@@ -14,7 +14,7 @@ Dữ liệu ban đầu trống: chỉ có tài khoản `admin`, mật khẩu m�
 
 ## 1. Tạo repo GitHub (làm một lần)
 
-1. Trên GitHub tạo repo **private, trống** (không README) tên `TBRs-Portal`.
+1. Trên GitHub tạo repo **private, trống** (không README) tên `TBRs-portal`.
 2. Gửi link repo cho người phụ trách để đẩy mã nguồn lên.
 
 ## 2. Chuẩn bị máy chủ (làm một lần, chạy bằng tài khoản quản trị máy chủ)
@@ -28,7 +28,7 @@ sudo -u postgres pg_dump -s --no-owner --no-privileges tbr_portal | sudo -u post
 # sudo -u postgres psql -q -d tbrs_portal -f /var/www/tbrs-portal/scripts/tbrs_schema_init.sql
 
 # 2.2 Mã nguồn
-sudo git clone https://github.com/<tài-khoản>/TBRs-Portal.git /var/www/tbrs-portal
+sudo git clone https://github.com/ndkhanh6886-blip/TBRs-portal.git /var/www/tbrs-portal
 cd /var/www/tbrs-portal
 
 # 2.3 Biến môi trường (KHÔNG chép SESSION_SECRET của TBR / VIA)
@@ -61,7 +61,7 @@ Không cần khởi động lại cloudflared.
 
 File `.github/workflows/deploy.yml` đã cấu hình sẵn cho TBRs (chỉ khởi động lại tiến trình `tbrs-portal`,
 không đụng TBR / VIA, không khởi động lại Cloudflare Tunnel).
-Cần đăng ký **self-hosted runner** cho repo `TBRs-Portal`:
+Cần đăng ký **self-hosted runner** cho repo `TBRs-portal`:
 GitHub → repo → Settings → Actions → Runners → **New self-hosted runner** → Linux → chạy các lệnh GitHub hiển thị
 trên máy chủ (đặt runner thành service: `sudo ./svc.sh install && sudo ./svc.sh start`).
 
