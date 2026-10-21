@@ -1030,7 +1030,10 @@ export const EnterpriseChatModule: React.FC = () => {
         const normMembers = c.members.map(m => normalizeUserName(m));
         return normMembers.includes(targetNorm) && normMembers.includes(currentUserName);
       }
-      return normalizeUserName(c.name) === targetNorm;
+      // Kênh cũ không có danh sách thành viên: chỉ nhận khi đúng cặp người tạo / người nhận
+      const nameNorm = normalizeUserName(c.name);
+      const creatorNorm = normalizeUserName(c.created_by);
+      return (nameNorm === targetNorm && creatorNorm === currentUserName) || (nameNorm === currentUserName && creatorNorm === targetNorm);
     });
 
     if (existing) {

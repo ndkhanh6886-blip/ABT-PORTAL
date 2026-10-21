@@ -40,9 +40,9 @@ function channelAccessSql(aliasParam: string) {
       SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) mm
       WHERE LOWER(TRIM(mm)) = ANY(${aliasParam})
     )
-    OR (c.channel_type = 'DIRECT' AND EXISTS (
-      SELECT 1 FROM unnest(${aliasParam}) a WHERE length(a) >= 4 AND LOWER(c.name) LIKE '%' || a || '%'
-    ))
+    OR (c.channel_type = 'DIRECT'
+        AND jsonb_array_length(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) = 0
+        AND LOWER(TRIM(c.name)) = ANY(${aliasParam}))
   )`;
 }
 
@@ -513,33 +513,42 @@ export async function POST(req: NextRequest) {
       const cleanType = channel_type || "GROUP";
       const memberList: string[] = Array.isArray(members) ? members : [];
 
-      // If DIRECT message, check if channel already exists between these 2 users
-      if (cleanType === "DIRECT" && memberList.length >= 2) {
-        const u1 = memberList[0];
-        const u2 = memberList[1];
-        const u1IsAdmin = u1.toLowerCase().includes("admin") || u1.includes("Quản Trị");
-        const u2IsAdmin = u2.toLowerCase().includes("admin") || u2.includes("Quản Trị");
-
-        const existQuery = `
-          SELECT * FROM chat_channels 
-          WHERE channel_type = 'DIRECT' 
-            AND (
-              (
-                (members::text ILIKE '%' || $1 || '%' ${u1IsAdmin ? "OR members::text ILIKE '%admin%' OR members::text ILIKE '%Quản Trị%'" : ""})
-                AND
-                (members::text ILIKE '%' || $2 || '%' ${u2IsAdmin ? "OR members::text ILIKE '%admin%' OR members::text ILIKE '%Quản Trị%'" : ""})
+      // Tin nhắn riêng: tìm đúng kênh giữa NGƯỜI ĐANG ĐĂNG NHẬP và NGƯỜI ĐƯỢC CHỌN (so khớp chính xác tên thành viên).
+      // Trước đây so "tên kênh có chứa tên mình" nên mở chat với ai cũng rơi vào kênh người khác đã nhắn cho mình.
+      if (cleanType === "DIRECT") {
+        const ADMIN_ALIASES = ["admin", "quản trị viên hệ thống", "quản trị viên", "quan tri vien he thong", "quan tri vien"];
+        const meAliases = ident.aliases;
+        const target = String(
+          memberList.map(m => String(m || "").trim()).find(m => m && !meAliases.includes(m.toLowerCase())) || name
+        ).trim();
+        if (!target || meAliases.includes(target.toLowerCase())) {
+          return NextResponse.json({ error: "Không thể tự nhắn tin cho chính mình" }, { status: 400 });
+        }
+        const targetAliases = ADMIN_ALIASES.includes(target.toLowerCase()) ? ADMIN_ALIASES : [target.toLowerCase()];
+        const existRes = await query(
+          `SELECT * FROM chat_channels c
+            WHERE c.channel_type = 'DIRECT'
+              AND (
+                (
+                  EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) m WHERE LOWER(TRIM(m)) = ANY($1::text[]))
+                  AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) m WHERE LOWER(TRIM(m)) = ANY($2::text[]))
+                )
+                OR (
+                  jsonb_array_length(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) = 0
+                  AND (
+                    (LOWER(TRIM(c.name)) = ANY($2::text[]) AND LOWER(TRIM(COALESCE(c.created_by, ''))) = ANY($1::text[]))
+                    OR (LOWER(TRIM(c.name)) = ANY($1::text[]) AND LOWER(TRIM(COALESCE(c.created_by, ''))) = ANY($2::text[]))
+                  )
+                )
               )
-              OR (name ILIKE '%' || $1 || '%' AND created_by ILIKE '%' || $2 || '%')
-              OR (name ILIKE '%' || $2 || '%' AND created_by ILIKE '%' || $1 || '%')
-              OR (name ILIKE '%' || $1 || '%' ${u2IsAdmin ? "AND (created_by ILIKE '%admin%' OR created_by ILIKE '%Quản Trị%')" : ""})
-              OR (name ILIKE '%' || $2 || '%' ${u1IsAdmin ? "AND (created_by ILIKE '%admin%' OR created_by ILIKE '%Quản Trị%')" : ""})
-            )
-          LIMIT 1
-        `;
-        const existRes = await query(existQuery, [u1, u2]);
+            ORDER BY c.id ASC
+            LIMIT 1`,
+          [meAliases, targetAliases]
+        );
         if (existRes.rows.length > 0) {
           return NextResponse.json({ success: true, channel: existRes.rows[0], isExisting: true });
         }
+        memberList.splice(0, memberList.length, ident.name, target);
       }
 
       // Generate clean channel_code
