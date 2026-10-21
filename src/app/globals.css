@@ -1,0 +1,1293 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Be Vietnam Pro", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-serif: "Times New Roman", Times, serif;
+  --font-mono: "Be Vietnam Pro", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* TBRs: màu thương hiệu xanh theo logo TBR Scientific — mọi lớp orange-* hiển thị bằng dải xanh này */
+  --color-orange-50: #eef4fc;
+  --color-orange-100: #d9e6f8;
+  --color-orange-200: #b6cdf0;
+  --color-orange-300: #86ace4;
+  --color-orange-400: #5285d5;
+  --color-orange-500: #2a63c2;
+  --color-orange-600: #0c4a97;
+  --color-orange-700: #0a3f82;
+  --color-orange-800: #0b356a;
+  --color-orange-900: #0c2d58;
+  --color-orange-950: #081c38;
+  --color-slate-850: #151f32;
+  --color-slate-750: #243247;
+  /* in-between shades used by components (Tailwind has none: a button with bg-emerald-650 had no background) */
+  --color-slate-650: #3b4a5f;
+  --color-slate-450: #7b8aa0;
+  --color-slate-350: #a8b4c4;
+  --color-slate-250: #d6dde6;
+  --color-slate-150: #e9eef3;
+  --color-emerald-650: #04855f;
+  --color-emerald-450: #22c58b;
+  --color-indigo-650: #4a3fd9;
+  --color-indigo-350: #9aa6f9;
+  --color-indigo-250: #b7c0fc;
+  --color-rose-450: #f8546b;
+  --color-rose-350: #fc8a9a;
+}
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    --font-inter: "Be Vietnam Pro", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --bg-main: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-card-subtle: #f1f5f9;
+    --border-main: #e2e8f0;
+    --border-subtle: #f1f5f9;
+    --text-main: #0f172a;
+    --text-muted: #64748b;
+    --primary: #0c4a97;
+    --primary-hover: #0a3f82;
+    --primary-light: #eef4fc;
+  }
+
+  .dark {
+    --bg-main: #090d16;
+    --bg-card: #0f172a;
+    --bg-card-subtle: #1e293b;
+    --border-main: #1e293b;
+    --border-subtle: #334155;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --primary: #2a63c2;
+    --primary-hover: #5285d5;
+    --primary-light: #081c38;
+  }
+}
+
+html,
+body {
+  background-color: var(--bg-main);
+  color: var(--text-main);
+  font-family: var(--font-inter);
+  font-synthesis: weight style;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s ease, color 0.2s ease;
+  overflow-x: hidden;
+}
+
+.font-sans {
+  font-family: var(--font-sans) !important;
+}
+
+.font-serif {
+  font-family: "Times New Roman", Times, serif !important;
+}
+
+.font-mono {
+  font-family: var(--font-sans) !important;
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  background-color: #0c4a97;
+  color: #ffffff;
+}
+
+/* ==========================================================================
+   TBRs BRAND BLUE IDENTITY (tên biến giữ nguyên để không phải sửa nơi dùng)
+   ========================================================================== */
+:root {
+  --tbr-orange: #0c4a97;
+  --tbr-orange-hover: #0a3f82;
+  --tbr-orange-light: #eef4fc;
+  --tbr-orange-border: #b6cdf0;
+}
+
+/* ==========================================================================
+   LIGHT MODE STYLING & ADAPTATION (CHẾ ĐỘ SÁNG)
+   Bảo đảm 100% chữ đen/xám đậm rõ nét, độ tương phản cao trên nền trắng
+   ========================================================================== */
+html:not(.dark) {
+  color: #0f172a;
+
+  body {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+  }
+
+  /* 1. Main Backgrounds & Card Surfaces from Dark Codebases */
+  [class*="bg-slate-900"],
+  [class*="bg-slate-950"],
+  [class*="bg-[#090D1A]"],
+  [class*="bg-[#0a0f1d]"],
+  [class*="bg-[#0f172a]"],
+  .glass,
+  .glass-dark {
+    background-color: #ffffff !important;
+  }
+
+  /* 2. Secondary Panels, Inset Well, Subtabs Containers */
+  [class*="bg-slate-800"],
+  [class*="bg-slate-850"],
+  [class*="bg-slate-750"] {
+    background-color: #f8fafc !important;
+  }
+
+  /* 3. Subtle Badges & Subtle Wells */
+  [class*="bg-slate-700"] {
+    background-color: #f1f5f9 !important;
+  }
+
+  /* 4. Borders */
+  [class*="border-slate-800"],
+  [class*="border-slate-700"],
+  [class*="border-slate-750"],
+  [class*="border-slate-850"],
+  [class*="border-slate-900"],
+  [class*="border-white/"] {
+    border-color: #e2e8f0 !important;
+  }
+
+  /* 5. Text Legibility Overrides: ALL Text must be clear and dark */
+  [class*="text-white"],
+  [class*="text-slate-100"],
+  [class*="text-slate-200"],
+  [class*="text-slate-900"] {
+    color: #0f172a !important;
+    -webkit-text-fill-color: initial !important;
+  }
+
+  [class*="text-slate-300"],
+  [class*="text-slate-350"],
+  [class*="text-slate-400"],
+  [class*="text-slate-500"],
+  [class*="text-slate-600"],
+  [class*="text-slate-700"] {
+    color: #334155 !important;
+    -webkit-text-fill-color: initial !important;
+  }
+
+  label, h1, h2, h3, h4, h5, h6 {
+    color: #0f172a !important;
+    -webkit-text-fill-color: initial !important;
+  }
+
+  /* 6. Navbar Specifics */
+  header {
+    background-color: rgba(255, 255, 255, 0.98) !important;
+    border-color: #e2e8f0 !important;
+  }
+
+  header nav button {
+    color: #334155 !important;
+    -webkit-text-fill-color: initial !important;
+  }
+
+  header nav button:hover {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+  }
+
+  header nav button[class~="bg-orange-600"],
+  header nav button[class~="bg-orange-500"] {
+    background-color: #0c4a97 !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+  }
+
+  header nav button[class~="bg-indigo-600"],
+  header nav button[class~="bg-indigo-500"] {
+    background-color: #4f46e5 !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+  }
+
+  header nav button[class~="bg-emerald-600"],
+  header nav button[class~="bg-emerald-500"] {
+    background-color: #059669 !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+  }
+
+  header nav button[class~="bg-blue-600"],
+  header nav button[class~="bg-blue-500"] {
+    background-color: #2563eb !important;
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+  }
+
+  header nav button[class~="bg-orange-600"] *,
+  header nav button[class~="bg-orange-500"] *,
+  header nav button[class~="bg-indigo-600"] *,
+  header nav button[class~="bg-indigo-500"] *,
+  header nav button[class~="bg-emerald-600"] *,
+  header nav button[class~="bg-emerald-500"] *,
+  header nav button[class~="bg-blue-600"] *,
+  header nav button[class~="bg-blue-500"] * {
+    color: #ffffff !important;
+    -webkit-text-fill-color: #ffffff !important;
+  }
+
+  /* 7. Table Styling: Crisp headers and rows */
+  table {
+    color: #0f172a !important;
+  }
+
+  table thead tr {
+    background-color: #f1f5f9 !important;
+    border-color: #cbd5e1 !important;
+  }
+
+  table th {
+    background-color: #f1f5f9 !important;
+    color: #1e293b !important;
+    border-color: #cbd5e1 !important;
+    font-weight: 700 !important;
+    -webkit-text-fill-color: initial !important;
+  }
+
+  table tbody tr {
+    background-color: #ffffff !important;
+    border-color: #e2e8f0 !important;
+  }
+
+  table tbody tr:hover {
+    background-color: #f8fafc !important;
+  }
+
+  table td {
+    color: #0f172a !important;
+    border-color: #e2e8f0 !important;
+    -webkit-text-fill-color: initial !important;
+  }
+
+  /* 8. Inactive & Slate Buttons in Light Mode: clean light surface instead of black */
+  button:not([class*="bg-"]):not(.btn-action):not(.btn-primary),
+  button[class~="bg-transparent"],
+  button[class~="bg-white"],
+  button[class~="bg-slate-100"],
+  button[class~="bg-slate-100/90"],
+  button[class~="bg-slate-50"],
+  button[class~="bg-slate-50/90"] {
+    color: #1e293b;
+    -webkit-text-fill-color: initial;
+  }
+
+  button[class~="bg-slate-950"],
+  button[class~="bg-slate-900"],
+  button[class~="bg-slate-900/90"],
+  button[class~="bg-slate-900/80"],
+  button[class~="bg-slate-900/60"],
+  button[class~="bg-slate-900/50"],
+  button[class~="bg-slate-900/40"],
+  button[class~="bg-slate-850"],
+  button[class~="bg-slate-800"],
+  button[class~="bg-slate-800/90"],
+  button[class~="bg-slate-800/80"],
+  button[class~="bg-slate-800/70"],
+  button[class~="bg-slate-800/60"],
+  button[class~="bg-slate-800/50"],
+  button[class~="bg-slate-800/40"],
+  button[class~="bg-slate-700"],
+  button[class~="bg-gray-950"],
+  button[class~="bg-gray-900"],
+  button[class~="bg-gray-800"],
+  button[class~="bg-zinc-950"],
+  button[class~="bg-zinc-900"],
+  button[class~="bg-zinc-800"] {
+    background-color: #f1f5f9 !important;
+    border-color: #cbd5e1 !important;
+    color: #1e293b !important;
+    -webkit-text-fill-color: #1e293b !important;
+  }
+
+  button[class~="bg-slate-950"]:hover,
+  button[class~="bg-slate-900"]:hover,
+  button[class~="bg-slate-850"]:hover,
+  button[class~="bg-slate-800"]:hover,
+  button[class~="bg-slate-700"]:hover,
+  button[class~="bg-gray-950"]:hover,
+  button[class~="bg-gray-900"]:hover,
+  button[class~="bg-gray-800"]:hover {
+    background-color: #e2e8f0 !important;
+    color: #0f172a !important;
+    -webkit-text-fill-color: #0f172a !important;
+  }
+
+  /* Preserve distinct pastel -50 / -100 cards & account buttons in Light Mode (even when paired with dark:bg-slate-*) */
+  [class~="bg-blue-50"],
+  [class~="bg-blue-50/90"],
+  [class~="bg-blue-50/80"],
+  [class~="bg-blue-100"],
+  [class~="bg-blue-100/80"] {
+    background-color: #eff6ff !important;
+    border-color: #bfdbfe !important;
+    color: #1e3a8a !important;
+    -webkit-text-fill-color: #1e3a8a !important;
+  }
+  button[class~="bg-blue-50"]:hover,
+  button[class~="bg-blue-50/90"]:hover,
+  button[class~="bg-blue-50/80"]:hover {
+    background-color: #dbeafe !important;
+  }
+
+  [class~="bg-emerald-50"],
+  [class~="bg-emerald-50/90"],
+  [class~="bg-emerald-50/80"],
+  [class~="bg-emerald-100"],
+  [class~="bg-emerald-100/80"] {
+    background-color: #ecfdf5 !important;
+    border-color: #a7f3d0 !important;
+    color: #065f46 !important;
+    -webkit-text-fill-color: #065f46 !important;
+  }
+  button[class~="bg-emerald-50"]:hover,
+  button[class~="bg-emerald-50/90"]:hover,
+  button[class~="bg-emerald-50/80"]:hover {
+    background-color: #d1fae5 !important;
+  }
+
+  [class~="bg-purple-50"],
+  [class~="bg-purple-50/90"],
+  [class~="bg-purple-50/80"],
+  [class~="bg-purple-100"],
+  [class~="bg-purple-100/80"] {
+    background-color: #faf5ff !important;
+    border-color: #e9d5ff !important;
+    color: #581c87 !important;
+    -webkit-text-fill-color: #581c87 !important;
+  }
+  button[class~="bg-purple-50"]:hover,
+  button[class~="bg-purple-50/90"]:hover,
+  button[class~="bg-purple-50/80"]:hover {
+    background-color: #f3e8ff !important;
+  }
+
+  [class~="bg-amber-50"],
+  [class~="bg-amber-50/90"],
+  [class~="bg-amber-50/80"],
+  [class~="bg-amber-100"],
+  [class~="bg-amber-100/80"] {
+    background-color: #fffbeb !important;
+    border-color: #fde68a !important;
+    color: #92400e !important;
+    -webkit-text-fill-color: #92400e !important;
+  }
+  button[class~="bg-amber-50"]:hover,
+  button[class~="bg-amber-50/90"]:hover,
+  button[class~="bg-amber-50/80"]:hover {
+    background-color: #fef3c7 !important;
+  }
+
+  [class~="bg-rose-50"],
+  [class~="bg-rose-50/90"],
+  [class~="bg-rose-50/80"],
+  [class~="bg-rose-100"],
+  [class~="bg-rose-100/80"] {
+    background-color: #fff1f2 !important;
+    border-color: #fecdd3 !important;
+    color: #9f1239 !important;
+    -webkit-text-fill-color: #9f1239 !important;
+  }
+  button[class~="bg-rose-50"]:hover,
+  button[class~="bg-rose-50/90"]:hover,
+  button[class~="bg-rose-50/80"]:hover {
+    background-color: #ffe4e6 !important;
+  }
+
+  [class~="bg-cyan-50"],
+  [class~="bg-cyan-50/90"],
+  [class~="bg-cyan-50/80"],
+  [class~="bg-cyan-100"],
+  [class~="bg-cyan-100/80"] {
+    background-color: #ecfeff !important;
+    border-color: #a5f3fc !important;
+    color: #155e75 !important;
+    -webkit-text-fill-color: #155e75 !important;
+  }
+  button[class~="bg-cyan-50"]:hover,
+  button[class~="bg-cyan-50/90"]:hover,
+  button[class~="bg-cyan-50/80"]:hover {
+    background-color: #cffafe !important;
+  }
+
+  [class~="bg-violet-50"],
+  [class~="bg-violet-50/90"],
+  [class~="bg-violet-50/80"],
+  [class~="bg-violet-100"],
+  [class~="bg-violet-100/80"] {
+    background-color: #f5f3ff !important;
+    border-color: #ddd6fe !important;
+    color: #4c1d95 !important;
+    -webkit-text-fill-color: #4c1d95 !important;
+  }
+  button[class~="bg-violet-50"]:hover,
+  button[class~="bg-violet-50/90"]:hover,
+  button[class~="bg-violet-50/80"]:hover {
+    background-color: #ede9fe !important;
+  }
+
+  [class~="bg-teal-50"],
+  [class~="bg-teal-50/90"],
+  [class~="bg-teal-50/80"],
+  [class~="bg-teal-100"],
+  [class~="bg-teal-100/80"] {
+    background-color: #f0fdfa !important;
+    border-color: #99f6e4 !important;
+    color: #115e59 !important;
+    -webkit-text-fill-color: #115e59 !important;
+  }
+  button[class~="bg-teal-50"]:hover,
+  button[class~="bg-teal-50/90"]:hover,
+  button[class~="bg-teal-50/80"]:hover {
+    background-color: #ccfbf1 !important;
+  }
+
+  [class~="bg-indigo-50"],
+  [class~="bg-indigo-50/90"],
+  [class~="bg-indigo-50/80"],
+  [class~="bg-indigo-50/60"],
+  [class~="bg-indigo-100"],
+  [class~="bg-indigo-100/80"] {
+    background-color: #eef2ff !important;
+    border-color: #c7d2fe !important;
+    color: #312e81 !important;
+    -webkit-text-fill-color: #312e81 !important;
+  }
+  button[class~="bg-indigo-50"]:hover,
+  button[class~="bg-indigo-50/90"]:hover,
+  button[class~="bg-indigo-50/80"]:hover {
+    background-color: #e0e7ff !important;
+  }
+
+  [class~="bg-orange-50"],
+  [class~="bg-orange-50/90"],
+  [class~="bg-orange-50/80"],
+  [class~="bg-orange-100"],
+  [class~="bg-orange-100/80"] {
+    background-color: #eef4fc !important;
+    border-color: #b6cdf0 !important;
+    color: #0b356a !important;
+    -webkit-text-fill-color: #0b356a !important;
+  }
+  button[class~="bg-orange-50"]:hover,
+  button[class~="bg-orange-50/90"]:hover,
+  button[class~="bg-orange-50/80"]:hover {
+    background-color: #d9e6f8 !important;
+  }
+
+  /* 1b. Remove dark -900/-950 gradients in Light Mode (convert to soft light surfaces) */
+  [class*="from-slate-900"],
+  [class*="from-slate-950"],
+  [class*="from-slate-850"],
+  [class*="from-slate-800"],
+  [class*="via-slate-900"],
+  [class*="via-slate-850"],
+  [class*="via-slate-800"],
+  [class*="to-slate-900"],
+  [class*="to-slate-950"],
+  [class*="from-indigo-950"],
+  [class*="from-indigo-900"],
+  [class*="from-blue-950"],
+  [class*="from-blue-900"],
+  [class*="from-teal-950"],
+  [class*="from-teal-900"],
+  [class*="from-cyan-950"],
+  [class*="from-cyan-900"],
+  [class*="from-emerald-950"],
+  [class*="from-emerald-900"],
+  [class*="from-amber-950"],
+  [class*="from-amber-900"],
+  [class*="from-orange-950"],
+  [class*="from-orange-900"],
+  [class*="from-rose-950"],
+  [class*="from-rose-900"],
+  [class*="from-purple-950"],
+  [class*="from-purple-900"] {
+    background-image: none !important;
+    background-color: #f8fafc !important;
+  }
+
+  table tbody tr[class*="from-slate-"] td {
+    background-color: #f1f5f9 !important;
+    border-top: 2px solid #cbd5e1 !important;
+    border-bottom: 1px solid #cbd5e1 !important;
+  }
+
+  /* Soft -950 / -900 badges, pills & dark-coded buttons in Light Mode (matching only non-dark-prefixed tokens or subtle translucent pills) */
+  div[class~="bg-purple-950"],
+  div[class~="bg-purple-900"],
+  div[class*="bg-purple-950/"],
+  div[class*="bg-purple-900/"],
+  span[class~="bg-purple-950"],
+  span[class~="bg-purple-900"],
+  span[class*="bg-purple-950/"],
+  span[class*="bg-purple-900/"],
+  span[class*="bg-purple-600/"],
+  span[class*="bg-purple-500/"],
+  button[class~="bg-purple-950"],
+  button[class~="bg-purple-900"],
+  button[class*="bg-purple-950/"],
+  button[class*="bg-purple-900/"] {
+    background-color: #f3e8ff !important;
+    border-color: #c084fc !important;
+    color: #581c87 !important;
+    -webkit-text-fill-color: #581c87 !important;
+  }
+
+  div[class~="bg-amber-950"],
+  div[class~="bg-amber-900"],
+  div[class*="bg-amber-950/"],
+  div[class*="bg-amber-900/"],
+  span[class~="bg-amber-950"],
+  span[class~="bg-amber-900"],
+  span[class*="bg-amber-950/"],
+  span[class*="bg-amber-900/"],
+  span[class*="bg-amber-600/"],
+  span[class*="bg-amber-500/"],
+  button[class~="bg-amber-950"],
+  button[class~="bg-amber-900"],
+  button[class*="bg-amber-950/"],
+  button[class*="bg-amber-900/"] {
+    background-color: #fef3c7 !important;
+    border-color: #f59e0b !important;
+    color: #92400e !important;
+    -webkit-text-fill-color: #92400e !important;
+  }
+  button[class~="bg-amber-950"] *,
+  button[class~="bg-amber-900"] *,
+  button[class*="bg-amber-950/"] *,
+  button[class*="bg-amber-900/"] * {
+    color: #92400e !important;
+    -webkit-text-fill-color: #92400e !important;
+  }
+
+  div[class~="bg-cyan-950"],
+  div[class~="bg-cyan-900"],
+  div[class*="bg-cyan-950/"],
+  div[class*="bg-cyan-900/"],
+  div[class~="bg-teal-950"],
+  div[class~="bg-teal-900"],
+  div[class*="bg-teal-950/"],
+  div[class*="bg-teal-900/"],
+  div[class~="bg-sky-950"],
+  div[class~="bg-sky-900"],
+  div[class*="bg-sky-950/"],
+  div[class*="bg-sky-900/"],
+  span[class~="bg-cyan-950"],
+  span[class~="bg-cyan-900"],
+  span[class*="bg-cyan-950/"],
+  span[class*="bg-cyan-900/"],
+  span[class~="bg-teal-950"],
+  span[class~="bg-teal-900"],
+  span[class*="bg-teal-950/"],
+  span[class*="bg-teal-900/"],
+  span[class~="bg-sky-950"],
+  span[class~="bg-sky-900"],
+  span[class*="bg-sky-950/"],
+  span[class*="bg-sky-900/"],
+  span[class*="bg-cyan-600/"],
+  span[class*="bg-teal-600/"],
+  span[class*="bg-sky-600/"],
+  button[class~="bg-cyan-950"],
+  button[class~="bg-cyan-900"],
+  button[class*="bg-cyan-950/"],
+  button[class*="bg-cyan-900/"],
+  button[class~="bg-sky-950"],
+  button[class~="bg-sky-900"],
+  button[class*="bg-sky-950/"],
+  button[class*="bg-sky-900/"],
+  button[class~="bg-teal-950"],
+  button[class~="bg-teal-900"],
+  button[class*="bg-teal-950/"],
+  button[class*="bg-teal-900/"] {
+    background-color: #e0f2fe !important;
+    border-color: #38bdf8 !important;
+    color: #0c4a6e !important;
+    -webkit-text-fill-color: #0c4a6e !important;
+  }
+  button[class~="bg-cyan-950"] *,
+  button[class~="bg-cyan-900"] *,
+  button[class*="bg-cyan-950/"] *,
+  button[class*="bg-cyan-900/"] *,
+  button[class~="bg-sky-950"] *,
+  button[class~="bg-sky-900"] *,
+  button[class*="bg-sky-950/"] *,
+  button[class*="bg-sky-900/"] *,
+  button[class~="bg-teal-950"] *,
+  button[class~="bg-teal-900"] *,
+  button[class*="bg-teal-950/"] *,
+  button[class*="bg-teal-900/"] * {
+    color: #0c4a6e !important;
+    -webkit-text-fill-color: #0c4a6e !important;
+  }
+
+  div[class~="bg-blue-950"],
+  div[class~="bg-blue-900"],
+  div[class*="bg-blue-950/"],
+  div[class*="bg-blue-900/"],
+  span[class~="bg-blue-950"],
+  span[class~="bg-blue-900"],
+  span[class*="bg-blue-950/"],
+  span[class*="bg-blue-900/"],
+  span[class*="bg-blue-600/"],
+  button[class~="bg-blue-950"],
+  button[class~="bg-blue-900"],
+  button[class*="bg-blue-950/"],
+  button[class*="bg-blue-900/"] {
+    background-color: #dbeafe !important;
+    border-color: #60a5fa !important;
+    color: #1e3a8a !important;
+    -webkit-text-fill-color: #1e3a8a !important;
+  }
+  button[class~="bg-blue-950"] *,
+  button[class~="bg-blue-900"] *,
+  button[class*="bg-blue-950/"] *,
+  button[class*="bg-blue-900/"] * {
+    color: #1e3a8a !important;
+    -webkit-text-fill-color: #1e3a8a !important;
+  }
+
+  div[class~="bg-emerald-950"],
+  div[class~="bg-emerald-900"],
+  div[class*="bg-emerald-950/"],
+  div[class*="bg-emerald-900/"],
+  div[class~="bg-green-950"],
+  div[class~="bg-green-900"],
+  span[class~="bg-emerald-950"],
+  span[class~="bg-emerald-900"],
+  span[class*="bg-emerald-950/"],
+  span[class*="bg-emerald-900/"],
+  span[class~="bg-green-950"],
+  span[class~="bg-green-900"],
+  span[class*="bg-emerald-600/"],
+  button[class~="bg-emerald-950"],
+  button[class~="bg-emerald-900"],
+  button[class*="bg-emerald-950/"],
+  button[class*="bg-emerald-900/"] {
+    background-color: #d1fae5 !important;
+    border-color: #34d399 !important;
+    color: #065f46 !important;
+    -webkit-text-fill-color: #065f46 !important;
+  }
+  button[class~="bg-emerald-950"] *,
+  button[class~="bg-emerald-900"] *,
+  button[class*="bg-emerald-950/"] *,
+  button[class*="bg-emerald-900/"] * {
+    color: #065f46 !important;
+    -webkit-text-fill-color: #065f46 !important;
+  }
+
+  div[class~="bg-rose-950"],
+  div[class~="bg-rose-900"],
+  div[class*="bg-rose-950/"],
+  div[class*="bg-rose-900/"],
+  div[class~="bg-red-950"],
+  div[class~="bg-red-900"],
+  span[class~="bg-rose-950"],
+  span[class~="bg-rose-900"],
+  span[class*="bg-rose-950/"],
+  span[class*="bg-rose-900/"],
+  span[class~="bg-red-950"],
+  span[class~="bg-red-900"],
+  span[class*="bg-rose-600/"],
+  button[class~="bg-rose-950"],
+  button[class~="bg-rose-900"],
+  button[class*="bg-rose-950/"],
+  button[class*="bg-rose-900/"],
+  button[class~="bg-red-950"],
+  button[class~="bg-red-900"] {
+    background-color: #ffe4e6 !important;
+    border-color: #fb7185 !important;
+    color: #9f1239 !important;
+    -webkit-text-fill-color: #9f1239 !important;
+  }
+  button[class~="bg-rose-950"] *,
+  button[class~="bg-rose-900"] *,
+  button[class*="bg-rose-950/"] *,
+  button[class*="bg-rose-900/"] * {
+    color: #9f1239 !important;
+    -webkit-text-fill-color: #9f1239 !important;
+  }
+
+  div[class~="bg-indigo-950"],
+  div[class~="bg-indigo-900"],
+  div[class*="bg-indigo-950/"],
+  div[class*="bg-indigo-900/"],
+  span[class~="bg-indigo-950"],
+  span[class~="bg-indigo-900"],
+  span[class*="bg-indigo-950/"],
+  span[class*="bg-indigo-900/"],
+  span[class*="bg-indigo-600/"],
+  button[class~="bg-indigo-950"],
+  button[class~="bg-indigo-900"],
+  button[class*="bg-indigo-950/"],
+  button[class*="bg-indigo-900/"] {
+    background-color: #e0e7ff !important;
+    border-color: #818cf8 !important;
+    color: #312e81 !important;
+    -webkit-text-fill-color: #312e81 !important;
+  }
+  button[class~="bg-indigo-950"] *,
+  button[class~="bg-indigo-900"] *,
+  button[class*="bg-indigo-950/"] *,
+  button[class*="bg-indigo-900/"] * {
+    color: #312e81 !important;
+    -webkit-text-fill-color: #312e81 !important;
+  }
+
+  /* Product / Item summary card buttons inside table cells: clean light card instead of solid black box */
+  table td button.group[class*="bg-slate-9"],
+  table td button.group[class*="bg-slate-8"] {
+    background-color: #f8fafc !important;
+    border-color: #cbd5e1 !important;
+    color: #0f172a !important;
+    -webkit-text-fill-color: #0f172a !important;
+  }
+  table td button.group[class*="bg-slate-9"]:hover,
+  table td button.group[class*="bg-slate-8"]:hover {
+    background-color: #f1f5f9 !important;
+    border-color: #94a3b8 !important;
+  }
+  table td button.group[class*="bg-slate-9"] *,
+  table td button.group[class*="bg-slate-8"] * {
+    color: #0f172a !important;
+    -webkit-text-fill-color: #0f172a !important;
+  }
+  table td button.group[class*="bg-slate-9"] [class*="text-emerald-"],
+  table td button.group[class*="bg-slate-8"] [class*="text-emerald-"] {
+    color: #047857 !important;
+    -webkit-text-fill-color: #047857 !important;
+  }
+  table td button.group[class*="bg-slate-9"] span[class*="bg-cyan-"],
+  table td button.group[class*="bg-slate-8"] span[class*="bg-cyan-"] {
+    background-color: #e0f2fe !important;
+    border-color: #38bdf8 !important;
+    color: #0c4a6e !important;
+    -webkit-text-fill-color: #0c4a6e !important;
+  }
+  table td button.group[class*="bg-slate-9"] span[class*="bg-amber-"],
+  table td button.group[class*="bg-slate-8"] span[class*="bg-amber-"] {
+    background-color: #fef3c7 !important;
+    border-color: #f59e0b !important;
+    color: #92400e !important;
+    -webkit-text-fill-color: #92400e !important;
+  }
+  table td button.group[class*="bg-slate-9"] span[class*="bg-purple-"],
+  table td button.group[class*="bg-slate-8"] span[class*="bg-purple-"] {
+    background-color: #f3e8ff !important;
+    border-color: #c084fc !important;
+    color: #581c87 !important;
+    -webkit-text-fill-color: #581c87 !important;
+  }
+  table td button.group[class*="bg-slate-9"] span[class*="bg-indigo-"],
+  table td button.group[class*="bg-slate-8"] span[class*="bg-indigo-"] {
+    background-color: #e0e7ff !important;
+    border-color: #818cf8 !important;
+    color: #312e81 !important;
+    -webkit-text-fill-color: #312e81 !important;
+  }
+
+  /* High-Contrast Colored Text in Light Mode: Ensure 100% readability on light surfaces */
+  [class*="text-sky-400"],
+  [class*="text-sky-300"],
+  [class*="text-sky-200"] {
+    color: #0369a1 !important;
+    -webkit-text-fill-color: #0369a1 !important;
+    font-weight: 700 !important;
+  }
+  [class*="text-cyan-400"],
+  [class*="text-cyan-300"],
+  [class*="text-cyan-200"],
+  [class*="text-cyan-100"] {
+    color: #0e7490 !important;
+    -webkit-text-fill-color: #0e7490 !important;
+    font-weight: 600 !important;
+  }
+  [class*="text-teal-400"],
+  [class*="text-teal-300"],
+  [class*="text-teal-200"] {
+    color: #0f766e !important;
+    -webkit-text-fill-color: #0f766e !important;
+    font-weight: 600 !important;
+  }
+  [class*="text-emerald-300"],
+  [class*="text-emerald-200"] {
+    color: #065f46 !important;
+    -webkit-text-fill-color: #065f46 !important;
+    font-weight: 600 !important;
+  }
+  [class*="text-amber-400"],
+  [class*="text-amber-300"],
+  [class*="text-amber-200"],
+  [class*="text-amber-100"] {
+    color: #b45309 !important;
+    -webkit-text-fill-color: #b45309 !important;
+    font-weight: 700 !important;
+  }
+  [class*="text-indigo-400"],
+  [class*="text-indigo-300"],
+  [class*="text-indigo-200"] {
+    color: #3730a3 !important;
+    -webkit-text-fill-color: #3730a3 !important;
+  }
+  [class*="text-purple-400"],
+  [class*="text-purple-300"],
+  [class*="text-purple-200"] {
+    color: #6b21a8 !important;
+    -webkit-text-fill-color: #6b21a8 !important;
+  }
+  [class*="text-blue-400"],
+  [class*="text-blue-300"],
+  [class*="text-blue-200"] {
+    color: #1e40af !important;
+    -webkit-text-fill-color: #1e40af !important;
+  }
+  [class*="text-rose-400"],
+  [class*="text-rose-300"],
+  [class*="text-rose-200"] {
+    color: #be123c !important;
+    -webkit-text-fill-color: #be123c !important;
+  }
+
+  /* 9. Forms, Inputs & Selects */
+  input:not([type="checkbox"]):not([type="radio"]),
+  select,
+  textarea {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    border-color: #cbd5e1 !important;
+    -webkit-text-fill-color: initial !important;
+  }
+
+  input::placeholder,
+  textarea::placeholder {
+    color: #94a3b8 !important;
+  }
+
+  option {
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+  }
+
+  /* 10. Text Gradient Overrides */
+  .bg-clip-text {
+    background-image: none !important;
+    -webkit-text-fill-color: #0f172a !important;
+    color: #0f172a !important;
+  }
+
+  /* 11. Modals & Dialogs */
+  .fixed .glass-dark,
+  [role="dialog"] {
+    background-color: #ffffff !important;
+    border-color: #e2e8f0 !important;
+    box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.15) !important;
+  }
+}
+
+/* ==========================================================================
+   UNIVERSAL DARK & VIVID SURFACES: ALWAYS CRISP BRIGHT WHITE TEXT (#FFFFFF)
+   Mọi phần tử (button, div, span, a, label, header, bubble, avatar, badge)
+   có nền màu đậm hoặc gradient tối đều bắt buộc hiển thị chữ sáng trắng (#ffffff)
+   để đạt độ tương phản cao nhất ở cả Giao Diện Sáng và Giao Diện Tối.
+   ========================================================================== */
+:is(
+  [class~="bg-indigo-500"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-600/90"],
+  [class~="bg-indigo-600/80"],
+  [class~="bg-indigo-650"],
+  [class~="bg-indigo-700"],
+  [class~="bg-indigo-800"],
+  [class~="bg-indigo-800/80"],
+  [class~="bg-indigo-800/60"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-600/90"],
+  [class~="bg-blue-600/80"],
+  [class~="bg-blue-700"],
+  [class~="bg-blue-800"],
+  [class~="bg-sky-500"],
+  [class~="bg-sky-600"],
+  [class~="bg-sky-700"],
+  [class~="bg-cyan-500"],
+  [class~="bg-cyan-600"],
+  [class~="bg-cyan-700"],
+  [class~="bg-teal-500"],
+  [class~="bg-teal-600"],
+  [class~="bg-teal-600/90"],
+  [class~="bg-teal-700"],
+  [class~="bg-teal-800"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-600/90"],
+  [class~="bg-emerald-600/80"],
+  [class~="bg-emerald-650"],
+  [class~="bg-emerald-700"],
+  [class~="bg-emerald-800"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-green-700"],
+  [class~="bg-purple-500"],
+  [class~="bg-purple-600"],
+  [class~="bg-purple-600/90"],
+  [class~="bg-purple-600/80"],
+  [class~="bg-purple-700"],
+  [class~="bg-purple-800"],
+  [class~="bg-violet-500"],
+  [class~="bg-violet-600"],
+  [class~="bg-violet-700"],
+  [class~="bg-violet-800"],
+  [class~="bg-fuchsia-600"],
+  [class~="bg-pink-500"],
+  [class~="bg-pink-600"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-rose-600/90"],
+  [class~="bg-rose-600/80"],
+  [class~="bg-rose-700"],
+  [class~="bg-rose-800"],
+  [class~="bg-red-500"],
+  [class~="bg-red-600"],
+  [class~="bg-red-600/90"],
+  [class~="bg-red-700"],
+  [class~="bg-red-800"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-orange-600/90"],
+  [class~="bg-orange-700"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"],
+  [class~="bg-amber-600/90"],
+  [class~="bg-amber-700"],
+  [class~="bg-black/60"],
+  [class~="bg-black/70"],
+  [class~="bg-black/80"],
+  [class~="from-indigo-500"]:not(.bg-clip-text),
+  [class~="from-indigo-600"]:not(.bg-clip-text),
+  [class~="from-indigo-700"]:not(.bg-clip-text),
+  [class~="from-indigo-800"]:not(.bg-clip-text),
+  [class~="from-blue-500"]:not(.bg-clip-text),
+  [class~="from-blue-600"]:not(.bg-clip-text),
+  [class~="from-blue-700"]:not(.bg-clip-text),
+  [class~="from-sky-500"]:not(.bg-clip-text),
+  [class~="from-sky-600"]:not(.bg-clip-text),
+  [class~="from-cyan-500"]:not(.bg-clip-text),
+  [class~="from-cyan-600"]:not(.bg-clip-text),
+  [class~="from-teal-500"]:not(.bg-clip-text),
+  [class~="from-teal-600"]:not(.bg-clip-text),
+  [class~="from-teal-700"]:not(.bg-clip-text),
+  [class~="from-emerald-500"]:not(.bg-clip-text),
+  [class~="from-emerald-600"]:not(.bg-clip-text),
+  [class~="from-emerald-700"]:not(.bg-clip-text),
+  [class~="from-green-500"]:not(.bg-clip-text),
+  [class~="from-green-600"]:not(.bg-clip-text),
+  [class~="from-purple-500"]:not(.bg-clip-text),
+  [class~="from-purple-600"]:not(.bg-clip-text),
+  [class~="from-purple-700"]:not(.bg-clip-text),
+  [class~="from-violet-500"]:not(.bg-clip-text),
+  [class~="from-violet-600"]:not(.bg-clip-text),
+  [class~="from-violet-700"]:not(.bg-clip-text),
+  [class~="from-rose-500"]:not(.bg-clip-text),
+  [class~="from-rose-600"]:not(.bg-clip-text),
+  [class~="from-rose-700"]:not(.bg-clip-text),
+  [class~="from-red-500"]:not(.bg-clip-text),
+  [class~="from-red-600"]:not(.bg-clip-text),
+  [class~="from-red-700"]:not(.bg-clip-text),
+  [class~="from-pink-500"]:not(.bg-clip-text),
+  [class~="from-pink-600"]:not(.bg-clip-text),
+  [class~="from-orange-500"]:not(.bg-clip-text),
+  [class~="from-orange-600"]:not(.bg-clip-text),
+  [class~="from-orange-700"]:not(.bg-clip-text),
+  [class~="from-amber-500"]:not(.bg-clip-text),
+  [class~="from-amber-600"]:not(.bg-clip-text),
+  [class~="from-amber-700"]:not(.bg-clip-text),
+  .btn-action,
+  .btn-green,
+  .btn-primary
+) {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+:is(
+  [class~="bg-indigo-500"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-600/90"],
+  [class~="bg-indigo-600/80"],
+  [class~="bg-indigo-650"],
+  [class~="bg-indigo-700"],
+  [class~="bg-indigo-800"],
+  [class~="bg-indigo-800/80"],
+  [class~="bg-indigo-800/60"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-600/90"],
+  [class~="bg-blue-600/80"],
+  [class~="bg-blue-700"],
+  [class~="bg-blue-800"],
+  [class~="bg-sky-500"],
+  [class~="bg-sky-600"],
+  [class~="bg-sky-700"],
+  [class~="bg-cyan-500"],
+  [class~="bg-cyan-600"],
+  [class~="bg-cyan-700"],
+  [class~="bg-teal-500"],
+  [class~="bg-teal-600"],
+  [class~="bg-teal-600/90"],
+  [class~="bg-teal-700"],
+  [class~="bg-teal-800"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-600/90"],
+  [class~="bg-emerald-600/80"],
+  [class~="bg-emerald-650"],
+  [class~="bg-emerald-700"],
+  [class~="bg-emerald-800"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-green-700"],
+  [class~="bg-purple-500"],
+  [class~="bg-purple-600"],
+  [class~="bg-purple-600/90"],
+  [class~="bg-purple-600/80"],
+  [class~="bg-purple-700"],
+  [class~="bg-purple-800"],
+  [class~="bg-violet-500"],
+  [class~="bg-violet-600"],
+  [class~="bg-violet-700"],
+  [class~="bg-violet-800"],
+  [class~="bg-fuchsia-600"],
+  [class~="bg-pink-500"],
+  [class~="bg-pink-600"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-rose-600/90"],
+  [class~="bg-rose-600/80"],
+  [class~="bg-rose-700"],
+  [class~="bg-rose-800"],
+  [class~="bg-red-500"],
+  [class~="bg-red-600"],
+  [class~="bg-red-600/90"],
+  [class~="bg-red-700"],
+  [class~="bg-red-800"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-orange-600/90"],
+  [class~="bg-orange-700"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"],
+  [class~="bg-amber-600/90"],
+  [class~="bg-amber-700"],
+  [class~="bg-black/60"],
+  [class~="bg-black/70"],
+  [class~="bg-black/80"],
+  [class~="from-indigo-500"]:not(.bg-clip-text),
+  [class~="from-indigo-600"]:not(.bg-clip-text),
+  [class~="from-indigo-700"]:not(.bg-clip-text),
+  [class~="from-indigo-800"]:not(.bg-clip-text),
+  [class~="from-blue-500"]:not(.bg-clip-text),
+  [class~="from-blue-600"]:not(.bg-clip-text),
+  [class~="from-blue-700"]:not(.bg-clip-text),
+  [class~="from-sky-500"]:not(.bg-clip-text),
+  [class~="from-sky-600"]:not(.bg-clip-text),
+  [class~="from-cyan-500"]:not(.bg-clip-text),
+  [class~="from-cyan-600"]:not(.bg-clip-text),
+  [class~="from-teal-500"]:not(.bg-clip-text),
+  [class~="from-teal-600"]:not(.bg-clip-text),
+  [class~="from-teal-700"]:not(.bg-clip-text),
+  [class~="from-emerald-500"]:not(.bg-clip-text),
+  [class~="from-emerald-600"]:not(.bg-clip-text),
+  [class~="from-emerald-700"]:not(.bg-clip-text),
+  [class~="from-green-500"]:not(.bg-clip-text),
+  [class~="from-green-600"]:not(.bg-clip-text),
+  [class~="from-purple-500"]:not(.bg-clip-text),
+  [class~="from-purple-600"]:not(.bg-clip-text),
+  [class~="from-purple-700"]:not(.bg-clip-text),
+  [class~="from-violet-500"]:not(.bg-clip-text),
+  [class~="from-violet-600"]:not(.bg-clip-text),
+  [class~="from-violet-700"]:not(.bg-clip-text),
+  [class~="from-rose-500"]:not(.bg-clip-text),
+  [class~="from-rose-600"]:not(.bg-clip-text),
+  [class~="from-rose-700"]:not(.bg-clip-text),
+  [class~="from-red-500"]:not(.bg-clip-text),
+  [class~="from-red-600"]:not(.bg-clip-text),
+  [class~="from-red-700"]:not(.bg-clip-text),
+  [class~="from-pink-500"]:not(.bg-clip-text),
+  [class~="from-pink-600"]:not(.bg-clip-text),
+  [class~="from-orange-500"]:not(.bg-clip-text),
+  [class~="from-orange-600"]:not(.bg-clip-text),
+  [class~="from-orange-700"]:not(.bg-clip-text),
+  [class~="from-amber-500"]:not(.bg-clip-text),
+  [class~="from-amber-600"]:not(.bg-clip-text),
+  [class~="from-amber-700"]:not(.bg-clip-text),
+  .btn-action,
+  .btn-green,
+  .btn-primary
+) :is(*, svg) {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+/* Preserve dark text inside explicit white leaf buttons, pills & form inputs placed inside vivid banners */
+html:not(.dark) button[class~="bg-white"],
+html:not(.dark) button[class~="bg-white"] *,
+html:not(.dark) a[class~="bg-white"],
+html:not(.dark) a[class~="bg-white"] *,
+html:not(.dark) span[class~="bg-white"],
+html:not(.dark) span[class~="bg-white"] *,
+html:not(.dark) input:not([type="checkbox"]):not([type="radio"]),
+html:not(.dark) select,
+html:not(.dark) textarea {
+  color: #0f172a !important;
+  -webkit-text-fill-color: #0f172a !important;
+}
+
+/* ==========================================================================
+   THEME TOGGLE BUTTON STYLING (SPECIALIZED)
+   ========================================================================== */
+html:not(.dark) .theme-toggle-btn {
+  background-color: #eef4fc !important;
+  color: #0a3f82 !important;
+  border-color: #b6cdf0 !important;
+  -webkit-text-fill-color: #0a3f82 !important;
+}
+
+html:not(.dark) .theme-toggle-btn * {
+  color: #0a3f82 !important;
+  -webkit-text-fill-color: #0a3f82 !important;
+}
+
+html.dark .theme-toggle-btn {
+  background-color: #1e293b !important;
+  color: #fbbf24 !important;
+  border-color: #334155 !important;
+  -webkit-text-fill-color: #fbbf24 !important;
+}
+
+html.dark .theme-toggle-btn * {
+  color: #fbbf24 !important;
+  -webkit-text-fill-color: #fbbf24 !important;
+}
+
+/* ==========================================================================
+   TBR ORANGE MAPPING ACROSS COMPONENTS
+   ========================================================================== */
+button[class*="bg-indigo-600"],
+button[class*="bg-indigo-500"],
+button[class*="bg-blue-600"],
+.btn-action {
+  background-color: #0c4a97 !important;
+  color: #ffffff !important;
+}
+
+button[class*="bg-indigo-600"]:hover,
+button[class*="bg-indigo-500"]:hover,
+button[class*="bg-blue-600"]:hover,
+.btn-action:hover {
+  background-color: #0a3f82 !important;
+}
+
+/* Active tab highlights in orange */
+.active-tab-orange {
+  background-color: #eef4fc !important;
+  color: #0c4a97 !important;
+  border-color: #b6cdf0 !important;
+}
+
+.dark .active-tab-orange {
+  background-color: rgba(234, 88, 12, 0.15) !important;
+  color: #5285d5 !important;
+  border-color: rgba(234, 88, 12, 0.3) !important;
+}
+
+/* Status Badges */
+[class*="text-emerald-500"],
+[class*="text-emerald-600"],
+[class*="text-emerald-700"],
+[class*="text-emerald-400"] {
+  color: #059669 !important;
+}
+
+[class*="text-orange-500"],
+[class*="text-orange-600"],
+[class*="text-orange-700"] {
+  color: #0c4a97 !important;
+}
+
+.dark [class*="text-emerald-400"] {
+  color: #34d399 !important;
+}
+
+.dark [class*="text-orange-400"] {
+  color: #5285d5 !important;
+}
+
+/* Dark mode glassmorphism */
+html.dark {
+  .glass {
+    background: rgba(255, 255, 255, 0.05);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .glass-dark {
+    background: rgba(15, 23, 42, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+/* Hide scrollbar for clean horizontal tab strips while keeping scrollability */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* ==========================================================================
+   ANTI-CLIPPING & FLEX/GRID OVERFLOW SAFEGUARDS
+   Prevent long <option> text in <select> or wide inputs from pushing buttons
+   outside modals/cards and clipping text/buttons.
+   ========================================================================== */
+select {
+  max-width: 100%;
+  min-width: 0;
+  text-overflow: ellipsis;
+}
+
+.flex > select,
+.flex > input:not([type="checkbox"]):not([type="radio"]),
+.grid > select,
+.grid > input:not([type="checkbox"]):not([type="radio"]),
+.grid > div {
+  min-width: 0;
+}
+
+.flex > button:not(.flex-1):not(.flex-2):not(.grow):not(.w-full):not(.truncate),
+.inline-flex > button:not(.flex-1):not(.flex-2):not(.grow):not(.w-full):not(.truncate) {
+  flex-shrink: 0;
+}

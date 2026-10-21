@@ -1,0 +1,854 @@
+import { NextRequest, NextResponse } from "next/server";
+import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/backend/db/db";
+import { getAuthorizedUser, unauthorizedResponse, setAuditActor } from "@/backend/services/authz";
+
+/**
+ * Identity of the chat user comes from the server session. The browser used to send `user` /
+ * `sender_name` itself, so anyone could post as somebody else or read other people's private chats.
+ */
+type ChatIdentity = { name: string; aliases: string[]; isAdmin: boolean; department: string };
+
+async function getChatIdentity(req: NextRequest): Promise<ChatIdentity | null> {
+  const me = await getAuthorizedUser(req);
+  setAuditActor(me);
+  if (!me) return null;
+  const name = String(me.full_name || me.username).trim();
+  const aliases = new Set<string>([name, me.username].map(s => String(s || "").trim().toLowerCase()).filter(Boolean));
+  try {
+    const p = await query(
+      `SELECT employee_code FROM personnel
+        WHERE employee_code = $1 OR REPLACE(REPLACE(employee_code, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA') = $1 LIMIT 1`,
+      [me.username]
+    );
+    if (p.rows[0]?.employee_code) aliases.add(String(p.rows[0].employee_code).toLowerCase());
+  } catch {}
+  const isAdmin = me.username === "admin";
+  if (isAdmin) {
+    aliases.add("admin");
+    aliases.add("quản trị viên hệ thống");
+  }
+  return { name, aliases: Array.from(aliases), isAdmin, department: me.department || "" };
+}
+
+/** SQL condition (on alias `c`) for channels the user may see; the parameter must be a lowercase text[] of aliases. */
+function channelAccessSql(aliasParam: string) {
+  return `(
+    (c.is_private = FALSE AND c.channel_type = 'CHANNEL')
+    OR (c.channel_type = 'CHANNEL' AND c.department = 'Toàn công ty')
+    OR LOWER(TRIM(COALESCE(c.created_by, ''))) = ANY(${aliasParam})
+    OR EXISTS (
+      SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) mm
+      WHERE LOWER(TRIM(mm)) = ANY(${aliasParam})
+    )
+    OR (c.channel_type = 'DIRECT' AND EXISTS (
+      SELECT 1 FROM unnest(${aliasParam}) a WHERE length(a) >= 4 AND LOWER(c.name) LIKE '%' || a || '%'
+    ))
+  )`;
+}
+
+async function canAccessChannel(ident: ChatIdentity, channelId: any, channelCode?: any): Promise<number | null> {
+  const res = await query(
+    `SELECT c.id FROM chat_channels c
+      WHERE (($1::int IS NOT NULL AND c.id = $1::int) OR ($1::int IS NULL AND c.channel_code = $2))
+        AND ${channelAccessSql("$3::text[]")}
+      LIMIT 1`,
+    [channelId && !isNaN(Number(channelId)) ? Number(channelId) : null, channelCode || null, ident.aliases]
+  );
+  return res.rows[0]?.id ?? null;
+}
+
+function chatForbidden() {
+  return NextResponse.json({ error: "Bạn không phải thành viên của cuộc trò chuyện này." }, { status: 403 });
+}
+
+let chatTablesEnsured = false;
+async function ensureChatTables() {
+  if (chatTablesEnsured) return;
+  try {
+    await query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_id_id ON chat_messages(channel_id, id DESC)`);
+    chatTablesEnsured = true;
+  } catch {}
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    await ensureChatTables();
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action") || "channels";
+    const ident = await getChatIdentity(req);
+    if (!ident) return unauthorizedResponse();
+
+    // 1. Get channels list & personnel for mention / DM
+    if (action === "channels") {
+      const cleanUser = ident.name;
+      const isAdminUser = false; // quản trị viên cũng chỉ thấy các cuộc trò chuyện mình tham gia
+
+      // Auto-touch last_seen_at for the active user visiting chat (throttled to 30s to prevent hot-path contention)
+      if (cleanUser) {
+        await query(`
+          UPDATE users 
+          SET last_seen_at = NOW() 
+          WHERE (
+            TRIM(LOWER(full_name)) = TRIM(LOWER($1))
+            OR TRIM(LOWER(username)) = TRIM(LOWER($1))
+            OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA')))
+            OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-TBR', 'TBR'), 'NV-VIA', 'VIA')))
+            OR TRIM(LOWER(email)) = TRIM(LOWER($1))
+            OR ($1 ILIKE '%admin%' AND username = 'admin')
+            OR ($1 ILIKE '%quản trị%' AND username = 'admin')
+          )
+          AND (last_seen_at IS NULL OR last_seen_at < NOW() - INTERVAL '30 seconds')
+        `, [cleanUser]).catch((e) => console.error("[CHAT_TOUCH_USER_ERR]:", e?.message || e));
+      }
+
+      // Resolve user aliases (full_name, username, employee_code, email)
+      const userAliases: string[] = cleanUser ? [cleanUser] : [];
+      if (cleanUser && !isAdminUser) {
+        try {
+          const aliasRes = await query(
+            `SELECT u.username, u.full_name, u.email, p.employee_code 
+             FROM users u 
+             LEFT JOIN personnel p ON (u.username = REPLACE(REPLACE(p.employee_code, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA') OR TRIM(LOWER(u.full_name)) = TRIM(LOWER(p.full_name)))
+             WHERE TRIM(LOWER(u.full_name)) = TRIM(LOWER($1)) 
+                OR TRIM(LOWER(u.username)) = TRIM(LOWER($1)) 
+                OR TRIM(LOWER(u.email)) = TRIM(LOWER($1))
+                OR TRIM(LOWER(p.employee_code)) = TRIM(LOWER($1))
+             LIMIT 1`,
+            [cleanUser]
+          );
+          if (aliasRes.rows.length > 0) {
+            const row = aliasRes.rows[0];
+            if (row.full_name && !userAliases.includes(row.full_name)) userAliases.push(row.full_name);
+            if (row.username && !userAliases.includes(row.username)) userAliases.push(row.username);
+            if (row.employee_code && !userAliases.includes(row.employee_code)) userAliases.push(row.employee_code);
+          }
+        } catch (e) {}
+      }
+
+      let unreadSubquery = "0 as unread_count";
+      if (cleanUser) {
+        unreadSubquery = `
+          COALESCE((
+            SELECT COUNT(*) 
+            FROM chat_messages m
+            LEFT JOIN chat_channel_reads r ON (r.channel_id = c.id AND (
+              TRIM(LOWER(r.user_name)) = TRIM(LOWER($1))
+              ${isAdminUser ? "OR (r.user_name ILIKE '%admin%' OR r.user_name ILIKE '%quản trị%')" : ""}
+            ))
+            WHERE m.channel_id = c.id
+              AND TRIM(LOWER(m.sender_name)) != TRIM(LOWER($1))
+              ${isAdminUser ? "AND NOT (m.sender_name ILIKE '%admin%' OR m.sender_name ILIKE '%quản trị%')" : ""}
+              AND m.sender_name != 'Hệ Thống'
+              AND m.content NOT ILIKE 'Bắt đầu cuộc trò chuyện%'
+              AND m.content NOT ILIKE 'Đã tạo nhóm%'
+              AND m.content NOT ILIKE 'Chào mừng đến với%'
+              AND (
+                (r.last_read_message_id IS NOT NULL AND m.id > r.last_read_message_id)
+                OR (r.last_read_message_id IS NULL AND m.created_at >= NOW() - INTERVAL '14 days' AND c.created_by != $1)
+              )
+          ), 0) as unread_count
+        `;
+      }
+
+      let channelsQuery = `
+        SELECT c.*, 
+          (SELECT COUNT(*) FROM chat_messages m WHERE m.channel_id = c.id) as message_count,
+          ${unreadSubquery},
+          lm.last_message_content,
+          lm.last_message_sender,
+          lm.last_message_time
+        FROM chat_channels c
+        LEFT JOIN LATERAL (
+          SELECT content AS last_message_content,
+                 sender_name AS last_message_sender,
+                 created_at AS last_message_time
+          FROM chat_messages m
+          WHERE m.channel_id = c.id
+          ORDER BY m.id DESC
+          LIMIT 1
+        ) lm ON true
+      `;
+      const params: any[] = [cleanUser, ident.aliases];
+      channelsQuery += ` WHERE ${channelAccessSql("$2::text[]")}`;
+      channelsQuery += ` ORDER BY c.last_message_at DESC NULLS LAST, c.id ASC`;
+
+      const [channelsRes, personnelRes, tasksRes, workflowsRes] = await Promise.all([
+        query(channelsQuery, params),
+        query(`
+          SELECT 
+            COALESCE(u.id, p.id) as id,
+            COALESCE(u.id, p.id) as user_id,
+            p.employee_code as username,
+            p.full_name as full_name,
+            COALESCE(p.department, 'Khác') as department,
+            COALESCE(p.position, 'Thành viên') as position,
+            COALESCE(p.email, '') as email,
+            COALESCE(p.phone, '') as phone,
+            p.employee_code as employee_code,
+            u.last_seen_at,
+            CASE 
+              WHEN u.last_seen_at IS NOT NULL AND u.last_seen_at >= NOW() - INTERVAL '3 minutes' THEN 'online'
+              WHEN u.last_seen_at IS NOT NULL AND u.last_seen_at >= NOW() - INTERVAL '15 minutes' THEN 'away'
+              ELSE 'offline'
+            END as presence_status
+          FROM personnel p
+          LEFT JOIN users u ON (u.username = p.employee_code OR TRIM(LOWER(u.full_name)) = TRIM(LOWER(p.full_name)))
+          WHERE p.employee_code IS NOT NULL AND p.employee_code != '' AND (p.status IS NULL OR p.status != 'INACTIVE')
+
+          UNION ALL
+
+          SELECT 
+            u.id as id,
+            u.id as user_id,
+            u.username as username,
+            u.full_name as full_name,
+            COALESCE(u.department, 'Ban Giám Đốc') as department,
+            'Quản trị viên hệ thống' as position,
+            COALESCE(u.email, 'admin@tbrscientific.com') as email,
+            '' as phone,
+            'admin' as employee_code,
+            u.last_seen_at,
+            CASE 
+              WHEN u.last_seen_at IS NOT NULL AND u.last_seen_at >= NOW() - INTERVAL '3 minutes' THEN 'online'
+              WHEN u.last_seen_at IS NOT NULL AND u.last_seen_at >= NOW() - INTERVAL '15 minutes' THEN 'away'
+              ELSE 'offline'
+            END as presence_status
+          FROM users u
+          WHERE u.username = 'admin' 
+            AND NOT EXISTS (SELECT 1 FROM personnel WHERE employee_code = 'admin')
+
+          ORDER BY full_name ASC
+        `),
+        query("SELECT id, task_code, title, department, assignee_name, status FROM company_tasks ORDER BY id DESC LIMIT 50"),
+        query("SELECT id, workflow_code, title, requester_dept, target_dept, status FROM workflow_requests ORDER BY id DESC LIMIT 50")
+      ]);
+
+      const formattedChannels = (channelsRes.rows || []).map((c: any) => {
+        let members = c.members;
+        if (typeof members === "string") {
+          try {
+            members = JSON.parse(members);
+          } catch (e) {
+            members = members.replace(/[{}]/g, "").split(",").map((s: string) => s.trim().replace(/^"|"$/g, "")).filter(Boolean);
+          }
+        }
+        if (!Array.isArray(members)) members = [];
+        return {
+          ...c,
+          name: c.name || "Kênh chat",
+          members: members.map((m: any) => String(m || "").trim()).filter(Boolean)
+        };
+      });
+
+      return NextResponse.json({
+        channels: formattedChannels,
+        personnel: personnelRes.rows || [],
+        tasks: tasksRes.rows || [],
+        workflows: workflowsRes.rows || []
+      });
+    }
+
+    // 1.5 Real-time presence polling
+    if (action === "presence") {
+      const presenceRes = await query(`
+        SELECT DISTINCT ON (
+          COALESCE(
+            NULLIF(TRIM(LOWER(u.full_name)), ''), 
+            CASE WHEN u.username = 'admin' THEN 'quan tri vien he thong' ELSE LOWER(u.username) END
+          )
+        )
+          u.id, 
+          u.username, 
+          COALESCE(NULLIF(TRIM(u.full_name), ''), CASE WHEN u.username = 'admin' THEN 'Quản Trị Viên Hệ Thống' ELSE u.username END) as full_name, 
+          u.role, 
+          u.department, 
+          u.last_seen_at,
+          CASE 
+            WHEN u.last_seen_at IS NOT NULL AND u.last_seen_at >= NOW() - INTERVAL '3 minutes' THEN 'online'
+            WHEN u.last_seen_at IS NOT NULL AND u.last_seen_at >= NOW() - INTERVAL '15 minutes' THEN 'away'
+            ELSE 'offline'
+          END as presence_status
+        FROM users u
+        ORDER BY 
+          COALESCE(
+            NULLIF(TRIM(LOWER(u.full_name)), ''), 
+            CASE WHEN u.username = 'admin' THEN 'quan tri vien he thong' ELSE LOWER(u.username) END
+          ) ASC,
+          u.last_seen_at DESC NULLS LAST,
+          u.id ASC
+      `);
+      return NextResponse.json({ presence: presenceRes.rows });
+    }
+
+    // 2. Get messages for a channel
+    if (action === "messages") {
+      const channelId = searchParams.get("channel_id");
+      const channelCode = searchParams.get("channel_code");
+      const user = ident.name;
+      if ((channelId || channelCode) && !(await canAccessChannel(ident, channelId, channelCode))) return chatForbidden();
+
+      let res;
+      if (channelId) {
+        res = await query(
+          "SELECT * FROM chat_messages WHERE channel_id = $1 ORDER BY id ASC LIMIT 200",
+          [channelId]
+        );
+      } else if (channelCode) {
+        res = await query(
+          "SELECT * FROM chat_messages WHERE channel_code = $1 ORDER BY id ASC LIMIT 200",
+          [channelCode]
+        );
+      } else {
+        return NextResponse.json({ error: "Thiếu channel_id hoặc channel_code" }, { status: 400 });
+      }
+
+      if (user && res.rows.length > 0) {
+        const lastMsgId = res.rows[res.rows.length - 1].id;
+        const targetChanId = channelId || res.rows[0].channel_id;
+        await query(
+          `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (channel_id, user_name)
+           DO UPDATE SET last_read_message_id = GREATEST(chat_channel_reads.last_read_message_id, EXCLUDED.last_read_message_id),
+                         last_read_at = NOW()`,
+          [targetChanId, user, lastMsgId]
+        ).catch(() => {});
+      }
+
+      return NextResponse.json({ messages: res.rows });
+    }
+
+    // 2.5 Mark channel messages as read explicitly
+    if (action === "mark_read") {
+      const channelId = searchParams.get("channel_id");
+      const user = ident.name;
+      if (channelId && !(await canAccessChannel(ident, channelId))) return chatForbidden();
+      const lastId = searchParams.get("last_message_id");
+
+      if (channelId && user) {
+        let msgId = Number(lastId) || 0;
+        if (!msgId) {
+          const maxRes = await query("SELECT COALESCE(MAX(id), 0) as max_id FROM chat_messages WHERE channel_id = $1", [channelId]);
+          msgId = Number(maxRes.rows[0]?.max_id) || 0;
+        }
+        await query(
+          `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (channel_id, user_name)
+           DO UPDATE SET last_read_message_id = GREATEST(chat_channel_reads.last_read_message_id, EXCLUDED.last_read_message_id),
+                         last_read_at = NOW()`,
+          [channelId, user, msgId]
+        ).catch(() => {});
+      }
+
+      return NextResponse.json({ success: true });
+    }
+
+    // 3. Search messages across channels
+    if (action === "search") {
+      const q = searchParams.get("q") || "";
+      if (!q.trim()) return NextResponse.json({ messages: [] });
+
+      const res = await query(
+        `SELECT m.*, c.name as channel_name 
+         FROM chat_messages m
+         JOIN chat_channels c ON m.channel_id = c.id
+         WHERE m.content ILIKE $1 AND ${channelAccessSql("$2::text[]")}
+         ORDER BY m.id DESC LIMIT 50`,
+        [`%${q}%`, ident.aliases]
+      );
+
+      return NextResponse.json({ messages: res.rows });
+    }
+
+    return NextResponse.json({ error: "Hành động GET không hợp lệ" }, { status: 400 });
+  } catch (error: any) {
+    console.error("Chat API GET Error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action");
+    let body: any = {};
+    try {
+      body = await req.json();
+    } catch {
+      body = {};
+    }
+
+    const ident = await getChatIdentity(req);
+    if (!ident) return unauthorizedResponse();
+    if (!body || typeof body !== "object" || Array.isArray(body)) body = {};
+    // Người thực hiện luôn là người đang đăng nhập
+    body.sender_name = ident.name;
+    body.sender_dept = ident.department || body.sender_dept;
+    body.created_by = ident.name;
+    body.added_by = ident.name;
+    body.removed_by = ident.name;
+    body.user_name = ident.name;
+    body.user = ident.name;
+    if (action === "leave_channel") body.member_name = ident.name;
+
+    const CHANNEL_SCOPED = ["send_message", "add_members", "update_channel", "remove_member", "leave_channel", "delete_channel", "toggle_pin", "mark_read"];
+    if (CHANNEL_SCOPED.includes(action || "")) {
+      const chId = body.channel_id || searchParams.get("channel_id");
+      if ((chId || body.channel_code) && !(await canAccessChannel(ident, chId, body.channel_code))) return chatForbidden();
+    }
+    if (action === "toggle_reaction" && body.message_id) {
+      const m = await query("SELECT channel_id FROM chat_messages WHERE id = $1", [body.message_id]);
+      if (m.rows[0] && !(await canAccessChannel(ident, m.rows[0].channel_id))) return chatForbidden();
+    }
+    if (action === "delete_channel" && body.channel_id) {
+      const ch = await query("SELECT created_by FROM chat_channels WHERE id = $1", [body.channel_id]);
+      const owner = String(ch.rows[0]?.created_by || "").trim().toLowerCase();
+      if (ch.rows[0] && !ident.aliases.includes(owner) && !ident.isAdmin) {
+        return NextResponse.json({ error: "Chỉ người tạo nhóm hoặc Quản trị viên mới được xóa nhóm." }, { status: 403 });
+      }
+    }
+
+    // 1. Send Message
+    if (action === "send_message") {
+      const {
+        channel_id,
+        channel_code,
+        sender_id,
+        sender_name,
+        sender_avatar,
+        sender_role,
+        sender_dept,
+        content,
+        attachments,
+        related_work,
+        reply_to
+      } = body;
+
+      if (!content && (!attachments || attachments.length === 0)) {
+        return NextResponse.json({ error: "Nội dung tin nhắn hoặc tệp đính kèm không được rỗng" }, { status: 400 });
+      }
+
+      // Check or resolve channel
+      let resolvedChannelId = channel_id;
+      if (!resolvedChannelId && channel_code) {
+        const cRes = await query("SELECT id FROM chat_channels WHERE channel_code = $1", [channel_code]);
+        if (cRes.rows.length > 0) resolvedChannelId = cRes.rows[0].id;
+      }
+
+      if (!resolvedChannelId) {
+        return NextResponse.json({ error: "Không tìm thấy kênh chat" }, { status: 404 });
+      }
+
+
+      const res = await query(
+        `INSERT INTO chat_messages (
+           channel_id, channel_code, sender_id, sender_name, sender_avatar,
+           sender_role, sender_dept, content, attachments, related_work, reply_to
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
+        [
+          resolvedChannelId,
+          channel_code || "",
+          sender_id || "",
+          sender_name || "Nhân viên",
+          sender_avatar || "",
+          sender_role || "Thành viên",
+          sender_dept || "Kinh Doanh",
+          content || "",
+          JSON.stringify(attachments || []),
+          related_work ? JSON.stringify(related_work) : null,
+          reply_to ? JSON.stringify(reply_to) : null
+        ]
+      );
+
+      // Update channel last message timestamp
+      await query("UPDATE chat_channels SET last_message_at = CURRENT_TIMESTAMP WHERE id = $1", [resolvedChannelId]);
+
+      // Automatically touch last_seen_at for sender
+      if (sender_name) {
+        await query(`
+          UPDATE users 
+          SET last_seen_at = NOW() 
+          WHERE TRIM(LOWER(full_name)) = TRIM(LOWER($1))
+             OR TRIM(LOWER(username)) = TRIM(LOWER($1))
+             OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA')))
+             OR ($1 ILIKE '%admin%' AND username = 'admin')
+             OR ($1 ILIKE '%quản trị%' AND username = 'admin')
+        `, [sender_name]).catch(() => {});
+      }
+
+      const createdMessage = res.rows[0];
+
+      // Auto update read receipt for the sender so their own message is marked as read by them
+      if (createdMessage?.id && resolvedChannelId && sender_name) {
+        await query(
+          `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (channel_id, user_name)
+           DO UPDATE SET last_read_message_id = GREATEST(chat_channel_reads.last_read_message_id, EXCLUDED.last_read_message_id),
+                         last_read_at = NOW()`,
+          [resolvedChannelId, sender_name, createdMessage.id]
+        ).catch(() => {});
+      }
+
+      return NextResponse.json({ success: true, message: createdMessage });
+    }
+
+    // 2. Create Channel / Group Chat / Direct Message
+    if (action === "create_channel") {
+      const {
+        name,
+        channel_type,
+        department,
+        description,
+        is_private,
+        created_by,
+        members
+      } = body;
+
+      if (!name || !name.trim()) {
+        return NextResponse.json({ error: "Vui lòng nhập tên nhóm / kênh chat" }, { status: 400 });
+      }
+
+      const cleanType = channel_type || "GROUP";
+      const memberList: string[] = Array.isArray(members) ? members : [];
+
+      // If DIRECT message, check if channel already exists between these 2 users
+      if (cleanType === "DIRECT" && memberList.length >= 2) {
+        const u1 = memberList[0];
+        const u2 = memberList[1];
+        const u1IsAdmin = u1.toLowerCase().includes("admin") || u1.includes("Quản Trị");
+        const u2IsAdmin = u2.toLowerCase().includes("admin") || u2.includes("Quản Trị");
+
+        const existQuery = `
+          SELECT * FROM chat_channels 
+          WHERE channel_type = 'DIRECT' 
+            AND (
+              (
+                (members::text ILIKE '%' || $1 || '%' ${u1IsAdmin ? "OR members::text ILIKE '%admin%' OR members::text ILIKE '%Quản Trị%'" : ""})
+                AND
+                (members::text ILIKE '%' || $2 || '%' ${u2IsAdmin ? "OR members::text ILIKE '%admin%' OR members::text ILIKE '%Quản Trị%'" : ""})
+              )
+              OR (name ILIKE '%' || $1 || '%' AND created_by ILIKE '%' || $2 || '%')
+              OR (name ILIKE '%' || $2 || '%' AND created_by ILIKE '%' || $1 || '%')
+              OR (name ILIKE '%' || $1 || '%' ${u2IsAdmin ? "AND (created_by ILIKE '%admin%' OR created_by ILIKE '%Quản Trị%')" : ""})
+              OR (name ILIKE '%' || $2 || '%' ${u1IsAdmin ? "AND (created_by ILIKE '%admin%' OR created_by ILIKE '%Quản Trị%')" : ""})
+            )
+          LIMIT 1
+        `;
+        const existRes = await query(existQuery, [u1, u2]);
+        if (existRes.rows.length > 0) {
+          return NextResponse.json({ success: true, channel: existRes.rows[0], isExisting: true });
+        }
+      }
+
+      // Generate clean channel_code
+      const slug = name
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .replace(/đ/g, "d")
+        .replace(/[^a-z0-9]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-|-$/g, "");
+      
+      const prefix = cleanType === "DIRECT" ? "dm" : cleanType === "GROUP" ? "grp" : cleanType === "PROJECT" ? "prj" : "ch";
+      const channel_code = `${prefix}-${slug || "nhom"}-${Date.now().toString().slice(-4)}`;
+
+      const res = await query(
+        `INSERT INTO chat_channels (
+           channel_code, name, channel_type, department, description, is_private, created_by, members
+         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+        [
+          channel_code,
+          name.trim(),
+          cleanType,
+          department || (cleanType === "GROUP" ? "Liên phòng ban" : "Toàn công ty"),
+          description || "",
+          cleanType === "DIRECT" || cleanType === "GROUP" ? true : !!is_private,
+          created_by || "Nhân viên",
+          JSON.stringify(memberList)
+        ]
+      );
+
+      const created = res.rows[0];
+
+      // Auto add welcome message
+      const welcomeText = cleanType === "DIRECT"
+        ? `Bắt đầu cuộc trò chuyện trực tiếp giữa ${memberList.join(" và ")}.`
+        : cleanType === "GROUP"
+        ? `Đã tạo nhóm chat liên phòng ban với ${memberList.length} thành viên: ${memberList.join(", ")}.`
+        : cleanType === "PROJECT"
+        ? `Chào mừng đến với nhóm dự án #${created.name}! ${description ? `Mục đích: ${description}` : ""}`
+        : `Chào mừng đến với kênh #${created.name}! ${description ? `Mục đích: ${description}` : ""}`;
+
+      const welcomeRes = await query(
+        `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [
+          created.id,
+          created.channel_code,
+          created_by || "Hệ Thống",
+          "Điều phối",
+          department || "TBR",
+          welcomeText
+        ]
+      );
+      const welcomeMsg = welcomeRes.rows[0];
+      if (welcomeMsg?.id) {
+        const initialReaders = Array.from(new Set([created_by, ...(memberList || [])].filter(Boolean)));
+        for (const m of initialReaders) {
+          await query(
+            `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
+             VALUES ($1, $2, $3, NOW())
+             ON CONFLICT (channel_id, user_name)
+             DO UPDATE SET last_read_message_id = GREATEST(chat_channel_reads.last_read_message_id, EXCLUDED.last_read_message_id),
+                           last_read_at = NOW()`,
+            [created.id, m, welcomeMsg.id]
+          ).catch(() => {});
+        }
+      }
+
+      await logAudit("CREATE", "CHAT_CHANNEL", `Tạo mới nhóm chat: ${name} (${cleanType})`);
+      return NextResponse.json({ success: true, channel: created });
+    }
+
+    // 2.5 Add Members to Channel/Group
+    if (action === "add_members") {
+      const { channel_id, new_members, added_by } = body;
+      if (!channel_id || !Array.isArray(new_members) || new_members.length === 0) {
+        return NextResponse.json({ error: "Thiếu thông tin thành viên cần thêm" }, { status: 400 });
+      }
+
+      const cRes = await query("SELECT * FROM chat_channels WHERE id = $1", [channel_id]);
+      if (cRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
+      }
+
+      const channel = cRes.rows[0];
+      const currentMembers: string[] = Array.isArray(channel.members) ? channel.members : [];
+      const updatedMembers = Array.from(new Set([...currentMembers, ...new_members]));
+
+      await query("UPDATE chat_channels SET members = $1 WHERE id = $2", [JSON.stringify(updatedMembers), channel_id]);
+
+      // System notification message
+      await query(
+        `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          channel_id,
+          channel.channel_code,
+          "Hệ Thống",
+          "Thông báo",
+          "TBR",
+          `${added_by || "Thành viên"} đã thêm ${new_members.join(", ")} vào nhóm trao đổi.`
+        ]
+      );
+
+      return NextResponse.json({ success: true, members: updatedMembers });
+    }
+
+    // 2.6 Update Channel Settings
+    if (action === "update_channel") {
+      const { channel_id, name, department, description, is_private, user_name } = body;
+      if (!channel_id || !name || !name.trim()) {
+        return NextResponse.json({ error: "Thiếu thông tin cập nhật nhóm chat" }, { status: 400 });
+      }
+
+      const res = await query(
+        `UPDATE chat_channels 
+         SET name = $1, department = $2, description = $3, is_private = $4 
+         WHERE id = $5 RETURNING *`,
+        [name.trim(), department || "Liên phòng ban", description || "", !!is_private, channel_id]
+      );
+
+      if (res.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
+      }
+
+      const updated = res.rows[0];
+      await query(
+        `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          channel_id,
+          updated.channel_code,
+          "Hệ Thống",
+          "Cài đặt",
+          "TBR",
+          `${user_name || "Quản trị viên"} đã cập nhật thông tin nhóm: "${name}".`
+        ]
+      );
+
+      await logAudit("UPDATE", "CHAT_CHANNEL", `Cập nhật nhóm chat: ${name} (ID: ${channel_id})`);
+      return NextResponse.json({ success: true, channel: updated });
+    }
+
+    // 2.7 Remove Member from Group
+    if (action === "remove_member") {
+      const { channel_id, member_name, removed_by } = body;
+      if (!channel_id || !member_name) {
+        return NextResponse.json({ error: "Thiếu thông tin thành viên cần xóa" }, { status: 400 });
+      }
+
+      const cRes = await query("SELECT * FROM chat_channels WHERE id = $1", [channel_id]);
+      if (cRes.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
+
+      const channel = cRes.rows[0];
+      const currentMembers: string[] = Array.isArray(channel.members) ? channel.members : [];
+      const updatedMembers = currentMembers.filter(m => m !== member_name);
+
+      await query("UPDATE chat_channels SET members = $1 WHERE id = $2", [JSON.stringify(updatedMembers), channel_id]);
+
+      await query(
+        `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          channel_id,
+          channel.channel_code,
+          "Hệ Thống",
+          "Thông báo",
+          "TBR",
+          `${removed_by || "Quản trị"} đã xóa ${member_name} khỏi nhóm trao đổi.`
+        ]
+      );
+
+      return NextResponse.json({ success: true, members: updatedMembers });
+    }
+
+    // 2.8 Leave Channel / Group
+    if (action === "leave_channel") {
+      const { channel_id, member_name } = body;
+      if (!channel_id || !member_name) {
+        return NextResponse.json({ error: "Thiếu thông tin rời nhóm" }, { status: 400 });
+      }
+
+      const cRes = await query("SELECT * FROM chat_channels WHERE id = $1", [channel_id]);
+      if (cRes.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
+
+      const channel = cRes.rows[0];
+      const currentMembers: string[] = Array.isArray(channel.members) ? channel.members : [];
+      const updatedMembers = currentMembers.filter(m => m !== member_name);
+
+      await query("UPDATE chat_channels SET members = $1 WHERE id = $2", [JSON.stringify(updatedMembers), channel_id]);
+
+      await query(
+        `INSERT INTO chat_messages (channel_id, channel_code, sender_name, sender_role, sender_dept, content)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          channel_id,
+          channel.channel_code,
+          "Hệ Thống",
+          "Thông báo",
+          "TBR",
+          `${member_name} đã rời khỏi nhóm trao đổi.`
+        ]
+      );
+
+      return NextResponse.json({ success: true, members: updatedMembers });
+    }
+
+    // 2.9 Delete Channel / Group
+    if (action === "delete_channel") {
+      const { channel_id, user_name } = body;
+      if (!channel_id) {
+        return NextResponse.json({ error: "Thiếu channel_id cần xóa" }, { status: 400 });
+      }
+
+      const cRes = await query("SELECT * FROM chat_channels WHERE id = $1", [channel_id]);
+      if (cRes.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy nhóm chat" }, { status: 404 });
+
+      const channelName = cRes.rows[0].name;
+
+      // Delete messages first, then channel
+      await query("DELETE FROM chat_messages WHERE channel_id = $1", [channel_id]);
+      await query("DELETE FROM chat_channels WHERE id = $1", [channel_id]);
+
+      await logAudit("DELETE", "CHAT_CHANNEL", `Đã xóa vĩnh viễn nhóm chat: ${channelName} (ID: ${channel_id}) bởi ${user_name || "Người dùng"}`);
+      return NextResponse.json({ success: true, deleted_id: channel_id });
+    }
+
+    // 3. Toggle Emoji Reaction (M5: with row-lock)
+    if (action === "toggle_reaction") {
+      const { message_id, emoji, user_name } = body;
+      const updatedReactions = await withTransaction(async (c) => {
+        const res = await c.query("SELECT reactions FROM chat_messages WHERE id = $1 FOR UPDATE", [message_id]);
+        if (res.rows.length === 0) throw new HttpError(404, "Không tìm thấy tin nhắn");
+
+        const reactions = res.rows[0].reactions || {};
+        const currentUsers: string[] = reactions[emoji] || [];
+
+        if (currentUsers.includes(user_name)) {
+          reactions[emoji] = currentUsers.filter((u: string) => u !== user_name);
+          if (reactions[emoji].length === 0) delete reactions[emoji];
+        } else {
+          reactions[emoji] = [...currentUsers, user_name];
+        }
+
+        await c.query("UPDATE chat_messages SET reactions = $1 WHERE id = $2", [JSON.stringify(reactions), message_id]);
+        return reactions;
+      });
+      return NextResponse.json({ success: true, reactions: updatedReactions });
+    }
+
+    // 4. Toggle Pin Message (M5: with row-lock)
+    if (action === "toggle_pin") {
+      const { message_id, channel_id } = body;
+      const result = await withTransaction(async (c) => {
+        const res = await c.query("SELECT is_pinned, content, sender_name FROM chat_messages WHERE id = $1 FOR UPDATE", [message_id]);
+        if (res.rows.length === 0) throw new HttpError(404, "Không tìm thấy tin nhắn");
+
+        const newPinned = !res.rows[0].is_pinned;
+        await c.query("UPDATE chat_messages SET is_pinned = $1 WHERE id = $2", [newPinned, message_id]);
+
+        // Update pinned_messages array in channel with row lock
+        const chRes = await c.query("SELECT pinned_messages FROM chat_channels WHERE id = $1 FOR UPDATE", [channel_id]);
+        let pins: any[] = chRes.rows[0]?.pinned_messages || [];
+        if (newPinned) {
+          pins.push({
+            id: message_id,
+            content: res.rows[0].content,
+            sender_name: res.rows[0].sender_name,
+            pinned_at: new Date().toISOString()
+          });
+        } else {
+          pins = pins.filter((p: any) => p.id !== message_id);
+        }
+
+        await c.query("UPDATE chat_channels SET pinned_messages = $1 WHERE id = $2", [JSON.stringify(pins), channel_id]);
+        return { is_pinned: newPinned, pinned_messages: pins };
+      });
+      return NextResponse.json({ success: true, is_pinned: result.is_pinned, pinned_messages: result.pinned_messages });
+    }
+
+    // 6. Mark Read Action
+    if (action === "mark_read") {
+      const channel_id = body?.channel_id || searchParams.get("channel_id");
+      const user = body?.user || searchParams.get("user") || "";
+      const last_id = body?.last_message_id || searchParams.get("last_message_id");
+
+      if (channel_id && user) {
+        let msgId = Number(last_id) || 0;
+        if (!msgId) {
+          const maxRes = await query("SELECT COALESCE(MAX(id), 0) as max_id FROM chat_messages WHERE channel_id = $1", [channel_id]);
+          msgId = Number(maxRes.rows[0]?.max_id) || 0;
+        }
+        await query(
+          `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
+           VALUES ($1, $2, $3, NOW())
+           ON CONFLICT (channel_id, user_name)
+           DO UPDATE SET last_read_message_id = GREATEST(chat_channel_reads.last_read_message_id, EXCLUDED.last_read_message_id),
+                         last_read_at = NOW()`,
+          [channel_id, user, msgId]
+        ).catch((e) => console.error("[MARK_READ_ERR]:", e?.message || e));
+      }
+
+      return NextResponse.json({ success: true });
+    }
+
+    return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
+  } catch (error: any) {
+    console.error("Chat API POST Error:", error);
+    return NextResponse.json({ error: error.message || String(error) }, { status: httpErrorStatus(error) });
+  }
+}

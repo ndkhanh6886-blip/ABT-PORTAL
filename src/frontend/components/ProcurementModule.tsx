@@ -1,0 +1,7065 @@
+"use client";
+
+import React, { useState, useEffect, useMemo, useRef } from "react";
+import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
+import {
+  ShoppingCart,
+  Building2,
+  Plus,
+  ArrowDownLeft,
+  DollarSign,
+  Search,
+  CheckCircle2,
+  Clock,
+  X,
+  FileText,
+  AlertTriangle,
+  Printer,
+  CreditCard,
+  ArrowRight,
+  Edit2,
+  Trash2,
+  Eye,
+  PackageCheck,
+  Star,
+  Check,
+  Truck,
+  Anchor,
+  FileSearch,
+  ChevronDown,
+  ChevronUp,
+  ChevronRight,
+  Calendar,
+  XCircle,
+  ShieldCheck,
+  Sparkles,
+  Layers,
+  Upload,
+  Download,
+  FileSpreadsheet,
+  History,
+  TrendingUp,
+  TrendingDown,
+  RefreshCw,
+  Package,
+  Tag,
+  SlidersHorizontal
+} from "lucide-react";
+import * as XLSX from "xlsx";
+import { formatCurrency, formatDate } from "@/backend/services/utils";
+import { useNotification } from "@/frontend/contexts/NotificationContext";
+import { MoneyInput } from "@/frontend/components/MoneyInput";
+import { LineItemLookup } from "@/frontend/components/LineItemLookup";
+import { usePaymentMethods } from "@/frontend/utils/paymentMethods";
+import { useAuth } from "@/frontend/contexts/AuthContext";
+import { useCompanyConfig } from "@/frontend/utils/companyConfig";
+import { todayVN, toVNDateString } from "@/backend/services/dates";
+
+const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
+
+// Comprehensive PO Status Configuration with Imports / Customs Lifecycle
+export const PO_STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; border: string; icon: any; isImport?: boolean }> = {
+  PENDING: {
+    label: "Chờ xác nhận",
+    bg: "bg-amber-50 dark:bg-amber-950/50",
+    text: "text-amber-700 dark:text-amber-400",
+    border: "border-amber-200 dark:border-amber-800",
+    icon: Clock
+  },
+  CONFIRMED: {
+    label: "Đã xác nhận",
+    bg: "bg-blue-50 dark:bg-blue-950/50",
+    text: "text-blue-700 dark:text-blue-400",
+    border: "border-blue-200 dark:border-blue-800",
+    icon: CheckCircle2
+  },
+  SHIPPED: {
+    label: "Đang vận chuyển",
+    bg: "bg-purple-50 dark:bg-purple-950/50",
+    text: "text-purple-700 dark:text-purple-400",
+    border: "border-purple-200 dark:border-purple-800",
+    icon: Truck
+  },
+  AT_CUSTOMS: {
+    label: "Đã đến hải quan",
+    bg: "bg-cyan-50 dark:bg-cyan-950/50",
+    text: "text-cyan-700 dark:text-cyan-400",
+    border: "border-cyan-200 dark:border-cyan-800",
+    icon: Anchor,
+    isImport: true
+  },
+  CUSTOMS_CLEARING: {
+    label: "Đang làm thủ tục thông quan",
+    bg: "bg-orange-50 dark:bg-orange-950/50",
+    text: "text-orange-700 dark:text-orange-400",
+    border: "border-orange-200 dark:border-orange-800",
+    icon: FileSearch,
+    isImport: true
+  },
+  COMPLETED: {
+    label: "Đã nhập kho",
+    bg: "bg-emerald-50 dark:bg-emerald-950/50",
+    text: "text-emerald-700 dark:text-emerald-400",
+    border: "border-emerald-200 dark:border-emerald-800",
+    icon: PackageCheck
+  },
+  CANCELLED: {
+    label: "Đã hủy đơn",
+    bg: "bg-rose-50 dark:bg-rose-950/50",
+    text: "text-rose-700 dark:text-rose-400",
+    border: "border-rose-200 dark:border-rose-800",
+    icon: XCircle
+  }
+};
+
+/** Ngày từ CSDL ("2026-10-16T17:00:00.000Z" = 17/10 giờ VN) -> "YYYY-MM-DD" theo giờ Việt Nam (cắt chuỗi UTC lệch 1 ngày). */
+const dbDateVN = (v: any): string => {
+  if (!v) return "";
+  const s = String(v);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return toVNDateString(v) || s.slice(0, 10);
+};
+/** Mã đơn bán ghi trong tiêu đề / ghi chú PR (SO26-CR-1004). */
+const soCodeIn = (text: any): string => (String(text || "").match(/\bSO\d{2}-[A-Z0-9]{2,6}-\d{3,6}\b/) || [""])[0];
+/** PR mua cho khách hàng thật (không phải đơn lưu kho). */
+const isCustomerPR = (pr: any): boolean => {
+  const c = String(pr?.customer_name || "").trim();
+  return !!c && !/STOCK|kho|dự trữ|dự phòng|lưu trữ/i.test(c) && !String(pr?.workflow_code || "").includes("STOCK");
+};
+
+/** Bản cũ gắn mã PR vào đầu tên hàng ("[PR26-STOCK-1013] TopPURE..."): tách ra để tên hàng giữ đúng theo danh mục. */
+const PR_NAME_PREFIX_RE = /^\[((?:PR|WF)[^\]]*)\]\s*/;
+const cleanItemName = (name: any): string => String(name || "").replace(PR_NAME_PREFIX_RE, "");
+const itemSourcePR = (it: any): string => String(it?.source_pr_code || String(it?.product_name || "").match(PR_NAME_PREFIX_RE)?.[1] || "");
+/** Số đã nhập kho của dòng i. PO nhập kho bằng bản cũ (1 lần, không lưu theo dòng) mà đã COMPLETED: coi như nhập đủ. */
+const receivedOf = (po: any, i: number): number => {
+  const rq = po?.received_qty || {};
+  if (rq[i] !== undefined) return Number(rq[i]) || 0;
+  const legacyFull = po?.status === "COMPLETED" && Object.keys(rq).length === 0;
+  return legacyFull ? Number(po?.items?.[i]?.quantity) || 0 : 0;
+};
+
+PO_STATUS_CONFIG.ORDERED = PO_STATUS_CONFIG.ORDERED || {
+  label: "Đã đặt hàng",
+  bg: "bg-sky-50 dark:bg-sky-950/50",
+  text: "text-sky-700 dark:text-sky-400",
+  border: "border-sky-200 dark:border-sky-800",
+  icon: CheckCircle2
+};
+PO_STATUS_CONFIG.PARTIALLY_RECEIVED = PO_STATUS_CONFIG.PARTIALLY_RECEIVED || {
+  label: "Nhập kho 1 phần",
+  bg: "bg-teal-50 dark:bg-teal-950/50",
+  text: "text-teal-700 dark:text-teal-400",
+  border: "border-teal-200 dark:border-teal-800",
+  icon: PackageCheck
+};
+
+/** Trạng thái PO hải quan (gộp 1 nút lọc) và trạng thái đã đóng (không còn "đang mở"). */
+const PO_CUSTOMS_STATUSES = ["AT_CUSTOMS", "CUSTOMS_CLEARING"];
+const PO_CLOSED_STATUSES = ["COMPLETED", "CANCELLED"];
+
+export const ProcurementModule: React.FC = () => {
+  const { notifyActivity } = useNotification();
+  const companyConfig = useCompanyConfig();
+  const [subTab, setSubTab] = useState<"orders" | "pr" | "suppliers" | "payables" | "restock" | "lookup">("orders");
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [orders, setOrders] = useState<any[]>([]);
+  const [products, setProducts] = useState<any[]>([]);
+  const [restockAlerts, setRestockAlerts] = useState<any[]>([]);
+  const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>({
+    total_spend: 0,
+    total_paid: 0,
+    total_payable: 0,
+    active_orders_count: 0,
+    pending_pr_count: 0,
+    restock_alert_count: 0,
+    total_suppliers_count: 0
+  });
+  const [loading, setLoading] = useState(true);
+
+  // Search & Filters
+  const [orderSearch, setOrderSearch] = useState("");
+  // Lọc PO theo ngày đặt, số hóa đơn đầu vào, mã hàng
+  const [orderFrom, setOrderFrom] = useState("");
+  const [orderTo, setOrderTo] = useState("");
+  const [orderInvoiceSearch, setOrderInvoiceSearch] = useState("");
+  const [orderProductSearch, setOrderProductSearch] = useState("");
+  const [orderStatusFilter, setOrderStatusFilter] = useState("all");
+  const [supplierSearch, setSupplierSearch] = useState("");
+  const [prSearch, setPRSearch] = useState("");
+  const [prStatusFilter, setPRStatusFilter] = useState("all");
+  const [payableFilter, setPayableFilter] = useState("all");
+
+  // Inline Editing for Delivery Date
+  const [editingDeliveryDateId, setEditingDeliveryDateId] = useState<number | null>(null);
+  const [tempDeliveryDate, setTempDeliveryDate] = useState<string>("");
+
+  // Interactive Status Dropdown Popover
+  const [activeStatusDropdownId, setActiveStatusDropdownId] = useState<number | null>(null);
+
+  // Expand/collapse states for PO & PR line-item lists
+  const [expandedPOIds, setExpandedPOIds] = useState<Record<string, boolean>>({});
+  const [expandedPRIds, setExpandedPRIds] = useState<Record<string, boolean>>({});
+
+  const toggleExpandPO = (poId: string | number) => {
+    setExpandedPOIds(prev => ({ ...prev, [poId]: !prev[poId] }));
+  };
+
+  const toggleExpandPR = (prId: string | number) => {
+    setExpandedPRIds(prev => ({ ...prev, [prId]: !prev[prId] }));
+  };
+
+  const { user, can } = useAuth();
+
+  // Modals
+  const [isPOModalOpen, setIsPOModalOpen] = useState(false);
+  const [selectedPODetail, setSelectedPODetail] = useState<any>(null);
+  const [isSupplierModalOpen, setIsSupplierModalOpen] = useState(false);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [isPRModalOpen, setIsPRModalOpen] = useState(false);
+
+  // Supplier Products Catalog & Price Adjustment State
+  const [selectedSupplierForCatalog, setSelectedSupplierForCatalog] = useState<any | null>(null);
+  const [isSupplierCatalogOpen, setIsSupplierCatalogOpen] = useState(false);
+  const [supplierProducts, setSupplierProducts] = useState<any[]>([]);
+  const [loadingSupplierProducts, setLoadingSupplierProducts] = useState(false);
+  const [supplierProductSearch, setSupplierProductSearch] = useState("");
+  const [isAutoCollecting, setIsAutoCollecting] = useState(false);
+
+  // Add / Edit Supplier Product Modal
+  const [isAddEditProductModalOpen, setIsAddEditProductModalOpen] = useState(false);
+  const [productForm, setProductForm] = useState<any>({
+    id: null,
+    supplier_id: null,
+    product_code: "",
+    product_name: "",
+    specification: "",
+    unit: "Cái",
+    purchase_price: 0,
+    notes: ""
+  });
+
+  // Adjust Price Modal
+  const [isAdjustPriceModalOpen, setIsAdjustPriceModalOpen] = useState(false);
+  const [adjustPriceTarget, setAdjustPriceTarget] = useState<any | null>(null);
+  const [newPurchasePrice, setNewPurchasePrice] = useState<number | string>(0);
+  const [priceAdjustmentReason, setPriceAdjustmentReason] = useState("");
+  const [priceAdjustmentDate, setPriceAdjustmentDate] = useState(() => todayVN());
+  const [syncCostPrice, setSyncCostPrice] = useState(true);
+  const [isSavingPriceAdjustment, setIsSavingPriceAdjustment] = useState(false);
+
+  // Price History Modal
+  const [isPriceHistoryModalOpen, setIsPriceHistoryModalOpen] = useState(false);
+  const [priceHistoryTarget, setPriceHistoryTarget] = useState<any | null>(null);
+
+  const supplierCatalogFileInputRef = useRef<HTMLInputElement>(null);
+
+  // Real-time Stock Intelligence & Customer Stock Allocation states
+  const [inventoryItems, setInventoryItems] = useState<any[]>([]);
+  const [inventoryReservations, setInventoryReservations] = useState<any[]>([]);
+  const [salesCustomers, setSalesCustomers] = useState<any[]>([]);
+
+  // Consolidate PRs to Unified PO Modal State (Requirement 4 - Line-Item Level Consolidation)
+  const [isConsolidateModalOpen, setIsConsolidateModalOpen] = useState(false);
+  const [consolidateSupplierId, setConsolidateSupplierId] = useState<number | string>("");
+  const [selectedPRIdsForConsolidate, setSelectedPRIdsForConsolidate] = useState<string[]>([]);
+  const [selectedItemKeysForConsolidate, setSelectedItemKeysForConsolidate] = useState<string[]>([]);
+  const [expandedPRKeys, setExpandedPRKeys] = useState<string[]>([]);
+  const [consolidateExpectedDelivery, setConsolidateExpectedDelivery] = useState<string>(
+    () => toVNDateString(new Date(Date.now() + 14 * 86400000))
+  );
+  const [consolidateNotes, setConsolidateNotes] = useState<string>("");
+  const [isSubmittingConsolidate, setIsSubmittingConsolidate] = useState(false);
+
+  // PO Form State
+  const [poForm, setPOForm] = useState<any>({
+    id: null,
+    po_code: "",
+    supplier_id: 1,
+    supplier_name: "",
+    order_date: todayVN(),
+    expected_delivery_date: toVNDateString(new Date(Date.now() + 10 * 86400000)),
+    items: [
+      { product_code: "", product_name: "", quantity: 1, unit_price: 0, total: 0 }
+    ],
+    total_amount: 0,
+    status: "PENDING",
+    notes: ""
+  });
+
+  // Supplier Form State
+  const [supplierForm, setSupplierForm] = useState<any>({
+    id: null,
+    supplier_code: "",
+    name: "",
+    short_name: "",
+    contact_person: "",
+    phone: "",
+    email: "",
+    address: "",
+    product_lines: "",
+    payment_terms: "Công nợ 30 ngày",
+    rating: 5
+  });
+
+  // Payment Form State
+  const paymentMethods = usePaymentMethods();
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  // Công nợ NCC: bộ lọc, chọn nhiều PO để chi một lần, sổ chi tiền (xem / hủy / sửa)
+  const [payableSupplier, setPayableSupplier] = useState("all");
+  const [payableFrom, setPayableFrom] = useState("");
+  const [payableTo, setPayableTo] = useState("");
+  const [payableSearch, setPayableSearch] = useState("");
+  const [selectedPayPOs, setSelectedPayPOs] = useState<number[]>([]);
+  const [poPayments, setPoPayments] = useState<any[]>([]);
+  const [paymentHistoryPO, setPaymentHistoryPO] = useState<any | null>(null);
+  const [paymentForm, setPaymentForm] = useState<any>({
+    po_id: null,
+    po_code: "",
+    supplier_name: "",
+    total_amount: 0,
+    amount_paid: 0,
+    remaining_balance: 0,
+    payment_amount: 0,
+    payment_method: "",
+    reference_doc: "",
+    payment_date: todayVN(),
+    payment_notes: ""
+  });
+
+  const [selectedPRDetail, setSelectedPRDetail] = useState<any>(null);
+
+  // PR Form State with Dynamic Item Lines (Catalog + First-time New Items)
+  const [prForm, setPRForm] = useState<any>({
+    title: "",
+    priority: "MEDIUM",
+    requester_name: "Phòng Cung Ứng",
+    requester_dept: "Cung Ứng",
+    product_info: "",
+    due_date: toVNDateString(new Date(Date.now() + 7 * 86400000)),
+    description: "",
+    items: [
+      {
+        is_custom: false,
+        product_code: "",
+        product_name: "",
+        specification: "",
+        unit: "Hộp",
+        quantity: 1,
+        estimated_price: 0
+      }
+    ]
+  });
+
+  const handleOpenNewPRModal = () => {
+    const firstProd = products[0];
+    setPRForm({
+      title: "",
+      priority: "MEDIUM",
+      requester_name: "Phòng Cung Ứng",
+      requester_dept: "Cung Ứng",
+      product_info: "",
+      due_date: toVNDateString(new Date(Date.now() + 7 * 86400000)),
+      description: "",
+      items: [
+        {
+          is_custom: false,
+          product_code: firstProd?.code || "",
+          product_name: firstProd?.name || "",
+          specification: firstProd?.specification || "",
+          unit: firstProd?.unit || "Hộp",
+          quantity: 1,
+          estimated_price: parseFloat(firstProd?.cost_price) || 0
+        }
+      ]
+    });
+    setIsPRModalOpen(true);
+  };
+
+  const handleAddPRItem = () => {
+    const firstProd = products[0];
+    setPRForm((prev: any) => ({
+      ...prev,
+      items: [
+        ...prev.items,
+        {
+          is_custom: false,
+          product_code: firstProd?.code || "",
+          product_name: firstProd?.name || "",
+          specification: firstProd?.specification || "",
+          unit: firstProd?.unit || "Hộp",
+          quantity: 1,
+          estimated_price: parseFloat(firstProd?.cost_price) || 0
+        }
+      ]
+    }));
+  };
+
+  const handleRemovePRItem = (index: number) => {
+    if (prForm.items.length <= 1) return;
+    setPRForm((prev: any) => ({
+      ...prev,
+      items: prev.items.filter((_: any, i: number) => i !== index)
+    }));
+  };
+
+  const handleToggleItemCustom = (index: number, isCustom: boolean) => {
+    setPRForm((prev: any) => {
+      const updated = [...prev.items];
+      if (isCustom) {
+        updated[index] = {
+          ...updated[index],
+          is_custom: true,
+          product_code: updated[index].product_code?.startsWith("TBR-") ? "" : updated[index].product_code,
+          specification: updated[index].specification || "",
+          unit: updated[index].unit || "Cái"
+        };
+      } else {
+        const firstProd = products[0];
+        updated[index] = {
+          ...updated[index],
+          is_custom: false,
+          product_code: firstProd?.code || "",
+          product_name: firstProd?.name || "",
+          specification: firstProd?.specification || "",
+          unit: firstProd?.unit || "Hộp",
+          estimated_price: parseFloat(firstProd?.cost_price) || 0
+        };
+      }
+      return { ...prev, items: updated };
+    });
+  };
+
+  const handleSelectExistingProduct = (index: number, code: string) => {
+    const prod = products.find((p: any) => p.code === code);
+    setPRForm((prev: any) => {
+      const updated = [...prev.items];
+      if (prod) {
+        updated[index] = {
+          ...updated[index],
+          is_custom: false,
+          product_code: prod.code,
+          product_name: prod.name,
+          specification: prod.specification || "",
+          unit: prod.unit || "Cái",
+          estimated_price: parseFloat(prod.cost_price) || 0
+        };
+      } else {
+        updated[index] = {
+          ...updated[index],
+          product_code: code
+        };
+      }
+      return { ...prev, items: updated };
+    });
+  };
+
+  const handlePRItemChange = (index: number, field: string, value: any) => {
+    setPRForm((prev: any) => {
+      const updated = [...prev.items];
+      updated[index] = {
+        ...updated[index],
+        [field]: value
+      };
+      return { ...prev, items: updated };
+    });
+  };
+
+  const getProductStockIntelligence = (productCode: string) => {
+    if (!productCode) return null;
+    const cleanCode = productCode.trim().toLowerCase();
+    
+    // Physical on-hand items
+    const matchedItems = inventoryItems.filter(
+      (it: any) => (it.product_code || "").trim().toLowerCase() === cleanCode
+    );
+    const onHand = matchedItems.reduce((acc: number, it: any) => acc + (Number(it.quantity_on_hand) || 0), 0);
+    const itemReserved = matchedItems.reduce((acc: number, it: any) => acc + (Number(it.quantity_reserved) || 0), 0);
+    
+    // Reservations
+    const matchedReservations = inventoryReservations.filter(
+      (res: any) => (res.product_code || "").trim().toLowerCase() === cleanCode
+    );
+    const activeReserved = Math.max(
+      itemReserved,
+      matchedReservations.reduce((acc: number, res: any) => acc + (Number(res.quantity_reserved) || 0), 0)
+    );
+    
+    const available = Math.max(0, onHand - activeReserved);
+    
+    // Incoming open POs
+    const currentPOId = poForm?.id;
+    let incoming = 0;
+    orders.forEach((ord: any) => {
+      if (ord.id !== currentPOId && ord.status !== "COMPLETED" && ord.status !== "CANCELLED") {
+        let itms = ord.items;
+        if (typeof itms === "string") {
+          try { itms = JSON.parse(itms); } catch (e) { itms = []; }
+        }
+        if (Array.isArray(itms)) {
+          itms.forEach((pi: any) => {
+            if ((pi.product_code || pi.code || "").trim().toLowerCase() === cleanCode) {
+              incoming += Number(pi.quantity) || 0;
+            }
+          });
+        }
+      }
+    });
+
+    return {
+      onHand,
+      reserved: activeReserved,
+      available,
+      incoming,
+      reservations: matchedReservations
+    };
+  };
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch("/api/procurement?action=overview");
+      const data = await res.json();
+      if (data) {
+        setSuppliers(data.suppliers || []);
+        setOrders(data.orders || []);
+        setProducts(data.products || []);
+        setRestockAlerts(data.restock_alerts || []);
+        setPurchaseRequests(data.purchase_requests || []);
+        if (data.stats) setStats(data.stats);
+        if (data.inventory_items) setInventoryItems(data.inventory_items);
+        if (data.inventory_reservations) setInventoryReservations(data.inventory_reservations);
+        if (data.customers) setSalesCustomers(data.customers);
+      }
+    } catch (e) {
+      console.error("Failed to load procurement data:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const supplierFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleDownloadSupplierTemplate = () => {
+    const sampleData = [
+      {
+        "Mã NCC (*)": "NCC-TBR-001",
+        "Tên nhà cung cấp (*)": "Bioer Technology Co., Ltd (Đại Diện VN)",
+        "Người liên hệ": "Trần Văn Nam",
+        "Số điện thoại": "0901234567",
+        "Email": "contact@bioer.vn",
+        "Địa chỉ": "Tầng 5, Tòa nhà Meditech, Cầu Giấy, Hà Nội",
+        "Ngành hàng cung ứng": "Hệ thống PCR, Máy Real-time PCR",
+        "Điều khoản thanh toán": "Công nợ 30 ngày",
+        "Đánh giá": 5
+      },
+      {
+        "Mã NCC (*)": "NCC-TBR-002",
+        "Tên nhà cung cấp (*)": "Corning Scientific SEA Pte Ltd",
+        "Người liên hệ": "Nguyễn Hoàng Oanh",
+        "Số điện thoại": "0987654321",
+        "Email": "sea.sales@corning.com",
+        "Địa chỉ": "Marina Bay Financial Centre, Singapore",
+        "Ngành hàng cung ứng": "Vật tư tiêu hao, Đầu côn, Đĩa PCR",
+        "Điều khoản thanh toán": "Thanh toán 100% khi phát hành BL",
+        "Đánh giá": 5
+      }
+    ];
+    const ws = XLSX.utils.json_to_sheet(sampleData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Mau_Nha_Cung_Cap");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_TBR.xlsx");
+  };
+
+  const handleSupplierExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      setLoading(true);
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type: "array" });
+      const wsName = wb.SheetNames[0];
+      const ws = wb.Sheets[wsName];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      if (rows.length === 0) {
+        alert("File Excel không có dữ liệu!");
+        return;
+      }
+
+      const res = await fetch("/api/inventory?action=import_excel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          rows,
+          detected_type: "SUPPLIERS"
+        })
+      });
+      const result = await res.json();
+      if (res.ok && result.success) {
+        alert(`✅ ${result.message || `Nạp thành công ${rows.length} nhà cung cấp!`}`);
+        fetchData();
+      } else {
+        alert(`❌ Lỗi khi nạp: ${result.error || "Không thể nạp dữ liệu"}`);
+      }
+    } catch (err: any) {
+      console.error(err);
+      alert(`❌ Lỗi đọc file Excel: ${err?.message || "Vui lòng kiểm tra lại file"}`);
+    } finally {
+      setLoading(false);
+      if (supplierFileInputRef.current) {
+        supplierFileInputRef.current.value = "";
+      }
+    }
+  };
+
+  // Close status dropdown on outside click
+  useEffect(() => {
+    const handleClickOutside = () => {
+      setActiveStatusDropdownId(null);
+    };
+    window.addEventListener("click", handleClickOutside);
+    return () => window.removeEventListener("click", handleClickOutside);
+  }, []);
+
+  // Receive to warehouse: always through the receipt form (lot, expiry, quantity actually received)
+  const handleReceiveToWarehouse = (po: any) => openReceiveModal(po);
+
+  // Quick Change PO Status directly from row
+  const handleQuickChangeStatus = async (po: any, newStatus: string) => {
+    setActiveStatusDropdownId(null);
+    if (newStatus === "COMPLETED") {
+      handleReceiveToWarehouse(po);
+      return;
+    }
+    try {
+      const res = await fetch("/api/procurement?action=update_order_status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: po.id,
+          po_code: po.po_code,
+          status: newStatus
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setOrders(prev => prev.map(o => o.id === po.id ? { ...o, status: newStatus } : o));
+      } else {
+        alert(data.error || "Lỗi cập nhật trạng thái");
+      }
+    } catch (e) {
+      alert("Lỗi cập nhật trạng thái");
+    }
+  };
+
+  // Quick Save Delivery Date directly from row
+  const handleSaveDeliveryDate = async (po: any) => {
+    if (!tempDeliveryDate) {
+      setEditingDeliveryDateId(null);
+      return;
+    }
+    try {
+      const res = await fetch("/api/procurement?action=update_delivery_date", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: po.id,
+          po_code: po.po_code,
+          expected_delivery_date: tempDeliveryDate
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setOrders(prev => prev.map(o => o.id === po.id ? { ...o, expected_delivery_date: tempDeliveryDate } : o));
+        setEditingDeliveryDateId(null);
+      } else {
+        alert(data.error || "Lỗi cập nhật hạn giao hàng");
+      }
+    } catch (e) {
+      alert("Lỗi cập nhật hạn giao hàng");
+    }
+  };
+
+  // Dedicated Enterprise Print Solution (No Blank Page / 100% Guaranteed 1 Sheet)
+  const handlePrintPO = (po: any) => {
+    const statusCfg = PO_STATUS_CONFIG[po.status] || { label: po.status };
+    const printWindow = window.open("", "_blank", "width=850,height=1100");
+    if (!printWindow) {
+      alert("Trình duyệt đang chặn cửa sổ in pop-up. Vui lòng cho phép mở pop-up để in đơn PO.");
+      return;
+    }
+
+    const items = Array.isArray(po.items) ? po.items : [];
+    const hasLineNotes = items.some((it: any) => String(it.notes || "").trim());
+    const esc = (v: any) => String(v ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch] as string));
+    const itemsSum = items.reduce((s: number, it: any) => s + (Number(it.line_total) || (Number(it.quantity || 1) * Number(it.unit_price || 0))), 0);
+    const totalAmount = parseFloat(po.total_amount) || itemsSum || 0;
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8">
+        <title>ĐƠN ĐẶT MUA HÀNG - ${po.po_code}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 12mm 15mm 12mm 15mm;
+          }
+          * {
+            box-sizing: border-box;
+          }
+          body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #0f172a;
+            margin: 0;
+            padding: 10px;
+            font-size: 13px;
+            line-height: 1.5;
+            background: #fff;
+          }
+          .header-table {
+            width: 100%;
+            border-bottom: 2px solid #0c4a97;
+            padding-bottom: 12px;
+            margin-bottom: 18px;
+          }
+          .company-name {
+            font-size: 16px;
+            font-weight: 900;
+            color: #0c4a97;
+            text-transform: uppercase;
+            letter-spacing: -0.3px;
+          }
+          .company-info {
+            font-size: 11px;
+            color: #475569;
+            margin-top: 2px;
+          }
+          .po-title {
+            text-align: right;
+            vertical-align: top;
+          }
+          .po-title h1 {
+            font-size: 20px;
+            font-weight: 900;
+            margin: 0;
+            color: #0f172a;
+          }
+          .po-code {
+            font-size: 14px;
+            font-weight: 900;
+            color: #0c4a97;
+            margin-top: 4px;
+            font-variant-numeric: tabular-nums;
+          }
+          .meta-box {
+            display: table;
+            width: 100%;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 18px;
+          }
+          .meta-col {
+            display: table-cell;
+            width: 50%;
+            vertical-align: top;
+          }
+          .meta-title {
+            font-weight: 800;
+            color: #0f172a;
+            font-size: 11px;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+          }
+          .table-items {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 18px;
+          }
+          .table-items th {
+            background: #f1f5f9;
+            color: #334155;
+            font-weight: 800;
+            text-align: left;
+            padding: 9px 8px;
+            border: 1px solid #cbd5e1;
+            font-size: 12px;
+          }
+          .table-items td {
+            padding: 9px 8px;
+            border: 1px solid #cbd5e1;
+            font-size: 12px;
+          }
+          .text-center { text-align: center; }
+          .text-right { text-align: right; }
+          .font-mono { font-variant-numeric: tabular-nums; }
+          .font-bold { font-weight: 700; }
+          .total-row {
+            background: #f8fafc;
+            font-weight: 900;
+          }
+          .notes-box {
+            margin-bottom: 20px;
+            padding: 10px 14px;
+            background: #eef4fc;
+            border-left: 3px solid #0c4a97;
+            font-size: 11px;
+            color: #0b356a;
+            border-radius: 4px;
+          }
+          .signatures {
+            display: table;
+            width: 100%;
+            margin-top: 30px;
+            page-break-inside: avoid;
+          }
+          .sig-box {
+            display: table-cell;
+            width: 33.33%;
+            text-align: center;
+            vertical-align: top;
+          }
+          .sig-title {
+            font-weight: 800;
+            color: #0f172a;
+            font-size: 12px;
+          }
+          .sig-sub {
+            font-size: 10px;
+            color: #64748b;
+            margin-top: 2px;
+          }
+          .sig-space {
+            height: 60px;
+          }
+          .sig-name {
+            font-weight: 700;
+            color: #1e293b;
+            font-size: 12px;
+          }
+          @media print {
+            body { padding: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        <table class="header-table">
+          <tr>
+            <td style="vertical-align: top; width: 60%;">
+              <div class="company-name">${companyConfig.companyName}</div>
+              <div class="company-info">Địa chỉ: ${companyConfig.companyAddress || 'Chưa cập nhật'}</div>
+              <div class="company-info">Điện thoại: ${companyConfig.companyPhone || '---'} • Email: ${companyConfig.companyEmail || '---'}</div>
+              <div class="company-info">Mã số thuế: ${companyConfig.companyTaxCode || '---'}</div>
+            </td>
+            <td class="po-title">
+              <h1>ĐƠN ĐẶT MUA HÀNG</h1>
+              <div class="po-code">SỐ: ${po.po_code}</div>
+              <div style="font-size: 11px; color: #64748b; margin-top: 3px;">Ngày lập: ${formatDate(po.order_date)}</div>
+            </td>
+          </tr>
+        </table>
+
+        <div class="meta-box">
+          <div class="meta-col" style="padding-right: 15px;">
+            <div class="meta-title">ĐƠN VỊ CUNG CẤP (SUPPLIER):</div>
+            <div style="font-size: 13px; font-weight: 800; color: #0f172a;">${po.supplier_name}</div>
+            <div style="color: #475569; margin-top: 4px; font-size: 12px;">Hạn giao hàng dự kiến: <strong>${formatDate(po.expected_delivery_date)}</strong></div>
+            <div style="color: #475569; font-size: 12px;">Trạng thái đơn: <strong>${statusCfg.label}</strong></div>
+          </div>
+          <div class="meta-col">
+            <div class="meta-title">ĐỊA ĐIỂM GIAO NHẬN (DELIVERY):</div>
+            <div style="font-size: 13px; font-weight: 800; color: #0f172a;">Kho Trung Tâm</div>
+            <div style="color: #475569; margin-top: 4px; font-size: 12px;">Bộ phận tiếp nhận: <strong>Phòng Cung Ứng & Quản Lý Kho</strong></div>
+            <div style="color: #475569; font-size: 12px;">Điều khoản thanh toán: Chuyển khoản ngân hàng</div>
+          </div>
+        </div>
+
+        <table class="table-items">
+          <thead>
+            <tr>
+              <th class="text-center" style="width: 35px;">STT</th>
+              <th style="width: 110px;">Mã Sản Phẩm</th>
+              <th>Tên Hàng Hóa / Quy Cách Kỹ Thuật</th>
+              <th class="text-center" style="width: 50px;">ĐVT</th>
+              <th class="text-center" style="width: 50px;">SL</th>
+              <th class="text-right" style="width: 120px;">Đơn Giá (VNĐ)</th>
+              <th class="text-right" style="width: 130px;">Thành Tiền (VNĐ)</th>
+              ${hasLineNotes ? '<th style="width: 140px;">Ghi Chú</th>' : ''}
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map((it: any, i: number) => `
+              <tr>
+                <td class="text-center">${i + 1}</td>
+                <td class="font-mono font-bold" style="color: #0c4a97;">${it.product_code || ''}</td>
+                <td style="font-weight: 500;">${esc(cleanItemName(it.product_name))}</td>
+                <td class="text-center">${esc(it.unit || '')}</td>
+                <td class="text-center font-bold">${it.quantity || 1}</td>
+                <td class="text-right font-mono">${Number(it.unit_price || 0).toLocaleString('vi-VN')} đ</td>
+                <td class="text-right font-mono font-bold">${Number((it.quantity || 1) * (it.unit_price || 0)).toLocaleString('vi-VN')} đ</td>
+                ${hasLineNotes ? `<td style="font-size: 11px;">${esc(it.notes || '')}</td>` : ''}
+              </tr>
+            `).join('')}
+          </tbody>
+          <tfoot>
+            <tr class="total-row">
+              <td colspan="6" class="text-right uppercase">TỔNG CỘNG TIỀN HÀNG (CHƯA VAT):</td>
+              <td class="text-right font-mono font-bold" style="color: #0c4a97; font-size: 13px;">
+                ${Number(totalAmount).toLocaleString('vi-VN')} đ
+              </td>
+              ${hasLineNotes ? '<td></td>' : ''}
+            </tr>
+          </tfoot>
+        </table>
+
+        ${po.notes ? `<div class="notes-box"><strong>Ghi chú:</strong> ${po.notes}</div>` : ''}
+
+        <div class="signatures">
+          <div class="sig-box">
+            <div class="sig-title">Người Lập Đơn</div>
+            <div class="sig-sub">(Ký & ghi rõ họ tên)</div>
+            <div class="sig-space"></div>
+            <div class="sig-name">${po.creator_name || "Trần Thị Trà My"}</div>
+          </div>
+          <div class="sig-box">
+            <div class="sig-title">Ban Giám Đốc Phê Duyệt</div>
+            <div class="sig-sub">(Ký & phê duyệt)</div>
+            <div class="sig-space"></div>
+            <div class="sig-name">${po.approver_name || (companyConfig.companyRepresentative ? `${companyConfig.companyRepresentative}${companyConfig.companyRepresentativeRole ? ` (${companyConfig.companyRepresentativeRole})` : ''}` : "Ban Giám Đốc")}</div>
+          </div>
+          <div class="sig-box">
+            <div class="sig-title">Đại Diện Nhà Cung Cấp</div>
+            <div class="sig-sub">(Xác nhận đơn hàng)</div>
+            <div class="sig-space"></div>
+            <div class="sig-name">${po.supplier_name}</div>
+          </div>
+        </div>
+
+        <script>
+          window.onload = function() {
+            setTimeout(function() {
+              window.print();
+            }, 300);
+          };
+        </script>
+      </body>
+      </html>
+    `;
+
+    writeSafePrintDocument(printWindow, htmlContent);
+  };
+
+  // Save PO (H7: single atomic server transaction)
+  const handleSavePO = async () => {
+    if (!poForm.supplier_name || !poForm.items || poForm.items.length === 0) {
+      alert("Vui lòng chọn Nhà cung cấp và ít nhất 1 sản phẩm");
+      return;
+    }
+    try {
+      const res = await fetch("/api/procurement?action=order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(poForm)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsPOModalOpen(false);
+        fetchData();
+      } else if (res.status === 409) {
+        alert(`${data.error || "Đơn PO vừa được người khác cập nhật."}
+
+Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
+        setIsPOModalOpen(false);
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi lưu đơn PO");
+      }
+    } catch (e) {
+      alert("Lỗi kết nối khi lưu đơn PO");
+    }
+  };
+
+  // Edit PO
+  const handleEditPO = (po: any) => {
+    let parsedItems: any[] = [];
+    try {
+      if (typeof po.items === "string") {
+        parsedItems = JSON.parse(po.items);
+      } else if (Array.isArray(po.items)) {
+        parsedItems = po.items;
+      }
+    } catch {
+      parsedItems = [];
+    }
+
+    const itemsFormatted = parsedItems.map((it: any) => {
+      const qty = parseFloat(it.quantity) || 1;
+      const price = parseFloat(it.unit_price) || 0;
+      return {
+        ...it,
+        source_pr_code: itemSourcePR(it) || undefined,
+        product_code: it.product_code || "",
+        product_name: cleanItemName(it.product_name),
+        unit: it.unit || "Hộp",
+        quantity: qty,
+        unit_price: price,
+        total: qty * price
+      };
+    });
+
+    setPOForm({
+      id: po.id,
+      po_code: po.po_code,
+      supplier_id: po.supplier_id || 1,
+      supplier_name: po.supplier_name || "",
+      order_date: po.order_date ? dbDateVN(po.order_date) : todayVN(),
+      expected_delivery_date: po.expected_delivery_date ? dbDateVN(po.expected_delivery_date) : toVNDateString(new Date(Date.now() + 10 * 86400000)),
+      items: itemsFormatted.length > 0 ? itemsFormatted : [{ product_code: "", product_name: "", quantity: 1, unit_price: 0, total: 0 }],
+      total_amount: parseFloat(po.total_amount) || 0,
+      status: po.status || "PENDING",
+      notes: po.notes || "",
+      version: po.version,
+      received_qty: po.received_qty || {}
+    });
+    setIsPOModalOpen(true);
+  };
+
+  // ---- PO line editing (one row per line, totals always recomputed)
+  const updatePOLine = (idx: number, patch: any) => {
+    setPOForm((prev: any) => {
+      const items = [...prev.items];
+      const it = { ...items[idx], ...patch };
+      it.total = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0);
+      items[idx] = it;
+      return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + (Number(b.total) || 0), 0) };
+    });
+  };
+
+  // ---- change supplier: offer the new supplier's purchase prices for the lines it sells
+  const handleChangePOSupplier = async (name: string) => {
+    const sup = suppliers.find((s) => s.name === name);
+    setPOForm((prev: any) => ({ ...prev, supplier_name: name, supplier_id: sup?.id || prev.supplier_id }));
+    if (!sup?.id) return;
+    try {
+      const res = await fetch(`/api/procurement?action=supplier_products&supplier_id=${sup.id}`);
+      const data = await res.json();
+      const catalog: any[] = Array.isArray(data?.products) ? data.products : [];
+      if (catalog.length === 0) return;
+      const priceOf = new Map(catalog.map((c: any) => [String(c.product_code), Number(c.purchase_price) || 0]));
+      const current: any[] = poForm.items || [];
+      const changes = current
+        .map((it: any, idx: number) => ({ idx, it, price: priceOf.get(String(it.product_code)) }))
+        .filter(x => x.price !== undefined && x.price > 0 && x.price !== (Number(x.it.unit_price) || 0));
+      const notSold = current.filter((it: any) => it.product_code && !priceOf.has(String(it.product_code)));
+      const msg: string[] = [];
+      if (changes.length > 0) msg.push(`Bảng giá của ${name} có giá khác cho ${changes.length} dòng:\n` + changes.map(x => `• ${x.it.product_code}: ${formatCurrency(x.it.unit_price)} → ${formatCurrency(x.price)}`).join("\n"));
+      if (notSold.length > 0) msg.push(`Lưu ý: ${notSold.length} mã chưa có trong bảng giá của ${name}: ${notSold.map((it: any) => it.product_code).join(", ")}`);
+      if (msg.length === 0) return;
+      if (changes.length > 0 && confirm(msg.join("\n\n") + "\n\nCập nhật đơn giá theo bảng giá nhà cung cấp mới?")) {
+        setPOForm((prev: any) => {
+          const items = prev.items.map((it: any) => {
+            const pr = priceOf.get(String(it.product_code));
+            if (pr === undefined || pr <= 0) return it;
+            return { ...it, unit_price: pr, total: (Number(it.quantity) || 0) * pr };
+          });
+          return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + (Number(b.total) || 0), 0) };
+        });
+      } else if (changes.length === 0) {
+        alert(msg.join("\n\n"));
+      }
+    } catch {}
+  };
+
+  // ---- Excel export (a PO, or the PO list as filtered on screen)
+  const exportPOExcel = (po: any) => {
+    const items: any[] = Array.isArray(po.items) ? po.items : [];
+    const rows: any[][] = [
+      ["ĐƠN ĐẶT MUA HÀNG", po.po_code],
+      ["Nhà cung cấp", po.supplier_name || ""],
+      ["Ngày lập", formatDate(po.order_date)],
+      ["Hạn giao dự kiến", formatDate(po.expected_delivery_date)],
+      ["Trạng thái", PO_STATUS_CONFIG[po.status]?.label || po.status],
+      ["Ghi chú", po.notes || ""],
+      [],
+      ["STT", "Mã hàng", "Tên hàng / Quy cách", "ĐVT", "SL đặt", "Đã nhập kho", "Đơn giá", "Thành tiền", "Mục đích", "Nguồn PR", "Ghi chú dòng"]
+    ];
+    items.forEach((it, i) => {
+      const qty = Number(it.quantity) || 0;
+      const price = Number(it.unit_price) || 0;
+      rows.push([
+        i + 1, it.product_code || "", cleanItemName(it.product_name), it.unit || "", qty, receivedOf(po, i), price, qty * price,
+        it.is_stock === false ? (it.target_customer_name || "Khách hàng") : "Stock", itemSourcePR(it), it.notes || ""
+      ]);
+    });
+    rows.push([], ["", "", "", "", "", "", "Tổng cộng", parseFloat(po.total_amount) || items.reduce((a, it) => a + (Number(it.quantity) || 0) * (Number(it.unit_price) || 0), 0)]);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 6 }, { wch: 14 }, { wch: 50 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 24 }, { wch: 18 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "PO");
+    XLSX.writeFile(wb, `${po.po_code || "PO"}.xlsx`);
+  };
+  const exportPOListExcel = (list: any[]) => {
+    const rows: any[][] = [["Mã PO", "Nhà cung cấp", "Ngày lập", "Hạn giao", "Trạng thái", "Mã hàng", "Tên hàng", "ĐVT", "SL đặt", "Đã nhập", "Đơn giá", "Thành tiền", "Nguồn PR", "Ghi chú dòng", "Ghi chú PO"]];
+    list.forEach(po => {
+      const items: any[] = Array.isArray(po.items) ? po.items : [];
+      items.forEach((it, i) => {
+        const qty = Number(it.quantity) || 0;
+        const price = Number(it.unit_price) || 0;
+        rows.push([po.po_code, po.supplier_name || "", formatDate(po.order_date), formatDate(po.expected_delivery_date), PO_STATUS_CONFIG[po.status]?.label || po.status,
+          it.product_code || "", cleanItemName(it.product_name), it.unit || "", qty, receivedOf(po, i), price, qty * price, itemSourcePR(it), it.notes || "", po.notes || ""]);
+      });
+    });
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 16 }, { wch: 30 }, { wch: 11 }, { wch: 11 }, { wch: 16 }, { wch: 14 }, { wch: 44 }, { wch: 7 }, { wch: 8 }, { wch: 8 }, { wch: 13 }, { wch: 15 }, { wch: 18 }, { wch: 26 }, { wch: 30 }];
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Danh sách PO");
+    XLSX.writeFile(wb, `Danh_sach_PO_${todayVN()}.xlsx`);
+  };
+
+  // ---- Goods receipt of a PO: lot / expiry / MFG / storage / shelf / QC / received quantity per line, can be split into several lots
+  const [receiveTarget, setReceiveTarget] = useState<any>(null);
+  const [receiveLines, setReceiveLines] = useState<any[]>([]);
+  const [receiveNotes, setReceiveNotes] = useState("");
+  const [receiveHeader, setReceiveHeader] = useState({
+    receipt_date: todayVN(),
+    warehouse_name: "Kho Trung Tâm",
+    received_by: "",
+    vat_invoice_no: "",
+    vat_invoice_date: "",
+    shipping_unit: "",
+    inbound_type: "Nhập mua hàng theo Đơn PO từ NCC"
+  });
+  const [isSubmittingReceive, setIsSubmittingReceive] = useState(false);
+  const receiveRequestId = useRef<string>("");
+  const [poReceipts, setPOReceipts] = useState<any[]>([]);
+
+  const openReceiveModal = (po: any) => {
+    const items: any[] = Array.isArray(po.items) ? po.items : [];
+    const rq = po.received_qty || {};
+    const lines = items
+      .map((it, idx) => {
+        const ordered = Number(it.quantity) || 0;
+        const received = Number(rq[idx]) || 0;
+        const matchedProd = products.find((p: any) => p.code === it.product_code);
+        return {
+          line_index: idx,
+          product_code: it.product_code,
+          product_name: cleanItemName(it.product_name),
+          specification: it.specification || matchedProd?.specification || "",
+          unit: it.unit || matchedProd?.unit || "Hộp",
+          unit_price: Number(it.unit_price) || Number(matchedProd?.cost_price) || 0,
+          ordered,
+          received,
+          quantity: Math.max(0, ordered - received),
+          lot_number: "",
+          manufacture_date: "",
+          expiry_date: "",
+          no_expiry: false,
+          storage_condition: it.storage_condition || matchedProd?.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)",
+          shelf_position: it.shelf_position || matchedProd?.shelf_position || "",
+          qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+          notes: ""
+        };
+      })
+      .filter(l => l.ordered - l.received > 0);
+    if (lines.length === 0) {
+      alert(`PO ${po.po_code} đã nhập kho đủ.`);
+      return;
+    }
+    receiveRequestId.current = `${po.po_code}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setReceiveHeader({
+      receipt_date: todayVN(),
+      warehouse_name: "Kho Trung Tâm",
+      received_by: user?.full_name || user?.username || "Thủ kho TBRs",
+      vat_invoice_no: "",
+      vat_invoice_date: "",
+      shipping_unit: "",
+      inbound_type: "Nhập mua hàng theo Đơn PO từ NCC"
+    });
+    setReceiveNotes("");
+    setReceiveLines(lines);
+    setReceiveTarget(po);
+  };
+
+  const submitReceive = async () => {
+    if (!receiveTarget) return;
+    const lines = receiveLines.filter(l => (Number(l.quantity) || 0) > 0);
+    if (lines.length === 0) { alert("Nhập số lượng thực nhận cho ít nhất 1 dòng."); return; }
+    for (const l of lines) {
+      if (!String(l.lot_number).trim()) { alert(`${l.product_code}: chưa nhập số lô.`); return; }
+      if (!l.no_expiry && !l.expiry_date) { alert(`${l.product_code} (lô ${l.lot_number}): chưa nhập hạn dùng, hoặc đánh dấu "Không có HSD".`); return; }
+    }
+    const perLine: Record<number, number> = {};
+    for (const l of lines) perLine[l.line_index] = (perLine[l.line_index] || 0) + (Number(l.quantity) || 0);
+    for (const [idx, q] of Object.entries(perLine)) {
+      const l = receiveLines.find(x => x.line_index === Number(idx));
+      if (l && q > l.ordered - l.received) { alert(`${l.product_code}: còn phải nhập ${l.ordered - l.received}, đang nhập ${q} — vượt số lượng đặt.`); return; }
+    }
+    setIsSubmittingReceive(true);
+    try {
+      const res = await fetch("/api/procurement?action=receive_to_inventory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          po_id: receiveTarget.id,
+          po_code: receiveTarget.po_code,
+          request_id: receiveRequestId.current,
+          receipt_date: receiveHeader.receipt_date,
+          warehouse_name: receiveHeader.warehouse_name,
+          received_by: receiveHeader.received_by,
+          vat_invoice_no: receiveHeader.vat_invoice_no,
+          vat_invoice_date: receiveHeader.vat_invoice_date || undefined,
+          shipping_unit: receiveHeader.shipping_unit,
+          inbound_type: receiveHeader.inbound_type,
+          receipt_notes: receiveNotes,
+          lines: lines.map(l => ({
+            line_index: l.line_index,
+            quantity: Number(l.quantity) || 0,
+            specification: l.specification || "",
+            unit: l.unit || "Hộp",
+            unit_price: Number(l.unit_price) || 0,
+            lot_number: String(l.lot_number).trim(),
+            manufacture_date: l.manufacture_date || "",
+            expiry_date: l.no_expiry ? "" : l.expiry_date,
+            no_expiry: !!l.no_expiry,
+            storage_condition: l.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)",
+            shelf_position: l.shelf_position || "",
+            qc_status: l.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+            notes: l.notes
+          }))
+        })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) { alert(data.error || "Lỗi khi nhập kho"); return; }
+      try {
+        window.dispatchEvent(new CustomEvent("inventory_updated", { detail: { po_code: receiveTarget.po_code } }));
+      } catch (e) {}
+      notifyActivity({
+        title: "Hàng PO Đã Về Kho (Goods Receipt)",
+        message: `PO ${receiveTarget.po_code} (${receiveTarget.supplier_name || ""}) — phiếu nhập ${data.inbound_code} tại ${receiveHeader.warehouse_name}${data.status === "COMPLETED" ? ", đã nhập đủ" : ", nhập 1 phần"}.`,
+        category: "warehouse",
+        type: "success",
+        eventKey: "po_received",
+        link: { tab: "warehouse", subTab: "stock" }
+      });
+      alert(`Nhập kho thành công: phiếu ${data.inbound_code}.\n${data.status === "COMPLETED" ? "PO đã nhập kho đủ." : "PO còn hàng chưa về (nhập kho 1 phần)."}`);
+      setReceiveTarget(null);
+      if (selectedPODetail?.po_code === receiveTarget.po_code) setSelectedPODetail(null);
+      fetchData();
+    } catch (e) {
+      alert("Lỗi kết nối khi nhập kho");
+    } finally {
+      setIsSubmittingReceive(false);
+    }
+  };
+
+  // receipts (PNK) of the PO being viewed
+  useEffect(() => {
+    if (!selectedPODetail?.po_code) { setPOReceipts([]); return; }
+    let alive = true;
+    fetch(`/api/procurement?action=po_receipts&po_code=${encodeURIComponent(selectedPODetail.po_code)}`)
+      .then(r => r.json()).then(d => { if (alive) setPOReceipts(Array.isArray(d?.receipts) ? d.receipts : []); })
+      .catch(() => { if (alive) setPOReceipts([]); });
+    return () => { alive = false; };
+  }, [selectedPODetail?.po_code]);
+
+  // Esc closes the top-most PO window (the edit form asks first: unsaved changes would be lost)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (receiveTarget) { setReceiveTarget(null); return; }
+      if (selectedPODetail) { setSelectedPODetail(null); return; }
+      if (isPOModalOpen && confirm("Đóng đơn PO mà không lưu thay đổi?")) setIsPOModalOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [receiveTarget, selectedPODetail, isPOModalOpen]);
+
+  // Delete PO
+  const handleDeletePO = async (po: any) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa đơn PO ${po.po_code}?`)) return;
+    try {
+      const res = await fetch("/api/procurement?action=delete_order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: po.id, po_code: po.po_code })
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi khi xóa PO");
+      }
+    } catch (e) {
+      alert("Lỗi khi xóa PO");
+    }
+  };
+
+  // Save Supplier
+  const handleSaveSupplier = async () => {
+    if (!supplierForm.name) {
+      alert("Vui lòng nhập Tên Nhà Cung Cấp");
+      return;
+    }
+    try {
+      const res = await fetch("/api/procurement?action=supplier", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(supplierForm)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsSupplierModalOpen(false);
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi lưu thông tin NCC");
+      }
+    } catch (e) {
+      alert("Lỗi lưu thông tin NCC");
+    }
+  };
+
+  // Delete Supplier
+  const handleDeleteSupplier = async (sup: any) => {
+    if (!confirm(`Bạn có chắc chắn muốn xóa hồ sơ NCC ${sup.name}?`)) return;
+    try {
+      const res = await fetch("/api/procurement?action=delete_supplier", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: sup.id, name: sup.name })
+      });
+      const data = await res.json();
+      if (data.success) {
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi xóa NCC");
+      }
+    } catch (e) {
+      alert("Lỗi xóa NCC");
+    }
+  };
+
+  // =========================================================
+  // SUPPLIER PRODUCTS & PRICE ADJUSTMENT AUDIT HANDLERS
+  // =========================================================
+
+  const fetchSupplierProducts = async (supplierId: number) => {
+    try {
+      setLoadingSupplierProducts(true);
+      const res = await fetch(`/api/procurement?action=supplier_products&supplier_id=${supplierId}`);
+      const data = await res.json();
+      if (data.success) {
+        setSupplierProducts(data.products || []);
+      }
+    } catch (e) {
+      console.error("Failed to load supplier products:", e);
+    } finally {
+      setLoadingSupplierProducts(false);
+    }
+  };
+
+  const [isSyncingCatalogSuppliers, setIsSyncingCatalogSuppliers] = useState(false);
+
+  const handleSyncSuppliersFromCatalog = async () => {
+    try {
+      setIsSyncingCatalogSuppliers(true);
+      const res = await fetch("/api/procurement?action=sync_catalog_suppliers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
+      });
+      const data = await res.json();
+      if (data.success) {
+        await fetchData();
+        alert(
+          `✅ Đã đồng bộ tự động từ Danh mục hàng hóa & Đơn PO!\n` +
+          `• Nhà cung cấp / Hãng SX mới thêm: ${data.newSuppliersCreated || 0}\n` +
+          `• Mặt hàng liên kết mới vào NCC: ${data.newProductsLinked || 0}\n` +
+          `• Mặt hàng cập nhật giá mua: ${data.pricesUpdated || 0}`
+        );
+      } else {
+        alert(data.error || "Không thể đồng bộ nhà cung cấp từ danh mục hàng hóa");
+      }
+    } catch (e: any) {
+      alert("Lỗi khi đồng bộ nhà cung cấp: " + (e?.message || e));
+    } finally {
+      setIsSyncingCatalogSuppliers(false);
+    }
+  };
+
+  const handleOpenSupplierCatalog = (supplier: any) => {
+    setSelectedSupplierForCatalog(supplier);
+    setIsSupplierCatalogOpen(true);
+    setSupplierProductSearch("");
+    fetchSupplierProducts(supplier.id);
+  };
+
+  const handleAutoCollectFromPOs = async () => {
+    if (!selectedSupplierForCatalog) return;
+    try {
+      setIsAutoCollecting(true);
+      const res = await fetch("/api/procurement?action=auto_collect_supplier_products", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          supplier_id: selectedSupplierForCatalog.id,
+          supplier_name: selectedSupplierForCatalog.name,
+          actor_name: user?.full_name || user?.username || "Chuyên viên Cung ứng"
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`✅ Đã tự động thu thập thành công!\n• Mặt hàng mới thu thập: ${data.new_collected}\n• Mặt hàng cập nhật giá theo PO: ${data.price_updated}\n• Tổng số mặt hàng hiện có: ${data.total_items}`);
+        fetchSupplierProducts(selectedSupplierForCatalog.id);
+        fetchData();
+      } else {
+        alert(data.error || "Không thể thu thập dữ liệu tự động");
+      }
+    } catch (e: any) {
+      alert("Lỗi khi gọi tự động thu thập: " + (e?.message || e));
+    } finally {
+      setIsAutoCollecting(false);
+    }
+  };
+
+  const handleOpenAddProductModal = (prod?: any) => {
+    if (prod) {
+      setProductForm({
+        id: prod.id,
+        supplier_id: prod.supplier_id,
+        product_code: prod.product_code,
+        product_name: prod.product_name,
+        specification: prod.specification || "",
+        unit: prod.unit || "Cái",
+        purchase_price: prod.purchase_price || 0,
+        notes: prod.notes || ""
+      });
+    } else {
+      const firstProd = products[0];
+      setProductForm({
+        id: null,
+        supplier_id: selectedSupplierForCatalog?.id,
+        product_code: firstProd?.code || "",
+        product_name: firstProd?.name || "",
+        specification: firstProd?.specification || "",
+        unit: firstProd?.unit || "Cái",
+        purchase_price: parseFloat(firstProd?.cost_price) || 0,
+        notes: ""
+      });
+    }
+    setIsAddEditProductModalOpen(true);
+  };
+
+  const handleSaveSupplierProduct = async () => {
+    if (!productForm.product_code || !productForm.product_name) {
+      alert("Vui lòng nhập đầy đủ Mã hàng và Tên mặt hàng");
+      return;
+    }
+    try {
+      const res = await fetch("/api/procurement?action=save_supplier_product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...productForm,
+          supplier_id: selectedSupplierForCatalog?.id,
+          actor_name: user?.full_name || user?.username || "Chuyên viên Cung ứng"
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsAddEditProductModalOpen(false);
+        if (selectedSupplierForCatalog) {
+          fetchSupplierProducts(selectedSupplierForCatalog.id);
+        }
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi lưu mã hàng");
+      }
+    } catch (e) {
+      alert("Lỗi lưu mã hàng");
+    }
+  };
+
+  const handleOpenAdjustPriceModal = (product: any) => {
+    setAdjustPriceTarget(product);
+    setNewPurchasePrice(product.purchase_price || 0);
+    setPriceAdjustmentReason("");
+    setPriceAdjustmentDate(todayVN());
+    setSyncCostPrice(true);
+    setIsAdjustPriceModalOpen(true);
+  };
+
+  const handleSavePriceAdjustment = async () => {
+    const priceNum = parseFloat(String(newPurchasePrice)) || 0;
+    if (priceNum <= 0) {
+      alert("Vui lòng nhập đơn giá mua hợp lệ (> 0 VNĐ)");
+      return;
+    }
+    if (!priceAdjustmentReason.trim()) {
+      alert("Vui lòng nhập lý do điều chỉnh giá để lưu vào lịch sử kiểm toán");
+      return;
+    }
+    try {
+      setIsSavingPriceAdjustment(true);
+      const res = await fetch("/api/procurement?action=adjust_supplier_price", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: adjustPriceTarget.id,
+          new_price: priceNum,
+          effective_date: priceAdjustmentDate,
+          reason: priceAdjustmentReason,
+          sync_cost_price: syncCostPrice,
+          actor_name: user?.full_name || user?.username || "Chuyên viên Cung ứng"
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setIsAdjustPriceModalOpen(false);
+        if (selectedSupplierForCatalog) {
+          fetchSupplierProducts(selectedSupplierForCatalog.id);
+        }
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi điều chỉnh giá");
+      }
+    } catch (e) {
+      alert("Lỗi điều chỉnh giá");
+    } finally {
+      setIsSavingPriceAdjustment(false);
+    }
+  };
+
+  const handleDeleteSupplierProduct = async (product: any) => {
+    if (!confirm(`Xóa mã hàng [${product.product_code}] khỏi danh mục NCC ${selectedSupplierForCatalog?.name}?`)) return;
+    try {
+      const res = await fetch("/api/procurement?action=delete_supplier_product", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: product.id,
+          product_code: product.product_code,
+          actor_name: user?.full_name || user?.username || "Chuyên viên Cung ứng"
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (selectedSupplierForCatalog) {
+          fetchSupplierProducts(selectedSupplierForCatalog.id);
+        }
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi khi xóa mặt hàng");
+      }
+    } catch (e) {
+      alert("Lỗi khi xóa mặt hàng");
+    }
+  };
+
+  const handleOpenPriceHistoryModal = (product: any) => {
+    setPriceHistoryTarget(product);
+    setIsPriceHistoryModalOpen(true);
+  };
+
+  const handleDownloadCatalogTemplate = () => {
+    const sample = [
+      {
+        "Mã hàng (*)": "TBR-KIT-001",
+        "Tên sản phẩm (*)": "Bộ Kít Tách Chiết RNA/DNA Viral",
+        "Quy cách": "50 test/hộp",
+        "Đơn vị tính": "Hộp",
+        "Giá mua (*)": 1500000,
+        "Ghi chú": "Bảng giá áp dụng quý 4/2026"
+      },
+      {
+        "Mã hàng (*)": "TBR-PCR-002",
+        "Tên sản phẩm (*)": "MasterMix Real-time PCR 2X",
+        "Quy cách": "100 phản ứng/lọ",
+        "Đơn vị tính": "Lọ",
+        "Giá mua (*)": 850000,
+        "Ghi chú": "Đơn hàng tối thiểu 5 lọ"
+      }
+    ];
+    const ws = XLSX.utils.json_to_sheet(sample);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Bang_Gia_NCC");
+    XLSX.writeFile(wb, `Bang_Gia_NCC_${selectedSupplierForCatalog?.supplier_code || "Sample"}.xlsx`);
+  };
+
+  const handleUploadCatalogExcel = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !selectedSupplierForCatalog) return;
+    try {
+      const buffer = await file.arrayBuffer();
+      const wb = XLSX.read(buffer, { type: "array" });
+      const wsName = wb.SheetNames[0];
+      const ws = wb.Sheets[wsName];
+      const rows: any[] = XLSX.utils.sheet_to_json(ws);
+      if (!rows || rows.length === 0) {
+        alert("File Excel không có dữ liệu!");
+        return;
+      }
+      const res = await fetch("/api/procurement?action=import_supplier_products_excel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          supplier_id: selectedSupplierForCatalog.id,
+          items: rows,
+          actor_name: user?.full_name || user?.username || "Chuyên viên Cung ứng"
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(`✅ Đã nạp thành công ${data.count} mã hàng vào danh mục NCC ${selectedSupplierForCatalog.name}!`);
+        fetchSupplierProducts(selectedSupplierForCatalog.id);
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi khi nạp file Excel");
+      }
+    } catch (err: any) {
+      alert("Lỗi khi đọc file Excel: " + (err?.message || err));
+    } finally {
+      if (e.target) e.target.value = "";
+    }
+  };
+
+  // Record Payment
+  const handleRecordPayment = async () => {
+    const isMulti = Array.isArray(paymentForm.allocations);
+    const amount = isMulti
+      ? paymentForm.allocations.reduce((s: number, a: any) => s + (Number(a.amount) || 0), 0)
+      : Number(paymentForm.payment_amount) || 0;
+    if (amount <= 0) {
+      alert("Số tiền thanh toán phải lớn hơn 0");
+      return;
+    }
+    if (!isMulti && amount > (Number(paymentForm.remaining_balance) || 0) + 0.5) {
+      alert("Số tiền thanh toán vượt công nợ còn lại của PO");
+      return;
+    }
+    if (isSubmittingPayment) return;
+    setIsSubmittingPayment(true);
+    try {
+      const res = await fetch(`/api/procurement?action=${isMulti ? "record_payment_multi" : "record_payment"}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(isMulti
+          ? { ...paymentForm, allocations: paymentForm.allocations.map((a: any) => ({ po_id: a.po_id, amount: Number(a.amount) || 0 })) }
+          : paymentForm)
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.duplicate ? "Khoản thanh toán này đã được ghi nhận trước đó (không ghi trùng)." : (data.voucher_code ? `Đã ghi nhận phiếu chi ${data.voucher_code}!` : "Ghi nhận thanh toán thành công!"));
+        setIsPaymentModalOpen(false);
+        setSelectedPayPOs([]);
+        fetchData();
+        fetchPoPayments();
+      } else {
+        alert(data.error || "Lỗi ghi nhận thanh toán");
+      }
+    } catch (e) {
+      alert("Lỗi kết nối khi ghi nhận thanh toán. Bấm lại để gửi lại cùng khoản (không bị ghi trùng).");
+    } finally {
+      setIsSubmittingPayment(false);
+    }
+  };
+
+  // Save PR with Structured Multi-Item Support
+  const handleSavePR = async () => {
+    if (!prForm.title?.trim()) {
+      alert("Vui lòng nhập Tiêu đề đề xuất mua hàng");
+      return;
+    }
+    if (!prForm.items || prForm.items.length === 0) {
+      alert("Vui lòng bổ sung ít nhất 1 mặt hàng cần mua");
+      return;
+    }
+    for (let i = 0; i < prForm.items.length; i++) {
+      const it = prForm.items[i];
+      if (!it.product_name?.trim()) {
+        alert(`Vui lòng nhập tên mặt hàng ở dòng #${i + 1}`);
+        return;
+      }
+      if (!it.unit?.trim()) {
+        alert(`Vui lòng nhập đơn vị tính ở dòng #${i + 1}`);
+        return;
+      }
+      if (!it.quantity || it.quantity <= 0) {
+        alert(`Số lượng ở dòng #${i + 1} phải lớn hơn 0`);
+        return;
+      }
+    }
+
+    try {
+      const res = await fetch("/api/procurement?action=create_pr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(prForm)
+      });
+      const data = await res.json();
+      if (data.success) {
+        notifyActivity({
+          title: "Đề Xuất Mua Hàng Mới (PR)",
+          message: `${prForm.requester_name || "Nhân viên"} đã lập đề xuất mua hàng: ${data.code || prForm.title}`,
+          category: "procurement",
+          type: "info",
+          eventKey: "pr_created",
+          link: { tab: "procurement", subTab: "pr" }
+        });
+        alert(`Khởi tạo thành công Đề xuất mua hàng ${data.code}!`);
+        setIsPRModalOpen(false);
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi tạo đề xuất PR");
+      }
+    } catch (e) {
+      alert("Lỗi kết nối khi gửi đề xuất PR");
+    }
+  };
+
+  // Helper to extract items from a PR
+  const getPRItems = (pr: any) => {
+    let prItems: any[] = [];
+    try {
+      if (typeof pr.results_summary === "string" && pr.results_summary.trim().startsWith("[")) {
+        prItems = JSON.parse(pr.results_summary);
+      } else if (Array.isArray(pr.results_summary)) {
+        prItems = pr.results_summary;
+      }
+    } catch (e) {}
+
+    // Fallback: Parse from product_info text if results_summary is empty
+    if (prItems.length === 0 && pr.product_info) {
+      const parts = pr.product_info.split(" | ");
+      for (const part of parts) {
+        const m = part.match(/^([^:]+):\s*(.*?)(?:\s*\((.*?)\))?(?:\s*-\s*SL:\s*(\d+)\s*(.*?))?$/);
+        if (m) {
+          prItems.push({
+            product_code: m[1].trim(),
+            product_name: m[2].trim(),
+            specification: m[3] ? m[3].trim() : "",
+            quantity: m[4] ? parseInt(m[4]) : 1,
+            unit: m[5] ? m[5].trim() : "Hộp",
+            estimated_price: pr.estimated_price || 0
+          });
+        }
+      }
+    }
+
+    if (prItems.length === 0) {
+      const matchedProd = products.find(
+        (p) => pr.product_info?.includes(p.code) || pr.product_info?.toLowerCase().includes(p.name?.toLowerCase())
+      );
+      prItems = [
+        {
+          product_code: matchedProd?.code || "TBR-ITEM",
+          product_name: matchedProd?.name || pr.product_info || pr.title,
+          specification: matchedProd?.specification || "",
+          unit: matchedProd?.unit || "Hộp",
+          quantity: 1,
+          estimated_price: matchedProd ? parseFloat(matchedProd.cost_price) || 0 : 0
+        }
+      ];
+    }
+    return prItems;
+  };
+
+  // Helper to determine PO status of an individual PR item
+  const getItemPOInfo = (pr: any, it: any, idx?: number) => {
+    // 1. Direct po_code on item (saved from convert or consolidate)
+    if (it && it.po_code) {
+      const linkedPO = orders.find(o => o.po_code === it.po_code);
+      return {
+        hasPO: true,
+        poCode: it.po_code,
+        linkedPO: linkedPO || null
+      };
+    }
+
+    // 2. Cross-match with orders by PR code and product code / name
+    const prCode = pr?.workflow_code || String(pr?.id || "");
+    const itCode = it?.product_code || "";
+    const itName = it?.product_name || "";
+
+    const matchedPO = orders.find(o => {
+      const notesMatch = o.notes && (
+        o.notes.includes(prCode) || 
+        (pr?.title && o.notes.includes(pr.title))
+      );
+      if (!notesMatch) return false;
+      const poItems = Array.isArray(o.items) ? o.items : [];
+      return poItems.some((poIt: any) => 
+        (itCode && poIt.product_code === itCode) || 
+        (itName && poIt.product_name && (poIt.product_name.includes(itName) || itName.includes(poIt.product_name)))
+      );
+    });
+
+    if (matchedPO) {
+      return {
+        hasPO: true,
+        poCode: matchedPO.po_code,
+        linkedPO: matchedPO
+      };
+    }
+
+    // 3. Fallback: If whole PR was converted/completed and has a single linked PO
+    const statusUpper = String(pr?.status || "").toUpperCase();
+    if (statusUpper === "COMPLETED" || statusUpper === "CONVERTED") {
+      const directPO = orders.find(o => 
+        (o.notes && o.notes.includes(prCode)) ||
+        (o.po_code && pr?.description?.includes(o.po_code))
+      );
+      if (directPO) {
+        return {
+          hasPO: true,
+          poCode: directPO.po_code,
+          linkedPO: directPO
+        };
+      }
+    }
+
+    return {
+      hasPO: false,
+      poCode: null,
+      linkedPO: null
+    };
+  };
+
+  /** Một PR thuộc đúng 1 nhóm: closed (từ chối / huỷ) • completed • partial • pending. */
+  const getPRBucket = (pr: any): "pending" | "partial" | "completed" | "closed" => {
+    const st = String(pr?.status || "").toUpperCase();
+    if (st === "REJECTED" || st === "CANCELLED") return "closed";
+    const summary = getPRPOSummary(pr);
+    if (summary.isFullyConverted) return "completed";
+    if (summary.isPartiallyConverted) return "partial";
+    return "pending";
+  };
+
+  // Helper to get aggregated PR PO Status Summary
+  const getPRPOSummary = (pr: any) => {
+    if (!pr) return { totalItems: 0, convertedCount: 0, pendingCount: 0, isFullyConverted: false, isPartiallyConverted: false, isPending: true, poCodes: [], linkedPOs: [] };
+
+    const items = getPRItems(pr);
+    const totalItems = items.length;
+    let convertedCount = 0;
+    const poCodesSet = new Set<string>();
+    const linkedPOs: any[] = [];
+
+    items.forEach((it: any, idx: number) => {
+      const info = getItemPOInfo(pr, it, idx);
+      if (info.hasPO && info.poCode) {
+        convertedCount++;
+        poCodesSet.add(info.poCode);
+        if (info.linkedPO && !linkedPOs.some(p => p.id === info.linkedPO.id)) {
+          linkedPOs.push(info.linkedPO);
+        }
+      }
+    });
+
+    // Check PR status tags
+    const statusUpper = String(pr.status || "").toUpperCase();
+    let isFullyConverted = (totalItems > 0 && convertedCount === totalItems) || statusUpper === "COMPLETED" || statusUpper === "CONVERTED";
+    let isPartiallyConverted = (!isFullyConverted && convertedCount > 0) || statusUpper === "PARTIAL_CONVERTED";
+    
+    // In case status is CONVERTED/COMPLETED but items didn't match directly
+    if (isFullyConverted && convertedCount === 0) {
+      convertedCount = totalItems;
+      const directPO = orders.find(o => o.notes && o.notes.includes(pr.workflow_code));
+      if (directPO) {
+        poCodesSet.add(directPO.po_code);
+        if (!linkedPOs.some(p => p.id === directPO.id)) linkedPOs.push(directPO);
+      }
+    }
+
+    const pendingCount = isFullyConverted ? 0 : Math.max(0, totalItems - convertedCount);
+    const isPending = !isFullyConverted && !isPartiallyConverted;
+
+    return {
+      totalItems,
+      convertedCount: isFullyConverted ? totalItems : convertedCount,
+      pendingCount: isFullyConverted ? 0 : pendingCount,
+      isFullyConverted,
+      isPartiallyConverted: !isFullyConverted && isPartiallyConverted,
+      isPending,
+      poCodes: Array.from(poCodesSet),
+      linkedPOs
+    };
+  };
+
+  // Convert PR to PO (1-Click - Only selects unconverted items if partial)
+  const handleConvertPRToPO = (pr: any) => {
+    const prItems = getPRItems(pr);
+    const unconvertedWithIdx = prItems
+      .map((it: any, idx: number) => ({ it, idx }))
+      .filter(({ it, idx }) => !getItemPOInfo(pr, it, idx).hasPO);
+
+    const targetItems = unconvertedWithIdx.length > 0 
+      ? unconvertedWithIdx 
+      : prItems.map((it: any, idx: number) => ({ it, idx }));
+
+    let poItems: any[] = [];
+    const forCustomer = isCustomerPR(pr);
+    const prCustomer = forCustomer ? salesCustomers.find((c: any) => String(c.name || "").trim().toLowerCase() === String(pr.customer_name || "").trim().toLowerCase()) : null;
+    const prOrderCode = soCodeIn(pr.title) || soCodeIn(pr.description);
+    targetItems.forEach(({ it }) => {
+      const matchedProd = products.find(p => p.code === it.product_code);
+      // Giá mua: giá vốn trong danh mục trước; giá trên PR (thường là giá bán của Kinh doanh) chỉ dùng khi chưa có giá vốn
+      const costPrice = matchedProd ? parseFloat(matchedProd.cost_price) || 0 : 0;
+      const price = costPrice > 0 ? costPrice : Number(it.estimated_price || it.unit_price || it.price || 0);
+      const qty = Number(it.quantity) || 1;
+      const nameWithSpec = it.specification && !it.product_name?.includes(it.specification) 
+        ? `${it.product_name} (${it.specification})` 
+        : (it.product_name || it.product_code || "Mặt hàng mua ngoài");
+      poItems.push({
+        product_code: it.product_code || "TBR-PR-ITEM",
+        product_name: nameWithSpec,
+        source_pr_code: pr.workflow_code || undefined,
+        is_stock: !forCustomer,
+        target_customer_name: forCustomer ? pr.customer_name : undefined,
+        target_customer_id: prCustomer?.id,
+        order_code: forCustomer && prOrderCode ? prOrderCode : undefined,
+        unit: it.unit || matchedProd?.unit || "Hộp",
+        quantity: qty,
+        unit_price: price,
+        total: qty * price
+      });
+    });
+
+    const totalAmt = poItems.reduce((sum, it) => sum + (it.total || 0), 0);
+    
+    // Intelligent Supplier matching
+    const searchTarget = `${pr.description || ''} ${pr.title || ''} ${JSON.stringify(targetItems.map(x => x.it))}`.toLowerCase();
+    let matchedSupplier = suppliers.find(s => 
+      (s.name && searchTarget.includes(s.name.toLowerCase())) ||
+      (s.supplier_code && searchTarget.includes(s.supplier_code.toLowerCase()))
+    );
+    if (!matchedSupplier && targetItems.length > 0) {
+      for (const { it } of targetItems) {
+        if (it.notes) {
+          const s = suppliers.find(sup => sup.name?.toLowerCase().includes(it.notes.toLowerCase()));
+          if (s) { matchedSupplier = s; break; }
+        }
+      }
+    }
+    if (!matchedSupplier) {
+      matchedSupplier = suppliers.find(s => s.name?.includes("Bioer") || s.name?.includes("TopBio")) || suppliers[0];
+    }
+
+    const convertedIndices = targetItems.map(x => x.idx);
+    const isPartialConversion = convertedIndices.length < prItems.length;
+
+    setPOForm({
+      id: null,
+      po_code: "",
+      supplier_id: matchedSupplier?.id || 1,
+      supplier_name: matchedSupplier?.name || "Bioer Technology Co., Ltd (Đại Diện VN)",
+      order_date: todayVN(),
+      expected_delivery_date: pr.due_date && dbDateVN(pr.due_date) >= todayVN() ? dbDateVN(pr.due_date) : toVNDateString(new Date(Date.now() + 10 * 86400000)),
+      items: poItems,
+      total_amount: totalAmt,
+      status: "PENDING",
+      linked_pr_id: pr.id,
+      linked_pr_code: pr.workflow_code,
+      converted_item_indices: convertedIndices,
+      is_partial_conversion: isPartialConversion,
+      notes: isPartialConversion
+        ? `Lập đơn mua cho ${poItems.length}/${prItems.length} mặt hàng còn lại theo Đề xuất ${pr.workflow_code}: ${pr.title}`
+        : `Lập đơn mua theo Đề xuất ${pr.workflow_code}: ${pr.title} (Yêu cầu bởi: ${pr.requester_name} - ${pr.requester_dept})`
+    });
+
+    setIsPOModalOpen(true);
+  };
+
+  // Helper to detect supplier match for an item
+  const getItemSuggestedSupplier = (item: any) => {
+    const pCode = (item.product_code || "").toLowerCase();
+    const pName = (item.product_name || "").toLowerCase();
+    const matchedProd = products.find((p) => p.code === item.product_code);
+    const manufacturer = (matchedProd?.manufacturer || "").toLowerCase();
+
+    for (const sup of suppliers) {
+      const sName = sup.name.toLowerCase();
+      const sLines = (sup.product_lines || "").toLowerCase();
+
+      // Check Bioer
+      if (
+        (sName.includes("bioer") || sLines.includes("bioer")) &&
+        (pCode.includes("eq-001") ||
+          pCode.includes("eq-002") ||
+          pName.includes("bioer") ||
+          pName.includes("linegene") ||
+          pName.includes("genepure") ||
+          pCode.includes("kit-001") ||
+          pCode.includes("kit-002") ||
+          manufacturer.includes("bioer"))
+      ) {
+        return sup;
+      }
+      // Check ABT Chemical / Biotech
+      if (
+        (sName.includes("abt") || sLines.includes("abt")) &&
+        (pCode.includes("kit") || pName.includes("topspec") || pName.includes("magpure") || manufacturer.includes("abt"))
+      ) {
+        return sup;
+      }
+      // Check Daan Gene / MGI
+      if (
+        (sName.includes("daan") || sLines.includes("daan") || sName.includes("mgi")) &&
+        (pName.includes("daan") || pName.includes("mgi") || manufacturer.includes("daan") || manufacturer.includes("mgi"))
+      ) {
+        return sup;
+      }
+      // Check general supplier line matching
+      if (sLines && (sLines.includes(pCode) || (matchedProd?.category && sLines.includes(matchedProd.category.toLowerCase())))) {
+        return sup;
+      }
+    }
+    return suppliers[0] || null;
+  };
+
+  // 1-Click Auto Select All Matching Items for Target Supplier
+  const handleAutoSelectBySupplier = (supplierId: string | number) => {
+    const targetSup = suppliers.find((s) => String(s.id) === String(supplierId)) || suppliers[0];
+    if (!targetSup) return;
+    const pendingPRs = purchaseRequests.filter(
+      (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
+    );
+
+    const matchingKeys: string[] = [];
+    const prsToExpand: string[] = [];
+
+    pendingPRs.forEach((pr) => {
+      const prKey = pr.workflow_code || String(pr.id);
+      const items = getPRItems(pr);
+      let hasMatchInPR = false;
+
+      items.forEach((it, idx) => {
+        const itemSup = getItemSuggestedSupplier(it);
+        if (itemSup && String(itemSup.id) === String(targetSup.id)) {
+          matchingKeys.push(`${prKey}___${idx}`);
+          hasMatchInPR = true;
+        }
+      });
+
+      if (hasMatchInPR) {
+        prsToExpand.push(prKey);
+      }
+    });
+
+    setSelectedItemKeysForConsolidate(matchingKeys);
+    setExpandedPRKeys((prev) => Array.from(new Set([...prev, ...prsToExpand])));
+  };
+
+  // Toggle selection for a full PR (all its child items)
+  const togglePRSelection = (pr: any) => {
+    const prKey = pr.workflow_code || String(pr.id);
+    const items = getPRItems(pr);
+    const itemKeys = items.map((_, idx) => `${prKey}___${idx}`);
+    const allSelected = itemKeys.length > 0 && itemKeys.every((k) => selectedItemKeysForConsolidate.includes(k));
+
+    if (allSelected) {
+      setSelectedItemKeysForConsolidate((prev) => prev.filter((k) => !itemKeys.includes(k)));
+    } else {
+      setSelectedItemKeysForConsolidate((prev) => Array.from(new Set([...prev, ...itemKeys])));
+    }
+  };
+
+  // Toggle selection for an individual line item
+  const toggleItemSelection = (itemKey: string) => {
+    setSelectedItemKeysForConsolidate((prev) =>
+      prev.includes(itemKey) ? prev.filter((k) => k !== itemKey) : [...prev, itemKey]
+    );
+  };
+
+  // Toggle accordion expansion for PR
+  const togglePRExpansion = (prKey: string) => {
+    setExpandedPRKeys((prev) =>
+      prev.includes(prKey) ? prev.filter((k) => k !== prKey) : [...prev, prKey]
+    );
+  };
+
+  // Consolidate Multiple PRs into a Unified PO (Requirement 4 - Line-Item Level)
+  const handleConsolidatePRsSubmit = async () => {
+    if (selectedItemKeysForConsolidate.length === 0) {
+      alert("Vui lòng chọn ít nhất 1 mặt hàng cần gom vào Đơn PO!");
+      return;
+    }
+    const targetSupplier = suppliers.find((s) => String(s.id) === String(consolidateSupplierId)) || suppliers[0];
+    if (!targetSupplier) {
+      alert("Vui lòng chọn Nhà cung cấp!");
+      return;
+    }
+
+    setIsSubmittingConsolidate(true);
+    try {
+      const pendingPRs = purchaseRequests.filter(
+        (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
+      );
+      let combinedItems: any[] = [];
+      const involvedPRKeys = new Set<string>();
+
+      pendingPRs.forEach((pr) => {
+        const prKey = pr.workflow_code || String(pr.id);
+        const items = getPRItems(pr);
+
+        items.forEach((it, idx) => {
+          const itemKey = `${prKey}___${idx}`;
+          if (selectedItemKeysForConsolidate.includes(itemKey)) {
+            involvedPRKeys.add(prKey);
+            const matchedProd = products.find((p) => p.code === it.product_code);
+            const costPrice = matchedProd ? parseFloat(matchedProd.cost_price) || 0 : 0;
+            const price = costPrice > 0 ? costPrice : (Number(it.estimated_price) || 0);
+            const forCustomer = isCustomerPR(pr);
+            const prOrderCode = soCodeIn(pr.title) || soCodeIn(pr.description);
+            const qty = it.quantity || 1;
+            const nameWithSpec = it.specification ? `${it.product_name} (${it.specification})` : it.product_name;
+            combinedItems.push({
+              product_code: it.product_code || "TBR-ITEM",
+              product_name: nameWithSpec,
+              source_pr_code: pr.workflow_code || undefined,
+              is_stock: !forCustomer,
+              target_customer_name: forCustomer ? pr.customer_name : undefined,
+              order_code: forCustomer && prOrderCode ? prOrderCode : undefined,
+              unit: it.unit || "Cái",
+              quantity: qty,
+              unit_price: price,
+              total: qty * price
+            });
+          }
+        });
+      });
+
+      const res = await fetch("/api/procurement?action=consolidate_prs_to_po", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          supplier_id: targetSupplier.id,
+          supplier_name: targetSupplier.name,
+          pr_ids: Array.from(involvedPRKeys),
+          selected_item_keys: selectedItemKeysForConsolidate,
+          items: combinedItems,
+          expected_delivery_date: consolidateExpectedDelivery,
+          notes:
+            consolidateNotes ||
+            `Đơn PO tổng hợp gom ${combinedItems.length} mặt hàng từ các PR: ${Array.from(involvedPRKeys).join(", ")}`,
+          created_by: "Phòng Cung Ứng"
+        })
+      });
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert(
+          `Đã gom thành công ${combinedItems.length} mặt hàng (từ ${involvedPRKeys.size} đề xuất PR) vào Đơn PO tổng ${data.po_code}!`
+        );
+        setIsConsolidateModalOpen(false);
+        setSelectedItemKeysForConsolidate([]);
+        setExpandedPRKeys([]);
+        fetchData();
+        setSubTab("orders");
+      } else {
+        alert("Lỗi khi gom PR: " + (data.error || "Không rõ nguyên nhân"));
+      }
+    } catch (err: any) {
+      alert("Lỗi: " + err.message);
+    } finally {
+      setIsSubmittingConsolidate(false);
+    }
+  };
+
+  // Restock to PO (1-Click)
+  const handleRestockToPO = (item: any) => {
+    const matchedSupplier = suppliers.find(s => s.product_lines?.toLowerCase().includes(item.product_name?.toLowerCase()) || s.name?.toLowerCase().includes(item.manufacturer?.toLowerCase())) || suppliers[0];
+    const qtyNeeded = Math.max(5, (item.min_stock_level || 5) * 2 - (item.quantity_on_hand || 0));
+    const price = parseFloat(item.cost_price) || 0;
+
+    setPOForm({
+      id: null,
+      po_code: "",
+      supplier_id: matchedSupplier?.id || 1,
+      supplier_name: matchedSupplier?.name || "Bioer Technology Co., Ltd (Đại Diện VN)",
+      order_date: todayVN(),
+      expected_delivery_date: toVNDateString(new Date(Date.now() + 10 * 86400000)),
+      items: [
+        {
+          product_code: item.product_code,
+          product_name: item.product_name,
+          quantity: qtyNeeded,
+          unit_price: price,
+          total: qtyNeeded * price
+        }
+      ],
+      total_amount: qtyNeeded * price,
+      status: "PENDING",
+      notes: `Lập đơn đặt hàng bổ sung tồn kho thiếu hụt (Tồn hiện tại: ${item.quantity_on_hand}, Ngưỡng tối thiểu: ${item.min_stock_level})`
+    });
+
+    setIsPOModalOpen(true);
+  };
+
+  // Open Payment Modal
+  const openPaymentModal = (order: any) => {
+    const total = parseFloat(order.total_amount) || 0;
+    const paid = parseFloat(order.amount_paid) || 0;
+    const remaining = Math.max(0, total - paid);
+
+    setPaymentForm({
+      request_id: `PAY-${order.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      po_id: order.id,
+      po_code: order.po_code,
+      supplier_name: order.supplier_name,
+      total_amount: total,
+      amount_paid: paid,
+      remaining_balance: remaining,
+      payment_amount: remaining,
+      payment_method: paymentMethods[0] || "Chuyển khoản",
+      reference_doc: "",
+      payment_date: todayVN(),
+      payment_notes: `Thanh toán tiền hàng PO ${order.po_code}`,
+      allocations: null
+    });
+    setIsPaymentModalOpen(true);
+  };
+
+  // Một phiếu chi cho nhiều PO của cùng NCC
+  const openMultiPaymentModal = (pos: any[]) => {
+    if (pos.length === 0) return;
+    const supplierSet = new Set(pos.map(po => String(po.supplier_name || "").trim().toLowerCase()));
+    if (supplierSet.size > 1) {
+      alert("Chỉ chọn các PO của cùng một nhà cung cấp để chi chung một phiếu.");
+      return;
+    }
+    const allocations = pos.map(po => {
+      const remaining = Math.max(0, (parseFloat(po.total_amount) || 0) - (parseFloat(po.amount_paid) || 0));
+      return { po_id: po.id, po_code: po.po_code, remaining, amount: remaining };
+    });
+    setPaymentForm({
+      request_id: `MULTI-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+      po_id: null,
+      po_code: pos.map(po => po.po_code).join(", "),
+      supplier_name: pos[0].supplier_name,
+      total_amount: pos.reduce((s, po) => s + (parseFloat(po.total_amount) || 0), 0),
+      amount_paid: pos.reduce((s, po) => s + (parseFloat(po.amount_paid) || 0), 0),
+      remaining_balance: allocations.reduce((s, a) => s + a.remaining, 0),
+      payment_amount: allocations.reduce((s, a) => s + a.amount, 0),
+      payment_method: paymentMethods[0] || "Chuyển khoản",
+      reference_doc: "",
+      payment_date: todayVN(),
+      payment_notes: `Thanh toán tiền hàng ${allocations.length} PO`,
+      allocations
+    });
+    setIsPaymentModalOpen(true);
+  };
+
+  const fetchPoPayments = async () => {
+    try {
+      const r = await fetch("/api/procurement?action=po_payments");
+      const d = await r.json();
+      if (Array.isArray(d.payments)) setPoPayments(d.payments);
+    } catch { /* bỏ qua: chỉ ảnh hưởng phần lịch sử */ }
+  };
+
+  const handleVoidPayment = async (pay: any, reopenForEdit: boolean) => {
+    const reason = window.prompt(reopenForEdit ? "Lý do sửa khoản chi (khoản cũ sẽ được hủy, nhập lại khoản đúng):" : "Lý do hủy khoản chi:", "");
+    if (!reason || !reason.trim()) return;
+    try {
+      const res = await fetch("/api/procurement?action=void_payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment_id: pay.id, reason: reason.trim() })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.success) { alert(d.error || "Không hủy được khoản chi"); return; }
+      await fetchData();
+      await fetchPoPayments();
+      setPaymentHistoryPO(null);
+      if (reopenForEdit) {
+        const po = orders.find(o => o.id === pay.po_id);
+        if (po) {
+          const paidAfter = Math.max(0, (parseFloat(po.amount_paid) || 0) - (Number(pay.amount) || 0));
+          openPaymentModal({ ...po, amount_paid: paidAfter });
+          setPaymentForm((prev: any) => ({
+            ...prev,
+            payment_amount: Number(pay.amount) || prev.payment_amount,
+            payment_method: pay.method || prev.payment_method,
+            reference_doc: pay.reference_doc || "",
+            payment_date: pay.payment_date ? String(pay.payment_date).slice(0, 10) : prev.payment_date,
+            payment_notes: pay.notes || prev.payment_notes
+          }));
+        }
+      }
+    } catch {
+      alert("Lỗi kết nối khi hủy khoản chi");
+    }
+  };
+
+  // Filtered Orders
+  const poSupplierInvoices = (po: any): any[] => {
+    let v: any = po?.supplier_invoices;
+    if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = []; } }
+    return Array.isArray(v) ? v : [];
+  };
+
+  const filteredOrders = useMemo(() => {
+    return orders.filter(po => {
+      const matchSearch =
+        po.po_code?.toLowerCase().includes(orderSearch.toLowerCase()) ||
+        po.supplier_name?.toLowerCase().includes(orderSearch.toLowerCase()) ||
+        (Array.isArray(po.items) && po.items.some((it: any) => it.product_name?.toLowerCase().includes(orderSearch.toLowerCase())));
+      const d = po.order_date ? String(po.order_date).slice(0, 10) : "";
+      if (orderFrom && (!d || d < orderFrom)) return false;
+      if (orderTo && (!d || d > orderTo)) return false;
+      const invKw = orderInvoiceSearch.trim().toLowerCase();
+      if (invKw && !poSupplierInvoices(po).some((iv: any) => String(iv.invoice_no || "").toLowerCase().includes(invKw))) return false;
+      const prodKw = orderProductSearch.trim().toLowerCase();
+      if (prodKw && !(Array.isArray(po.items) && po.items.some((it: any) => String(it.product_code || "").toLowerCase().includes(prodKw)))) return false;
+      
+      let matchStatus = true;
+      if (orderStatusFilter === "all") {
+        matchStatus = true;
+      } else if (orderStatusFilter === "CUSTOMS") {
+        matchStatus = PO_CUSTOMS_STATUSES.includes(po.status);
+      } else if (orderStatusFilter === "open") {
+        matchStatus = !PO_CLOSED_STATUSES.includes(po.status);
+      } else {
+        matchStatus = po.status === orderStatusFilter;
+      }
+
+      return matchSearch && matchStatus;
+    });
+  }, [orders, orderSearch, orderStatusFilter, orderFrom, orderTo, orderInvoiceSearch, orderProductSearch]);
+
+  // PR status filter counts: one bucket per PR, the buckets add up to "Tất cả"
+  const prCounts = useMemo(() => {
+    let pending = 0;
+    let partial = 0;
+    let completed = 0;
+    let closed = 0;
+
+    purchaseRequests.forEach(pr => {
+      const bucket = getPRBucket(pr);
+      if (bucket === "closed") closed++;
+      else if (bucket === "completed") completed++;
+      else if (bucket === "partial") partial++;
+      else pending++;
+    });
+
+    return {
+      all: purchaseRequests.length,
+      pending,
+      partial,
+      completed,
+      closed
+    };
+  }, [purchaseRequests, orders]);
+
+  // PO counts per status filter, computed from the same list that is displayed
+  const poCounts = useMemo(() => {
+    const c: Record<string, number> = { all: orders.length, open: 0 };
+    orders.forEach(po => {
+      const key = PO_CUSTOMS_STATUSES.includes(po.status) ? "CUSTOMS" : String(po.status || "PENDING");
+      c[key] = (c[key] || 0) + 1;
+      if (!PO_CLOSED_STATUSES.includes(po.status)) c.open++;
+    });
+    return c;
+  }, [orders]);
+
+  // Header KPIs use the very same lists as the tabs, so the numbers always agree (and refresh after every edit)
+  const liveStats = useMemo(() => {
+    const live = orders.filter(o => o.status !== "CANCELLED");
+    const totalSpend = live.reduce((a, o) => a + (parseFloat(o.total_amount) || 0), 0);
+    const totalPaid = live.reduce((a, o) => a + (parseFloat(o.amount_paid) || 0), 0);
+    return {
+      total_spend: totalSpend,
+      total_paid: totalPaid,
+      total_payable: Math.max(0, totalSpend - totalPaid),
+      active_orders_count: poCounts.open,
+      pending_pr_count: prCounts.pending + prCounts.partial,
+      restock_alert_count: restockAlerts.length,
+      total_suppliers_count: suppliers.length
+    };
+  }, [orders, poCounts, prCounts, restockAlerts, suppliers]);
+
+  // Filtered PRs
+  const filteredPRs = useMemo(() => {
+    return purchaseRequests.filter(pr => {
+      const matchSearch =
+        pr.workflow_code?.toLowerCase().includes(prSearch.toLowerCase()) ||
+        pr.title?.toLowerCase().includes(prSearch.toLowerCase()) ||
+        pr.product_info?.toLowerCase().includes(prSearch.toLowerCase()) ||
+        pr.requester_name?.toLowerCase().includes(prSearch.toLowerCase());
+
+      if (!matchSearch) return false;
+
+      if (prStatusFilter === "all") return true;
+      return getPRBucket(pr) === prStatusFilter;
+    });
+  }, [purchaseRequests, prSearch, prStatusFilter, orders]);
+
+  // Filtered Suppliers
+  const filteredSuppliers = useMemo(() => {
+    return suppliers.filter(s => {
+      return (
+        s.name?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
+        s.supplier_code?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
+        s.contact_person?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
+        s.product_lines?.toLowerCase().includes(supplierSearch.toLowerCase())
+      );
+    });
+  }, [suppliers, supplierSearch]);
+
+  // Filtered Payables: NCC, khoảng ngày đặt, trạng thái công nợ, mã PO / mã hàng
+  const payableSuppliers = useMemo(
+    () => Array.from(new Set(orders.map(o => String(o.supplier_name || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "vi")),
+    [orders]
+  );
+  const filteredPayables = useMemo(() => {
+    const kw = payableSearch.trim().toLowerCase();
+    return orders.filter(po => {
+      const total = parseFloat(po.total_amount) || 0;
+      const paid = parseFloat(po.amount_paid) || 0;
+      const remaining = total - paid;
+      if (String(po.status || "").toUpperCase() === "CANCELLED" && paid <= 0) return false;
+      if (payableFilter === "debt" && !(remaining > 0.5)) return false;
+      if (payableFilter === "paid" && remaining > 0.5) return false;
+      if (payableSupplier !== "all" && String(po.supplier_name || "").trim() !== payableSupplier) return false;
+      const d = po.order_date ? String(po.order_date).slice(0, 10) : "";
+      if (payableFrom && (!d || d < payableFrom)) return false;
+      if (payableTo && (!d || d > payableTo)) return false;
+      if (kw) {
+        let items: any[] = po.items;
+        if (typeof items === "string") { try { items = JSON.parse(items); } catch { items = []; } }
+        const hay = [po.po_code, po.supplier_name, ...(Array.isArray(items) ? items.map((it: any) => `${it.product_code || ""} ${it.product_name || ""}`) : [])];
+        if (!hay.some(v => String(v || "").toLowerCase().includes(kw))) return false;
+      }
+      return true;
+    });
+  }, [orders, payableFilter, payableSupplier, payableFrom, payableTo, payableSearch]);
+
+  return (
+    <div className="space-y-6">
+      {/* 1. TOP HEADER & KPI METRIC CARDS */}
+      <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-5">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2.5 text-orange-600 dark:text-orange-400">
+              <div className="p-2 rounded-xl bg-orange-50 dark:bg-orange-950/60 border border-orange-200 dark:border-orange-800/60">
+                <ShoppingCart className="w-6 h-6" />
+              </div>
+              <div>
+                <h2 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">
+                  CUNG ỨNG & MUA HÀNG THƯƠNG MẠI
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Hệ thống chuyên trách Quản lý Đơn mua hàng (PO), Đề xuất mua (PR), Tiến độ giao nhận & Thông quan Hải quan, Công nợ NCC.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                setPOForm({
+                  id: null,
+                  po_code: "",
+                  supplier_id: suppliers[0]?.id || 1,
+                  supplier_name: suppliers[0]?.name || "",
+                  order_date: todayVN(),
+                  expected_delivery_date: toVNDateString(new Date(Date.now() + 10 * 86400000)),
+                  items: [
+                    { product_code: products[0]?.code || "", product_name: products[0]?.name || "", quantity: 1, unit_price: parseFloat(products[0]?.cost_price) || 0, total: parseFloat(products[0]?.cost_price) || 0 }
+                  ],
+                  total_amount: parseFloat(products[0]?.cost_price) || 0,
+                  status: "PENDING",
+                  notes: ""
+                });
+                setIsPOModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-orange-600 text-white shadow-xs hover:bg-orange-700 transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" /> Lập Đơn Đặt Mua (PO)
+            </button>
+            <button
+              onClick={handleOpenNewPRModal}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all cursor-pointer"
+            >
+              <FileText className="w-4 h-4" /> Gửi Đề Xuất (PR)
+            </button>
+            <button
+              onClick={() => {
+                setSupplierForm({
+                  id: null,
+                  supplier_code: `NCC-TBR-${Date.now().toString().slice(-4)}`,
+                  name: "",
+                  short_name: "",
+                  contact_person: "",
+                  phone: "",
+                  email: "",
+                  address: "",
+                  product_lines: "",
+                  payment_terms: "Công nợ 30 ngày",
+                  rating: 5
+                });
+                setIsSupplierModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-all cursor-pointer"
+            >
+              <Building2 className="w-4 h-4" /> Thêm NCC Mới
+            </button>
+          </div>
+        </div>
+
+        {/* 5 Stat Cards */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
+          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60">
+            <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
+              <span>Tổng Chi Mua Hàng</span>
+              <DollarSign className="w-3.5 h-3.5 text-blue-500" />
+            </div>
+            <div className="mt-1 text-base font-black font-mono text-slate-900 dark:text-white">
+              {formatCurrency(liveStats.total_spend)}
+            </div>
+            <div className="text-[10px] text-slate-400 mt-0.5">{orders.length} đơn PO toàn hệ thống</div>
+          </div>
+
+          <div role="button" onClick={() => { setSubTab("orders"); setOrderStatusFilter("open"); }} title="Bấm để xem các PO đang mở" className="p-3.5 rounded-xl bg-orange-50/70 dark:bg-orange-950/40 border border-orange-200/80 dark:border-orange-800/60 cursor-pointer hover:ring-2 hover:ring-orange-300">
+            <div className="flex items-center justify-between text-orange-700 dark:text-orange-400 text-[11px] font-semibold">
+              <span>PO Đang Mở</span>
+              <Clock className="w-3.5 h-3.5 text-orange-500" />
+            </div>
+            <div className="mt-1 text-base font-black font-mono text-orange-700 dark:text-orange-400">
+              {liveStats.active_orders_count} / {orders.length} Đơn PO
+            </div>
+            <div className="text-[10px] text-orange-600/70 mt-0.5">Chưa nhập kho đủ, chưa huỷ</div>
+          </div>
+
+          <div role="button" onClick={() => { setSubTab("pr"); setPRStatusFilter("all"); }} title="PR cần xử lý = Chờ xử lý + Đã chuyển PO 1 phần" className="p-3.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/60 cursor-pointer hover:ring-2 hover:ring-indigo-300">
+            <div className="flex items-center justify-between text-indigo-700 dark:text-indigo-400 text-[11px] font-semibold">
+              <span>PR Cần Xử Lý</span>
+              <FileText className="w-3.5 h-3.5 text-indigo-500" />
+            </div>
+            <div className="mt-1 text-base font-black font-mono text-indigo-700 dark:text-indigo-400">
+              {liveStats.pending_pr_count} / {purchaseRequests.length} Đề Xuất
+            </div>
+            <div className="text-[10px] text-indigo-600/70 mt-0.5">Chờ xử lý + đã lên PO 1 phần</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/40 border border-rose-200/80 dark:border-rose-800/60">
+            <div className="flex items-center justify-between text-rose-700 dark:text-rose-400 text-[11px] font-semibold">
+              <span>Công Nợ Cần Trả NCC</span>
+              <CreditCard className="w-3.5 h-3.5 text-rose-500" />
+            </div>
+            <div className="mt-1 text-base font-black font-mono text-rose-700 dark:text-rose-400">
+              {formatCurrency(liveStats.total_payable)}
+            </div>
+            <div className="text-[10px] text-rose-600/70 mt-0.5">Đã trả: {formatCurrency(liveStats.total_paid)}</div>
+          </div>
+
+          <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60">
+            <div className="flex items-center justify-between text-amber-700 dark:text-amber-400 text-[11px] font-semibold">
+              <span>Cảnh Báo Tồn Thiếu</span>
+              <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
+            </div>
+            <div className="mt-1 text-base font-black font-mono text-amber-700 dark:text-amber-400">
+              {liveStats.restock_alert_count} Mặt Hàng
+            </div>
+            <div className="text-[10px] text-amber-600/70 mt-0.5">Chạm hoặc dưới mức Min</div>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. SUBTAB NAVIGATION BAR */}
+      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-2 md:gap-6 text-xs font-bold overflow-x-auto">
+        <button
+          id="subtab-btn-orders"
+          onClick={() => setSubTab("orders")}
+          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            subTab === "orders" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+          }`}
+        >
+          <ShoppingCart className="w-4 h-4" />
+          <span>Đơn Đặt Mua Hàng (PO NCC)</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+            {orders.length}
+          </span>
+        </button>
+
+        <button
+          id="subtab-btn-pr"
+          onClick={() => setSubTab("pr")}
+          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            subTab === "pr" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+          }`}
+        >
+          <FileText className="w-4 h-4" />
+          <span>Đề Xuất Mua Hàng (PR)</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400">
+            {purchaseRequests.length}
+          </span>
+        </button>
+
+        <button
+          id="subtab-btn-suppliers"
+          onClick={() => setSubTab("suppliers")}
+          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            subTab === "suppliers" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+          }`}
+        >
+          <Building2 className="w-4 h-4" />
+          <span>Danh Bạ & Đánh Giá NCC</span>
+          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400">
+            {suppliers.length}
+          </span>
+        </button>
+
+        <button
+          id="subtab-btn-payables"
+          onClick={() => setSubTab("payables")}
+          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            subTab === "payables" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+          }`}
+        >
+          <CreditCard className="w-4 h-4" />
+          <span>Quản Lý Công Nợ NCC</span>
+          {liveStats.total_payable > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-400 font-mono">
+              {formatCurrency(liveStats.total_payable)}
+            </span>
+          )}
+        </button>
+
+        <button
+          id="subtab-btn-restock"
+          onClick={() => setSubTab("restock")}
+          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            subTab === "restock" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+          }`}
+        >
+          <AlertTriangle className="w-4 h-4" />
+          <span>Cảnh Báo Tồn Thiếu (Restock)</span>
+          {restockAlerts.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
+              {restockAlerts.length}
+            </span>
+          )}
+        </button>
+        <button
+          id="subtab-btn-lookup"
+          onClick={() => setSubTab("lookup")}
+          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            subTab === "lookup" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+          }`}
+        >
+          <Search className="w-4 h-4" />
+          <span>Tra Cứu Dòng Hàng</span>
+        </button>
+      </div>
+
+      {subTab === "lookup" && (
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+          <LineItemLookup sources={[
+            "po", "receipt",
+            ...((can && (can("sales.view") || can("warehouse.view"))) ? (["px", "so"] as const) : [])
+          ]} />
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* SUBTAB 1: PURCHASE ORDERS (PO)                            */}
+      {/* ========================================================= */}
+      {subTab === "orders" && (
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          {/* Controls Bar & Expanded Lifecycle Filters */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div className="flex items-center gap-3 flex-1 max-w-md">
+              <div className="relative w-full">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Tìm theo mã PO, tên NCC hoặc tên sản phẩm..."
+                  value={orderSearch}
+                  onChange={(e) => setOrderSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => exportPOListExcel(filteredOrders)}
+                title="Xuất Excel danh sách PO đang lọc (mỗi dòng hàng 1 dòng)"
+                className="shrink-0 px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileSpreadsheet className="w-4 h-4" /> Excel
+              </button>
+            </div>
+
+            {/* Filter Buttons including Customs and All Lifecycle Statuses */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+              {[
+                { id: "all", label: "Tất cả" },
+                { id: "open", label: "Đang mở" },
+                { id: "PENDING", label: "Chờ xác nhận" },
+                { id: "ORDERED", label: "Đã đặt hàng" },
+                { id: "CONFIRMED", label: "Đã xác nhận" },
+                { id: "SHIPPED", label: "Đang vận chuyển" },
+                { id: "CUSTOMS", label: "🛃 Hải quan & Thông quan" },
+                { id: "PARTIALLY_RECEIVED", label: "Nhập kho 1 phần" },
+                { id: "COMPLETED", label: "Đã nhập kho đủ" },
+                { id: "CANCELLED", label: "Đã huỷ" }
+              ].filter(f => f.id === "all" || f.id === "open" || (poCounts[f.id] || 0) > 0 || orderStatusFilter === f.id).map(f => (
+                <button
+                  key={f.id}
+                  onClick={() => setOrderStatusFilter(f.id)}
+                  className={`px-2.5 py-1.5 rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${
+                    orderStatusFilter === f.id
+                      ? "bg-orange-600 text-white shadow-xs"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                  }`}
+                >
+                  {f.label} ({poCounts[f.id] || 0})
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <label className="flex items-center gap-1 text-slate-500">Ngày đặt từ
+              <input type="date" value={orderFrom} onChange={(e) => setOrderFrom(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
+            </label>
+            <label className="flex items-center gap-1 text-slate-500">đến
+              <input type="date" value={orderTo} onChange={(e) => setOrderTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
+            </label>
+            <input value={orderInvoiceSearch} onChange={(e) => setOrderInvoiceSearch(e.target.value)} placeholder="Số hóa đơn..."
+              className="w-36 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono" />
+            <input value={orderProductSearch} onChange={(e) => setOrderProductSearch(e.target.value)} placeholder="Mã hàng..."
+              className="w-36 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono" />
+            {(orderFrom || orderTo || orderInvoiceSearch || orderProductSearch) && (
+              <button type="button" onClick={() => { setOrderFrom(""); setOrderTo(""); setOrderInvoiceSearch(""); setOrderProductSearch(""); }}
+                className="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer">
+                Xóa lọc
+              </button>
+            )}
+            <span className="text-slate-400">{filteredOrders.length} PO</span>
+          </div>
+
+          {/* Table */}
+          <div className="overflow-x-auto min-h-[380px] pb-16">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
+                  <th className="py-3 px-4 w-36">Mã Đơn PO</th>
+                  <th className="py-3 px-4 w-44">Ngày Đặt / Hạn Giao</th>
+                  <th className="py-3 px-4 min-w-[280px]">Chi Tiết Hàng Hóa Đặt Mua</th>
+                  <th className="py-3 px-4 text-right w-36">Tổng Tiền PO</th>
+                  <th className="py-3 px-4 w-36">Số HĐ / Ngày HĐ</th>
+                  <th className="py-3 px-4 text-center w-28">Thanh Toán</th>
+                  <th className="py-3 px-4 text-center w-44">Trạng Thái Đơn</th>
+                  <th className="py-3 px-4 text-center w-36">Thao Tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {filteredOrders.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-8 text-center text-slate-400">
+                      Không tìm thấy đơn đặt mua hàng nào phù hợp
+                    </td>
+                  </tr>
+                ) : (
+                  filteredOrders.map((po, idx) => {
+                    const totalAmt = parseFloat(po.total_amount) || 0;
+                    const paidAmt = parseFloat(po.amount_paid) || 0;
+                    const remainingAmt = Math.max(0, totalAmt - paidAmt);
+                    const isFullyPaid = paidAmt >= totalAmt && totalAmt > 0;
+                    const statusCfg = PO_STATUS_CONFIG[po.status] || {
+                      label: po.status,
+                      bg: "bg-slate-100 dark:bg-slate-800",
+                      text: "text-slate-700 dark:text-slate-300",
+                      border: "border-slate-200",
+                      icon: Clock
+                    };
+                    const StatusIcon = statusCfg.icon;
+                    const supp = suppliers.find((s: any) => s.id === po.supplier_id || s.name === po.supplier_name);
+
+                    return (
+                      <React.Fragment key={po.id}>
+                        {/* Row 1: Dedicated Supplier Header Row */}
+                        <tr className="bg-slate-100/80 dark:bg-slate-800/80 border-t-2 border-slate-200/90 dark:border-slate-700">
+                          <td colSpan={8} className="py-2 px-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div className="flex items-center gap-2">
+                                <span className="p-1 rounded-md bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400">
+                                  <Building2 className="w-3.5 h-3.5" />
+                                </span>
+                                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-500">
+                                  Nhà Cung Cấp:
+                                </span>
+                                <span className="font-bold text-slate-900 dark:text-white text-xs">
+                                  {po.supplier_name || "Chưa xác định"}
+                                </span>
+                                {supp?.short_name && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800/60">
+                                    {supp.short_name}
+                                  </span>
+                                )}
+                                {supp?.phone && (
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    • 📞 {supp.phone}
+                                  </span>
+                                )}
+                              </div>
+                              {po.notes && (
+                                <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1.5 italic max-w-lg truncate bg-white/70 dark:bg-slate-900/60 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                                  <span className="font-semibold not-italic text-slate-400">Ghi chú:</span>
+                                  <span>{po.notes}</span>
+                                </div>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+
+                        {/* Row 2: Main PO Details */}
+                        <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors border-b border-slate-200/60 dark:border-slate-800">
+                          {/* Col 1: PO Code */}
+                          <td className="py-3 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 align-top">
+                            <button
+                              onClick={() => setSelectedPODetail(po)}
+                              className="hover:underline flex items-center gap-1 cursor-pointer"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                              {po.po_code}
+                            </button>
+                          </td>
+
+                          {/* Col 2: Dates */}
+                          <td className="py-3 px-4 text-slate-500 whitespace-nowrap align-top">
+                            <div className="font-medium text-slate-700 dark:text-slate-300">
+                              📅 {formatDate(po.order_date)}
+                            </div>
+                            
+                            {editingDeliveryDateId === po.id ? (
+                              <div className="flex items-center gap-1 mt-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-orange-400 shadow-sm">
+                                <input
+                                  type="date"
+                                  value={tempDeliveryDate}
+                                  onChange={(e) => setTempDeliveryDate(e.target.value)}
+                                  className="text-[11px] font-bold py-0.5 px-1 border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-hidden"
+                                />
+                                <button
+                                  onClick={() => handleSaveDeliveryDate(po)}
+                                  title="Lưu ngày hẹn giao"
+                                  className="p-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                                >
+                                  <Check className="w-3 h-3" />
+                                </button>
+                                <button
+                                  onClick={() => setEditingDeliveryDateId(null)}
+                                  title="Hủy"
+                                  className="p-1 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-600 dark:text-slate-300 cursor-pointer"
+                                >
+                                  <X className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1 mt-0.5">
+                                <span className="text-[11px] font-semibold text-orange-600 dark:text-orange-400">
+                                  Hẹn: {formatDate(po.expected_delivery_date)}
+                                </span>
+                                <button
+                                  onClick={() => {
+                                    setEditingDeliveryDateId(po.id);
+                                    setTempDeliveryDate(po.expected_delivery_date ? dbDateVN(po.expected_delivery_date) : "");
+                                  }}
+                                  title="Chỉnh sửa ngày hẹn giao hàng"
+                                  className="p-1 rounded-md text-slate-400 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Col 3: Items Details - Compact by default, click to expand */}
+                          <td className="py-3 px-4 text-slate-600 dark:text-slate-300 align-top">
+                            {Array.isArray(po.items) && po.items.length > 0 ? (
+                              (() => {
+                                const isExpanded = !!expandedPOIds[po.id];
+                                if (po.items.length === 1) {
+                                  const it = po.items[0];
+                                  return (
+                                    <div className="flex items-start justify-between gap-3 text-[11px] bg-slate-50/70 dark:bg-slate-800/50 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800/80">
+                                      <div className="flex-1">
+                                        <div className="flex items-baseline gap-1.5 flex-wrap">
+                                          <span className="font-mono font-bold text-slate-700 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-700/60 px-1.5 py-0.5 rounded text-[10px]">
+                                            {it.product_code || "---"}
+                                          </span>
+                                          <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                            {cleanItemName(it.product_name)}
+                                          </span>
+                                          {it.specification && (
+                                            <span className="text-[10px] text-slate-500 italic">
+                                              ({it.specification})
+                                            </span>
+                                          )}
+                                        </div>
+                                      </div>
+                                      <div className="text-right shrink-0">
+                                        <span className="font-mono font-bold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/60 px-2 py-0.5 rounded-md border border-orange-200 dark:border-orange-800">
+                                          x{it.quantity} {it.unit || ""}
+                                        </span>
+                                        {parseFloat(it.unit_price) > 0 && (
+                                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                            @ {formatCurrency(it.unit_price)}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                if (!isExpanded) {
+                                  const it = po.items[0];
+                                  return (
+                                    <div className="space-y-1.5">
+                                      <div className="flex items-start justify-between gap-3 text-[11px] bg-slate-50/70 dark:bg-slate-800/50 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800/80">
+                                        <div className="flex-1">
+                                          <div className="flex items-baseline gap-1.5 flex-wrap">
+                                            <span className="font-mono font-bold text-slate-700 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-700/60 px-1.5 py-0.5 rounded text-[10px]">
+                                              {it.product_code || "---"}
+                                            </span>
+                                            <span className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-xs">
+                                              {cleanItemName(it.product_name)}
+                                            </span>
+                                            {it.specification && (
+                                              <span className="text-[10px] text-slate-500 italic">
+                                                ({it.specification})
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                          <span className="font-mono font-bold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/60 px-2 py-0.5 rounded-md border border-orange-200 dark:border-orange-800">
+                                            x{it.quantity} {it.unit || ""}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            toggleExpandPO(po.id);
+                                          }}
+                                          className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900/70 px-2 py-0.5 rounded-md border border-indigo-200 dark:border-indigo-800 transition-colors cursor-pointer"
+                                          title="Bấm để hiển thị đầy đủ tất cả mặt hàng trong đơn PO này"
+                                        >
+                                          <ChevronDown className="w-3 h-3" />
+                                          <span>+{po.items.length - 1} mặt hàng khác (Bấm xem đầy đủ)</span>
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedPODetail(po);
+                                          }}
+                                          className="text-[10px] text-slate-400 hover:text-indigo-600 hover:underline cursor-pointer"
+                                        >
+                                          Chi tiết PO ↗
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                }
+
+                                return (
+                                  <div className="space-y-1.5">
+                                    {po.items.map((it: any, i: number) => (
+                                      <div
+                                        key={i}
+                                        className="flex items-start justify-between gap-3 text-[11px] bg-slate-50/70 dark:bg-slate-800/50 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800/80"
+                                      >
+                                        <div className="flex-1">
+                                          <div className="flex items-baseline gap-1.5 flex-wrap">
+                                            <span className="font-mono font-bold text-slate-700 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-700/60 px-1.5 py-0.5 rounded text-[10px]">
+                                              {it.product_code || "---"}
+                                            </span>
+                                            <span className="font-semibold text-slate-900 dark:text-slate-100">
+                                              {cleanItemName(it.product_name)}
+                                            </span>
+                                            {it.specification && (
+                                              <span className="text-[10px] text-slate-500 italic">
+                                                ({it.specification})
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        <div className="text-right shrink-0">
+                                          <span className="font-mono font-bold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/60 px-2 py-0.5 rounded-md border border-orange-200 dark:border-orange-800">
+                                            x{it.quantity} {it.unit || ""}
+                                          </span>
+                                          {parseFloat(it.unit_price) > 0 && (
+                                            <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                              @ {formatCurrency(it.unit_price)}
+                                            </div>
+                                          )}
+                                        </div>
+                                      </div>
+                                    ))}
+                                    <div className="pt-0.5">
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleExpandPO(po.id);
+                                        }}
+                                        className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+                                      >
+                                        <ChevronUp className="w-3 h-3" />
+                                        <span>Thu gọn danh mục ({po.items.length} mặt hàng)</span>
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })()
+                            ) : (
+                              <span className="text-slate-400 italic">Không có chi tiết</span>
+                            )}
+                          </td>
+
+                          {/* Col 4: Total Amount */}
+                          <td className="py-3 px-4 font-mono font-bold text-right text-slate-900 dark:text-white whitespace-nowrap align-top">
+                            <div className="text-sm">{formatCurrency(totalAmt)}</div>
+                          </td>
+
+                          {/* Hóa đơn đầu vào (theo từng đợt nhận hàng) */}
+                          <td className="py-3 px-4 align-top whitespace-nowrap">
+                            {poSupplierInvoices(po).length === 0 ? (
+                              <span className="text-slate-400">—</span>
+                            ) : poSupplierInvoices(po).map((iv: any, ivIdx: number) => (
+                              <div key={ivIdx} className="leading-tight mb-1" title={iv.inbound_code ? `Phiếu nhập ${iv.inbound_code}` : undefined}>
+                                <div className="font-mono font-bold text-slate-800 dark:text-slate-100">{iv.invoice_no}</div>
+                                <div className="text-[10px] text-slate-500">{iv.invoice_date ? formatDate(iv.invoice_date) : ""}</div>
+                              </div>
+                            ))}
+                          </td>
+
+                          {/* Col 5: Payment */}
+                          <td className="py-3 px-4 text-center whitespace-nowrap align-top">
+                            {isFullyPaid ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                                <CheckCircle2 className="w-3 h-3" /> Tất toán
+                              </span>
+                            ) : paidAmt > 0 ? (
+                              <div>
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
+                                  Đã trả {Math.round((paidAmt / totalAmt) * 100)}%
+                                </span>
+                                <div className="text-[10px] text-rose-500 font-mono font-bold mt-0.5">
+                                  Còn: {formatCurrency(remainingAmt)}
+                                </div>
+                              </div>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+                                Chưa trả
+                              </span>
+                            )}
+                          </td>
+
+                          {/* Col 6: Status */}
+                          <td className="py-3 px-4 text-center whitespace-nowrap relative align-top">
+                            {activeStatusDropdownId === po.id && (
+                              <div
+                                className="fixed inset-0 z-30"
+                                onClick={() => setActiveStatusDropdownId(null)}
+                              />
+                            )}
+                            <div className="inline-block text-left relative z-40" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                onClick={() => setActiveStatusDropdownId(activeStatusDropdownId === po.id ? null : po.id)}
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1.5 border transition-all cursor-pointer shadow-2xs hover:scale-105 ${statusCfg.bg} ${statusCfg.text} ${statusCfg.border}`}
+                                title="Bấm để thay đổi trạng thái đơn hàng"
+                              >
+                                <StatusIcon className="w-3 h-3" />
+                                <span>{statusCfg.label}</span>
+                                <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+                              </button>
+
+                              {/* Dropdown Menu of All Statuses */}
+                              {activeStatusDropdownId === po.id && (
+                                <div
+                                  className={`absolute z-50 left-1/2 -translate-x-1/2 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
+                                    idx >= 1 ? "bottom-full mb-1.5" : "top-full mt-1.5"
+                                  }`}
+                                >
+                                  <div className="px-3 py-1.5 font-bold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+                                    Cập nhật trạng thái đơn:
+                                  </div>
+                                  {Object.entries(PO_STATUS_CONFIG).map(([key, cfg]) => {
+                                    const IconComp = cfg.icon;
+                                    return (
+                                      <button
+                                        key={key}
+                                        onClick={() => handleQuickChangeStatus(po, key)}
+                                        className={`w-full px-3 py-2 text-left flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer ${
+                                          po.status === key ? "bg-orange-50/50 dark:bg-orange-950/30 font-bold" : ""
+                                        }`}
+                                      >
+                                        <div className="flex items-center gap-2">
+                                          <span className={`p-1 rounded-md ${cfg.bg} ${cfg.text}`}>
+                                            <IconComp className="w-3 h-3" />
+                                          </span>
+                                          <div>
+                                            <span className="text-slate-800 dark:text-slate-200">{cfg.label}</span>
+                                            {cfg.isImport && (
+                                              <span className="ml-1 text-[9px] px-1 rounded bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-400 font-bold">
+                                                Nhập khẩu
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                        {po.status === key && <Check className="w-3.5 h-3.5 text-orange-600" />}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+
+                          {/* Col 7: Actions */}
+                          <td className="py-3 px-4 text-center whitespace-nowrap align-top">
+                            <div className="flex items-center justify-center gap-1.5">
+                              {/* View / Print button */}
+                              <button
+                                onClick={() => setSelectedPODetail(po)}
+                                title="Xem & In Đơn Đặt Hàng"
+                                className="p-1.5 rounded-lg text-slate-600 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                              >
+                                <Printer className="w-4 h-4" />
+                              </button>
+
+                              {/* Edit PO button */}
+                              {po.status !== "COMPLETED" && po.status !== "CANCELLED" && (
+                                <button
+                                  onClick={() => handleEditPO(po)}
+                                  title="Hiệu chỉnh đơn PO (thay đổi số lượng, thêm/bớt mặt hàng, sửa giá, ngày giao)"
+                                  className="p-1.5 rounded-lg text-slate-600 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                                >
+                                  <Edit2 className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              {/* Receive to Warehouse */}
+                              {po.status === "CANCELLED" ? null : (po.status === "PENDING" || po.status === "DRAFT") ? (
+                                <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 px-1.5" title="PO cần được xác nhận (duyệt) trước khi nhập kho">
+                                  Chờ duyệt để nhập kho
+                                </span>
+                              ) : po.status !== "COMPLETED" ? (
+                                <button
+                                  onClick={() => handleReceiveToWarehouse(po)}
+                                  className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs flex items-center gap-1 cursor-pointer transition-all hover:scale-105"
+                                  title="Nhập kho hàng NCC đã giao: khai báo số lô, hạn dùng, số lượng thực nhận (nhập được nhiều lần)"
+                                >
+                                  <ArrowDownLeft className="w-3.5 h-3.5" /> {po.status === "PARTIALLY_RECEIVED" ? "Nhập tiếp" : "Nhập Kho"}
+                                </button>
+                              ) : (
+                                <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
+                                  {po.inbound_transaction_code || "Đã vào kho"}
+                                </span>
+                              )}
+
+                              {/* Record Payment */}
+                              {remainingAmt > 0 && (
+                                <button
+                                  onClick={() => openPaymentModal(po)}
+                                  title="Ghi nhận thanh toán công nợ"
+                                  className="p-1.5 rounded-lg text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                                >
+                                  <DollarSign className="w-4 h-4" />
+                                </button>
+                              )}
+
+                              {/* Delete PO */}
+                              <button
+                                onClick={() => handleDeletePO(po)}
+                                title="Xóa đơn hàng"
+                                className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      </React.Fragment>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* SUBTAB 2: PURCHASE REQUESTS (PR)                          */}
+      {/* ========================================================= */}
+      {subTab === "pr" && (
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                Luồng Đề Xuất Mua Hàng (Purchase Requests - PR)
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Tiếp nhận yêu cầu mua vật tư, thiết bị phát sinh từ Kho & Vận Hành hoặc Kinh Doanh và chuyển đổi 1-click thành Đơn Đặt Mua (PO).
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Tìm mã PR, sản phẩm, người gửi..."
+                  value={prSearch}
+                  onChange={(e) => setPRSearch(e.target.value)}
+                  className="pl-9 pr-4 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+              <button
+                onClick={handleOpenNewPRModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> Tạo PR Mới
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedPRIdsForConsolidate([]);
+                  setSelectedItemKeysForConsolidate([]);
+                  const pendingPRs = purchaseRequests.filter(
+                    (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
+                  );
+                  setExpandedPRKeys(pendingPRs.map((pr) => pr.workflow_code || String(pr.id)));
+                  if (suppliers.length > 0) setConsolidateSupplierId(suppliers[0].id);
+                  setIsConsolidateModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer transition-all"
+                title="Gom các PR cùng Nhà cung cấp để lên 1 Đơn đặt mua (PO) tổng hợp (Yêu cầu 4)"
+              >
+                <PackageCheck className="w-3.5 h-3.5" />
+                Gom PR Lên PO Tổng
+              </button>
+            </div>
+          </div>
+
+          {/* PR Filter Tabs */}
+          <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
+            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
+              <button
+                type="button"
+                onClick={() => setPRStatusFilter("all")}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  prStatusFilter === "all"
+                    ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs font-bold"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                Tất Cả ({prCounts.all})
+              </button>
+              <button
+                type="button"
+                onClick={() => setPRStatusFilter("pending")}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  prStatusFilter === "pending"
+                    ? "bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs font-bold"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                ⏳ Chờ Xử Lý ({prCounts.pending})
+              </button>
+              <button
+                type="button"
+                onClick={() => setPRStatusFilter("partial")}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  prStatusFilter === "partial"
+                    ? "bg-white dark:bg-slate-900 text-purple-600 dark:text-purple-400 shadow-xs font-bold"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                ⚡ Đã Chuyển PO 1 Phần ({prCounts.partial})
+              </button>
+              <button
+                type="button"
+                onClick={() => setPRStatusFilter("completed")}
+                className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                  prStatusFilter === "completed"
+                    ? "bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs font-bold"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                ✅ Đã Hoàn Thành PO ({prCounts.completed})
+              </button>
+              {prCounts.closed > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setPRStatusFilter("closed")}
+                  className={`px-3 py-1.5 rounded-lg font-semibold transition-all cursor-pointer ${
+                    prStatusFilter === "closed"
+                      ? "bg-white dark:bg-slate-900 text-rose-600 dark:text-rose-400 shadow-xs font-bold"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  ⛔ Từ chối / Huỷ ({prCounts.closed})
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
+                  <th className="py-3 px-4">Mã Đề Xuất</th>
+                  <th className="py-3 px-4">Bộ Phận Yêu Cầu</th>
+                  <th className="py-3 px-4">Nội Dung / Mặt Hàng Đề Xuất</th>
+                  <th className="py-3 px-4 text-center">Ưu Tiên</th>
+                  <th className="py-3 px-4">Hạn Cần Hàng</th>
+                  <th className="py-3 px-4 text-center">Trạng Thái PO</th>
+                  <th className="py-3 px-4 text-center">Thao Tác Xử Lý</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {filteredPRs.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} className="py-8 text-center text-slate-400">
+                      Không có đề xuất mua hàng nào trong danh sách
+                    </td>
+                  </tr>
+                ) : (
+                  filteredPRs.map((pr) => {
+                    const summary = getPRPOSummary(pr);
+                    return (
+                      <tr key={pr.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3.5 px-4 font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                          <button
+                            onClick={() => setSelectedPRDetail(pr)}
+                            className="hover:underline flex items-center gap-1 cursor-pointer"
+                            title="Bấm để xem chi tiết đề xuất mua hàng & trạng thái từng mã hàng"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            {pr.workflow_code}
+                          </button>
+                        </td>
+                        <td className="py-3.5 px-4">
+                          {(() => {
+                            const isStockPR = Boolean(
+                              (pr.workflow_code && pr.workflow_code.includes("STOCK")) ||
+                              (pr.title && (pr.title.includes("STOCK") || pr.title.includes("LƯU TRỮ") || pr.title.includes("DỰ PHÒNG"))) ||
+                              pr.customer_name === "STOCK"
+                            );
+                            const displayRequester = isStockPR
+                              ? "Bộ Phận Kho Vận"
+                              : (pr.requester_name === "Nguyễn Đăng Khánh" ? "Phòng Kinh Doanh" : (pr.requester_name || "Phòng Kinh Doanh"));
+                            const displayDept = isStockPR ? "Kho Vận" : (pr.requester_dept || "Kinh Doanh");
+                            return (
+                              <>
+                                <div className="font-bold text-slate-900 dark:text-white">{displayRequester}</div>
+                                <div className="text-[10px] text-slate-500">{displayDept}</div>
+                              </>
+                            );
+                          })()}
+                        </td>
+                        <td className="py-3.5 px-4 max-w-md">
+                          <div className="font-bold text-slate-900 dark:text-white">
+                            <button
+                              type="button"
+                              onClick={() => setSelectedPRDetail(pr)}
+                              className="text-left hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline cursor-pointer"
+                              title="Bấm để mở xem chi tiết đầy đủ đề xuất này"
+                            >
+                              {pr.title}
+                            </button>
+                          </div>
+                          {(() => {
+                            let itemsList: any[] = [];
+                            try {
+                              if (pr.results_summary && pr.results_summary.startsWith("[")) {
+                                itemsList = JSON.parse(pr.results_summary);
+                              }
+                            } catch (e) {}
+
+                            if (itemsList.length === 0) {
+                              return pr.product_info ? (
+                                <div className="text-[11px] text-slate-600 dark:text-slate-400 font-mono font-medium mt-0.5">
+                                  {pr.product_info}
+                                </div>
+                              ) : null;
+                            }
+
+                            const isExpanded = !!expandedPRIds[pr.id];
+
+                            if (itemsList.length === 1) {
+                              const it = itemsList[0];
+                              const itemPO = getItemPOInfo(pr, it, 0);
+                              return (
+                                <div className="mt-1 flex items-center flex-wrap gap-1.5 text-[11px]">
+                                  <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/70 px-1.5 py-0.5 rounded text-[10px]">
+                                    {it.product_code || "MÃ MỚI"}
+                                  </span>
+                                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                    {it.product_name}
+                                  </span>
+                                  {it.specification && (
+                                    <span className="text-slate-500 dark:text-slate-400 text-[10px] italic">
+                                      ({it.specification})
+                                    </span>
+                                  )}
+                                  <span className="font-bold text-orange-600 dark:text-orange-400 font-mono text-[11px]">
+                                    SL: {it.quantity} {it.unit || "Cái"}
+                                  </span>
+                                  {/* Line-item PO Tag */}
+                                  {itemPO.hasPO ? (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (itemPO.linkedPO) setSelectedPODetail(itemPO.linkedPO);
+                                      }}
+                                      className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 flex items-center gap-1 cursor-pointer"
+                                      title={`Mã hàng này đã tạo trong đơn PO ${itemPO.poCode}. Bấm để xem chi tiết đơn PO`}
+                                    >
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                                      <span>PO: {itemPO.poCode}</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-amber-500 shrink-0" />
+                                      <span>Chưa tạo PO</span>
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            }
+
+                            // Multiple items (> 1)
+                            if (!isExpanded) {
+                              const it0 = itemsList[0];
+                              return (
+                                <div className="mt-1 space-y-1">
+                                  <div className="flex items-center flex-wrap gap-1.5 text-[11px]">
+                                    <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/70 px-1.5 py-0.5 rounded text-[10px]">
+                                      {it0.product_code || "MÃ MỚI"}
+                                    </span>
+                                    <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-[220px]">
+                                      {it0.product_name}
+                                    </span>
+                                    <span className="font-bold text-orange-600 dark:text-orange-400 font-mono text-[11px]">
+                                      SL: {it0.quantity} {it0.unit || "Cái"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        toggleExpandPR(pr.id);
+                                      }}
+                                      className="inline-flex items-center gap-1 text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:text-indigo-800 dark:hover:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/70 hover:bg-indigo-100 dark:hover:bg-indigo-900/70 px-2 py-0.5 rounded-md border border-indigo-200 dark:border-indigo-800 transition-colors cursor-pointer"
+                                      title="Bấm để xem đầy đủ toàn bộ danh mục mặt hàng đề xuất"
+                                    >
+                                      <ChevronDown className="w-3 h-3" />
+                                      <span>+{itemsList.length - 1} mặt hàng khác (Bấm xem đầy đủ)</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setSelectedPRDetail(pr);
+                                      }}
+                                      className="text-[10px] text-slate-400 hover:text-indigo-600 hover:underline cursor-pointer"
+                                    >
+                                      Chi tiết PR ↗
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            }
+
+                            // isExpanded === true
+                            return (
+                              <div className="space-y-1.5 mt-1.5">
+                                {itemsList.map((it: any, idx: number) => {
+                                  const itemPO = getItemPOInfo(pr, it, idx);
+                                  return (
+                                    <div
+                                      key={idx}
+                                      className="flex items-center flex-wrap gap-1.5 text-[11px] bg-slate-50 dark:bg-slate-800/60 p-1.5 rounded-lg border border-slate-200/60 dark:border-slate-700/60"
+                                    >
+                                      <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/70 px-1.5 py-0.5 rounded text-[10px]">
+                                        {it.product_code || "MÃ MỚI"}
+                                      </span>
+                                      <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                        {it.product_name}
+                                      </span>
+                                      {it.specification && (
+                                        <span className="text-slate-500 dark:text-slate-400 text-[10px] bg-white dark:bg-slate-900 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700">
+                                          Qui cách: {it.specification}
+                                        </span>
+                                      )}
+                                      <span className="font-bold text-orange-600 dark:text-orange-400 font-mono text-[11px]">
+                                        SL: {it.quantity} {it.unit || "Cái"}
+                                      </span>
+                                      {/* Line-item PO Tag */}
+                                      {itemPO.hasPO ? (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (itemPO.linkedPO) setSelectedPODetail(itemPO.linkedPO);
+                                          }}
+                                          className="ml-auto font-mono text-[10px] font-bold px-2 py-0.5 rounded-md bg-emerald-100 dark:bg-emerald-950/90 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 hover:bg-emerald-200 flex items-center gap-1 cursor-pointer"
+                                          title={`Mã hàng này đã tạo trong đơn PO ${itemPO.poCode}. Bấm để xem chi tiết đơn PO`}
+                                        >
+                                          <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                                          <span>PO: {itemPO.poCode}</span>
+                                        </button>
+                                      ) : (
+                                        <span className="ml-auto text-[10px] font-bold px-2 py-0.5 rounded-md bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1">
+                                          <Clock className="w-3 h-3 text-amber-500 shrink-0" />
+                                          <span>Chưa tạo PO</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                                <div className="pt-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleExpandPR(pr.id);
+                                    }}
+                                    className="inline-flex items-center gap-1 text-[10px] font-bold text-slate-600 dark:text-slate-300 hover:text-slate-800 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+                                  >
+                                    <ChevronUp className="w-3 h-3" />
+                                    <span>Thu gọn danh mục ({itemsList.length} mặt hàng)</span>
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          {pr.description && (
+                            <div className="text-[10px] text-slate-400 truncate mt-1">
+                              Lý do: {pr.description}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-center">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            pr.priority === "URGENT"
+                              ? "bg-rose-50 text-rose-700 border border-rose-200"
+                              : pr.priority === "HIGH"
+                              ? "bg-amber-50 text-amber-700 border border-amber-200"
+                              : "bg-blue-50 text-blue-700 border border-blue-200"
+                          }`}>
+                            {pr.priority === "URGENT" ? "Khẩn cấp" : pr.priority === "HIGH" ? "Ưu tiên cao" : "Bình thường"}
+                          </span>
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-500 whitespace-nowrap">
+                          {formatDate(pr.due_date)}
+                        </td>
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          {summary.isFullyConverted ? (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border border-emerald-200 flex items-center gap-1 justify-center">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                              <span>Đã Hoàn Thành PO</span>
+                            </span>
+                          ) : summary.isPartiallyConverted ? (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-purple-50 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-200 flex items-center gap-1 justify-center" title={`${summary.convertedCount}/${summary.totalItems} mặt hàng đã lập PO`}>
+                              <Sparkles className="w-3 h-3 text-purple-500" />
+                              <span>Đã Chuyển PO 1 Phần ({summary.convertedCount}/{summary.totalItems})</span>
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 flex items-center gap-1 justify-center">
+                              <Clock className="w-3 h-3 text-slate-400" />
+                              <span>Chờ Xử Lý</span>
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                          {summary.isFullyConverted ? (
+                            summary.linkedPOs.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedPODetail(summary.linkedPOs[0])}
+                                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer transition-colors"
+                                title={`Đề xuất đã lập đơn PO ${summary.poCodes.join(", ")}. Bấm để xem chi tiết`}
+                              >
+                                <Eye className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                                <span>Xem PO ({summary.poCodes.join(", ")})</span>
+                              </button>
+                            ) : (
+                              <span className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-400 dark:text-slate-500 border border-slate-200 dark:border-slate-700 flex items-center gap-1.5 mx-auto">
+                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                <span>Đã Lập Đủ PO</span>
+                              </span>
+                            )
+                          ) : summary.isPartiallyConverted ? (
+                            <div className="flex flex-col items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleConvertPRToPO(pr)}
+                                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer transition-colors"
+                                title={`Còn ${summary.pendingCount} mặt hàng chưa tạo PO. Bấm để lập đơn PO`}
+                              >
+                                <ShoppingCart className="w-3.5 h-3.5" /> Lên PO ({summary.pendingCount} mã còn lại)
+                              </button>
+                              {summary.linkedPOs.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPODetail(summary.linkedPOs[0])}
+                                  className="text-[10px] text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer font-mono font-medium"
+                                  title="Bấm để xem đơn PO đã lập trước đó"
+                                >
+                                  <Eye className="w-3 h-3" /> Đã có: {summary.poCodes.join(", ")}
+                                </button>
+                              )}
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => handleConvertPRToPO(pr)}
+                              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer transition-colors"
+                            >
+                              <ShoppingCart className="w-3.5 h-3.5" /> Chuyển Thành PO
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* SUBTAB 3: SUPPLIERS DIRECTORY & RATINGS                   */}
+      {/* ========================================================= */}
+      {subTab === "suppliers" && (
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                Hồ Sơ & Đánh Giá Các Nhà Cung Cấp / Hãng Sản Xuất
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của TBRs.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Tìm NCC, mã, người liên hệ..."
+                  value={supplierSearch}
+                  onChange={(e) => setSupplierSearch(e.target.value)}
+                  className="pl-9 pr-4 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={handleSyncSuppliersFromCatalog}
+                disabled={isSyncingCatalogSuppliers}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900 transition-colors cursor-pointer disabled:opacity-50"
+                title="Tự động đồng bộ Nhà cung cấp / Hãng sản xuất và Danh mục hàng & Giá mua từ Danh mục sản phẩm"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 ${isSyncingCatalogSuppliers ? "animate-spin" : ""}`} />
+                {isSyncingCatalogSuppliers ? "Đang đồng bộ..." : "Đồng Bộ Từ Danh Mục HH"}
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadSupplierTemplate}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                title="Tải file mẫu Excel danh mục Nhà Cung Cấp"
+              >
+                <Download className="w-3.5 h-3.5 text-blue-500" /> Tải Mẫu Excel
+              </button>
+
+              <label className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-colors cursor-pointer">
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> Nạp Excel NCC
+                <input
+                  ref={supplierFileInputRef}
+                  type="file"
+                  accept=".xlsx, .xls, .csv"
+                  onChange={handleSupplierExcelUpload}
+                  className="hidden"
+                />
+              </label>
+
+              <button
+                onClick={() => {
+                  setSupplierForm({
+                    id: null,
+                    supplier_code: `NCC-TBR-${Date.now().toString().slice(-4)}`,
+                    name: "",
+                    short_name: "",
+                    contact_person: "",
+                    phone: "",
+                    email: "",
+                    address: "",
+                    product_lines: "",
+                    payment_terms: "Công nợ 30 ngày",
+                    rating: 5
+                  });
+                  setIsSupplierModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> Thêm NCC Mới
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
+                  <th className="py-3 px-4">Mã NCC</th>
+                  <th className="py-3 px-4">Tên Nhà Cung Cấp / Đại Diện</th>
+                  <th className="py-3 px-4">Đại Diện Liên Hệ</th>
+                  <th className="py-3 px-4">Ngành Hàng Cung Ứng</th>
+                  <th className="py-3 px-4">Điều Khoản Thanh Toán</th>
+                  <th className="py-3 px-4 text-center">Doanh Số Đã Đặt</th>
+                  <th className="py-3 px-4 text-center">Đánh Giá</th>
+                  <th className="py-3 px-4 text-center">Thao Tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {filteredSuppliers.map((s) => (
+                  <tr key={s.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                    <td className="py-3.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">{s.supplier_code}</td>
+                    <td className="py-3.5 px-4">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-slate-900 dark:text-white text-sm">{s.name}</span>
+                        {s.short_name && (
+                          <span className="px-2 py-0.5 rounded text-[10px] font-bold font-mono bg-orange-100 dark:bg-orange-950/80 text-orange-700 dark:text-orange-300 border border-orange-300 dark:border-orange-800" title="Tên viết tắt trên báo giá">
+                            🏷️ {s.short_name}
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">{s.address}</div>
+                      <div className="flex items-center gap-2 mt-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSupplierCatalog(s)}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 dark:hover:bg-indigo-900 border border-indigo-200 dark:border-indigo-800 transition-all cursor-pointer shadow-2xs hover:scale-[1.02]"
+                          title="Xem danh mục hàng hóa, bảng giá mua & lịch sử điều chỉnh giá"
+                        >
+                          <Package className="w-3.5 h-3.5 text-indigo-500" />
+                          <span>Danh mục hàng & Giá mua</span>
+                          <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-indigo-200/80 dark:bg-indigo-800 text-indigo-800 dark:text-indigo-200 font-mono font-bold">
+                            {s.product_count || 0} SP
+                          </span>
+                        </button>
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <div className="font-semibold text-slate-800 dark:text-slate-200">{s.contact_person}</div>
+                      <div className="text-[10px] text-slate-400">{s.phone} • {s.email}</div>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium">
+                        {s.product_lines}
+                      </span>
+                    </td>
+                    <td className="py-3.5 px-4 text-slate-600 dark:text-slate-400">{s.payment_terms}</td>
+                    <td className="py-3.5 px-4 text-center">
+                      <div className="font-mono font-bold text-slate-900 dark:text-white">
+                        {formatCurrency(s.total_spend || 0)}
+                      </div>
+                      <div className="text-[10px] text-slate-400">{s.order_count || 0} đơn PO</div>
+                    </td>
+                    <td className="py-3.5 px-4 text-center">
+                      <div className="font-bold text-amber-500 text-sm">
+                        {"★".repeat(s.rating || 5)}
+                      </div>
+                      <div className="text-[10px] text-slate-400">{s.rating || 5}/5 sao</div>
+                    </td>
+                    <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenSupplierCatalog(s)}
+                          className="p-1.5 rounded-lg text-slate-600 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                          title="Xem danh mục hàng & giá mua NCC"
+                        >
+                          <Package className="w-3.5 h-3.5 text-indigo-500" />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSupplierForm({ ...s });
+                            setIsSupplierModalOpen(true);
+                          }}
+                          className="p-1.5 rounded-lg text-slate-600 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                          title="Sửa thông tin NCC"
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteSupplier(s)}
+                          className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                          title="Xóa NCC"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* SUBTAB 4: ACCOUNTS PAYABLE (CÔNG NỢ NCC)                  */}
+      {/* ========================================================= */}
+      {subTab === "payables" && (
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                Theo Dõi & Quản Lý Công Nợ Nhà Cung Cấp
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Ghi nhận các khoản thanh toán, theo dõi thời hạn tín dụng (payment terms) và tiến độ chi trả tiền hàng.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPayableFilter("all")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer ${
+                  payableFilter === "all" ? "bg-orange-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600"
+                }`}
+              >
+                Tất cả đơn PO
+              </button>
+              <button
+                onClick={() => setPayableFilter("debt")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer ${
+                  payableFilter === "debt" ? "bg-rose-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600"
+                }`}
+              >
+                Còn nợ phải trả ({orders.filter(o => (parseFloat(o.total_amount) || 0) > (parseFloat(o.amount_paid) || 0)).length})
+              </button>
+              <button
+                onClick={() => setPayableFilter("paid")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer ${
+                  payableFilter === "paid" ? "bg-emerald-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600"
+                }`}
+              >
+                Đã tất toán xong
+              </button>
+            </div>
+          </div>
+
+          {/* Bộ lọc: NCC, thời gian đặt, mã PO / mã hàng */}
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <select
+              value={payableSupplier}
+              onChange={(e) => setPayableSupplier(e.target.value)}
+              className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white max-w-[260px]"
+            >
+              <option value="all">-- Tất cả NCC --</option>
+              {payableSuppliers.map(sn => <option key={sn} value={sn}>{sn}</option>)}
+            </select>
+            <label className="flex items-center gap-1 text-slate-500">Từ
+              <input type="date" value={payableFrom} onChange={(e) => setPayableFrom(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+            </label>
+            <label className="flex items-center gap-1 text-slate-500">Đến
+              <input type="date" value={payableTo} onChange={(e) => setPayableTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+            </label>
+            <input
+              value={payableSearch}
+              onChange={(e) => setPayableSearch(e.target.value)}
+              placeholder="Mã PO, tên NCC, mã hàng..."
+              className="flex-1 min-w-[180px] p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+            />
+            {(payableSupplier !== "all" || payableFrom || payableTo || payableSearch) && (
+              <button type="button" onClick={() => { setPayableSupplier("all"); setPayableFrom(""); setPayableTo(""); setPayableSearch(""); }} className="px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 cursor-pointer">
+                Xóa lọc
+              </button>
+            )}
+          </div>
+
+          {(() => {
+            const sel = filteredPayables.filter(po => selectedPayPOs.includes(po.id));
+            const sum = filteredPayables.reduce((acc, po) => {
+              const t = parseFloat(po.total_amount) || 0; const pd = parseFloat(po.amount_paid) || 0;
+              return { total: acc.total + t, paid: acc.paid + pd, remaining: acc.remaining + Math.max(0, t - pd) };
+            }, { total: 0, paid: 0, remaining: 0 });
+            return (
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                <div className="flex flex-wrap gap-4">
+                  <span>Tổng PO: <b className="font-mono">{formatCurrency(sum.total)}</b></span>
+                  <span>Đã trả: <b className="font-mono text-emerald-600">{formatCurrency(sum.paid)}</b></span>
+                  <span>Còn nợ: <b className="font-mono text-rose-600">{formatCurrency(sum.remaining)}</b></span>
+                </div>
+                <button
+                  type="button"
+                  disabled={sel.length === 0}
+                  onClick={() => openMultiPaymentModal(sel)}
+                  className="px-3 py-1.5 rounded-xl font-bold bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 cursor-pointer flex items-center gap-1.5"
+                  title="Chọn các PO cùng nhà cung cấp ở cột đầu để chi chung một phiếu"
+                >
+                  <DollarSign className="w-3.5 h-3.5" /> Chi tiền cho {sel.length} PO đã chọn
+                </button>
+              </div>
+            );
+          })()}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
+                  <th className="py-3 px-2 w-8"></th>
+                  <th className="py-3 px-4">Mã Đơn PO</th>
+                  <th className="py-3 px-4">Nhà Cung Cấp</th>
+                  <th className="py-3 px-4">Ngày Đặt Hàng</th>
+                  <th className="py-3 px-4">HĐ Đầu Vào</th>
+                  <th className="py-3 px-4 text-right">Tổng Tiền PO</th>
+                  <th className="py-3 px-4 text-right">Đã Thanh Toán</th>
+                  <th className="py-3 px-4 text-right">Còn Nợ Phải Trả</th>
+                  <th className="py-3 px-4 text-center">Trạng Thái Công Nợ</th>
+                  <th className="py-3 px-4 text-center">Thao Tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {filteredPayables.length === 0 && (
+                  <tr><td colSpan={10} className="py-8 text-center text-slate-400">Không có PO nào phù hợp bộ lọc.</td></tr>
+                )}
+                {filteredPayables.map((po) => {
+                  const total = parseFloat(po.total_amount) || 0;
+                  const paid = parseFloat(po.amount_paid) || 0;
+                  const remaining = Math.max(0, total - paid);
+                  const isPaid = remaining <= 0.5;
+                  const checked = selectedPayPOs.includes(po.id);
+                  let invs: any[] = po.supplier_invoices;
+                  if (typeof invs === "string") { try { invs = JSON.parse(invs); } catch { invs = []; } }
+                  invs = Array.isArray(invs) ? invs : [];
+
+                  return (
+                    <tr key={po.id} className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors ${checked ? "bg-emerald-50/60 dark:bg-emerald-950/20" : ""}`}>
+                      <td className="py-3.5 px-2 text-center">
+                        {!isPaid && (
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => setSelectedPayPOs(prev => e.target.checked ? [...prev, po.id] : prev.filter(x => x !== po.id))}
+                            className="w-4 h-4 accent-emerald-600 cursor-pointer"
+                          />
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">
+                        {po.po_code}
+                      </td>
+                      <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                        {po.supplier_name}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-500">
+                        {formatDate(po.order_date)}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono text-slate-600 dark:text-slate-300">
+                        {invs.length > 0 ? invs.map((iv: any) => iv.invoice_no).filter(Boolean).join(", ") : <span className="text-slate-400">—</span>}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-right text-slate-900 dark:text-white">
+                        {formatCurrency(total)}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-right text-emerald-600 dark:text-emerald-400">
+                        {formatCurrency(paid)}
+                      </td>
+                      <td className="py-3.5 px-4 font-mono font-bold text-right text-rose-600 dark:text-rose-400">
+                        {formatCurrency(remaining)}
+                      </td>
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                        {isPaid ? (
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border border-emerald-200">
+                            ✓ Đã tất toán
+                          </span>
+                        ) : paid > 0 ? (
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 border border-blue-200">
+                            Thanh toán 1 phần
+                          </span>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-400 border border-rose-200">
+                            Chưa thanh toán
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {!isPaid && (
+                            <button
+                              onClick={() => openPaymentModal(po)}
+                              className="px-3 py-1 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <DollarSign className="w-3.5 h-3.5" /> Chi tiền
+                            </button>
+                          )}
+                          {paid > 0 && (
+                            <button
+                              onClick={() => { setPaymentHistoryPO(po); fetchPoPayments(); }}
+                              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                              title="Xem / sửa / hủy các khoản đã chi"
+                            >
+                              Lịch sử chi
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Lịch sử chi tiền của một PO: sửa (= hủy + ghi lại) hoặc hủy khoản chi */}
+      {paymentHistoryPO && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full p-5 space-y-3 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                Lịch sử chi tiền — <span className="font-mono text-orange-600">{paymentHistoryPO.po_code}</span> · {paymentHistoryPO.supplier_name}
+              </h3>
+              <button onClick={() => setPaymentHistoryPO(null)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left">
+                <thead className="text-slate-500">
+                  <tr>
+                    <th className="p-1.5">Ngày chi</th>
+                    <th className="p-1.5 text-right">Số tiền</th>
+                    <th className="p-1.5">Phương thức</th>
+                    <th className="p-1.5">Phiếu chi / UNC</th>
+                    <th className="p-1.5">Người ghi</th>
+                    <th className="p-1.5"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {poPayments.filter(pp => pp.po_id === paymentHistoryPO.id).length === 0 && (
+                    <tr><td colSpan={6} className="p-4 text-center text-slate-400">Chưa có khoản chi nào được ghi trong sổ (khoản chi cũ chỉ còn trong ghi chú PO).</td></tr>
+                  )}
+                  {poPayments.filter(pp => pp.po_id === paymentHistoryPO.id).map(pp => (
+                    <tr key={pp.id} className={pp.voided_at ? "opacity-50 line-through" : ""}>
+                      <td className="p-1.5 font-mono">{formatDate(pp.payment_date)}</td>
+                      <td className="p-1.5 text-right font-mono font-bold">{formatCurrency(Number(pp.amount) || 0)}</td>
+                      <td className="p-1.5">{pp.method}</td>
+                      <td className="p-1.5 font-mono">{[pp.voucher_code, pp.reference_doc].filter(Boolean).join(" · ") || "—"}</td>
+                      <td className="p-1.5">{pp.created_by || ""}</td>
+                      <td className="p-1.5 text-right whitespace-nowrap no-underline">
+                        {pp.voided_at ? (
+                          <span className="text-[10px] text-rose-500" title={pp.void_reason || ""}>Đã hủy ({pp.voided_by})</span>
+                        ) : (
+                          <span className="inline-flex gap-1">
+                            <button onClick={() => handleVoidPayment(pp, true)} className="px-2 py-0.5 rounded bg-sky-600 text-white font-bold cursor-pointer">Sửa</button>
+                            <button onClick={() => handleVoidPayment(pp, false)} className="px-2 py-0.5 rounded bg-rose-600 text-white font-bold cursor-pointer">Hủy</button>
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="text-[11px] text-slate-400">Sửa = hủy khoản chi cũ (giữ lại lịch sử) rồi nhập lại khoản đúng. Công nợ PO được tính lại ngay.</p>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* SUBTAB 5: RESTOCK ALERTS & SUGGESTIONS                    */}
+      {/* ========================================================= */}
+      {subTab === "restock" && (
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <div>
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="w-4 h-4" />
+                Cảnh Báo Tồn Kho Dưới Định Mức & Gợi Ý Bổ Sung (Restock)
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Các sản phẩm đang có số lượng khả dụng nhỏ hơn hoặc bằng định mức an toàn (Min Stock). Click để tạo đơn PO mua bù ngay lập tức.
+              </p>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
+                  <th className="py-3 px-4">Mã Sản Phẩm</th>
+                  <th className="py-3 px-4">Tên Hàng Hóa / Sinh Phẩm</th>
+                  <th className="py-3 px-4">Vị Trí Lưu Kho</th>
+                  <th className="py-3 px-4 text-center">Tồn Hiện Tại</th>
+                  <th className="py-3 px-4 text-center">Định Mức Tối Thiểu</th>
+                  <th className="py-3 px-4 text-center">Trạng Thái Thiếu</th>
+                  <th className="py-3 px-4">Hãng Sản Xuất Đề Xuất</th>
+                  <th className="py-3 px-4 text-right">Đơn Giá Nhập Ước Tính</th>
+                  <th className="py-3 px-4 text-center">Thao Tác</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {restockAlerts.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-8 text-center text-slate-400">
+                      Tất cả các sản phẩm đều đang đạt mức tồn kho an toàn!
+                    </td>
+                  </tr>
+                ) : (
+                  restockAlerts.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                      <td className="py-3.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">{item.product_code}</td>
+                      <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                        {item.product_name}
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-500">{item.warehouse_location}</td>
+                      <td className="py-3.5 px-4 text-center font-mono font-black text-rose-600 dark:text-rose-400 text-sm">
+                        {item.quantity_on_hand} {item.unit || "Cái"}
+                      </td>
+                      <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-500">
+                        {item.min_stock_level} {item.unit || "Cái"}
+                      </td>
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-400 border border-amber-200">
+                          ⚠️ Chạm ngưỡng Min
+                        </span>
+                      </td>
+                      <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300 font-medium">
+                        {item.manufacturer || "Bioer Technology"}
+                      </td>
+                      <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900 dark:text-white">
+                        {formatCurrency(item.cost_price || 0)}
+                      </td>
+                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                        <button
+                          onClick={() => handleRestockToPO(item)}
+                          className="px-3 py-1 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer"
+                        >
+                          <Plus className="w-3.5 h-3.5" /> Lập PO Mua Bổ Sung
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 1: CREATE / EDIT PURCHASE ORDER (PO)                */}
+      {/* Một dòng hàng = một hàng của bảng (gọn như Excel).        */}
+      {/* Đầu và chân cửa sổ cố định, chỉ phần bảng cuộn.           */}
+      {/* ========================================================= */}
+      {isPOModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-6xl w-full max-h-[96vh] flex flex-col">
+            {/* Header (fixed): title + supplier / dates / status always visible */}
+            <div className="shrink-0 px-5 pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-orange-600">
+                  <ShoppingCart className="w-5 h-5" />
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    {poForm.id ? `Cập Nhật Đơn PO ${poForm.po_code || ""}` : "Lập Đơn Đặt Mua Hàng Mới (PO)"}
+                  </h3>
+                </div>
+                <button onClick={() => setIsPOModalOpen(false)} title="Đóng (Esc)" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
+                <div>
+                  <label className="block font-bold text-slate-500 dark:text-slate-400 mb-0.5 text-[10px] uppercase">Mã PO</label>
+                  <input
+                    type="text"
+                    value={poForm.po_code}
+                    placeholder="Cấp khi lưu"
+                    disabled={!!poForm.id}
+                    onChange={(e) => setPOForm({ ...poForm, po_code: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold disabled:opacity-70"
+                  />
+                </div>
+                <div className="col-span-2">
+                  <label className="block font-bold text-slate-500 dark:text-slate-400 mb-0.5 text-[10px] uppercase">Nhà cung cấp</label>
+                  <select
+                    value={poForm.supplier_name}
+                    onChange={(e) => handleChangePOSupplier(e.target.value)}
+                    className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold cursor-pointer"
+                  >
+                    {!suppliers.some(s => s.name === poForm.supplier_name) && poForm.supplier_name && (
+                      <option value={poForm.supplier_name}>{poForm.supplier_name}</option>
+                    )}
+                    {suppliers.map((s) => (
+                      <option key={s.id} value={s.name}>
+                        {s.name} ({s.payment_terms || "30 ngày"})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-500 dark:text-slate-400 mb-0.5 text-[10px] uppercase">Ngày lập</label>
+                  <input
+                    type="date"
+                    value={poForm.order_date}
+                    onChange={(e) => setPOForm({ ...poForm, order_date: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-500 dark:text-slate-400 mb-0.5 text-[10px] uppercase">Hạn giao dự kiến</label>
+                  <input
+                    type="date"
+                    value={poForm.expected_delivery_date}
+                    onChange={(e) => setPOForm({ ...poForm, expected_delivery_date: e.target.value })}
+                    className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Body (scrolls): line table */}
+            <div className="flex-1 overflow-y-auto px-5 py-3 space-y-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-slate-700 dark:text-slate-300">Danh mục hàng đặt mua ({poForm.items.length} dòng)</span>
+                  <select
+                    value={poForm.status}
+                    onChange={(e) => setPOForm({ ...poForm, status: e.target.value })}
+                    disabled={["PARTIALLY_RECEIVED", "COMPLETED"].includes(poForm.status)}
+                    title="Trạng thái đơn (trạng thái nhập kho chỉ cập nhật qua nút Nhập kho)"
+                    className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold cursor-pointer disabled:opacity-70"
+                  >
+                    <option value="PENDING">Chờ xác nhận</option>
+                    <option value="ORDERED">Đã đặt hàng</option>
+                    <option value="CONFIRMED">Đã xác nhận</option>
+                    <option value="SHIPPED">Đang vận chuyển</option>
+                    <option value="AT_CUSTOMS">🛃 Đã đến hải quan</option>
+                    <option value="CUSTOMS_CLEARING">📋 Đang thông quan</option>
+                    {poForm.status === "PARTIALLY_RECEIVED" && <option value="PARTIALLY_RECEIVED">Nhập kho 1 phần</option>}
+                  </select>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPOForm((prev: any) => ({ ...prev, items: [...prev.items, { product_code: "", product_name: "", unit: "Hộp", quantity: 1, unit_price: 0, total: 0, is_stock: true, notes: "" }] }));
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg text-orange-600 font-bold hover:bg-orange-50 dark:hover:bg-orange-950/40 flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" /> Thêm dòng
+                </button>
+              </div>
+
+              <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-x-auto">
+                <table className="w-full text-left text-xs min-w-[980px]">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[11px]">
+                      <th className="p-2 w-8 text-center">#</th>
+                      <th className="p-2 min-w-[260px]">Mã hàng / Sản phẩm</th>
+                      <th className="p-2 w-14 text-center">ĐVT</th>
+                      <th className="p-2 w-28 text-center" title="Tồn khả dụng / Đang về (rê chuột để xem chi tiết giữ chỗ)">Tồn KD / Đang về</th>
+                      <th className="p-2 w-20 text-center">SL đặt</th>
+                      <th className="p-2 w-32 text-right">Đơn giá</th>
+                      <th className="p-2 w-32 text-right">Thành tiền</th>
+                      <th className="p-2 w-44">Mục đích</th>
+                      <th className="p-2 min-w-[150px]">Ghi chú dòng</th>
+                      <th className="p-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {poForm.items.map((item: any, idx: number) => {
+                      const stockIntel = item.product_code ? getProductStockIntelligence(item.product_code) : null;
+                      const isStockOrder = item.is_stock !== false;
+                      const receivedQty = Number((poForm.received_qty || {})[idx]) || 0;
+                      const srcPR = itemSourcePR(item);
+                      const stockTitle = stockIntel
+                        ? `Tồn thực tế: ${stockIntel.onHand} • Đang giữ chỗ: ${stockIntel.reserved} • Khả dụng: ${stockIntel.available} • Đang về: ${stockIntel.incoming}` +
+                          (stockIntel.reservations.length > 0 ? `\nGiữ chỗ: ${stockIntel.reservations.map((r: any) => `${r.customer_name}${r.order_code ? ` (${r.order_code})` : ""}: ${r.quantity_reserved}`).join("; ")}` : "")
+                        : "";
+                      return (
+                        <tr key={idx} className="align-top hover:bg-slate-50/60 dark:hover:bg-slate-800/30">
+                          <td className="p-2 text-center text-slate-400 font-mono pt-3">{idx + 1}</td>
+                          <td className="p-2">
+                            <select
+                              value={item.product_code}
+                              disabled={receivedQty > 0}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                const prod = products.find(pp => pp.code === val);
+                                updatePOLine(idx, {
+                                  product_code: val,
+                                  product_name: prod?.name || item.product_name,
+                                  unit: prod?.unit || item.unit || "Hộp",
+                                  unit_price: prod ? parseFloat(prod.cost_price) || 0 : item.unit_price
+                                });
+                              }}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold cursor-pointer disabled:opacity-70"
+                            >
+                              <option value="">-- Chọn mã hàng --</option>
+                              {!products.some(pp => pp.code === item.product_code) && item.product_code && (
+                                <option value={item.product_code}>
+                                  {item.product_code} - {cleanItemName(item.product_name)}
+                                </option>
+                              )}
+                              {products.map(pp => (
+                                <option key={pp.code} value={pp.code}>
+                                  {pp.code} - {pp.name}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="flex items-center gap-1.5 mt-0.5 px-0.5">
+                              <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={cleanItemName(item.product_name)}>
+                                {cleanItemName(item.product_name)}
+                              </span>
+                              {srcPR && (
+                                <span className="shrink-0 text-[9px] font-mono font-bold px-1 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800" title="Đề xuất mua (PR) nguồn của dòng này">
+                                  {srcPR}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-2 text-center pt-3 text-slate-600 dark:text-slate-300">{item.unit || "Hộp"}</td>
+                          <td className="p-2 text-center pt-3 font-mono cursor-help" title={stockTitle}>
+                            {stockIntel ? (
+                              <span className="inline-flex items-center gap-1">
+                                <strong className={stockIntel.available > 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-500"}>{stockIntel.available}</strong>
+                                <span className="text-slate-400">/</span>
+                                <span className="text-sky-600 dark:text-sky-400">{stockIntel.incoming}</span>
+                                {stockIntel.available >= (Number(item.quantity) || 1) && (
+                                  <AlertTriangle className="w-3 h-3 text-amber-500" aria-label="Kho đang đủ hàng khả dụng cho số lượng này" />
+                                )}
+                              </span>
+                            ) : <span className="text-slate-300">—</span>}
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="number"
+                              min={Math.max(1, receivedQty)}
+                              value={item.quantity}
+                              onChange={(e) => updatePOLine(idx, { quantity: Math.max(1, receivedQty, parseInt(e.target.value) || 1) })}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-center text-xs"
+                            />
+                            {receivedQty > 0 && <div className="text-[9px] text-teal-600 text-center mt-0.5">đã nhập {receivedQty}</div>}
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="number"
+                              min={0}
+                              value={item.unit_price}
+                              onChange={(e) => updatePOLine(idx, { unit_price: Math.max(0, parseFloat(e.target.value) || 0) })}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-xs"
+                            />
+                          </td>
+                          <td className="p-2 pt-3 text-right font-mono font-bold text-slate-800 dark:text-slate-100">
+                            {formatCurrency((Number(item.quantity) || 0) * (Number(item.unit_price) || 0))}
+                          </td>
+                          <td className="p-2">
+                            <select
+                              value={isStockOrder ? "__STOCK__" : (item.target_customer_name || "")}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                if (v === "__STOCK__") {
+                                  updatePOLine(idx, { is_stock: true, target_customer_name: "", target_customer_id: undefined });
+                                } else {
+                                  const cust = salesCustomers.find((c: any) => c.name === v);
+                                  updatePOLine(idx, { is_stock: false, target_customer_name: v, target_customer_id: cust?.id });
+                                }
+                              }}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold cursor-pointer"
+                              title="Mua lưu kho (Stock) hoặc mua cho khách hàng cụ thể"
+                            >
+                              <option value="__STOCK__">📦 Stock (lưu kho)</option>
+                              {!isStockOrder && item.target_customer_name && !salesCustomers.some((c: any) => c.name === item.target_customer_name) && (
+                                <option value={item.target_customer_name}>{item.target_customer_name}</option>
+                              )}
+                              {salesCustomers.map((c: any) => (
+                                <option key={c.id} value={c.name}>🏢 {c.name}</option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              value={item.notes || ""}
+                              onChange={(e) => updatePOLine(idx, { notes: e.target.value })}
+                              placeholder="Ghi chú cho dòng này..."
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs"
+                            />
+                          </td>
+                          <td className="p-2 pt-2.5 text-center">
+                            {poForm.items.length > 1 && receivedQty === 0 && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setPOForm((prev: any) => {
+                                    const items = prev.items.filter((_: any, i: number) => i !== idx);
+                                    return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + (Number(b.total) || 0), 0) };
+                                  });
+                                }}
+                                className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded cursor-pointer"
+                                title="Xoá dòng"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ghi chú đơn hàng / Hợp đồng mua bán</label>
+                <textarea
+                  rows={2}
+                  value={poForm.notes}
+                  onChange={(e) => setPOForm({ ...poForm, notes: e.target.value })}
+                  placeholder="Điều khoản hợp đồng, địa điểm giao nhận, chứng chỉ COA..."
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+                />
+              </div>
+            </div>
+
+            {/* Footer (fixed): total + actions always visible */}
+            <div className="shrink-0 px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm">
+                <span className="font-bold text-slate-600 dark:text-slate-300">Tổng giá trị PO: </span>
+                <span className="font-mono font-black text-lg text-orange-600 dark:text-orange-400">{formatCurrency(poForm.total_amount)}</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setIsPOModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+                >
+                  Đóng
+                </button>
+                <button
+                  onClick={handleSavePO}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-sm cursor-pointer"
+                >
+                  Lưu Đơn Đặt Hàng
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 2: PO DETAIL (xem, in, Excel, nhập kho, lịch sử PNK) */}
+      {/* ========================================================= */}
+      {selectedPODetail && (() => {
+        const d = selectedPODetail;
+        const dItems: any[] = Array.isArray(d.items) ? d.items : [];
+        const totalD = parseFloat(d.total_amount) || dItems.reduce((s: number, it: any) => s + (Number(it.line_total) || (Number(it.quantity || 1) * Number(it.unit_price || 0))), 0);
+        return (
+          <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4" onClick={() => setSelectedPODetail(null)}>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[96vh] flex flex-col text-slate-900 border border-slate-200" onClick={(e) => e.stopPropagation()}>
+              {/* Action bar (fixed) */}
+              <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3">
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5 text-orange-600" />
+                  <span className="font-bold text-sm text-slate-700">Đơn đặt hàng <span className="font-mono text-orange-600">{d.po_code}</span></span>
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${PO_STATUS_CONFIG[d.status]?.bg || ""} ${PO_STATUS_CONFIG[d.status]?.text || ""} ${PO_STATUS_CONFIG[d.status]?.border || ""}`}>
+                    {PO_STATUS_CONFIG[d.status]?.label || d.status}
+                  </span>
+                </div>
+                <div className="flex items-center gap-2">
+                  {!["COMPLETED", "CANCELLED", "PENDING", "DRAFT"].includes(d.status) && (
+                    <button onClick={() => openReceiveModal(d)} className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5 cursor-pointer">
+                      <ArrowDownLeft className="w-4 h-4" /> {d.status === "PARTIALLY_RECEIVED" ? "Nhập tiếp" : "Nhập kho"}
+                    </button>
+                  )}
+                  <button onClick={() => exportPOExcel(d)} className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5 cursor-pointer">
+                    <FileSpreadsheet className="w-4 h-4" /> Excel
+                  </button>
+                  <button onClick={() => handlePrintPO(d)} className="px-3 py-2 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 flex items-center gap-1.5 cursor-pointer">
+                    <Printer className="w-4 h-4" /> In / PDF
+                  </button>
+                  <button onClick={() => setSelectedPODetail(null)} className="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1 cursor-pointer" title="Đóng (Esc)">
+                    <X className="w-4 h-4" /> Đóng
+                  </button>
+                </div>
+              </div>
+
+              {/* Content (scrolls) */}
+              <div className="flex-1 overflow-y-auto p-5 space-y-5 text-xs">
+                <div className="flex justify-between items-start border-b pb-3">
+                  <div>
+                    <div className="text-base font-black text-orange-600">{companyConfig.companyName}</div>
+                    <div className="text-[11px] text-slate-600 mt-1">Trụ sở: {companyConfig.companyAddress || "Chưa cập nhật"}</div>
+                    <div className="text-[11px] text-slate-600">Điện thoại: {companyConfig.companyPhone || "---"} • Email: {companyConfig.companyEmail || "---"}</div>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-lg font-black text-slate-900">ĐƠN ĐẶT MUA HÀNG</div>
+                    <div className="text-xs font-mono font-bold text-orange-600 mt-1">SỐ: {d.po_code}</div>
+                    <div className="text-[11px] text-slate-500 mt-0.5">Ngày lập: {formatDate(d.order_date)}</div>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-100">
+                  <div>
+                    <div className="font-bold text-slate-900 mb-1">NHÀ CUNG CẤP</div>
+                    <div className="font-bold text-slate-800 text-sm">{d.supplier_name}</div>
+                    <div className="text-slate-600 mt-1">Hạn giao hàng dự kiến: <strong>{formatDate(d.expected_delivery_date)}</strong></div>
+                  </div>
+                  <div>
+                    <div className="font-bold text-slate-900 mb-1">GIAO NHẬN</div>
+                    <div className="text-slate-800 font-semibold">Kho Trung Tâm</div>
+                    <div className="text-slate-600 mt-1">
+                      Tình trạng nhập kho: <strong>{d.status === "COMPLETED" ? "Đã nhập đủ" : d.status === "PARTIALLY_RECEIVED" ? "Đã nhập 1 phần" : "Chưa nhập"}</strong>
+                      {poReceipts.length > 0 && <> • {poReceipts.length} phiếu nhập</>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse border border-slate-200 min-w-[820px]">
+                    <thead>
+                      <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[11px]">
+                        <th className="p-2 border-r border-slate-200 text-center w-10">STT</th>
+                        <th className="p-2 border-r border-slate-200">Mã hàng</th>
+                        <th className="p-2 border-r border-slate-200">Tên hàng / Quy cách</th>
+                        <th className="p-2 border-r border-slate-200 text-center">ĐVT</th>
+                        <th className="p-2 border-r border-slate-200 text-center">SL đặt</th>
+                        <th className="p-2 border-r border-slate-200 text-center">Đã nhập</th>
+                        <th className="p-2 border-r border-slate-200 text-right">Đơn giá</th>
+                        <th className="p-2 border-r border-slate-200 text-right">Thành tiền</th>
+                        <th className="p-2 border-r border-slate-200">Nguồn PR</th>
+                        <th className="p-2">Ghi chú</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                      {dItems.map((it: any, i: number) => {
+                        const got = receivedOf(d, i);
+                        const qty = Number(it.quantity) || 0;
+                        return (
+                          <tr key={i}>
+                            <td className="p-2 border-r border-slate-200 text-center">{i + 1}</td>
+                            <td className="p-2 border-r border-slate-200 font-mono font-bold text-orange-600">{it.product_code}</td>
+                            <td className="p-2 border-r border-slate-200 font-medium">{cleanItemName(it.product_name)}</td>
+                            <td className="p-2 border-r border-slate-200 text-center">{it.unit || ""}</td>
+                            <td className="p-2 border-r border-slate-200 text-center font-bold">{qty}</td>
+                            <td className={`p-2 border-r border-slate-200 text-center font-bold ${got >= qty && qty > 0 ? "text-emerald-600" : got > 0 ? "text-teal-600" : "text-slate-400"}`}>{got}</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono">{formatCurrency(it.unit_price)}</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono font-bold">{formatCurrency(qty * (Number(it.unit_price) || 0))}</td>
+                            <td className="p-2 border-r border-slate-200 font-mono text-[10px] text-indigo-600">{itemSourcePR(it)}</td>
+                            <td className="p-2 text-[11px] text-slate-600">{it.notes || ""}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-50 font-bold border-t border-slate-200">
+                        <td colSpan={7} className="p-2.5 text-right uppercase">Tổng cộng tiền hàng (chưa VAT):</td>
+                        <td className="p-2.5 text-right font-mono text-orange-600 text-sm">{formatCurrency(totalD)}</td>
+                        <td colSpan={2}></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+
+                {d.notes && (
+                  <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-slate-700"><strong>Ghi chú PO:</strong> {d.notes}</div>
+                )}
+
+                {/* Goods receipts: what came in, which lot, which expiry */}
+                <div>
+                  <div className="font-bold text-slate-800 mb-1.5 flex items-center gap-1.5"><PackageCheck className="w-4 h-4 text-emerald-600" /> Lịch sử nhập kho của PO</div>
+                  {poReceipts.length === 0 ? (
+                    <div className="text-slate-400 italic">Chưa có phiếu nhập kho nào cho PO này.</div>
+                  ) : (
+                    <table className="w-full text-left border-collapse border border-slate-200">
+                      <thead>
+                        <tr className="bg-emerald-50 text-emerald-800 font-bold text-[11px]">
+                          <th className="p-2 border-r border-slate-200">Phiếu nhập</th>
+                          <th className="p-2 border-r border-slate-200">Ngày</th>
+                          <th className="p-2 border-r border-slate-200">Mã hàng</th>
+                          <th className="p-2 border-r border-slate-200">Số lô</th>
+                          <th className="p-2 border-r border-slate-200">Hạn dùng</th>
+                          <th className="p-2 border-r border-slate-200 text-center">SL</th>
+                          <th className="p-2">Người nhập</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200">
+                        {poReceipts.flatMap((r: any) => {
+                          const its: any[] = Array.isArray(r.items) ? r.items : (() => { try { return JSON.parse(r.items || "[]"); } catch { return []; } })();
+                          return its.map((it: any, k: number) => (
+                            <tr key={`${r.transaction_code}-${k}`}>
+                              <td className="p-2 border-r border-slate-200 font-mono font-bold text-emerald-700">{k === 0 ? r.transaction_code : ""}</td>
+                              <td className="p-2 border-r border-slate-200">{k === 0 ? formatDate(r.date) : ""}</td>
+                              <td className="p-2 border-r border-slate-200 font-mono">{it.product_code}</td>
+                              <td className="p-2 border-r border-slate-200 font-mono">{it.lot_number || <span className="text-rose-500">(không có lô)</span>}</td>
+                              <td className="p-2 border-r border-slate-200">{it.expiry_date ? formatDate(it.expiry_date) : "—"}</td>
+                              <td className="p-2 border-r border-slate-200 text-center font-bold">{it.quantity}</td>
+                              <td className="p-2">{k === 0 ? r.performed_by : ""}</td>
+                            </tr>
+                          ));
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ========================================================= */}
+      {/* MODAL R: NHẬP KHO THEO PO (ĐẦY ĐỦ CHUẨN NHẬP KHO)         */}
+      {/* ========================================================= */}
+      {receiveTarget && (
+        <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-7xl w-full max-h-[96vh] flex flex-col">
+            <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <div className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
+                  <ArrowDownLeft className="w-5 h-5 text-emerald-600" /> Nhập kho theo PO <span className="font-mono text-orange-600">{receiveTarget.po_code}</span>
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  {receiveTarget.supplier_name} • Khai báo đầy đủ thông tin chứng từ, kho lưu trữ, số lô (LOT), ngày SX (MFG), hạn dùng (EXP), điều kiện bảo quản, vị trí kệ và QC đầu vào.
+                </div>
+              </div>
+              <button onClick={() => setReceiveTarget(null)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" title="Đóng (Esc)">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-3.5 text-xs space-y-4">
+              {/* PHẦN 1: THÔNG TIN CHỨNG TỪ & KHO TIẾP NHẬN (ĐỒNG BỘ VỚI GIAO DIỆN NHẬP KHO CHUẨN) */}
+              <div className="p-3.5 rounded-xl bg-slate-50/80 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/80 space-y-3">
+                <div className="font-bold text-slate-800 dark:text-slate-200 uppercase text-[11px] tracking-wide flex items-center gap-1.5">
+                  <Building2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>1. Thông Tin Chứng Từ & Kho Tiếp Nhận</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Ngày Nhập Kho *</label>
+                    <input
+                      type="date"
+                      value={receiveHeader.receipt_date}
+                      onChange={(e) => setReceiveHeader(prev => ({ ...prev, receipt_date: e.target.value }))}
+                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Kho Tiếp Nhận *</label>
+                    <select
+                      value={receiveHeader.warehouse_name}
+                      onChange={(e) => setReceiveHeader(prev => ({ ...prev, warehouse_name: e.target.value }))}
+                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold cursor-pointer"
+                    >
+                      <option value="Kho Trung Tâm">Kho Trung Tâm</option>
+                      <option value="Kho Lạnh Âm Sâu -20°C (Khu A)">Kho Lạnh Âm Sâu -20°C (Khu A)</option>
+                      <option value="Kho Mát 2-8°C (Khu B)">Kho Mát 2-8°C (Khu B)</option>
+                      <option value="Kho Thiết Bị & Demo (Khu C)">Kho Thiết Bị & Demo (Khu C)</option>
+                      <option value="Kho Chi Nhánh Hà Nội">Kho Chi Nhánh Hà Nội</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Loại Hình Nhập</label>
+                    <select
+                      value={receiveHeader.inbound_type}
+                      onChange={(e) => setReceiveHeader(prev => ({ ...prev, inbound_type: e.target.value }))}
+                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium cursor-pointer"
+                    >
+                      <option value="Nhập mua hàng theo Đơn PO từ NCC">Nhập mua hàng theo PO từ NCC</option>
+                      <option value="Nhập khẩu ủy thác / Trực tiếp qua Hải Quan">Nhập khẩu trực tiếp / Hải quan</option>
+                      <option value="Nhập bổ sung / Giao từng đợt theo PO">Nhập giao từng đợt theo PO</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Số Hóa Đơn VAT / Tờ Khai HQ</label>
+                    <input
+                      type="text"
+                      value={receiveHeader.vat_invoice_no}
+                      onChange={(e) => setReceiveHeader(prev => ({ ...prev, vat_invoice_no: e.target.value }))}
+                      placeholder="VD: HD-2026-0412 / TK-109..."
+                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Ngày Hóa Đơn</label>
+                    <input
+                      type="date"
+                      value={receiveHeader.vat_invoice_date || ""}
+                      onChange={(e) => setReceiveHeader(prev => ({ ...prev, vat_invoice_date: e.target.value }))}
+                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Thủ Kho / Người Tiếp Nhận *</label>
+                    <input
+                      type="text"
+                      value={receiveHeader.received_by}
+                      onChange={(e) => setReceiveHeader(prev => ({ ...prev, received_by: e.target.value }))}
+                      placeholder="Tên thủ kho nhận hàng..."
+                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Đơn Vị Vận Chuyển / Giao Hàng</label>
+                    <input
+                      type="text"
+                      value={receiveHeader.shipping_unit}
+                      onChange={(e) => setReceiveHeader(prev => ({ ...prev, shipping_unit: e.target.value }))}
+                      placeholder="Xe tải lạnh, DHL, NCC giao..."
+                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* PHẦN 2: CHI TIẾT TỪNG DÒNG HÀNG NHẬP KHO THEO PO */}
+              <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-x-auto">
+                <table className="w-full text-left min-w-[1250px]">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[11px]">
+                      <th className="p-2 min-w-[180px]">Mã hàng / Tên / Quy cách</th>
+                      <th className="p-2 text-center w-20">Đặt / Đã nhập</th>
+                      <th className="p-2 w-20 text-center">SL thực nhận *</th>
+                      <th className="p-2 w-28">Số lô (LOT) *</th>
+                      <th className="p-2 w-32">Ngày SX (MFG)</th>
+                      <th className="p-2 w-32">Hạn dùng (EXP) *</th>
+                      <th className="p-2 w-16 text-center" title="Không có hạn sử dụng (Thiết bị / Vật tư)">K.HSD</th>
+                      <th className="p-2 w-44">Điều kiện bảo quản</th>
+                      <th className="p-2 w-32">Vị trí Tủ / Kệ</th>
+                      <th className="p-2 w-44">Tình trạng QC đầu vào</th>
+                      <th className="p-2 min-w-[120px]">Ghi chú dòng</th>
+                      <th className="p-2 w-14 text-center">Tách lô</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {receiveLines.map((l: any, i: number) => {
+                      const isFirstOfLine = i === 0 || receiveLines[i - 1].line_index !== l.line_index;
+                      const setL = (patch: any) => setReceiveLines(prev => prev.map((x, j) => j === i ? { ...x, ...patch } : x));
+                      return (
+                        <tr key={i} className="align-top hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                          <td className="p-2">
+                            {isFirstOfLine ? (
+                              <>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="font-mono font-bold text-orange-600">{l.product_code}</span>
+                                  {l.unit && <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold">{l.unit}</span>}
+                                </div>
+                                <div className="text-[10px] text-slate-500 truncate max-w-[210px]" title={l.product_name}>{l.product_name}</div>
+                                {l.specification && <div className="text-[10px] text-slate-400 truncate max-w-[210px]">{l.specification}</div>}
+                              </>
+                            ) : <div className="text-[10px] text-slate-400 pl-3 pt-2">↳ lô khác của {l.product_code}</div>}
+                          </td>
+                          <td className="p-2 text-center font-mono pt-3">{isFirstOfLine ? <>{l.ordered} / <span className="text-teal-600">{l.received}</span></> : ""}</td>
+                          <td className="p-2">
+                            <input type="number" min={0} value={l.quantity} onChange={(e) => setL({ quantity: Math.max(0, parseInt(e.target.value) || 0) })}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-center" />
+                          </td>
+                          <td className="p-2">
+                            <input type="text" value={l.lot_number} onChange={(e) => setL({ lot_number: e.target.value })} placeholder="VD: 2510A01"
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-orange-600 dark:text-orange-400 font-mono font-bold" />
+                          </td>
+                          <td className="p-2">
+                            <input type="date" value={l.manufacture_date || ""} onChange={(e) => setL({ manufacture_date: e.target.value })}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px]" />
+                          </td>
+                          <td className="p-2">
+                            <input type="date" value={l.expiry_date} disabled={l.no_expiry} onChange={(e) => setL({ expiry_date: e.target.value })}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px] disabled:opacity-50" />
+                          </td>
+                          <td className="p-2 text-center pt-3">
+                            <input type="checkbox" checked={!!l.no_expiry} onChange={(e) => setL({ no_expiry: e.target.checked, expiry_date: e.target.checked ? "" : l.expiry_date })}
+                              title="Thiết bị / vật tư không có hạn dùng" className="w-4 h-4 accent-orange-600 cursor-pointer" />
+                          </td>
+                          <td className="p-2">
+                            <select
+                              value={l.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"}
+                              onChange={(e) => setL({ storage_condition: e.target.value })}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]"
+                            >
+                              <option value="-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)">-20°C (Lạnh âm sâu)</option>
+                              <option value="2-8°C (Kho mát - Hóa chất, Kháng thể)">2-8°C (Kho mát)</option>
+                              <option value="15-25°C (Nhiệt độ phòng - Vật tư, Thiết bị)">15-25°C (Nhiệt độ phòng)</option>
+                              <option value="-80°C (Âm siêu sâu - Mẫu chuẩn)">-80°C (Âm siêu sâu)</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              value={l.shelf_position || ""}
+                              onChange={(e) => setL({ shelf_position: e.target.value })}
+                              placeholder="VD: Tủ -20°C Kệ A1"
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]"
+                            />
+                          </td>
+                          <td className="p-2">
+                            <select
+                              value={l.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)"}
+                              onChange={(e) => setL({ qc_status: e.target.value })}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]"
+                            >
+                              <option value="Đạt chuẩn 100% (Nguyên niêm phong & COA)">Đạt chuẩn 100% (Nguyên tem & COA)</option>
+                              <option value="Đạt chuẩn - Chờ bổ sung COA từ NCC">Đạt chuẩn - Chờ bổ sung COA</option>
+                              <option value="Bao bì xước nhẹ, niêm phong nguyên vẹn">Bao bì xước nhẹ, còn niêm phong</option>
+                              <option value="Cảnh báo chênh lệch nhiệt độ vận chuyển">Cảnh báo lệch nhiệt độ vận chuyển</option>
+                            </select>
+                          </td>
+                          <td className="p-2">
+                            <input type="text" value={l.notes} onChange={(e) => setL({ notes: e.target.value })} placeholder="Ghi chú thêm..."
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]" />
+                          </td>
+                          <td className="p-2 text-center whitespace-nowrap">
+                            <button type="button" title="Tách thêm 1 lô cho mặt hàng này"
+                              onClick={() => setReceiveLines(prev => { const n = [...prev]; n.splice(i + 1, 0, { ...l, quantity: 0, lot_number: "", manufacture_date: "", expiry_date: "", no_expiry: l.no_expiry, notes: "" }); return n; })}
+                              className="p-1 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"><Plus className="w-4 h-4" /></button>
+                            {!isFirstOfLine && (
+                              <button type="button" title="Bỏ lô này" onClick={() => setReceiveLines(prev => prev.filter((_, j) => j !== i))}
+                                className="p-1 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"><Trash2 className="w-4 h-4" /></button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* PHẦN 3: GHI CHÚ PHIẾU NHẬP & TỔNG HỢP */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                <div className="md:col-span-8">
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">3. Ghi chú chung phiếu nhập kho (PNK)</label>
+                  <input type="text" value={receiveNotes} onChange={(e) => setReceiveNotes(e.target.value)} placeholder="Tình trạng thùng bảo ôn / đá khô khi nhận, biên bản giao nhận kèm theo..."
+                    className="w-full p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+                </div>
+                <div className="md:col-span-4 flex items-center justify-end gap-4 p-2.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-800/60">
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">Dòng thực nhận</span>
+                    <strong className="text-slate-900 dark:text-white font-mono text-sm">
+                      {receiveLines.filter(l => (Number(l.quantity) || 0) > 0).length} dòng
+                    </strong>
+                  </div>
+                  <div>
+                    <span className="text-[10px] text-slate-500 block">Tổng SL thực nhận</span>
+                    <strong className="text-emerald-600 dark:text-emerald-400 font-mono text-sm">
+                      {receiveLines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0)}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="shrink-0 px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
+              <button onClick={() => setReceiveTarget(null)} className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer">Đóng</button>
+              <button onClick={submitReceive} disabled={isSubmittingReceive}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm cursor-pointer disabled:opacity-60">
+                {isSubmittingReceive ? "Đang nhập kho..." : "Xác nhận nhập kho"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 3: SUPPLIER CRUD MODAL                              */}
+      {/* ========================================================= */}
+      {isSupplierModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-orange-600">
+                <Building2 className="w-5 h-5" />
+                <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                  {supplierForm.id ? "Cập Nhật Hồ Sơ Nhà Cung Cấp" : "Thêm Nhà Cung Cấp Mới"}
+                </h3>
+              </div>
+              <button onClick={() => setIsSupplierModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã NCC</label>
+                  <input
+                    type="text"
+                    value={supplierForm.supplier_code}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, supplier_code: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 font-mono font-bold text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đánh Giá (1 - 5 Sao)</label>
+                  <select
+                    value={supplierForm.rating}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, rating: parseInt(e.target.value) || 5 })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-amber-500 cursor-pointer"
+                  >
+                    <option value={5}>★★★★★ (5/5 Sao - Xuất sắc)</option>
+                    <option value={4}>★★★★☆ (4/5 Sao - Rất tốt)</option>
+                    <option value={3}>★★★☆☆ (3/5 Sao - Trung bình)</option>
+                    <option value={2}>★★☆☆☆ (2/5 Sao - Cần cải thiện)</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tên Đầy Đủ NCC / Hãng Sản Xuất</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: Công ty TNHH Giải Pháp Y Sinh ABT..."
+                    value={supplierForm.name}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, name: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-orange-600 dark:text-orange-400 mb-1">Tên Viết Tắt / Brand (Hiện trên Báo giá)</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: ABT, Phù Sa, Bioer..."
+                    value={supplierForm.short_name || ""}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, short_name: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-orange-300 dark:border-orange-500/50 bg-white dark:bg-slate-800 font-bold text-orange-600 dark:text-orange-400"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Người Liên Hệ Đại Diện</label>
+                  <input
+                    type="text"
+                    placeholder="Họ và tên"
+                    value={supplierForm.contact_person}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, contact_person: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số Điện Thoại</label>
+                  <input
+                    type="text"
+                    placeholder="Hotline / SĐT"
+                    value={supplierForm.phone}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, phone: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Email Liên Hệ</label>
+                  <input
+                    type="email"
+                    placeholder="sales@supplier.com"
+                    value={supplierForm.email}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, email: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Điều Khoản Thanh Toán</label>
+                  <input
+                    type="text"
+                    placeholder="Ví dụ: Công nợ 30 ngày"
+                    value={supplierForm.payment_terms}
+                    onChange={(e) => setSupplierForm({ ...supplierForm, payment_terms: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngành Hàng Cung Ứng</label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: Thiết bị Real-time PCR, Kít sinh học phân tử..."
+                  value={supplierForm.product_lines}
+                  onChange={(e) => setSupplierForm({ ...supplierForm, product_lines: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Địa Chỉ Doanh Nghiệp</label>
+                <input
+                  type="text"
+                  placeholder="Số nhà, đường, quận, thành phố"
+                  value={supplierForm.address}
+                  onChange={(e) => setSupplierForm({ ...supplierForm, address: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => setIsSupplierModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSaveSupplier}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-sm cursor-pointer"
+              >
+                Lưu Hồ Sơ NCC
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 3B: SUPPLIER PRODUCTS CATALOG & PRICING DRAWER       */}
+      {/* ========================================================= */}
+      {isSupplierCatalogOpen && selectedSupplierForCatalog && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-5xl w-full flex flex-col max-h-[92vh] overflow-hidden">
+            
+            {/* Header */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-indigo-50 dark:bg-indigo-950/80 border border-indigo-200 dark:border-indigo-800 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                  <Package className="w-5 h-5" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                      {selectedSupplierForCatalog.name}
+                    </h3>
+                    <span className="font-mono text-xs font-bold px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800">
+                      {selectedSupplierForCatalog.supplier_code}
+                    </span>
+                    <span className="text-xs text-amber-500 font-bold">
+                      {"★".repeat(selectedSupplierForCatalog.rating || 5)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                    Hồ sơ danh mục hàng hóa cung ứng, quản lý đơn giá mua và tra cứu lịch sử biến động giá của NCC.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsSupplierCatalogOpen(false)}
+                className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Quick KPI stats */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-slate-50/80 dark:bg-slate-950/40 border-b border-slate-200 dark:border-slate-800 text-xs">
+              <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+                <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Mặt hàng cung ứng</span>
+                  <Package className="w-3.5 h-3.5 text-indigo-500" />
+                </div>
+                <div className="text-lg font-mono font-bold text-slate-900 dark:text-white mt-1">
+                  {supplierProducts.length} <span className="text-xs font-normal text-slate-400">mã hàng</span>
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+                <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Giá mua cao nhất</span>
+                  <TrendingUp className="w-3.5 h-3.5 text-rose-500" />
+                </div>
+                <div className="text-sm font-mono font-bold text-rose-600 dark:text-rose-400 mt-1">
+                  {formatCurrency(
+                    supplierProducts.length > 0 
+                      ? Math.max(...supplierProducts.map(p => parseFloat(p.purchase_price) || 0)) 
+                      : 0
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+                <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Giá mua thấp nhất</span>
+                  <TrendingDown className="w-3.5 h-3.5 text-emerald-500" />
+                </div>
+                <div className="text-sm font-mono font-bold text-emerald-600 dark:text-emerald-400 mt-1">
+                  {formatCurrency(
+                    supplierProducts.length > 0 
+                      ? Math.min(...supplierProducts.map(p => parseFloat(p.purchase_price) || 0)) 
+                      : 0
+                  )}
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
+                <div className="text-[11px] text-slate-500 flex items-center justify-between">
+                  <span>Mã có lịch sử đổi giá</span>
+                  <History className="w-3.5 h-3.5 text-amber-500" />
+                </div>
+                <div className="text-lg font-mono font-bold text-amber-600 dark:text-amber-400 mt-1">
+                  {supplierProducts.filter(p => {
+                    let h = [];
+                    try { h = typeof p.price_history === "string" ? JSON.parse(p.price_history) : (p.price_history || []); } catch {}
+                    return Array.isArray(h) && h.length > 1;
+                  }).length} <span className="text-xs font-normal text-slate-400">mã SP</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Toolbar */}
+            <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-3">
+              <div className="relative flex-1 max-w-sm">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Tìm mã hàng, tên sản phẩm..."
+                  value={supplierProductSearch}
+                  onChange={(e) => setSupplierProductSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                {/* Auto collect button */}
+                <button
+                  type="button"
+                  onClick={handleAutoCollectFromPOs}
+                  disabled={isAutoCollecting}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-50 dark:bg-amber-950/70 border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900 transition-all cursor-pointer shadow-2xs"
+                  title="Hệ thống tự động quét toàn bộ đơn PO của nhà cung cấp này để trích xuất danh mục hàng và cập nhật lịch sử giá mua"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5 text-amber-600 dark:text-amber-400", isAutoCollecting && "animate-spin")} />
+                  <span>{isAutoCollecting ? "Đang quét PO..." : "⚡ Tự Động Thu Thập Từ PO"}</span>
+                </button>
+
+                {/* Add product button */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenAddProductModal()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-2xs cursor-pointer transition-all"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Thêm Mã Hàng</span>
+                </button>
+
+                {/* Excel buttons */}
+                <button
+                  type="button"
+                  onClick={handleDownloadCatalogTemplate}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors cursor-pointer"
+                  title="Tải mẫu Excel Bảng Giá NCC"
+                >
+                  <Download className="w-3.5 h-3.5 text-blue-500" />
+                  <span className="hidden sm:inline">Mẫu Excel</span>
+                </button>
+
+                <label className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900 transition-colors cursor-pointer">
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  <span>Nạp Excel Bảng Giá</span>
+                  <input
+                    ref={supplierCatalogFileInputRef}
+                    type="file"
+                    accept=".xlsx, .xls, .csv"
+                    onChange={handleUploadCatalogExcel}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+            </div>
+
+            {/* Product table */}
+            <div className="overflow-x-auto flex-1 p-4">
+              {loadingSupplierProducts ? (
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  <RefreshCw className="w-6 h-6 animate-spin mx-auto text-indigo-500 mb-2" />
+                  Đang tải danh mục hàng hóa của nhà cung cấp...
+                </div>
+              ) : supplierProducts.length === 0 ? (
+                <div className="py-12 text-center text-slate-400 space-y-3">
+                  <Package className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto" />
+                  <div>
+                    <p className="font-semibold text-slate-700 dark:text-slate-300 text-sm">Chưa có mã hàng nào trong danh mục của NCC này</p>
+                    <p className="text-xs text-slate-500 mt-1">Bấm <strong>"⚡ Tự Động Thu Thập Từ PO"</strong> để trích xuất tự động từ các đơn đặt hàng đã lập, hoặc bấm <strong>"Thêm Mã Hàng"</strong> để tạo mới.</p>
+                  </div>
+                  <div className="flex items-center justify-center gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={handleAutoCollectFromPOs}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 cursor-pointer shadow-xs flex items-center gap-1.5"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" /> ⚡ Tự Động Thu Thập Từ PO Của NCC
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleOpenAddProductModal()}
+                      className="px-3.5 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer shadow-xs flex items-center gap-1.5"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Thêm Thủ Công
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
+                      <th className="py-2.5 px-3 w-10 text-center">STT</th>
+                      <th className="py-2.5 px-3">Mã Hàng</th>
+                      <th className="py-2.5 px-3">Tên Mặt Hàng & Quy Cách</th>
+                      <th className="py-2.5 px-3 text-center">ĐVT</th>
+                      <th className="py-2.5 px-3 text-right">Đơn Giá Mua Hiện Tại</th>
+                      <th className="py-2.5 px-3 text-center">Lịch Sử Biến Động</th>
+                      <th className="py-2.5 px-3 text-center">Thao Tác</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {supplierProducts
+                      .filter(p => {
+                        if (!supplierProductSearch.trim()) return true;
+                        const q = supplierProductSearch.toLowerCase();
+                        return (
+                          (p.product_code || "").toLowerCase().includes(q) ||
+                          (p.product_name || "").toLowerCase().includes(q) ||
+                          (p.specification || "").toLowerCase().includes(q)
+                        );
+                      })
+                      .map((p, idx) => {
+                        let history: any[] = [];
+                        try {
+                          history = typeof p.price_history === "string" ? JSON.parse(p.price_history) : (p.price_history || []);
+                        } catch {}
+                        if (!Array.isArray(history)) history = [];
+
+                        // Calculate difference vs previous price
+                        let priceDiffPct: number | null = null;
+                        if (history.length >= 2) {
+                          const lastChange = history[history.length - 1];
+                          const oldP = parseFloat(lastChange.old_price) || 0;
+                          const newP = parseFloat(lastChange.new_price) || 0;
+                          if (oldP > 0) {
+                            priceDiffPct = ((newP - oldP) / oldP) * 100;
+                          }
+                        }
+
+                        return (
+                          <tr key={p.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                            <td className="py-3 px-3 text-center text-slate-400 font-mono text-[11px]">{idx + 1}</td>
+                            
+                            <td className="py-3 px-3 font-mono font-bold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                              {p.product_code}
+                            </td>
+
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900 dark:text-white text-xs">{p.product_name}</div>
+                              {p.specification && (
+                                <div className="text-[10px] text-slate-400 mt-0.5">{p.specification}</div>
+                              )}
+                              {p.notes && (
+                                <div className="text-[9px] text-amber-500 italic mt-0.5">{p.notes}</div>
+                              )}
+                            </td>
+
+                            <td className="py-3 px-3 text-center">
+                              <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-medium text-[11px]">
+                                {p.unit || "Cái"}
+                              </span>
+                            </td>
+
+                            <td className="py-3 px-3 text-right whitespace-nowrap">
+                              <div className="font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">
+                                {formatCurrency(p.purchase_price || 0)}
+                              </div>
+                              {priceDiffPct !== null && (
+                                <div className={cn(
+                                  "text-[10px] font-bold flex items-center justify-end gap-0.5 mt-0.5",
+                                  priceDiffPct > 0 ? "text-rose-500" : priceDiffPct < 0 ? "text-emerald-500" : "text-slate-400"
+                                )}>
+                                  {priceDiffPct > 0 ? (
+                                    <>
+                                      <TrendingUp className="w-3 h-3" />
+                                      <span>+{priceDiffPct.toFixed(1)}%</span>
+                                    </>
+                                  ) : priceDiffPct < 0 ? (
+                                    <>
+                                      <TrendingDown className="w-3 h-3" />
+                                      <span>{priceDiffPct.toFixed(1)}%</span>
+                                    </>
+                                  ) : (
+                                    <span>0%</span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenPriceHistoryModal(p)}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800/80 hover:bg-amber-100 dark:hover:bg-amber-900 cursor-pointer transition-all shadow-2xs"
+                                title="Xem toàn bộ lịch sử các lần điều chỉnh giá mua"
+                              >
+                                <History className="w-3 h-3 text-amber-500" />
+                                <span>{history.length > 0 ? `${history.length} lần đổi giá` : "Xem lịch sử"}</span>
+                              </button>
+                              {p.last_updated_at && (
+                                <div className="text-[9px] text-slate-400 mt-1 font-mono">
+                                  {new Date(p.last_updated_at).toLocaleDateString("vi-VN")}
+                                </div>
+                              )}
+                            </td>
+
+                            <td className="py-3 px-3 text-center whitespace-nowrap">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAdjustPriceModal(p)}
+                                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900 cursor-pointer transition-all"
+                                  title="Điều chỉnh giá mua và ghi nhận lý do vào lịch sử"
+                                >
+                                  <DollarSign className="w-3 h-3" />
+                                  <span>Đổi giá</span>
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAddProductModal(p)}
+                                  className="p-1.5 rounded-lg text-slate-600 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                                  title="Sửa thông tin mã hàng"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteSupplierProduct(p)}
+                                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                                  title="Xóa mã hàng khỏi NCC"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50 text-xs">
+              <span className="text-slate-500">
+                Hiển thị <strong>{supplierProducts.length}</strong> mặt hàng thuộc NCC <strong>{selectedSupplierForCatalog.name}</strong>
+              </span>
+              <button
+                type="button"
+                onClick={() => setIsSupplierCatalogOpen(false)}
+                className="px-4 py-2 rounded-xl font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 cursor-pointer transition-colors"
+              >
+                Đóng
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 3C: ADD / EDIT SUPPLIER PRODUCT MODAL               */}
+      {/* ========================================================= */}
+      {isAddEditProductModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                <Package className="w-5 h-5" />
+                <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                  {productForm.id ? "Cập Nhật Mã Hàng NCC" : "Thêm Mặt Hàng Vào Danh Mục NCC"}
+                </h3>
+              </div>
+              <button onClick={() => setIsAddEditProductModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              {/* Select from existing products dropdown */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Chọn Nhanh Từ Danh Mục Kho (Hoặc tự nhập mã mới bên dưới)
+                </label>
+                <select
+                  onChange={(e) => {
+                    const sel = products.find(x => x.code === e.target.value);
+                    if (sel) {
+                      setProductForm({
+                        ...productForm,
+                        product_code: sel.code,
+                        product_name: sel.name,
+                        specification: sel.specification || "",
+                        unit: sel.unit || "Cái",
+                        purchase_price: parseFloat(sel.cost_price) || 0
+                      });
+                    }
+                  }}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white cursor-pointer font-semibold"
+                >
+                  <option value="">-- Chọn sản phẩm có sẵn để nạp thông tin --</option>
+                  {products.map(p => (
+                    <option key={p.code} value={p.code}>
+                      [{p.code}] {p.name} - Giá vốn: {formatCurrency(p.cost_price || 0)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Hàng (*)</label>
+                  <input
+                    type="text"
+                    placeholder="Mã sản phẩm / SKU"
+                    value={productForm.product_code}
+                    onChange={(e) => setProductForm({ ...productForm, product_code: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono font-bold text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đơn Vị Tính</label>
+                  <input
+                    type="text"
+                    placeholder="Hộp, Cái, Lọ, Bộ..."
+                    value={productForm.unit}
+                    onChange={(e) => setProductForm({ ...productForm, unit: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tên Mặt Hàng (*)</label>
+                <input
+                  type="text"
+                  placeholder="Tên đầy đủ của sản phẩm / hóa chất / vật tư"
+                  value={productForm.product_name}
+                  onChange={(e) => setProductForm({ ...productForm, product_name: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Quy Cách / Đóng Gói</label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: 50 test/hộp, 250ml/chai, 96 giếng/đĩa..."
+                  value={productForm.specification}
+                  onChange={(e) => setProductForm({ ...productForm, specification: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đơn Giá Mua Ban Đầu (VNĐ)</label>
+                <input
+                  type="number"
+                  placeholder="Đơn giá mua từ nhà cung cấp"
+                  value={productForm.purchase_price}
+                  onChange={(e) => setProductForm({ ...productForm, purchase_price: parseFloat(e.target.value) || 0 })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ghi Chú Bảng Giá</label>
+                <input
+                  type="text"
+                  placeholder="Chính sách giá, số lượng đặt tối thiểu..."
+                  value={productForm.notes}
+                  onChange={(e) => setProductForm({ ...productForm, notes: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsAddEditProductModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveSupplierProduct}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm cursor-pointer"
+              >
+                Lưu Mặt Hàng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 3D: ADJUST PURCHASE PRICE WITH AUDIT REASON         */}
+      {/* ========================================================= */}
+      {isAdjustPriceModalOpen && adjustPriceTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-5 space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                <SlidersHorizontal className="w-5 h-5" />
+                <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                  Điều Chỉnh Đơn Giá Mua
+                </h3>
+              </div>
+              <button onClick={() => setIsAdjustPriceModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Target Item Details */}
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-1.5 text-xs">
+              <div className="flex justify-between">
+                <span className="text-slate-500">Mã hàng:</span>
+                <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{adjustPriceTarget.product_code}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Tên mặt hàng:</span>
+                <span className="font-bold text-slate-900 dark:text-white text-right truncate max-w-[280px]">{adjustPriceTarget.product_name}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-500">Nhà cung cấp:</span>
+                <span className="font-semibold text-slate-800 dark:text-slate-200">{selectedSupplierForCatalog?.name}</span>
+              </div>
+              <div className="flex justify-between border-t border-slate-200 dark:border-slate-700/80 pt-1.5">
+                <span className="text-slate-500 font-semibold">Giá Mua Hiện Tại:</span>
+                <span className="font-mono font-bold text-slate-900 dark:text-white text-sm">
+                  {formatCurrency(adjustPriceTarget.purchase_price || 0)}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Đơn Giá Mua Mới Áp Dụng (VNĐ) (*)
+                </label>
+                <input
+                  type="number"
+                  placeholder="Nhập giá mua mới"
+                  value={newPurchasePrice}
+                  onChange={(e) => setNewPurchasePrice(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono font-bold text-emerald-600 dark:text-emerald-400 text-base"
+                />
+
+                {/* Real-time comparison badge */}
+                {(() => {
+                  const oldP = parseFloat(adjustPriceTarget.purchase_price) || 0;
+                  const newP = parseFloat(String(newPurchasePrice)) || 0;
+                  const diff = newP - oldP;
+                  const pct = oldP > 0 ? (diff / oldP) * 100 : 0;
+                  return (
+                    <div className="flex items-center gap-2 mt-1.5 text-[11px] font-semibold">
+                      <span className="text-slate-500">Biến động:</span>
+                      <span className={cn(
+                        "font-mono font-bold px-2 py-0.5 rounded-md",
+                        diff > 0 
+                          ? "bg-rose-100 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400" 
+                          : diff < 0 
+                          ? "bg-emerald-100 dark:bg-emerald-950/80 text-emerald-600 dark:text-emerald-400" 
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-500"
+                      )}>
+                        {diff > 0 ? `+${formatCurrency(diff)} (+${pct.toFixed(1)}%)` : diff < 0 ? `${formatCurrency(diff)} (${pct.toFixed(1)}%)` : "Không đổi"}
+                      </span>
+                    </div>
+                  );
+                })()}
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Ngày Bắt Đầu Áp Dụng
+                </label>
+                <input
+                  type="date"
+                  value={priceAdjustmentDate}
+                  onChange={(e) => setPriceAdjustmentDate(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Lý Do Điều Chỉnh Giá (*) (Ghi nhận lịch sử kiểm toán)
+                </label>
+                
+                {/* Fast Chips */}
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {[
+                    "Hãng tăng giá định kỳ",
+                    "Chiết khấu đợt nhập lớn",
+                    "Biến động tỷ giá ngoại tệ",
+                    "Đàm phán hạ giá thành công",
+                    "Thay đổi quy cách đóng gói"
+                  ].map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setPriceAdjustmentReason(chip)}
+                      className={cn(
+                        "px-2 py-1 rounded-md text-[10px] font-semibold border transition-all cursor-pointer",
+                        priceAdjustmentReason === chip
+                          ? "bg-indigo-600 text-white border-indigo-600"
+                          : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-200 dark:hover:bg-slate-700"
+                      )}
+                    >
+                      {chip}
+                    </button>
+                  ))}
+                </div>
+
+                <textarea
+                  rows={2}
+                  placeholder="Chi tiết lý do điều chỉnh đơn giá mua (bắt buộc)..."
+                  value={priceAdjustmentReason}
+                  onChange={(e) => setPriceAdjustmentReason(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              {/* Sync Cost Price Checkbox */}
+              <label className="flex items-center gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={syncCostPrice}
+                  onChange={(e) => setSyncCostPrice(e.target.checked)}
+                  className="w-4 h-4 text-indigo-600 rounded cursor-pointer"
+                />
+                <span className="text-[11px] text-slate-700 dark:text-slate-300 font-medium">
+                  Đồng thời cập nhật đơn giá vốn (Cost Price) của sản phẩm này trong Danh Mục Kho toàn công ty
+                </span>
+              </label>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsAdjustPriceModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                disabled={isSavingPriceAdjustment}
+                onClick={handleSavePriceAdjustment}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm cursor-pointer flex items-center gap-1.5"
+              >
+                <Check className="w-3.5 h-3.5" />
+                <span>{isSavingPriceAdjustment ? "Đang lưu..." : "Xác Nhận & Lưu Lịch Sử Giá"}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 3E: PRICE ADJUSTMENT HISTORY TIMELINE               */}
+      {/* ========================================================= */}
+      {isPriceHistoryModalOpen && priceHistoryTarget && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-xl w-full p-5 space-y-4 max-h-[85vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-amber-500">
+                <History className="w-5 h-5" />
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    Lịch Sử Biến Động & Điều Chỉnh Giá Mua
+                  </h3>
+                  <div className="text-[11px] text-slate-400 font-mono">
+                    Mã SP: <span className="font-bold text-indigo-400">{priceHistoryTarget.product_code}</span> • {priceHistoryTarget.product_name}
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setIsPriceHistoryModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Current Price Box */}
+            <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 rounded-xl flex items-center justify-between">
+              <div>
+                <span className="text-[10px] font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wider block">Đơn Giá Mua Hiện Tại:</span>
+                <span className="text-lg font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                  {formatCurrency(priceHistoryTarget.purchase_price || 0)}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPriceHistoryModalOpen(false);
+                  handleOpenAdjustPriceModal(priceHistoryTarget);
+                }}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer shadow-2xs"
+              >
+                + Điều Chỉnh Giá Mới
+              </button>
+            </div>
+
+            {/* Timeline content */}
+            <div className="overflow-y-auto flex-1 pr-1 space-y-4">
+              {(() => {
+                let history: any[] = [];
+                try {
+                  history = typeof priceHistoryTarget.price_history === "string" 
+                    ? JSON.parse(priceHistoryTarget.price_history) 
+                    : (priceHistoryTarget.price_history || []);
+                } catch {}
+                if (!Array.isArray(history) || history.length === 0) {
+                  return (
+                    <div className="py-8 text-center text-slate-400 text-xs">
+                      Chưa có lịch sử điều chỉnh giá nào cho sản phẩm này.
+                    </div>
+                  );
+                }
+
+                // Render in reverse chronological order
+                const reversed = [...history].reverse();
+
+                return (
+                  <div className="relative pl-6 space-y-4 before:content-[''] before:absolute before:left-2.5 before:top-2 before:bottom-2 before:w-0.5 before:bg-slate-200 dark:before:bg-slate-800">
+                    {reversed.map((item: any, hIdx: number) => {
+                      const oldP = parseFloat(item.old_price) || 0;
+                      const newP = parseFloat(item.new_price) || 0;
+                      const diff = newP - oldP;
+                      const pct = oldP > 0 ? (diff / oldP) * 100 : 0;
+
+                      return (
+                        <div key={hIdx} className="relative group">
+                          {/* Dot on line */}
+                          <div className={cn(
+                            "absolute -left-6 top-1.5 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900",
+                            diff > 0 
+                              ? "bg-rose-500" 
+                              : diff < 0 
+                              ? "bg-emerald-500" 
+                              : "bg-indigo-500"
+                          )} />
+
+                          <div className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-1.5 text-xs">
+                            <div className="flex items-center justify-between flex-wrap gap-1">
+                              <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">
+                                📅 {item.date ? new Date(item.date).toLocaleDateString("vi-VN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "N/A"}
+                              </span>
+                              <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium">
+                                {item.source === "PO_AUTO" ? "⚡ Tự động từ PO" : item.source === "EXCEL_IMPORT" ? "📥 Nạp Excel" : "✏️ Thủ công"}
+                              </span>
+                            </div>
+
+                            {/* Price change comparison */}
+                            <div className="flex items-center gap-2 font-mono flex-wrap">
+                              <span className="text-slate-400 line-through">
+                                {formatCurrency(oldP)}
+                              </span>
+                              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+                              <span className="font-bold text-slate-900 dark:text-white text-sm">
+                                {formatCurrency(newP)}
+                              </span>
+                              {oldP > 0 && (
+                                <span className={cn(
+                                  "text-[10px] font-bold px-1.5 py-0.2 rounded font-sans",
+                                  diff > 0 ? "bg-rose-100 dark:bg-rose-950 text-rose-600 dark:text-rose-400" : "bg-emerald-100 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400"
+                                )}>
+                                  {diff > 0 ? `+${pct.toFixed(1)}%` : `${pct.toFixed(1)}%`}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Reason & Actor */}
+                            <div className="text-[11px] text-slate-600 dark:text-slate-300 font-medium">
+                              <strong>Lý do:</strong> {item.reason || "Không ghi rõ"}
+                            </div>
+                            <div className="text-[10px] text-slate-400">
+                              Người thực hiện: <strong>{item.changed_by || "Admin"}</strong>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+            </div>
+
+            <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsPriceHistoryModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 dark:hover:bg-slate-700 cursor-pointer"
+              >
+                Đóng
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isPaymentModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[92vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-emerald-600">
+                <DollarSign className="w-5 h-5" />
+                <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                  Ghi Nhận Chi Tiền Cho Nhà Cung Cấp
+                </h3>
+              </div>
+              <button onClick={() => setIsPaymentModalOpen(false)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl space-y-1">
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500 shrink-0">Đơn Hàng PO:</span>
+                  <span className="font-mono font-bold text-orange-600 text-right break-all">{paymentForm.po_code}</span>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <span className="text-slate-500 shrink-0">Nhà Cung Cấp:</span>
+                  <span className="font-bold text-slate-900 dark:text-white text-right">{paymentForm.supplier_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Tổng Tiền PO:</span>
+                  <span className="font-mono font-bold">{formatCurrency(paymentForm.total_amount)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Đã Thanh Toán:</span>
+                  <span className="font-mono font-bold text-emerald-600">{formatCurrency(paymentForm.amount_paid)}</span>
+                </div>
+                <div className="flex justify-between border-t border-slate-200 dark:border-slate-700 pt-1 font-bold">
+                  <span className="text-rose-600">Còn Nợ Cần Trả:</span>
+                  <span className="font-mono text-rose-600">{formatCurrency(paymentForm.remaining_balance)}</span>
+                </div>
+              </div>
+
+              {Array.isArray(paymentForm.allocations) ? (
+                <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-500">
+                      <tr><th className="p-2 text-left">PO</th><th className="p-2 text-right">Còn nợ</th><th className="p-2 text-right w-36">Chi lần này</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {paymentForm.allocations.map((al: any, i: number) => (
+                        <tr key={al.po_id}>
+                          <td className="p-2 font-mono font-bold text-orange-600">{al.po_code}</td>
+                          <td className="p-2 text-right font-mono">{formatCurrency(al.remaining)}</td>
+                          <td className="p-2 text-right">
+                            <MoneyInput
+                              value={al.amount}
+                              onValueChange={(v) => setPaymentForm((prev: any) => ({
+                                ...prev,
+                                allocations: prev.allocations.map((x: any, k: number) => k === i ? { ...x, amount: Math.min(v, x.remaining) } : x)
+                              }))}
+                              className="w-32 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-right"
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="font-bold">
+                        <td className="p-2">Tổng phiếu chi</td>
+                        <td></td>
+                        <td className="p-2 text-right font-mono text-emerald-600">
+                          {formatCurrency(paymentForm.allocations.reduce((s: number, a: any) => s + (Number(a.amount) || 0), 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              ) : (
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số Tiền Thanh Toán Đợt Này (VNĐ)</label>
+                  <MoneyInput
+                    value={paymentForm.payment_amount}
+                    onValueChange={(v) => setPaymentForm({ ...paymentForm, payment_amount: v })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-base"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Phương Thức Thanh Toán</label>
+                <select
+                  value={paymentForm.payment_method}
+                  onChange={(e) => setPaymentForm({ ...paymentForm, payment_method: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold cursor-pointer"
+                >
+                  {(paymentMethods.includes(paymentForm.payment_method) || !paymentForm.payment_method ? paymentMethods : [paymentForm.payment_method, ...paymentMethods]).map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số UNC / Chứng Từ <span className="font-normal text-slate-400">(không bắt buộc)</span></label>
+                  <input
+                    type="text"
+                    value={paymentForm.reference_doc}
+                    onChange={(e) => setPaymentForm({ ...paymentForm, reference_doc: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngày Chi Tiền</label>
+                  <input
+                    type="date"
+                    value={paymentForm.payment_date}
+                    onChange={(e) => setPaymentForm({ ...paymentForm, payment_date: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ghi Chú Kế Toán</label>
+                <input
+                  type="text"
+                  value={paymentForm.payment_notes}
+                  onChange={(e) => setPaymentForm({ ...paymentForm, payment_notes: e.target.value })}
+                  placeholder="Ghi chú thêm về đợt thanh toán..."
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => setIsPaymentModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleRecordPayment}
+                disabled={isSubmittingPayment}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm cursor-pointer"
+              >
+                Xác Nhận Chi Tiền
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 5: CREATE PURCHASE REQUEST (PR)                     */}
+      {/* ========================================================= */}
+      {isPRModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full p-6 space-y-4 my-8">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                <FileText className="w-5 h-5" />
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    Khởi Tạo Đề Xuất Mua Hàng (PR Mới)
+                  </h3>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                    Chọn mặt hàng có sẵn trong kho hoặc gõ mới (hàng mua lần đầu)
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setIsPRModalOpen(false)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              {/* Title */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tiêu Đề Đề Xuất *</label>
+                <input
+                  type="text"
+                  placeholder="Ví dụ: Đề xuất mua bổ sung Kít chẩn đoán Real-time PCR và Sinh phẩm..."
+                  value={prForm.title}
+                  onChange={(e) => setPRForm({ ...prForm, title: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-bold"
+                />
+              </div>
+
+              {/* Department, Priority & Due Date */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Bộ Phận Yêu Cầu</label>
+                  <select
+                    value={prForm.requester_dept}
+                    onChange={(e) => setPRForm({ ...prForm, requester_dept: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold cursor-pointer"
+                  >
+                    <option value="Kho & Vận Hành">Kho & Vận Hành</option>
+                    <option value="Kinh Doanh">Kinh Doanh</option>
+                    <option value="Application">Application (Lab)</option>
+                    <option value="Cung Ứng">Cung Ứng</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mức Độ Ưu Tiên</label>
+                  <select
+                    value={prForm.priority}
+                    onChange={(e) => setPRForm({ ...prForm, priority: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold cursor-pointer"
+                  >
+                    <option value="URGENT">Khẩn cấp (Hết hàng/Hàng gấp)</option>
+                    <option value="HIGH">Ưu tiên cao</option>
+                    <option value="MEDIUM">Bình thường (Định kỳ)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Hạn Cần Hàng</label>
+                  <input
+                    type="date"
+                    value={prForm.due_date}
+                    onChange={(e) => setPRForm({ ...prForm, due_date: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
+                  />
+                </div>
+              </div>
+
+              {/* Dynamic Items Section */}
+              <div className="border border-slate-200 dark:border-slate-700 rounded-xl p-3.5 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="font-black text-slate-800 dark:text-slate-200 text-xs uppercase tracking-wide">
+                      Danh Sách Mặt Hàng Đề Xuất Mua ({prForm.items?.length || 0})
+                    </span>
+                    <span className="text-[10px] text-slate-400">(Mã hàng, Qui cách, Đơn vị, Số lượng)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddPRItem}
+                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 cursor-pointer transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Thêm mặt hàng
+                  </button>
+                </div>
+
+                <div className="space-y-3 max-h-[380px] overflow-y-auto pr-1">
+                  {prForm.items?.map((it: any, idx: number) => (
+                    <div
+                      key={idx}
+                      className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xs space-y-2.5"
+                    >
+                      {/* Row Top: Index, Mode Selector & Delete Button */}
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className="w-5 h-5 rounded-full bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-400 font-bold text-[10px] flex items-center justify-center">
+                            {idx + 1}
+                          </span>
+                          <span className="font-bold text-slate-700 dark:text-slate-300 text-xs">
+                            Mặt hàng #{idx + 1}
+                          </span>
+
+                          {/* Mode Toggle Buttons */}
+                          <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 p-0.5 ml-2">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleItemCustom(idx, false)}
+                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                                !it.is_custom
+                                  ? "bg-indigo-600 text-white shadow-xs"
+                                  : "text-slate-600 dark:text-slate-400 hover:text-indigo-600"
+                              }`}
+                            >
+                              📋 Chọn mã hàng có sẵn
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleItemCustom(idx, true)}
+                              className={`px-2.5 py-1 rounded-md text-[10px] font-bold transition-all cursor-pointer ${
+                                it.is_custom
+                                  ? "bg-orange-600 text-white shadow-xs"
+                                  : "text-slate-600 dark:text-slate-400 hover:text-orange-600"
+                              }`}
+                            >
+                              ✍️ Gõ mới (Mua lần đầu)
+                            </button>
+                          </div>
+                        </div>
+
+                        {prForm.items.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => handleRemovePRItem(idx)}
+                            className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-800 cursor-pointer"
+                            title="Xóa mặt hàng này"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Mode 1: Available Product from Catalog */}
+                      {!it.is_custom ? (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="block text-[10px] font-bold text-slate-500 mb-1">
+                              Chọn sản phẩm từ danh mục hệ thống:
+                            </label>
+                            <select
+                              value={it.product_code}
+                              onChange={(e) => handleSelectExistingProduct(idx, e.target.value)}
+                              className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold text-xs cursor-pointer"
+                            >
+                              <option value="">-- Bấm để chọn mặt hàng trong danh mục TBRs --</option>
+                              {products.map((p: any) => (
+                                <option key={p.code} value={p.code}>
+                                  [{p.code}] {p.name} {p.specification ? `- (${p.specification})` : ""} - ĐVT: {p.unit || "Cái"}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="grid grid-cols-12 gap-2">
+                            <div className="col-span-3">
+                              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Mã hàng</label>
+                              <input
+                                type="text"
+                                readOnly
+                                value={it.product_code}
+                                placeholder="Mã SKU..."
+                                className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 font-mono font-bold text-xs"
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Qui cách kỹ thuật</label>
+                              <input
+                                type="text"
+                                value={it.specification || ""}
+                                onChange={(e) => handlePRItemChange(idx, "specification", e.target.value)}
+                                placeholder="VD: 50 test/kit, 96 well..."
+                                className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs"
+                              />
+                            </div>
+                            <div className="col-span-2">
+                              <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Đơn vị *</label>
+                              <input
+                                type="text"
+                                value={it.unit || ""}
+                                onChange={(e) => handlePRItemChange(idx, "unit", e.target.value)}
+                                placeholder="Hộp, Kit..."
+                                className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs text-center font-bold"
+                              />
+                            </div>
+                            <div className="col-span-3">
+                              <label className="block text-[10px] font-bold text-orange-600 dark:text-orange-400 mb-0.5">Số lượng cần mua *</label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={it.quantity}
+                                onChange={(e) => handlePRItemChange(idx, "quantity", parseInt(e.target.value) || 1)}
+                                className="w-full p-1.5 rounded-lg border-2 border-orange-400 bg-orange-50/40 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 font-bold text-xs text-center"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        /* Mode 2: First-time New Custom Item */
+                        <div className="space-y-2">
+                          <div className="bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 rounded-lg p-2 text-[11px] text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                            <AlertTriangle className="w-3.5 h-3.5 shrink-0 text-amber-600" />
+                            <span>Mặt hàng mua lần đầu (chưa có trong danh mục kho). Vui lòng nhập Mã hàng, Tên hàng, Qui cách, Đơn vị và Số lượng.</span>
+                          </div>
+
+                          <div className="grid grid-cols-12 gap-2">
+                            <div className="col-span-3">
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-300 mb-0.5">Mã hàng</label>
+                              <input
+                                type="text"
+                                value={it.product_code}
+                                onChange={(e) => handlePRItemChange(idx, "product_code", e.target.value)}
+                                placeholder="VD: TBR-NEW-01..."
+                                className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-xs"
+                              />
+                            </div>
+                            <div className="col-span-5">
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-300 mb-0.5">Tên hàng hóa *</label>
+                              <input
+                                type="text"
+                                value={it.product_name}
+                                onChange={(e) => handlePRItemChange(idx, "product_name", e.target.value)}
+                                placeholder="Tên hóa chất, sinh phẩm, linh kiện mới..."
+                                className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold text-xs"
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-300 mb-0.5">Qui cách kỹ thuật</label>
+                              <input
+                                type="text"
+                                value={it.specification || ""}
+                                onChange={(e) => handlePRItemChange(idx, "specification", e.target.value)}
+                                placeholder="VD: Chai 500ml, Bộ 100 test..."
+                                className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-12 gap-2">
+                            <div className="col-span-4">
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-300 mb-0.5">Đơn vị tính (ĐVT) *</label>
+                              <input
+                                type="text"
+                                value={it.unit || ""}
+                                onChange={(e) => handlePRItemChange(idx, "unit", e.target.value)}
+                                placeholder="Hộp, Chai, Cái, Kit, Bộ, Máy..."
+                                className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-bold"
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <label className="block text-[10px] font-bold text-orange-600 dark:text-orange-400 mb-0.5">Số lượng cần mua *</label>
+                              <input
+                                type="number"
+                                min={1}
+                                value={it.quantity}
+                                onChange={(e) => handlePRItemChange(idx, "quantity", parseInt(e.target.value) || 1)}
+                                className="w-full p-1.5 rounded-lg border-2 border-orange-400 bg-orange-50/40 dark:bg-orange-950/30 text-orange-700 dark:text-orange-300 font-bold text-xs text-center"
+                              />
+                            </div>
+                            <div className="col-span-4">
+                              <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-300 mb-0.5">Đơn giá dự kiến (VNĐ)</label>
+                              <input
+                                type="number"
+                                value={it.estimated_price || ""}
+                                onChange={(e) => handlePRItemChange(idx, "estimated_price", parseFloat(e.target.value) || 0)}
+                                placeholder="Tùy chọn..."
+                                className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 text-xs font-mono"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Reason / Notes */}
+              <div>
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Lý Do Đề Xuất / Khách Hàng Mục Tiêu</label>
+                <textarea
+                  rows={2}
+                  value={prForm.description}
+                  onChange={(e) => setPRForm({ ...prForm, description: e.target.value })}
+                  placeholder="Ghi rõ lý do thiếu hàng, dự án bệnh viện, CDC hoặc viện nghiên cứu sử dụng..."
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => setIsPRModalOpen(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                onClick={handleSavePR}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm cursor-pointer"
+              >
+                Gửi Đề Xuất Mua (PR)
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL 6: VIEW PURCHASE REQUEST DETAILS                    */}
+      {/* ========================================================= */}
+      {selectedPRDetail && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full p-6 space-y-4 my-8">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
+                <FileText className="w-5 h-5" />
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    Chi Tiết Đề Xuất Mua Hàng: {selectedPRDetail.workflow_code}
+                  </h3>
+                  <div className="text-[11px] text-slate-500">
+                    Người tạo: <strong>{selectedPRDetail.requester_name}</strong> ({selectedPRDetail.requester_dept})
+                  </div>
+                </div>
+              </div>
+              <button onClick={() => setSelectedPRDetail(null)} className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-100 dark:border-slate-800 grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Tiêu đề</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{selectedPRDetail.title}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Ưu tiên</span>
+                  <span className="font-bold text-orange-600">{selectedPRDetail.priority}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Hạn cần hàng</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{formatDate(selectedPRDetail.due_date)}</span>
+                </div>
+                <div>
+                  <span className="text-[10px] text-slate-400 block">Trạng thái</span>
+                  <span className="font-bold text-indigo-600">{selectedPRDetail.status}</span>
+                </div>
+              </div>
+
+              {/* PO Status Overview Banner */}
+              {(() => {
+                const summary = getPRPOSummary(selectedPRDetail);
+                if (summary.isFullyConverted) {
+                  return (
+                    <div className="p-3 bg-emerald-50 dark:bg-emerald-950/50 rounded-xl border border-emerald-200 dark:border-emerald-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 text-emerald-800 dark:text-emerald-300">
+                        <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                        <div>
+                          <div className="font-bold text-xs">
+                            Đề xuất này đã hoàn thành tạo PO cho toàn bộ {summary.totalItems} mặt hàng!
+                          </div>
+                          <div className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5">
+                            Mã PO liên kết: <strong className="font-mono">{summary.poCodes.join(", ") || "Đã lập PO"}</strong>
+                          </div>
+                        </div>
+                      </div>
+                      {summary.linkedPOs.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const po = summary.linkedPOs[0];
+                            setSelectedPRDetail(null);
+                            setSelectedPODetail(po);
+                          }}
+                          className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shrink-0 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> Xem đơn PO ({summary.linkedPOs[0].po_code})
+                        </button>
+                      )}
+                    </div>
+                  );
+                }
+                if (summary.isPartiallyConverted) {
+                  return (
+                    <div className="p-3 bg-purple-50 dark:bg-purple-950/50 rounded-xl border border-purple-200 dark:border-purple-800/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <div className="flex items-center gap-2.5 text-purple-900 dark:text-purple-300">
+                        <Sparkles className="w-5 h-5 text-purple-600 shrink-0" />
+                        <div>
+                          <div className="font-bold text-xs">
+                            Đã chuyển PO một phần: {summary.convertedCount}/{summary.totalItems} mặt hàng đã có PO, còn {summary.pendingCount} mặt hàng chưa tạo PO.
+                          </div>
+                          <div className="text-[11px] text-purple-700 dark:text-purple-400 mt-0.5">
+                            Mã PO đã lập: <strong className="font-mono">{summary.poCodes.join(", ") || "Chưa có"}</strong>
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pr = selectedPRDetail;
+                          setSelectedPRDetail(null);
+                          handleConvertPRToPO(pr);
+                        }}
+                        className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shrink-0 flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      >
+                        <ShoppingCart className="w-3.5 h-3.5" /> Lên PO cho {summary.pendingCount} mã còn lại
+                      </button>
+                    </div>
+                  );
+                }
+                return (
+                  <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
+                      <Clock className="w-4 h-4 text-slate-500 shrink-0" />
+                      <span className="text-xs">Đề xuất này đang <strong>Chờ Xử Lý</strong> (Chưa có mặt hàng nào được lập đơn PO).</span>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Items Table */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <h4 className="font-bold text-slate-800 dark:text-slate-200">Danh Sách Mặt Hàng & Tình Trạng Lập PO</h4>
+                  <span className="text-[11px] text-slate-500">
+                    Bấm vào mã PO ở từng dòng để mở xem chi tiết đơn PO tương ứng
+                  </span>
+                </div>
+                {(() => {
+                  let items: any[] = [];
+                  try {
+                    if (selectedPRDetail.results_summary && selectedPRDetail.results_summary.startsWith("[")) {
+                      items = JSON.parse(selectedPRDetail.results_summary);
+                    }
+                  } catch (e) {}
+
+                  if (items.length > 0) {
+                    return (
+                      <table className="w-full text-left border-collapse border border-slate-200 dark:border-slate-700 text-xs">
+                        <thead>
+                          <tr className="bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700 text-[11px]">
+                            <th className="p-2 border-r border-slate-200 dark:border-slate-700 text-center w-10">STT</th>
+                            <th className="p-2 border-r border-slate-200 dark:border-slate-700">Mã Hàng</th>
+                            <th className="p-2 border-r border-slate-200 dark:border-slate-700">Tên Mặt Hàng</th>
+                            <th className="p-2 border-r border-slate-200 dark:border-slate-700">Qui Cách</th>
+                            <th className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">ĐVT</th>
+                            <th className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">Số Lượng</th>
+                            <th className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">Trạng Thái PO</th>
+                            <th className="p-2 text-center">Mã PO Liên Kết</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
+                          {items.map((it: any, i: number) => {
+                            const itemPO = getItemPOInfo(selectedPRDetail, it, i);
+                            return (
+                              <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                                <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">{i + 1}</td>
+                                <td className="p-2 border-r border-slate-200 dark:border-slate-700 font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                  {it.product_code || "MÃ MỚI"}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 dark:border-slate-700 font-medium">
+                                  <div>{it.product_name}</div>
+                                  {it.is_custom && (
+                                    <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-400">
+                                      Hàng mới mua lần đầu
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-slate-500">
+                                  {it.specification || "-"}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-center font-bold">
+                                  {it.unit || "Cái"}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-center font-bold text-orange-600 font-mono">
+                                  {it.quantity}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-center whitespace-nowrap">
+                                  {itemPO.hasPO ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 inline-flex items-center gap-1">
+                                      <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Đã tạo PO
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-800 dark:bg-amber-950 dark:text-amber-300 border border-amber-300 dark:border-amber-800 inline-flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-amber-500" /> Chưa tạo PO
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-2 text-center font-mono whitespace-nowrap">
+                                  {itemPO.hasPO && itemPO.poCode ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        if (itemPO.linkedPO) {
+                                          setSelectedPRDetail(null);
+                                          setSelectedPODetail(itemPO.linkedPO);
+                                        }
+                                      }}
+                                      className="font-bold text-indigo-600 dark:text-indigo-400 hover:underline inline-flex items-center gap-1 cursor-pointer bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-800"
+                                      title="Bấm để mở xem chi tiết đơn PO này"
+                                    >
+                                      <Eye className="w-3 h-3 text-indigo-500" />
+                                      <span>{itemPO.poCode}</span>
+                                    </button>
+                                  ) : (
+                                    <span className="text-slate-400 text-[11px] italic">Chờ lên PO</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    );
+                  }
+
+                  return (
+                    <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg text-slate-700 dark:text-slate-300 font-mono">
+                      {selectedPRDetail.product_info}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {selectedPRDetail.description && (
+                <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
+                  <span className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Lý do & Khách hàng mục tiêu:</span>
+                  <p className="text-slate-600 dark:text-slate-400 whitespace-pre-line">{selectedPRDetail.description}</p>
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-between items-center pt-3 border-t border-slate-100 dark:border-slate-800">
+              <button
+                onClick={() => setSelectedPRDetail(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer hover:bg-slate-200"
+              >
+                Đóng
+              </button>
+              {(() => {
+                const summary = getPRPOSummary(selectedPRDetail);
+                if (summary.isFullyConverted) {
+                  return (
+                    <div className="flex items-center gap-2">
+                      {summary.linkedPOs.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPRDetail(null);
+                            setSelectedPODetail(summary.linkedPOs[0]);
+                          }}
+                          className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Eye className="w-4 h-4" /> Xem Đơn PO Đã Lập ({summary.poCodes.join(", ")})
+                        </button>
+                      ) : (
+                        <span className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800 flex items-center gap-1.5">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-500" /> Đã Lập Đủ Đơn PO
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+
+                if (summary.isPartiallyConverted) {
+                  return (
+                    <div className="flex items-center gap-2">
+                      {summary.linkedPOs.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedPRDetail(null);
+                            setSelectedPODetail(summary.linkedPOs[0]);
+                          }}
+                          className="px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Eye className="w-4 h-4" /> Xem PO Đã Lập ({summary.poCodes.join(", ")})
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pr = selectedPRDetail;
+                          setSelectedPRDetail(null);
+                          handleConvertPRToPO(pr);
+                        }}
+                        className="px-4 py-2 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-sm flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <ShoppingCart className="w-4 h-4" /> Lên PO Cho {summary.pendingCount} Mã Còn Lại
+                      </button>
+                    </div>
+                  );
+                }
+
+                return (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const pr = selectedPRDetail;
+                      setSelectedPRDetail(null);
+                      handleConvertPRToPO(pr);
+                    }}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <ShoppingCart className="w-4 h-4" /> Chuyển Thành Đơn Đặt Mua (PO)
+                  </button>
+                );
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* MODAL: GOM NHIỀU PR LÊN ĐƠN PO TỔNG HỢP (Yêu cầu 4)       */}
+      {/* ========================================================= */}
+      {isConsolidateModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-150">
+            {/* Header */}
+            <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400">
+                  <PackageCheck className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
+                    Gom Nhiều Đề Xuất (PR) Lên Đơn Mua Hàng Tổng (PO)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    ERP Standard • Tổng hợp nhu cầu từ nhiều bộ phận gửi cùng một Nhà Cung Cấp để tối ưu chiết khấu & logistics
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsConsolidateModalOpen(false)}
+                className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-6 space-y-4 overflow-y-auto flex-1 text-xs">
+              {/* Supplier Selection & Delivery Date */}
+              <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1.5 uppercase font-mono text-[10px]">
+                      Nhà Cung Cấp tiếp nhận đơn tổng *
+                    </label>
+                    <select
+                      value={consolidateSupplierId}
+                      onChange={(e) => {
+                        const newSupId = e.target.value;
+                        setConsolidateSupplierId(newSupId);
+                      }}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold outline-none"
+                    >
+                      {suppliers.map((s) => (
+                        <option key={s.id} value={s.id}>
+                          {s.name} ({s.supplier_code})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1.5 uppercase font-mono text-[10px]">
+                      Hạn giao hàng mong muốn cho PO tổng *
+                    </label>
+                    <input
+                      type="date"
+                      value={consolidateExpectedDelivery}
+                      onChange={(e) => setConsolidateExpectedDelivery(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 font-mono font-bold outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* 1-Click Smart Matching Actions Bar */}
+                {(() => {
+                  const targetSup = suppliers.find((s) => String(s.id) === String(consolidateSupplierId)) || suppliers[0];
+                  return (
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-slate-500">Gợi ý phân rã theo NCC:</span>
+                        <button
+                          type="button"
+                          onClick={() => handleAutoSelectBySupplier(targetSup?.id)}
+                          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          <Sparkles className="w-3.5 h-3.5" />
+                          <span>⚡ 1-Click: Chọn Tất Cả Hàng Phù Hợp ({targetSup?.name?.split(" ")[0] || "NCC này"})</span>
+                        </button>
+                      </div>
+
+                      {selectedItemKeysForConsolidate.length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedItemKeysForConsolidate([])}
+                          className="text-xs text-rose-500 hover:underline font-semibold cursor-pointer"
+                        >
+                          ✕ Bỏ chọn tất cả ({selectedItemKeysForConsolidate.length} mục)
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* Selection Summary Strip */}
+              {(() => {
+                const pendingPRs = purchaseRequests.filter(
+                  (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
+                );
+                const involvedPRs = new Set<string>();
+                let totalEstAmount = 0;
+
+                pendingPRs.forEach((pr) => {
+                  const prKey = pr.workflow_code || String(pr.id);
+                  const items = getPRItems(pr);
+                  items.forEach((it, idx) => {
+                    if (selectedItemKeysForConsolidate.includes(`${prKey}___${idx}`)) {
+                      involvedPRs.add(prKey);
+                      const matchedProd = products.find((p) => p.code === it.product_code);
+                      const price = it.estimated_price || (matchedProd ? parseFloat(matchedProd.cost_price) || 0 : 0);
+                      const qty = it.quantity || 1;
+                      totalEstAmount += qty * price;
+                    }
+                  });
+                });
+
+                return (
+                  <div className="p-3 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="font-bold text-slate-800 dark:text-white uppercase tracking-wider text-[11px]">
+                        Danh Sách PR Đang Chờ Xử Lý ({pendingPRs.length} phiếu):
+                      </span>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono font-bold text-[11px]">
+                        Đã chọn: {selectedItemKeysForConsolidate.length} mặt hàng ({involvedPRs.size} PR)
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const allPRKeys = pendingPRs.map((pr) => pr.workflow_code || String(pr.id));
+                          if (expandedPRKeys.length >= allPRKeys.length && allPRKeys.length > 0) {
+                            setExpandedPRKeys([]);
+                          } else {
+                            setExpandedPRKeys(allPRKeys);
+                          }
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer shadow-2xs transition-colors flex items-center gap-1"
+                      >
+                        {expandedPRKeys.length > 0 ? "⊟ Thu gọn tất cả dòng hàng" : "⊞ Mở rộng bóc tách tất cả mã hàng"}
+                      </button>
+                    </div>
+                    {totalEstAmount > 0 && (
+                      <div className="text-right">
+                        <span className="text-[10px] text-slate-500 mr-1.5">Ước tính giá trị PO:</span>
+                        <strong className="font-mono font-black text-indigo-700 dark:text-indigo-300 text-sm">
+                          {formatCurrency(totalEstAmount)}
+                        </strong>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* PR Selection Table with Nested Line-Item Rows */}
+              <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold">
+                    <tr>
+                      <th className="py-2.5 px-3 w-28 text-center">Bóc Tách / Chọn</th>
+                      <th className="py-2.5 px-3">Mã Đề Xuất (PR)</th>
+                      <th className="py-2.5 px-3">Bộ Phận / Người Gửi</th>
+                      <th className="py-2.5 px-3">Nội Dung Đề Xuất</th>
+                      <th className="py-2.5 px-3 text-center">Số Mặt Hàng</th>
+                      <th className="py-2.5 px-3">Hạn Cần</th>
+                      <th className="py-2.5 px-3 text-center">Trạng Thái</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {(() => {
+                      const pendingPRs = purchaseRequests.filter(
+                        (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
+                      );
+
+                      if (pendingPRs.length === 0) {
+                        return (
+                          <tr>
+                            <td colSpan={7} className="py-6 text-center text-slate-400 italic">
+                              Không có đề xuất mua hàng nào đang chờ xử lý.
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      const targetSup = suppliers.find((s) => String(s.id) === String(consolidateSupplierId)) || suppliers[0];
+
+                      return pendingPRs.map((pr) => {
+                        const prKey = pr.workflow_code || String(pr.id);
+                        const items = getPRItems(pr);
+                        const isExpanded = expandedPRKeys.includes(prKey);
+                        const itemKeys = items.map((_, idx) => `${prKey}___${idx}`);
+                        const selectedInThisPR = itemKeys.filter((k) => selectedItemKeysForConsolidate.includes(k));
+                        const isAllSelected = items.length > 0 && selectedInThisPR.length === items.length;
+                        const isPartialSelected = selectedInThisPR.length > 0 && !isAllSelected;
+
+                        return (
+                          <React.Fragment key={pr.id}>
+                            {/* PR Header Row */}
+                            <tr
+                              className={`transition-colors ${
+                                isAllSelected
+                                  ? "bg-emerald-50/70 dark:bg-emerald-950/40"
+                                  : isPartialSelected
+                                  ? "bg-indigo-50/40 dark:bg-indigo-950/20"
+                                  : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
+                              }`}
+                            >
+                              {/* Accordion Toggle + PR-Level Checkbox */}
+                              <td className="py-3 px-3">
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePRExpansion(prKey)}
+                                    className={`px-2 py-1 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer border transition-colors ${
+                                      isExpanded
+                                        ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700"
+                                        : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
+                                    }`}
+                                    title={isExpanded ? "Thu gọn danh sách mã hàng" : "Bấm để mở danh sách chọn từng mã hàng"}
+                                  >
+                                    {isExpanded ? (
+                                      <>
+                                        <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
+                                        <span>Thu gọn</span>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <ChevronRight className="w-3.5 h-3.5" />
+                                        <span>Tách hàng</span>
+                                      </>
+                                    )}
+                                  </button>
+                                  <input
+                                    type="checkbox"
+                                    checked={isAllSelected}
+                                    ref={(el) => {
+                                      if (el) el.indeterminate = isPartialSelected;
+                                    }}
+                                    onChange={() => togglePRSelection(pr)}
+                                    className="w-4 h-4 rounded text-emerald-600 cursor-pointer"
+                                    title="Chọn tất cả các mặt hàng trong PR này"
+                                  />
+                                </div>
+                              </td>
+
+                              {/* PR Code */}
+                              <td className="py-3 px-3 font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                                <div>{pr.workflow_code}</div>
+                                <span className="text-[10px] text-slate-400 font-normal">
+                                  {formatDate(pr.created_at || pr.due_date)}
+                                </span>
+                              </td>
+
+                              {/* Requester */}
+                              <td className="py-3 px-3">
+                                <span className="font-bold text-slate-800 dark:text-slate-200">{pr.requester_name}</span>
+                                <span className="text-slate-400 block text-[10px]">{pr.requester_dept}</span>
+                              </td>
+
+                              {/* Title / Info */}
+                              <td className="py-3 px-3">
+                                <span className="font-medium text-slate-800 dark:text-slate-200">{pr.title}</span>
+                                <span className="text-slate-400 block text-[10px] truncate max-w-xs">{pr.product_info}</span>
+                              </td>
+
+                              {/* Items Count Badge */}
+                              <td className="py-3 px-3 text-center">
+                                <button
+                                  type="button"
+                                  onClick={() => togglePRExpansion(prKey)}
+                                  className={`px-2 py-0.5 rounded-full font-mono text-[10px] font-bold cursor-pointer transition-colors ${
+                                    selectedInThisPR.length > 0
+                                      ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700"
+                                      : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
+                                  }`}
+                                >
+                                  {items.length} mặt hàng {selectedInThisPR.length > 0 && `(chọn ${selectedInThisPR.length})`}
+                                </button>
+                              </td>
+
+                              {/* Due Date */}
+                              <td className="py-3 px-3 font-mono text-slate-500">
+                                {formatDate(pr.due_date)}
+                              </td>
+
+                              {/* Status */}
+                              <td className="py-3 px-3 text-center">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                                  {pr.status}
+                                </span>
+                              </td>
+                            </tr>
+
+                            {/* Expanded Child Items Table (Line-Item Level) */}
+                            {isExpanded && (
+                              <tr className="bg-slate-50/70 dark:bg-slate-900/60">
+                                <td colSpan={7} className="p-3 pl-10">
+                                  <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs bg-white dark:bg-slate-900">
+                                    <div className="px-3 py-2 bg-slate-100/70 dark:bg-slate-800/70 text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 flex items-center justify-between">
+                                      <span>Bóc Tách Dòng Hàng Chi Tiết Của Đề Xuất {pr.workflow_code}:</span>
+                                      <span className="text-slate-400 lowercase font-normal">
+                                        Tick chọn từng mặt hàng để đưa vào PO tổng của NCC đang chọn
+                                      </span>
+                                    </div>
+                                    <table className="w-full text-left text-[11px]">
+                                      <thead className="bg-slate-50 dark:bg-slate-800/40 text-slate-500 font-semibold border-b border-slate-200 dark:border-slate-800">
+                                        <tr>
+                                          <th className="py-2 px-3 w-8 text-center">#</th>
+                                          <th className="py-2 px-3">Mã SKU</th>
+                                          <th className="py-2 px-3">Tên Mặt Hàng / Sinh Phẩm</th>
+                                          <th className="py-2 px-3 text-right">SL Cần</th>
+                                          <th className="py-2 px-3">ĐVT</th>
+                                          <th className="py-2 px-3 text-right">Đơn Giá Dự Kiến</th>
+                                          <th className="py-2 px-3">Nhà Cung Cấp Phù Hợp</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                                        {items.map((it: any, idx: number) => {
+                                          const itemKey = `${prKey}___${idx}`;
+                                          const isItemSelected = selectedItemKeysForConsolidate.includes(itemKey);
+                                          const itemSup = getItemSuggestedSupplier(it);
+                                          const isMatchSupplier = itemSup && String(itemSup.id) === String(targetSup?.id);
+
+                                          const isAlreadyPo = Boolean(it.po_code);
+                                          return (
+                                            <tr
+                                              key={idx}
+                                              onClick={() => !isAlreadyPo && toggleItemSelection(itemKey)}
+                                              className={`transition-colors ${
+                                                isAlreadyPo
+                                                  ? "opacity-50 bg-slate-100/50 dark:bg-slate-800/30 cursor-not-allowed"
+                                                  : isItemSelected
+                                                  ? "cursor-pointer bg-emerald-50/80 dark:bg-emerald-950/40"
+                                                  : isMatchSupplier
+                                                  ? "cursor-pointer bg-emerald-50/20 hover:bg-emerald-50/40 dark:bg-emerald-950/10"
+                                                  : "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                                              }`}
+                                            >
+                                              <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                                                {isAlreadyPo ? (
+                                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300" title={`Mặt hàng này đã được tạo đơn ${it.po_code}`}>
+                                                    ĐÃ LÊN PO
+                                                  </span>
+                                                ) : (
+                                                  <input
+                                                    type="checkbox"
+                                                    checked={isItemSelected}
+                                                    onChange={() => toggleItemSelection(itemKey)}
+                                                    className="w-3.5 h-3.5 rounded text-emerald-600 cursor-pointer"
+                                                  />
+                                                )}
+                                              </td>
+                                              <td className="py-2 px-3 font-mono font-bold text-slate-800 dark:text-slate-200">
+                                                {it.product_code || "TBR-ITEM"}
+                                              </td>
+                                              <td className="py-2 px-3">
+                                                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                                  {cleanItemName(it.product_name)}
+                                                </span>
+                                                {it.specification && (
+                                                  <span className="text-[10px] text-slate-400 block font-mono">
+                                                    Quy cách: {it.specification}
+                                                  </span>
+                                                )}
+                                              </td>
+                                              <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 dark:text-white">
+                                                {it.quantity || 1}
+                                              </td>
+                                              <td className="py-2 px-3 text-slate-500">{it.unit || "Cái"}</td>
+                                              <td className="py-2 px-3 text-right font-mono text-slate-600 dark:text-slate-300">
+                                                {it.estimated_price ? formatCurrency(it.estimated_price) : "Theo báo giá"}
+                                              </td>
+                                              <td className="py-2 px-3">
+                                                {isMatchSupplier ? (
+                                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                                                    <Check className="w-3 h-3" />
+                                                    Khớp NCC này ({itemSup.name?.split(" ")[0]})
+                                                  </span>
+                                                ) : (
+                                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                                    NCC khác: {itemSup?.name?.split(" ")[0] || "Khác"}
+                                                  </span>
+                                                )}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </td>
+                              </tr>
+                            )}
+                          </React.Fragment>
+                        );
+                      });
+                    })()}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Notes */}
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1 text-[10px] uppercase font-mono">
+                  Ghi chú đơn đặt mua tổng hợp:
+                </label>
+                <textarea
+                  rows={2}
+                  value={consolidateNotes}
+                  onChange={(e) => setConsolidateNotes(e.target.value)}
+                  placeholder="Ghi chú điều kiện giao hàng, tiến độ thanh toán cho NCC..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-none resize-none"
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
+              <span className="text-xs text-slate-500">
+                Sau khi tạo PO tổng, các dòng hàng được chọn sẽ tự động gắn mã PO này. PR chuyển thành <strong className="text-indigo-600 font-mono">CONVERTED</strong>.
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsConsolidateModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="button"
+                  disabled={selectedItemKeysForConsolidate.length === 0 || isSubmittingConsolidate}
+                  onClick={handleConsolidatePRsSubmit}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white shadow-sm flex items-center gap-1.5 cursor-pointer"
+                >
+                  <PackageCheck className="w-4 h-4" />
+                  <span>
+                    {isSubmittingConsolidate
+                      ? "Đang tạo PO..."
+                      : `📦 Xác Nhận Tạo PO Tổng (${selectedItemKeysForConsolidate.length} Mặt Hàng)`}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};

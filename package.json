@@ -1,0 +1,38 @@
+{
+  "name": "tbrs-portal",
+  "version": "1.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "next dev -p 3007",
+    "build": "next build",
+    "start": "next start -p 3007",
+    "lint": "eslint"
+  },
+  "dependencies": {
+    "@types/jsbarcode": "^3.11.4",
+    "@types/qrcode": "^1.5.6",
+    "clsx": "^2.1.1",
+    "exceljs": "^4.4.0",
+    "framer-motion": "^12.31.1",
+    "jsbarcode": "^3.12.3",
+    "lucide-react": "^0.563.0",
+    "next": "16.1.6",
+    "pg": "^8.23.0",
+    "qrcode": "^1.5.4",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "tailwind-merge": "^3.4.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.1.6",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}

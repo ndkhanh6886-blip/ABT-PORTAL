@@ -1,0 +1,122 @@
+name: CI/CD Pipeline - Build & Auto Deploy
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  # ==========================================
+  # STAGE 1: Continuous Integration (CI)
+  # ==========================================
+  ci-build:
+    name: Build & Code Quality Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: ⚙️ Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: 📦 Install Dependencies
+        run: npm ci || npm install --prefer-offline --no-audit
+
+      - name: 🔨 Build Production Application
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+          NODE_ENV: production
+
+  # ==========================================
+  # STAGE 2: Auto Deploy on Self-Hosted Server
+  # ==========================================
+  deploy:
+    name: Deploy on Production Server (Self-Hosted)
+    if: github.ref == 'refs/heads/main'
+    runs-on: self-hosted
+    permissions:
+      contents: read
+
+    steps:
+      - name: 🚀 Pull Latest Code & Restart Application
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=========================================="
+          echo "🚀 [TBRs Portal] Bắt đầu tự động cập nhật trên máy chủ..."
+          echo "=========================================="
+          
+          TARGET_DIR="/var/www/tbrs-portal"
+          if [ ! -d "$TARGET_DIR" ]; then
+            echo "❌ Chưa có thư mục $TARGET_DIR trên máy chủ (xem docs/TRIEN_KHAI_TBRS.md)"; exit 1
+          fi
+          
+          echo "📂 Thư mục triển khai: $TARGET_DIR"
+          cd "$TARGET_DIR"
+          
+          echo "📥 Kéo mã nguồn mới nhất từ GitHub..."
+          # Repo riêng tư: dùng token tạm của chính lần chạy này (GITHUB_TOKEN, chỉ đọc) thay vì
+          # thông tin đăng nhập lưu trên máy chủ (token cũ hết hạn -> "could not read Username").
+          # GitHub nhận token qua HTTP Basic (giống actions/checkout): base64("x-access-token:<token>")
+          AUTH_B64=$(printf "x-access-token:%s" "$GH_TOKEN" | base64 -w0)
+          git -c http.extraheader="AUTHORIZATION: basic ${AUTH_B64}" fetch "https://github.com/${GITHUB_REPOSITORY}.git" main
+          git reset --hard FETCH_HEAD
+          
+          echo "🔐 Kiểm tra khóa bảo mật SESSION_SECRET trong .env.local..."
+          touch .env.local
+          if ! grep -q "^SESSION_SECRET=.\+" .env.local 2>/dev/null; then
+            NEW_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")
+            echo "" >> .env.local
+            echo "SESSION_SECRET=${NEW_SECRET}" >> .env.local
+            echo "✅ Đã tự động khởi tạo khóa SESSION_SECRET vào .env.local"
+          fi
+
+          echo "📦 Cập nhật thư viện & Build ứng dụng..."
+          npm ci || npm install --no-audit
+          npm run build
+          
+          echo "🗄️ Tự động đồng bộ và tạo toàn bộ bảng Database (41 bảng)..."
+          node -e "const { Pool } = require('pg'); const fs = require('fs'); const pool = new Pool({ host: process.env.PGHOST || '127.0.0.1', port: parseInt(process.env.PGPORT || '5432'), user: process.env.PGUSER || 'postgres', password: process.env.PGPASSWORD || '12345678', database: process.env.PGDATABASE || 'tbrs_portal' }); fs.existsSync('src/backend/db/schema.sql') && pool.query(fs.readFileSync('src/backend/db/schema.sql', 'utf-8')).then(() => { console.log('✅ Khởi tạo và đồng bộ 41 bảng dữ liệu hoàn tất!'); pool.end(); }).catch(e => { console.warn('Database sync warning:', e.message); pool.end(); });" || true
+          
+          echo "🔄 Khởi động lại dịch vụ qua PM2..."
+          # Chỉ khởi động lại TBRs (không đụng TBR / VIA chạy chung máy chủ)
+          pm2 restart tbrs-portal --update-env || pm2 start npm --name "tbrs-portal" -- start
+          
+          # Không khởi động lại Cloudflare Tunnel ở đây: tunnel dùng chung cho các trang khác trên cùng máy chủ
+          
+          echo "🔍 Kiểm tra trạng thái dịch vụ và lưu vào app_storage..."
+          node -e "
+            const { execSync } = require('child_process');
+            const { Pool } = require('pg');
+            const pool = new Pool({
+              host: process.env.PGHOST || '127.0.0.1',
+              port: parseInt(process.env.PGPORT || '5432'),
+              user: process.env.PGUSER || 'postgres',
+              password: process.env.PGPASSWORD || (process.env.NODE_ENV === 'production' ? '' : '12345678'),
+              database: process.env.PGDATABASE || 'tbrs_portal'
+            });
+            const run = (cmd) => { try { return execSync(cmd, { encoding: 'utf8', timeout: 5000 }); } catch (e) { return e.stdout || e.message; } };
+            const debug = {
+              timestamp: new Date().toISOString(),
+              pm2: run('pm2 list'),
+              cloudflared_systemctl: run('systemctl status cloudflared --no-pager'),
+              cloudflared_service: run('service cloudflared status'),
+              docker_ps: run('docker ps -a')
+            };
+            pool.query('INSERT INTO app_storage (key, data, version, updated_at) VALUES (\$1, \$2, 1, now()) ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = now()', ['tunnel_debug', JSON.stringify(debug)])
+              .then(() => { console.log('✅ Đã lưu log tunnel_debug'); pool.end(); })
+              .catch(err => { console.error('Lỗi lưu debug:', err); pool.end(); });
+          " || true
+          
+          echo "=========================================="
+          echo "✅ [TBRs Portal] Triển khai thành công 100%!"
+          echo "=========================================="

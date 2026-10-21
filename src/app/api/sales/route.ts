@@ -1,0 +1,2310 @@
+import { NextRequest, NextResponse } from "next/server";
+import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/backend/db/db";
+import { generateDocumentCode, getShortRepCode, getShortCustCode } from "@/backend/services/codeGenerator";
+import { addStock, sortByProductCode, reserveStock, releaseReservation, releaseReservationsFor } from "@/backend/services/inventoryLedger";
+import { stableStringify } from "@/backend/services/storagePatch";
+import { getAuthorizedUser, unauthorizedResponse, forbiddenResponse, isAdminUser, setAuditActor } from "@/backend/services/authz";
+import { hasPermission } from "@/backend/services/permissions";
+import { stripCostFields } from "@/backend/services/costVisibility";
+import { canApproveSalesOrders } from "@/backend/services/approvalGuard";
+import { todayVN, toVNDateString } from "@/backend/services/dates";
+
+const DEFAULT_CREDIT_LIMIT = 100000000;
+const DEFAULT_CREDIT_TERM_DAYS = 30;
+
+/** Credit limit / term of a customer. A limit of 0 means "no credit" (it used to silently become 100 triệu). */
+function customerCreditTerms(cust: any) {
+  const rawLimit = cust?.credit_limit;
+  const parsedLimit = parseFloat(rawLimit);
+  const limit = rawLimit === null || rawLimit === undefined || rawLimit === "" || !Number.isFinite(parsedLimit) ? DEFAULT_CREDIT_LIMIT : parsedLimit;
+  const parsedTerm = parseInt(cust?.credit_term_days);
+  const termDays = Number.isFinite(parsedTerm) && parsedTerm >= 0 ? parsedTerm : DEFAULT_CREDIT_TERM_DAYS;
+  return { limit, termDays };
+}
+
+/** Parses "YYYY-MM-DD..." or "DD/MM/YYYY" into a UTC date (null when unreadable). */
+function parseLooseDate(v: any): Date | null {
+  if (!v) return null;
+  if (v instanceof Date) return isNaN(v.getTime()) ? null : v;
+  const s = String(v).trim();
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
+  return null;
+}
+
+/** Earliest confirmed delivery date of each order, from its (non-cancelled) delivery slips. */
+async function firstDeliveryDates(orderCodes: string[]): Promise<Map<string, Date>> {
+  const out = new Map<string, Date>();
+  if (orderCodes.length === 0) return out;
+  let rows: any[] = [];
+  try {
+    rows = (await query("SELECT order_code, delivery_date, status, extra_data FROM sales_delivery_slips WHERE order_code = ANY($1::text[])", [orderCodes])).rows;
+  } catch {
+    // extra_data column not created yet on this database
+    rows = (await query("SELECT order_code, delivery_date, status FROM sales_delivery_slips WHERE order_code = ANY($1::text[])", [orderCodes])).rows;
+  }
+  for (const r of rows) {
+    let extra: any = r.extra_data;
+    if (typeof extra === "string") { try { extra = JSON.parse(extra); } catch { extra = {}; } }
+    extra = extra && typeof extra === "object" ? extra : {};
+    const st = String(extra.deliveryStatus || "").toUpperCase();
+    const cancelled = st === "CANCELLED" || String(r.status || "").toUpperCase() === "CANCELLED";
+    const delivered = extra.isDelivered === true || extra.isDelivered === "true" || ["DELIVERED", "FULLY_DELIVERED", "PARTIALLY_DELIVERED"].includes(st);
+    if (!delivered || cancelled) continue;
+    const d = parseLooseDate(extra.deliveredAt) || parseLooseDate(r.delivery_date);
+    if (!d) continue;
+    const prev = out.get(r.order_code);
+    if (!prev || d < prev) out.set(r.order_code, d);
+  }
+  return out;
+}
+
+/**
+ * Open (unpaid, not cancelled) orders of a customer, optionally excluding one order, each with
+ * `due_start`: the date the payment term starts = the (first) delivery date. Orders not delivered
+ * yet have no due_start and can never be overdue (they still count towards the credit limit).
+ */
+async function openOrdersOfCustomer(cust: any, excludeOrderId: number | null = null) {
+  const res = await query(
+    `SELECT id, order_code, order_date, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status, delivery_status, invoice_date, delivered_at FROM sales_orders
+      WHERE (customer_id = $1 OR (customer_id IS NULL AND customer_name = $2))
+        AND COALESCE(payment_status, 'UNPAID') <> 'PAID'
+        AND UPPER(COALESCE(delivery_status, '')) <> 'CANCELLED'
+        AND ($3::int IS NULL OR id <> $3::int)`,
+    [cust.id, cust.name, excludeOrderId]
+  );
+  const deliveries = await firstDeliveryDates(res.rows.map((r: any) => r.order_code).filter(Boolean));
+  return res.rows.map((r: any) => {
+    let dueStart: Date | null = deliveries.get(r.order_code) || null;
+    // Delivered through the order status only (no slip with a date): update_delivery_status stores the delivery date in invoice_date
+    if (!dueStart && r.delivered_at) dueStart = parseLooseDate(r.delivered_at);
+    // Older rows: update_delivery_status used to store the delivery date in invoice_date
+    if (!dueStart && String(r.delivery_status || "").toUpperCase() === "DELIVERED") {
+      dueStart = parseLooseDate(r.invoice_date) || parseLooseDate(r.order_date);
+    }
+    return { ...r, due_start: dueStart };
+  });
+}
+
+/** Days past the payment term for an open order (0 when not delivered or still within term). */
+function overdueDays(order: any, termDays: number): number {
+  if (!order.due_start) return 0;
+  const days = Math.floor((Date.now() - new Date(order.due_start).getTime()) / (1000 * 3600 * 24));
+  return days > termDays ? days - termDays : 0;
+}
+
+/** Credit check for an order of `orderTotal` (Requirement 10 & 11). */
+async function evaluateCredit(cust: any, orderTotal: number, excludeOrderId: number | null) {
+  const { limit, termDays } = customerCreditTerms(cust);
+  const openOrders = await openOrdersOfCustomer(cust, excludeOrderId);
+  const currentDebt = openOrders.reduce((sum: number, o: any) => sum + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.amount_paid) || 0)), 0);
+  const newTotalDebt = currentDebt + (Number(orderTotal) || 0);
+  let blocked = false;
+  let reason = "";
+  if (newTotalDebt > limit) {
+    blocked = true;
+    reason = `Vượt hạn mức công nợ: Tổng nợ mới (${newTotalDebt.toLocaleString('vi-VN')} đ) vượt trần ${limit.toLocaleString('vi-VN')} đ`;
+  }
+  for (const uo of openOrders) {
+    const late = overdueDays(uo, termDays);
+    if (late > 0) {
+      blocked = true;
+      reason = (reason ? reason + " • " : "") + `Đơn ${uo.order_code} đã quá hạn thanh toán ${late} ngày kể từ ngày giao (Hạn: ${termDays} ngày)`;
+      break;
+    }
+  }
+  return { blocked, reason };
+}
+
+/** A customer with open (unpaid, not cancelled) orders cannot be deleted: its debt control would disappear. */
+async function openOrderCountForCustomer(idOrCode: any): Promise<number> {
+  const numId = idOrCode !== undefined && idOrCode !== null && !isNaN(Number(idOrCode)) ? Number(idOrCode) : null;
+  const cust = (await query(
+    "SELECT id, name FROM sales_customers WHERE ($1::int IS NOT NULL AND id = $1::int) OR customer_code = $2 LIMIT 1",
+    [numId, String(idOrCode ?? "")]
+  )).rows[0];
+  if (!cust) return 0;
+  return (await openOrdersOfCustomer(cust)).length;
+}
+
+/** order_id from the UI is sometimes the numeric row id and sometimes the order CODE: only a number may be compared with the id column. */
+function numericIdOrNull(v: any): number | null {
+  if (v === undefined || v === null || v === "") return null;
+  const s = String(v).trim();
+  return /^\d+$/.test(s) ? Number(s) : null;
+}
+
+/** True when the slip does not exist or was cancelled (its stock was put back). */
+async function deliverySlipIsCancelled(idOrCode: any): Promise<boolean> {
+  const r = await query(
+    "SELECT status, extra_data FROM sales_delivery_slips WHERE slip_code = $1 OR ($2::int IS NOT NULL AND id = $2::int) LIMIT 1",
+    [String(idOrCode ?? ""), numericIdOrNull(idOrCode)]
+  );
+  const row = r.rows[0];
+  if (!row) return true;
+  let extra: any = row.extra_data;
+  if (typeof extra === "string") { try { extra = JSON.parse(extra); } catch { extra = {}; } }
+  return String(extra?.deliveryStatus || row.status || "").toUpperCase() === "CANCELLED";
+}
+
+function parseJsonArray(v: any): any[] {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+  }
+  return [];
+}
+
+function itemHasZeroPrice(it: any): boolean {
+  const p = parseFloat(it?.price) || parseFloat(it?.unitPrice) || parseFloat(it?.unit_price) || 0;
+  return it?.status !== "CANCELLED" && (p === 0 || it?.isGift === true || it?.isSample === true);
+}
+
+// ==========================================
+// FINITE STATE MACHINE (FSM) HIERARCHIES & MONOTONIC PROCESS GUARD
+// Chốt chặn ngăn chặn triệt để tình trạng lùi bước / tụt trạng thái tiến trình
+// ==========================================
+const DELIVERY_STATUS_HIERARCHY: Record<string, number> = {
+  "PENDING": 0,
+  "PROCESSING": 1,
+  "PACKED": 2,
+  "READY": 2,
+  "SHIPPED": 3,
+  "DISPATCHED": 3,
+  "PARTIALLY_DELIVERED": 3.5,
+  "DELIVERED": 4,
+  "CANCELLED": -1
+};
+
+const INVOICE_STATUS_HIERARCHY: Record<string, number> = {
+  "PENDING_INVOICE": 0,
+  "PENDING": 0,
+  "PARTIALLY_INVOICED": 1,
+  "ISSUED": 2,
+  "INVOICED": 2
+};
+
+const PAYMENT_STATUS_HIERARCHY: Record<string, number> = {
+  "UNPAID": 0,
+  "PARTIALLY_PAID": 1,
+  "PAID": 2
+};
+
+function resolveMonotonicStatus(
+  currentStatus: string | null | undefined,
+  incomingStatus: string | null | undefined,
+  hierarchy: Record<string, number>,
+  allowRollback: boolean = false
+): string {
+  const curr = (currentStatus || "").trim().toUpperCase();
+  const next = (incomingStatus || "").trim().toUpperCase();
+
+  if (!next) return curr || Object.keys(hierarchy)[0];
+  if (!curr) return next;
+  if (curr === next) return curr;
+
+  // Nếu người dùng có quyền và yêu cầu rollback có lý do rõ ràng
+  if (allowRollback) return next;
+
+  // Trạng thái hủy / hoàn hàng được phép chuyển nếu có quy trình
+  if (next === "CANCELLED" || next === "REJECTED") return next;
+
+  const currLevel = hierarchy[curr] !== undefined ? hierarchy[curr] : 0;
+  const nextLevel = hierarchy[next] !== undefined ? hierarchy[next] : 0;
+
+  // Bảo vệ đơn hướng: Không cho phép lùi trạng thái nếu nextLevel < currLevel
+  if (nextLevel < currLevel) {
+    return curr; // Giữ nguyên trạng thái cao nhất đã đạt được, triệt tiêu lỗi lùi bước
+  }
+
+  return next;
+}
+
+function parseSqlDate(d: any): string {
+  if (!d) return todayVN();
+  if (typeof d === 'string' && d.includes('/')) {
+    const parts = d.split('/');
+    if (parts.length === 3) {
+      const day = parts[0].padStart(2, '0');
+      const month = parts[1].padStart(2, '0');
+      const year = parts[2];
+      return `${year}-${month}-${day}`;
+    }
+  }
+  try {
+    const parsed = new Date(d);
+    if (!isNaN(parsed.getTime())) return toVNDateString(parsed);
+  } catch (e) {}
+  return todayVN();
+}
+
+let quotationExtraColumnEnsured = false;
+let customerTaxAddressColumnEnsured = false;
+const QUOTATION_EXTRA_KEYS = [
+  "contactPerson", "contactPhone", "contactEmail", "contactPosition",
+  "salesRepId", "salesRepPhone", "salesRepEmail",
+  "validityTerms", "deliveryTerms", "paymentTerms", "noteTerms",
+  "hasZeroPriceItems", "priceApprovalStatus", "customer_code", "customerId"
+];
+
+function normalizeQuotationRow(r: any) {
+  if (!r) return null;
+  const quoteId = r.quote_code || (r.id ? String(r.id) : `BG-${Date.now()}`);
+  let extra: any = {};
+  try {
+    extra = typeof r.extra_data === "string" ? JSON.parse(r.extra_data || "{}") : (r.extra_data || {});
+  } catch (e) { extra = {}; }
+  const rawItems = Array.isArray(r.items) ? r.items : (typeof r.items === 'string' ? JSON.parse(r.items || '[]') : []);
+  const normalizedItems = rawItems.map((it: any) => ({
+    ...it,
+    productCode: it.productCode || it.product_code || it.sku || it.code || "",
+    productName: it.productName || it.product_name || it.name || it.productCode || "",
+    quantity: Number(it.quantity !== undefined ? it.quantity : (it.qty !== undefined ? it.qty : 1)) || 1,
+    qty: Number(it.quantity !== undefined ? it.quantity : (it.qty !== undefined ? it.qty : 1)) || 1,
+    price: Number(it.price !== undefined ? it.price : (it.unitPrice !== undefined ? it.unitPrice : (it.unit_price !== undefined ? it.unit_price : 0))) || 0,
+    unitPrice: Number(it.unitPrice !== undefined ? it.unitPrice : (it.price !== undefined ? it.price : 0)) || 0,
+    unit: it.unit || "Hộp",
+    total: Number(it.total !== undefined ? it.total : (it.amount !== undefined ? it.amount : 0)) || 0
+  }));
+
+  return {
+    ...(extra && typeof extra === "object" ? extra : {}),
+    ...r,
+    id: quoteId,
+    quote_code: quoteId,
+    customerName: r.customer_name || r.customerName || "",
+    customerId: r.customer_id ? String(r.customer_id) : (r.customerId || ""),
+    salesRepName: r.sales_rep_name || r.salesRepName || "",
+    salesRepId: extra.salesRepId || r.salesRepId || r.sales_rep_id || "",
+    totalAmount: Number(r.total_amount || r.totalAmount) || 0,
+    totalBeforeVat: Number(r.subtotal || r.totalBeforeVat) || 0,
+    totalVat: Number(r.tax_amount || r.totalVat) || 0,
+    totalDiscount: Number(r.discount_amount || r.totalDiscount) || 0,
+    discountRate: Number(r.discount_rate || r.discountRate) || 0,
+    taxRate: Number(r.tax_rate || r.taxRate) || 8,
+    status: r.status || "Draft",
+    paymentTerms: r.terms || r.paymentTerms || "",
+    items: normalizedItems
+  };
+}
+
+function normalizeContractRow(r: any) {
+  if (!r) return null;
+  const contractId = r.contract_code || (r.id ? String(r.id) : `CTR-${Date.now()}`);
+  return {
+    ...r,
+    id: contractId,
+    contract_code: contractId,
+    contractTitle: r.title || r.contractTitle || "Hợp đồng mua bán",
+    customerName: r.customer_name || r.customerName || "",
+    salesRepName: r.sales_rep_name || r.salesRepName || "",
+    totalAmount: Number(r.total_value || r.totalAmount) || 0,
+    total_value: Number(r.total_value || r.totalAmount) || 0,
+    status: r.status || "ACTIVE",
+    notes: r.notes || "",
+    items: Array.isArray(r.items) ? r.items : (typeof r.items === 'string' ? JSON.parse(r.items || '[]') : []),
+    contract_files: Array.isArray(r.contract_files) ? r.contract_files : (typeof r.contract_files === 'string' ? JSON.parse(r.contract_files || '[]') : [])
+  };
+}
+
+// Thông tin mở rộng của phiếu giao (đợt giao, hình thức, trạng thái xác nhận, POD...) lưu ở cột JSONB extra_data
+let deliverySlipExtraColumnEnsured = false;
+const DELIVERY_SLIP_EXTRA_KEYS = [
+  "batchNumber", "deliveryMode", "deliveryStatus", "isDelivered", "deliveredAt",
+  "receiverName", "receiverPhone", "receiverRole", "deliveryStaff", "confirmedBy", "confirmedAt",
+  "podImages", "podDeliveryId", "invoiceNo", "invoiceStatus", "invoiceFiles",
+  "cancelledAt", "cancelledBy", "cancelReason", "editedAt", "editedBy", "createdBy"
+];
+
+function normalizeDeliverySlipRow(r: any) {
+  if (!r) return null;
+  let extra: any = r.extra_data;
+  if (typeof extra === "string") {
+    try { extra = JSON.parse(extra || "{}"); } catch { extra = {}; }
+  }
+  extra = extra && typeof extra === "object" ? extra : {};
+  return {
+    ...extra,
+    ...r,
+    id: r.slip_code || String(r.id),
+    orderId: r.order_id || "",
+    orderCode: r.order_code || "",
+    customerName: r.customer_name || "",
+    customerAddress: r.customer_address || "",
+    customerPhone: r.customer_phone || "",
+    customerContact: r.customer_contact || "",
+    deliveryDate: r.delivery_date || "",
+    timeliness: r.timeliness || "",
+    dispatchLocation: r.dispatch_location || "",
+    dispatcherName: r.dispatcher_name || "",
+    dispatcherPhone: r.dispatcher_phone || "",
+    creatorName: r.creator_name || "",
+    notes: r.notes || "",
+    items: Array.isArray(r.items) ? r.items : (typeof r.items === 'string' ? JSON.parse(r.items || '[]') : []),
+    invoiceNumber: r.invoice_number || "",
+    invoiceDate: r.invoice_date || "",
+    status: r.status || "COMPLETED",
+    createdAt: r.created_at
+  };
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    // Phiên phải còn hiệu lực (tài khoản chưa bị khóa, mật khẩu chưa đổi): proxy chỉ kiểm tra chữ ký cookie
+    const authUser = await getAuthorizedUser(req);
+    if (!authUser) return unauthorizedResponse();
+    setAuditActor(authUser);
+    const canSeeCost = isAdminUser(authUser) || hasPermission(authUser, "warehouse.view_cost_price");
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action") || "overview";
+
+    if (action === "overview") {
+      const [customers, orders, quotations, products, targets, tasks, plans, daily, reservations, openPOs, contractsRes, rmaRes, recallsRes, slipsRes, prRes] = await Promise.all([
+        query("SELECT * FROM sales_customers ORDER BY id DESC"),
+        query("SELECT * FROM sales_orders ORDER BY id DESC"),
+        query("SELECT * FROM sales_quotations ORDER BY id DESC"),
+        query("SELECT * FROM products ORDER BY code ASC"),
+        query("SELECT * FROM sales_targets ORDER BY id DESC"),
+        query("SELECT * FROM sales_tasks ORDER BY id DESC"),
+        query("SELECT * FROM sales_plans ORDER BY id DESC"),
+        query("SELECT * FROM sales_daily_logs ORDER BY log_date DESC LIMIT 100"),
+        query("SELECT * FROM inventory_reservations ORDER BY id DESC"),
+        query("SELECT id, po_code, supplier_name, expected_delivery_date, status, items FROM procurement_orders ORDER BY id DESC"),
+        query("SELECT * FROM sales_contracts ORDER BY id DESC"),
+        query("SELECT * FROM rma_returns ORDER BY id DESC"),
+        query("SELECT * FROM lot_recalls ORDER BY id DESC"),
+        query("SELECT * FROM sales_delivery_slips ORDER BY id DESC"),
+        query("SELECT id, workflow_code, title, status, product_info, due_date, description, results_summary, requester_name FROM workflow_requests WHERE target_dept = 'Cung Ứng' OR workflow_type LIKE '%PROCUREMENT%' OR workflow_type = 'SALES_TO_PROCUREMENT' OR workflow_code LIKE 'PR%' ORDER BY id DESC"),
+      ]);
+
+      // Đã thu theo từng phiếu giao (khoản thu không gắn phiếu: delivery_slip_code = null)
+      let slipPayments: any[] = [];
+      try {
+        slipPayments = (await query(
+          "SELECT order_code, delivery_slip_code, SUM(amount)::float AS paid FROM sales_payments GROUP BY order_code, delivery_slip_code"
+        )).rows;
+      } catch { slipPayments = []; }
+
+      return NextResponse.json({
+        slip_payments: slipPayments,
+        customers: customers.rows,
+        orders: orders.rows,
+        quotations: quotations.rows.map(normalizeQuotationRow),
+        products: canSeeCost ? products.rows : stripCostFields(products.rows),
+        targets: targets.rows,
+        tasks: tasks.rows,
+        plans: plans.rows,
+        daily: daily.rows,
+        reservations: reservations.rows,
+        procurement_orders: openPOs.rows,
+        contracts: contractsRes.rows.map(normalizeContractRow),
+        rma_returns: rmaRes.rows,
+        lot_recalls: recallsRes.rows,
+        delivery_slips: slipsRes.rows.map(normalizeDeliverySlipRow),
+        purchase_requests: prRes.rows,
+      });
+    }
+
+    if (action === "customer_credit") {
+      const customerId = searchParams.get("customer_id");
+      const customerName = searchParams.get("customer_name");
+
+      const custRes = await query(
+        "SELECT * FROM sales_customers WHERE id = $1 OR name = $2 LIMIT 1",
+        [numericIdOrNull(customerId), customerName || null]
+      );
+      if (custRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy khách hàng" }, { status: 404 });
+      }
+
+      const cust = custRes.rows[0];
+      const { limit, termDays } = customerCreditTerms(cust);
+
+      // Unpaid, not cancelled orders
+      const unpaidOrders = { rows: await openOrdersOfCustomer(cust) };
+
+      const currentDebt = unpaidOrders.rows.reduce(
+        (sum: number, o: any) => sum + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.amount_paid) || 0)),
+        0
+      );
+      const now = new Date();
+      let isBlocked = false;
+      let blockedReasons: string[] = [];
+      let maxOverdueDays = 0;
+      let overdueOrders: any[] = [];
+
+      // Check overdue orders (payment term counted from the delivery date)
+      for (const uo of unpaidOrders.rows) {
+        const overdue = overdueDays(uo, termDays);
+        if (overdue > 0) {
+          if (overdue > maxOverdueDays) maxOverdueDays = overdue;
+          overdueOrders.push({
+            order_code: uo.order_code,
+            order_date: uo.order_date,
+            delivered_at: uo.due_start,
+            total_amount: uo.total_amount,
+            amount_paid: uo.amount_paid || 0,
+            remaining_amount: Math.max(0, (parseFloat(uo.total_amount) || 0) - (parseFloat(uo.amount_paid) || 0)),
+            overdue_days: overdue
+          });
+        }
+      }
+
+      if (currentDebt > limit) {
+        isBlocked = true;
+        blockedReasons.push(`Tổng nợ hiện tại (${currentDebt.toLocaleString('vi-VN')} đ) đã vượt hạn mức cho phép (${limit.toLocaleString('vi-VN')} đ)`);
+      }
+
+      if (overdueOrders.length > 0) {
+        isBlocked = true;
+        blockedReasons.push(`Có ${overdueOrders.length} đơn hàng quá hạn thanh toán (đơn trễ nhất quá hạn ${maxOverdueDays} ngày; quy định: tối đa ${termDays} ngày kể từ ngày giao)`);
+      }
+
+      return NextResponse.json({
+        customer: cust,
+        credit_limit: limit,
+        credit_term_days: termDays,
+        current_debt: currentDebt,
+        is_blocked: isBlocked,
+        blocked_reasons: blockedReasons,
+        overdue_orders: overdueOrders,
+        max_overdue_days: maxOverdueDays,
+        special_price_list: cust.special_price_list || []
+      });
+    }
+
+    if (action === "reservations") {
+      const res = await query("SELECT * FROM inventory_reservations ORDER BY id DESC");
+      return NextResponse.json({ reservations: res.rows });
+    }
+
+    if (action === "customers") {
+      const res = await query("SELECT * FROM sales_customers ORDER BY id DESC");
+      return NextResponse.json({ customers: res.rows });
+    }
+
+    if (action === "orders") {
+      const res = await query("SELECT * FROM sales_orders ORDER BY id DESC");
+      return NextResponse.json({ orders: res.rows });
+    }
+
+    if (action === "quotations") {
+      const res = await query("SELECT * FROM sales_quotations ORDER BY id DESC");
+      return NextResponse.json({ quotations: res.rows.map(normalizeQuotationRow) });
+    }
+
+    if (action === "contracts") {
+      const res = await query("SELECT * FROM sales_contracts ORDER BY id DESC");
+      return NextResponse.json({ contracts: res.rows.map(normalizeContractRow) });
+    }
+
+    if (action === "delivery_slips") {
+      const res = await query("SELECT * FROM sales_delivery_slips ORDER BY id DESC");
+      return NextResponse.json({ delivery_slips: res.rows.map(normalizeDeliverySlipRow) });
+    }
+
+    // Báo cáo lần đồng bộ dữ liệu cũ (đơn cần nhập số HĐ thật, cần duyệt giá / mở khóa lại, PO tạm đã hủy)
+    if (action === "legacy_sync_report") {
+      if (!isAdminUser(authUser)) return forbiddenResponse("Chỉ Quản trị viên xem được báo cáo đồng bộ.");
+      const r = await query("SELECT data, updated_at FROM app_storage WHERE key = 'report_legacy_sales_sync_2026_10'");
+      return NextResponse.json({ report: r.rows[0]?.data || null, updated_at: r.rows[0]?.updated_at || null });
+    }
+
+    // Tra cứu dòng hàng của nhiều chứng từ trên một trang: SO, PO, phiếu nhập kho, phiếu giao (xuất)
+    if (action === "line_items") {
+      const source = String(searchParams.get("source") || "so");
+      const from = searchParams.get("from") || "";
+      const to = searchParams.get("to") || "";
+      const kw = String(searchParams.get("q") || "").trim().toLowerCase();
+      const partnerKw = String(searchParams.get("partner") || "").trim().toLowerCase();
+      const admin = isAdminUser(authUser);
+      const can = (...keys: string[]) => admin || keys.some(k => hasPermission(authUser, k));
+      const allowed: Record<string, boolean> = {
+        so: can("sales.view", "warehouse.view"),
+        px: can("sales.view", "warehouse.view"),
+        po: can("procurement.view", "procurement.create_pr", "procurement.approve_po"),
+        receipt: can("warehouse.view", "procurement.view"),
+      };
+      if (!(source in allowed)) return NextResponse.json({ error: "Nguồn chứng từ không hợp lệ" }, { status: 400 });
+      if (!allowed[source]) return forbiddenResponse("Bạn không có quyền xem loại chứng từ này.");
+      const showCost = canSeeCost || can("procurement.view", "procurement.approve_po");
+      const asObj = (v: any): any => { if (v && typeof v === "object") return v; try { return JSON.parse(v || "{}"); } catch { return {}; } };
+      const d10 = (v: any): string => {
+        if (!v) return "";
+        if (v instanceof Date) return toVNDateString(v);
+        const t = String(v);
+        const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+        return t.slice(0, 10);
+      };
+      const out: any[] = [];
+      const push = (r: any) => {
+        if (from && (!r.doc_date || r.doc_date < from)) return;
+        if (to && (!r.doc_date || r.doc_date > to)) return;
+        if (kw && ![r.product_code, r.product_name, r.doc_code, r.lot].some((v: any) => String(v || "").toLowerCase().includes(kw))) return;
+        if (partnerKw && !String(r.partner || "").toLowerCase().includes(partnerKw)) return;
+        out.push(r);
+      };
+      if (source === "so") {
+        const rows = (await query("SELECT order_code, order_date, customer_name, sales_rep_name, items, delivery_status FROM sales_orders ORDER BY id DESC")).rows;
+        for (const o of rows) for (const it of parseJsonArray(o.items)) {
+          if (it?.status === "CANCELLED") continue;
+          const qty = Number(it?.quantity) || 0; const price = Number(it?.unitPrice ?? it?.price) || 0;
+          push({ doc_code: o.order_code, doc_date: d10(o.order_date), partner: o.customer_name, person: o.sales_rep_name, product_code: it?.productCode || it?.product_code, product_name: it?.productName || it?.product_name, unit: it?.unit || "", quantity: qty, unit_price: price, total: Math.round(qty * price), status: o.delivery_status });
+        }
+      } else if (source === "px") {
+        const rows = (await query("SELECT slip_code, order_code, customer_name, items, delivery_date, status, extra_data, created_at FROM sales_delivery_slips ORDER BY id DESC")).rows;
+        for (const sl of rows) {
+          const ex = asObj(sl.extra_data);
+          const st = String(ex.deliveryStatus || sl.status || "").toUpperCase();
+          for (const it of parseJsonArray(sl.items)) {
+            push({ doc_code: sl.slip_code, doc_date: d10(sl.delivery_date) || d10(sl.created_at), partner: sl.customer_name, ref: sl.order_code, product_code: it?.productCode || it?.product_code, product_name: it?.productName || it?.product_name, unit: it?.unit || "", quantity: Number(it?.quantity) || 0, lot: it?.lotNo || it?.lotNumber || it?.lot_number || "", expiry: it?.expiryDate || it?.expiry_date || "", status: st === "CANCELLED" ? "CANCELLED" : (ex.isDelivered === true || st === "DELIVERED" ? "DELIVERED" : "PENDING") });
+          }
+        }
+      } else if (source === "po") {
+        const rows = (await query("SELECT po_code, order_date, supplier_name, items, status, received_qty, supplier_invoices FROM procurement_orders ORDER BY id DESC")).rows;
+        for (const po of rows) {
+          const rec = asObj(po.received_qty);
+          const invs = parseJsonArray(po.supplier_invoices).map((x: any) => x?.invoice_no).filter(Boolean).join(", ");
+          parseJsonArray(po.items).forEach((it: any, i: number) => {
+            const qty = Number(it?.quantity) || 0; const price = Number(it?.unit_price ?? it?.price) || 0;
+            push({ doc_code: po.po_code, doc_date: d10(po.order_date), partner: po.supplier_name, product_code: it?.product_code, product_name: it?.product_name, unit: it?.unit || "", quantity: qty, received: Number(rec[i] ?? rec[String(i)]) || 0, unit_price: showCost ? price : null, total: showCost ? Math.round(qty * price) : null, status: po.status, ref: invs, customer: it?.target_customer || "" });
+          });
+        }
+      } else {
+        const rows = (await query("SELECT transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes FROM inventory_transactions WHERE transaction_type = 'INBOUND' ORDER BY date DESC, id DESC")).rows;
+        for (const t of rows) {
+          const partner = String(t.notes || "").match(/NCC:\s*([^•]+?)\s*(?:•|$)/)?.[1] || "";
+          for (const it of parseJsonArray(t.items)) {
+            push({ doc_code: t.transaction_code, doc_date: d10(t.date), partner, person: t.performed_by, ref: t.reference_code, product_code: it?.product_code || it?.productCode, product_name: it?.product_name || it?.productName, unit: it?.unit || "", quantity: Number(it?.quantity ?? it?.qty) || 0, lot: it?.lot_number || it?.lotNumber || "", expiry: it?.expiry_date || it?.expiryDate || "", status: t.warehouse_name || "" });
+          }
+        }
+      }
+      const limited = out.slice(0, 5000);
+      return NextResponse.json({ rows: limited, truncated: out.length > limited.length, total_rows: out.length, show_cost: source === "po" ? showCost : true });
+    }
+
+    // Công nợ phải thu theo khách hàng (Kế toán / Quản trị): giá trị hàng ĐÃ GIAO - đã thu, hạn = ngày giao + số ngày nợ của khách
+    if (action === "customer_debt") {
+      const dept = String((authUser as any).department || "").toLowerCase();
+      if (!isAdminUser(authUser) && !dept.includes("kế toán") && !String((authUser as any).role || "").toLowerCase().includes("account")) {
+        return forbiddenResponse("Chỉ Kế toán / Quản trị viên xem được công nợ khách hàng.");
+      }
+      const [ordRes, custRes, slipRes, payRes] = await Promise.all([
+        query(`SELECT id, order_code, order_date, customer_id, customer_name, sales_rep_name, items, total_amount, COALESCE(amount_paid, 0) AS amount_paid,
+                      delivery_status, delivered_at, invoice_no, invoice_status, payment_status, notes
+                 FROM sales_orders
+                WHERE COALESCE(delivery_status, '') <> 'CANCELLED' AND COALESCE(applied_price_policy, '') <> 'STOCK'`),
+        query("SELECT id, customer_code, name, tax_code, credit_limit, credit_term_days FROM sales_customers"),
+        query("SELECT slip_code, order_code, items, status, extra_data FROM sales_delivery_slips"),
+        query("SELECT order_code, amount, payment_date, method, reference, delivery_slip_code, created_by FROM sales_payments ORDER BY payment_date DESC, id DESC")
+      ]);
+      const asObj = (v: any): any => { if (v && typeof v === "object") return v; try { return JSON.parse(v || "{}"); } catch { return {}; } };
+      const itemCode = (it: any) => String(it?.productCode || it?.product_code || "").trim();
+      const custById = new Map<number, any>(custRes.rows.map((c: any) => [c.id, c]));
+      const custByName = new Map<string, any>(custRes.rows.map((c: any) => [String(c.name || "").trim().toLowerCase(), c]));
+      const slipsByOrder = new Map<string, any[]>();
+      for (const sl of slipRes.rows) {
+        const k = String(sl.order_code || ""); if (!k) continue;
+        if (!slipsByOrder.has(k)) slipsByOrder.set(k, []);
+        slipsByOrder.get(k)!.push(sl);
+      }
+      const paysByOrder = new Map<string, any[]>();
+      for (const py of payRes.rows) {
+        const k = String(py.order_code || "");
+        if (!paysByOrder.has(k)) paysByOrder.set(k, []);
+        paysByOrder.get(k)!.push(py);
+      }
+      const today = new Date(todayVN() + "T00:00:00");
+      const customers = new Map<string, any>();
+      for (const o of ordRes.rows) {
+        const items = parseJsonArray(o.items).filter((it: any) => it?.status !== "CANCELLED");
+        const unit = (code: string) => { const it = items.find((x: any) => itemCode(x) === code); return Number(it?.unitPrice ?? it?.price) || 0; };
+        const total = Number(o.total_amount) || 0;
+        const st = String(o.delivery_status || "").toUpperCase();
+        let delivered = 0;
+        let anySlip = false;
+        for (const sl of slipsByOrder.get(String(o.order_code)) || []) {
+          const ex = asObj(sl.extra_data);
+          if (String(ex.deliveryStatus || sl.status || "").toUpperCase() === "CANCELLED") continue;
+          const isDel = ex.isDelivered === true || ex.isDelivered === "true" || String(ex.deliveryStatus || "").toUpperCase() === "DELIVERED";
+          if (!isDel) continue;
+          anySlip = true;
+          delivered += parseJsonArray(sl.items).reduce((s: number, it: any) => s + (Number(it?.quantity) || 0) * (Number(it?.unitPrice ?? it?.price) || unit(itemCode(it))), 0);
+        }
+        if (!anySlip && st === "DELIVERED") delivered = total;
+        delivered = Math.min(Math.round(delivered), total || Math.round(delivered));
+        const paid = Number(o.amount_paid) || 0;
+        if (delivered <= 0 && paid <= 0) continue; // chưa giao, chưa thu: chưa phát sinh công nợ
+        const cust = (o.customer_id && custById.get(o.customer_id)) || custByName.get(String(o.customer_name || "").trim().toLowerCase()) || null;
+        const term = cust?.credit_term_days !== undefined && cust?.credit_term_days !== null ? Number(cust.credit_term_days) : 30;
+        const outstanding = Math.round(delivered - paid);
+        const deliveredAt = o.delivered_at ? toVNDateString(o.delivered_at) : null;
+        let dueDate: string | null = null;
+        let overdueDays = 0;
+        if (deliveredAt) {
+          const d = new Date(deliveredAt + "T00:00:00");
+          d.setDate(d.getDate() + term);
+          dueDate = toVNDateString(d);
+          overdueDays = Math.max(0, Math.floor((today.getTime() - d.getTime()) / 86400000));
+        }
+        const key = cust ? `C${cust.id}` : `N${String(o.customer_name || "").trim().toLowerCase()}`;
+        if (!customers.has(key)) {
+          customers.set(key, {
+            customer_id: cust?.id || null, customer_code: cust?.customer_code || "", customer_name: cust?.name || o.customer_name,
+            tax_code: cust?.tax_code || "", credit_limit: Number(cust?.credit_limit) || 0, credit_term_days: term,
+            order_total: 0, delivered: 0, paid: 0, outstanding: 0, overdue: 0,
+            aging: { current: 0, d1_30: 0, d31_60: 0, d60_plus: 0 }, max_overdue_days: 0, orders: []
+          });
+        }
+        const c = customers.get(key);
+        c.order_total += total; c.delivered += delivered; c.paid += paid; c.outstanding += outstanding;
+        if (outstanding > 0) {
+          if (overdueDays <= 0) c.aging.current += outstanding;
+          else if (overdueDays <= 30) c.aging.d1_30 += outstanding;
+          else if (overdueDays <= 60) c.aging.d31_60 += outstanding;
+          else c.aging.d60_plus += outstanding;
+          if (overdueDays > 0) c.overdue += outstanding;
+          c.max_overdue_days = Math.max(c.max_overdue_days, overdueDays);
+        }
+        c.orders.push({
+          order_code: o.order_code, order_date: o.order_date ? toVNDateString(o.order_date) : null, sales_rep_name: o.sales_rep_name,
+          total, delivered, paid, outstanding, delivery_status: st, delivered_at: deliveredAt, due_date: dueDate,
+          overdue_days: outstanding > 0 ? overdueDays : 0, invoice_no: o.invoice_no, payment_status: o.payment_status,
+          payments: (paysByOrder.get(String(o.order_code)) || []).map((py: any) => ({
+            amount: Number(py.amount) || 0, date: py.payment_date ? toVNDateString(py.payment_date) : null,
+            method: py.method, reference: py.reference, slip: py.delivery_slip_code, by: py.created_by
+          }))
+        });
+      }
+      const rows = Array.from(customers.values()).sort((a, b) => b.outstanding - a.outstanding);
+      return NextResponse.json({ customers: rows, generated_at: new Date().toISOString() });
+    }
+
+    // Hóa đơn theo phiếu giao đã lưu số tiền lớn hơn giá trị phiếu: màn xuất HĐ cũ cộng VAT lên đơn giá đã gồm VAT
+    if (action === "invoice_amount_check") {
+      const dept = String((authUser as any).department || "").toLowerCase();
+      if (!isAdminUser(authUser) && !dept.includes("kế toán")) return forbiddenResponse("Chỉ Kế toán / Quản trị viên xem được báo cáo này.");
+      const orders = (await query(
+        "SELECT order_code, customer_name, total_amount, items, invoiced_delivery_slips FROM sales_orders WHERE jsonb_array_length(COALESCE(invoiced_delivery_slips, '[]'::jsonb)) > 0"
+      )).rows;
+      const slipRows = (await query("SELECT slip_code, items FROM sales_delivery_slips")).rows;
+      const slipItems = new Map<string, any[]>(slipRows.map((r: any) => [r.slip_code, parseJsonArray(r.items)]));
+      const out: any[] = [];
+      for (const o of orders) {
+        const oItems = parseJsonArray(o.items);
+        const price = (code: string) => {
+          const it = oItems.find((x: any) => String(x?.productCode || x?.product_code || "") === code);
+          return Number(it?.unitPrice ?? it?.price) || 0;
+        };
+        for (const inv of parseJsonArray(o.invoiced_delivery_slips)) {
+          const items = slipItems.get(inv.delivery_slip_id) || [];
+          const picked = Array.isArray(inv.invoiced_items) && inv.invoiced_items.length > 0 ? new Set(inv.invoiced_items.map((x: any) => String(x?.code || x?.productCode || x?.product_code || x))) : null;
+          const expected = Math.round(items
+            .filter((it: any) => !picked || picked.has(String(it?.productCode || it?.product_code || "")))
+            .reduce((s: number, it: any) => s + (Number(it.quantity) || 0) * (Number(it.unitPrice ?? it.price) || price(String(it?.productCode || it?.product_code || ""))), 0));
+          const amount = Number(inv.invoice_amount) || 0;
+          if (expected > 0 && amount > expected + 1) {
+            out.push({ order_code: o.order_code, customer_name: o.customer_name, delivery_slip_id: inv.delivery_slip_id, invoice_no: inv.invoice_no, invoice_amount: amount, expected_amount: expected, difference: amount - expected });
+          }
+        }
+      }
+      return NextResponse.json({ count: out.length, rows: out });
+    }
+
+    if (action === "generate_code") {
+      const type = (searchParams.get("type") || "SO").toUpperCase() as any;
+      const rep = searchParams.get("rep") || searchParams.get("sales_rep") || "";
+      const cust = searchParams.get("cust") || searchParams.get("customer") || "";
+      const custCode = searchParams.get("cust_code") || "";
+      const tagMode = (searchParams.get("tag_mode") || "CUSTOMER") as any;
+
+      const code = await generateDocumentCode({
+        docType: type,
+        salesRepName: rep,
+        customerName: cust,
+        customerCode: custCode,
+        tagMode: tagMode
+      });
+      return NextResponse.json({ code });
+    }
+
+    return NextResponse.json({ error: "Hành động không hợp lệ" }, { status: 400 });
+  } catch (error: any) {
+    console.error("Sales API GET Error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+export async function POST(req: NextRequest) {
+  try {
+    // Phiên phải còn hiệu lực (tài khoản chưa bị khóa, mật khẩu chưa đổi): proxy chỉ kiểm tra chữ ký cookie
+    const authUser = await getAuthorizedUser(req);
+    if (!authUser) return unauthorizedResponse();
+    setAuditActor(authUser);
+    // Ghi dữ liệu Kinh doanh: người dùng phân hệ Kinh doanh / Kho (giao hàng); thao tác nhạy cảm cần quyền riêng
+    const salesAdmin = isAdminUser(authUser);
+    if (!salesAdmin && !hasPermission(authUser, "sales.view") && !hasPermission(authUser, "warehouse.view")) {
+      return forbiddenResponse("Bạn không có quyền thao tác dữ liệu Kinh doanh.");
+    }
+    const SALES_ACTION_PERMISSIONS: Record<string, string[]> = {
+      update_product_price: ["sales.approve_discount"],
+      product_price: ["sales.approve_discount"],
+      product: ["sales.approve_discount"],
+      delete_customer: ["sales.delete"],
+      delete_quotation: ["sales.delete"],
+      delete_contract: ["sales.delete"],
+      delete_delivery_slip: ["sales.delete"],
+      approve_rma: ["sales.approve_discount"],
+      reject_rma: ["sales.approve_discount"],
+    };
+    const salesNeeded = SALES_ACTION_PERMISSIONS[new URL(req.url).searchParams.get("action") || ""];
+    if (salesNeeded && !salesAdmin && !salesNeeded.some(k => hasPermission(authUser, k))) {
+      return forbiddenResponse("Bạn không có quyền thực hiện thao tác này (cần quyền duyệt giá / xóa chứng từ).");
+    }
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action");
+    const body = await req.json();
+
+    if (action === "customer") {
+      const { id, customer_code, name, customer_name, contact_person, contact_position, phone, email, address, tax_code, sales_rep_id, sales_rep_name, classification, industry, payment_terms, notes, credit_limit, credit_term_days, customer_type, special_price_list, region, province } = body;
+      const custName = (name || customer_name || "").trim();
+      const cLimit = parseFloat(credit_limit) >= 0 ? parseFloat(credit_limit) : 100000000;
+      const cTerm = parseInt(credit_term_days) >= 0 ? parseInt(credit_term_days) : 30;
+      const cType = customer_type || "END_USER";
+      const sPriceList = Array.isArray(special_price_list) ? JSON.stringify(special_price_list) : "[]";
+
+      // Địa chỉ thuế (xuất hóa đơn) - cột bổ sung, tự tạo nếu chưa có
+      const saveTaxAddress = async (custId: number | null | undefined) => {
+        if (!custId || body.tax_address === undefined) return;
+        try {
+          if (!customerTaxAddressColumnEnsured) {
+            await query("ALTER TABLE sales_customers ADD COLUMN IF NOT EXISTS tax_address TEXT");
+            customerTaxAddressColumnEnsured = true;
+          }
+          await query("UPDATE sales_customers SET tax_address = $1 WHERE id = $2", [body.tax_address || null, custId]);
+        } catch (err) {
+          console.error("Failed to save sales_customers.tax_address:", err);
+        }
+      };
+
+      if (id && !isNaN(Number(id))) {
+        // Chỉ cập nhật các trường form thực sự gửi lên: trường không gửi (ví dụ Ghi chú, Điều khoản thanh toán)
+        // giữ nguyên giá trị cũ thay vì bị ghi đè thành rỗng.
+        const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k) && body[k] !== undefined;
+        const sets: string[] = [];
+        const params: any[] = [];
+        const set = (col: string, val: any, cast = "") => { params.push(val); sets.push(`${col} = $${params.length}${cast}`); };
+        if (has("name") || has("customer_name")) set("name", custName);
+        if (has("contact_person")) set("contact_person", contact_person);
+        if (has("contact_position")) set("contact_position", contact_position);
+        if (has("phone")) set("phone", phone);
+        if (has("email")) set("email", email);
+        if (has("address")) set("address", address);
+        if (has("tax_code")) set("tax_code", tax_code);
+        if (has("sales_rep_id")) set("sales_rep_id", sales_rep_id);
+        if (has("sales_rep_name")) set("sales_rep_name", sales_rep_name);
+        if (has("classification")) set("classification", classification);
+        if (has("payment_terms")) set("payment_terms", payment_terms);
+        if (has("notes")) set("notes", notes);
+        if (has("credit_limit")) set("credit_limit", cLimit);
+        if (has("credit_term_days")) set("credit_term_days", cTerm);
+        if (has("customer_type")) set("customer_type", cType);
+        if (has("special_price_list")) set("special_price_list", sPriceList, "::jsonb");
+        if (has("region")) set("region", region || null);
+        if (has("province")) set("province", province || null);
+        if (has("industry")) set("industry", industry || null);
+        if (has("customer_code") && String(customer_code).trim()) {
+          const clash = await query("SELECT id, name FROM sales_customers WHERE customer_code = $1 AND id <> $2", [String(customer_code).trim(), Number(id)]);
+          if (clash.rows.length > 0) {
+            return NextResponse.json({ error: `Mã khách hàng ${customer_code} đã được dùng cho "${clash.rows[0].name}".` }, { status: 409 });
+          }
+          set("customer_code", String(customer_code).trim());
+        }
+        if (sets.length > 0) {
+          params.push(Number(id));
+          await query(`UPDATE sales_customers SET ${sets.join(", ")} WHERE id = $${params.length}`, params);
+        }
+        await saveTaxAddress(Number(id));
+        await logAudit("UPDATE", "SALES_CUSTOMER", `Cập nhật khách hàng ${custName} (${customer_code || id}) - Khu vực: ${region || "Chưa rõ"}, Tỉnh thành: ${province || "Chưa rõ"}`);
+        return NextResponse.json({ success: true, id: Number(id) });
+      } else {
+        // Tạo mới: mã trùng phải báo lỗi chứ không được ghi đè lên khách hàng khác đang dùng mã đó
+        let code = String(customer_code || "").trim();
+        if (code) {
+          const clash = await query("SELECT id, name FROM sales_customers WHERE customer_code = $1", [code]);
+          if (clash.rows.length > 0) {
+            return NextResponse.json({ error: `Mã khách hàng ${code} đã tồn tại (${clash.rows[0].name}). Vui lòng dùng mã khác hoặc mở hồ sơ hiện có để sửa.`, existing_id: clash.rows[0].id }, { status: 409 });
+          }
+        } else {
+          code = await generateDocumentCode({ docType: "KH", customerName: custName, salesRepName: sales_rep_name, tagMode: "GENERAL" } as any)
+            .catch(() => `KH-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`);
+        }
+        const insRes = await query(
+          `INSERT INTO sales_customers (customer_code, name, contact_person, contact_position, phone, email, address, tax_code, sales_rep_id, sales_rep_name, classification, payment_terms, notes, credit_limit, credit_term_days, customer_type, special_price_list, region, province, industry)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20)
+           RETURNING id, customer_code, name`,
+          [code, custName, contact_person, contact_position, phone, email, address, tax_code, sales_rep_id, sales_rep_name, classification, payment_terms, notes, cLimit, cTerm, cType, sPriceList, region || null, province || null, industry || null]
+        );
+        await saveTaxAddress(insRes.rows[0]?.id);
+        await logAudit("SAVE", "SALES_CUSTOMER", `Lưu khách hàng ${custName} (${code})`);
+        return NextResponse.json({ success: true, customer: insRes.rows[0], id: insRes.rows[0]?.id });
+      }
+    }
+
+    if (action === "delete_customer") {
+      const { id, customer_code } = body;
+      const openCount = await openOrderCountForCustomer(id && !isNaN(Number(id)) ? id : (customer_code || id));
+      if (openCount > 0) {
+        return NextResponse.json({ error: `Khách hàng còn ${openCount} đơn hàng chưa thanh toán xong, không thể xóa (sẽ mất kiểm soát công nợ).` }, { status: 409 });
+      }
+      if (id && !isNaN(Number(id))) {
+        await query("DELETE FROM sales_customers WHERE id = $1", [Number(id)]);
+      } else if (id || customer_code) {
+        await query("DELETE FROM sales_customers WHERE customer_code = $1 OR id = $2", [customer_code || id, isNaN(Number(id)) ? null : Number(id)]);
+      }
+      await logAudit("DELETE", "SALES_CUSTOMER", `Xóa khách hàng ID/Mã: ${id || customer_code}`);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "delivery_slip") {
+      const {
+        id, slip_code, order_id, orderId, order_code, orderCode,
+        customer_name, customerName, customer_address, customerAddress,
+        customer_phone, customerPhone, customer_contact, customerContact,
+        delivery_date, deliveryDate, timeliness, dispatch_location, dispatchLocation,
+        dispatcher_name, dispatcherName, dispatcher_phone, dispatcherPhone,
+        creator_name, creatorName, notes, items, invoice_number, invoiceNumber,
+        invoice_date, invoiceDate, status
+      } = body;
+
+      const finalCode = slip_code || id || `PX-${Date.now()}`;
+      const oId = order_id || orderId || null;
+      const oCode = order_code || orderCode || null;
+      const cName = customer_name || customerName || "Khách hàng";
+      const cAddr = customer_address || customerAddress || null;
+      const cPhone = customer_phone || customerPhone || null;
+      const cContact = customer_contact || customerContact || null;
+      const dDate = delivery_date || deliveryDate || null;
+      const dLoc = dispatch_location || dispatchLocation || null;
+      const dName = dispatcher_name || dispatcherName || null;
+      const dPhone = dispatcher_phone || dispatcherPhone || null;
+      const crName = creator_name || creatorName || null;
+      const invNo = invoice_number || invoiceNumber || null;
+      const invDate = invoice_date || invoiceDate || null;
+      const slipStatus = status || "COMPLETED";
+
+      const itemsArr = Array.isArray(items) ? items : (typeof items === 'string' ? JSON.parse(items || '[]') : []);
+
+      // Kiểm tra đơn hàng cha nếu lập/cập nhật phiếu giao không phải trạng thái CANCELLED
+      if (String(slipStatus).toUpperCase() !== "CANCELLED" && (oId || oCode)) {
+        const parentRes = await query(
+          "SELECT id, order_code, delivery_status, approval_status, is_credit_blocked, price_approval_status FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 OR order_code = $3 ORDER BY id LIMIT 1",
+          [numericIdOrNull(oId), String(oCode || "").trim() || null, typeof oId === "string" ? oId.trim() : null]
+        );
+        const parentOrd = parentRes.rows[0];
+        if (parentOrd) {
+          const appSt = String(parentOrd.approval_status || "").toUpperCase();
+          const priceSt = String(parentOrd.price_approval_status || "").toUpperCase();
+          const delSt = String(parentOrd.delivery_status || "").toUpperCase();
+          if (parentOrd.is_credit_blocked === true || ["PENDING_APPROVAL", "REJECTED"].includes(appSt) || priceSt === "PENDING_APPROVAL" || delSt === "CANCELLED") {
+            return NextResponse.json({
+              error: `Đơn hàng ${parentOrd.order_code} đang bị khóa công nợ, chờ duyệt hoặc đã hủy — không thể lập/cập nhật phiếu giao hàng.`
+            }, { status: 400 });
+          }
+        }
+      }
+
+      // Phiếu mới: chỉ chèn, không bao giờ ghi đè một phiếu khác đã có cùng mã
+      if (body.is_new) {
+        const ins = await query(
+          `INSERT INTO sales_delivery_slips (
+            slip_code, order_id, order_code, customer_name, customer_address,
+            customer_phone, customer_contact, delivery_date, timeliness,
+            dispatch_location, dispatcher_name, dispatcher_phone, creator_name,
+            notes, items, invoice_number, invoice_date, status, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, CURRENT_TIMESTAMP)
+          ON CONFLICT (slip_code) DO NOTHING
+          RETURNING id`,
+          [
+            finalCode, oId, oCode, cName, cAddr, cPhone, cContact, dDate, timeliness || null,
+            dLoc, dName, dPhone, crName, notes || null, JSON.stringify(itemsArr), invNo, invDate, slipStatus
+          ]
+        );
+        if (ins.rows.length === 0) {
+          return NextResponse.json({ error: `Mã phiếu ${finalCode} đã tồn tại. Vui lòng lập lại phiếu để nhận mã mới.` }, { status: 409 });
+        }
+      } else
+      await query(
+        `INSERT INTO sales_delivery_slips (
+          slip_code, order_id, order_code, customer_name, customer_address,
+          customer_phone, customer_contact, delivery_date, timeliness,
+          dispatch_location, dispatcher_name, dispatcher_phone, creator_name,
+          notes, items, invoice_number, invoice_date, status, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15::jsonb, $16, $17, $18, CURRENT_TIMESTAMP)
+        ON CONFLICT (slip_code) DO UPDATE
+        SET order_id = EXCLUDED.order_id,
+            order_code = EXCLUDED.order_code,
+            customer_name = EXCLUDED.customer_name,
+            customer_address = EXCLUDED.customer_address,
+            customer_phone = EXCLUDED.customer_phone,
+            customer_contact = EXCLUDED.customer_contact,
+            delivery_date = EXCLUDED.delivery_date,
+            timeliness = EXCLUDED.timeliness,
+            dispatch_location = EXCLUDED.dispatch_location,
+            dispatcher_name = EXCLUDED.dispatcher_name,
+            dispatcher_phone = EXCLUDED.dispatcher_phone,
+            creator_name = EXCLUDED.creator_name,
+            notes = EXCLUDED.notes,
+            items = CASE WHEN $19::boolean THEN EXCLUDED.items ELSE sales_delivery_slips.items END,
+            invoice_number = COALESCE(EXCLUDED.invoice_number, sales_delivery_slips.invoice_number),
+            invoice_date = COALESCE(EXCLUDED.invoice_date, sales_delivery_slips.invoice_date),
+            status = EXCLUDED.status,
+            updated_at = CURRENT_TIMESTAMP`,
+        [
+          finalCode, oId, oCode, cName, cAddr, cPhone, cContact, dDate, timeliness || null,
+          dLoc, dName, dPhone, crName, notes || null, JSON.stringify(itemsArr), invNo, invDate, slipStatus,
+          items !== undefined
+        ]
+      );
+
+      // Lưu thông tin mở rộng (đợt giao, trạng thái chờ giao/đã giao/hủy, POD...) vào extra_data
+      if (!deliverySlipExtraColumnEnsured) {
+        try {
+          await query("ALTER TABLE sales_delivery_slips ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb");
+          deliverySlipExtraColumnEnsured = true;
+        } catch (err) {
+          console.error("Failed to ensure sales_delivery_slips.extra_data column:", err);
+        }
+      }
+      if (deliverySlipExtraColumnEnsured) {
+        const slipExtra: Record<string, any> = {};
+        for (const k of DELIVERY_SLIP_EXTRA_KEYS) {
+          if (body[k] !== undefined && body[k] !== null) slipExtra[k] = body[k];
+        }
+        if (Object.keys(slipExtra).length > 0) {
+          await query(
+            "UPDATE sales_delivery_slips SET extra_data = COALESCE(extra_data, '{}'::jsonb) || $1::jsonb WHERE slip_code = $2",
+            [JSON.stringify(slipExtra), finalCode]
+          );
+        }
+      }
+
+      await logAudit("SAVE", "DELIVERY_SLIP", `Lưu phiếu xuất kho ${finalCode} cho đơn ${oCode || oId}`);
+      return NextResponse.json({ success: true, slip_code: finalCode });
+    }
+
+    if (action === "delete_delivery_slip") {
+      const { id, slip_code } = body;
+      // A slip that was not cancelled already took its goods out of stock: deleting it would lose that movement
+      if (!(await deliverySlipIsCancelled(slip_code || id))) {
+        return NextResponse.json({ error: "Chỉ xóa được phiếu giao đã hủy (hủy phiếu sẽ nhập lại hàng vào kho trước)." }, { status: 409 });
+      }
+      await query("DELETE FROM sales_delivery_slips WHERE slip_code = $1 OR id = $2", [slip_code || id, isNaN(Number(id)) ? null : Number(id)]);
+      await logAudit("DELETE", "DELIVERY_SLIP", `Xóa phiếu xuất kho ${slip_code || id}`);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "rename_industry_group") {
+      const { oldName, newName } = body;
+      if (oldName && newName && oldName !== newName) {
+        await query(
+          "UPDATE sales_customers SET industry = $1 WHERE industry = $2",
+          [newName, oldName]
+        );
+        await query(
+          "UPDATE sales_customers SET classification = $1 WHERE classification = $2",
+          [newName, oldName]
+        );
+        await logAudit("UPDATE", "SALES_CUSTOMER", `Cập nhật phân nhóm ngành hàng từ "${oldName}" thành "${newName}"`);
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "order") {
+      const { id, order_code, customer_id, customer_name, sales_rep_name, order_date, items, total_amount } = body;
+      const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k) && body[k] !== undefined;
+
+      let resolvedCustomerId: number | null = null;
+      let matchedCustomer: any = null;
+      if (customer_id && !isNaN(Number(customer_id))) {
+        const idCheck = await query("SELECT * FROM sales_customers WHERE id = $1", [Number(customer_id)]);
+        if (idCheck.rows.length > 0) {
+          resolvedCustomerId = idCheck.rows[0].id;
+          matchedCustomer = idCheck.rows[0];
+        }
+      }
+      const custCodeIn = String(body.customer_code || body.customerCode || "").trim();
+      if (!resolvedCustomerId && custCodeIn) {
+        const codeCheck = await query("SELECT * FROM sales_customers WHERE customer_code = $1 LIMIT 1", [custCodeIn]);
+        if (codeCheck.rows.length > 0) {
+          resolvedCustomerId = codeCheck.rows[0].id;
+          matchedCustomer = codeCheck.rows[0];
+        }
+      }
+      if (!resolvedCustomerId && customer_name) {
+        const nameCheck = await query("SELECT * FROM sales_customers WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1", [String(customer_name).trim()]);
+        if (nameCheck.rows.length > 0) {
+          resolvedCustomerId = nameCheck.rows[0].id;
+          matchedCustomer = nameCheck.rows[0];
+        }
+      }
+
+      const isStockOrder = Boolean(body.is_stock_order || body.isStockOrder || (order_code && String(order_code).includes("STOCK")));
+      const itemsArr = Array.isArray(items) ? items : [];
+      const hasZeroPrice = itemsArr.some(itemHasZeroPrice);
+
+      // Một lần "sửa đơn" chỉ mang theo order_code: tìm đơn đang có theo id, rồi theo mã.
+      // (Trước đây thiếu id nên mỗi lần sửa lại INSERT thêm một dòng SO trùng mã, reset trạng thái giao/thanh toán.)
+      let existing: any = null;
+      if (id && !isNaN(Number(id))) {
+        existing = (await query("SELECT * FROM sales_orders WHERE id = $1", [Number(id)])).rows[0] || null;
+      }
+      if (!existing && order_code) {
+        existing = (await query("SELECT * FROM sales_orders WHERE order_code = $1 ORDER BY id ASC LIMIT 1", [String(order_code).trim()])).rows[0] || null;
+      }
+
+      if (existing) {
+        const isRollback = Boolean(body.force_rollback);
+        const sets: string[] = [];
+        const params: any[] = [];
+        const set = (col: string, val: any, cast = "") => { params.push(val); sets.push(`${col} = $${params.length}${cast}`); };
+
+        if (has("customer_name")) set("customer_name", customer_name);
+        if (has("customer_id") || has("customer_name")) set("customer_id", resolvedCustomerId ?? existing.customer_id);
+        if (has("sales_rep_name")) set("sales_rep_name", sales_rep_name);
+        if (has("sales_rep_id") && body.sales_rep_id) set("sales_rep_id", String(body.sales_rep_id));
+        if (has("order_date") && order_date) set("order_date", order_date);
+        if (has("items")) set("items", JSON.stringify(itemsArr), "::jsonb");
+        if (has("total_amount")) set("total_amount", Number(total_amount) || 0);
+        if (has("notes")) set("notes", body.notes);
+        if (has("order_notes")) set("order_notes", body.order_notes ? String(body.order_notes).slice(0, 2000) : null);
+        if (has("applied_price_policy")) set("applied_price_policy", body.applied_price_policy || "STANDARD");
+        if (has("vat_requested")) set("vat_requested", Boolean(body.vat_requested));
+        for (const col of ["vat_company_name", "vat_tax_code", "vat_address", "vat_email", "shipping_method", "tracking_code"]) {
+          if (has(col)) set(col, body[col] || null);
+        }
+        if (has("pr_code") || has("prCode")) set("pr_code", body.pr_code || body.prCode || null);
+        if (has("procure_status") || has("procureStatus")) set("procure_status", body.procure_status || body.procureStatus || null);
+        if (has("procure_order_code") || has("procureOrderCode")) set("procure_order_code", body.procure_order_code || body.procureOrderCode || null);
+        if (has("fulfillment_source") || has("fulfillmentSource")) set("fulfillment_source", body.fulfillment_source || body.fulfillmentSource || null);
+        if (has("invoiced_delivery_slips")) set("invoiced_delivery_slips", JSON.stringify(body.invoiced_delivery_slips || []), "::jsonb");
+        // Monotonic FSM: a stale form can never move an order backwards
+        if (has("delivery_status")) set("delivery_status", resolveMonotonicStatus(existing.delivery_status, body.delivery_status, DELIVERY_STATUS_HIERARCHY, isRollback));
+        if (has("payment_status")) set("payment_status", resolveMonotonicStatus(existing.payment_status, body.payment_status, PAYMENT_STATUS_HIERARCHY, isRollback));
+        if (has("invoice_status")) set("invoice_status", resolveMonotonicStatus(existing.invoice_status, body.invoice_status, INVOICE_STATUS_HIERARCHY, isRollback));
+
+        // Re-evaluate approvals when the content changes (an approved order could otherwise be edited
+        // to 0đ items or a much larger amount without new approval)
+        let priceApprovalStatus = existing.price_approval_status || "APPROVED";
+        if (has("items")) {
+          const itemsChanged = stableStringify(parseJsonArray(existing.items)) !== stableStringify(itemsArr);
+          set("has_zero_price_items", hasZeroPrice);
+          if (!isStockOrder && hasZeroPrice && itemsChanged) priceApprovalStatus = "PENDING_APPROVAL";
+          if (!hasZeroPrice && priceApprovalStatus === "PENDING_APPROVAL") priceApprovalStatus = "APPROVED";
+          if (priceApprovalStatus !== existing.price_approval_status) set("price_approval_status", priceApprovalStatus);
+        }
+
+        let isCreditBlocked = Boolean(existing.is_credit_blocked);
+        let creditBlockReason = existing.credit_block_reason || "";
+        const newTotal = has("total_amount") ? (Number(total_amount) || 0) : (Number(existing.total_amount) || 0);
+        const customerChanged = resolvedCustomerId !== null && resolvedCustomerId !== existing.customer_id;
+        if (!isStockOrder && matchedCustomer && (newTotal > (Number(existing.total_amount) || 0) + 0.5 || customerChanged)) {
+          const credit = await evaluateCredit(matchedCustomer, newTotal, existing.id);
+          if (credit.blocked) {
+            isCreditBlocked = true;
+            creditBlockReason = credit.reason;
+            set("is_credit_blocked", true);
+            set("credit_block_reason", credit.reason);
+          }
+        }
+
+        if (sets.length > 0) {
+          params.push(existing.id);
+          await query(`UPDATE sales_orders SET ${sets.join(", ")} WHERE id = $${params.length}`, params);
+        }
+        await logAudit("UPDATE", "SALES_ORDER", `Cập nhật đơn hàng ${existing.order_code} cho ${customer_name || existing.customer_name}`);
+        return NextResponse.json({
+          success: true,
+          id: existing.id,
+          order_code: existing.order_code,
+          code: existing.order_code,
+          is_credit_blocked: isCreditBlocked,
+          credit_block_reason: creditBlockReason,
+          has_zero_price_items: has("items") ? hasZeroPrice : Boolean(existing.has_zero_price_items),
+          price_approval_status: priceApprovalStatus
+        });
+      }
+
+      // ---- New order ----
+      let isCreditBlocked = false;
+      let creditBlockReason = "";
+      if (!isStockOrder && matchedCustomer) {
+        const credit = await evaluateCredit(matchedCustomer, Number(total_amount) || 0, null);
+        isCreditBlocked = credit.blocked;
+        creditBlockReason = credit.reason;
+      } else if (!isStockOrder) {
+        // Không xác định được hồ sơ khách hàng -> không kiểm tra được công nợ: chuyển Kế toán duyệt thay vì bỏ qua
+        isCreditBlocked = true;
+        creditBlockReason = `Chưa xác định được hồ sơ khách hàng "${customer_name || ""}" trong CSDL nên chưa kiểm tra được hạn mức công nợ. Cần Kế toán xác nhận.`;
+      }
+      const priceApprovalStatus = (!isStockOrder && hasZeroPrice) ? "PENDING_APPROVAL" : "APPROVED";
+
+      const code = (order_code && (/^SO\d{2}-[A-Z0-9]{2,5}-\d{4,5}$/.test(order_code) || String(order_code).includes("STOCK")))
+        ? String(order_code).trim()
+        : await generateDocumentCode({
+            docType: "SO",
+            customerName: customer_name,
+            salesRepName: sales_rep_name,
+            tagMode: isStockOrder ? "STOCK" : "CUSTOMER"
+          });
+      const ins = await query(
+        `INSERT INTO sales_orders (
+          order_code, customer_id, customer_name, sales_rep_name, order_date, items, total_amount,
+          delivery_status, payment_status, invoice_status, notes,
+          is_credit_blocked, credit_block_reason, has_zero_price_items, price_approval_status, applied_price_policy,
+          vat_requested, vat_company_name, vat_tax_code, vat_address, vat_email, shipping_method, tracking_code, invoiced_delivery_slips,
+          pr_code, procure_status, procure_order_code, fulfillment_source, sales_rep_id, order_notes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+        RETURNING id`,
+        [
+          code, resolvedCustomerId, customer_name, sales_rep_name, order_date || todayVN(),
+          JSON.stringify(itemsArr), Number(total_amount) || 0, body.delivery_status || "PENDING", body.payment_status || "UNPAID",
+          body.invoice_status || "PENDING_INVOICE", body.notes,
+          isCreditBlocked, creditBlockReason, hasZeroPrice, priceApprovalStatus, body.applied_price_policy || "STANDARD",
+          Boolean(body.vat_requested), body.vat_company_name || null, body.vat_tax_code || null, body.vat_address || null, body.vat_email || null,
+          body.shipping_method || "Xe lạnh chuyên dụng", body.tracking_code || null, JSON.stringify(body.invoiced_delivery_slips || []),
+          body.pr_code || body.prCode || null, body.procure_status || body.procureStatus || null, body.procure_order_code || body.procureOrderCode || null, body.fulfillment_source || body.fulfillmentSource || null,
+          body.sales_rep_id ? String(body.sales_rep_id) : null,
+          body.order_notes ? String(body.order_notes).slice(0, 2000) : null
+        ]
+      );
+      await logAudit("CREATE", "SALES_ORDER", `Tạo mới đơn hàng thương mại ${code} (${total_amount} đ)${isCreditBlocked ? " [BỊ KHÓA DO VI PHẠM CÔNG NỢ]" : ""}`);
+      return NextResponse.json({
+        success: true,
+        id: ins.rows[0]?.id,
+        order_code: code,
+        code,
+        is_credit_blocked: isCreditBlocked,
+        credit_block_reason: creditBlockReason,
+        has_zero_price_items: hasZeroPrice,
+        price_approval_status: priceApprovalStatus
+      });
+    }
+
+    // Duyệt / từ chối yêu cầu đặt hàng (SO): quyết định được ghi và kiểm tra tại máy chủ.
+    // Đơn đang bị khóa công nợ cần Kế toán mở khóa (release_credit), đơn có hàng 0đ / quà tặng cần
+    // Ban Giám Đốc duyệt giá (approve_price) trước khi được duyệt.
+    if (action === "approve_order") {
+      const me = await getAuthorizedUser(req);
+      setAuditActor(me);
+      if (!me) return unauthorizedResponse();
+      if (!canApproveSalesOrders(me)) {
+        return forbiddenResponse("Chỉ Trưởng/Phó phòng Kinh doanh, Quản lý hoặc Ban Giám Đốc mới có quyền duyệt yêu cầu đặt hàng.");
+      }
+      const approve = body.approve !== false;
+      const codes: string[] = (Array.isArray(body.order_codes) ? body.order_codes : [body.order_code])
+        .map((c: any) => String(c || "").trim())
+        .filter(Boolean);
+      if (codes.length === 0) return NextResponse.json({ error: "Thiếu mã đơn hàng" }, { status: 400 });
+      const note = body.note ? String(body.note) : null;
+
+      const results = await withTransaction(async (c) => {
+        const out: { order_code: string; ok: boolean; approval_status?: string; error?: string }[] = [];
+        for (const code of codes) {
+          const row = (await c.query("SELECT id, order_code, is_credit_blocked, price_approval_status, approval_status FROM sales_orders WHERE order_code = $1 FOR UPDATE", [code])).rows[0];
+          if (!row) {
+            out.push({ order_code: code, ok: false, error: "Đơn chưa được lưu vào CSDL. Hãy mở và lưu lại đơn trước khi duyệt." });
+            continue;
+          }
+          if (approve && row.is_credit_blocked) {
+            out.push({ order_code: code, ok: false, error: "Đơn đang bị khóa công nợ, cần Kế toán mở khóa trước." });
+            continue;
+          }
+          if (approve && row.price_approval_status === "PENDING_APPROVAL") {
+            out.push({ order_code: code, ok: false, error: "Đơn có hàng 0đ / quà tặng chưa được Ban Giám Đốc duyệt giá." });
+            continue;
+          }
+          const status = approve ? "APPROVED" : "REJECTED";
+          await c.query(
+            "UPDATE sales_orders SET approval_status = $1, approved_by = $2, approved_at = CURRENT_TIMESTAMP, approval_note = $3 WHERE id = $4",
+            [status, me.full_name || me.username, note, row.id]
+          );
+          out.push({ order_code: code, ok: true, approval_status: status });
+        }
+        return out;
+      });
+      const okCodes = results.filter(r => r.ok).map(r => r.order_code);
+      if (okCodes.length > 0) {
+        await logAudit(approve ? "APPROVE_ORDER" : "REJECT_ORDER", "SALES_ORDER", `${approve ? "Duyệt" : "Từ chối"} yêu cầu đặt hàng ${okCodes.join(", ")}${note ? ` — ${note}` : ""}`, me.username, me.full_name);
+      }
+      return NextResponse.json({ success: okCodes.length > 0, results, approved_by: me.full_name || me.username });
+    }
+
+    // Xóa đơn hàng: xóa trong CSDL (trước đây chỉ xóa trên giao diện nên đơn "sống lại" khi tải lại trang)
+    if (action === "delete_order") {
+      const me = await getAuthorizedUser(req);
+      setAuditActor(me);
+      if (!me) return unauthorizedResponse();
+      if (!hasPermission(me, "sales.delete") && !isAdminUser(me)) {
+        return forbiddenResponse("Bạn không có quyền xóa đơn hàng.");
+      }
+      const code = String(body.order_code || "").trim();
+      if (!code) return NextResponse.json({ error: "Thiếu mã đơn hàng" }, { status: 400 });
+
+      const result = await withTransaction(async (c) => {
+        const rows = (await c.query("SELECT * FROM sales_orders WHERE order_code = $1 FOR UPDATE", [code])).rows;
+        if (rows.length === 0) return { deleted: 0 };
+        for (const ord of rows) {
+          const delivered = (DELIVERY_STATUS_HIERARCHY[String(ord.delivery_status || "").toUpperCase()] ?? 0) >= 3;
+          const invoiced = (INVOICE_STATUS_HIERARCHY[String(ord.invoice_status || "").toUpperCase()] ?? 0) > 0 || parseJsonArray(ord.invoiced_delivery_slips).length > 0;
+          const paid = (PAYMENT_STATUS_HIERARCHY[String(ord.payment_status || "").toUpperCase()] ?? 0) > 0;
+          if (delivered || invoiced || paid) {
+            throw new HttpError(409, `Đơn ${code} đã giao hàng / xuất hóa đơn / thanh toán nên không được xóa. Hãy dùng quy trình hủy dòng hoặc trả hàng (RMA).`);
+          }
+        }
+        const active = await c.query(
+          "SELECT DISTINCT product_code FROM inventory_reservations WHERE order_code = $1 AND status = 'ACTIVE' ORDER BY product_code",
+          [code]
+        );
+        for (const r of active.rows) {
+          if (r.product_code) await releaseReservationsFor(c, code, r.product_code, ` • [Tự động nhả do xóa đơn ${code}]`);
+        }
+        await c.query("DELETE FROM sales_orders WHERE order_code = $1", [code]);
+        return { deleted: rows.length };
+      });
+      await logAudit("DELETE", "SALES_ORDER", `Xóa đơn hàng ${code} (${result.deleted} bản ghi CSDL)`, me.username, me.full_name);
+      return NextResponse.json({ success: true, deleted: result.deleted });
+    }
+
+    // 1.1 Explicit Delivery Status Update with FSM Guard (Ngăn chặn lùi bước)
+    if (action === "update_delivery_status") {
+      const { order_id, order_code, delivery_status, delivered_at, invoice_no, invoice_date, invoice_status, invoice_files, delivery_notes, force_rollback, rollback_reason } = body;
+      const orderRes = await query(
+        "SELECT id, order_code, delivery_status, invoice_status, invoice_no, invoice_date, approval_status, is_credit_blocked, price_approval_status FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 OR order_code = $3 ORDER BY id LIMIT 1",
+        [numericIdOrNull(order_id), String(order_code || "").trim() || null, typeof order_id === "string" ? order_id.trim() : null]
+      );
+      if (orderRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy đơn hàng" }, { status: 404 });
+      }
+      const ord = orderRes.rows[0];
+      const isRollback = Boolean(force_rollback);
+      const targetUpper = String(delivery_status || "").toUpperCase();
+
+      if (["PACKED", "READY", "SHIPPED", "DISPATCHED", "PARTIALLY_DELIVERED", "DELIVERED"].includes(targetUpper)) {
+        const appSt = String(ord.approval_status || "").toUpperCase();
+        const priceSt = String(ord.price_approval_status || "").toUpperCase();
+        const delSt = String(ord.delivery_status || "").toUpperCase();
+        if (ord.is_credit_blocked === true || ["PENDING_APPROVAL", "REJECTED"].includes(appSt) || priceSt === "PENDING_APPROVAL" || delSt === "CANCELLED") {
+          return NextResponse.json({
+            error: `Đơn hàng ${ord.order_code} đang bị khóa công nợ, chờ duyệt hoặc đã hủy — không thể chuyển trạng thái giao hàng sang "${delivery_status}".`
+          }, { status: 400 });
+        }
+      }
+
+      const currDelLevel = DELIVERY_STATUS_HIERARCHY[ord.delivery_status?.toUpperCase()] ?? 0;
+      const nextDelLevel = DELIVERY_STATUS_HIERARCHY[delivery_status?.toUpperCase()] ?? 0;
+
+      // Chặn đứng hành vi lùi trạng thái nếu không có cờ rollback và lý do cụ thể
+      if (!isRollback && nextDelLevel < currDelLevel && delivery_status?.toUpperCase() !== "CANCELLED") {
+        return NextResponse.json({
+          error: `[Bảo vệ tiến trình]: Đơn hàng đã ở trạng thái "${ord.delivery_status}". Không thể lùi bước về "${delivery_status}". Nếu muốn trả/hoàn đơn, vui lòng dùng quy trình RMA hoặc Rollback có lý do.`
+        }, { status: 400 });
+      }
+
+      const safeDelStatus = resolveMonotonicStatus(ord.delivery_status, delivery_status, DELIVERY_STATUS_HIERARCHY, isRollback);
+      const safeInvStatus = invoice_status ? resolveMonotonicStatus(ord.invoice_status, invoice_status, INVOICE_STATUS_HIERARCHY, isRollback) : ord.invoice_status;
+
+      const deliveredDate = delivered_at ? parseSqlDate(delivered_at) : null;
+      const invNo = String(invoice_no || "").trim() || null;
+      const invDate = invNo ? (invoice_date ? parseSqlDate(invoice_date) : todayVN()) : null;
+      await query(
+        `UPDATE sales_orders
+         SET delivery_status = $1::text,
+             invoice_status = COALESCE($2, invoice_status),
+             invoice_no = COALESCE($3, invoice_no),
+             invoice_date = COALESCE($4, invoice_date),
+             delivered_at = CASE WHEN $7::date IS NOT NULL AND $1::text IN ('DELIVERED', 'PARTIALLY_DELIVERED') THEN COALESCE(delivered_at, $7::date) ELSE delivered_at END,
+             notes = CASE WHEN $5::text IS NOT NULL AND $5::text != '' THEN COALESCE(notes, '') || ' • [Giao hàng: ' || $5::text || ']' ELSE notes END
+         WHERE id = $6`,
+        [safeDelStatus, safeInvStatus, invNo, invDate, delivery_notes || null, ord.id, deliveredDate]
+      );
+
+      await logAudit("UPDATE_DELIVERY_STATUS", "SALES_ORDER", `Cập nhật giao hàng đơn ${ord.order_code}: ${safeDelStatus} (HĐ: ${invoice_no || 'N/A'})${isRollback ? ` [ROLLBACK: ${rollback_reason}]` : ''}`);
+      return NextResponse.json({ success: true, delivery_status: safeDelStatus, invoice_status: safeInvStatus });
+    }
+
+    // 2.0 Partial Invoicing per Delivery Slip (Yêu cầu 9)
+    if (action === "partial_invoice") {
+      const { order_id, order_code, delivery_slip_id, invoice_no, invoice_date, invoice_amount, invoice_files, is_final, invoiced_items } = body;
+      const invNoClean = String(invoice_no || "").trim();
+      if (!invNoClean) return NextResponse.json({ error: "Thiếu số hóa đơn" }, { status: 400 });
+
+      const result = await withTransaction(async (c) => {
+        const orderRes = await c.query(
+          "SELECT id, order_code, total_amount, invoiced_delivery_slips FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 OR order_code = $3 ORDER BY id LIMIT 1 FOR UPDATE",
+          [numericIdOrNull(order_id), String(order_code || "").trim() || null, typeof order_id === "string" ? order_id.trim() : null]
+        );
+        if (orderRes.rows.length === 0) throw new HttpError(404, "Không tìm thấy đơn hàng");
+        const ord = orderRes.rows[0];
+        const orderTotal = Number(ord.total_amount) || 0;
+        const existingSlips = parseJsonArray(ord.invoiced_delivery_slips);
+
+        const newSlipAmount = Number(invoice_amount) || 0;
+        const otherSlipsTotal = existingSlips
+          .filter((s: any) => s.delivery_slip_id !== delivery_slip_id)
+          .reduce((sum: number, s: any) => sum + (Number(s.invoice_amount) || 0), 0);
+        const projectedInvoicedTotal = otherSlipsTotal + newSlipAmount;
+
+        // Chốt chặn logic an toàn: Tránh xuất hóa đơn vượt quá giá trị đơn hàng
+        if (orderTotal > 0 && projectedInvoicedTotal > Math.round(orderTotal * 1.05)) {
+          throw new HttpError(400, `Tổng tiền hóa đơn lũy kế (${projectedInvoicedTotal.toLocaleString('vi-VN')} đ) vượt quá tổng giá trị đơn hàng (${orderTotal.toLocaleString('vi-VN')} đ)! Vui lòng đối soát lại số tiền phiếu giao.`);
+        }
+
+        const newRecord = {
+          delivery_slip_id,
+          invoice_no: invNoClean,
+          invoice_date: invoice_date ? parseSqlDate(invoice_date) : todayVN(),
+          invoice_amount: newSlipAmount,
+          invoice_files: invoice_files || [],
+          invoiced_items: invoiced_items || [],
+          created_at: new Date().toISOString()
+        };
+
+        const updatedSlips = [...existingSlips.filter((s: any) => s.delivery_slip_id !== delivery_slip_id), newRecord];
+        const isActuallyFullyInvoiced = is_final || (orderTotal > 0 && projectedInvoicedTotal >= orderTotal * 0.99);
+        const newStatus = isActuallyFullyInvoiced ? "ISSUED" : "PARTIALLY_INVOICED";
+
+        await c.query(
+          `UPDATE sales_orders
+           SET invoiced_delivery_slips = $1::jsonb,
+               invoice_status = $2,
+               invoice_no = COALESCE(invoice_no, $3),
+               invoice_date = COALESCE(invoice_date, $4)
+           WHERE id = $5`,
+          [JSON.stringify(updatedSlips), newStatus, invNoClean, newRecord.invoice_date, ord.id]
+        );
+
+        if (delivery_slip_id) {
+          await c.query(
+            `UPDATE sales_delivery_slips
+             SET invoice_number = $1, invoice_date = $2, updated_at = CURRENT_TIMESTAMP
+             WHERE slip_code = $3`,
+            [invNoClean, newRecord.invoice_date, delivery_slip_id]
+          );
+        }
+        return { ord, updatedSlips, newStatus };
+      });
+
+      await logAudit("PARTIAL_INVOICE", "SALES_ORDER", `Xuất HĐ ${invNoClean} cho Phiếu Giao Hàng ${delivery_slip_id} (Đơn ${result.ord.order_code})`);
+      return NextResponse.json({ success: true, invoiced_delivery_slips: result.updatedSlips, invoice_status: result.newStatus });
+    }
+
+    // Thu tiền khách hàng (Kế toán): ghi sổ thanh toán, cập nhật số đã thu và trạng thái thanh toán của đơn.
+    // Bấm 2 lần / gửi lại cùng request_id không bị ghi trùng. Không cho thu vượt giá trị đơn.
+    if (action === "record_customer_payment") {
+      const me = await getAuthorizedUser(req);
+      setAuditActor(me);
+      if (!me) return unauthorizedResponse();
+      const dept = String(me.department || "").toLowerCase();
+      if (!isAdminUser(me) && !dept.includes("kế toán") && !String(me.role || "").toLowerCase().includes("account")) {
+        return forbiddenResponse("Chỉ Kế toán / Ban Giám Đốc mới được ghi nhận thu tiền khách hàng.");
+      }
+      const amount = Math.round((Number(body.amount) || 0) * 100) / 100;
+      if (!(amount > 0)) return NextResponse.json({ error: "Số tiền thu phải lớn hơn 0" }, { status: 400 });
+      const payDate = body.payment_date ? parseSqlDate(body.payment_date) : todayVN();
+      const requestId = body.request_id ? String(body.request_id).slice(0, 100) : null;
+
+      const result = await withTransaction(async (c) => {
+        const ord = (await c.query(
+          "SELECT id, order_code, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 ORDER BY id LIMIT 1 FOR UPDATE",
+          [numericIdOrNull(body.order_id), String(body.order_code || body.order_id || "").trim() || null]
+        )).rows[0];
+        if (!ord) throw new HttpError(404, "Không tìm thấy đơn hàng");
+        if (requestId) {
+          const dup = await c.query("SELECT id FROM sales_payments WHERE order_id = $1 AND request_id = $2", [ord.id, requestId]);
+          if (dup.rows[0]) return { ord, duplicate: true, paid: Number(ord.amount_paid), status: ord.payment_status };
+        }
+        const total = Number(ord.total_amount) || 0;
+        const paidBefore = Number(ord.amount_paid) || 0;
+        if (total > 0 && paidBefore + amount > total + 0.5) {
+          throw new HttpError(409, `Đơn ${ord.order_code}: giá trị ${total.toLocaleString("vi-VN")} đ, đã thu ${paidBefore.toLocaleString("vi-VN")} đ — khoản thu ${amount.toLocaleString("vi-VN")} đ vượt số còn phải thu.`);
+        }
+        // Phân bổ khoản thu theo phiếu giao (Kế toán chọn phiếu nào được thanh toán). Không gửi -> khoản thu chung của đơn.
+        const rawAlloc: any[] = Array.isArray(body.allocations) && body.allocations.length > 0
+          ? body.allocations
+          : [{ delivery_slip_code: body.delivery_slip_code || null, amount }];
+        const alloc = rawAlloc
+          .map((a: any) => ({ slip: a?.delivery_slip_code ? String(a.delivery_slip_code).trim() : null, amount: Math.round((Number(a?.amount) || 0) * 100) / 100 }))
+          .filter((a: any) => a.amount > 0);
+        const allocSum = alloc.reduce((s: number, a: any) => s + a.amount, 0);
+        if (Math.abs(allocSum - amount) > 0.5) throw new HttpError(400, "Tổng tiền phân bổ cho các phiếu giao phải bằng số tiền thu");
+        const slipCodes = alloc.map((a: any) => a.slip).filter(Boolean);
+        if (slipCodes.length > 0) {
+          const slipRows = (await c.query("SELECT slip_code, order_code, items FROM sales_delivery_slips WHERE slip_code = ANY($1::text[])", [slipCodes])).rows;
+          const oItems = parseJsonArray((await c.query("SELECT items FROM sales_orders WHERE id = $1", [ord.id])).rows[0]?.items);
+          const unitOf = (code: string) => { const it = oItems.find((x: any) => String(x?.productCode || x?.product_code || "") === code); return Number(it?.unitPrice ?? it?.price) || 0; };
+          for (const a of alloc) {
+            if (!a.slip) continue;
+            const sr = slipRows.find((r: any) => r.slip_code === a.slip);
+            if (!sr || String(sr.order_code || "") !== String(ord.order_code)) throw new HttpError(400, `Phiếu giao ${a.slip} không thuộc đơn ${ord.order_code}`);
+            const value = Math.round(parseJsonArray(sr.items).reduce((s: number, it: any) => {
+              const code = String(it?.productCode || it?.product_code || "");
+              return s + (Number(it?.quantity) || 0) * (Number(it?.unitPrice ?? it?.price) || unitOf(code));
+            }, 0));
+            const paidSlip = Number((await c.query("SELECT COALESCE(SUM(amount), 0) AS s FROM sales_payments WHERE order_id = $1 AND delivery_slip_code = $2", [ord.id, a.slip])).rows[0]?.s) || 0;
+            if (value > 0 && paidSlip + a.amount > value + 0.5) {
+              throw new HttpError(409, `Phiếu ${a.slip}: giá trị ${value.toLocaleString("vi-VN")} đ, đã thu ${paidSlip.toLocaleString("vi-VN")} đ — không thu vượt.`);
+            }
+          }
+        }
+        for (let i = 0; i < alloc.length; i++) {
+          await c.query(
+            `INSERT INTO sales_payments (order_id, order_code, amount, payment_date, method, reference, notes, request_id, created_by, delivery_slip_code)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [ord.id, ord.order_code, alloc[i].amount, payDate, body.method || "Chuyển khoản", body.reference || null, body.notes || null,
+             requestId ? (i === 0 ? requestId : `${requestId}#${i}`) : null, me.full_name || me.username, alloc[i].slip]
+          );
+        }
+        const paid = paidBefore + amount;
+        const status = total > 0 && paid >= total - 0.5 ? "PAID" : "PARTIALLY_PAID";
+        await c.query("UPDATE sales_orders SET amount_paid = $1, payment_status = $2 WHERE id = $3", [paid, status, ord.id]);
+        return { ord, duplicate: false, paid, status };
+      });
+      if (!result.duplicate) {
+        await logAudit("CUSTOMER_PAYMENT", "SALES_ORDER", `Thu ${amount.toLocaleString("vi-VN")} đ đơn ${result.ord.order_code} (${result.status})`, me.username, me.full_name);
+      }
+      return NextResponse.json({ success: true, amount_paid: result.paid, payment_status: result.status, duplicate: result.duplicate });
+    }
+
+    // 2.1 Release Credit Block (Accounting unblock) - Requirement 10 & 11
+    if (action === "release_credit") {
+      const me = await getAuthorizedUser(req);
+      setAuditActor(me);
+      if (!me) return unauthorizedResponse();
+      const dept = String(me.department || "").toLowerCase();
+      if (!isAdminUser(me) && !dept.includes("kế toán") && !String(me.role || "").toLowerCase().includes("account")) {
+        return forbiddenResponse("Chỉ Kế toán / Ban Giám Đốc mới được mở khóa công nợ.");
+      }
+      const { order_id, override_reason } = body;
+      const override_by = me.full_name || me.username;
+      // order_id from the UI is the order code: match the numeric id or the code
+      const upd = await query(
+        `UPDATE sales_orders
+         SET is_credit_blocked = false,
+             credit_override_by = $1,
+             credit_override_at = CURRENT_TIMESTAMP,
+             credit_override_reason = $2
+         WHERE ($3::int IS NOT NULL AND id = $3::int) OR order_code = $4`,
+        [override_by || "Kế Toán Trưởng", override_reason || "Kế toán bảo lãnh mở khóa", numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
+      );
+      if (upd.rowCount === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
+      await logAudit("RELEASE_CREDIT", "SALES_ORDER", `Kế toán ${override_by} mở khóa công nợ cho đơn #${order_id}: ${override_reason}`);
+      return NextResponse.json({ success: true });
+    }
+
+    // 2.2 Approve Price Policy / Zero-price Item - Requirement 12 & 13
+    if (action === "approve_price") {
+      const me = await getAuthorizedUser(req);
+      setAuditActor(me);
+      if (!me) return unauthorizedResponse();
+      if (!hasPermission(me, "sales.approve_discount") && !isAdminUser(me)) {
+        return forbiddenResponse("Chỉ Ban Giám Đốc / người được phân quyền duyệt giá mới được duyệt đơn 0đ / quà tặng.");
+      }
+      const { order_id, notes } = body;
+      const approved_by = me.full_name || me.username;
+      const upd = await query(
+        `UPDATE sales_orders
+         SET price_approval_status = 'APPROVED',
+             price_approval_notes = $1
+         WHERE ($2::int IS NOT NULL AND id = $2::int) OR order_code = $3`,
+        [notes || body.approval_notes || `Duyệt giá/quà tặng bởi ${approved_by || 'Quản lý'}`, numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
+      );
+      if (upd.rowCount === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
+      await logAudit("APPROVE_PRICE", "SALES_ORDER", `Duyệt giá/quà tặng cho đơn SO #${order_id}`);
+      return NextResponse.json({ success: true });
+    }
+
+    // 2.3 Reserve Stock for Sales with TTL Expiry - Requirement 6
+    if (action === "reserve_stock") {
+      const { order_code, customer_name, sales_rep_name, product_code, product_name, lot_number, quantity_reserved, hold_until_date, notes } = body;
+      const orderCode = order_code || (await generateDocumentCode({ docType: "RES", tagMode: "GENERAL" } as any));
+      const reservationId = await withTransaction((c) =>
+        reserveStock(c, {
+          orderCode,
+          customerName: customer_name,
+          salesRepName: sales_rep_name,
+          productCode: product_code,
+          productName: product_name,
+          lotNumber: lot_number || null,
+          qty: Number(quantity_reserved) || 1,
+          holdUntil: hold_until_date || null,
+          notes
+        })
+      );
+      await logAudit("RESERVE_STOCK", "INVENTORY", `Sales ${sales_rep_name} giữ ${quantity_reserved} ${product_code} cho đơn ${orderCode} đến ngày ${hold_until_date}`);
+      return NextResponse.json({ success: true, id: reservationId });
+    }
+
+    // 2.4 Release Stock Reservation - Requirement 6
+    if (action === "release_reservation") {
+      const { reservation_id, reason, actor } = body;
+      await withTransaction((c) =>
+        releaseReservation(c, Number(reservation_id), actor || "Hệ thống", reason || "Hết hạn giữ chỗ hoặc đơn đã xuất")
+      );
+      await logAudit("RELEASE_RESERVATION", "INVENTORY", `Giải phóng giữ chỗ ID #${reservation_id}: ${reason}`);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "update_invoice") {
+      const { order_id, invoice_no, invoice_date, invoice_status, invoice_files } = body;
+      const cur = await query(
+        "SELECT id, invoice_status FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 ORDER BY id LIMIT 1",
+        [numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
+      );
+      if (cur.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng" }, { status: 404 });
+      const safeInvoiceStatus = resolveMonotonicStatus(cur.rows[0].invoice_status, invoice_status || "INVOICED", INVOICE_STATUS_HIERARCHY, Boolean(body.force_rollback));
+      await query(
+        `UPDATE sales_orders
+            SET invoice_no = COALESCE($1, invoice_no), invoice_date = COALESCE($2, invoice_date), invoice_status = $3,
+                invoice_files = CASE WHEN $6::boolean THEN $4::jsonb ELSE invoice_files END
+          WHERE id = $5`,
+        [invoice_no || null, invoice_date || null, safeInvoiceStatus, JSON.stringify(invoice_files || []), cur.rows[0].id, invoice_files !== undefined]
+      );
+      await logAudit("UPDATE_INVOICE", "SALES_ORDER", `Cập nhật HĐ ${invoice_no} cho đơn hàng ID ${order_id}`);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "quotation") {
+      const code = body.quote_code || body.id;
+      const custName = body.customer_name || body.customerName || "Khách Hàng";
+      const repName = body.sales_rep_name || body.salesRepName || "Nhân viên kinh doanh";
+
+      let validCustId: number | null = null;
+      const cid = body.customer_id || body.customerId;
+      if (cid) {
+        const parsedId = parseInt(cid);
+        if (!isNaN(parsedId)) {
+          const cCheck = await query("SELECT id FROM sales_customers WHERE id = $1", [parsedId]);
+          if (cCheck.rows.length > 0) validCustId = parsedId;
+        }
+      }
+
+      if (!validCustId && custName) {
+        const byName = await query("SELECT id FROM sales_customers WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1", [String(custName)]);
+        if (byName.rows[0]) validCustId = byName.rows[0].id;
+      }
+      const dateVal = parseSqlDate(body.date);
+      const validUntilVal = body.valid_until ? parseSqlDate(body.valid_until) : (body.validUntil ? parseSqlDate(body.validUntil) : null);
+      const items = Array.isArray(body.items) ? body.items : (typeof body.items === 'string' ? JSON.parse(body.items || '[]') : []);
+      const subtotal = Number(body.subtotal !== undefined ? body.subtotal : body.totalBeforeVat) || 0;
+      const discountRate = Number(body.discount_rate !== undefined ? body.discount_rate : body.discountRate) || 0;
+      const discountAmount = Number(body.discount_amount !== undefined ? body.discount_amount : body.totalDiscount) || 0;
+      const taxRate = Number(body.tax_rate !== undefined ? body.tax_rate : body.taxRate) || 8;
+      const taxAmount = Number(body.tax_amount !== undefined ? body.tax_amount : body.totalVat) || 0;
+      const totalAmount = Number(body.total_amount !== undefined ? body.total_amount : body.totalAmount) || 0;
+      const status = body.status || "DRAFT";
+      const terms = body.terms || body.paymentTerms || body.noteTerms || "";
+
+      if (discountRate < 0 || discountRate > 100) {
+        return NextResponse.json({ error: "Tỷ lệ chiết khấu báo giá phải nằm trong khoảng 0% - 100%." }, { status: 400 });
+      }
+      if (subtotal < 0 || discountAmount < 0 || taxRate < 0 || taxAmount < 0 || totalAmount < 0) {
+        return NextResponse.json({ error: "Giá trị tiền hoặc thuế của báo giá không được là số âm." }, { status: 400 });
+      }
+      for (const it of items) {
+        const q = Number(it.quantity ?? it.qty ?? 0);
+        const p = Number(it.unit_price ?? it.unitPrice ?? it.price ?? 0);
+        if (q < 0 || p < 0) {
+          return NextResponse.json({ error: "Số lượng và đơn giá mặt hàng trong báo giá không được là số âm." }, { status: 400 });
+        }
+      }
+
+      let finalCode = (code && /^BG\d{2}-[A-Z0-9]{2}-\d{4}$/.test(code))
+        ? code
+        : (code && String(code).trim().length > 0 ? String(code).trim() : null);
+
+      if (!finalCode) {
+        finalCode = await generateDocumentCode({
+          docType: "BG",
+          customerName: custName,
+          salesRepName: repName,
+          tagMode: "CUSTOMER"
+        });
+      }
+
+      // Thông tin mở rộng (người liên hệ KH, liên hệ NVKD) lưu vào cột JSONB extra_data
+      if (!quotationExtraColumnEnsured) {
+        try {
+          await query("ALTER TABLE sales_quotations ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb");
+          await query("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_quotations_quote_code ON sales_quotations (quote_code)");
+          quotationExtraColumnEnsured = true;
+        } catch (err) {
+          console.error("Failed to ensure sales_quotations schema:", err);
+        }
+      }
+      const extra: Record<string, any> = {};
+      for (const k of QUOTATION_EXTRA_KEYS) {
+        if (body[k] !== undefined && body[k] !== null) extra[k] = body[k];
+      }
+
+      // Resilient check-and-upsert that never fails even without unique constraint
+      let upsertRes;
+      const existing = await query("SELECT id, extra_data FROM sales_quotations WHERE quote_code = $1", [finalCode]);
+      if (existing.rows.length > 0) {
+        upsertRes = await query(
+          `UPDATE sales_quotations SET
+            customer_id = $2, customer_name = $3, sales_rep_name = $4,
+            date = $5, valid_until = $6, items = $7, subtotal = $8, discount_rate = $9,
+            discount_amount = $10, tax_rate = $11, tax_amount = $12, total_amount = $13,
+            status = $14, terms = $15, extra_data = COALESCE(sales_quotations.extra_data, '{}'::jsonb) || $16
+           WHERE quote_code = $1 RETURNING *`,
+          [
+            finalCode, validCustId, custName, repName,
+            dateVal, validUntilVal, JSON.stringify(items), subtotal, discountRate,
+            discountAmount, taxRate, taxAmount, totalAmount, status, terms, JSON.stringify(extra)
+          ]
+        );
+      } else {
+        upsertRes = await query(
+          `INSERT INTO sales_quotations (
+            quote_code, customer_id, customer_name, sales_rep_name, 
+            date, valid_until, items, subtotal, discount_rate, 
+            discount_amount, tax_rate, tax_amount, total_amount, status, terms, extra_data
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          RETURNING *`,
+          [
+            finalCode, validCustId, custName, repName,
+            dateVal, validUntilVal, JSON.stringify(items), subtotal, discountRate,
+            discountAmount, taxRate, taxAmount, totalAmount, status, terms, JSON.stringify(extra)
+          ]
+        );
+      }
+
+      await logAudit("UPSERT", "SALES_QUOTE", `Lưu báo giá quan hệ ${finalCode}`);
+
+      // Synchronize fresh list to app_storage for dual-write compatibility
+      try {
+        const allQ = await query("SELECT * FROM sales_quotations ORDER BY id DESC");
+        const normalizedList = allQ.rows.map(normalizeQuotationRow);
+        await query(
+          `INSERT INTO app_storage (key, data, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+           ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
+          ["sales_quotations", JSON.stringify(normalizedList)]
+        );
+      } catch (err) {
+        console.error("Failed to sync sales_quotations to app_storage:", err);
+      }
+
+      return NextResponse.json({ success: true, quotation: normalizeQuotationRow(upsertRes.rows[0]) });
+    }
+
+    if (action === "delete_quotation") {
+      const { id, quote_code } = body;
+      const targetCode = quote_code || (typeof id === 'string' && isNaN(Number(id)) ? id : null);
+      const targetId = !isNaN(Number(id)) ? Number(id) : null;
+
+      await query(
+        "DELETE FROM sales_quotations WHERE quote_code = $1 OR id = $2",
+        [targetCode, targetId]
+      );
+      await logAudit("DELETE", "SALES_QUOTE", `Xóa báo giá ${targetCode || targetId}`);
+
+      // Sync fresh snapshot to app_storage
+      try {
+        const allQ = await query("SELECT * FROM sales_quotations ORDER BY id DESC");
+        const normalizedList = allQ.rows.map(normalizeQuotationRow);
+        await query(
+          `INSERT INTO app_storage (key, data, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+           ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
+          ["sales_quotations", JSON.stringify(normalizedList)]
+        );
+      } catch (err) {}
+
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "task") {
+      const { id, task_code, title, assignee_code, assignee_name, customer_name, priority, status, deadline, description, logs } = body;
+      if (id) {
+        await query(
+          `UPDATE sales_tasks SET title=$1, assignee_code=$2, assignee_name=$3, customer_name=$4, priority=$5, status=$6, deadline=$7, description=$8, logs=$9 WHERE id=$10`,
+          [title, assignee_code, assignee_name, customer_name, priority, status, deadline, description, JSON.stringify(logs || []), id]
+        );
+      } else {
+        const code = task_code || `TSK-${Date.now().toString().slice(-5)}`;
+        await query(
+          `INSERT INTO sales_tasks (task_code, title, assignee_code, assignee_name, customer_name, priority, status, deadline, description, logs)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [code, title, assignee_code, assignee_name, customer_name, priority || "MEDIUM", status || "TODO", deadline, description, JSON.stringify(logs || [])]
+        );
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "daily") {
+      const { log_date, employee_code, employee_name, work_content, result, issues, next_day_plan } = body;
+      await query(
+        `INSERT INTO sales_daily_logs (log_date, employee_code, employee_name, work_content, result, issues, next_day_plan)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [log_date || todayVN(), employee_code, employee_name, work_content, result, issues, next_day_plan]
+      );
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "update_product_price" || action === "product_price") {
+      const { code, standard_price, cost_price, priceDealer1, priceDealer2 } = body;
+      if (!code) {
+        return NextResponse.json({ error: "Thiếu mã sản phẩm" }, { status: 400 });
+      }
+
+      await query(
+        `UPDATE products 
+         SET standard_price = COALESCE($1, standard_price), 
+             cost_price = COALESCE($2, cost_price) 
+         WHERE code = $3`,
+        [standard_price !== undefined ? Number(standard_price) : null, cost_price !== undefined ? Number(cost_price) : null, code]
+      );
+
+      // Sync to app_storage sales_commercial_products
+      try {
+        const storageRes = await query("SELECT data FROM app_storage WHERE key = $1", ["sales_commercial_products"]);
+        if (storageRes.rows.length > 0 && Array.isArray(storageRes.rows[0].data)) {
+          let commList = storageRes.rows[0].data;
+          let changed = false;
+          commList = commList.map((c: any) => {
+            if (c && c.code === code) {
+              changed = true;
+              return {
+                ...c,
+                price: standard_price !== undefined ? Number(standard_price) : c.price,
+                costPrice: cost_price !== undefined ? Number(cost_price) : c.costPrice,
+                priceDealer1: priceDealer1 !== undefined ? Number(priceDealer1) : (standard_price !== undefined ? Math.round(Number(standard_price) * 0.85) : c.priceDealer1),
+                priceDealer2: priceDealer2 !== undefined ? Number(priceDealer2) : (standard_price !== undefined ? Math.round(Number(standard_price) * 0.8) : c.priceDealer2)
+              };
+            }
+            return c;
+          });
+          if (changed) {
+            await query(
+              `INSERT INTO app_storage (key, data, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
+              ["sales_commercial_products", JSON.stringify(commList)]
+            );
+          }
+        }
+      } catch (err) {
+        console.error("Failed to sync sales_commercial_products price update:", err);
+      }
+
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "product") {
+      const { id, code, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level } = body;
+      if (id) {
+        await query(
+          `UPDATE products SET name=$1, category=$2, unit=$3, specification=$4, standard_price=$5, cost_price=$6, manufacturer=$7, origin=$8, min_stock_level=$9 WHERE id=$10`,
+          [name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level, id]
+        );
+      } else {
+        const existing = await query("SELECT id FROM products WHERE code = $1", [code]);
+        if (existing.rows.length > 0) {
+          await query(
+            `UPDATE products SET name=$1, category=$2, unit=$3, specification=$4, standard_price=$5, cost_price=$6, manufacturer=$7, origin=$8, min_stock_level=$9 WHERE code=$10`,
+            [name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level, code]
+          );
+        } else {
+          await query(
+            `INSERT INTO products (code, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+            [code, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level]
+          );
+        }
+      }
+      return NextResponse.json({ success: true });
+    }
+
+    // 3.1 Digital Contract Management with Signed Files & Expiry (Requirement 3)
+    if (action === "contract") {
+      const code = body.contract_code || body.id;
+      const custName = body.customer_name || body.customerName || "Khách Hàng";
+      const repName = body.sales_rep_name || body.salesRepName || "Nhân viên kinh doanh";
+
+      let validCustId: number | null = null;
+      const cid = body.customer_id || body.customerId;
+      if (cid) {
+        const parsedId = parseInt(cid);
+        if (!isNaN(parsedId)) {
+          const cCheck = await query("SELECT id FROM sales_customers WHERE id = $1", [parsedId]);
+          if (cCheck.rows.length > 0) validCustId = parsedId;
+        }
+      }
+
+      if (!validCustId && custName) {
+        const byName = await query("SELECT id FROM sales_customers WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1", [String(custName)]);
+        if (byName.rows[0]) validCustId = byName.rows[0].id;
+      }
+      const title = body.contractTitle || body.title || "Hợp đồng mua bán";
+      const signDate = parseSqlDate(body.signDate || body.sign_date || body.date);
+      const validUntil = (body.validUntil || body.valid_until) ? parseSqlDate(body.validUntil || body.valid_until) : null;
+      const totalVal = Number(body.total_value !== undefined ? body.total_value : (body.totalAmount !== undefined ? body.totalAmount : body.totalValue)) || 0;
+      const status = body.status || "ACTIVE";
+      const notes = body.notes || "";
+      const contractFiles = Array.isArray(body.contract_files) ? body.contract_files : (Array.isArray(body.contractFiles) ? body.contractFiles : []);
+      const items = Array.isArray(body.items) ? body.items : (typeof body.items === 'string' ? JSON.parse(body.items || '[]') : []);
+
+      if (totalVal < 0) {
+        return NextResponse.json({ error: "Giá trị hợp đồng không được là số âm." }, { status: 400 });
+      }
+      for (const it of items) {
+        const q = Number(it.quantity ?? it.qty ?? 0);
+        const p = Number(it.unit_price ?? it.unitPrice ?? it.price ?? 0);
+        if (q < 0 || p < 0) {
+          return NextResponse.json({ error: "Số lượng và đơn giá mặt hàng trong hợp đồng không được là số âm." }, { status: 400 });
+        }
+      }
+
+      let finalCode = (code && /^HD\d{2}-[A-Z0-9]{2}-\d{4}$/.test(code))
+        ? code
+        : (code && String(code).trim().length > 0 ? String(code).trim() : null);
+
+      if (!finalCode) {
+        finalCode = await generateDocumentCode({
+          docType: "HD",
+          salesRepName: repName,
+          customerName: custName,
+          tagMode: "CUSTOMER"
+        });
+      }
+
+      const upsertRes = await query(
+        `INSERT INTO sales_contracts (
+          contract_code, customer_id, customer_name, sales_rep_name, 
+          title, sign_date, valid_until, total_value, status, notes, contract_files, items
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+        ON CONFLICT (contract_code) DO UPDATE 
+        SET customer_id = EXCLUDED.customer_id,
+            customer_name = EXCLUDED.customer_name,
+            sales_rep_name = EXCLUDED.sales_rep_name,
+            title = EXCLUDED.title,
+            sign_date = EXCLUDED.sign_date,
+            valid_until = EXCLUDED.valid_until,
+            total_value = EXCLUDED.total_value,
+            status = EXCLUDED.status,
+            notes = EXCLUDED.notes,
+            contract_files = CASE WHEN $13::boolean THEN EXCLUDED.contract_files ELSE sales_contracts.contract_files END,
+            items = CASE WHEN $14::boolean THEN EXCLUDED.items ELSE sales_contracts.items END
+        RETURNING *`,
+        [
+          finalCode, validCustId, custName, repName, title, signDate, validUntil, totalVal, status, notes, JSON.stringify(contractFiles), JSON.stringify(items),
+          body.contract_files !== undefined || body.contractFiles !== undefined,
+          body.items !== undefined
+        ]
+      );
+
+      await logAudit("CREATE_OR_UPDATE", "CONTRACT", `Lưu hợp đồng số hóa ${finalCode}`);
+
+      // Sync fresh snapshot to app_storage
+      try {
+        const allC = await query("SELECT * FROM sales_contracts ORDER BY id DESC");
+        const normalizedList = allC.rows.map(normalizeContractRow);
+        await query(
+          `INSERT INTO app_storage (key, data, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+           ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
+          ["sales_contracts", JSON.stringify(normalizedList)]
+        );
+      } catch (err) {
+        console.error("Failed to sync sales_contracts to app_storage:", err);
+      }
+
+      return NextResponse.json({ success: true, contract: normalizeContractRow(upsertRes.rows[0]) });
+    }
+
+    if (action === "delete_contract") {
+      const { id, contract_code } = body;
+      const targetCode = contract_code || (typeof id === 'string' && isNaN(Number(id)) ? id : null);
+      const targetId = !isNaN(Number(id)) ? Number(id) : null;
+
+      await query(
+        "DELETE FROM sales_contracts WHERE contract_code = $1 OR id = $2",
+        [targetCode, targetId]
+      );
+      await logAudit("DELETE", "CONTRACT", `Xóa hợp đồng ${targetCode || targetId}`);
+
+      // Sync fresh snapshot to app_storage
+      try {
+        const allC = await query("SELECT * FROM sales_contracts ORDER BY id DESC");
+        const normalizedList = allC.rows.map(normalizeContractRow);
+        await query(
+          `INSERT INTO app_storage (key, data, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
+           ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
+          ["sales_contracts", JSON.stringify(normalizedList)]
+        );
+      } catch (err) {}
+
+      return NextResponse.json({ success: true });
+    }
+
+    // 3.2 Flexible Cancel Order Item (Requirement 15 - H5)
+    if (action === "cancel_order_item") {
+      const { order_code, product_code, reason, canceled_by } = body;
+      const result = await withTransaction(async (c) => {
+        const ordRes = await c.query("SELECT * FROM sales_orders WHERE order_code = $1 FOR UPDATE", [order_code]);
+        if (ordRes.rows.length === 0) {
+          throw new HttpError(404, "Không tìm thấy đơn hàng");
+        }
+        const ord = ordRes.rows[0];
+
+        // Kiểm tra xem mặt hàng đã được xuất trên phiếu giao hàng chưa hủy hay chưa
+        const slipsRes = await c.query(
+          "SELECT slip_code, status, items FROM sales_delivery_slips WHERE order_code = $1 OR ($2::int IS NOT NULL AND order_id = $2::text)",
+          [order_code, ord.id]
+        );
+        for (const slip of slipsRes.rows) {
+          if (String(slip.status || "").toUpperCase() === "CANCELLED") continue;
+          const slipItems = parseJsonArray(slip.items);
+          const shippedQty = slipItems
+            .filter((si: any) => (si.productCode || si.product_code || si.code) === product_code)
+            .reduce((s: number, si: any) => s + (Number(si.quantity ?? si.qtyDeliverNow ?? si.qty ?? 0) || 0), 0);
+          if (shippedQty > 0) {
+            throw new HttpError(400, `Mặt hàng ${product_code} đã được xuất giao (${shippedQty}) trên phiếu ${slip.slip_code}. Không thể hủy trực tiếp dòng hàng đã giao; vui lòng hủy phiếu giao hoặc tạo phiếu trả hàng RMA.`);
+          }
+        }
+
+        let items = ord.items;
+        if (typeof items === "string") {
+          try { items = JSON.parse(items); } catch { items = []; }
+        }
+        const updatedItems = items.map((it: any) => {
+          const itCode = it.productCode || it.product_code;
+          if (itCode === product_code && it.status !== "CANCELLED") {
+            return {
+              ...it,
+              status: "CANCELLED",
+              cancel_reason: reason || "Khách yêu cầu hủy dòng",
+              canceled_at: new Date().toISOString(),
+              canceled_by: canceled_by || "NVKD"
+            };
+          }
+          return it;
+        });
+
+        const activeItems = updatedItems.filter((it: any) => it.status !== "CANCELLED");
+        const newTotal = activeItems.reduce((sum: number, it: any) => {
+          const lineTotal = Number(it.subtotal || it.totalPrice || it.total_price) || 
+            ((Number(it.quantity) || 1) * (Number(it.unitPrice || it.unit_price || it.price) || 0));
+          return sum + lineTotal;
+        }, 0);
+
+        await c.query(
+          `UPDATE sales_orders SET items = $1, total_amount = $2 WHERE id = $3`,
+          [JSON.stringify(updatedItems), newTotal, ord.id]
+        );
+
+        // H5: Release active reservations and decrement quantity_allocated in inventory_items atomically!
+        const relRes = await c.query(
+          `UPDATE inventory_reservations 
+           SET status = 'RELEASED', notes = COALESCE(notes, '') || ' • [Tự động nhả do hủy dòng: ' || $1 || ']'
+           WHERE order_code = $2 AND product_code = $3 AND status = 'ACTIVE'
+           RETURNING quantity_reserved`,
+          [reason || "Hủy dòng mặt hàng", order_code, product_code]
+        );
+
+        const totalReleased = relRes.rows.reduce((sum: number, r: any) => sum + (Number(r.quantity_reserved) || 0), 0);
+        if (totalReleased > 0) {
+          await c.query(
+            `UPDATE inventory_items 
+             SET quantity_allocated = GREATEST(0, COALESCE(quantity_allocated, 0) - $1), 
+                 last_updated = CURRENT_TIMESTAMP 
+             WHERE product_code = $2`,
+            [totalReleased, product_code]
+          );
+        }
+
+        return { updatedItems, newTotal, totalReleased };
+      });
+
+      await logAudit("CANCEL_ORDER_ITEM", "SALES_ORDER", `Hủy mặt hàng ${product_code} trong đơn ${order_code}: ${reason}`);
+      return NextResponse.json({ success: true, updated_items: result.updatedItems, new_total: result.newTotal });
+    }
+
+    // 3.3 Create RMA Return Request (Requirement 15 - M2)
+    if (action === "create_rma") {
+      const { order_code, items, reason_category, restock_action, refund_type, notes } = body;
+      const code = String(order_code || "").trim();
+      if (!code) throw new HttpError(400, "Thiếu mã đơn hàng cần trả");
+      const wanted = (Array.isArray(items) ? items : [])
+        .map((it: any) => ({ code: String(it?.product_code || it?.productCode || "").trim(), qty: Number(it?.quantity) || 0, reason: String(it?.reason || "").slice(0, 300) }))
+        .filter((it: any) => it.code && it.qty > 0);
+      if (wanted.length === 0) throw new HttpError(400, "Chọn ít nhất 1 mặt hàng với số lượng trả > 0");
+
+      const created = await withTransaction(async (c) => {
+        const ord = (await c.query(
+          "SELECT order_code, customer_name, items, delivery_status FROM sales_orders WHERE order_code = $1 FOR UPDATE",
+          [code]
+        )).rows[0];
+        if (!ord) throw new HttpError(404, `Không tìm thấy đơn hàng ${code}`);
+        const asArr = (v: any): any[] => { if (Array.isArray(v)) return v; try { const x = JSON.parse(v || "[]"); return Array.isArray(x) ? x : []; } catch { return []; } };
+        const asObj = (v: any): any => { if (v && typeof v === "object") return v; try { return JSON.parse(v || "{}"); } catch { return {}; } };
+        const itemCode = (it: any) => String(it?.productCode || it?.product_code || it?.code || "").trim();
+        const orderItems = asArr(ord.items).filter((it: any) => it?.status !== "CANCELLED");
+
+        // Đã giao: phiếu giao đã xác nhận giao (không huỷ); đơn cũ giao không qua phiếu thì lấy SL đặt khi đơn đã DELIVERED
+        const slips = (await c.query("SELECT items, status, extra_data FROM sales_delivery_slips WHERE order_code = $1", [code])).rows;
+        const delivered: Record<string, number> = {};
+        let anySlipDelivered = false;
+        for (const s of slips) {
+          const ex = asObj(s.extra_data);
+          if (String(ex.deliveryStatus || s.status || "").toUpperCase() === "CANCELLED") continue;
+          const isDel = ex.isDelivered === true || ex.isDelivered === "true" || String(ex.deliveryStatus || "").toUpperCase() === "DELIVERED";
+          if (!isDel) continue;
+          anySlipDelivered = true;
+          for (const it of asArr(s.items)) { const k = itemCode(it); if (k) delivered[k] = (delivered[k] || 0) + (Number(it.quantity) || 0); }
+        }
+        if (!anySlipDelivered && String(ord.delivery_status || "").toUpperCase() === "DELIVERED") {
+          for (const it of orderItems) { const k = itemCode(it); if (k) delivered[k] = (delivered[k] || 0) + (Number(it.quantity) || 0); }
+        }
+        // Đã trả / đang chờ duyệt trả
+        const returned: Record<string, number> = {};
+        const prev = (await c.query("SELECT items FROM rma_returns WHERE order_code = $1 AND status IN ('PENDING_APPROVAL', 'APPROVED')", [code])).rows;
+        for (const r of prev) for (const it of asArr(r.items)) { const k = itemCode(it); if (k) returned[k] = (returned[k] || 0) + (Number(it.quantity) || 0); }
+
+        const lines = wanted.map((w: any) => {
+          const oi = orderItems.find((it: any) => itemCode(it) === w.code);
+          if (!oi) throw new HttpError(400, `Mã ${w.code} không có trong đơn ${code}`);
+          const can = (delivered[w.code] || 0) - (returned[w.code] || 0);
+          if (w.qty > can + 1e-9) {
+            throw new HttpError(400, `Mã ${w.code}: chỉ còn trả được ${Math.max(0, can)} (đã giao ${delivered[w.code] || 0}, đã/đang trả ${returned[w.code] || 0})`);
+          }
+          // Đơn giá trên SO là giá đã gồm VAT
+          const unit = Number(oi.unitPrice ?? oi.price ?? oi.unit_price) || 0;
+          return {
+            product_code: w.code,
+            product_name: oi.productName || oi.product_name || oi.name || w.code,
+            unit: oi.unit || "",
+            quantity: w.qty,
+            unit_price: unit,
+            total: Math.round(unit * w.qty),
+            reason: w.reason
+          };
+        });
+        const total = lines.reduce((s: number, x: any) => s + x.total, 0);
+        const rmaCode = await generateDocumentCode({ docType: "RMA", customerName: ord.customer_name, tagMode: "CUSTOMER" });
+        await c.query(
+          `INSERT INTO rma_returns (rma_code, order_code, customer_name, items, total_amount, reason_category, status, restock_action, refund_type, notes)
+           VALUES ($1, $2, $3, $4, $5, $6, 'PENDING_APPROVAL', $7, $8, $9)`,
+          [rmaCode, code, ord.customer_name, JSON.stringify(lines), total, reason_category || "DEFECTIVE", restock_action || "RESTOCK", refund_type || "CREDIT_OFFSET", notes ? String(notes).slice(0, 1000) : null]
+        );
+        return { rmaCode, customer: ord.customer_name };
+      });
+      await logAudit("CREATE_RMA", "RMA", `Tạo yêu cầu trả hàng ${created.rmaCode} cho đơn ${code} (${created.customer})`);
+      return NextResponse.json({ success: true, rma_code: created.rmaCode });
+    }
+
+    if (action === "reject_rma") {
+      const { rma_id, notes } = body;
+      const who = (authUser as any)?.full_name || (authUser as any)?.username || "Người duyệt";
+      const r = await query(
+        `UPDATE rma_returns SET status = 'REJECTED', approved_by = $1, notes = COALESCE(notes, '') || $2
+          WHERE id = $3 AND status = 'PENDING_APPROVAL' RETURNING rma_code`,
+        [who, ` • [Từ chối bởi ${who}: ${String(notes || "Không đủ điều kiện trả hàng").slice(0, 500)}]`, rma_id]
+      );
+      if (r.rowCount === 0) throw new HttpError(409, "Phiếu trả hàng không tồn tại hoặc đã được xử lý");
+      await logAudit("REJECT_RMA", "RMA", `Từ chối phiếu trả hàng ${r.rows[0].rma_code}`);
+      return NextResponse.json({ success: true });
+    }
+
+    // 3.4 Approve RMA Return Request (Requirement 15 - C3)
+    if (action === "approve_rma") {
+      const { rma_id, restock_action, notes } = body;
+      const approver = (authUser as any)?.full_name || (authUser as any)?.username || "Ban Giám Đốc";
+      const approvalNote = notes || "Đã duyệt nhận hàng trả";
+      const appendedNote = ` • [Duyệt bởi ${approver}: ${approvalNote}]`;
+
+      const result = await withTransaction(async (c) => {
+        // CAS: only PENDING_APPROVAL can transition to APPROVED
+        const r = await c.query(
+          `UPDATE rma_returns 
+           SET status = 'APPROVED', approved_by = $1, 
+               restock_action = COALESCE($2, restock_action), 
+               notes = COALESCE(notes, '') || $3
+           WHERE id = $4 AND status = 'PENDING_APPROVAL'
+           RETURNING *`,
+          [approver, restock_action || null, appendedNote, rma_id]
+        );
+        if (r.rowCount === 0) {
+          throw new HttpError(409, "Phiếu RMA không tồn tại hoặc đã được xử lý trước đó");
+        }
+        const rma = r.rows[0];
+        const finalAction = rma.restock_action || "RESTOCK";
+
+        if (finalAction === "RESTOCK") {
+          let items = rma.items;
+          if (typeof items === "string") {
+            try { items = JSON.parse(items); } catch { items = []; }
+          }
+          if (Array.isArray(items) && items.length > 0) {
+            const validItems = sortByProductCode(
+              items.filter((it: any) => (it.product_code || it.productCode) && Number(it.quantity) > 0),
+              (it: any) => it.product_code || it.productCode
+            );
+
+            for (const it of validItems) {
+              const pCode = (it.product_code || it.productCode || "").trim();
+              const pName = (it.product_name || it.name || pCode).trim();
+              const qty = Number(it.quantity) || 0;
+              await addStock(c, {
+                productCode: pCode,
+                productName: pName,
+                qty,
+                lotNumber: it.lot_number || it.lotNumber || null,
+                expiryDate: it.expiry_date || it.expiryDate || null,
+                location: "Kho Trung Tâm",
+                shelf: "Khu Nhập Trả RMA"
+              });
+            }
+
+            // One deterministic document code per RMA
+            await c.query(
+              `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
+               VALUES ($1, 'INBOUND', $2, $3, $4, 'Kho Trung Tâm', $5, $6)`,
+              [`TRK-${rma.rma_code}`, rma.rma_code, todayVN(), approver, JSON.stringify(validItems), `Nhập trả kho theo phiếu RMA ${rma.rma_code} (${rma.customer_name})`]
+            );
+          }
+        }
+
+        // Nếu hình thức hoàn là giảm trừ công nợ (CREDIT_OFFSET), tự động giảm trừ giá trị đơn hàng gốc
+        const rmaAmount = Number(rma.total_amount) || 0;
+        if (String(rma.refund_type || "CREDIT_OFFSET").toUpperCase() === "CREDIT_OFFSET" && rma.order_code && rmaAmount > 0) {
+          await c.query(
+            `UPDATE sales_orders
+             SET total_amount = GREATEST(0, COALESCE(total_amount, 0) - $1),
+                 notes = COALESCE(notes, '') || $2
+             WHERE order_code = $3`,
+            [rmaAmount, ` • [Giảm trừ công nợ RMA ${rma.rma_code}: -${rmaAmount.toLocaleString("vi-VN")} đ]`, rma.order_code]
+          );
+        }
+
+        return { rma, finalAction };
+      });
+
+      await logAudit("APPROVE_RMA", "RMA", `Duyệt phiếu trả hàng ${result.rma.rma_code} (Xử lý: ${result.finalAction})`);
+      return NextResponse.json({ success: true });
+    }
+
+    // Update Customer Contacts list (Add, Edit, Delete)
+    if (action === "update_contacts") {
+      const { customer_id, customer_code, contacts } = body;
+      const contactsJson = JSON.stringify(contacts || []);
+      const primaryContact = Array.isArray(contacts) ? contacts.find((c: any) => c.is_primary) : null;
+
+      await withTransaction(async (c) => {
+        let resolvedId: number | null = typeof customer_id === "number" ? customer_id : numericIdOrNull(customer_id);
+        let resolvedCode: string | null = customer_code || null;
+
+        if (resolvedId) {
+          const r = await c.query("UPDATE sales_customers SET contacts = $1::jsonb WHERE id = $2 RETURNING id, customer_code", [contactsJson, resolvedId]);
+          if (r.rows[0]?.customer_code && !resolvedCode) resolvedCode = r.rows[0].customer_code;
+        } else if (resolvedCode) {
+          const r = await c.query("UPDATE sales_customers SET contacts = $1::jsonb WHERE customer_code = $2 RETURNING id, customer_code", [contactsJson, resolvedCode]);
+          if (r.rows[0]?.id && !resolvedId) resolvedId = r.rows[0].id;
+        }
+
+        if (primaryContact) {
+          if (resolvedId) {
+            await c.query(
+              `UPDATE sales_customers 
+               SET contact_person = COALESCE($1, contact_person),
+                   contact_position = COALESCE($2, contact_position),
+                   phone = COALESCE($3, phone),
+                   email = COALESCE($4, email)
+               WHERE id = $5`,
+              [primaryContact.name || null, primaryContact.position || null, primaryContact.phone || null, primaryContact.email || null, resolvedId]
+            );
+          } else if (resolvedCode) {
+            await c.query(
+              `UPDATE sales_customers 
+               SET contact_person = COALESCE($1, contact_person),
+                   contact_position = COALESCE($2, contact_position),
+                   phone = COALESCE($3, phone),
+                   email = COALESCE($4, email)
+               WHERE customer_code = $5`,
+              [primaryContact.name || null, primaryContact.position || null, primaryContact.phone || null, primaryContact.email || null, resolvedCode]
+            );
+          }
+        }
+
+        if (resolvedCode && Array.isArray(contacts)) {
+          await c.query("DELETE FROM customer_contacts WHERE customer_code = $1", [resolvedCode]);
+          for (const ct of contacts) {
+            await c.query(
+              `INSERT INTO customer_contacts (customer_code, customer_id, name, position, department, phone, email, role_type, is_primary, notes)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+              [resolvedCode, resolvedId, ct.name || "", ct.position || null, ct.department || null, ct.phone || null, ct.email || null, ct.role_type || null, Boolean(ct.is_primary), ct.notes || null]
+            );
+          }
+        }
+      });
+
+      await logAudit("UPDATE_CONTACTS", "CUSTOMER", `Cập nhật danh sách ${contacts?.length || 0} người liên hệ cho KH ${customer_code || customer_id}`);
+      return NextResponse.json({ success: true, contacts });
+    }
+
+    return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
+  } catch (error: any) {
+    console.error("Sales API POST Error:", error);
+    return NextResponse.json({ error: error.message || String(error) }, { status: httpErrorStatus(error) });
+  }
+}
+
+export async function DELETE(req: NextRequest) {
+  try {
+    // Phiên phải còn hiệu lực (tài khoản chưa bị khóa, mật khẩu chưa đổi): proxy chỉ kiểm tra chữ ký cookie
+    const authUser = await getAuthorizedUser(req);
+    if (!authUser) return unauthorizedResponse();
+    setAuditActor(authUser);
+    if (!isAdminUser(authUser) && !hasPermission(authUser, "sales.delete")) {
+      return forbiddenResponse("Bạn không có quyền xóa dữ liệu Kinh doanh.");
+    }
+    const { searchParams } = new URL(req.url);
+    const action = searchParams.get("action");
+    const id = searchParams.get("id");
+
+    if (action === "customer" && id) {
+      const openCount = await openOrderCountForCustomer(id);
+      if (openCount > 0) {
+        return NextResponse.json({ error: `Khách hàng còn ${openCount} đơn hàng chưa thanh toán xong, không thể xóa.` }, { status: 409 });
+      }
+      if (!isNaN(Number(id))) {
+        await query("DELETE FROM sales_customers WHERE id = $1", [Number(id)]);
+      } else {
+        await query("DELETE FROM sales_customers WHERE customer_code = $1", [id]);
+      }
+      await logAudit("DELETE", "SALES_CUSTOMER", `Xóa khách hàng ${id}`);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "delivery_slip" && id) {
+      if (!(await deliverySlipIsCancelled(id))) {
+        return NextResponse.json({ error: "Chỉ xóa được phiếu giao đã hủy (hủy phiếu sẽ nhập lại hàng vào kho trước)." }, { status: 409 });
+      }
+      if (!isNaN(Number(id))) {
+        await query("DELETE FROM sales_delivery_slips WHERE id = $1 OR slip_code = $2", [Number(id), id]);
+      } else {
+        await query("DELETE FROM sales_delivery_slips WHERE slip_code = $1", [id]);
+      }
+      await logAudit("DELETE", "DELIVERY_SLIP", `Xóa phiếu xuất ${id}`);
+      return NextResponse.json({ success: true });
+    }
+
+    return NextResponse.json({ error: "Hành động DELETE không hợp lệ" }, { status: 400 });
+  } catch (error: any) {
+    console.error("Sales API DELETE Error:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
+
+
+
