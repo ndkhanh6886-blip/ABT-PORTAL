@@ -3250,6 +3250,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [debtRefreshKey, setDebtRefreshKey] = useState(0);
     // Báo cáo kiểm tra dữ liệu đơn (Quản trị): mã đơn trùng, phiếu lệch khách...
     const [integrityReport, setIntegrityReport] = useState<any | null>(null);
+    const fixIntegrity = async (payload: any, confirmText: string) => {
+        if (!window.confirm(confirmText)) return;
+        try {
+            const r = await fetch("/api/sales?action=order_integrity_fix", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+            const d = await r.json().catch(() => ({}));
+            if (!r.ok || !d.success) { showToast(d.error || "Không sửa được", "error"); return; }
+            showToast(d.message || "Đã sửa", "success");
+            await loadIntegrityReport();
+            fetchReservations();
+        } catch { showToast("Lỗi kết nối máy chủ", "error"); }
+    };
     const loadIntegrityReport = async () => {
         try {
             const r = await fetch("/api/sales?action=order_integrity_report");
@@ -20224,6 +20235,34 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </div>
                     {integrityReport && (() => {
+                        const fixButtons = (k: string, x: any) => {
+                            const btn = "ml-2 px-1.5 py-0.5 rounded text-[10px] font-sans font-bold cursor-pointer";
+                            if (k === "inv") return (
+                                <button type="button" className={`${btn} bg-emerald-700 text-white`}
+                                    onClick={() => fixIntegrity({ type: "move_invoice", order_code: x.order_code, delivery_slip_id: x.delivery_slip_id }, `Chuyển HĐ ${x.invoice_no} (phiếu ${x.delivery_slip_id}) từ đơn ${x.order_code} về đơn ${x.slip_order_code}?`)}>
+                                    Chuyển HĐ về {x.slip_order_code}
+                                </button>
+                            );
+                            if (k === "mis") return (
+                                <>
+                                    <button type="button" className={`${btn} bg-sky-700 text-white`}
+                                        onClick={() => fixIntegrity({ type: "set_order_customer_from_slip", slip_code: x.slip_code }, `Đổi khách của ĐƠN ${x.order_code} thành "${x.slip_customer}" (theo phiếu)?`)}>
+                                        Đơn theo phiếu
+                                    </button>
+                                    <button type="button" className={`${btn} bg-slate-600 text-white`}
+                                        onClick={() => fixIntegrity({ type: "set_slip_customer_from_order", slip_code: x.slip_code }, `Đổi khách của PHIẾU ${x.slip_code} thành "${x.order_customer}" (theo đơn)?`)}>
+                                        Phiếu theo đơn
+                                    </button>
+                                </>
+                            );
+                            if (k === "orph") return x.in_screen_copy ? (
+                                <button type="button" className={`${btn} bg-amber-600 text-white`}
+                                    onClick={() => fixIntegrity({ type: "restore_order_from_screen", order_code: x.order_code }, `Khôi phục đơn ${x.order_code} vào CSDL từ bản sao trên màn hình?`)}>
+                                    Khôi phục đơn
+                                </button>
+                            ) : <span className="ml-2 text-[10px] text-slate-500 font-sans">không còn bản sao — cần lập lại đơn</span>;
+                            return null;
+                        };
                         const sections: [string, string, any[], (x: any) => string][] = [
                             ["dup", "Mã đơn bị trùng (nhiều đơn cùng một mã)", integrityReport.duplicate_order_codes || [], (x) => `${x.order_code} × ${x.n}: ${x.customers}`],
                             ["mis", "Phiếu giao khác khách hàng với đơn", integrityReport.slip_customer_mismatch || [], (x) => `${x.slip_code} (khách: ${x.slip_customer}) ↔ đơn ${x.order_code} (khách: ${x.order_customer})`],
@@ -20242,11 +20281,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div key={k}>
                                         <div className="font-bold text-slate-200">{title} ({rows.length})</div>
                                         <ul className="list-disc pl-5 text-slate-300 font-mono text-[11px] max-h-40 overflow-y-auto">
-                                            {rows.map((x: any, i: number) => <li key={i}>{fmt(x)}</li>)}
+                                            {rows.map((x: any, i: number) => <li key={i}>{fmt(x)}{fixButtons(k, x)}</li>)}
                                         </ul>
                                     </div>
                                 ))}
-                                {total > 0 && <div className="text-[11px] text-slate-400">Danh sách để đối soát; hệ thống không tự sửa. Gửi danh sách này để xử lý từng trường hợp.</div>}
+                                {total > 0 && <div className="text-[11px] text-slate-400">Hệ thống không tự sửa: bấm nút ở từng dòng sau khi đã đối chiếu với chứng từ (mỗi lần sửa đều ghi nhật ký).</div>}
                             </div>
                         );
                     })()}

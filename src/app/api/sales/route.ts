@@ -139,7 +139,7 @@ function numericIdOrNull(v: any): number | null {
 /** True when the slip does not exist or was cancelled (its stock was put back). */
 async function deliverySlipIsCancelled(idOrCode: any): Promise<boolean> {
   const r = await query(
-    "SELECT status, extra_data FROM sales_delivery_slips WHERE slip_code = $1 OR ($2::int IS NOT NULL AND id = $2::int) LIMIT 1",
+    "SELECT status, extra_data FROM sales_delivery_slips WHERE (CASE WHEN NULLIF($1::text, '') IS NOT NULL AND $1::text !~ '^[0-9]+$' THEN slip_code = $1::text ELSE id = $2::int END) LIMIT 1",
     [String(idOrCode ?? ""), numericIdOrNull(idOrCode)]
   );
   const row = r.rows[0];
@@ -798,7 +798,8 @@ export async function GET(req: NextRequest) {
       const slipCustomerMismatch = slipRes.rows
         .filter((s: any) => { const o = ordByCode.get(String(s.order_code || "")); return o && s.customer_name && o.customer_name && norm(s.customer_name) !== norm(o.customer_name); })
         .map((s: any) => ({ slip_code: s.slip_code, order_code: s.order_code, slip_customer: s.customer_name, order_customer: ordByCode.get(String(s.order_code))?.customer_name }));
-      const slipsWithoutOrder = slipRes.rows.filter((s: any) => s.order_code && !ordByCode.has(String(s.order_code))).map((s: any) => ({ slip_code: s.slip_code, order_code: s.order_code, customer: s.customer_name }));
+      const blobCodes = new Set(parseJsonArray(blobRes.rows[0]?.data).flatMap((fo: any) => [fo?.order_code, fo?.id].filter(Boolean).map(String)));
+      const slipsWithoutOrder = slipRes.rows.filter((s: any) => s.order_code && !ordByCode.has(String(s.order_code))).map((s: any) => ({ slip_code: s.slip_code, order_code: s.order_code, customer: s.customer_name, in_screen_copy: blobCodes.has(String(s.order_code)) }));
       const invoiceWrongSlip: any[] = [];
       for (const o of ordRes.rows) {
         for (const r of parseJsonArray(o.invoiced_delivery_slips)) {
@@ -1041,7 +1042,7 @@ export async function POST(req: NextRequest) {
       // Kiểm tra đơn hàng cha nếu lập/cập nhật phiếu giao không phải trạng thái CANCELLED
       if (String(slipStatus).toUpperCase() !== "CANCELLED" && (oId || oCode)) {
         const parentRes = await query(
-          "SELECT id, order_code, delivery_status, approval_status, is_credit_blocked, price_approval_status FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 OR order_code = $3 ORDER BY id LIMIT 1",
+          "SELECT id, order_code, delivery_status, approval_status, is_credit_blocked, price_approval_status FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL THEN order_code = $2::text WHEN $3::text IS NOT NULL AND $3::text !~ '^[0-9]+$' THEN order_code = $3::text ELSE id = $1::int END) ORDER BY id LIMIT 1",
           [numericIdOrNull(oId), String(oCode || "").trim() || null, typeof oId === "string" ? oId.trim() : null]
         );
         const parentOrd = parentRes.rows[0];
@@ -1198,12 +1199,13 @@ export async function POST(req: NextRequest) {
 
       // Một lần "sửa đơn" chỉ mang theo order_code: tìm đơn đang có theo id, rồi theo mã.
       // (Trước đây thiếu id nên mỗi lần sửa lại INSERT thêm một dòng SO trùng mã, reset trạng thái giao/thanh toán.)
+      // Tìm đơn theo MÃ ĐƠN trước; id số chỉ dùng khi không gửi mã (id lấy từ màn hình có thể là của đơn khác
+      // -> trước đây sửa đơn này lại ghi đè sang đơn kia, kể cả tên khách hàng)
       let existing: any = null;
-      if (id && !isNaN(Number(id))) {
-        existing = (await query("SELECT * FROM sales_orders WHERE id = $1", [Number(id)])).rows[0] || null;
-      }
-      if (!existing && order_code) {
+      if (order_code && String(order_code).trim()) {
         existing = (await query("SELECT * FROM sales_orders WHERE order_code = $1 ORDER BY id ASC LIMIT 1", [String(order_code).trim()])).rows[0] || null;
+      } else if (id && !isNaN(Number(id))) {
+        existing = (await query("SELECT * FROM sales_orders WHERE id = $1", [Number(id)])).rows[0] || null;
       }
 
       if (existing) {
@@ -1423,7 +1425,7 @@ export async function POST(req: NextRequest) {
     if (action === "update_delivery_status") {
       const { order_id, order_code, delivery_status, delivered_at, invoice_no, invoice_date, invoice_status, invoice_files, delivery_notes, force_rollback, rollback_reason } = body;
       const orderRes = await query(
-        "SELECT id, order_code, delivery_status, invoice_status, invoice_no, invoice_date, approval_status, is_credit_blocked, price_approval_status FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 OR order_code = $3 ORDER BY id LIMIT 1",
+        "SELECT id, order_code, delivery_status, invoice_status, invoice_no, invoice_date, approval_status, is_credit_blocked, price_approval_status FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL THEN order_code = $2::text WHEN $3::text IS NOT NULL AND $3::text !~ '^[0-9]+$' THEN order_code = $3::text ELSE id = $1::int END) ORDER BY id LIMIT 1",
         [numericIdOrNull(order_id), String(order_code || "").trim() || null, typeof order_id === "string" ? order_id.trim() : null]
       );
       if (orderRes.rows.length === 0) {
@@ -1484,7 +1486,7 @@ export async function POST(req: NextRequest) {
 
       const result = await withTransaction(async (c) => {
         const orderRes = await c.query(
-          "SELECT id, order_code, total_amount, invoiced_delivery_slips FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 OR order_code = $3 ORDER BY id LIMIT 1 FOR UPDATE",
+          "SELECT id, order_code, total_amount, invoiced_delivery_slips FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL THEN order_code = $2::text WHEN $3::text IS NOT NULL AND $3::text !~ '^[0-9]+$' THEN order_code = $3::text ELSE id = $1::int END) ORDER BY id LIMIT 1 FOR UPDATE",
           [numericIdOrNull(order_id), String(order_code || "").trim() || null, typeof order_id === "string" ? order_id.trim() : null]
         );
         if (orderRes.rows.length === 0) throw new HttpError(404, "Không tìm thấy đơn hàng");
@@ -1574,7 +1576,7 @@ export async function POST(req: NextRequest) {
 
       const result = await withTransaction(async (c) => {
         const ord = (await c.query(
-          "SELECT id, order_code, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 ORDER BY id LIMIT 1 FOR UPDATE",
+          "SELECT id, order_code, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL AND $2::text !~ '^[0-9]+$' THEN order_code = $2::text ELSE id = $1::int END) ORDER BY id LIMIT 1 FOR UPDATE",
           [numericIdOrNull(body.order_id), String(body.order_code || body.order_id || "").trim() || null]
         )).rows[0];
         if (!ord) throw new HttpError(404, "Không tìm thấy đơn hàng");
@@ -1681,7 +1683,7 @@ export async function POST(req: NextRequest) {
              credit_override_by = $1,
              credit_override_at = CURRENT_TIMESTAMP,
              credit_override_reason = $2
-         WHERE ($3::int IS NOT NULL AND id = $3::int) OR order_code = $4`,
+         WHERE (CASE WHEN $4::text IS NOT NULL AND $4::text !~ '^[0-9]+$' THEN order_code = $4::text ELSE id = $3::int END)`,
         [override_by || "Kế Toán Trưởng", override_reason || "Kế toán bảo lãnh mở khóa", numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
       );
       if (upd.rowCount === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
@@ -1703,7 +1705,7 @@ export async function POST(req: NextRequest) {
         `UPDATE sales_orders
          SET price_approval_status = 'APPROVED',
              price_approval_notes = $1
-         WHERE ($2::int IS NOT NULL AND id = $2::int) OR order_code = $3`,
+         WHERE (CASE WHEN $3::text IS NOT NULL AND $3::text !~ '^[0-9]+$' THEN order_code = $3::text ELSE id = $2::int END)`,
         [notes || body.approval_notes || `Duyệt giá/quà tặng bởi ${approved_by || 'Quản lý'}`, numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
       );
       if (upd.rowCount === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
@@ -1745,7 +1747,7 @@ export async function POST(req: NextRequest) {
     if (action === "update_invoice") {
       const { order_id, invoice_no, invoice_date, invoice_status, invoice_files } = body;
       const cur = await query(
-        "SELECT id, invoice_status FROM sales_orders WHERE ($1::int IS NOT NULL AND id = $1::int) OR order_code = $2 ORDER BY id LIMIT 1",
+        "SELECT id, invoice_status FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL AND $2::text !~ '^[0-9]+$' THEN order_code = $2::text ELSE id = $1::int END) ORDER BY id LIMIT 1",
         [numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
       );
       if (cur.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng" }, { status: 404 });
@@ -2434,6 +2436,93 @@ export async function POST(req: NextRequest) {
 
       await logAudit("UPDATE_CONTACTS", "CUSTOMER", `Cập nhật danh sách ${contacts?.length || 0} người liên hệ cho KH ${customer_code || customer_id}`);
       return NextResponse.json({ success: true, contacts });
+    }
+
+    // Sửa dữ liệu từ báo cáo "Kiểm tra dữ liệu đơn" (Quản trị viên chọn từng trường hợp; có nhật ký)
+    if (action === "order_integrity_fix") {
+      if (!isAdminUser(authUser)) return forbiddenResponse("Chỉ Quản trị viên được sửa dữ liệu đơn.");
+      const type = String(body.type || "");
+      const result = await withTransaction(async (c) => {
+        if (type === "move_invoice") {
+          // hóa đơn ghi nhầm vào đơn khác: chuyển về đơn sở hữu phiếu giao
+          const { order_code, delivery_slip_id } = body;
+          const wrong = (await c.query("SELECT id, order_code, invoice_no, invoiced_delivery_slips FROM sales_orders WHERE order_code = $1 FOR UPDATE", [order_code])).rows[0];
+          const slip = (await c.query("SELECT order_code FROM sales_delivery_slips WHERE slip_code = $1", [delivery_slip_id])).rows[0];
+          if (!wrong || !slip) throw new HttpError(404, "Không tìm thấy đơn hoặc phiếu giao");
+          const right = (await c.query("SELECT id, order_code, total_amount, invoice_no, invoiced_delivery_slips FROM sales_orders WHERE order_code = $1 FOR UPDATE", [slip.order_code])).rows[0];
+          const recs = parseJsonArray(wrong.invoiced_delivery_slips);
+          const rec = recs.find((r: any) => r.delivery_slip_id === delivery_slip_id);
+          if (!rec) throw new HttpError(409, "Hóa đơn này không còn nằm ở đơn sai");
+          const remain = recs.filter((r: any) => r.delivery_slip_id !== delivery_slip_id);
+          const wrongNo = remain.find((r: any) => r.invoice_no)?.invoice_no || null;
+          await c.query(
+            `UPDATE sales_orders SET invoiced_delivery_slips = $1::jsonb,
+                    invoice_no = CASE WHEN invoice_no = $2 THEN $3 ELSE invoice_no END,
+                    invoice_date = CASE WHEN invoice_no = $2 THEN $4::date ELSE invoice_date END,
+                    invoice_status = CASE WHEN jsonb_array_length($1::jsonb) = 0 THEN 'PENDING_INVOICE' ELSE invoice_status END
+              WHERE id = $5`,
+            [JSON.stringify(remain), String(rec.invoice_no || ""), wrongNo, remain.find((r: any) => r.invoice_no)?.invoice_date || null, wrong.id]
+          );
+          if (right) {
+            const rRecs = parseJsonArray(right.invoiced_delivery_slips);
+            if (!rRecs.some((r: any) => r.delivery_slip_id === delivery_slip_id)) {
+              const next = [...rRecs, rec];
+              const sum = next.reduce((s: number, r: any) => s + (Number(r.invoice_amount) || 0), 0);
+              const full = Number(right.total_amount) > 0 && sum >= Number(right.total_amount) * 0.99;
+              await c.query(
+                "UPDATE sales_orders SET invoiced_delivery_slips = $1::jsonb, invoice_no = COALESCE(invoice_no, $2), invoice_date = COALESCE(invoice_date, $3::date), invoice_status = $4 WHERE id = $5",
+                [JSON.stringify(next), rec.invoice_no || null, rec.invoice_date || null, full ? "ISSUED" : "PARTIALLY_INVOICED", right.id]
+              );
+            }
+          }
+          return `Chuyển HĐ ${rec.invoice_no} (phiếu ${delivery_slip_id}) từ đơn ${wrong.order_code} về đơn ${slip.order_code}`;
+        }
+        if (type === "set_order_customer_from_slip" || type === "set_slip_customer_from_order") {
+          const { slip_code } = body;
+          const slip = (await c.query("SELECT slip_code, order_code, customer_name FROM sales_delivery_slips WHERE slip_code = $1 FOR UPDATE", [slip_code])).rows[0];
+          if (!slip) throw new HttpError(404, "Không tìm thấy phiếu giao");
+          const ord = (await c.query("SELECT id, order_code, customer_name FROM sales_orders WHERE order_code = $1 FOR UPDATE", [slip.order_code])).rows[0];
+          if (!ord) throw new HttpError(404, "Không tìm thấy đơn của phiếu");
+          if (type === "set_order_customer_from_slip") {
+            const cust = (await c.query("SELECT id FROM sales_customers WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1", [slip.customer_name])).rows[0];
+            await c.query("UPDATE sales_orders SET customer_name = $1, customer_id = COALESCE($2, customer_id) WHERE id = $3", [slip.customer_name, cust?.id || null, ord.id]);
+            // bản sao trên màn hình cũng theo CSDL
+            await c.query(
+              `UPDATE app_storage SET data = (
+                 SELECT COALESCE(jsonb_agg(CASE WHEN e->>'order_code' = $1 OR e->>'id' = $1 THEN jsonb_set(e, '{customerName}', to_jsonb($2::text)) ELSE e END), '[]'::jsonb)
+                 FROM jsonb_array_elements(data) e) WHERE key = 'sales_factory_orders' AND jsonb_typeof(data) = 'array'`,
+              [ord.order_code, slip.customer_name]
+            );
+            return `Đơn ${ord.order_code}: khách "${ord.customer_name}" -> "${slip.customer_name}" (theo phiếu ${slip.slip_code})`;
+          }
+          await c.query("UPDATE sales_delivery_slips SET customer_name = $1 WHERE slip_code = $2", [ord.customer_name, slip.slip_code]);
+          return `Phiếu ${slip.slip_code}: khách "${slip.customer_name}" -> "${ord.customer_name}" (theo đơn ${ord.order_code})`;
+        }
+        if (type === "restore_order_from_screen") {
+          // đơn chỉ còn trong bản sao trên màn hình: ghi lại vào CSDL (giữ nguyên mã đơn)
+          const code = String(body.order_code || "").trim();
+          if ((await c.query("SELECT 1 FROM sales_orders WHERE order_code = $1", [code])).rows[0]) throw new HttpError(409, "Đơn đã có trong CSDL");
+          const blob = parseJsonArray((await c.query("SELECT data FROM app_storage WHERE key = 'sales_factory_orders'")).rows[0]?.data);
+          const fo = blob.find((x: any) => String(x?.order_code || x?.id || "") === code);
+          if (!fo) throw new HttpError(404, "Không còn bản sao của đơn này trên màn hình — cần lập lại đơn");
+          const custName = fo.customerName || fo.customer_name || "";
+          const cust = (await c.query("SELECT id FROM sales_customers WHERE LOWER(TRIM(name)) = LOWER(TRIM($1)) LIMIT 1", [custName])).rows[0];
+          const items = Array.isArray(fo.items) ? fo.items : [];
+          const total = Number(fo.totalAmount ?? fo.total_amount) || items.reduce((s: number, it: any) => s + (Number(it.quantity) || 0) * (Number(it.unitPrice ?? it.price) || 0), 0);
+          const slipsDelivered = (await c.query("SELECT extra_data FROM sales_delivery_slips WHERE order_code = $1", [code])).rows
+            .some((r: any) => { let ex: any = r.extra_data; if (typeof ex === "string") { try { ex = JSON.parse(ex); } catch { ex = {}; } } return ex?.isDelivered === true || String(ex?.deliveryStatus || "").toUpperCase() === "DELIVERED"; });
+          await c.query(
+            `INSERT INTO sales_orders (order_code, customer_id, customer_name, sales_rep_name, order_date, items, total_amount, delivery_status, payment_status, invoice_status, notes, price_approval_status)
+             VALUES ($1, $2, $3, $4, CURRENT_DATE, $5::jsonb, $6, $7, 'UNPAID', 'PENDING_INVOICE', $8, 'APPROVED')`,
+            [code, cust?.id || null, custName, fo.salesRepName || fo.sales_rep_name || null, JSON.stringify(items), total,
+             slipsDelivered ? "DELIVERED" : "PENDING", "[Khôi phục từ bản sao màn hình — kiểm tra lại ngày đơn, giá]"]
+          );
+          return `Khôi phục đơn ${code} (${custName}, ${total.toLocaleString("vi-VN")} đ) từ bản sao màn hình`;
+        }
+        throw new HttpError(400, "Loại sửa không hợp lệ");
+      });
+      await logAudit("INTEGRITY_FIX", "SALES_ORDER", result);
+      return NextResponse.json({ success: true, message: result });
     }
 
     return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });
