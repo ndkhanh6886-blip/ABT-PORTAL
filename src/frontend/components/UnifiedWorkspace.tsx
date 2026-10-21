@@ -895,6 +895,15 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
             setSearch(value || "");
             setIsOpen(true);
           }}
+          onKeyDown={(e) => {
+            // Enter trong ô tìm: chọn kết quả đầu tiên, KHÔNG gửi form đang nhập
+            if (e.key === "Enter") {
+              e.preventDefault();
+              if (isOpen && search.trim() && filtered.length > 0) onChange(filtered[0].name);
+              setIsOpen(false);
+              setSearch("");
+            }
+          }}
           placeholder={placeholder}
           className="w-full pl-9 pr-16 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 outline-none transition-all placeholder-slate-400"
         />
@@ -1071,6 +1080,17 @@ const SearchableProductSelect: React.FC<SearchableProductSelectProps> = ({
           onFocus={() => {
             setSearch(value || "");
             setIsOpen(true);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              if (isOpen && search.trim() && filtered.length > 0) {
+                const p: any = filtered[0];
+                onChange(p.name ? `${p.name} (${p.code})` : p.code);
+              }
+              setIsOpen(false);
+              setSearch("");
+            }
           }}
           placeholder={placeholder}
           className="w-full pl-9 pr-16 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500 outline-none transition-all placeholder-slate-400"
@@ -1366,7 +1386,11 @@ export const renderWorkflowResultSummary = (summary: any) => {
 
 export const UnifiedWorkspace: React.FC = () => {
   const { showToast, notifyActivity } = useNotification();
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // Tạo / sửa / xóa quy trình mẫu: Quản trị viên hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
+  const canManageTemplates = Boolean(can && can("workspace.manage_templates"));
+  const warnNoTemplatePermission = () =>
+    showToast("Bạn chưa có quyền tạo / sửa quy trình mẫu. Nhờ Quản trị viên cấp quyền \"Quản lý quy trình phối hợp mẫu\" (Cấu hình → Phân quyền) hoặc gửi nội dung quy trình để Quản trị viên tạo.", "warning");
 
   // Role-Based Access Control strictly according to the logged-in user:
   // - Ban Giám Đốc (admin / director): Full company-wide access (4 departments)
@@ -1450,6 +1474,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
   const [scheduleForm, setScheduleForm] = useState<{
     day: string;
+    date?: string;
     time: string;
     category: string;
     title: string;
@@ -1466,6 +1491,51 @@ export const UnifiedWorkspace: React.FC = () => {
     attachments: []
   });
   const [weeklySchedule, setWeeklySchedule] = useState<any[]>([]);
+  // Lịch tuần theo NGÀY THẬT: tuần đang xem (0 = tuần này), lịch đang sửa
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null);
+  const viewedWeek = useMemo(() => {
+    const base = new Date(todayVN() + "T00:00:00");
+    const dow = (base.getDay() + 6) % 7; // 0 = Thứ 2
+    const monday = new Date(base);
+    monday.setDate(base.getDate() - dow + weekOffset * 7);
+    const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    const names = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"];
+    const days = names.map((name, i) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + i);
+      return { name, date: iso(d), label: `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}` };
+    });
+    // Số tuần ISO-8601
+    const t = new Date(Date.UTC(monday.getFullYear(), monday.getMonth(), monday.getDate() + 3));
+    const firstThu = new Date(Date.UTC(t.getUTCFullYear(), 0, 4));
+    const weekNo = 1 + Math.round(((t.getTime() - firstThu.getTime()) / 86400000 - 3 + ((firstThu.getUTCDay() + 6) % 7)) / 7);
+    return { days, weekNo, year: t.getUTCFullYear() };
+  }, [weekOffset]);
+  // Lịch cũ chỉ lưu "Thứ 2"... (không có ngày): hiển thị ở tuần hiện tại
+  const scheduleOnDay = (s: any, day: { name: string; date: string }) =>
+    s.date ? String(s.date).slice(0, 10) === day.date : (weekOffset === 0 && s.day === day.name);
+  const openScheduleForm = (date?: string, item?: any) => {
+    const defaultActor = selectedAssignee !== "all" ? selectedAssignee : (departmentStaffList[0]?.full_name || currentStaffName);
+    const defaultCategory = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Application" : selectedDept);
+    const today = todayVN();
+    const pick = date || (viewedWeek.days.some(d => d.date === today) ? today : viewedWeek.days[0].date);
+    if (item) {
+      const itemDate = item.date ? String(item.date).slice(0, 10) : (viewedWeek.days.find(d => d.name === item.day)?.date || pick);
+      setEditingScheduleId(item.id);
+      setScheduleForm({
+        day: item.day, date: itemDate, time: item.time || "08:30", category: item.category || defaultCategory,
+        title: item.title || "", actor: item.actor || "", location: item.location || "", attachments: item.attachments || []
+      });
+    } else {
+      setEditingScheduleId(null);
+      setScheduleForm({
+        day: viewedWeek.days.find(d => d.date === pick)?.name || "Thứ 2", date: pick, time: "08:30",
+        category: defaultCategory, title: "", actor: defaultActor, location: "", attachments: []
+      });
+    }
+    setIsScheduleModalOpen(true);
+  };
 
   const [isLabProjectModalOpen, setIsLabProjectModalOpen] = useState(false);
   const [editingThematicId, setEditingThematicId] = useState<string | null>(null);
@@ -2380,6 +2450,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Open Create Template Modal
   const handleOpenCreateTemplate = () => {
+    if (!canManageTemplates) { warnNoTemplatePermission(); return; }
     setTemplateForm({
       id: null,
       code: `WF-TMP-${Date.now().toString().slice(-4)}`,
@@ -2420,6 +2491,7 @@ export const UnifiedWorkspace: React.FC = () => {
   };
 
   const handleEditTemplate = (tmpl: any) => {
+    if (!canManageTemplates) { warnNoTemplatePermission(); return; }
     setTemplateForm({
       id: typeof tmpl.id === "number" ? tmpl.id : null,
       code: tmpl.code || tmpl.id || `WF-TMP-${Date.now().toString().slice(-4)}`,
@@ -3055,9 +3127,13 @@ export const UnifiedWorkspace: React.FC = () => {
       showToast("Vui lòng nhập nội dung lịch công tác", "error");
       return;
     }
+    const dateIso = scheduleForm.date || todayVN();
+    const dIdx = (new Date(dateIso + "T00:00:00").getDay() + 6) % 7;
+    const dayName = ["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7", "Chủ nhật"][dIdx];
     const newItem = {
-      id: Date.now(),
-      day: scheduleForm.day,
+      id: editingScheduleId || Date.now(),
+      day: dayName,
+      date: dateIso,
       time: scheduleForm.time,
       category: scheduleForm.category,
       title: scheduleForm.title,
@@ -3065,8 +3141,12 @@ export const UnifiedWorkspace: React.FC = () => {
       location: scheduleForm.location,
       attachments: scheduleForm.attachments || []
     };
-    const updated = [...weeklySchedule, newItem];
+    const wasEditing = editingScheduleId !== null;
+    const updated = wasEditing
+      ? weeklySchedule.map((s) => (s.id === editingScheduleId ? { ...s, ...newItem } : s))
+      : [...weeklySchedule, newItem];
     setWeeklySchedule(updated);
+    setEditingScheduleId(null);
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem("unified_weekly_schedule", JSON.stringify(updated));
@@ -3079,8 +3159,10 @@ export const UnifiedWorkspace: React.FC = () => {
     } catch (err) {
       console.warn("Error saving weekly schedule:", err);
     }
-    showToast(`Đã thêm lịch công tác vào ${scheduleForm.day}!`, "success");
+    const dateLabel = `${dateIso.slice(8, 10)}/${dateIso.slice(5, 7)}`;
+    showToast(wasEditing ? `Đã cập nhật lịch công tác (${dayName} ${dateLabel})` : `Đã thêm lịch công tác vào ${dayName} ${dateLabel}!`, "success");
     setIsScheduleModalOpen(false);
+    if (wasEditing) { setScheduleForm((prev) => ({ ...prev, title: "", attachments: [] })); return; }
 
     // Send Activity Notification for Weekly Schedule
     const scheduleActors = scheduleForm.actor
@@ -3088,7 +3170,7 @@ export const UnifiedWorkspace: React.FC = () => {
       : [];
     notifyActivity({
       title: "Lịch Công Tác / Sự Kiện Tuần Mới",
-      message: `${currentStaffName} đã lên lịch "${scheduleForm.title}" vào ${scheduleForm.day} (${scheduleForm.time}) tại ${scheduleForm.location || 'Công ty'}.`,
+      message: `${currentStaffName} đã lên lịch "${scheduleForm.title}" vào ${dayName} ${dateLabel} (${scheduleForm.time}) tại ${scheduleForm.location || 'Công ty'}.`,
       type: "info",
       category: "plan",
       sender: { name: currentStaffName },
@@ -4050,6 +4132,7 @@ ${wf.description || ""}`}
                   key={wf.id || wf.code}
                   className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-700 transition-all group relative"
                 >
+                  {canManageTemplates && (
                   <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button
                       type="button"
@@ -4070,6 +4153,7 @@ ${wf.description || ""}`}
                       </button>
                     )}
                   </div>
+                  )}
 
                   <div>
                     <div className="flex items-center gap-2 mb-2">
@@ -4592,9 +4676,20 @@ ${wf.description || ""}`}
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <span>Lịch Công Tác &amp; Điều Phối Tuần Này</span>
+                    <span>Lịch Công Tác &amp; Điều Phối {weekOffset === 0 ? "Tuần Này" : weekOffset === 1 ? "Tuần Sau" : weekOffset === -1 ? "Tuần Trước" : ""}</span>
                     <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                      Tuần 37 / 2026
+                      Tuần {viewedWeek.weekNo} / {viewedWeek.year} · {viewedWeek.days[0].label} – {viewedWeek.days[5].label}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <button type="button" onClick={() => setWeekOffset(w => w - 1)} className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer" title="Tuần trước">
+                        <ChevronRight className="w-3.5 h-3.5 rotate-180" />
+                      </button>
+                      {weekOffset !== 0 && (
+                        <button type="button" onClick={() => setWeekOffset(0)} className="px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 cursor-pointer">Tuần này</button>
+                      )}
+                      <button type="button" onClick={() => setWeekOffset(w => w + 1)} className="p-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer" title="Tuần sau">
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
@@ -4603,19 +4698,7 @@ ${wf.description || ""}`}
                 </div>
 
                 <button
-                  onClick={() => {
-                    const defaultActor = selectedAssignee !== "all" ? selectedAssignee : (departmentStaffList[0]?.full_name || currentStaffName);
-                    const defaultCategory = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Application" : selectedDept);
-                    setScheduleForm({
-                      day: "Thứ 2",
-                      time: "08:30",
-                      category: defaultCategory,
-                      title: "",
-                      actor: defaultActor,
-                      location: ""
-                    });
-                    setIsScheduleModalOpen(true);
-                  }}
+                  onClick={() => openScheduleForm()}
                   className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -4674,17 +4757,19 @@ ${wf.description || ""}`}
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-3">
-                {["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"].map((day, idx) => {
-                  const dayEvents = filteredSchedules.filter((s) => s.day === day);
+                {viewedWeek.days.map((wd) => {
+                  const day = wd.name;
+                  const dayEvents = filteredSchedules.filter((s) => scheduleOnDay(s, wd)).sort((a, b) => String(a.time || "").localeCompare(String(b.time || "")));
+                  const isToday = wd.date === todayVN();
                   return (
                     <div
-                      key={day}
+                      key={wd.date}
                       className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-xl p-3 min-h-[220px] flex flex-col justify-between"
                     >
                       <div>
                         <div className="text-xs font-bold text-slate-700 dark:text-slate-300 pb-2 border-b border-slate-200 dark:border-slate-700 mb-2 flex items-center justify-between">
-                          <span>{day}</span>
-                          <span className="text-[10px] text-slate-400 font-mono">1{idx + 4}/09</span>
+                          <span className={isToday ? "text-indigo-600 dark:text-indigo-400" : ""}>{day}{isToday ? " · Hôm nay" : ""}</span>
+                          <span className="text-[10px] text-slate-400 font-mono">{wd.label}</span>
                         </div>
 
                         <div className="space-y-1.5">
@@ -4708,13 +4793,22 @@ ${wf.description || ""}`}
                               >
                                 <div className="flex items-center justify-between gap-1 mb-0.5">
                                   <span className="font-bold font-mono text-[10px]">⏰ {ev.time}</span>
-                                  <button
-                                    onClick={() => handleDeleteSchedule(ev.id)}
-                                    title="Xóa lịch trình"
-                                    className="opacity-0 group-hover:opacity-100 hover:text-rose-600 transition-opacity p-0.5"
-                                  >
-                                    <X className="w-3 h-3" />
-                                  </button>
+                                  <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                      onClick={() => openScheduleForm(undefined, ev)}
+                                      title="Sửa lịch trình"
+                                      className="hover:text-indigo-600 p-0.5"
+                                    >
+                                      <Pencil className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      onClick={() => { if (confirm("Xóa lịch trình này?")) handleDeleteSchedule(ev.id); }}
+                                      title="Xóa lịch trình"
+                                      className="hover:text-rose-600 p-0.5"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
+                                  </span>
                                 </div>
                                 <div className="font-semibold leading-tight">{ev.title}</div>
                                 <div className="text-[10px] opacity-75 mt-1 flex items-center justify-between">
@@ -4735,19 +4829,7 @@ ${wf.description || ""}`}
 
                       <div className="pt-2 border-t border-slate-200/50 dark:border-slate-700/50 mt-2">
                         <button
-                          onClick={() => {
-                            const defaultActor = selectedAssignee !== "all" ? selectedAssignee : (departmentStaffList[0]?.full_name || currentStaffName);
-                            const defaultCategory = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Application" : selectedDept);
-                            setScheduleForm({
-                              day: day,
-                              time: "08:30",
-                              category: defaultCategory,
-                              title: "",
-                              actor: defaultActor,
-                              location: ""
-                            });
-                            setIsScheduleModalOpen(true);
-                          }}
+                          onClick={() => openScheduleForm(wd.date)}
                           className="w-full py-1 text-[10px] font-bold text-slate-400 hover:text-indigo-600 hover:bg-indigo-50/50 dark:hover:bg-slate-800 rounded transition-colors flex items-center justify-center gap-1"
                         >
                           <Plus className="w-3 h-3" />
@@ -6344,12 +6426,12 @@ ${wf.description || ""}`}
 
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Khách hàng / Viện</label>
-              <input
-                type="text"
+              {/* Chọn từ danh mục khách hàng để công việc hiện trong "Hoạt động với khách hàng" */}
+              <SearchableCustomerSelect
                 value={taskForm.customer_name}
-                onChange={(e) => setTaskForm({ ...taskForm, customer_name: e.target.value })}
-                placeholder="VD: BV Chợ Rẫy (nếu có)"
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
+                onChange={(val) => setTaskForm({ ...taskForm, customer_name: val })}
+                customerList={customerList}
+                placeholder="Chọn hoặc gõ tìm khách hàng (nếu có)"
               />
             </div>
           </div>
@@ -7998,25 +8080,32 @@ ${wf.description || ""}`}
       <Modal
         isOpen={isScheduleModalOpen}
         onClose={() => setIsScheduleModalOpen(false)}
-        title="THÊM LỊCH CÔNG TÁC &amp; ĐIỀU PHỐI TUẦN"
+        title={editingScheduleId ? "SỬA LỊCH CÔNG TÁC" : "THÊM LỊCH CÔNG TÁC & ĐIỀU PHỐI TUẦN"}
         size="md"
       >
         <form onSubmit={handleSaveSchedule} className="space-y-3 p-1 text-xs">
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngày trong tuần *</label>
-              <select
-                value={scheduleForm.day}
-                onChange={(e) => setScheduleForm({ ...scheduleForm, day: e.target.value })}
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngày thực hiện *</label>
+              <input
+                type="date"
+                required
+                value={scheduleForm.date || ""}
+                onChange={(e) => setScheduleForm({ ...scheduleForm, date: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
-              >
-                <option value="Thứ 2">Thứ 2 (14/09)</option>
-                <option value="Thứ 3">Thứ 3 (15/09)</option>
-                <option value="Thứ 4">Thứ 4 (16/09)</option>
-                <option value="Thứ 5">Thứ 5 (17/09)</option>
-                <option value="Thứ 6">Thứ 6 (18/09)</option>
-                <option value="Thứ 7">Thứ 7 (19/09)</option>
-              </select>
+              />
+              <div className="flex flex-wrap gap-1 mt-1">
+                {viewedWeek.days.map((wd) => (
+                  <button
+                    key={wd.date}
+                    type="button"
+                    onClick={() => setScheduleForm({ ...scheduleForm, date: wd.date })}
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-semibold cursor-pointer ${scheduleForm.date === wd.date ? "bg-indigo-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300"}`}
+                  >
+                    {wd.name.replace("Thứ ", "T")} {wd.label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             <div>

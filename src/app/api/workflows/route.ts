@@ -888,7 +888,9 @@ export async function POST(req: NextRequest) {
 
     // 3c. Workflow Template Create / Update
     if (action === "template") {
-      if (!isAdminUser(me)) return forbiddenResponse("Chỉ Quản trị viên mới được tạo hoặc cập nhật mẫu quy trình.");
+      if (!isAdminUser(me) && !hasPermission(me, "workspace.manage_templates")) {
+        return forbiddenResponse("Bạn chưa có quyền \"Quản lý quy trình phối hợp mẫu\". Nhờ Quản trị viên cấp quyền (Cấu hình → Phân quyền).");
+      }
       const { id, code, name, source_dept, target_dept, icon, description, sla_days, steps } = body;
       if (!name || !source_dept || !target_dept) {
         return NextResponse.json({ error: "Vui lòng nhập đầy đủ Tên quy trình, Phòng ban nguồn và Phòng ban đích" }, { status: 400 });
@@ -929,7 +931,9 @@ export async function POST(req: NextRequest) {
 
     // 3d. Delete Workflow Template
     if (action === "delete_template") {
-      if (!isAdminUser(me)) return forbiddenResponse("Chỉ Quản trị viên mới được xóa mẫu quy trình.");
+      if (!isAdminUser(me) && !hasPermission(me, "workspace.manage_templates")) {
+        return forbiddenResponse("Bạn chưa có quyền \"Quản lý quy trình phối hợp mẫu\".");
+      }
       const { id } = body;
       await query(
         "DELETE FROM workflow_templates WHERE id = $1 AND UPPER(code) NOT IN ('SALES_TO_APP', 'SALES_TO_WAREHOUSE', 'TO_PROCUREMENT', 'APP_TO_WAREHOUSE', 'SALES_TO_LEGAL')",

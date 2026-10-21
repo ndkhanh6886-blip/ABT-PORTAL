@@ -1161,6 +1161,28 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, voucher_code: result.voucher, duplicate: result.duplicate });
     }
 
+    // Nhập / sửa số hóa đơn & ngày hóa đơn đầu vào của PO ngay trên danh sách PO (Cung ứng / Kế toán)
+    if (action === "update_supplier_invoices") {
+      if (!canWriteProcurement(me) && !canRecordSupplierPayment(me)) {
+        return forbiddenResponse("Bạn không có quyền cập nhật hóa đơn đầu vào của PO.");
+      }
+      const poId = Number(body.po_id);
+      if (!Number.isInteger(poId) || poId <= 0) throw new HttpError(400, "Thiếu PO");
+      const list = (Array.isArray(body.invoices) ? body.invoices : [])
+        .map((x: any) => ({
+          invoice_no: String(x?.invoice_no || "").trim().slice(0, 100),
+          invoice_date: /^\d{4}-\d{2}-\d{2}$/.test(String(x?.invoice_date || "")) ? String(x.invoice_date) : null,
+          inbound_code: x?.inbound_code ? String(x.inbound_code).slice(0, 100) : undefined
+        }))
+        .filter((x: any) => x.invoice_no);
+      const before = (await query("SELECT po_code, supplier_invoices FROM procurement_orders WHERE id = $1", [poId])).rows[0];
+      if (!before) throw new HttpError(404, "Không tìm thấy PO");
+      await query("UPDATE procurement_orders SET supplier_invoices = $1::jsonb, version = COALESCE(version, 0) + 1 WHERE id = $2", [JSON.stringify(list), poId]);
+      const fmt = (arr: any) => (Array.isArray(arr) ? arr : []).map((x: any) => `${x.invoice_no}${x.invoice_date ? ` (${x.invoice_date})` : ""}`).join(", ") || "—";
+      await logAudit("UPDATE", "PROCUREMENT", `Cập nhật HĐ đầu vào PO ${before.po_code}: ${fmt(before.supplier_invoices)} -> ${fmt(list)}`);
+      return NextResponse.json({ success: true, supplier_invoices: list });
+    }
+
     // Hủy khoản chi ghi nhầm: giữ lại trong sổ (đánh dấu hủy), trừ lại số đã trả của PO. "Sửa" = hủy rồi ghi khoản mới.
     if (action === "void_payment") {
       const pid = Number(body.payment_id);

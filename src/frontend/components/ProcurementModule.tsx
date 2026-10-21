@@ -314,6 +314,32 @@ export const ProcurementModule: React.FC = () => {
   const [selectedPayPOs, setSelectedPayPOs] = useState<number[]>([]);
   const [poPayments, setPoPayments] = useState<any[]>([]);
   const [paymentHistoryPO, setPaymentHistoryPO] = useState<any | null>(null);
+  // Sửa số HĐ / ngày HĐ đầu vào của PO
+  const [invoiceEditPO, setInvoiceEditPO] = useState<any | null>(null);
+  const [invoiceEditRows, setInvoiceEditRows] = useState<{ invoice_no: string; invoice_date: string; inbound_code?: string }[]>([]);
+  const openInvoiceEditor = (po: any) => {
+    let v: any = po?.supplier_invoices;
+    if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = []; } }
+    const rows = (Array.isArray(v) ? v : []).map((x: any) => ({ invoice_no: String(x.invoice_no || ""), invoice_date: x.invoice_date ? String(x.invoice_date).slice(0, 10) : "", inbound_code: x.inbound_code }));
+    setInvoiceEditRows(rows.length > 0 ? rows : [{ invoice_no: "", invoice_date: todayVN() }]);
+    setInvoiceEditPO(po);
+  };
+  const saveInvoiceEditor = async () => {
+    if (!invoiceEditPO) return;
+    try {
+      const res = await fetch("/api/procurement?action=update_supplier_invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ po_id: invoiceEditPO.id, invoices: invoiceEditRows })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.success) { alert(d.error || "Không lưu được hóa đơn"); return; }
+      setOrders(prev => prev.map(o => (o.id === invoiceEditPO.id ? { ...o, supplier_invoices: d.supplier_invoices } : o)));
+      setInvoiceEditPO(null);
+    } catch {
+      alert("Lỗi kết nối máy chủ");
+    }
+  };
   const [paymentForm, setPaymentForm] = useState<any>({
     po_id: null,
     po_code: "",
@@ -3048,6 +3074,16 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <div className="text-[10px] text-slate-500">{iv.invoice_date ? formatDate(iv.invoice_date) : ""}</div>
                               </div>
                             ))}
+                            {po.status !== "CANCELLED" && (
+                              <button
+                                type="button"
+                                onClick={() => openInvoiceEditor(po)}
+                                className="mt-0.5 text-[10px] font-bold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer"
+                                title="Nhập / sửa số hóa đơn và ngày hóa đơn của nhà cung cấp"
+                              >
+                                {poSupplierInvoices(po).length === 0 ? "+ Nhập HĐ" : "✎ Sửa HĐ"}
+                              </button>
+                            )}
                           </td>
 
                           {/* Col 5: Payment */}
@@ -4038,6 +4074,48 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* Sửa số hóa đơn / ngày hóa đơn đầu vào của PO */}
+      {invoiceEditPO && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-5 space-y-3 text-xs">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+              <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                Hóa đơn đầu vào — <span className="font-mono text-orange-600">{invoiceEditPO.po_code}</span>
+              </h3>
+              <button onClick={() => setInvoiceEditPO(null)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="space-y-2">
+              {invoiceEditRows.map((r, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input
+                    value={r.invoice_no}
+                    onChange={(e) => setInvoiceEditRows(prev => prev.map((x, k) => k === i ? { ...x, invoice_no: e.target.value } : x))}
+                    placeholder="Số hóa đơn"
+                    className="flex-1 p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+                  />
+                  <input
+                    type="date"
+                    value={r.invoice_date}
+                    onChange={(e) => setInvoiceEditRows(prev => prev.map((x, k) => k === i ? { ...x, invoice_date: e.target.value } : x))}
+                    className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                  <button type="button" onClick={() => setInvoiceEditRows(prev => prev.filter((_, k) => k !== i))} className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 cursor-pointer" title="Bỏ dòng này">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+              <button type="button" onClick={() => setInvoiceEditRows(prev => [...prev, { invoice_no: "", invoice_date: todayVN() }])} className="text-[11px] font-bold text-orange-600 dark:text-orange-400 hover:underline cursor-pointer">
+                + Thêm hóa đơn (PO giao nhiều đợt)
+              </button>
+            </div>
+            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <button onClick={() => setInvoiceEditPO(null)} className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer">Hủy</button>
+              <button onClick={saveInvoiceEditor} className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer">Lưu hóa đơn</button>
+            </div>
           </div>
         </div>
       )}

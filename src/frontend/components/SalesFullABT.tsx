@@ -78,6 +78,7 @@ import { DeliverySlipListView } from "@/frontend/components/DeliverySlipListView
 import { MoneyInput } from "@/frontend/components/MoneyInput";
 import { CustomerDebtView } from "@/frontend/components/CustomerDebtView";
 import { LineItemLookup } from "@/frontend/components/LineItemLookup";
+import { CustomerActivityTimeline } from "@/frontend/components/CustomerActivityTimeline";
 
 // Allowed roles / depts for sales access
 const ALLOWED_DEPTS = [
@@ -3247,6 +3248,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     // Đã thu theo phiếu giao (mã phiếu -> số tiền) và phân bổ khoản thu đang nhập
     const [slipPaidMap, setSlipPaidMap] = useState<Record<string, number>>({});
     const [debtRefreshKey, setDebtRefreshKey] = useState(0);
+    // Báo cáo kiểm tra dữ liệu đơn (Quản trị): mã đơn trùng, phiếu lệch khách...
+    const [integrityReport, setIntegrityReport] = useState<any | null>(null);
+    const loadIntegrityReport = async () => {
+        try {
+            const r = await fetch("/api/sales?action=order_integrity_report");
+            const d = await r.json();
+            if (!r.ok) { showToast(d.error || "Không tải được báo cáo", "error"); return; }
+            setIntegrityReport(d);
+        } catch { showToast("Lỗi kết nối máy chủ", "error"); }
+    };
     const [customerPaymentAlloc, setCustomerPaymentAlloc] = useState<Record<string, number>>({});
     const [customerPaymentDate, setCustomerPaymentDate] = useState(todayVN());
     const [customerPaymentRef, setCustomerPaymentRef] = useState("");
@@ -16610,6 +16621,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 </table>
                                             </div>
                                         </div>
+
+                                        {/* Hoạt động của sale với khách hàng này (BGĐ / trưởng phòng: mọi khách; sale: khách mình phụ trách) */}
+                                        <div className="mt-4">
+                                            <CustomerActivityTimeline customer={selectedCustomer} />
+                                        </div>
                                     </>
                         );
                     })()}
@@ -20195,8 +20211,45 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             >
                                 <span>Làm mới bộ lọc</span>
                             </button>
+                            {Boolean(can && can("settings.view")) && (
+                                <button
+                                    onClick={loadIntegrityReport}
+                                    className="bg-slate-850 hover:bg-slate-800 text-amber-300 border border-amber-700/50 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                                    title="Quản trị: tìm mã đơn trùng, phiếu giao lệch khách hàng, hóa đơn trỏ nhầm phiếu"
+                                >
+                                    <AlertTriangle className="w-3.5 h-3.5" />
+                                    <span>Kiểm tra dữ liệu đơn</span>
+                                </button>
+                            )}
                         </div>
                     </div>
+                    {integrityReport && (() => {
+                        const sections: [string, string, any[], (x: any) => string][] = [
+                            ["dup", "Mã đơn bị trùng (nhiều đơn cùng một mã)", integrityReport.duplicate_order_codes || [], (x) => `${x.order_code} × ${x.n}: ${x.customers}`],
+                            ["mis", "Phiếu giao khác khách hàng với đơn", integrityReport.slip_customer_mismatch || [], (x) => `${x.slip_code} (khách: ${x.slip_customer}) ↔ đơn ${x.order_code} (khách: ${x.order_customer})`],
+                            ["orph", "Phiếu giao trỏ tới mã đơn không có trong CSDL", integrityReport.slips_without_order || [], (x) => `${x.slip_code} → ${x.order_code} (${x.customer || ""})`],
+                            ["inv", "Hóa đơn của đơn này nhưng phiếu thuộc đơn khác", integrityReport.invoice_on_other_orders_slip || [], (x) => `Đơn ${x.order_code} · HĐ ${x.invoice_no} · phiếu ${x.delivery_slip_id} (thuộc ${x.slip_order_code})`],
+                            ["blob", "Màn hình và CSDL ghi khác khách hàng cho cùng mã đơn", integrityReport.screen_copy_customer_mismatch || [], (x) => `${x.order_code}: màn hình "${x.screen_customer}" ↔ CSDL "${x.db_customer}"`],
+                        ];
+                        const total = sections.reduce((s, [, , rows]) => s + rows.length, 0);
+                        return (
+                            <div className="mb-4 p-3 rounded-xl border border-amber-700/50 bg-amber-950/20 text-xs space-y-2">
+                                <div className="flex items-center justify-between">
+                                    <strong className="text-amber-300">Kiểm tra dữ liệu đơn: {total === 0 ? "không phát hiện vấn đề" : `${total} vấn đề`}</strong>
+                                    <button type="button" onClick={() => setIntegrityReport(null)} className="text-slate-400 hover:text-white cursor-pointer">Đóng ✕</button>
+                                </div>
+                                {sections.filter(([, , rows]) => rows.length > 0).map(([k, title, rows, fmt]) => (
+                                    <div key={k}>
+                                        <div className="font-bold text-slate-200">{title} ({rows.length})</div>
+                                        <ul className="list-disc pl-5 text-slate-300 font-mono text-[11px] max-h-40 overflow-y-auto">
+                                            {rows.map((x: any, i: number) => <li key={i}>{fmt(x)}</li>)}
+                                        </ul>
+                                    </div>
+                                ))}
+                                {total > 0 && <div className="text-[11px] text-slate-400">Danh sách để đối soát; hệ thống không tự sửa. Gửi danh sách này để xử lý từng trường hợp.</div>}
+                            </div>
+                        );
+                    })()}
 
                     {/* KPI Metrics Cards (4 summary cards) */}
                     {(() => {
@@ -20516,8 +20569,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <div className="flex flex-col items-center gap-1.5">
                                                                     {ord.deliverySlips.map((sl: any) => {
                                                                         const invSlips = ord.invoiced_delivery_slips || ord.rawOrder?.invoiced_delivery_slips || [];
-                                                                        const isSlipInvoiced = invSlips.some((s: any) => s.delivery_slip_id === sl.id);
-                                                                        const slipInv = invSlips.find((s: any) => s.delivery_slip_id === sl.id);
+                                                                        const slipInvRec = invSlips.find((s: any) => s.delivery_slip_id === sl.id);
+                                                                        const slipOwnInvNo = sl.invoiceNumber || sl.invoice_number || "";
+                                                                        const isSlipInvoiced = Boolean(slipInvRec) || Boolean(slipOwnInvNo);
+                                                                        const slipInv = slipInvRec || (slipOwnInvNo ? { invoice_no: slipOwnInvNo, invoice_date: sl.invoiceDate || sl.invoice_date } : null);
 
                                                                         const slipItemsList = sl.items || [];
                                                                         const itemsNeedInvoice = slipItemsList.filter((it: any) => it.needsInvoice !== false);
@@ -20554,8 +20609,33 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                                                 {/* Partial Invoicing status & button (Yêu cầu 9) */}
                                                                                 {isSlipInvoiced ? (
-                                                                                    <span className="text-[9px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded" title={`HĐ: ${slipInv?.invoice_no} (${new Date(slipInv?.invoice_date).toLocaleDateString('vi-VN')})`}>
-                                                                                        ✅ Đã xuất HĐ
+                                                                                    <span className="inline-flex items-center gap-1">
+                                                                                        <span className="text-[9px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded" title={`HĐ: ${slipInv?.invoice_no}${slipInv?.invoice_date ? ` (${new Date(slipInv.invoice_date).toLocaleDateString('vi-VN')})` : ""}`}>
+                                                                                            ✅ HĐ {slipInv?.invoice_no}
+                                                                                        </span>
+                                                                                        {canViewCustomerDebt && (
+                                                                                            <button
+                                                                                                type="button"
+                                                                                                onClick={() => {
+                                                                                                    const picked: string[] = Array.isArray(slipInvRec?.invoiced_items) ? slipInvRec.invoiced_items.map((x: any) => String(x?.code || x?.productCode || x)) : [];
+                                                                                                    const sel: Record<string, boolean> = {};
+                                                                                                    (sl.items || []).forEach((it: any, idx: number) => {
+                                                                                                        const code = getItemCode(it) || `item_${idx}`;
+                                                                                                        sel[code] = picked.length > 0 ? picked.includes(code) : it.needsInvoice !== false;
+                                                                                                    });
+                                                                                                    setPartialInvSelectedItems(sel);
+                                                                                                    setPartialInvoiceModalSlip({ order: ord, slip: sl });
+                                                                                                    setPartialInvNo(String(slipInv?.invoice_no || ""));
+                                                                                                    setPartialInvDate(slipInv?.invoice_date ? toVNDateString(slipInv.invoice_date) : todayVN());
+                                                                                                    setPartialInvAmount(Number(slipInvRec?.invoice_amount) || getSlipValue(sl, ord.rawOrder || ord));
+                                                                                                    setPartialInvIsFinal(false);
+                                                                                                }}
+                                                                                                className="text-[9px] px-1 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                                                                                                title="Sửa số hóa đơn / ngày / số tiền của phiếu này (Kế toán)"
+                                                                                            >
+                                                                                                ✎
+                                                                                            </button>
+                                                                                        )}
                                                                                     </span>
                                                                                 ) : (
                                                                                     <button
@@ -20638,7 +20718,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             )}
                                                         </td>
                                                         <td className="p-3 font-mono">
-                                                            {ord.invoiceNo ? (
+                                                            {(() => {
+                                                                const recs: any[] = (ord.invoiced_delivery_slips || ord.rawOrder?.invoiced_delivery_slips || []).filter((r: any) => r && r.invoice_no);
+                                                                if (recs.length === 0) return null;
+                                                                return (
+                                                                    <div className="space-y-1">
+                                                                        {recs.map((r: any, ri: number) => (
+                                                                            <div key={ri}>
+                                                                                <div className="font-bold text-white text-xs flex items-center gap-1">
+                                                                                    <Receipt className="w-3 h-3 text-emerald-400" />
+                                                                                    <span>{r.invoice_no}</span>
+                                                                                </div>
+                                                                                <div className="text-[10px] text-slate-400">
+                                                                                    {r.invoice_date ? new Date(r.invoice_date).toLocaleDateString("vi-VN") : "—"}{r.delivery_slip_id ? ` · ${r.delivery_slip_id}` : ""}
+                                                                                </div>
+                                                                            </div>
+                                                                        ))}
+                                                                    </div>
+                                                                );
+                                                            })()}
+                                                            {(ord.invoiced_delivery_slips || ord.rawOrder?.invoiced_delivery_slips || []).some((r: any) => r && r.invoice_no) ? null : ord.invoiceNo ? (
                                                                 <div>
                                                                     <div className="font-bold text-white text-xs flex items-center gap-1">
                                                                         <Receipt className="w-3 h-3 text-emerald-400" />
@@ -20693,12 +20792,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 {isPending ? (
                                                                     <>
                                                                         <PlusCircle className="w-3.5 h-3.5" />
-                                                                        <span>Xuất & Đính kèm HĐ</span>
+                                                                        <span>Đính kèm tệp HĐ</span>
                                                                     </>
                                                                 ) : (
                                                                     <>
                                                                         <Edit className="w-3 h-3 text-slate-400" />
-                                                                        <span>Cập nhật HĐ</span>
+                                                                        <span>Tệp HĐ & giao hàng</span>
                                                                     </>
                                                                 )}
                                                             </button>

@@ -391,6 +391,26 @@ export function DeliverySlipListView({
   const exportExcel = () => {
     const wb = XLSX.utils.book_new();
 
+    // Sheet 0: Mỗi phiếu một dòng (tổng tiền, số hóa đơn, thu tiền) — dùng cho Kế toán đối soát
+    const outSum: any[][] = [[
+      "Mã phiếu", "Ngày giao", "Trạng thái", "Đợt", "Mã đơn SO", "Khách hàng", "Số mặt hàng", "Tổng SL",
+      "Thành tiền (gồm VAT)", "Số hóa đơn", "Ngày hóa đơn", "Đã thu", "Còn phải thu", "Người lập", "Người giao",
+    ]];
+    rows.forEach(({ slip, date, status: st }) => {
+      const items: any[] = slip.items || [];
+      const f = getFinance ? getFinance(slip) : { amount: 0, invoiceNo: "", invoiceDate: "", paid: 0 };
+      outSum.push([
+        slip.id, fmtVN(date), STATUS_META[st].label.replace(/^[^ ]+ /, ""), slip.batchNumber || "", slip.orderCode || "",
+        slip.customerName || "", items.length, items.reduce((a, it) => a + (Number(it.quantity) || 0), 0),
+        Math.round(f.amount || 0), f.invoiceNo || "", f.invoiceDate || "", Math.round(f.paid || 0),
+        st === "CANCELLED" ? 0 : Math.max(0, Math.round((f.amount || 0) - (f.paid || 0))),
+        slip.creatorName || "", slip.dispatcherName || "",
+      ]);
+    });
+    const wsSum = XLSX.utils.aoa_to_sheet(outSum);
+    wsSum["!cols"] = [{ wch: 15 }, { wch: 12 }, { wch: 12 }, { wch: 6 }, { wch: 18 }, { wch: 34 }, { wch: 10 }, { wch: 9 }, { wch: 16 }, { wch: 14 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 18 }, { wch: 18 }];
+    XLSX.utils.book_append_sheet(wb, wsSum, "Tổng hợp phiếu");
+
     // Sheet 1: Danh sách chi tiết phiếu giao hàng
     const outSlips: any[][] = [
       [
@@ -424,7 +444,7 @@ export function DeliverySlipListView({
           it.productCode || "",
           it.productName || "",
           it.unit || "",
-          it.lotNo || "",
+          String(it.lotNo || "").replace(/\s*\(\s*Tồn[^)]*\)/gi, "").trim(),
           it.expDate || "",
           Number(it.quantity) || 0,
           slip.creatorName || "",
@@ -451,7 +471,7 @@ export function DeliverySlipListView({
       { wch: 18 },
       { wch: 30 },
     ];
-    XLSX.utils.book_append_sheet(wb, wsSlips, "Phiếu giao hàng");
+    XLSX.utils.book_append_sheet(wb, wsSlips, "Chi tiết mặt hàng");
 
     // Sheet 2: Tổng hợp theo Mã đơn SO & Số lượng còn lại chưa giao
     const outSO: any[][] = [

@@ -434,6 +434,14 @@ async function runIntegrityMigrations() {
         ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS supplier_invoices JSONB NOT NULL DEFAULT '[]'::jsonb;
       `)
     );
+    // Hủy khoản thu ghi nhầm (giữ lịch sử, không xóa)
+    await step("sales_payments_void_columns", () =>
+      client.query(`
+        ALTER TABLE sales_payments ADD COLUMN IF NOT EXISTS voided_at TIMESTAMPTZ;
+        ALTER TABLE sales_payments ADD COLUMN IF NOT EXISTS voided_by VARCHAR(150);
+        ALTER TABLE sales_payments ADD COLUMN IF NOT EXISTS void_reason TEXT;
+      `)
+    );
     // Số HĐ đầu vào trước đây chỉ nằm trong ghi chú phiếu nhập ("HĐ/Tờ khai: ..."): chép sang PO một lần
     await step("backfill_po_supplier_invoices", async () => {
       if (await flagDone("migration_backfill_po_supplier_invoices")) return;

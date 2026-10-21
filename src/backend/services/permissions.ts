@@ -233,6 +233,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     permissions: [
       { key: "chat.view", label: "Chat & Trao Đổi Nội Bộ", desc: "Mở tính năng chat trực tuyến cho toàn bộ nhân viên công ty" },
       { key: "zalo.view", label: "Điều Hành Zalo OA 4.0", desc: "Quản trị Zalo OA, cấu hình webhook, duyệt báo giá chiết khấu cao (Ban Giám Đốc / Quản Lý)" },
+      { key: "workspace.manage_templates", label: "Quản Lý Quy Trình Phối Hợp Mẫu", desc: "Tạo / sửa / xóa quy trình phối hợp mẫu (các bước, phòng ban, người phụ trách) trong Điều Hành" },
     ]
   }
 ];

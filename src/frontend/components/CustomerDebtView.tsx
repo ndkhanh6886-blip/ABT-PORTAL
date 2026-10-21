@@ -23,7 +23,7 @@ interface DebtOrder {
   overdue_days: number;
   invoice_no?: string;
   payment_status?: string;
-  payments: { amount: number; date: string | null; method?: string; reference?: string; slip?: string; by?: string }[];
+  payments: { id?: number; amount: number; date: string | null; method?: string; reference?: string; slip?: string; by?: string; voided?: boolean; voided_by?: string; void_reason?: string }[];
 }
 
 interface DebtCustomer {
@@ -60,6 +60,26 @@ export function CustomerDebtView({
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<"open" | "overdue" | "all">("open");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [historyOrder, setHistoryOrder] = useState<string | null>(null);
+
+  // Hủy khoản thu ghi nhầm; "Sửa" = hủy rồi mở lại cửa sổ thu tiền với số liệu cũ
+  const voidPayment = async (p: any, order: DebtOrder, customerName: string, reopen: boolean) => {
+    const reason = window.prompt(reopen ? "Lý do sửa khoản thu (khoản cũ sẽ bị hủy, nhập lại khoản đúng):" : "Lý do hủy khoản thu:", "");
+    if (!reason || !reason.trim()) return;
+    try {
+      const res = await fetch("/api/sales?action=void_customer_payment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payment_id: p.id, reason: reason.trim() })
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.success) { alert(d.error || "Không hủy được khoản thu"); return; }
+      await load();
+      if (reopen && onCollect) onCollect({ order_code: order.order_code, customer_name: customerName, total: order.total, paid: Number(d.amount_paid) || 0 });
+    } catch {
+      alert("Lỗi kết nối máy chủ");
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -239,8 +259,29 @@ export function CustomerDebtView({
                                 <td className="p-1.5 font-mono text-indigo-300">
                                   {o.order_code}
                                   {o.payments.length > 0 && (
-                                    <div className="text-[9px] text-slate-500" title={o.payments.map((p) => `${dmy(p.date)}: ${fmt(p.amount)}${p.slip ? ` (phiếu ${p.slip})` : ""}${p.reference ? ` · ${p.reference}` : ""}`).join("\n")}>
-                                      {o.payments.length} lần thu
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setHistoryOrder(historyOrder === o.order_code ? null : o.order_code); }}
+                                      className="block text-[9px] text-sky-400 hover:text-sky-300 underline cursor-pointer">
+                                      {o.payments.filter((p) => !p.voided).length} lần thu{o.payments.some((p) => p.voided) ? ` (+${o.payments.filter((p) => p.voided).length} đã hủy)` : ""}
+                                    </button>
+                                  )}
+                                  {historyOrder === o.order_code && (
+                                    <div className="mt-1 p-1.5 rounded bg-slate-900 border border-slate-700 space-y-1 font-sans">
+                                      {o.payments.map((p, pi) => (
+                                        <div key={pi} className={`flex items-center gap-1.5 text-[10px] ${p.voided ? "opacity-50 line-through" : ""}`}>
+                                          <span className="font-mono">{dmy(p.date)}</span>
+                                          <span className="font-mono text-emerald-300">{fmt(p.amount)}</span>
+                                          {p.slip && <span className="text-slate-400">phiếu {p.slip}</span>}
+                                          {p.reference && <span className="text-slate-500 truncate max-w-[120px]">{p.reference}</span>}
+                                          {p.voided ? (
+                                            <span className="no-underline text-rose-400" title={p.void_reason || ""}>đã hủy ({p.voided_by})</span>
+                                          ) : p.id ? (
+                                            <span className="ml-auto inline-flex gap-1">
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); voidPayment(p, o, c.customer_name, true); }} className="px-1 rounded bg-sky-700 text-white cursor-pointer">Sửa</button>
+                                              <button type="button" onClick={(e) => { e.stopPropagation(); voidPayment(p, o, c.customer_name, false); }} className="px-1 rounded bg-rose-700 text-white cursor-pointer">Hủy</button>
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                      ))}
                                     </div>
                                   )}
                                 </td>
