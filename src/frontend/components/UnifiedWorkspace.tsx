@@ -1743,8 +1743,8 @@ export const UnifiedWorkspace: React.FC = () => {
         setWorkflows(data.workflows || []);
         setDailyLogs(data.daily || []);
         if (data.personnel) setPersonnelList(data.personnel);
-        if (data.customers && data.customers.length > 0) setCustomerList(data.customers);
-        if (data.products && data.products.length > 0) setProductList(data.products);
+        if (Array.isArray(data.customers)) setCustomerList(data.customers);
+        if (Array.isArray(data.products)) setProductList(data.products);
         setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
         // Load persistent weekly schedule
         try {

@@ -59,7 +59,6 @@ import {
     Building2,
     Copy,
     RotateCw, Tag, Camera, Image as ImageIcon, Maximize2, ExternalLink, PackageCheck } from "lucide-react";
-import defaultCustomersData from "@/frontend/data/defaultCustomers.json";
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/backend/services/utils";
 import { Modal } from "@/frontend/components/Modal";
@@ -1064,12 +1063,8 @@ export function SalesFullABT() {
         }
     };
 
-    const DEFAULT_COMPANY_CUSTOMERS: any[] = (Array.isArray(defaultCustomersData) ? defaultCustomersData : []).map((c: any) => ({
-        ...c,
-        contacts: typeof c.contacts === "string" 
-            ? (() => { try { return JSON.parse(c.contacts); } catch(e) { return []; } })() 
-            : (Array.isArray(c.contacts) ? c.contacts : [])
-    }));
+    // Không còn danh sách khách hàng mẫu: khách hàng chỉ lấy từ CSDL
+    const DEFAULT_COMPANY_CUSTOMERS: any[] = [];
 
     const [customers, setCustomers] = useState<any[]>(() => {
         if (typeof window !== "undefined") {
@@ -3530,7 +3525,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const res = await fetch("/api/sales?action=overview");
             if (res.ok) {
                 const data = await res.json();
-                if (data && Array.isArray(data.customers) && data.customers.length > 0) {
+                if (data && Array.isArray(data.customers)) { // CSDL là nguồn chính: danh sách rỗng cũng là kết quả đúng
                     const parsedCusts = data.customers.map((c: any) => ({
                         ...c,
                         contacts: typeof c.contacts === "string" ? (() => { try { return JSON.parse(c.contacts); } catch(e) { return []; } })() : (Array.isArray(c.contacts) ? c.contacts : [])
@@ -3982,7 +3977,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const res = await fetch("/api/sales?action=customers");
             if (res.ok) {
                 const data = await res.json();
-                if (data && Array.isArray(data.customers) && data.customers.length > 0) {
+                if (data && Array.isArray(data.customers)) { // CSDL là nguồn chính: danh sách rỗng cũng là kết quả đúng
                     const parsedCusts = data.customers.map((c: any) => ({
                         ...c,
                         contacts: typeof c.contacts === "string" 
