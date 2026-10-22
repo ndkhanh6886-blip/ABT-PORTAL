@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
 import * as XLSX from "xlsx";
 import { FileSpreadsheet, RefreshCw, Search } from "lucide-react";
 import { todayVN } from "@/backend/services/dates";
@@ -43,15 +44,17 @@ export function MovementReportView() {
   const categories = useMemo(() => uniq(rows.map((r) => r.category)), [rows]);
   const manufacturers = useMemo(() => uniq(rows.map((r) => r.manufacturer)), [rows]);
 
+  const qDebounced = useDebouncedValue(q, 300);
   const view = useMemo(() => {
-    const kw = q.trim().toLowerCase();
+    const kw = qDebounced.trim().toLowerCase();
     return rows
       .filter((r) => !onlyMoved || r.total_in !== 0 || r.total_out !== 0)
       .filter((r) => category === "all" || String(r.category || "").trim() === category)
       .filter((r) => manufacturer === "all" || String(r.manufacturer || "").trim() === manufacturer)
       .filter((r) => !kw || `${r.product_code} ${r.product_name}`.toLowerCase().includes(kw))
       .sort((a, b) => String(a.product_code).localeCompare(String(b.product_code)));
-  }, [rows, q, onlyMoved, category, manufacturer]);
+  }, [rows, qDebounced, onlyMoved, category, manufacturer]);
+  const viewPage = usePaged(view, 100, `${qDebounced}|${onlyMoved}|${category}|${manufacturer}|${from}|${to}`);
 
   const sum = (k: string) => view.reduce((s, r) => s + (Number(r[k]) || 0), 0);
 
@@ -139,7 +142,7 @@ export function MovementReportView() {
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {view.length === 0 ? (
               <tr><td colSpan={11} className="p-6 text-center text-slate-400">{loading ? "Đang tải..." : "Không có dữ liệu trong kỳ."}</td></tr>
-            ) : view.map((r) => (
+            ) : viewPage.items.map((r) => (
               <tr key={r.product_code} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30">
                 <td className="p-2 font-mono font-bold text-orange-600 dark:text-orange-400">{r.product_code}</td>
                 <td className="p-2 text-slate-800 dark:text-slate-100">{r.product_name}</td>
@@ -165,6 +168,7 @@ export function MovementReportView() {
           )}
         </table>
       </div>
+      <Pager p={viewPage} unit="mã" />
     </div>
   );
 }

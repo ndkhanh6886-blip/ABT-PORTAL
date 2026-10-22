@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query, logAudit, withTransaction, httpErrorStatus } from "@/backend/db/db";
+import { query, logAudit, withTransaction, httpErrorStatus, HttpError } from "@/backend/db/db";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { applyStoragePatch, StoragePatch } from "@/backend/services/storagePatch";
 import { enforceApprovalGuards } from "@/backend/services/approvalGuard";
 import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
+import { CATALOG_KEY, readCatalog, catalogVersion, applyCatalogPatch, replaceCatalog } from "@/backend/services/catalogStore";
 import { itemIdentity } from "@/backend/services/storagePatch";
 import type { AuthorizedUser } from "@/backend/services/authz";
 import { syncCatalogSuppliersAndProducts } from "@/backend/services/supplierCatalogSync";
@@ -95,9 +96,14 @@ export async function GET(request: NextRequest) {
       const result: Record<string, any> = {};
       const versions: Record<string, number> = {};
       for (const row of res.rows) {
+        if (row.key === CATALOG_KEY) continue; // danh mục đọc từ bảng catalog_items bên dưới
         if (!allowedBy(me, keyPolicy(row.key).read)) continue;
         result[row.key] = readableData(me, row.key, row.data);
         versions[row.key] = row.version || 1;
+      }
+      if ((!keys || keys.includes(CATALOG_KEY)) && allowedBy(me, keyPolicy(CATALOG_KEY).read)) {
+        result[CATALOG_KEY] = readableData(me, CATALOG_KEY, await readCatalog());
+        versions[CATALOG_KEY] = await catalogVersion();
       }
       return NextResponse.json({ data: result, versions });
     }
@@ -107,6 +113,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (!allowedBy(me, keyPolicy(key).read)) return forbiddenResponse();
+    if (key === CATALOG_KEY) {
+      return NextResponse.json({ data: readableData(me, key, await readCatalog()), version: await catalogVersion() });
+    }
     const res = await query("SELECT data, version FROM app_storage WHERE key = $1", [key]);
     if (res.rows.length === 0) {
       return NextResponse.json({ data: null, version: 0 });
@@ -143,6 +152,23 @@ export async function POST(request: NextRequest) {
     if (!me) return unauthorizedResponse();
     if (!allowedBy(me, keyPolicy(key).write)) return forbiddenResponse("Bạn không có quyền sửa dữ liệu này.");
     const hideCost = COST_BEARING_KEYS.has(key) && !canSeeCost(me);
+
+    // Danh mục sản phẩm: ghi từng dòng vào catalog_items (không ghi lại cả khối)
+    if (key === CATALOG_KEY) {
+      const version = await withTransaction(async (c) => {
+        if (isEnvelope && body.patch && typeof body.patch === "object") {
+          await applyCatalogPatch(c, body.patch as StoragePatch, hideCost);
+        } else {
+          const data = isEnvelope ? body.data : body;
+          if (!Array.isArray(data)) throw new HttpError(400, "Danh mục sản phẩm phải là danh sách");
+          // người không xem được giá vốn: chỉ thêm / sửa, không xóa hàng loạt
+          await replaceCatalog(c, data, !hideCost, hideCost);
+        }
+        return catalogVersion(c);
+      });
+      await syncCatalogSuppliersAndProducts();
+      return NextResponse.json({ success: true, version });
+    }
 
     if (isEnvelope && body.patch && typeof body.patch === "object") {
       const result = await withTransaction(async (c) => {

@@ -522,6 +522,29 @@ async function runIntegrityMigrations() {
         CREATE INDEX IF NOT EXISTS idx_tech_care_followup ON tech_care_logs (next_followup_date) WHERE followup_done = FALSE;
       `)
     );
+    // Danh mục hàng thương mại: mỗi mặt hàng một dòng (thay khối JSON app_storage.sales_commercial_products).
+    // Chuyển dữ liệu một lần; khối cũ giữ nguyên làm bản dự phòng.
+    await step("catalog_items", async () => {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS catalog_items (
+          code TEXT PRIMARY KEY,
+          data JSONB NOT NULL,
+          sort_order BIGINT NOT NULL DEFAULT 0,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_catalog_items_sort ON catalog_items (sort_order, code);
+      `);
+      if (await flagDone("migration_catalog_items_v1")) return;
+      await client.query(`
+        INSERT INTO catalog_items (code, data, sort_order)
+        SELECT DISTINCT ON (TRIM(e->>'code')) TRIM(e->>'code'), jsonb_set(e, '{code}', to_jsonb(TRIM(e->>'code'))), t.ord
+          FROM app_storage s, jsonb_array_elements(CASE WHEN jsonb_typeof(s.data) = 'array' THEN s.data ELSE '[]'::jsonb END) WITH ORDINALITY AS t(e, ord)
+         WHERE s.key = 'sales_commercial_products' AND COALESCE(TRIM(e->>'code'), '') <> ''
+         ORDER BY TRIM(e->>'code'), t.ord DESC
+        ON CONFLICT (code) DO NOTHING
+      `);
+      await setFlag("migration_catalog_items_v1");
+    });
     await step("procurement_partial_receipts", () =>
       client.query(`
         ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS received_qty JSONB NOT NULL DEFAULT '{}'::jsonb;

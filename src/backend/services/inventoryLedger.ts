@@ -1,5 +1,6 @@
 import type { PoolClient } from "pg";
 import { HttpError } from "@/backend/db/db";
+import { appendCatalogEntry } from "@/backend/services/catalogStore";
 
 /**
  * Inventory ledger (Deep Code Audit H1/H2/H5).
@@ -456,24 +457,7 @@ export async function releaseLotQuarantine(c: Queryable, productCode: string, lo
   await refreshAggregateLotInfo(c, productCode);
 }
 
-/**
- * H4: atomic append of a product into the `sales_commercial_products` blob.
- * No read-modify-write; bumps `version` so stale UI snapshots get a 409 instead of overwriting.
- */
+/** Thêm mặt hàng mới về kho vào danh mục hàng thương mại (bảng catalog_items; đã có mã thì bỏ qua). */
 export async function appendCommercialCatalogEntry(c: Queryable, entry: Record<string, any>) {
-  if (!entry?.code) return;
-  await c.query(
-    `INSERT INTO app_storage (key, data, version, updated_at)
-     VALUES ('sales_commercial_products', jsonb_build_array($1::jsonb), 1, now())
-     ON CONFLICT (key) DO UPDATE
-        SET data = COALESCE(app_storage.data, '[]'::jsonb) || jsonb_build_array($1::jsonb),
-            version = COALESCE(app_storage.version, 1) + 1,
-            updated_at = now()
-      WHERE (app_storage.data IS NULL OR jsonb_typeof(app_storage.data) = 'array')
-        AND NOT EXISTS (
-          SELECT 1 FROM jsonb_array_elements(
-                   CASE WHEN jsonb_typeof(app_storage.data) = 'array' THEN app_storage.data ELSE '[]'::jsonb END) e
-           WHERE e->>'code' = $2)`,
-    [JSON.stringify(entry), String(entry.code)]
-  );
+  await appendCatalogEntry(c, entry);
 }

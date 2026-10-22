@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
+import { Pager, useDebouncedValue } from "@/frontend/components/Pager";
 import * as XLSX from "xlsx";
 import { AlertOctagon, CheckCircle2, FileSpreadsheet, RefreshCw, Search, XCircle } from "lucide-react";
 import { todayVN } from "@/backend/services/dates";
@@ -53,14 +54,28 @@ export function LotStockView() {
   const [location, setLocation] = useState("all");
   const [q, setQ] = useState("");
 
+  const qDebounced = useDebouncedValue(q, 300);
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(100);
+  const [total, setTotal] = useState(0);
+  const [counts, setCounts] = useState<Record<string, number>>({ all: 0 });
+  const [options, setOptions] = useState<{ manufacturers: string[]; categories: string[]; locations: string[] }>({ manufacturers: [], categories: [], locations: [] });
+  const filterQs = () => {
+    const p = new URLSearchParams({ q: qDebounced, manufacturer, category, location, cls, near_days: String(nearDays) });
+    return p.toString();
+  };
+  // Lọc, đếm và chia trang trên máy chủ: chỉ tải về một trang lô
   const load = async () => {
     setLoading(true);
     setError("");
     try {
-      const r = await fetch("/api/inventory?action=lot_stock");
+      const r = await fetch(`/api/inventory?action=lot_stock_page&${filterQs()}&page=${page}&size=${size}`);
       const d = await r.json();
       if (!r.ok) throw new Error(d?.error || String(r.status));
       setLots(Array.isArray(d.lots) ? d.lots : []);
+      setTotal(Number(d.total) || 0);
+      setCounts(d.counts || { all: 0 });
+      if (d.options) setOptions({ manufacturers: d.options.manufacturers || [], categories: d.options.categories || [], locations: d.options.locations || [] });
       if (d.today) setToday(d.today);
     } catch (e: any) {
       setError(e?.message || "Lỗi tải dữ liệu");
@@ -68,46 +83,32 @@ export function LotStockView() {
       setLoading(false);
     }
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { setPage(1); }, [qDebounced, manufacturer, category, location, cls, nearDays, size]);
+  useEffect(() => { load(); }, [qDebounced, manufacturer, category, location, cls, nearDays, page, size]);
   useEffect(() => {
     try { localStorage.setItem(NEAR_DAYS_KEY, String(nearDays)); } catch {}
   }, [nearDays]);
 
-  const enriched = useMemo(() => lots.map((l) => {
+  const withClass = (l: any) => {
     const exp = l.expiry_date ? String(l.expiry_date).slice(0, 10) : "";
-    const left = exp ? daysBetween(today, exp) : null;
-    const klass: ExpiryClass = !exp ? "no_expiry" : left! < 0 ? "expired" : left! <= nearDays ? "near" : "normal";
-    return { ...l, exp, left, klass };
-  }), [lots, today, nearDays]);
+    const left = l.left_days === null || l.left_days === undefined ? null : Number(l.left_days);
+    return { ...l, exp, left, klass: (l.klass || "no_expiry") as ExpiryClass };
+  };
+  const rows = useMemo(() => lots.map(withClass), [lots]);
+  const pages = Math.max(1, Math.ceil(total / size));
+  const lotPage = { items: rows, page, pages, setPage, size, setSize, total };
 
-  const options = useMemo(() => {
-    const uniq = (arr: any[]) => Array.from(new Set(arr.map((v) => String(v || "").trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "vi"));
-    return {
-      manufacturers: uniq(enriched.map((l) => l.manufacturer)),
-      categories: uniq(enriched.map((l) => l.category)),
-      locations: uniq(enriched.map((l) => l.warehouse_location)),
-    };
-  }, [enriched]);
-
-  const baseFiltered = useMemo(() => {
-    const kw = q.trim().toLowerCase();
-    return enriched.filter((l) =>
-      (manufacturer === "all" || String(l.manufacturer || "").trim() === manufacturer) &&
-      (category === "all" || String(l.category || "").trim() === category) &&
-      (location === "all" || String(l.warehouse_location || "").trim() === location) &&
-      (!kw || [l.product_code, l.product_name, l.lot_number, l.manufacturer, l.shelf_position].some((v) => String(v || "").toLowerCase().includes(kw)))
-    );
-  }, [enriched, manufacturer, category, location, q]);
-
-  const counts = useMemo(() => {
-    const c: Record<string, number> = { all: baseFiltered.length, normal: 0, near: 0, expired: 0, no_expiry: 0 };
-    baseFiltered.forEach((l) => (c[l.klass] = (c[l.klass] || 0) + 1));
-    return c;
-  }, [baseFiltered]);
-
-  const rows = useMemo(() => baseFiltered.filter((l) => cls === "all" || l.klass === cls), [baseFiltered, cls]);
-
-  const exportExcel = () => {
+  const exportExcel = async () => {
+    // xuất toàn bộ danh sách đang lọc (không chỉ trang đang xem)
+    let rows: any[] = [];
+    try {
+      const r = await fetch(`/api/inventory?action=lot_stock_page&${filterQs()}&all=1`);
+      const d = await r.json();
+      rows = (Array.isArray(d.lots) ? d.lots : []).map(withClass);
+    } catch {
+      setError("Không tải được danh sách để xuất Excel");
+      return;
+    }
     const label = cls === "all" ? "Tat_ca" : cls === "normal" ? "Binh_thuong" : cls === "near" ? `Can_date_${nearDays}_ngay` : cls === "expired" ? "Het_date" : "Khong_HSD";
     const out: any[][] = [["Mã hàng", "Tên hàng", "Hãng sản xuất", "Nhóm hàng", "Số lô", "Hạn dùng", "Số ngày còn lại", "Phân loại", "Tồn", "ĐVT", "Vị trí", "Kệ", "Bảo quản", "Cách ly"]];
     rows.forEach((l) => out.push([
@@ -135,7 +136,7 @@ export function LotStockView() {
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Tải lại
           </button>
           <button type="button" onClick={exportExcel} className="px-3 py-2 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1.5 cursor-pointer">
-            <FileSpreadsheet className="w-4 h-4" /> Xuất Excel ({rows.length} lô)
+            <FileSpreadsheet className="w-4 h-4" /> Xuất Excel ({total.toLocaleString("vi-VN")} lô)
           </button>
         </div>
       </div>
@@ -199,7 +200,7 @@ export function LotStockView() {
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {rows.length === 0 ? (
               <tr><td colSpan={11} className="p-6 text-center text-slate-400">{loading ? "Đang tải..." : "Không có lô nào phù hợp bộ lọc."}</td></tr>
-            ) : rows.map((l) => (
+            ) : lotPage.items.map((l) => (
               <tr key={l.id} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30">
                 <td className="p-2.5 font-mono font-bold text-orange-600 dark:text-orange-400">{l.product_code}</td>
                 <td className="p-2.5 text-slate-800 dark:text-slate-100 font-medium">{l.product_name}</td>
@@ -217,6 +218,7 @@ export function LotStockView() {
           </tbody>
         </table>
       </div>
+      <Pager p={lotPage} unit="lô" />
     </div>
   );
 }

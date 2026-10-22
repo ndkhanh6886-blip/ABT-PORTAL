@@ -56,6 +56,7 @@ import { LotStockView } from "./warehouse/LotStockView";
 import { MovementReportView } from "./warehouse/MovementReportView";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
+import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 
@@ -749,6 +750,8 @@ export const WarehouseModule: React.FC = () => {
       totalUnits: filteredValuationItems.reduce((acc, it) => acc + (Number(it.quantity_on_hand) || 0), 0)
     };
   }, [filteredValuationItems]);
+  // Danh sách định giá theo mã: vẽ từng trang
+  const valuationSkuPage = usePaged(valuationData.skuDetailsList, 100, valuationData.skuDetailsList.length);
 
   // Phase 3: Trace Lot 360 (Requirement 14)
   const handleTraceLot = async (lotQuery?: string) => {
@@ -1765,14 +1768,17 @@ export const WarehouseModule: React.FC = () => {
   }, [enrichedItems]);
 
   // Filtered Items based on Multi-Dimensional Filter
+  // Lọc sau khi người dùng ngừng gõ (danh sách hàng nghìn dòng)
+  const debouncedSearch = useDebouncedValue(searchQuery, 300);
   const filteredItems = useMemo(() => {
+    const q = debouncedSearch.toLowerCase();
     return enrichedItems.filter((item) => {
       // 1. Search Query
-      const matchSearch =
-        item.product_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.product_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.lot_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (item.shelf_position || "").toLowerCase().includes(searchQuery.toLowerCase());
+      const matchSearch = !q ||
+        String(item.product_name || "").toLowerCase().includes(q) ||
+        String(item.product_code || "").toLowerCase().includes(q) ||
+        String(item.lot_number || "").toLowerCase().includes(q) ||
+        (item.shelf_position || "").toLowerCase().includes(q);
       if (!matchSearch) return false;
 
       // 2. Risk Filter
@@ -1799,7 +1805,24 @@ export const WarehouseModule: React.FC = () => {
 
       return true;
     });
-  }, [enrichedItems, searchQuery, riskFilter, tempFilter, categoryFilter]);
+  }, [enrichedItems, debouncedSearch, riskFilter, tempFilter, categoryFilter]);
+  // Bảng tồn kho chỉ vẽ một trang (3.000 dòng vẽ cùng lúc làm màn hình đứng nhiều giây)
+  const stockPage = usePaged(filteredItems, 50, `${debouncedSearch}|${riskFilter}|${tempFilter}|${categoryFilter}`);
+  // Danh sách sản phẩm ở tab BOM: lọc sau khi ngừng gõ, đếm thành phần một lần, vẽ từng trang
+  const bomSearchDebounced = useDebouncedValue(bomSearchQuery, 300);
+  const bomFilteredProducts = useMemo(() => {
+    const withComps = new Set(productComponents.map((c: any) => c.parent_product_code));
+    const q = bomSearchDebounced.toLowerCase();
+    return products.filter((p: any) => {
+      const matchesQuery = !q || String(p.code || "").toLowerCase().includes(q) || String(p.name || "").toLowerCase().includes(q);
+      if (!matchesQuery) return false;
+      const hasComponents = withComps.has(p.code);
+      if (bomTypeFilter === "kits_only") return hasComponents;
+      if (bomTypeFilter === "single") return !hasComponents;
+      return true;
+    });
+  }, [products, productComponents, bomSearchDebounced, bomTypeFilter]);
+  const bomPage = usePaged(bomFilteredProducts, 100, `${bomSearchDebounced}|${bomTypeFilter}`);
 
   const alertCount = riskKPIs.lowStockCount;
 
@@ -3366,7 +3389,7 @@ export const WarehouseModule: React.FC = () => {
 
           {/* MOBILE CARD VIEW FOR INVENTORY (Smart Handheld UX) */}
           <div className="block md:hidden space-y-3 p-2">
-            {filteredItems.map((item) => {
+            {stockPage.items.map((item) => {
               const itemKey = String(item.id || `${item.product_code}-${item.lot_number || 'default'}`);
               const itemComponents: any[] = (item.components && Array.isArray(item.components) && item.components.length > 0)
                 ? item.components
@@ -3569,6 +3592,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
               );
             })}
+            <Pager p={stockPage} unit="dòng tồn kho" />
           </div>
 
           {/* TABLE OF INVENTORY ITEMS WITH RISK TOOLKIT & ACTIONS (Desktop View) */}
@@ -3598,7 +3622,7 @@ export const WarehouseModule: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                {filteredItems.map((item) => {
+                {stockPage.items.map((item) => {
                   const itemKey = String(item.id || `${item.product_code}-${item.lot_number || 'default'}`);
                   const isExpanded = !!expandedItemComponents[itemKey];
                   const itemComponents: any[] = (item.components && Array.isArray(item.components) && item.components.length > 0)
@@ -4127,6 +4151,7 @@ export const WarehouseModule: React.FC = () => {
                 })}
               </tbody>
             </table>
+            <Pager p={stockPage} unit="dòng tồn kho" />
           </div>
         </div>
       )}
@@ -5196,10 +5221,10 @@ export const WarehouseModule: React.FC = () => {
                         </td>
                       </tr>
                     ) : (
-                      valuationData.skuDetailsList.map((item, idx) => (
+                      valuationSkuPage.items.map((item, idx) => (
                         <tr key={idx} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
                           <td className="py-2.5 px-3 text-center text-slate-400 font-mono">
-                            {idx + 1}
+                            {(valuationSkuPage.page - 1) * valuationSkuPage.size + idx + 1}
                           </td>
                           <td className="py-2.5 px-3">
                             <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-1.5 py-0.5 rounded text-[11px] block w-fit mb-0.5">
@@ -5251,6 +5276,7 @@ export const WarehouseModule: React.FC = () => {
                     )}
                   </tbody>
                 </table>
+                <Pager p={valuationSkuPage} unit="mã" />
               </div>
             </div>
           )}
@@ -6150,17 +6176,7 @@ export const WarehouseModule: React.FC = () => {
 
               {/* List of Products */}
               <div className="space-y-1.5 max-h-[560px] overflow-y-auto pr-1">
-                {products
-                  .filter((p) => {
-                    const q = bomSearchQuery.toLowerCase();
-                    const matchesQuery = !q || p.code.toLowerCase().includes(q) || p.name.toLowerCase().includes(q);
-                    const hasComponents = productComponents.some((c) => c.parent_product_code === p.code);
-                    if (!matchesQuery) return false;
-                    if (bomTypeFilter === "kits_only") return hasComponents;
-                    if (bomTypeFilter === "single") return !hasComponents;
-                    return true;
-                  })
-                  .map((p) => {
+                {bomPage.items.map((p) => {
                     const comps = productComponents.filter((c) => c.parent_product_code === p.code);
                     const isSelected = selectedBomParent === p.code;
 
@@ -6201,6 +6217,7 @@ export const WarehouseModule: React.FC = () => {
                     );
                   })}
               </div>
+              <Pager p={bomPage} unit="sản phẩm" sizes={[50, 100, 200]} />
             </div>
 
             {/* Cột Phải (8 cols): Chi tiết cây cấu trúc BOM của sản phẩm được chọn */}

@@ -79,6 +79,21 @@ import { CustomerDebtView } from "@/frontend/components/CustomerDebtView";
 import { LineItemLookup } from "@/frontend/components/LineItemLookup";
 import { CustomerActivityTimeline } from "@/frontend/components/CustomerActivityTimeline";
 import { useFormDraft, DraftBanner } from "@/frontend/utils/useFormDraft";
+import { useDebouncedValue } from "@/frontend/components/Pager";
+// Ô chọn sản phẩm: chỉ vẽ 60 kết quả đầu (danh mục hàng nghìn mã vẽ hết sẽ làm khung chọn đứng hình).
+const PICKER_LIMIT = 60;
+function pickerRows<T>(list: T[], render: (p: T, i: number) => React.ReactNode): React.ReactNode[] {
+    const rows: React.ReactNode[] = list.slice(0, PICKER_LIMIT).map(render);
+    if (list.length > PICKER_LIMIT) {
+        rows.push(
+            <div key="__picker_more__" className="px-3 py-2 text-[11px] italic text-slate-400 text-center border-t border-white/5">
+                Còn {(list.length - PICKER_LIMIT).toLocaleString("vi-VN")} sản phẩm khác — gõ thêm mã hoặc tên để lọc
+            </div>
+        );
+    }
+    return rows;
+}
+
 
 // Allowed roles / depts for sales access
 const ALLOWED_DEPTS = [
@@ -2958,6 +2973,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     }, [commercialProducts, isCommercialLoaded]);
 
     const [commercialSearchQuery, setCommercialSearchQuery] = useState("");
+    // lọc danh mục sau khi ngừng gõ
+    const commercialSearchDebounced = useDebouncedValue(commercialSearchQuery, 300);
     const [commercialCategoryFilter, setCommercialCategoryFilter] = useState("all");
     const [commercialBrandFilter, setCommercialBrandFilter] = useState("all");
     const [commercialAvailabilityFilter, setCommercialAvailabilityFilter] = useState("all");
@@ -7985,19 +8002,52 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         notes: row["Ghi Chú"] || row["Ghi chú"] || undefined
                     };
                 });
-                // Mỗi mã SKU một dòng (giữ dòng cuối): mã trùng làm danh mục không lưu được lên máy chủ
-                const byCode = new Map<string, CommercialProduct>();
+                // Hỏi trước khi ghi: (1) mã SKU lặp lại trong file, (2) mã đã có trong danh mục sẽ bị ghi đè.
+                // Mỗi mã chỉ một dòng (mã trùng làm danh mục không lưu được lên máy chủ).
+                const lastIdx = new Map<string, number>();
                 const dupCodes = new Set<string>();
-                for (const p of importedAll) {
+                importedAll.forEach((p, i) => {
                     const k = String(p.code || "").trim();
-                    if (!k) continue;
-                    if (byCode.has(k)) dupCodes.add(k);
-                    byCode.set(k, { ...p, code: k });
+                    if (!k) return;
+                    if (lastIdx.has(k)) dupCodes.add(k);
+                    lastIdx.set(k, i);
+                });
+                const listCodes = (codes: Iterable<string>) => {
+                    const a = Array.from(codes);
+                    return a.slice(0, 8).join(", ") + (a.length > 8 ? ` … (+${a.length - 8} mã)` : "");
+                };
+                if (dupCodes.size > 0 && !window.confirm(
+                    `File có ${dupCodes.size} mã SKU xuất hiện ở nhiều dòng:\n${listCodes(dupCodes)}\n\n` +
+                    `OK: mỗi mã chỉ lấy DÒNG CUỐI CÙNG trong file.\nCancel: hủy nhập để sửa lại file.`
+                )) {
+                    showToast("Đã hủy nhập Excel. Chưa có gì thay đổi.", "info");
+                    return;
                 }
-                const imported = Array.from(byCode.values());
-                if (dupCodes.size > 0) {
-                    const sample = Array.from(dupCodes).slice(0, 5).join(", ");
-                    showToast(`File có ${dupCodes.size} mã SKU bị trùng (${sample}${dupCodes.size > 5 ? "..." : ""}): mỗi mã chỉ giữ dòng cuối cùng.`, "warning");
+                const keepIdx = new Set(lastIdx.values());
+                const existingCodes = new Set(commercialProducts.map(p => String(p.code || "").trim()));
+                const overlap = Array.from(lastIdx.keys()).filter(k => existingCodes.has(k));
+                if (overlap.length > 0) {
+                    const newCount = lastIdx.size - overlap.length;
+                    const overwrite = window.confirm(
+                        `${overlap.length} mã trong file ĐÃ CÓ trong danh mục:\n${listCodes(overlap)}\n\n` +
+                        `OK: CẬP NHẬT các mã này theo file (thông tin và giá đang có sẽ bị thay).\nCancel: không ghi đè - chọn tiếp ở bước sau.`
+                    );
+                    if (!overwrite) {
+                        if (newCount === 0 || !window.confirm(
+                            `Chỉ thêm ${newCount} mã MỚI và giữ nguyên ${overlap.length} mã đã có?\n\nOK: chỉ thêm mã mới.\nCancel: hủy nhập.`
+                        )) {
+                            showToast("Đã hủy nhập Excel. Chưa có gì thay đổi.", "info");
+                            return;
+                        }
+                        for (const k of overlap) keepIdx.delete(lastIdx.get(k)!);
+                    }
+                }
+                const keptIdx = Array.from(keepIdx).sort((a, b) => a - b);
+                const imported: CommercialProduct[] = keptIdx.map(i => ({ ...importedAll[i], code: String(importedAll[i].code).trim() }));
+                const rowsToSend = keptIdx.map(i => json[i]);
+                if (imported.length === 0) {
+                    showToast("Không có mã nào để nhập.", "info");
+                    return;
                 }
 
                 // Sync directly to backend DB /api/inventory?action=import_excel
@@ -8008,7 +8058,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         body: JSON.stringify({
                             action: "import_excel",
                             fileName: file.name,
-                            rows: json,
+                            rows: rowsToSend,
                             contact_rows: secondaryRows
                         })
                     });
@@ -13377,7 +13427,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     }, [commercialSearchQuery, commercialCategoryFilter, commercialBrandFilter, commercialAvailabilityFilter, commercialComponentFilter, commercialStorageFilter, commercialPriceFilter]);
 
     const filteredCommercialProducts = useMemo(() => {
-        const q = commercialSearchQuery.toLowerCase().trim();
+        const q = commercialSearchDebounced.toLowerCase().trim();
         return commercialProducts.filter(p => {
             const matchesSearch = !q || (
                 (p.code || "").toLowerCase().includes(q) ||
@@ -13422,7 +13472,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             return true;
         });
-    }, [commercialProducts, commercialSearchQuery, commercialCategoryFilter, commercialBrandFilter, commercialAvailabilityFilter, commercialComponentFilter, commercialStorageFilter, commercialPriceFilter, dbProductComponents]);
+    }, [commercialProducts, commercialSearchDebounced, commercialCategoryFilter, commercialBrandFilter, commercialAvailabilityFilter, commercialComponentFilter, commercialStorageFilter, commercialPriceFilter, dbProductComponents]);
 
     const commercialTotalPages = useMemo(() => {
         if (commercialPageSize === "all") return 1;
@@ -22208,7 +22258,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         return <div className="p-4 text-slate-400 text-xs italic text-center">Không tìm thấy sản phẩm nào khớp với từ khóa</div>;
                                                                     }
                                                                     
-                                                                    return filteredProds.map(p => {
+                                                                    return pickerRows(filteredProds, p => {
                                                                         const codeToShow = p.parent_code || (p as any).parent_item_code || p.code;
                                                                         const stockIntel = getProductLiveStockIntelligence(p.code);
                                                                         return (
@@ -23552,7 +23602,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 return <div className="p-4 text-slate-500 text-xs italic text-center">Không tìm thấy sản phẩm nào</div>;
                                                             }
                                                             
-                                                            return filteredProds.map(p => (
+                                                            return pickerRows(filteredProds, p => (
                                                                 <div
                                                                     key={p.code}
                                                                     onClick={() => {
@@ -24830,7 +24880,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 return <div className="p-2 text-slate-500 text-xs italic">Không tìm thấy sản phẩm nào</div>;
                                                             }
                                                             
-                                                            return filteredProds.map(p => (
+                                                            return pickerRows(filteredProds, p => (
                                                                 <div
                                                                     key={p.code}
                                                                     onClick={() => {
@@ -32064,7 +32114,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     return <div className="p-3 text-slate-500 text-xs italic">Không tìm thấy mặt hàng nào</div>;
                                                 }
                                                 
-                                                return filteredProds.map(p => (
+                                                return pickerRows(filteredProds, p => (
                                                     <div
                                                         key={p.code}
                                                         onClick={() => {
@@ -32404,7 +32454,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     return <div className="p-2 text-slate-500 text-xs italic">Không tìm thấy sản phẩm nào</div>;
                                                 }
                                                 
-                                                return filteredProds.map(p => (
+                                                return pickerRows(filteredProds, p => (
                                                     <div
                                                         key={p.code}
                                                         onClick={() => {
@@ -32696,7 +32746,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             return <div className="p-2 text-slate-500 text-xs italic">Không tìm thấy sản phẩm nào</div>;
                                                                         }
                                                                         
-                                                                        return filteredProds.map(p => (
+                                                                        return pickerRows(filteredProds, p => (
                                                                             <div
                                                                                 key={p.code}
                                                                                 onClick={() => {

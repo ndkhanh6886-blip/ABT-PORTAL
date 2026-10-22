@@ -8,6 +8,7 @@ import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { canApproveSalesOrders } from "@/backend/services/approvalGuard";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { mergeCatalogFields } from "@/backend/services/catalogStore";
 
 const DEFAULT_CREDIT_LIMIT = 100000000;
 const DEFAULT_CREDIT_TERM_DAYS = 30;
@@ -1956,34 +1957,16 @@ export async function POST(req: NextRequest) {
         [standard_price !== undefined ? Number(standard_price) : null, cost_price !== undefined ? Number(cost_price) : null, code]
       );
 
-      // Sync to app_storage sales_commercial_products
+      // Đồng bộ giá sang danh mục hàng thương mại (bảng catalog_items, mỗi mặt hàng một dòng)
       try {
-        const storageRes = await query("SELECT data FROM app_storage WHERE key = $1", ["sales_commercial_products"]);
-        if (storageRes.rows.length > 0 && Array.isArray(storageRes.rows[0].data)) {
-          let commList = storageRes.rows[0].data;
-          let changed = false;
-          commList = commList.map((c: any) => {
-            if (c && c.code === code) {
-              changed = true;
-              return {
-                ...c,
-                price: standard_price !== undefined ? Number(standard_price) : c.price,
-                costPrice: cost_price !== undefined ? Number(cost_price) : c.costPrice,
-                priceDealer1: priceDealer1 !== undefined ? Number(priceDealer1) : (standard_price !== undefined ? Math.round(Number(standard_price) * 0.85) : c.priceDealer1),
-                priceDealer2: priceDealer2 !== undefined ? Number(priceDealer2) : (standard_price !== undefined ? Math.round(Number(standard_price) * 0.8) : c.priceDealer2)
-              };
-            }
-            return c;
-          });
-          if (changed) {
-            await query(
-              `INSERT INTO app_storage (key, data, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP) ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
-              ["sales_commercial_products", JSON.stringify(commList)]
-            );
-          }
-        }
+        await mergeCatalogFields(null, code, {
+          price: standard_price !== undefined ? Number(standard_price) : undefined,
+          costPrice: cost_price !== undefined ? Number(cost_price) : undefined,
+          priceDealer1: priceDealer1 !== undefined ? Number(priceDealer1) : (standard_price !== undefined ? Math.round(Number(standard_price) * 0.85) : undefined),
+          priceDealer2: priceDealer2 !== undefined ? Number(priceDealer2) : (standard_price !== undefined ? Math.round(Number(standard_price) * 0.8) : undefined),
+        });
       } catch (err) {
-        console.error("Failed to sync sales_commercial_products price update:", err);
+        console.error("Failed to sync catalog price update:", err);
       }
 
       return NextResponse.json({ success: true });

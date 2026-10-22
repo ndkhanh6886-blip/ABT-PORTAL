@@ -417,7 +417,7 @@ export async function syncCatalogSuppliersAndProducts(
         await Promise.all([
           query("SELECT * FROM procurement_suppliers ORDER BY id ASC"),
           query("SELECT code, name, manufacturer, category, specification, unit, cost_price, standard_price FROM products ORDER BY code ASC"),
-          query("SELECT data FROM app_storage WHERE key = 'sales_commercial_products'"),
+          query("SELECT COALESCE(jsonb_agg(data ORDER BY sort_order, code), '[]'::jsonb) AS data FROM catalog_items"),
           query("SELECT data FROM app_storage WHERE key = 'deleted_procurement_suppliers'"),
           query("SELECT id, supplier_id, product_code, product_name, specification, unit, purchase_price, price_history FROM supplier_products"),
           query("SELECT id, po_code, supplier_id, supplier_name, items, order_date FROM procurement_orders WHERE COALESCE(status, '') <> 'CANCELLED' ORDER BY id ASC"),

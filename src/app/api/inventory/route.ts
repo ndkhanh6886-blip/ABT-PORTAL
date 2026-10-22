@@ -64,6 +64,64 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ lots: canSeeCost ? rows : rows.map(({ cost_price, ...rest }: any) => rest), today: todayVN() });
     }
 
+    // Tồn theo lô, lọc + đếm + chia trang trên máy chủ (hàng chục nghìn lô không phải tải hết về trình duyệt).
+    // all=1: trả toàn bộ danh sách đang lọc (xuất Excel).
+    if (action === "lot_stock_page") {
+      const today = todayVN();
+      const nearDays = Math.min(730, Math.max(1, parseInt(searchParams.get("near_days") || "90") || 90));
+      const kw = String(searchParams.get("q") || "").trim();
+      const manufacturer = String(searchParams.get("manufacturer") || "all");
+      const category = String(searchParams.get("category") || "all");
+      const location = String(searchParams.get("location") || "all");
+      const cls = String(searchParams.get("cls") || "all");
+      const all = searchParams.get("all") === "1";
+      const size = Math.min(500, Math.max(10, parseInt(searchParams.get("size") || "100") || 100));
+      const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
+      const base = `
+        WITH base AS (
+          SELECT l.id, l.product_code, l.lot_number, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} AS expiry_date, l.expiry_date AS expiry_raw,
+                 l.warehouse_location, l.quantity_on_hand,
+                 COALESCE(l.is_quarantined, false) AS is_quarantined, l.quarantine_reason, l.created_at, l.last_updated,
+                 COALESCE(p.name, i.product_name, l.product_code) AS product_name,
+                 p.category, p.manufacturer, p.unit, p.specification, p.storage_condition, p.cost_price, i.shelf_position
+            FROM inventory_lots l
+            LEFT JOIN products p ON p.code = l.product_code
+            LEFT JOIN inventory_items i ON i.product_code = l.product_code
+           WHERE l.quantity_on_hand > 0
+        ), k AS (
+          SELECT b.*, d.left_days,
+                 CASE WHEN d.left_days IS NULL THEN 'no_expiry' WHEN d.left_days < 0 THEN 'expired'
+                      WHEN d.left_days <= $2::int THEN 'near' ELSE 'normal' END AS klass
+            FROM base b
+            CROSS JOIN LATERAL (SELECT CASE WHEN b.expiry_date ~ '^\\d{4}-\\d{2}-\\d{2}' THEN (LEFT(b.expiry_date, 10)::date - $1::date) END AS left_days) d
+        )`;
+      // bộ lọc (trừ phân loại hạn dùng) dùng chung cho danh sách và bộ đếm
+      const where = `($3 = 'all' OR TRIM(COALESCE(manufacturer, '')) = $3)
+        AND ($4 = 'all' OR TRIM(COALESCE(category, '')) = $4)
+        AND ($5 = 'all' OR TRIM(COALESCE(warehouse_location, '')) = $5)
+        AND ($6 = '' OR CONCAT_WS(' ', product_code, product_name, lot_number, manufacturer, shelf_position) ILIKE '%' || $6 || '%')`;
+      const params = [today, nearDays, manufacturer, category, location, kw];
+      const [rowsRes, countRes, optRes] = await Promise.all([
+        query(
+          `${base} SELECT *, COUNT(*) OVER () AS total_rows FROM k
+            WHERE ${where} AND ($7 = 'all' OR klass = $7)
+            ORDER BY product_code ASC, expiry_date ASC NULLS LAST, id ASC
+            ${all ? "" : "LIMIT $8 OFFSET $9"}`,
+          all ? [...params, cls] : [...params, cls, size, (page - 1) * size]
+        ),
+        query(`${base} SELECT klass, COUNT(*)::int AS n FROM k WHERE ${where} GROUP BY klass`, params),
+        query(`SELECT
+                 ARRAY(SELECT DISTINCT TRIM(p.manufacturer) FROM inventory_lots l JOIN products p ON p.code = l.product_code WHERE l.quantity_on_hand > 0 AND TRIM(COALESCE(p.manufacturer, '')) <> '' ORDER BY 1) AS manufacturers,
+                 ARRAY(SELECT DISTINCT TRIM(p.category) FROM inventory_lots l JOIN products p ON p.code = l.product_code WHERE l.quantity_on_hand > 0 AND TRIM(COALESCE(p.category, '')) <> '' ORDER BY 1) AS categories,
+                 ARRAY(SELECT DISTINCT TRIM(warehouse_location) FROM inventory_lots WHERE quantity_on_hand > 0 AND TRIM(COALESCE(warehouse_location, '')) <> '' ORDER BY 1) AS locations`),
+      ]);
+      const counts: Record<string, number> = { all: 0, normal: 0, near: 0, expired: 0, no_expiry: 0 };
+      for (const r of countRes.rows) { counts[r.klass] = r.n; counts.all += r.n; }
+      const total = Number(rowsRes.rows[0]?.total_rows || 0);
+      const lots = rowsRes.rows.map(({ total_rows, cost_price, ...rest }: any) => (canSeeCost ? { ...rest, cost_price } : rest));
+      return NextResponse.json({ lots, total, page, size, counts, options: optRes.rows[0], today, nearDays });
+    }
+
     // Báo cáo Xuất – Nhập – Tồn theo kỳ: tồn đầu, nhập (mua / trả lại / khác), xuất, tồn cuối theo từng mã hàng
     if (action === "movement_report") {
       const from = String(searchParams.get("from") || "").slice(0, 10);
@@ -201,7 +259,13 @@ export async function GET(req: NextRequest) {
         query(`
           SELECT i.*, p.category, p.unit, p.specification, p.standard_price, p.cost_price, p.min_stock_level, p.manufacturer, p.origin, p.storage_condition 
           FROM inventory_items i
-          LEFT JOIN products p ON i.product_id = p.id OR i.product_code = p.code
+          -- nối theo mã (có chỉ mục), id chỉ dùng khi không khớp mã: "id OR mã" làm phép nối quét chéo hai bảng
+          LEFT JOIN LATERAL (
+            SELECT * FROM products p0
+             WHERE p0.code = i.product_code OR (i.product_id IS NOT NULL AND p0.id = i.product_id)
+             ORDER BY (p0.code = i.product_code) DESC
+             LIMIT 1
+          ) p ON TRUE
           ORDER BY i.id ASC
         `),
         query("SELECT * FROM inventory_transactions ORDER BY date DESC, id DESC LIMIT 100"),
