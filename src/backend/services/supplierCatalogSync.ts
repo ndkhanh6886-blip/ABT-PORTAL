@@ -87,7 +87,7 @@ export function resolveCanonicalSupplier(raw?: string | null): CanonicalSupplier
       defaultFullName:
         upper.startsWith("CÔNG TY") || upper.startsWith("CTY")
           ? clean
-          : "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT - CHI NHÁNH LONG HẬU",
+          : "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT",
       defaultProductLines: "Sinh phẩm chẩn đoán PCR, Kit tách chiết DNA/RNA & Hóa chất y sinh",
       preferredCode: "NCC0001",
     };

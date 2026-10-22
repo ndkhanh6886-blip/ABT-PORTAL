@@ -55,12 +55,16 @@ import { RfidControlHub } from "./RfidControlHub";
 import { LotStockView } from "./warehouse/LotStockView";
 import { MovementReportView } from "./warehouse/MovementReportView";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
+import { useAuth } from "@/frontend/contexts/AuthContext";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 
 export const WarehouseModule: React.FC = () => {
   const companyConfig = useCompanyConfig();
   const { notifyActivity } = useNotification();
+  const { user: authUser } = useAuth();
+  // Người thực hiện mặc định = người đang đăng nhập (không điền sẵn tên một nhân viên cố định)
+  const currentUserName = String((authUser as any)?.full_name || (authUser as any)?.name || "");
   const [subTab, setSubTab] = useState<"stock" | "lot_stock" | "movement_report" | "transactions" | "reservations" | "valuation" | "lot_trace" | "excel_center" | "bom_kits" | "rfid_hub">("stock");
 
   // Barcode & QR Label Printing Modal states
@@ -83,7 +87,7 @@ export const WarehouseModule: React.FC = () => {
     unit: "Ống",
     quantity_per_kit: 1,
     tracking_type: "LOT",
-    storage_condition: "2-8°C (Lạnh mát)",
+    storage_condition: "",
     is_mandatory: true,
     notes: ""
   });
@@ -200,10 +204,10 @@ export const WarehouseModule: React.FC = () => {
     inbound_type: "Nhập mua hàng theo Đơn PO từ NCC",
     reference_code: "",
     vat_invoice_no: "",
-    supplier_name: "Công ty TNHH Thiết Bị & Hóa Chất ABT",
+    supplier_name: "",
     warehouse_name: "Kho Trung Tâm",
-    performed_by: "Trần Thị Minh Hậu (Thủ Kho TBRs)",
-    shipping_unit: "Xe tải chuyên dụng lạnh nội bộ TBRs",
+    performed_by: currentUserName,
+    shipping_unit: "",
     notes: "",
     items: [
       {
@@ -216,7 +220,7 @@ export const WarehouseModule: React.FC = () => {
         lot_number: "",
         manufacture_date: "",
         expiry_date: "",
-        storage_condition: "2-8°C (Lạnh mát)",
+        storage_condition: "",
         shelf_position: "",
         qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
         item_notes: "",
@@ -233,7 +237,7 @@ export const WarehouseModule: React.FC = () => {
   const excelInboundCodeRef = useRef<string | null>(null);
   const [outboundForm, setOutboundForm] = useState<any>({
     reference_code: "",
-    performed_by: "Trần Thị Minh Hậu (Thủ Kho TBRs)",
+    performed_by: currentUserName,
     warehouse_name: "Kho Trung Tâm",
     items: [{ product_code: "", product_name: "", quantity: 1, lot_number: "" }],
     notes: ""
@@ -244,12 +248,12 @@ export const WarehouseModule: React.FC = () => {
   const [excelInboundRows, setExcelInboundRows] = useState<any[]>([]);
   const [excelInboundFileName, setExcelInboundFileName] = useState("");
   const [excelInboundDetails, setExcelInboundDetails] = useState({
-    supplier_name: "Công ty TNHH Thiết Bị & Hóa Chất ABT",
+    supplier_name: "",
     reference_code: "",
     vat_invoice_no: "",
     inbound_reason: "Nhập mua hàng theo PO từ Nhà cung cấp",
     warehouse_name: "Kho Trung Tâm",
-    performed_by: "Trần Thị Minh Hậu (Thủ Kho TBRs)",
+    performed_by: currentUserName,
     notes: ""
   });
   const [isSubmittingExcelInbound, setIsSubmittingExcelInbound] = useState(false);
@@ -1169,7 +1173,7 @@ export const WarehouseModule: React.FC = () => {
     const sampleData = [
       {
         "Mã đơn PO (*)": `PO-TBR-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
-        "Nhà cung cấp (*)": "Công ty TNHH Thiết Bị & Hóa Chất ABT",
+        "Nhà cung cấp (*)": "Công ty TNHH Giải pháp Y Sinh ABT",
         "Ngày đặt hàng (*)": todayVN(),
         "Hạn giao dự kiến (*)": toVNDateString(new Date(Date.now() + 10 * 86400000)),
         "Mã sản phẩm SKU (*)": firstProd.code,
@@ -2252,7 +2256,7 @@ export const WarehouseModule: React.FC = () => {
         "Loại hình / Lý do nhập": "Nhập mua hàng theo PO từ NCC",
         "Mã Đơn Đặt Hàng (PO)": "PO-2026-042",
         "Số Hóa Đơn VAT / Tờ khai HQ": "HD-2026-0412",
-        "Nhà Cung Cấp": "Công ty TNHH Thiết Bị & Hóa Chất ABT",
+        "Nhà Cung Cấp": "Công ty TNHH Giải pháp Y Sinh ABT",
         "Kho Tiếp Nhận": "Kho Trung Tâm",
         "Thủ Kho / Người Tiếp Nhận": "Thủ kho TBRs",
         "Đơn vị vận chuyển": "Xe tải chuyên dụng lạnh nội bộ TBRs",
@@ -2277,7 +2281,7 @@ export const WarehouseModule: React.FC = () => {
         "Loại hình / Lý do nhập": "Nhập mua hàng theo PO từ NCC",
         "Mã Đơn Đặt Hàng (PO)": "PO-2026-042",
         "Số Hóa Đơn VAT / Tờ khai HQ": "HD-2026-0412",
-        "Nhà Cung Cấp": "Công ty TNHH Thiết Bị & Hóa Chất ABT",
+        "Nhà Cung Cấp": "Công ty TNHH Giải pháp Y Sinh ABT",
         "Kho Tiếp Nhận": "Kho Trung Tâm",
         "Thủ Kho / Người Tiếp Nhận": "Thủ kho TBRs",
         "Đơn vị vận chuyển": "Xe tải chuyên dụng lạnh nội bộ TBRs",
