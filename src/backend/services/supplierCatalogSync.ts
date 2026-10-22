@@ -84,8 +84,9 @@ export function resolveCanonicalSupplier(raw?: string | null): CanonicalSupplier
     return {
       canonicalKey: "ABT",
       shortName: "ABT",
+      // tên mẫu cũ "Thiết Bị & Hóa Chất ABT" (form nhập kho điền sẵn) không phải tên thật của ABT
       defaultFullName:
-        upper.startsWith("CÔNG TY") || upper.startsWith("CTY")
+        (upper.startsWith("CÔNG TY") || upper.startsWith("CTY")) && !upper.includes("THIẾT BỊ & HÓA CHẤT ABT")
           ? clean
           : "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT",
       defaultProductLines: "Sinh phẩm chẩn đoán PCR, Kit tách chiết DNA/RNA & Hóa chất y sinh",

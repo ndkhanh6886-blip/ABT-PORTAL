@@ -545,6 +545,24 @@ async function runIntegrityMigrations() {
       `);
       await setFlag("migration_catalog_items_v1");
     });
+    // Tên nhà cung cấp ABT bị sai do form nhập kho từng điền sẵn tên mẫu: sửa một lần ở mọi nơi lưu tên NCC
+    // (chứng từ nhập kho đã lập giữ nguyên như lúc lập).
+    await step("fix_abt_supplier_name", async () => {
+      if (await flagDone("migration_fix_abt_supplier_name_v1")) return;
+      const wrong = "công ty tnhh thiết bị & hóa chất abt";
+      const right = "Công ty TNHH Giải pháp Y Sinh ABT";
+      await client.query("UPDATE procurement_suppliers SET name = $2 WHERE LOWER(TRIM(name)) = $1", [wrong, right]);
+      await client.query("UPDATE procurement_orders SET supplier_name = $2 WHERE LOWER(TRIM(supplier_name)) = $1", [wrong, right]);
+      await client.query("UPDATE products SET manufacturer = $2 WHERE LOWER(TRIM(manufacturer)) = $1", [wrong, right]);
+      for (const field of ["supplier", "manufacturer", "brand"]) {
+        await client.query(
+          `UPDATE catalog_items SET data = jsonb_set(data, ARRAY[$3::text], to_jsonb($2::text)), updated_at = now()
+            WHERE LOWER(TRIM(data->>$3)) = $1`,
+          [wrong, right, field]
+        );
+      }
+      await setFlag("migration_fix_abt_supplier_name_v1");
+    });
     await step("procurement_partial_receipts", () =>
       client.query(`
         ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS received_qty JSONB NOT NULL DEFAULT '{}'::jsonb;
