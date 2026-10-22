@@ -1190,7 +1190,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           manufacture_date: "",
           expiry_date: "",
           no_expiry: false,
-          storage_condition: it.storage_condition || matchedProd?.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)",
+          storage_condition: it.storage_condition || matchedProd?.storage_condition || "",
           shelf_position: it.shelf_position || matchedProd?.shelf_position || "",
           qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
           notes: ""
@@ -1257,7 +1257,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             manufacture_date: l.manufacture_date || "",
             expiry_date: l.no_expiry ? "" : l.expiry_date,
             no_expiry: !!l.no_expiry,
-            storage_condition: l.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)",
+            storage_condition: l.storage_condition || "",
             shelf_position: l.shelf_position || "",
             qc_status: l.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
             notes: l.notes
@@ -4879,10 +4879,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           </td>
                           <td className="p-2">
                             <select
-                              value={l.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"}
+                              value={l.storage_condition || ""}
                               onChange={(e) => setL({ storage_condition: e.target.value })}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]"
                             >
+                              <option value="">-- Chưa khai báo nhiệt độ --</option>
                               <option value="-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)">-20°C (Lạnh âm sâu)</option>
                               <option value="2-8°C (Kho mát - Hóa chất, Kháng thể)">2-8°C (Kho mát)</option>
                               <option value="15-25°C (Nhiệt độ phòng - Vật tư, Thiết bị)">15-25°C (Nhiệt độ phòng)</option>

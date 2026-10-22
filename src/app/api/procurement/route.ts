@@ -1316,6 +1316,7 @@ export async function POST(req: NextRequest) {
 
         // validate every receipt line against the PO line it belongs to
         const thisReceipt: Record<string, number> = {};
+        const pMasterTemp: Record<string, string> = {};
         const clean: any[] = [];
         for (const ln of lines) {
           const idx = Number(ln?.line_index);
@@ -1324,6 +1325,8 @@ export async function POST(req: NextRequest) {
           const qty = Number(ln.quantity) || 0;
           if (qty <= 0) continue;
           const pCode = String(poIt.product_code || poIt.productCode || "").trim();
+          // nhiệt độ bảo quản: lô khai báo -> dòng PO -> danh mục sản phẩm; không tự điền
+          if (pCode && !(pCode in pMasterTemp)) pMasterTemp[pCode] = (await c.query("SELECT storage_condition FROM products WHERE code = $1", [pCode])).rows[0]?.storage_condition || "";
           const lot = String(ln.lot_number || "").trim();
           const expiry = String(ln.expiry_date || "").trim();
           const mfgDate = String(ln.manufacture_date || "").trim();
@@ -1342,7 +1345,7 @@ export async function POST(req: NextRequest) {
             specification: String(ln.specification || poIt.specification || "").trim(),
             unit: String(ln.unit || poIt.unit || "Hộp").trim(),
             unit_price: Number(ln.unit_price ?? poIt.unit_price) || 0,
-            storage_condition: String(ln.storage_condition || poIt.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)").trim(),
+            storage_condition: String(ln.storage_condition || poIt.storage_condition || pMasterTemp[pCode] || "").trim(),
             shelf_position: String(ln.shelf_position || poIt.shelf_position || "").trim(),
             qc_status: String(ln.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)").trim(),
             notes: String(ln.notes || "").trim()
@@ -1418,7 +1421,7 @@ export async function POST(req: NextRequest) {
             manufacturer: po.supplier_name || it.supplier_name || "Nhà Cung Cấp Phân Phối",
             origin: it.origin || "Chính hãng",
             min_stock_level: 10,
-            storage_condition: x.storage_condition || it.storage_condition || "15-25°C (Nhiệt độ phòng)"
+            storage_condition: x.storage_condition || it.storage_condition || null
           });
 
           await addStock(c, {
@@ -1447,7 +1450,7 @@ export async function POST(req: NextRequest) {
             price: 0,
             priceDealer1: 0,
             priceDealer2: 0,
-            storageCondition: x.storage_condition || it.storage_condition || "15-25°C (Nhiệt độ phòng)",
+            storageCondition: x.storage_condition || it.storage_condition || "",
             leadTime: "Có sẵn kho",
             notes: `Tự động tạo từ Nhập kho PO ${po.po_code}`
           });

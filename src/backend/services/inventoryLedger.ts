@@ -139,7 +139,7 @@ export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promis
       p.manufacturer || "TBRs Phân Phối",
       p.origin || "Nhập khẩu / Chính hãng",
       Number(p.min_stock_level) || 10,
-      p.storage_condition || "15-25°C (Nhiệt độ phòng)",
+      p.storage_condition || null,
     ]
   );
   if (ins.rows.length > 0) return { id: ins.rows[0].id, created: true };

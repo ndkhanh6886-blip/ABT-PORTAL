@@ -354,7 +354,7 @@ export async function POST(req: NextRequest) {
             manufacturer: item.manufacturer || item.brand || item.supplier_name || "TBRs Phân Phối",
             origin: item.origin || "Nhập khẩu / Chính hãng",
             min_stock_level: item.min_stock_level || 10,
-            storage_condition: item.storage_condition || item.storageCondition || "15-25°C (Nhiệt độ phòng)"
+            storage_condition: item.storage_condition || item.storageCondition || null
           });
 
           // Đồng bộ sang Danh mục sản phẩm kinh doanh (sales_commercial_products) — appended atomically at the end
@@ -370,7 +370,7 @@ export async function POST(req: NextRequest) {
             price: Number(item.standard_price) || 0, // 0 nếu chưa có giá để cảnh báo
             priceDealer1: Number(item.standard_price) ? Math.round(Number(item.standard_price) * 0.85) : 0,
             priceDealer2: Number(item.standard_price) ? Math.round(Number(item.standard_price) * 0.8) : 0,
-            storageCondition: item.storage_condition || item.storageCondition || "15-25°C (Nhiệt độ phòng)",
+            storageCondition: item.storage_condition || item.storageCondition || "",
             leadTime: "Có sẵn kho",
             notes: `Tự động tạo từ Nhập kho ${code}`
           });
@@ -793,8 +793,8 @@ export async function POST(req: NextRequest) {
 
           await query(
             `INSERT INTO products (code, name, manufacturer, category, specification, unit, cost_price, standard_price, min_stock_level, storage_condition)
-             VALUES ($1, COALESCE($2, $1), COALESCE($3, 'TBR'), COALESCE($4, 'Vật tư y tế'), $5, COALESCE($6, 'Hộp'),
-                     COALESCE($7, 0), COALESCE($8, 0), COALESCE($9, 10), COALESCE($10, '15-25°C (Nhiệt độ phòng)'))
+             VALUES ($1::text, COALESCE($2::text, $1::text), COALESCE($3, 'TBR'), COALESCE($4, 'Vật tư y tế'), $5, COALESCE($6, 'Hộp'),
+                     COALESCE($7, 0), COALESCE($8, 0), COALESCE($9, 10), $10::text)
              ON CONFLICT (code) DO UPDATE
              SET name = COALESCE($2, products.name),
                  manufacturer = COALESCE($3, products.manufacturer),
@@ -804,7 +804,7 @@ export async function POST(req: NextRequest) {
                  cost_price = COALESCE($7, products.cost_price),
                  standard_price = COALESCE($8, products.standard_price),
                  min_stock_level = COALESCE($9, products.min_stock_level),
-                 storage_condition = COALESCE($10, products.storage_condition)`,
+                 storage_condition = COALESCE($10::text, products.storage_condition)`,
             [pCode, pName, brand, cat, spec, unit, cost, stdPrice, minStock, storageCondition]
           );
 
@@ -832,7 +832,7 @@ export async function POST(req: NextRequest) {
               const unit = getCrVal(["Đơn vị tính", "ĐVT", "unit"], "Cái");
               const qtyPerKit = Number(getCrVal(["Định mức theo bộ (*)", "Định mức theo bộ", "quantity_per_kit"])) || 1;
               const trackingType = getCrVal(["Hình thức quản lý (LOT/SERIAL)", "Hình thức quản lý", "tracking_type"]).toUpperCase().includes("SERIAL") ? "SERIAL" : "LOT";
-              const storageCond = getCrVal(["Điều kiện bảo quản tiêu chuẩn", "Điều kiện bảo quản", "storage_condition"], "Nhiệt độ phòng (15-25°C)");
+              const storageCond = getCrVal(["Điều kiện bảo quản tiêu chuẩn", "Điều kiện bảo quản", "storage_condition"]);
               const notes = getCrVal(["Ghi chú", "notes"]);
 
               const existComp = await query(
@@ -891,7 +891,9 @@ export async function POST(req: NextRequest) {
           const qty = Number(getVal(["Số lượng nhập (*)", "Số lượng nhập", "Số lượng", "quantity"])) || 0;
           const unitCost = Number(getVal(["Đơn giá nhập (VNĐ)", "Đơn giá nhập", "Đơn giá", "unit_cost", "cost_price"])) || 0;
           const totalAmt = Number(getVal(["Thành tiền (VNĐ)", "Thành tiền"])) || (qty * unitCost);
-          const storageCondition = getVal(["Điều kiện nhiệt độ bảo quản", "Nhiệt độ bảo quản", "storage_condition"], "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme qPCR)");
+          const storageConditionRaw = getVal(["Điều kiện nhiệt độ bảo quản", "Nhiệt độ bảo quản", "storage_condition"]);
+          // Không tự điền nhiệt độ: lấy theo danh mục sản phẩm, không có thì để trống
+          const storageCondition = storageConditionRaw || (pCode ? ((await query("SELECT storage_condition FROM products WHERE code = $1", [pCode])).rows[0]?.storage_condition || "") : "");
           const shelf = getVal(["Vị trí tủ / kệ lưu trữ", "Vị trí kho / Tủ lưu trữ", "Vị trí kệ kho", "shelf_position"], "Kệ A01");
           const qcStatus = getVal(["Kiểm nhận / Tình trạng QC", "Tình trạng QC", "qc_status"], "Đạt chuẩn 100% (Nguyên niêm phong & COA)");
           let inboundCode = getVal(["Mã Phiếu Nhập (PNK)", "Mã phiếu nhập", "transaction_code"]);
@@ -1351,7 +1353,7 @@ export async function POST(req: NextRequest) {
           WHERE id = $11
         `, [
           parent_product_code, component_code, component_name, specification || "", unit || "Cái",
-          Number(quantity_per_kit) || 1, tracking_type || "LOT", storage_condition || "15-25°C",
+          Number(quantity_per_kit) || 1, tracking_type || "LOT", storage_condition || "",
           is_mandatory !== false, notes || "", Number(id)
         ]);
         await logAudit("UPDATE_COMPONENT", "BOM", `Cập nhật thành phần ${component_name} (${component_code}) của mã chính ${parent_product_code}`);
@@ -1361,7 +1363,7 @@ export async function POST(req: NextRequest) {
           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `, [
           parent_product_code, component_code, component_name, specification || "", unit || "Cái",
-          Number(quantity_per_kit) || 1, tracking_type || "LOT", storage_condition || "15-25°C",
+          Number(quantity_per_kit) || 1, tracking_type || "LOT", storage_condition || "",
           is_mandatory !== false, notes || ""
         ]);
         await logAudit("SAVE_COMPONENT", "BOM", `Thêm mới thành phần ${component_name} (${component_code}) cho mã chính ${parent_product_code}`);

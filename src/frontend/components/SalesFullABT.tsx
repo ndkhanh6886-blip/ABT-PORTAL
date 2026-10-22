@@ -2824,8 +2824,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     if (!sc || sc === "15-25°C" || sc === "15-25°C (Nhiệt độ phòng)") {
                         if (def?.storageCondition) {
                             sc = def.storageCondition;
-                        } else if ((p.category || "").includes("PCR") || (p.category || "").includes("Tách chiết") || p.code.startsWith("SQH") || p.code.startsWith("EXS")) {
-                            sc = "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme qPCR)";
                         } else if ((p.category || "").includes("Hóa chất") || p.code === "LBC-021") {
                             sc = "2-8°C (Mát - Hóa chất, Mẫu test)";
                         }
@@ -7328,11 +7326,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             "Quy Cách": p.specification || "",
             "Phân Loại Cấp 1": p.category || "Khác",
             "Phân Loại Cấp 2": p.category2 || "Khác",
-            "Điều kiện bảo quản chuẩn": (p.category || "").includes("Kit") || (p.category || "").includes("Tách chiết") 
-                ? "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme qPCR)" 
-                : (p.category || "").includes("Hóa chất") 
-                ? "2-8°C (Mát - Hóa chất, Mẫu test)" 
-                : "15-25°C (Nhiệt độ phòng)",
+            "Điều kiện bảo quản chuẩn": (p as any).storageCondition || (p as any).storage_condition || "",
             "Số Lưu Hành": p.registrationNo || "",
             "Ghi Chú": p.notes || "",
             "Giá End User (VNĐ)": p.price || 0,

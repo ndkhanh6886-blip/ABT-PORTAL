@@ -376,7 +376,7 @@ export const WarehouseModule: React.FC = () => {
       // Dynamic properties read directly from real inventory item
       let lot_number = item.lot_number || "";
       let expiry_date = item.expiry_date || "";
-      let storage_temp = item.storage_temp || item.storage_condition || "15-25°C (Kho thường)";
+      let storage_temp = item.storage_temp || item.storage_condition || "";
       let temp_category: "-20C" | "2-8C" | "room" = "room";
       const sTemp = storage_temp.toLowerCase();
       if (sTemp.includes("-20") || sTemp.includes("-80") || sTemp.includes("âm")) {
@@ -653,10 +653,11 @@ export const WarehouseModule: React.FC = () => {
       byCatMap[cat].listVal += lVal;
 
       // 3. By Storage Condition
-      let storageLabel = "Nhiệt độ phòng (15-25°C)";
+      let storageLabel = "Chưa khai báo nhiệt độ";
       const sc = (it.storage_condition || it.storage_temp || "").toLowerCase();
       if (sc.includes("-20") || it.temp_category === "-20C") storageLabel = "Đông sâu (-20°C)";
       else if (sc.includes("2-8") || it.temp_category === "2-8C") storageLabel = "Lạnh mát (2-8°C)";
+      else if (sc.includes("15-25") || sc.includes("phòng") || sc.includes("thường")) storageLabel = "Nhiệt độ phòng (15-25°C)";
       else if (it.storage_condition) storageLabel = it.storage_condition;
 
       if (!byStorageMap[storageLabel]) {
@@ -1815,7 +1816,7 @@ export const WarehouseModule: React.FC = () => {
           lot_number: "",
           manufacture_date: "",
           expiry_date: "",
-          storage_condition: defaultProd.storage_condition || "2-8°C (Bảo quản mát tiêu chuẩn)",
+          storage_condition: defaultProd.storage_condition || "",
           shelf_position: "",
           qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
           item_notes: "",
@@ -1850,12 +1851,8 @@ export const WarehouseModule: React.FC = () => {
           updated[index].unit_price = prod.cost_price || prod.standard_price || updated[index].unit_price || 0;
           if (prod.storage_condition) {
             updated[index].storage_condition = prod.storage_condition;
-          } else if (prod.category?.includes("Sinh phẩm") || prod.category?.includes("Tách chiết")) {
-            updated[index].storage_condition = "2-8°C (Bảo quản mát tiêu chuẩn)";
-            updated[index].shelf_position = "Kho Lạnh 2-8°C (Kệ B1)";
-          } else if (prod.category?.includes("Thiết bị")) {
-            updated[index].storage_condition = "15-25°C (Nhiệt độ phòng - Vật tư, Thiết bị)";
-            updated[index].shelf_position = "Kho Thiết Bị (Khu C)";
+          } else {
+            updated[index].storage_condition = "";
           }
 
           // Xóa trắng số lô và hạn dùng cũ khi đổi mã sản phẩm để người dùng nhập đúng thực tế lô hàng
@@ -2080,7 +2077,7 @@ export const WarehouseModule: React.FC = () => {
         unit: comp.unit || "Ống",
         quantity_per_kit: comp.quantity_per_kit || 1,
         tracking_type: comp.tracking_type || "LOT",
-        storage_condition: comp.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)",
+        storage_condition: comp.storage_condition || "",
         is_mandatory: comp.is_mandatory !== false,
         notes: comp.notes || ""
       });
@@ -2095,7 +2092,7 @@ export const WarehouseModule: React.FC = () => {
         unit: "Ống",
         quantity_per_kit: 1,
         tracking_type: "LOT",
-        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)",
+        storage_condition: "",
         is_mandatory: true,
         notes: ""
       });
@@ -2106,6 +2103,10 @@ export const WarehouseModule: React.FC = () => {
   const handleSaveComponent = async () => {
     if (!componentFormData.parent_product_code?.trim() || !componentFormData.component_code?.trim() || !componentFormData.component_name?.trim()) {
       alert("Vui lòng điền đầy đủ Mã sản phẩm chính, Mã thành phần con và Tên thành phần!");
+      return;
+    }
+    if (!componentFormData.storage_condition) {
+      alert("Vui lòng chọn điều kiện nhiệt độ bảo quản của thành phần.");
       return;
     }
 
@@ -2575,7 +2576,7 @@ export const WarehouseModule: React.FC = () => {
           const lot_number = r["Số Lô (LOT) (*)"] || r["Số Lô (LOT)"] || r["Số Lô"] || r["Lô"] || r["lot_number"] || "LOT-STD";
           const expiry_date = r["Hạn sử dụng (EXP) (*)"] || r["Hạn sử dụng (EXP)"] || r["Hạn sử dụng"] || r["Hạn dùng"] || r["expiry_date"] || "";
           const manufacture_date = r["Ngày sản xuất (MFG)"] || r["Ngày sản xuất"] || r["mfg_date"] || "";
-          const storage_condition = r["Điều kiện nhiệt độ bảo quản"] || r["Nhiệt độ bảo quản"] || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme qPCR)";
+          const storage_condition = r["Điều kiện nhiệt độ bảo quản"] || r["Nhiệt độ bảo quản"] || "";
           const storage_location = r["Vị trí tủ / kệ lưu trữ"] || r["Vị trí kho / Tủ lưu trữ"] || r["Vị trí kệ kho"] || r["Vị trí"] || "Kho Trung Tâm";
           const shelf_position = r["Vị trí tủ / kệ lưu trữ"] || r["Vị trí kho / Tủ lưu trữ"] || r["shelf_position"] || "Kệ A01";
           const qc_status = r["Kiểm nhận / Tình trạng QC"] || r["Tình trạng QC"] || "Đạt chuẩn 100% (Nguyên niêm phong & COA)";
@@ -3549,7 +3550,7 @@ export const WarehouseModule: React.FC = () => {
                           product_name: item.product_name,
                           batch_lot: item.lot_number || "",
                           expiry_date: item.expiry_date || "",
-                          storage_condition: item.storage_condition || "2-8°C (Lạnh mát)",
+                          storage_condition: item.storage_condition || "",
                           quantity: item.quantity_available || 1,
                           unit: item.unit || "Hộp"
                         });
@@ -3787,7 +3788,7 @@ export const WarehouseModule: React.FC = () => {
                               ) : (
                                 <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                               )}
-                              <span>{item.storage_temp}</span>
+                              {item.storage_temp ? <span>{item.storage_temp}</span> : <span className="text-amber-600 dark:text-amber-400">⚠ Chưa khai báo nhiệt độ</span>}
                             </div>
                             <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
                               <span>{item.warehouse_location || "Kho Trung Tâm"}</span>
@@ -3955,7 +3956,7 @@ export const WarehouseModule: React.FC = () => {
                                   product_name: item.product_name,
                                   batch_lot: item.lot_number || "",
                                   expiry_date: item.expiry_date || "",
-                                  storage_condition: item.storage_condition || "2-8°C (Lạnh mát)",
+                                  storage_condition: item.storage_condition || "",
                                   quantity: item.quantity_available || 1,
                                   unit: item.unit || "Hộp"
                                 });
@@ -6338,7 +6339,7 @@ export const WarehouseModule: React.FC = () => {
                                 </td>
                                 <td className="py-3 px-3 whitespace-nowrap">
                                   <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                                    {comp.storage_condition || "Nhiệt độ phòng"}
+                                    {comp.storage_condition || "Chưa khai báo nhiệt độ"}
                                   </span>
                                 </td>
                                 <td className="py-3 px-3 text-center">
@@ -7202,10 +7203,11 @@ export const WarehouseModule: React.FC = () => {
                             Điều Kiện Nhiệt Độ Bảo Quản
                           </label>
                           <select
-                            value={item.storage_condition || "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"}
+                            value={item.storage_condition || ""}
                             onChange={(e) => handleInboundItemChange(idx, "storage_condition", e.target.value)}
                             className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium text-xs"
                           >
+                            <option value="">-- Chưa khai báo nhiệt độ --</option>
                             <option value="-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)">-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme qPCR)</option>
                             <option value="2-8°C (Kho mát - Hóa chất, Kháng thể)">2-8°C (Kho mát - Hóa chất, Kháng thể, Test nhanh)</option>
                             <option value="15-25°C (Nhiệt độ phòng - Vật tư, Thiết bị)">15-25°C (Nhiệt độ phòng - Vật tư tiêu hao, Thiết bị)</option>
@@ -8456,6 +8458,7 @@ export const WarehouseModule: React.FC = () => {
                     onChange={(e) => setComponentFormData({ ...componentFormData, storage_condition: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-medium"
                   >
+                    <option value="">-- Chưa khai báo nhiệt độ --</option>
                     <option value="-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)">-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)</option>
                     <option value="2-8°C (Kho mát - Hóa chất, Kháng thể)">2-8°C (Kho mát - Hóa chất, Hạt từ)</option>
                     <option value="15-25°C (Nhiệt độ phòng - Vật tư, Thiết bị)">15-25°C (Nhiệt độ phòng - Thiết bị, vật tư)</option>
