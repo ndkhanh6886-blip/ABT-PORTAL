@@ -78,6 +78,7 @@ import { MoneyInput } from "@/frontend/components/MoneyInput";
 import { CustomerDebtView } from "@/frontend/components/CustomerDebtView";
 import { LineItemLookup } from "@/frontend/components/LineItemLookup";
 import { CustomerActivityTimeline } from "@/frontend/components/CustomerActivityTimeline";
+import { useFormDraft, DraftBanner } from "@/frontend/utils/useFormDraft";
 
 // Allowed roles / depts for sales access
 const ALLOWED_DEPTS = [
@@ -3475,6 +3476,50 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     // Phase 3: Contract Expiry & File Attachments (Yêu cầu 3)
     const [contractValidUntil, setContractValidUntil] = useState<string>(() => toVNDateString(new Date(Date.now() + 365 * 24 * 3600 * 1000)));
     const [contractAttachedFiles, setContractAttachedFiles] = useState<any[]>([]);
+
+    // Tự lưu nháp khi lập mới báo giá / hợp đồng / đơn hàng (khôi phục được sau khi lỡ tải lại trang)
+    const draftOwner = String(user?.username || user?.id || "");
+    const quoteDraft = useFormDraft(`quote_${draftOwner}`, isQuoteModalOpen, !editingQuoteId, {
+        quoteCustomerId, quoteContactName, quoteEmployee, quoteRepPhone, quoteRepEmail, quotePriceTier, quoteItems,
+        quoteValidityTerms, quoteDeliveryTerms, quotePaymentTerms, quoteNoteTerms,
+    }, (d: any) => {
+        setQuoteCustomerId(d.quoteCustomerId ?? ""); setQuoteContactName(d.quoteContactName ?? "");
+        setQuoteEmployee(d.quoteEmployee ?? ""); setQuoteRepPhone(d.quoteRepPhone ?? ""); setQuoteRepEmail(d.quoteRepEmail ?? "");
+        if (d.quotePriceTier) setQuotePriceTier(d.quotePriceTier);
+        if (Array.isArray(d.quoteItems)) setQuoteItems(d.quoteItems);
+        setQuoteValidityTerms(d.quoteValidityTerms ?? ""); setQuoteDeliveryTerms(d.quoteDeliveryTerms ?? "");
+        setQuotePaymentTerms(d.quotePaymentTerms ?? ""); setQuoteNoteTerms(d.quoteNoteTerms ?? "");
+    });
+    const contractDraft = useFormDraft(`contract_${draftOwner}`, isContractModalOpen, !editingContractId, {
+        contractType, contractTitle, contractTaxCode, contractRepresentative, contractDeliveryTerms, contractPaymentTerms, contractGeneralTerms,
+        directContractCustomerId, directContractItems, contractQuoteId, selectedQuoteForContract, contractValidUntil, contractPriceTier,
+        contractPartyAName, contractPartyAAddress, contractPartyAPhone, contractPartyAEmail, contractPartyATaxCode, contractPartyARepresentative, contractPartyARole, contractPartyACustomFields,
+        contractPartyBName, contractPartyBAddress, contractPartyBPhone, contractPartyBEmail, contractPartyBTaxCode, contractPartyBRepresentative, contractPartyBRole, contractPartyBCustomFields,
+    }, (d: any) => {
+        if (d.contractType) setContractType(d.contractType);
+        setContractTitle(d.contractTitle ?? ""); setContractTaxCode(d.contractTaxCode ?? ""); setContractRepresentative(d.contractRepresentative ?? "");
+        setContractDeliveryTerms(d.contractDeliveryTerms ?? ""); setContractPaymentTerms(d.contractPaymentTerms ?? ""); setContractGeneralTerms(d.contractGeneralTerms ?? "");
+        setDirectContractCustomerId(d.directContractCustomerId ?? ""); setDirectContractItems(Array.isArray(d.directContractItems) ? d.directContractItems : []);
+        setContractQuoteId(d.contractQuoteId ?? ""); setSelectedQuoteForContract(d.selectedQuoteForContract ?? null);
+        if (d.contractValidUntil) setContractValidUntil(d.contractValidUntil);
+        if (d.contractPriceTier) setContractPriceTier(d.contractPriceTier);
+        setContractPartyAName(d.contractPartyAName ?? ""); setContractPartyAAddress(d.contractPartyAAddress ?? ""); setContractPartyAPhone(d.contractPartyAPhone ?? "");
+        setContractPartyAEmail(d.contractPartyAEmail ?? ""); setContractPartyATaxCode(d.contractPartyATaxCode ?? ""); setContractPartyARepresentative(d.contractPartyARepresentative ?? "");
+        setContractPartyARole(d.contractPartyARole ?? ""); setContractPartyACustomFields(Array.isArray(d.contractPartyACustomFields) ? d.contractPartyACustomFields : []);
+        setContractPartyBName(d.contractPartyBName ?? ""); setContractPartyBAddress(d.contractPartyBAddress ?? ""); setContractPartyBPhone(d.contractPartyBPhone ?? "");
+        setContractPartyBEmail(d.contractPartyBEmail ?? ""); setContractPartyBTaxCode(d.contractPartyBTaxCode ?? ""); setContractPartyBRepresentative(d.contractPartyBRepresentative ?? "");
+        setContractPartyBRole(d.contractPartyBRole ?? ""); setContractPartyBCustomFields(Array.isArray(d.contractPartyBCustomFields) ? d.contractPartyBCustomFields : []);
+    });
+    const factoryOrderDraft = useFormDraft(`order_${draftOwner}`, isFactoryOrderModalOpen, !editingFactoryOrderId, {
+        factoryOrderContractId, factoryOrderQuoteId, factoryOrderPlanId, factoryOrderCustomerName, factoryOrderDeliveryDate,
+        factoryOrderNotes, factoryOrderFulfillmentSource, factoryOrderItems, isStockOrder,
+    }, (d: any) => {
+        setFactoryOrderContractId(d.factoryOrderContractId ?? ""); setFactoryOrderQuoteId(d.factoryOrderQuoteId ?? ""); setFactoryOrderPlanId(d.factoryOrderPlanId ?? "");
+        setFactoryOrderCustomerName(d.factoryOrderCustomerName ?? ""); if (d.factoryOrderDeliveryDate) setFactoryOrderDeliveryDate(d.factoryOrderDeliveryDate);
+        setFactoryOrderNotes(d.factoryOrderNotes ?? ""); if (d.factoryOrderFulfillmentSource) setFactoryOrderFulfillmentSource(d.factoryOrderFulfillmentSource);
+        if (Array.isArray(d.factoryOrderItems)) setFactoryOrderItems(d.factoryOrderItems);
+        setIsStockOrder(!!d.isStockOrder);
+    });
 
     // Phase 3: Cancel Order Item & RMA Return Workflow (Yêu cầu 15)
     const [isCancelItemModalOpen, setIsCancelItemModalOpen] = useState(false);
@@ -21847,6 +21892,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 size="6xl"
             >
                 <form onSubmit={handleCreateQuotation} className="space-y-4 p-2 text-slate-100">
+                    <DraftBanner draft={quoteDraft} />
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Khách hàng CRM *</label>
@@ -23228,6 +23274,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 size="4xl"
             >
                 <form onSubmit={handleCreateContract} className="space-y-4 p-2 text-slate-100">
+                    <DraftBanner draft={contractDraft} />
 
                     {/* THÔNG BÁO DẠNG HỢP ĐỒNG NẾU TỪ BÁO GIÁ */}
                     {selectedQuoteForContract && (
@@ -24225,6 +24272,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 setFactoryOrderItems([{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, targetAllocations: [], needsInvoice: true }]);
             }} title={editingFactoryOrderId ? `CHỈNH SỬA YÊU CẦU ĐẶT HÀNG: ${editingFactoryOrderId}` : (isStockOrder ? "📦 YÊU CẦU ĐẶT HÀNG GỐI ĐẦU / LƯU KHO DỰ PHÒNG (SO STOCK)" : "YÊU CẦU ĐẶT HÀNG NCC / HÃNG (SO)")} size="4xl">
                 <form onSubmit={handleCreateFactoryOrder} className="space-y-4 p-2 text-slate-100">
+                    <DraftBanner draft={factoryOrderDraft} />
                     {/* ── Order Category Switch: Commercial SO vs SO Stock ── */}
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 bg-slate-900/90 border border-slate-800 p-2.5 rounded-xl shadow-inner">
                         <div className="flex items-center gap-2">
