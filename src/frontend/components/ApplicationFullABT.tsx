@@ -22,6 +22,7 @@ import {
     FileText,
     FlaskConical,
     Wrench,
+    HeartHandshake,
     PlusCircle,
     FolderPlus,
     ArrowUpRight,
@@ -58,6 +59,8 @@ import * as XLSX from "xlsx";
 import { getMesApiBase } from "@/frontend/utils/mesApi";
 import { ApplicationEvaluationAnalytics } from "./ApplicationEvaluationAnalytics";
 import { CustomerEquipmentService } from "./CustomerEquipmentService";
+import { AttachmentPicker, type Attachment } from "./AttachmentPicker";
+import { TechCareLog } from "./TechCareLog";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 
 // Allowed roles for access control
@@ -156,7 +159,7 @@ export function ApplicationFullABT() {
     const { user, can } = useAuth();
     
     // Tab states: Customer Service (FSE), Lab Resources, Customer Issues, Weekly Planner, Tasks
-    const [activeTab, setActiveTab] = useState<"service" | "resources" | "issues" | "planner" | "tasks" | "daily" | "workload">("service");
+    const [activeTab, setActiveTab] = useState<"service" | "techcare" | "resources" | "issues" | "planner" | "tasks" | "daily" | "workload">("service");
     const [resourceSubTab, setResourceSubTab] = useState<"equipment" | "materials" | "samples">("equipment");
     
     // Customer Issue Workflow States
@@ -294,7 +297,8 @@ export function ApplicationFullABT() {
                     preventive_actions: issue.preventiveActions || "",
                     not_real_issue_reason: issue.notRealIssueReason || "",
                     investigation_details: issue.investigationDetails || {},
-                    capa_action: compositeCapa
+                    capa_action: compositeCapa,
+                    attachments: Array.isArray(issue.attachments) ? issue.attachments : undefined
                 })
             });
         } catch (e) {
@@ -652,6 +656,8 @@ export function ApplicationFullABT() {
     // Forms: Add New Equipment
     const [addEqName, setAddEqName] = useState("");
     const [addEqModel, setAddEqModel] = useState("");
+    const [addEqSerial, setAddEqSerial] = useState("");
+    const [newIssueAttachments, setNewIssueAttachments] = useState<Attachment[]>([]);
     const [addEqLocation, setAddEqLocation] = useState("Phòng Thử Nghiệm App");
     const [isAddEquipmentModalOpen, setIsAddEquipmentModalOpen] = useState(false);
 
@@ -695,6 +701,7 @@ export function ApplicationFullABT() {
     const [editEqModel, setEditEqModel] = useState("");
     const [editEqLocation, setEditEqLocation] = useState("");
     const [editEqStatus, setEditEqStatus] = useState("");
+    const [editEqSerial, setEditEqSerial] = useState("");
 
     // Forms: Edit Material (Admin only)
     const [isEditMatModalOpen, setIsEditMatModalOpen] = useState(false);
@@ -1696,7 +1703,13 @@ export function ApplicationFullABT() {
             return;
         }
 
-        const newId = `INC-2026-${String(customerIssues.length + 1).padStart(4, "0")}`;
+        // mã mới = số lớn nhất của năm + 1 (đếm theo số lượng sẽ trùng mã sau khi xóa / đồng bộ)
+        const incYear = new Date().getFullYear();
+        const maxInc = customerIssues.reduce((m, iss) => {
+            const mm = String(iss.id || "").match(new RegExp(`^INC-${incYear}-(\\d+)$`));
+            return mm ? Math.max(m, Number(mm[1])) : m;
+        }, 0);
+        const newId = `INC-${incYear}-${String(maxInc + 1).padStart(4, "0")}`;
         const newIssue = {
             id: newId,
             createdAt: todayVN(),
@@ -1710,6 +1723,7 @@ export function ApplicationFullABT() {
             customerName: newIssueCustomerName,
             contactInfo: newIssueContactInfo,
             hospitalName: newIssueCustomerName,
+            attachments: newIssueAttachments,
             isRealIssue: null,
             emergencySolution: "",
             firstTimeUsing: null,
@@ -1741,9 +1755,12 @@ export function ApplicationFullABT() {
                 product_name: newIssueProductName,
                 lot_number: newIssueLotNumber,
                 description: newIssueDesc,
-                handled_by: user?.name || "Kỹ thuật viên App"
+                handled_by: user?.name || "Kỹ thuật viên App",
+                attachments: newIssueAttachments
             })
-        }).catch(console.error);
+        })
+            .then(async r => { if (!r.ok) { const d = await r.json().catch(() => ({})); showToast(`Chưa lưu được sự cố lên máy chủ: ${d.error || r.status}`, "error"); } })
+            .catch(() => showToast("Chưa lưu được sự cố lên máy chủ (mất kết nối)", "error"));
 
         // Reset
         setNewIssueProductCode("");
@@ -1752,6 +1769,7 @@ export function ApplicationFullABT() {
         setNewIssueCustomerName("");
         setNewIssueContactInfo("");
         setNewIssueDesc("");
+        setNewIssueAttachments([]);
         setIsProductDropdownOpen(false);
         setIsLotDropdownOpen(false);
         setIsCustomerDropdownOpen(false);
@@ -2286,12 +2304,18 @@ export function ApplicationFullABT() {
     const handleAddEquipment = (e: React.FormEvent) => {
         e.preventDefault();
         if (!addEqName.trim()) return;
+        const serial = addEqSerial.trim();
+        const dupSerial = serial ? equipment.find(eq => String(eq.serial || "").trim().toLowerCase() === serial.toLowerCase()) : null;
+        if (dupSerial && !confirm(`Số serial "${serial}" đã có ở thiết bị ${dupSerial.id} - ${dupSerial.name}. Vẫn đăng ký?`)) return;
 
+        // mã mới = số lớn nhất hiện có + 1 (đếm theo số lượng sẽ trùng mã sau khi xóa bớt thiết bị)
+        const maxNo = equipment.reduce((m, eq) => Math.max(m, Number(String(eq.id || "").match(/(\d+)$/)?.[1] || 0)), 0);
         const newEq = {
-            id: `EQ-APP-${String(equipment.length + 1).padStart(3, "0")}`,
-            name: addEqName,
+            id: `EQ-APP-${String(maxNo + 1).padStart(3, "0")}`,
+            name: addEqName.trim(),
             status: "Available",
             model: addEqModel,
+            serial,
             location: addEqLocation,
             history: []
         };
@@ -2302,6 +2326,7 @@ export function ApplicationFullABT() {
 
         setAddEqName("");
         setAddEqModel("");
+        setAddEqSerial("");
         setIsAddEquipmentModalOpen(false);
         showToast(`Đã thêm thiết bị "${newEq.name}" thành công!`, "success");
     };
@@ -2344,16 +2369,22 @@ export function ApplicationFullABT() {
         setEditEqModel(eq.model || "");
         setEditEqLocation(eq.location || "");
         setEditEqStatus(eq.status || "Available");
+        setEditEqSerial(eq.serial || "");
         setIsEditEqModalOpen(true);
     };
 
     const handleSaveEditEquipment = (e: React.FormEvent) => {
         e.preventDefault();
+        if (!editEqName.trim()) { showToast("Tên thiết bị không được để trống", "error"); return; }
+        const serial = editEqSerial.trim();
+        const dupSerial = serial ? equipment.find(eq => eq.id !== editEqId && String(eq.serial || "").trim().toLowerCase() === serial.toLowerCase()) : null;
+        if (dupSerial && !confirm(`Số serial "${serial}" đã có ở thiết bị ${dupSerial.id} - ${dupSerial.name}. Vẫn lưu?`)) return;
         const updated = equipment.map(eq => {
             if (eq.id === editEqId) {
                 return {
                     ...eq,
-                    name: editEqName,
+                    name: editEqName.trim(),
+                    serial,
                     model: editEqModel,
                     location: editEqLocation,
                     status: editEqStatus
@@ -2881,6 +2912,16 @@ export function ApplicationFullABT() {
                             <span className="px-1.5 py-0.5 text-[9px] rounded-full bg-amber-500/20 text-amber-300 font-extrabold border border-amber-500/30">Mới</span>
                         </button>
                         <button
+                            onClick={() => setActiveTab("techcare")}
+                            className={cn(
+                                "px-3.5 py-1.5 font-bold text-xs relative transition-all flex items-center gap-2 whitespace-nowrap rounded-lg cursor-pointer",
+                                activeTab === "techcare" ? "bg-indigo-600 text-white shadow-xs" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                            )}
+                        >
+                            <HeartHandshake className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                            <span>Chăm sóc kỹ thuật</span>
+                        </button>
+                        <button
                             onClick={() => setActiveTab("resources")}
                             className={cn(
                                 "px-3.5 py-1.5 font-bold text-xs relative transition-all flex items-center gap-2 whitespace-nowrap rounded-lg cursor-pointer",
@@ -2908,6 +2949,12 @@ export function ApplicationFullABT() {
             <div>
                 <AnimatePresence mode="wait">
                     {/* Tab 0: Customer Equipment Service & Maintenance (PM/CM) */}
+                    {activeTab === "techcare" && (
+                        <motion.div key="techcare-tab" initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -15 }} transition={{ duration: 0.2 }}>
+                            <TechCareLog currentUserName={String((user as any)?.full_name || user?.name || "")} showToast={showToast} />
+                        </motion.div>
+                    )}
+
                     {activeTab === "service" && (
                         <motion.div
                             key="service-tab"
@@ -3253,6 +3300,7 @@ export function ApplicationFullABT() {
                                                         <th className="pb-3 pr-2">Mã thiết bị</th>
                                                         <th className="pb-3 pr-2">Tên thiết bị</th>
                                                         <th className="pb-3 pr-2">Model</th>
+                                                        <th className="pb-3 pr-2">Serial</th>
                                                         <th className="pb-3 pr-2">Vị trí</th>
                                                         <th className="pb-3 pr-2">Trạng thái</th>
                                                         <th className="pb-3 text-right">Thao tác</th>
@@ -3264,6 +3312,7 @@ export function ApplicationFullABT() {
                                                             <td className="py-3 font-mono text-[10px] text-slate-400">{item.id}</td>
                                                             <td className="py-3 font-bold text-white pr-2">{item.name}</td>
                                                             <td className="py-3 text-slate-300 pr-2">{item.model}</td>
+                                                            <td className="py-3 font-mono text-[10px] text-slate-300 pr-2">{item.serial || <span className="text-slate-500">—</span>}</td>
                                                             <td className="py-3 text-slate-400 pr-2">{item.location}</td>
                                                             <td className="py-3">
                                                                 <span className={cn(
@@ -3274,21 +3323,20 @@ export function ApplicationFullABT() {
                                                                 </span>
                                                             </td>
                                                             <td className="py-3 text-right space-x-2.5 whitespace-nowrap">
+                                                                {/* Người đăng ký thiết bị cũng sửa được (nhập sai tên / serial); xóa chỉ Quản trị viên */}
+                                                                <button
+                                                                    onClick={() => handleStartEditEquipment(item)}
+                                                                    className="text-[9px] font-bold text-primary hover:underline"
+                                                                >
+                                                                    ✎ Sửa
+                                                                </button>
                                                                 {isAdmin && (
-                                                                    <>
-                                                                        <button
-                                                                            onClick={() => handleStartEditEquipment(item)}
-                                                                            className="text-[9px] font-bold text-primary hover:underline"
-                                                                        >
-                                                                            Sửa
-                                                                        </button>
-                                                                        <button
-                                                                            onClick={() => handleDeleteEquipment(item.id, item.name)}
-                                                                            className="text-[9px] font-bold text-rose-400 hover:underline"
-                                                                        >
-                                                                            Xóa
-                                                                        </button>
-                                                                    </>
+                                                                    <button
+                                                                        onClick={() => handleDeleteEquipment(item.id, item.name)}
+                                                                        className="text-[9px] font-bold text-rose-400 hover:underline"
+                                                                    >
+                                                                        Xóa
+                                                                    </button>
                                                                 )}
                                                             </td>
                                                         </tr>
@@ -4155,6 +4203,15 @@ export function ApplicationFullABT() {
 
                                         return (
                                             <div className="p-6 rounded-3xl bg-slate-900/40 border border-white/5 glass space-y-6 shadow-xl">
+                                                {/* Ảnh / video / tài liệu của sự cố: xem và bổ sung ở mọi bước */}
+                                                <div data-no-dirty className="rounded-2xl border border-white/10 bg-slate-950/40 p-3">
+                                                    <AttachmentPicker
+                                                        files={Array.isArray(activeIssue.attachments) ? activeIssue.attachments : []}
+                                                        onChange={(files) => updateActiveIssue({ attachments: files })}
+                                                        label="Hình ảnh, video & tài liệu sự cố"
+                                                        hint="Ảnh kết quả chạy máy, video hiện tượng, file dữ liệu máy (.pcrd, .eds), biên bản... Tối đa 200 MB mỗi tệp."
+                                                    />
+                                                </div>
                                                 {/* Stepper visual progress bar */}
                                                 <div className="border-b border-white/5 pb-6">
                                                     <div className="flex justify-between items-center flex-wrap gap-4 mb-6">
@@ -4326,39 +4383,7 @@ export function ApplicationFullABT() {
                                                                 </div>
 
                                                                 {/* Attachments from client */}
-                                                                {activeIssue.attachments && activeIssue.attachments.length > 0 && (
-                                                                    <div className="border-t border-white/5 pt-3 space-y-2">
-                                                                        <span className="text-[10px] text-teal-400 font-bold uppercase flex items-center gap-1.5">
-                                                                            <Paperclip className="w-3.5 h-3.5" />
-                                                                            Hồ sơ &amp; Bằng chứng đính kèm từ Bệnh viện ({activeIssue.attachments.length}):
-                                                                        </span>
-                                                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                                                            {activeIssue.attachments.map((file: any, fIdx: number) => {
-                                                                                const isImg = file.category === "image" || (file.type && file.type.startsWith("image/")) || /\.(png|jpe?g|webp|gif)$/i.test(file.name || file.url || "");
-                                                                                const isVid = file.category === "video" || (file.type && file.type.startsWith("video/")) || /\.(mp4|mov|webm|avi)$/i.test(file.name || file.url || "");
-
-                                                                                return (
-                                                                                    <div key={fIdx} className="p-2 rounded-lg bg-slate-950 border border-white/5 flex flex-col gap-1.5">
-                                                                                        {isImg && (
-                                                                                            <a href={file.url} target="_blank" rel="noreferrer" className="block w-full h-20 rounded overflow-hidden bg-slate-900 group">
-                                                                                                <img src={file.url} alt={file.name} className="w-full h-full object-cover group-hover:scale-105 transition-all" />
-                                                                                            </a>
-                                                                                        )}
-                                                                                        {isVid && (
-                                                                                            <video src={file.url} controls className="w-full h-20 rounded bg-black object-cover" />
-                                                                                        )}
-                                                                                        <div className="flex items-center justify-between gap-1 text-[10px]">
-                                                                                            <span className="truncate text-slate-300" title={file.name}>{file.name}</span>
-                                                                                            <a href={file.url} download={file.name} target="_blank" rel="noreferrer" className="p-1 rounded bg-slate-800 text-teal-300 hover:bg-slate-700">
-                                                                                                <Download className="w-3 h-3" />
-                                                                                            </a>
-                                                                                        </div>
-                                                                                    </div>
-                                                                                );
-                                                                            })}
-                                                                        </div>
-                                                                    </div>
-                                                                )}
+                                                                {/* tệp đính kèm hiển thị ở khung chung phía trên (mọi bước) */}
                                                             </div>
                                                             <div className="flex justify-end pt-4 border-t border-white/5">
                                                                 <button
@@ -7237,6 +7262,16 @@ export function ApplicationFullABT() {
                             />
                         </div>
                     </div>
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Số Serial (S/N)</label>
+                        <input
+                            type="text"
+                            value={addEqSerial}
+                            onChange={(e) => setAddEqSerial(e.target.value)}
+                            placeholder="Số serial in trên tem máy, ví dụ: 275012345"
+                            className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-slate-300 font-mono outline-none focus:ring-1 focus:ring-primary/50"
+                        />
+                    </div>
                     <div className="flex gap-3 pt-4 border-t border-white/5">
                         <button
                             type="button"
@@ -7411,6 +7446,15 @@ export function ApplicationFullABT() {
                                 className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-slate-300 outline-none"
                             />
                         </div>
+                    </div>
+                    <div className="space-y-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase">Số Serial (S/N)</label>
+                        <input
+                            type="text"
+                            value={editEqSerial}
+                            onChange={(e) => setEditEqSerial(e.target.value)}
+                            className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-slate-300 font-mono outline-none"
+                        />
                     </div>
                     <div className="space-y-2">
                         <label className="text-xs font-bold text-slate-500 uppercase">Trạng thái hoạt động</label>
@@ -7914,6 +7958,15 @@ export function ApplicationFullABT() {
                             onChange={(e) => setNewIssueDesc(e.target.value)}
                             placeholder="Mô tả cụ thể sự cố khách hàng gặp phải (ví dụ: chứng dương không lên, có vạch mờ ở chứng âm...)"
                             className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-slate-300 outline-none focus:ring-1 focus:ring-primary/50"
+                        />
+                    </div>
+
+                    <div className="rounded-xl border border-white/10 bg-slate-950/40 p-3">
+                        <AttachmentPicker
+                            files={newIssueAttachments}
+                            onChange={setNewIssueAttachments}
+                            label="Hình ảnh / video sự cố"
+                            hint="Ảnh kết quả, ảnh mẫu, video hiện tượng, file dữ liệu máy... (tối đa 200 MB mỗi tệp)"
                         />
                     </div>
 

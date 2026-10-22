@@ -18,6 +18,7 @@ const TYPE_META: Record<string, { label: string; cls: string }> = {
   payment: { label: "Thu tiền", cls: "bg-green-950 text-green-300 border-green-700/60" },
   rma: { label: "Trả hàng", cls: "bg-rose-950 text-rose-300 border-rose-700/60" },
   workflow: { label: "Phiếu phối hợp", cls: "bg-purple-950 text-purple-300 border-purple-700/60" },
+  tech_care: { label: "Chăm sóc kỹ thuật", cls: "bg-teal-950 text-teal-300 border-teal-700/60" },
   task: { label: "Công việc", cls: "bg-amber-950 text-amber-300 border-amber-700/60" },
   schedule: { label: "Lịch công tác", cls: "bg-cyan-950 text-cyan-300 border-cyan-700/60" },
   daily: { label: "Nhật ký", cls: "bg-slate-800 text-slate-300 border-slate-600" },

@@ -722,7 +722,7 @@ export async function GET(req: NextRequest) {
       const add = (x: any) => items.push({ ...x, date: x.date || null });
       const safe = (p: Promise<any>) => p.catch(() => ({ rows: [] as any[] }));
 
-      const [qRes, cRes, oRes, sRes, pRes, rRes, wRes, tRes, stRes, dRes, plRes, storeRes] = await Promise.all([
+      const [qRes, cRes, oRes, sRes, pRes, rRes, wRes, tRes, stRes, dRes, tcRes, plRes, storeRes] = await Promise.all([
         safe(query("SELECT quote_code, customer_id, customer_name, sales_rep_name, date, total_amount, status, created_at FROM sales_quotations")),
         safe(query("SELECT contract_code, customer_id, customer_name, sales_rep_name, title, sign_date, total_value, status, created_at FROM sales_contracts")),
         safe(query("SELECT order_code, customer_id, customer_name, sales_rep_name, order_date, total_amount, delivery_status, invoiced_delivery_slips, created_at FROM sales_orders")),
@@ -733,6 +733,7 @@ export async function GET(req: NextRequest) {
         safe(query("SELECT task_code, title, assignee_name, customer_name, status, deadline, result, created_at FROM company_tasks")),
         safe(query("SELECT task_code, title, assignee_name, customer_name, status, deadline, created_at FROM sales_tasks")),
         safe(query("SELECT log_date, employee_name, work_content, result FROM sales_daily_logs")),
+        safe(query("SELECT id, customer_id, customer_name, activity_type, activity_date, content, performed_by, next_followup_date FROM tech_care_logs")),
         safe(query("SELECT week_number, year, employee_name, plan_data, status FROM sales_plans")),
         safe(query("SELECT key, data FROM app_storage WHERE key IN ('sales_deals_pipeline', 'unified_weekly_schedule', 'shared_app_requests', 'sales_specialized_plans', 'sales_daily_logs', 'sales_plans', 'sales_tasks')"))
       ]);
@@ -753,6 +754,7 @@ export async function GET(req: NextRequest) {
       }
       for (const r of pRes.rows) if (sameCust(r.customer_name, r.customer_id)) add({ type: "payment", date: day(r.payment_date), code: r.order_code, title: `Thu tiền${r.delivery_slip_code ? ` (phiếu ${r.delivery_slip_code})` : ""}${r.method ? ` · ${r.method}` : ""}`, amount: Number(r.amount) || 0, person: r.created_by });
       for (const r of rRes.rows) if (sameCust(r.customer_name, r.customer_id)) add({ type: "rma", date: day(r.created_at), code: r.rma_code, title: `Trả hàng (đơn ${r.order_code || ""})`, amount: Number(r.total_amount) || 0, status: r.status });
+      for (const r of tcRes.rows) if (sameCust(r.customer_name, r.customer_id)) add({ type: "tech_care", date: day(r.activity_date), code: `CSKT-${r.id}`, title: `${r.activity_type}: ${String(r.content || "").slice(0, 200)}`, person: r.performed_by, extra: r.next_followup_date ? `Hẹn chăm sóc tiếp: ${day(r.next_followup_date)}` : undefined });
       for (const r of wRes.rows) if (sameCust(r.customer_name)) add({ type: "workflow", date: day(r.created_at), code: r.workflow_code, title: r.title, status: r.status, person: r.requester_name, extra: r.assignee_name ? `Phụ trách: ${r.assignee_name}` : r.target_dept });
       for (const r of tRes.rows) if (sameCust(r.customer_name)) add({ type: "task", date: day(r.created_at || r.deadline), code: r.task_code, title: r.title, status: r.status, person: r.assignee_name, extra: r.result || null });
       for (const r of stRes.rows) if (sameCust(r.customer_name)) add({ type: "task", date: day(r.created_at || r.deadline), code: r.task_code, title: r.title, status: r.status, person: r.assignee_name });

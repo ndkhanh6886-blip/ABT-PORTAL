@@ -34,6 +34,25 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // Nhật ký chăm sóc kỹ thuật: danh sách (lọc theo khách / loại) + các lần hẹn chăm sóc đến hạn
+    if (action === "tech_care") {
+      const customer = String(searchParams.get("customer") || "").trim();
+      const type = String(searchParams.get("type") || "").trim();
+      const res = await query(
+        `SELECT * FROM tech_care_logs
+          WHERE ($1 = '' OR LOWER(customer_name) LIKE '%' || LOWER($1) || '%')
+            AND ($2 = '' OR activity_type = $2)
+          ORDER BY activity_date DESC, id DESC LIMIT 500`,
+        [customer, type]
+      );
+      const due = await query(
+        `SELECT * FROM tech_care_logs
+          WHERE followup_done = FALSE AND next_followup_date IS NOT NULL AND next_followup_date <= CURRENT_DATE + 7
+          ORDER BY next_followup_date ASC LIMIT 200`
+      );
+      return NextResponse.json({ logs: res.rows, due: due.rows });
+    }
+
     if (action === "plans") {
       const res = await query("SELECT * FROM application_plans ORDER BY id DESC");
       return NextResponse.json({ plans: res.rows });
@@ -62,6 +81,53 @@ export async function POST(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action");
     const body = await req.json();
+
+    if (action === "tech_care") {
+      const me = String((authUser as any).full_name || (authUser as any).username || "");
+      const id = Number(body.id) || null;
+      const customerName = String(body.customer_name || "").trim();
+      const content = String(body.content || "").trim();
+      const type = String(body.activity_type || "").trim();
+      if (!customerName || !content || !type) return NextResponse.json({ error: "Cần có khách hàng, loại hoạt động và nội dung" }, { status: 400 });
+      const isoDate = (v: any) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : null);
+      const sat = Number(body.satisfaction);
+      const params = [
+        Number(body.customer_id) || null, customerName, String(body.contact_name || "").trim() || null, type,
+        isoDate(body.activity_date) || todayVN(), content, sat >= 1 && sat <= 5 ? sat : null,
+        String(body.performed_by || "").trim() || me, JSON.stringify(Array.isArray(body.attachments) ? body.attachments : []),
+        isoDate(body.next_followup_date), String(body.next_followup_note || "").trim() || null,
+      ];
+      let row;
+      if (id) {
+        row = (await query(
+          `UPDATE tech_care_logs SET customer_id=$1, customer_name=$2, contact_name=$3, activity_type=$4, activity_date=$5, content=$6,
+                  satisfaction=$7, performed_by=$8, attachments=$9::jsonb, next_followup_date=$10, next_followup_note=$11, updated_at=NOW()
+            WHERE id=$12 RETURNING *`, [...params, id])).rows[0];
+        if (!row) return NextResponse.json({ error: "Không tìm thấy nhật ký" }, { status: 404 });
+      } else {
+        row = (await query(
+          `INSERT INTO tech_care_logs (customer_id, customer_name, contact_name, activity_type, activity_date, content, satisfaction,
+                  performed_by, attachments, next_followup_date, next_followup_note, created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12) RETURNING *`, [...params, me])).rows[0];
+      }
+      // ghi nhận lần chăm sóc này là thực hiện lịch hẹn của nhật ký trước
+      if (Number(body.completes_followup_of)) {
+        await query("UPDATE tech_care_logs SET followup_done = TRUE, updated_at = NOW() WHERE id = $1", [Number(body.completes_followup_of)]);
+      }
+      await logAudit(id ? "UPDATE" : "CREATE", "TECH_CARE", `Chăm sóc kỹ thuật ${customerName}: ${type} (${row.activity_date ? String(row.activity_date).slice(0, 10) : ""})`);
+      return NextResponse.json({ success: true, log: row });
+    }
+
+    if (action === "tech_care_followup_done") {
+      await query("UPDATE tech_care_logs SET followup_done = TRUE, updated_at = NOW() WHERE id = $1", [Number(body.id)]);
+      return NextResponse.json({ success: true });
+    }
+
+    if (action === "delete_tech_care") {
+      const row = (await query("DELETE FROM tech_care_logs WHERE id = $1 RETURNING customer_name, activity_type", [Number(body.id)])).rows[0];
+      if (row) await logAudit("DELETE", "TECH_CARE", `Xóa nhật ký chăm sóc kỹ thuật ${row.customer_name}: ${row.activity_type}`);
+      return NextResponse.json({ success: true });
+    }
 
     if (action === "plan") {
       const { id, week_number, year, employee_name, plan_data, status } = body;

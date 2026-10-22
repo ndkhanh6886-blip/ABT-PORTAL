@@ -352,7 +352,8 @@ export async function POST(req: NextRequest) {
         preventive_actions,
         not_real_issue_reason,
         investigation_details,
-        capa_action
+        capa_action,
+        attachments
       } = body;
 
       if (!incident_code) {
@@ -382,6 +383,7 @@ export async function POST(req: NextRequest) {
             not_real_issue_reason = COALESCE($9, not_real_issue_reason),
             investigation_details = CASE WHEN $10::text IS NOT NULL THEN $10::jsonb ELSE investigation_details END,
             capa_action = COALESCE($11, capa_action),
+            attachments = CASE WHEN $13::text IS NOT NULL THEN $13::jsonb ELSE attachments END,
             updated_at = CURRENT_TIMESTAMP
         WHERE UPPER(incident_code) = UPPER($12)
         RETURNING *
@@ -397,7 +399,8 @@ export async function POST(req: NextRequest) {
         not_real_issue_reason || null,
         investigation_details ? JSON.stringify(investigation_details) : null,
         finalCapa || null,
-        incident_code.trim()
+        incident_code.trim(),
+        Array.isArray(attachments) ? JSON.stringify(attachments) : null
       ]);
 
       await logAudit(
@@ -426,7 +429,8 @@ export async function POST(req: NextRequest) {
         lot_number,
         description,
         handled_by,
-        severity
+        severity,
+        attachments
       } = body;
 
       const code = incident_code || `INC-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -435,9 +439,9 @@ export async function POST(req: NextRequest) {
         INSERT INTO customer_incidents (
           incident_code, customer_name, customer_phone, organization,
           product_code, product_name, lot_number, description,
-          severity, status, current_step, resolution_status, handled_by, created_at, updated_at
+          severity, status, current_step, resolution_status, handled_by, attachments, incident_category, created_at, updated_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'RECEIVED', 'Step1', 'Investigating', $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'RECEIVED', 'Step1', 'Investigating', $10, $11::jsonb, $12, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         RETURNING *
       `, [
         code,
@@ -449,7 +453,10 @@ export async function POST(req: NextRequest) {
         lot_number || "",
         description || "",
         severity || "MEDIUM",
-        handled_by || "Chuyên viên Application"
+        handled_by || "Chuyên viên Application",
+        JSON.stringify(Array.isArray(attachments) ? attachments : []),
+        // cột bắt buộc: thiếu nó thì sự cố tạo từ Application không bao giờ được lưu vào CSDL
+        String(body.incident_category || "OTHER")
       ]);
 
       await logAudit(

@@ -62,6 +62,7 @@ import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { cn } from "@/backend/services/utils";
 import { todayVN, toVNDateString, nowVNDateTime } from "@/backend/services/dates";
+import { AttachmentPicker, AttachmentList } from "@/frontend/components/AttachmentPicker";
 
 // Configuration for Departments
 export const DEPARTMENTS = [
@@ -1621,6 +1622,7 @@ export const UnifiedWorkspace: React.FC = () => {
     due_date: string;
     description: string;
     steps?: any[];
+    attachments?: Array<{ name: string; url: string; size?: number; type?: string; uploaded_at?: string }>;
   }>({
     workflow_type: "SALES_TO_APP",
     title: "",
@@ -4519,10 +4521,29 @@ ${wf.description || ""}`}
                                       <strong>KQ:</strong> {st.deliverables_note}
                                     </div>
                                   )}
+                                  {Array.isArray(st.attachments) && st.attachments.length > 0 && (
+                                    <div className="mt-1 flex flex-col gap-0.5">
+                                      {st.attachments.map((att: any, aIdx: number) => (
+                                        <a key={aIdx} href={att.url} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline truncate" title={att.name}>
+                                          📎 {att.name}
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
                                 </div>
                               );
                             })}
                           </div>
+                        </div>
+                      )}
+
+                      {/* Tài liệu gửi kèm khi tạo phiếu (phiếu triển khai...) khi chưa có tổng hợp kết quả */}
+                      {!wf.results_summary && Array.isArray(wf.attachments) && wf.attachments.length > 0 && (
+                        <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 space-y-1.5">
+                          <div className="text-[11px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1">
+                            <Paperclip className="w-3 h-3" /> Tài liệu đính kèm phiếu ({wf.attachments.length})
+                          </div>
+                          <AttachmentList files={wf.attachments} />
                         </div>
                       )}
 
@@ -7007,6 +7028,15 @@ ${wf.description || ""}`}
             />
           </div>
 
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/40">
+            <AttachmentPicker
+              files={wfForm.attachments || []}
+              onChange={(files) => setWfForm((prev: any) => ({ ...prev, attachments: files }))}
+              label={wfForm.workflow_type === "SALES_TO_APP" ? "Phiếu triển khai & tài liệu kèm theo" : "Tài liệu đính kèm phiếu"}
+              hint="Phiếu yêu cầu triển khai, hồ sơ khách hàng, ảnh mẫu... Kết quả triển khai được đính kèm khi từng bước báo hoàn thành."
+            />
+          </div>
+
           <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
@@ -7314,7 +7344,7 @@ ${wf.description || ""}`}
             <div className="flex items-center justify-between">
               <label className="block font-bold text-emerald-800 dark:text-emerald-300 text-xs flex items-center gap-1">
                 <Paperclip className="w-3.5 h-3.5" />
-                <span>Đính kèm hình ảnh / biên bản nghiệm thu:</span>
+                <span>Đính kèm kết quả triển khai (biên bản, ảnh, file kết quả máy):</span>
               </label>
               <label className="cursor-pointer px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] flex items-center gap-1 shadow-2xs">
                 <UploadCloud className="w-3 h-3" />

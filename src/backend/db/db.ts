@@ -497,6 +497,31 @@ async function runIntegrityMigrations() {
       console.log("[MIGRATION:legacy_sales_sync_2026_10]", Object.fromEntries(Object.entries(rep).map(([k, v]) => [k, (v as any[]).length])));
     });
     // PO goods receipt in several deliveries: received quantity per PO line (index -> qty)
+    // Nhật ký chăm sóc khách hàng về kỹ thuật (phòng Application)
+    await step("tech_care_logs", () =>
+      client.query(`
+        CREATE TABLE IF NOT EXISTS tech_care_logs (
+          id SERIAL PRIMARY KEY,
+          customer_id INT,
+          customer_name VARCHAR(255) NOT NULL,
+          contact_name VARCHAR(255),
+          activity_type VARCHAR(50) NOT NULL,
+          activity_date DATE NOT NULL DEFAULT CURRENT_DATE,
+          content TEXT NOT NULL,
+          satisfaction SMALLINT,
+          performed_by VARCHAR(150),
+          attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+          next_followup_date DATE,
+          next_followup_note TEXT,
+          followup_done BOOLEAN NOT NULL DEFAULT FALSE,
+          created_by VARCHAR(150),
+          created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_tech_care_customer ON tech_care_logs (LOWER(customer_name));
+        CREATE INDEX IF NOT EXISTS idx_tech_care_followup ON tech_care_logs (next_followup_date) WHERE followup_done = FALSE;
+      `)
+    );
     await step("procurement_partial_receipts", () =>
       client.query(`
         ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS received_qty JSONB NOT NULL DEFAULT '{}'::jsonb;
