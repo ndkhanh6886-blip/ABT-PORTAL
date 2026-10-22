@@ -2947,7 +2947,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ key: "sales_commercial_products", data: commercialProducts })
-                }).catch(() => {});
+                }).then(async res => {
+                    if (!res.ok) {
+                        const d = await res.json().catch(() => ({}));
+                        showToast(`Danh mục sản phẩm CHƯA được lưu lên máy chủ: ${d.error || `lỗi ${res.status}`}. Tải lại trang sẽ mất thay đổi vừa rồi.`, "error");
+                    }
+                }).catch(() => showToast("Mất kết nối: danh mục sản phẩm chưa được lưu lên máy chủ.", "error"));
             }
         }
     }, [commercialProducts, isCommercialLoaded]);
@@ -7809,9 +7814,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ key: "sales_commercial_products", data: next })
-                }).then(res => {
-                    if (!res.ok) console.error("Failed to save sales_commercial_products to /api/storage:", res.status);
-                }).catch(() => {});
+                }).then(async res => {
+                    if (!res.ok) {
+                        const d = await res.json().catch(() => ({}));
+                        showToast(`Chưa lưu được thay đổi lên máy chủ: ${d.error || `lỗi ${res.status}`}`, "error");
+                    }
+                }).catch(() => showToast("Mất kết nối: thay đổi chưa được lưu lên máy chủ.", "error"));
             }
             return next;
         });
@@ -7938,7 +7946,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     }
                 }
 
-                const imported: CommercialProduct[] = json.map((row, idx) => {
+                const importedAll: CommercialProduct[] = json.map((row, idx) => {
                     const code = String(row["Mã SKU (*)"] || row["Mã Hàng Hóa (SKU)"] || row["Mã SKU"] || row["Mã hàng"] || row["Code"] || `COMM-IMP-${idx + 1}`).trim();
                     const name = String(row["Tên sản phẩm (*)"] || row["Tên Hàng Hóa Thương Mại"] || row["Tên hàng"] || row["Name"] || "Hàng hóa nhập khẩu").trim();
                     const category = (row["Nhóm ngành hàng (*)"] || row["Phân Loại Chính"] || row["Phân loại"] || row["Category"] || "Thiết bị") as any;
@@ -7977,6 +7985,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         notes: row["Ghi Chú"] || row["Ghi chú"] || undefined
                     };
                 });
+                // Mỗi mã SKU một dòng (giữ dòng cuối): mã trùng làm danh mục không lưu được lên máy chủ
+                const byCode = new Map<string, CommercialProduct>();
+                const dupCodes = new Set<string>();
+                for (const p of importedAll) {
+                    const k = String(p.code || "").trim();
+                    if (!k) continue;
+                    if (byCode.has(k)) dupCodes.add(k);
+                    byCode.set(k, { ...p, code: k });
+                }
+                const imported = Array.from(byCode.values());
+                if (dupCodes.size > 0) {
+                    const sample = Array.from(dupCodes).slice(0, 5).join(", ");
+                    showToast(`File có ${dupCodes.size} mã SKU bị trùng (${sample}${dupCodes.size > 5 ? "..." : ""}): mỗi mã chỉ giữ dòng cuối cùng.`, "warning");
+                }
 
                 // Sync directly to backend DB /api/inventory?action=import_excel
                 try {

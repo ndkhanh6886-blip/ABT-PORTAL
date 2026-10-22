@@ -72,6 +72,14 @@ function identitiesOf(arr: any[]): string[] | null {
  */
 export function buildStoragePatch(base: any, next: any): StoragePatch | null {
   if (Array.isArray(next)) {
+    // Hai phần tử cùng mã (vd. nhập Excel có dòng trùng SKU): giữ phần tử sau cùng. Trước đây cả danh sách bị
+    // coi là "không vá được" -> ghi đè toàn bộ, và bị từ chối với người không được ghi đè (mất thay đổi).
+    const lastIndex = new Map<string, number>();
+    next.forEach((item, i) => { const id = itemIdentity(item); if (id !== null) lastIndex.set(id, i); });
+    if (lastIndex.size < next.length) {
+      const deduped = next.filter((item: any, i: number) => { const id = itemIdentity(item); return id === null || lastIndex.get(id) === i; });
+      if (deduped.length < next.length) next = deduped;
+    }
     const nextIds = identitiesOf(next);
     if (!nextIds) return null;
     const baseMap = new Map<string, string>();
@@ -82,7 +90,7 @@ export function buildStoragePatch(base: any, next: any): StoragePatch | null {
       }
     }
     const upserts: any[] = [];
-    next.forEach((item, i) => {
+    next.forEach((item: any, i: number) => {
       const prev = baseMap.get(nextIds[i]);
       if (prev === undefined || prev !== stableStringify(item)) upserts.push(item);
     });
