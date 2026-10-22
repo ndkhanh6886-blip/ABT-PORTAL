@@ -488,7 +488,7 @@ export const CustomerEquipmentService: React.FC = () => {
     department: "Khoa Vi Sinh / Sinh Học Phân Tử",
     deviceId: "",
     category: "PCR_REALTIME" as EquipmentCategory,
-    scheduledDate: new Date().toLocaleDateString("vi-VN"),
+    scheduledDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     assignedEngineer: "Vũ Nhật Tân",
     priority: "CAO" as CustomerDeviceService["priority"],
     serviceReportNotes: "Bảo trì định kỳ theo khuyến cáo nhà sản xuất và tiêu chuẩn ISO 13485.",
@@ -512,7 +512,7 @@ export const CustomerEquipmentService: React.FC = () => {
       department: targetDev?.department || "Khoa Xét Nghiệm",
       deviceId: targetDev?.id || "",
       category: cat,
-      scheduledDate: new Date().toLocaleDateString("vi-VN"),
+      scheduledDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       assignedEngineer: "Vũ Nhật Tân",
       priority: "CAO",
       serviceReportNotes: "Bảo trì định kỳ theo khuyến cáo nhà sản xuất và tiêu chuẩn ISO 13485.",
@@ -530,7 +530,7 @@ export const CustomerEquipmentService: React.FC = () => {
     department: "Khoa Xét Nghiệm",
     deviceId: "",
     category: "PCR_REALTIME" as EquipmentCategory,
-    scheduledDate: new Date().toLocaleDateString("vi-VN"),
+    scheduledDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     assignedEngineer: "Mai Quí Minh",
     priority: "KHAN_CAP" as CustomerDeviceService["priority"],
     issueDescription: "",
@@ -547,7 +547,7 @@ export const CustomerEquipmentService: React.FC = () => {
       department: targetDev?.department || "Khoa Xét Nghiệm",
       deviceId: targetDev?.id || "",
       category: cat,
-      scheduledDate: new Date().toLocaleDateString("vi-VN"),
+      scheduledDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       assignedEngineer: "Mai Quí Minh",
       priority: "KHAN_CAP",
       issueDescription: "",
@@ -565,7 +565,7 @@ export const CustomerEquipmentService: React.FC = () => {
     serialNumber: `SN-TBR-${Date.now().toString().slice(-5)}`,
     hospitalName: "",
     department: "Khoa Xét Nghiệm",
-    installationDate: new Date().toLocaleDateString("vi-VN"),
+    installationDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     warrantyExpiry: "31/12/2028",
     maintenanceIntervalMonths: 6,
     assignedEngineer: "Vũ Nhật Tân"
@@ -775,7 +775,7 @@ export const CustomerEquipmentService: React.FC = () => {
       warrantyExpiry: newDeviceForm.warrantyExpiry,
       maintenanceIntervalMonths: Number(newDeviceForm.maintenanceIntervalMonths),
       lastMaintenanceDate: newDeviceForm.installationDate,
-      nextMaintenanceDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN"),
+      nextMaintenanceDate: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       status: "HOAT_DONG_TOT",
       assignedEngineer: newDeviceForm.assignedEngineer
     };
@@ -792,7 +792,7 @@ export const CustomerEquipmentService: React.FC = () => {
         return {
           ...s,
           status: newStatus,
-          completedDate: newStatus === "HOAN_THANH" ? new Date().toLocaleDateString("vi-VN") : s.completedDate
+          completedDate: newStatus === "HOAN_THANH" ? new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : s.completedDate
         };
       }
       return s;

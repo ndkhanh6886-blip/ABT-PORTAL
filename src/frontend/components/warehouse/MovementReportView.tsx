@@ -5,6 +5,7 @@ import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager"
 import * as XLSX from "xlsx";
 import { FileSpreadsheet, RefreshCw, Search } from "lucide-react";
 import { todayVN } from "@/backend/services/dates";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 
 const fmtVN = (iso: string) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
 
@@ -86,11 +87,11 @@ export function MovementReportView() {
         <div className="flex flex-wrap items-end gap-2">
           <div>
             <label className="block text-[10px] font-bold uppercase text-slate-400 mb-0.5">Từ ngày</label>
-            <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono" />
+            <DateInputVN value={from} onChange={(e) => setFrom(e.target.value)} className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono" />
           </div>
           <div>
             <label className="block text-[10px] font-bold uppercase text-slate-400 mb-0.5">Đến ngày</label>
-            <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono" />
+            <DateInputVN value={to} onChange={(e) => setTo(e.target.value)} className="px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-mono" />
           </div>
           <button type="button" onClick={load} className="px-3 py-2 rounded-xl font-bold bg-orange-600 hover:bg-orange-700 text-white flex items-center gap-1.5 cursor-pointer">
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Xem báo cáo

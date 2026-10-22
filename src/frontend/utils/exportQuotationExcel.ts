@@ -282,7 +282,7 @@ export async function exportCustomerQuotationToExcel({
 
     sheet.mergeCells("G2:I2");
     const cellG2 = sheet.getCell("G2");
-    cellG2.value = `Ngày lập: ${quote.date || new Date().toLocaleDateString("vi-VN")}`;
+    cellG2.value = `Ngày lập: ${quote.date || new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`;
     cellG2.font = { name: "Segoe UI", size: 9.5, color: { argb: "FF334155" } };
     cellG2.alignment = { vertical: "middle", horizontal: "right" };
 

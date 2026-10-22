@@ -5,6 +5,7 @@ import { HeartHandshake, Plus, CalendarClock, Search, Pencil, Trash2, Star, Pape
 import { Modal } from "@/frontend/components/Modal";
 import { AttachmentPicker, AttachmentList, type Attachment } from "@/frontend/components/AttachmentPicker";
 import { todayVN } from "@/backend/services/dates";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 
 export const TECH_CARE_TYPES = [
     "Gọi hỏi thăm định kỳ",
@@ -214,7 +215,7 @@ export function TechCareLog({ currentUserName, showToast }: { currentUserName: s
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1">
                                 <label className={label}>Ngày thực hiện</label>
-                                <input type="date" value={form.activity_date} onChange={e => setForm({ ...form, activity_date: e.target.value })} className={input} />
+                                <DateInputVN value={form.activity_date} onChange={e => setForm({ ...form, activity_date: e.target.value })} className={input} />
                             </div>
                             <div className="space-y-1">
                                 <label className={label}>Người thực hiện</label>
@@ -244,7 +245,7 @@ export function TechCareLog({ currentUserName, showToast }: { currentUserName: s
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
                         <div className="space-y-1">
                             <label className={label}>Hẹn chăm sóc tiếp</label>
-                            <input type="date" value={form.next_followup_date} onChange={e => setForm({ ...form, next_followup_date: e.target.value })} className={input} />
+                            <DateInputVN value={form.next_followup_date} onChange={e => setForm({ ...form, next_followup_date: e.target.value })} className={input} />
                         </div>
                         <div className="space-y-1 md:col-span-2">
                             <label className={label}>Nội dung hẹn</label>

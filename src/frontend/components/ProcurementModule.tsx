@@ -54,6 +54,7 @@ import { usePaymentMethods } from "@/frontend/utils/paymentMethods";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
@@ -2758,10 +2759,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <label className="flex items-center gap-1 text-slate-500">Ngày đặt từ
-              <input type="date" value={orderFrom} onChange={(e) => setOrderFrom(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
+              <DateInputVN value={orderFrom} onChange={(e) => setOrderFrom(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
             </label>
             <label className="flex items-center gap-1 text-slate-500">đến
-              <input type="date" value={orderTo} onChange={(e) => setOrderTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
+              <DateInputVN value={orderTo} onChange={(e) => setOrderTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white" />
             </label>
             <input value={orderInvoiceSearch} onChange={(e) => setOrderInvoiceSearch(e.target.value)} placeholder="Số hóa đơn..."
               className="w-36 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono" />
@@ -2872,8 +2873,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             
                             {editingDeliveryDateId === po.id ? (
                               <div className="flex items-center gap-1 mt-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-orange-400 shadow-sm">
-                                <input
-                                  type="date"
+                                <DateInputVN
                                   value={tempDeliveryDate}
                                   onChange={(e) => setTempDeliveryDate(e.target.value)}
                                   className="text-[11px] font-bold py-0.5 px-1 border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-hidden"
@@ -3926,10 +3926,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               {payableSuppliers.map(sn => <option key={sn} value={sn}>{sn}</option>)}
             </select>
             <label className="flex items-center gap-1 text-slate-500">Từ
-              <input type="date" value={payableFrom} onChange={(e) => setPayableFrom(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+              <DateInputVN value={payableFrom} onChange={(e) => setPayableFrom(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
             </label>
             <label className="flex items-center gap-1 text-slate-500">Đến
-              <input type="date" value={payableTo} onChange={(e) => setPayableTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
+              <DateInputVN value={payableTo} onChange={(e) => setPayableTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white" />
             </label>
             <input
               value={payableSearch}
@@ -4097,8 +4097,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     placeholder="Số hóa đơn"
                     className="flex-1 p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
                   />
-                  <input
-                    type="date"
+                  <DateInputVN
                     value={r.invoice_date}
                     onChange={(e) => setInvoiceEditRows(prev => prev.map((x, k) => k === i ? { ...x, invoice_date: e.target.value } : x))}
                     className="p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -4306,8 +4305,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
                 <div>
                   <label className="block font-bold text-slate-500 dark:text-slate-400 mb-0.5 text-[10px] uppercase">Ngày lập</label>
-                  <input
-                    type="date"
+                  <DateInputVN
                     value={poForm.order_date}
                     onChange={(e) => setPOForm({ ...poForm, order_date: e.target.value })}
                     className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
@@ -4315,8 +4313,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
                 <div>
                   <label className="block font-bold text-slate-500 dark:text-slate-400 mb-0.5 text-[10px] uppercase">Hạn giao dự kiến</label>
-                  <input
-                    type="date"
+                  <DateInputVN
                     value={poForm.expected_delivery_date}
                     onChange={(e) => setPOForm({ ...poForm, expected_delivery_date: e.target.value })}
                     className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
@@ -4744,8 +4741,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2.5">
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Ngày Nhập Kho *</label>
-                    <input
-                      type="date"
+                    <DateInputVN
                       value={receiveHeader.receipt_date}
                       onChange={(e) => setReceiveHeader(prev => ({ ...prev, receipt_date: e.target.value }))}
                       className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
@@ -4789,8 +4785,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </div>
                   <div>
                     <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-300 mb-1">Ngày Hóa Đơn</label>
-                    <input
-                      type="date"
+                    <DateInputVN
                       value={receiveHeader.vat_invoice_date || ""}
                       onChange={(e) => setReceiveHeader(prev => ({ ...prev, vat_invoice_date: e.target.value }))}
                       className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
@@ -4866,11 +4861,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-orange-600 dark:text-orange-400 font-mono font-bold" />
                           </td>
                           <td className="p-2">
-                            <input type="date" value={l.manufacture_date || ""} onChange={(e) => setL({ manufacture_date: e.target.value })}
+                            <DateInputVN value={l.manufacture_date || ""} onChange={(e) => setL({ manufacture_date: e.target.value })}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px]" />
                           </td>
                           <td className="p-2">
-                            <input type="date" value={l.expiry_date} disabled={l.no_expiry} onChange={(e) => setL({ expiry_date: e.target.value })}
+                            <DateInputVN value={l.expiry_date} disabled={l.no_expiry} onChange={(e) => setL({ expiry_date: e.target.value })}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px] disabled:opacity-50" />
                           </td>
                           <td className="p-2 text-center pt-3">
@@ -5408,7 +5403,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               </button>
                               {p.last_updated_at && (
                                 <div className="text-[9px] text-slate-400 mt-1 font-mono">
-                                  {new Date(p.last_updated_at).toLocaleDateString("vi-VN")}
+                                  {new Date(p.last_updated_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
                                 </div>
                               )}
                             </td>
@@ -5688,8 +5683,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
                   Ngày Bắt Đầu Áp Dụng
                 </label>
-                <input
-                  type="date"
+                <DateInputVN
                   value={priceAdjustmentDate}
                   onChange={(e) => setPriceAdjustmentDate(e.target.value)}
                   className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
@@ -5857,7 +5851,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           <div className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-1.5 text-xs">
                             <div className="flex items-center justify-between flex-wrap gap-1">
                               <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">
-                                📅 {item.date ? new Date(item.date).toLocaleDateString("vi-VN", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "N/A"}
+                                📅 {item.date ? new Date(item.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "N/A"}
                               </span>
                               <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium">
                                 {item.source === "PO_AUTO" ? "⚡ Tự động từ PO" : item.source === "EXCEL_IMPORT" ? "📥 Nạp Excel" : "✏️ Thủ công"}
@@ -6021,8 +6015,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngày Chi Tiền</label>
-                  <input
-                    type="date"
+                  <DateInputVN
                     value={paymentForm.payment_date}
                     onChange={(e) => setPaymentForm({ ...paymentForm, payment_date: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
@@ -6126,8 +6119,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Hạn Cần Hàng</label>
-                  <input
-                    type="date"
+                  <DateInputVN
                     value={prForm.due_date}
                     onChange={(e) => setPRForm({ ...prForm, due_date: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
@@ -6748,8 +6740,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1.5 uppercase font-mono text-[10px]">
                       Hạn giao hàng mong muốn cho PO tổng *
                     </label>
-                    <input
-                      type="date"
+                    <DateInputVN
                       value={consolidateExpectedDelivery}
                       onChange={(e) => setConsolidateExpectedDelivery(e.target.value)}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 font-mono font-bold outline-none"

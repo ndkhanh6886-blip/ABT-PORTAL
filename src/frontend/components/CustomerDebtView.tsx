@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Download, RefreshCw, Search } from "lucide-react";
 import * as XLSX from "xlsx";
+import { todayVN } from "@/backend/services/dates";
 
 /**
  * Công nợ phải thu theo khách hàng (Kế toán / Quản trị).
@@ -134,7 +135,7 @@ export function CustomerDebtView({
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), "Tong hop");
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), "Chi tiet SO");
-    XLSX.writeFile(wb, `cong-no-khach-hang-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `cong-no-khach-hang-${todayVN()}.xlsx`);
   };
 
   return (

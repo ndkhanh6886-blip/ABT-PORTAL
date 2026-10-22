@@ -782,7 +782,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                         </div>
                         <div className="font-bold text-sm text-white mt-1.5">{ord.customer_name}</div>
                         <div className="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
-                          <span>Ngày đặt: {new Date(ord.order_date).toLocaleDateString("vi-VN")}</span>
+                          <span>Ngày đặt: {new Date(ord.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</span>
                           <span className="font-mono font-bold text-emerald-400">
                             {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(ord.total_amount || 0)}
                           </span>
@@ -1027,7 +1027,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                         <option value="">-- Chọn đơn hàng của Quý Viện (hoặc góp ý chung) --</option>
                         {orders.map((o) => (
                           <option key={o.id} value={o.order_code}>
-                            {o.order_code} ({new Date(o.order_date).toLocaleDateString("vi-VN")}) - {o.delivery_status === "DELIVERED" ? "Đã Giao" : "Đang Vận Chuyển"}
+                            {o.order_code} ({new Date(o.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}) - {o.delivery_status === "DELIVERED" ? "Đã Giao" : "Đang Vận Chuyển"}
                           </option>
                         ))}
                       </select>
@@ -1294,7 +1294,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                         <option value="">-- Chọn đơn hàng liên quan (nếu có) --</option>
                         {orders.map((o) => (
                           <option key={o.id} value={o.order_code}>
-                            {o.order_code} ({new Date(o.order_date).toLocaleDateString("vi-VN")})
+                            {o.order_code} ({new Date(o.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })})
                           </option>
                         ))}
                       </select>

@@ -166,6 +166,7 @@ export interface ReagentRentalAgreement {
 // ============================================================
 
 import { parseMoney, formatThousands, MoneyInput } from "@/frontend/components/MoneyInput";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 export { parseMoney, formatThousands, MoneyInput };
 
 // ============================================================
@@ -238,7 +239,7 @@ const createDefaultBidForm = (defaultRep: string = "Lê Hữu Nhân") => ({
   biddingMethod: "RONG_RAI_QUA_MANG" as HospitalTender["biddingMethod"],
   packageBudget: 2000000000,
   ourBidPrice: 1900000000,
-  submissionDeadline: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN") + " 09:00",
+  submissionDeadline: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) + " 09:00",
   bidSecurityAmount: 50000000,
   leadSalesRep: defaultRep,
   notes: ""
@@ -256,8 +257,8 @@ const createDefaultRentalForm = (defaultRep: string = "Lê Hữu Nhân") => ({
   model: "TBR-PCR-9600",
   serialNumber: `SN-TBR-2026-${Date.now().toString().slice(-3)}`,
   associatedReagents: "Kit Real-time PCR HPV High Risk & HBV Định Lượng",
-  startDate: new Date().toLocaleDateString("vi-VN"),
-  endDate: new Date(Date.now() + 730 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN"),
+  startDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+  endDate: new Date(Date.now() + 730 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
   monthlyCommitmentTests: 500,
   currentMonthActualTests: 520,
   pricePerTest: 120000,
@@ -647,7 +648,7 @@ export const HospitalBiddingManagement: React.FC = () => {
         ? {
             ...t,
             status: newStatus,
-            contractAwardDate: newStatus === "TRUNG_THAU" ? new Date().toLocaleDateString("vi-VN") : t.contractAwardDate
+            contractAwardDate: newStatus === "TRUNG_THAU" ? new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : t.contractAwardDate
           }
         : t
     );
@@ -686,7 +687,7 @@ export const HospitalBiddingManagement: React.FC = () => {
             winningCompetitor: closeTenderForm.winningCompetitor || undefined,
             winningBidPrice: Number(closeTenderForm.winningBidPrice) || undefined,
             bankGuaranteeReturned: closeTenderForm.bankGuaranteeReturned,
-            closedDate: new Date().toLocaleDateString("vi-VN"),
+            closedDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             closedNotes: closeTenderForm.closedNotes || undefined
           }
         : t
@@ -707,7 +708,7 @@ export const HospitalBiddingManagement: React.FC = () => {
       lostLotsInfo: tender.lostReason || "",
       decisionNumber: tender.decisionNumber || "",
       decisionDate: tender.decisionDate || todayVN(),
-      contractAwardDate: tender.contractAwardDate || new Date().toLocaleDateString("vi-VN"),
+      contractAwardDate: tender.contractAwardDate || new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       totalDeliveryCalls: tender.totalDeliveryCalls || 1,
       winNotes: tender.winNotes || tender.closedNotes || ""
     });
@@ -731,7 +732,7 @@ export const HospitalBiddingManagement: React.FC = () => {
             lostReason: isPartial ? (winTenderForm.lostLotsInfo || undefined) : undefined,
             decisionNumber: winTenderForm.decisionNumber || undefined,
             decisionDate: winTenderForm.decisionDate || undefined,
-            contractAwardDate: winTenderForm.contractAwardDate || new Date().toLocaleDateString("vi-VN"),
+            contractAwardDate: winTenderForm.contractAwardDate || new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             totalDeliveryCalls: Number(winTenderForm.totalDeliveryCalls) || 1,
             winNotes: winTenderForm.winNotes || undefined,
             closedNotes: winTenderForm.winNotes || undefined
@@ -2046,8 +2047,7 @@ export const HospitalBiddingManagement: React.FC = () => {
                 <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
                   Ngày Ban Hành Quyết Định / Ký HĐ Khung
                 </label>
-                <input
-                  type="date"
+                <DateInputVN
                   value={winTenderForm.decisionDate}
                   onChange={e => setWinTenderForm({ ...winTenderForm, decisionDate: e.target.value, contractAwardDate: e.target.value })}
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold text-slate-900 dark:text-white"

@@ -50,6 +50,7 @@ import {
 } from "@/backend/services/rfidUtils";
 import { useHardwareScanner } from "@/frontend/hooks/useHardwareScanner";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 
 // Dữ liệu hàng tồn kho sổ sách chuẩn theo Kệ phục vụ Kiểm Kê Mã Vạch
 interface ShelfAuditItem {
@@ -193,7 +194,7 @@ export const RfidControlHub: React.FC = () => {
       const newItem = {
         code,
         name: parsed.sku ? `Mặt hàng SKU: ${parsed.sku}` : `Mã lạ: ${code}`,
-        time: new Date().toLocaleTimeString("vi-VN"),
+        time: new Date().toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
         reason: "Không thuộc danh mục phân bổ của kệ này (Nghi ngờ để nhầm vị trí)"
       };
       setMisplacedItems((prev) => [newItem, ...prev.slice(0, 15)]);
@@ -433,7 +434,7 @@ export const RfidControlHub: React.FC = () => {
         });
       });
 
-      const timestamp = new Date().toLocaleString("vi-VN");
+      const timestamp = new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
       const tagCountMap = new Map<string, number>();
       rfidTagsList.forEach((tag) => {
         const key = `${(tag.sku || "").toUpperCase()}__${(tag.lot || "").toUpperCase()}`;
@@ -1588,8 +1589,7 @@ export const RfidControlHub: React.FC = () => {
                   </div>
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Hạn dùng (EXP)</label>
-                    <input
-                      type="date"
+                    <DateInputVN
                       value={encodeForm.exp}
                       onChange={(e) => setEncodeForm({ ...encodeForm, exp: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-bold"

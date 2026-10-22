@@ -178,7 +178,7 @@ export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNaviga
     productLine: "Real-time PCR & Kit Xét Nghiệm",
     estimatedValue: 500000000,
     stage: "LEAD" as DealStage,
-    expectedCloseDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN"),
+    expectedCloseDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     assignedRep: "Lê Hữu Nhân",
     priority: "CAO" as SalesDeal["priority"],
     notes: ""
@@ -270,7 +270,7 @@ export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNaviga
               ...d,
               stage: nextStage,
               winProbability: STAGE_CONFIG[nextStage].winProbability,
-              updatedAt: new Date().toLocaleDateString("vi-VN")
+              updatedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
             }
           : d
       );
@@ -290,7 +290,7 @@ export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNaviga
               ...d,
               stage: prevStage,
               winProbability: STAGE_CONFIG[prevStage].winProbability,
-              updatedAt: new Date().toLocaleDateString("vi-VN")
+              updatedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
             }
           : d
       );
@@ -309,7 +309,7 @@ export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNaviga
             stage: "CLOSED_LOST" as DealStage,
             winProbability: 0,
             lostReason: lostReasonText,
-            updatedAt: new Date().toLocaleDateString("vi-VN")
+            updatedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
           }
         : d
     );
@@ -345,7 +345,7 @@ export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNaviga
       assignedRep: newDealForm.assignedRep,
       priority: newDealForm.priority,
       notes: newDealForm.notes,
-      createdAt: new Date().toLocaleDateString("vi-VN")
+      createdAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
     };
 
     const updated = [newDeal, ...deals];

@@ -420,7 +420,7 @@ export const ZaloOperationsHub: React.FC = () => {
     const userMsg = {
       sender: "user" as const,
       text: textToSend,
-      time: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
+      time: new Date().toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" })
     };
 
     setChatMessages((prev) => [...prev, userMsg]);
@@ -447,7 +447,7 @@ export const ZaloOperationsHub: React.FC = () => {
           sender: "bot" as const,
           text: data.reply.text,
           buttons: data.reply.buttons,
-          time: new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })
+          time: new Date().toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" })
         };
         setChatMessages((prev) => [...prev, botMsg]);
         fetchData(); // refresh approvals & logs
@@ -1051,7 +1051,7 @@ export const ZaloOperationsHub: React.FC = () => {
                         Chiết khấu lớn: {q.discount_rate}%
                       </span>
                       <span className="text-[10px] text-slate-400">
-                        Ngày tạo: {new Date(q.date).toLocaleDateString("vi-VN")}
+                        Ngày tạo: {new Date(q.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
                       </span>
                     </div>
 
@@ -1743,7 +1743,7 @@ export const ZaloOperationsHub: React.FC = () => {
                 {logs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                     <td className="py-2.5 px-3 font-mono text-[10px] text-slate-400">
-                      {new Date(log.created_at).toLocaleTimeString("vi-VN")} {new Date(log.created_at).toLocaleDateString("vi-VN")}
+                      {new Date(log.created_at).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} {new Date(log.created_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
                     </td>
                     <td className="py-2.5 px-3">
                       <span
@@ -1912,7 +1912,7 @@ export const ZaloOperationsHub: React.FC = () => {
                     </span>
                   </h3>
                   <p className="text-[11px] text-slate-400">
-                    {new Date(selectedLog.created_at).toLocaleString("vi-VN")} • {selectedLog.sender_name || "Người dùng"} ({selectedLog.zalo_user_id})
+                    {new Date(selectedLog.created_at).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} • {selectedLog.sender_name || "Người dùng"} ({selectedLog.zalo_user_id})
                   </p>
                 </div>
               </div>

@@ -80,6 +80,7 @@ import { LineItemLookup } from "@/frontend/components/LineItemLookup";
 import { CustomerActivityTimeline } from "@/frontend/components/CustomerActivityTimeline";
 import { useFormDraft, DraftBanner } from "@/frontend/utils/useFormDraft";
 import { useDebouncedValue } from "@/frontend/components/Pager";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 // Ô chọn sản phẩm: chỉ vẽ 60 kết quả đầu (danh mục hàng nghìn mã vẽ hết sẽ làm khung chọn đứng hình).
 const PICKER_LIMIT = 60;
 function pickerRows<T>(list: T[], render: (p: T, i: number) => React.ReactNode): React.ReactNode[] {
@@ -1362,7 +1363,7 @@ export function SalesFullABT() {
                 discountRate: Number(q.discountRate !== undefined ? q.discountRate : (q.discount_rate || 0)),
                 taxRate: calcTaxRate,
                 status: q.status || "Draft",
-                date: q.date || (q.created_at ? new Date(q.created_at).toLocaleDateString("vi-VN") : new Date().toLocaleDateString("vi-VN")),
+                date: q.date || (q.created_at ? new Date(q.created_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })),
                 items: normItems
             };
         });
@@ -1418,9 +1419,9 @@ export function SalesFullABT() {
                 salesRepId: repId,
                 totalAmount: Number(c.totalAmount || c.total_value || 0),
                 items: Array.isArray(items) ? items : (c.items || []),
-                date: c.date || (c.sign_date ? new Date(c.sign_date).toLocaleDateString("vi-VN") : new Date().toLocaleDateString("vi-VN")),
-                signDate: c.signDate || (c.sign_date ? new Date(c.sign_date).toLocaleDateString("vi-VN") : ""),
-                validUntil: c.validUntil || (c.valid_until ? new Date(c.valid_until).toLocaleDateString("vi-VN") : "")
+                date: c.date || (c.sign_date ? new Date(c.sign_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })),
+                signDate: c.signDate || (c.sign_date ? new Date(c.sign_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : ""),
+                validUntil: c.validUntil || (c.valid_until ? new Date(c.valid_until).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "")
             };
         });
     };
@@ -1600,7 +1601,7 @@ export function SalesFullABT() {
                 salesRepName: repName || "Nhân viên kinh doanh",
                 salesRepId: repId || "NV-001",
                 totalAmount: Number(o.totalAmount !== undefined ? o.totalAmount : (o.total_amount || 0)),
-                date: o.date || (o.order_date ? (typeof o.order_date === 'string' && o.order_date.includes('T') ? new Date(o.order_date).toLocaleDateString("vi-VN") : o.order_date) : (o.created_at ? new Date(o.created_at).toLocaleDateString("vi-VN") : new Date().toLocaleDateString("vi-VN"))),
+                date: o.date || (o.order_date ? (typeof o.order_date === 'string' && o.order_date.includes('T') ? new Date(o.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : o.order_date) : (o.created_at ? new Date(o.created_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }))),
                 items: items,
                 quoteId: quoteId,
                 prCode: prCode,
@@ -1952,7 +1953,7 @@ export function SalesFullABT() {
                             totalDiscount: 0,
                             totalVat: 0,
                             status: "Approved",
-                            date: fo.date || new Date().toLocaleDateString("vi-VN"),
+                            date: fo.date || new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
                             items: fo.items || [],
                             priceApprovalStatus: "APPROVED"
                         });
@@ -7377,7 +7378,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Danh Mục Sản Phẩm");
 
-        const fileName = `Danh_muc_san_pham_kinh_doanh_${new Date().toLocaleDateString("vi-VN").replace(/\//g, "-")}.xlsx`;
+        const fileName = `Danh_muc_san_pham_kinh_doanh_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast("Đã xuất file Excel danh mục sản phẩm thành công!", "success");
     };
@@ -7403,7 +7404,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return {
                 "STT": idx + 1,
                 "Mã Báo Giá": q.id,
-                "Ngày Lập": q.date ? new Date(q.date).toLocaleDateString("vi-VN") : "",
+                "Ngày Lập": q.date ? new Date(q.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
                 "Tên Khách Hàng / Đơn Vị": q.customerName || "—",
                 "Mã Khách Hàng": q.customer_code || q.customerId || "—",
                 "Người Liên Hệ": q.contactPerson || "—",
@@ -7448,7 +7449,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Danh Mục Báo Giá");
-        const fileName = `Danh_muc_bao_gia_${new Date().toLocaleDateString("vi-VN").replace(/\//g, "-")}.xlsx`;
+        const fileName = `Danh_muc_bao_gia_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast(`Đã xuất ${source.length} báo giá ra file Excel thành công!`, "success");
         setIsQuoteExportMenuOpen(false);
@@ -7487,7 +7488,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 rows.push({
                     "STT": stt++,
                     "Mã Báo Giá": q.id,
-                    "Ngày Báo Giá": q.date ? new Date(q.date).toLocaleDateString("vi-VN") : "",
+                    "Ngày Báo Giá": q.date ? new Date(q.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
                     "Khách Hàng": q.customerName || "—",
                     "NVKD Phụ Trách": q.salesRepName || "—",
                     "Mã Sản Phẩm": displayCode,
@@ -7540,7 +7541,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Hàng Hóa Báo Giá");
-        const fileName = `Hang_hoa_bao_gia_${new Date().toLocaleDateString("vi-VN").replace(/\//g, "-")}.xlsx`;
+        const fileName = `Hang_hoa_bao_gia_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast(`Đã xuất ${rows.length} dòng hàng hóa từ ${source.length} báo giá ra Excel!`, "success");
         setIsQuoteExportMenuOpen(false);
@@ -7561,7 +7562,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             "STT": idx + 1,
             "Mã Hợp Đồng": c.id,
             "Tiêu Đề Hợp Đồng": c.contractTitle || "Hợp đồng kinh tế",
-            "Ngày Ký": (c.contractDate || c.date) ? new Date(c.contractDate || c.date).toLocaleDateString("vi-VN") : "",
+            "Ngày Ký": (c.contractDate || c.date) ? new Date(c.contractDate || c.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
             "Khách Hàng (Bên B)": c.customerName || c.partyBName || "—",
             "Mã Khách Hàng": c.customer_code || c.customerId || "—",
             "Đại Diện Bên B": c.partyBRepresentative || "—",
@@ -7602,7 +7603,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Danh Mục Hợp Đồng");
-        const fileName = `Danh_muc_hop_dong_${new Date().toLocaleDateString("vi-VN").replace(/\//g, "-")}.xlsx`;
+        const fileName = `Danh_muc_hop_dong_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast(`Đã xuất ${source.length} hợp đồng ra file Excel thành công!`, "success");
         setIsContractExportMenuOpen(false);
@@ -7631,7 +7632,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     "STT": stt++,
                     "Mã Hợp Đồng": c.id,
                     "Tiêu Đề HĐ": c.contractTitle || "Hợp đồng kinh tế",
-                    "Ngày Ký": (c.contractDate || c.date) ? new Date(c.contractDate || c.date).toLocaleDateString("vi-VN") : "",
+                    "Ngày Ký": (c.contractDate || c.date) ? new Date(c.contractDate || c.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
                     "Khách Hàng (Bên B)": c.customerName || c.partyBName || "—",
                     "NVKD Phụ Trách": c.salesRepName || "—",
                     "Mã Sản Phẩm": it.productCode || "—",
@@ -7671,7 +7672,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Hàng Hóa Hợp Đồng");
-        const fileName = `Hang_hoa_hop_dong_${new Date().toLocaleDateString("vi-VN").replace(/\//g, "-")}.xlsx`;
+        const fileName = `Hang_hoa_hop_dong_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast(`Đã xuất ${rows.length} dòng hàng hóa từ ${source.length} hợp đồng ra Excel!`, "success");
         setIsContractExportMenuOpen(false);
@@ -7923,7 +7924,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Hàng Hóa Thương Mại");
 
-        const fileName = `Danh_muc_hang_hoa_thuong_mai_${new Date().toLocaleDateString("vi-VN").replace(/\//g, "-")}.xlsx`;
+        const fileName = `Danh_muc_hang_hoa_thuong_mai_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast("Đã xuất file Excel danh mục hàng hóa thương mại thành công!", "success");
     };
@@ -8827,7 +8828,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 return rowHtml;
             }).join("");
 
-            const contractDateStr = contract.date || new Date().toLocaleDateString("vi-VN");
+            const contractDateStr = contract.date || new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
             let day = new Date().getDate();
             let month = new Date().getMonth() + 1;
             let year = new Date().getFullYear();
@@ -9531,7 +9532,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             id: generatedContractId,
             quotationId: contractQuoteId || undefined,
             quoteId: contractQuoteId || undefined,
-            date: new Date().toLocaleDateString("vi-VN"),
+            date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             
             // Rich Party details
             partyAName: contractPartyAName,
@@ -10014,10 +10015,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             id: generatedCode,
             order_code: generatedCode,
             linkedSalesOrderId: generatedCode,
-            date: new Date().toLocaleDateString("vi-VN"),
+            date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             customerName: realCustomerName,
             customerCode: realCustomerCode,
-            requestedDeliveryDate: factoryOrderDeliveryDate || new Date(Date.now() + 7*24*60*60*1000).toLocaleDateString("vi-VN"),
+            requestedDeliveryDate: factoryOrderDeliveryDate || new Date(Date.now() + 7*24*60*60*1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             estimatedDeliveryDate: undefined,
             items: items,
             totalAmount: totalAmount,
@@ -11810,7 +11811,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 customerContact: deliveryReceiverName.trim() || deliveryTargetOrder.customerContact || custRec?.contact_person || custRec?.contact_name || "",
                 receiverName: deliveryReceiverName.trim() || deliveryTargetOrder.customerContact || custRec?.contact_person || custRec?.contact_name || "",
                 receiverPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.customerPhone || custRec?.phone || "",
-                deliveryDate: deliveryDate ? new Date(deliveryDate).toLocaleDateString("vi-VN") : now.toLocaleDateString("vi-VN"),
+                deliveryDate: deliveryDate ? new Date(deliveryDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : now.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
                 timeliness: deliveryTimeliness,
                 notes: deliveryNotes,
                 items: slipItems,
@@ -12622,14 +12623,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const rows = allDeliveredOrders.map((ord, idx) => ({
                 "STT": idx + 1,
                 "Mã Đơn Hàng": ord.order_code,
-                "Ngày Giao Hàng": ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN") : "—",
+                "Ngày Giao Hàng": ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—",
                 "Khách Hàng": ord.customer_name,
                 "Mã Số Thuế": ord.customer_tax_code || "—",
                 "Nhân Viên Kinh Doanh": ord.sales_rep_name || "—",
                 "Tổng Tiền (VNĐ)": ord.total_amount || 0,
                 "Trạng Thái HĐ": ord.invoiceStatus === "ISSUED" ? "Đã xuất HĐ" : ord.invoiceStatus === "NO_INVOICE" ? "Không xuất HĐ" : "Chờ xuất HĐ",
                 "Số Hóa Đơn": ord.invoiceNo || "Chưa có",
-                "Ngày Xuất HĐ": ord.invoiceDate ? new Date(ord.invoiceDate).toLocaleDateString("vi-VN") : "—",
+                "Ngày Xuất HĐ": ord.invoiceDate ? new Date(ord.invoiceDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—",
                 "Số File Đính Kèm": ord.invoiceFiles ? ord.invoiceFiles.length : 0,
                 "Ghi Chú": ord.deliveryNotes || ""
             }));
@@ -12669,7 +12670,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             customerContact: deliveryReceiverName.trim() || deliveryTargetOrder.customerContact || selectedCustomer?.contact_person || "",
             receiverName: deliveryReceiverName.trim() || deliveryTargetOrder.customerContact || selectedCustomer?.contact_person || "",
             receiverPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.customerPhone || selectedCustomer?.phone || "",
-            deliveryDate: deliveryDate ? new Date(deliveryDate).toLocaleDateString("vi-VN") : now.toLocaleDateString("vi-VN"),
+            deliveryDate: deliveryDate ? new Date(deliveryDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : now.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             timeliness: deliveryTimeliness,
             notes: deliveryNotes,
             items: previewItems,
@@ -13022,7 +13023,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             title: planTitle.trim(),
             salesRepId: repId,
             salesRepName: repName,
-            dateCreated: new Date().toLocaleDateString("vi-VN"),
+            dateCreated: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             status: "Pending",
             customersList: cleanedCusts,
             
@@ -13120,9 +13121,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
         const newReport = {
             id: `REP-${Date.now()}`,
-            stageName: stageReportName.trim() || `Báo cáo Giai đoạn ${new Date().toLocaleDateString("vi-VN")}`,
+            stageName: stageReportName.trim() || `Báo cáo Giai đoạn ${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`,
             content: stageReportText.trim(),
-            date: new Date().toLocaleDateString("vi-VN")
+            date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
         };
 
         setSpecializedPlans(prev => prev.map(p => {
@@ -13173,7 +13174,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             stepIndex: selectedPlanForProgress.currentStepIndex,
             fileName: attachmentName.trim(),
             fileSize: "1.2 MB",
-            uploadDate: new Date().toLocaleDateString("vi-VN")
+            uploadDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
         };
 
         setSpecializedPlans(prev => prev.map(p => {
@@ -13224,7 +13225,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const invoiceData = {
             name: file.name,
             size: (file.size / 1024).toFixed(1) + " KB",
-            uploadedAt: new Date().toLocaleDateString("vi-VN")
+            uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
         };
         
         setContracts(prev => prev.map(c => c.id === contractId ? { ...c, invoiceFile: invoiceData } : c));
@@ -13243,7 +13244,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const invoiceData = {
             name: file.name,
             size: (file.size / 1024).toFixed(1) + " KB",
-            uploadedAt: new Date().toLocaleDateString("vi-VN")
+            uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
         };
         
         setRetailLogs13b(prev => prev.map(l => l.id === logId ? { ...l, invoiceFile: invoiceData } : l));
@@ -14190,7 +14191,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         </div>
                                                                         <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
                                                                             <span>Số việc tuần: <strong>{repPlansCount}</strong></span>
-                                                                            {app.submittedAt && <span className="text-[9px] text-slate-500">{new Date(app.submittedAt).toLocaleTimeString("vi-VN", { hour: '2-digit', minute: '2-digit' })}</span>}
+                                                                            {app.submittedAt && <span className="text-[9px] text-slate-500">{new Date(app.submittedAt).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: '2-digit', minute: '2-digit' })}</span>}
                                                                         </div>
                                                                     </div>
                                                                     <div className="flex gap-1 pt-1 border-t border-slate-800">
@@ -14249,7 +14250,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     </div>
                                                                     <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
                                                                         <span>Số việc: <strong>{repPlansCount}</strong></span>
-                                                                        {app.reviewedAt && <span className="text-[9px] text-slate-500">{new Date(app.reviewedAt).toLocaleDateString("vi-VN")}</span>}
+                                                                        {app.reviewedAt && <span className="text-[9px] text-slate-500">{new Date(app.reviewedAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</span>}
                                                                     </div>
                                                                 </div>
 
@@ -14337,13 +14338,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div className="text-xs text-slate-300 space-y-0.5 pt-0.5">
                                                 {approval.status === "PENDING" && approval.submittedAt && (
                                                     <p className="text-[11px] text-amber-300/90">
-                                                        Đã gửi duyệt lúc {new Date(approval.submittedAt).toLocaleString("vi-VN")} tới <strong>{approverTitle}</strong>.
+                                                        Đã gửi duyệt lúc {new Date(approval.submittedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} tới <strong>{approverTitle}</strong>.
                                                     </p>
                                                 )}
                                                 {approval.status === "APPROVED" && (
                                                     <p className="text-[11px] text-emerald-300/90">
                                                         Phê duyệt bởi: <strong>{approval.reviewerName || approverTitle}</strong>
-                                                        {approval.reviewedAt && ` lúc ${new Date(approval.reviewedAt).toLocaleString("vi-VN")}`}
+                                                        {approval.reviewedAt && ` lúc ${new Date(approval.reviewedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`}
                                                         {approval.reviewerFeedback && ` • Ghi chú: "${approval.reviewerFeedback}"`}
                                                     </p>
                                                 )}
@@ -15014,7 +15015,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 {/* Left: Date badge + Staff Name + 1-line preview */}
                                                 <div className="flex items-center gap-2.5 min-w-0 flex-1">
                                                     <span className="text-[10px] font-mono font-bold text-indigo-300 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0">
-                                                        {new Date(log.log_date).toLocaleDateString("vi-VN")}
+                                                        {new Date(log.log_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
                                                     </span>
 
                                                     <span className="text-xs font-bold text-white shrink-0">
@@ -15089,7 +15090,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                     <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
                                                         <span>Nhân sự: <strong>{staff ? `${staff.full_name} (${staff.position || "NVKD"})` : log.employee_id}</strong></span>
-                                                        <span>Thời gian ghi: {new Date(log.log_date).toLocaleDateString("vi-VN", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
+                                                        <span>Thời gian ghi: {new Date(log.log_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
                                                     </div>
                                                 </div>
                                             )}
@@ -16443,7 +16444,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 const linkedSlip = deliverySlips.find(slip => slip.orderCode === ord.order_code || slip.orderId === String(ord.order_id) || (ord.raw_code && (slip.orderCode === ord.raw_code || slip.orderId === ord.raw_code)) || (ord.order_code && slip.orderCode && ord.order_code.includes(slip.orderCode)));
                                                                 const dateDisplay = ord.order_date 
                                                                     ? (new Date(ord.order_date).toString() !== "Invalid Date" 
-                                                                        ? new Date(ord.order_date).toLocaleDateString("vi-VN") 
+                                                                        ? new Date(ord.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) 
                                                                         : String(ord.order_date))
                                                                     : "—";
 
@@ -18987,8 +18988,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <td className="p-3 whitespace-nowrap">
                                                                 {canManageAllOrders ? (
                                                                     <div className="flex items-center gap-1.5">
-                                                                        <input
-                                                                            type="date"
+                                                                        <DateInputVN
                                                                             value={req.estimatedDeliveryDate || ""}
                                                                             onChange={(e) => handleUpdateEstimatedDeliveryDate(req.id, e.target.value)}
                                                                             className="bg-slate-950 border border-slate-750 hover:border-indigo-500 rounded px-2 py-1 text-xs text-amber-300 font-mono font-bold focus:border-indigo-500 focus:outline-none cursor-pointer"
@@ -20680,7 +20680,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <span>{ord.order_code}</span>
                                                             </div>
                                                             <div className="text-[10px] text-slate-400 mt-0.5">
-                                                                Giao ngày: <span className="text-slate-300 font-semibold">{ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN") : "—"}</span>
+                                                                Giao ngày: <span className="text-slate-300 font-semibold">{ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—"}</span>
                                                             </div>
                                                             {ord.sales_rep_name && (
                                                                 <div className="text-[9px] text-indigo-300/80 font-sans mt-0.5">
@@ -20875,7 +20875,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     <span>{r.invoice_no}</span>
                                                                                 </div>
                                                                                 <div className="text-[10px] text-slate-400">
-                                                                                    {r.invoice_date ? new Date(r.invoice_date).toLocaleDateString("vi-VN") : "—"}{r.delivery_slip_id ? ` · ${r.delivery_slip_id}` : ""}
+                                                                                    {r.invoice_date ? new Date(r.invoice_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—"}{r.delivery_slip_id ? ` · ${r.delivery_slip_id}` : ""}
                                                                                 </div>
                                                                             </div>
                                                                         ))}
@@ -20889,7 +20889,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <span>{ord.invoiceNo}</span>
                                                                     </div>
                                                                     <div className="text-[10px] text-slate-400 mt-0.5">
-                                                                        Ngày lập: {ord.invoiceDate ? new Date(ord.invoiceDate).toLocaleDateString("vi-VN") : (ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN") : "—")}
+                                                                        Ngày lập: {ord.invoiceDate ? new Date(ord.invoiceDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : (ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—")}
                                                                     </div>
                                                                 </div>
                                                             ) : (
@@ -21330,8 +21330,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Ngày Xuất Hóa Đơn *</label>
-                                    <input
-                                        type="date"
+                                    <DateInputVN
                                         required
                                         value={partialInvDate}
                                         onChange={(e) => setPartialInvDate(e.target.value)}
@@ -24009,8 +24008,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
                                     Ngày hết hạn hiệu lực hợp đồng *
                                 </label>
-                                <input
-                                    type="date"
+                                <DateInputVN
                                     value={contractValidUntil}
                                     onChange={(e) => setContractValidUntil(e.target.value)}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-amber-300 font-mono font-bold"
@@ -24471,8 +24469,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ngày giao hàng mong muốn *</label>
-                            <input
-                                type="date"
+                            <DateInputVN
                                 value={factoryOrderDeliveryDate}
                                 onChange={(e) => setFactoryOrderDeliveryDate(e.target.value)}
                                 required
@@ -25468,8 +25465,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <span>📅 Ngày Hãng hẹn giao</span>
                                                         <span className="text-[10px] text-slate-400 font-normal font-sans">(Tùy chọn)</span>
                                                     </label>
-                                                    <input
-                                                        type="date"
+                                                    <DateInputVN
                                                         value={combineMfgEstDelivery}
                                                         onChange={(e) => setCombineMfgEstDelivery(e.target.value)}
                                                         className="w-full bg-slate-950 border border-purple-500/40 rounded-lg px-2.5 py-1.5 text-xs text-amber-300 font-mono font-bold focus:border-purple-400 focus:outline-none"
@@ -25576,8 +25572,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <span>📅 Ngày NCC hẹn giao</span>
                                                         <span className="text-[10px] text-slate-400 font-normal font-sans">(Tùy chọn)</span>
                                                     </label>
-                                                    <input
-                                                        type="date"
+                                                    <DateInputVN
                                                         value={combineProcureEstDelivery}
                                                         onChange={(e) => setCombineProcureEstDelivery(e.target.value)}
                                                         className="w-full bg-slate-950 border border-cyan-500/40 rounded-lg px-2.5 py-1.5 text-xs text-amber-300 font-mono font-bold focus:border-cyan-400 focus:outline-none"
@@ -25730,8 +25725,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <span>📅 Ngày hẹn hoàn thành</span>
                                         <span className="text-[10px] text-slate-400 font-normal font-sans">(Tùy chọn)</span>
                                     </label>
-                                    <input
-                                        type="date"
+                                    <DateInputVN
                                         value={(() => {
                                             if (!singleMfgEstDelivery) return "";
                                             const s = String(singleMfgEstDelivery).trim();
@@ -26185,7 +26179,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             NCC: <strong>{linkedPO.supplier_name || "Nhà cung cấp"}</strong>
                                                                         </span>
                                                                         <span className="text-amber-300 font-mono">
-                                                                            📅 Hẹn: {linkedPO.expected_delivery_date ? new Date(linkedPO.expected_delivery_date).toLocaleDateString("vi-VN") : "Sắp về"}
+                                                                            📅 Hẹn: {linkedPO.expected_delivery_date ? new Date(linkedPO.expected_delivery_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Sắp về"}
                                                                         </span>
                                                                         <span className="px-1.5 py-0.2 rounded font-mono font-bold bg-slate-900 text-emerald-400 border border-slate-700 text-[9px]">
                                                                             ● {linkedPO.status}
@@ -26925,8 +26919,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                         📅 Ngày giao hàng *
                                     </label>
-                                    <input
-                                        type="date"
+                                    <DateInputVN
                                         required
                                         value={deliveryDate}
                                         onChange={(e) => setDeliveryDate(e.target.value)}
@@ -27805,7 +27798,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 )}
                             </label>
                             <label className="block text-[11px] font-bold text-slate-400">Ngày thu *
-                                <input type="date" value={customerPaymentDate} onChange={(e) => setCustomerPaymentDate(e.target.value)}
+                                <DateInputVN value={customerPaymentDate} onChange={(e) => setCustomerPaymentDate(e.target.value)}
                                     className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono" />
                             </label>
                         </div>
@@ -27984,8 +27977,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                         Ngày Giờ Giao Thực Tế *
                                     </label>
-                                    <input
-                                        type="date"
+                                    <DateInputVN
                                         required
                                         value={confirmDeliveryDate}
                                         onChange={(e) => setConfirmDeliveryDate(e.target.value)}
@@ -29290,7 +29282,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div key={so.order_code} className="bg-slate-950/70 border border-slate-900 p-2.5 rounded-lg text-xs flex justify-between items-center">
                                                 <div>
                                                     <span className="font-bold text-white block font-mono">{so.order_code}</span>
-                                                    <span className="text-[10px] text-slate-400">{new Date(so.order_date).toLocaleDateString("vi-VN")} | {so.customerName}</span>
+                                                    <span className="text-[10px] text-slate-400">{new Date(so.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} | {so.customerName}</span>
                                                 </div>
                                                 <span className="font-bold text-emerald-400 font-mono">{new Intl.NumberFormat("vi-VN").format(so.total_amount)}đ</span>
                                             </div>
@@ -29948,8 +29940,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Hạn hoàn thành</label>
-                                    <input
-                                        type="date"
+                                    <DateInputVN
                                         value={taskDueDate}
                                         onChange={(e) => setTaskDueDate(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none"
@@ -30675,7 +30666,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <option value="">-- Chọn công việc trong danh sách của bạn --</option>
                                             {myTasks.map(t => (
                                                 <option key={t.task_id} value={t.task_id}>
-                                                    [{t.priority || "Normal"}] {t.title} {t.due_date ? `(Hạn: ${new Date(t.due_date).toLocaleDateString("vi-VN")})` : ""}
+                                                    [{t.priority || "Normal"}] {t.title} {t.due_date ? `(Hạn: ${new Date(t.due_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })})` : ""}
                                                 </option>
                                             ))}
                                         </select>
@@ -30911,7 +30902,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                         </div>
                         <span className="text-[10px] font-mono bg-slate-950 text-slate-400 px-2.5 py-1 rounded border border-slate-850 font-semibold">
-                            📅 {new Date().toLocaleDateString("vi-VN", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}
+                            📅 {new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}
                         </span>
                     </div>
 
@@ -32191,8 +32182,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                                 Hạn sử dụng (Exp Date - nếu có)
                             </label>
-                            <input
-                                type="date"
+                            <DateInputVN
                                 value={inboundExpDate}
                                 onChange={(e) => setInboundExpDate(e.target.value)}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:border-indigo-500 focus:outline-none"
@@ -32509,8 +32499,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-amber-400 mb-1">
                                 Hạn giữ hàng tối đa (Hold TTL) *
                             </label>
-                            <input
-                                type="date"
+                            <DateInputVN
                                 required
                                 value={giveStockHoldUntil}
                                 onChange={(e) => setGiveStockHoldUntil(e.target.value)}
@@ -33277,8 +33266,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1">
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Hạn hoàn thành mong muốn (Deadline) *</label>
-                            <input
-                                type="date"
+                            <DateInputVN
                                 required
                                 value={appReqDueDate}
                                 onChange={(e) => setAppReqDueDate(e.target.value)}

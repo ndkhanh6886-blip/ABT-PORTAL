@@ -62,6 +62,7 @@ import { CustomerEquipmentService } from "./CustomerEquipmentService";
 import { AttachmentPicker, type Attachment } from "./AttachmentPicker";
 import { TechCareLog } from "./TechCareLog";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 
 // Allowed roles for access control
 const ALLOWED_ROLES = ["admin", "director", "vice_director", "manager", "head", "lead", "leader", "app_head", "app_deputy", "app_tech", "app_rep", "application", "engineer", "kỹ thuật", "ứng dụng", "giám đốc", "phó giám đốc", "quản lý", "trưởng phòng", "chuyên viên", "nhân viên"];
@@ -1250,7 +1251,7 @@ export function ApplicationFullABT() {
             user_name: selectedEmployee === "Tất cả" ? (item.user_name || "Nhân viên") : selectedEmployee,
             status: newStatus,
             result_summary: summary.trim(),
-            logged_at: new Date().toLocaleTimeString("sv-SE").substring(0, 5) + " " + new Date().toLocaleDateString("vi-VN")
+            logged_at: new Date().toLocaleTimeString("sv-SE").substring(0, 5) + " " + new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
         };
 
         const updatedLogs = {
@@ -1864,7 +1865,7 @@ export function ApplicationFullABT() {
             return;
         }
 
-        const dateStr = new Date().toLocaleDateString("vi-VN");
+        const dateStr = new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
         let tableRows = filteredIssues.map(iss => {
             let statusText = "Tiếp nhận";
             if (iss.status === "Step2") statusText = "Xác nhận";
@@ -4036,15 +4037,13 @@ export function ApplicationFullABT() {
                                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-3 items-center pt-2 border-t border-white/5">
                                         <div className="flex flex-wrap items-center gap-2 lg:col-span-2">
                                             <span className="text-[10px] uppercase font-bold text-slate-500 tracking-wider shrink-0">Thời gian tạo:</span>
-                                            <input
-                                                type="date"
+                                            <DateInputVN
                                                 value={filterIssueStartDate}
                                                 onChange={(e) => setFilterIssueStartDate(e.target.value)}
                                                 className="bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-300 outline-none focus:ring-1 focus:ring-primary/50"
                                             />
                                             <span className="text-slate-500 text-xs">đến</span>
-                                            <input
-                                                type="date"
+                                            <DateInputVN
                                                 value={filterIssueEndDate}
                                                 onChange={(e) => setFilterIssueEndDate(e.target.value)}
                                                 className="bg-slate-950 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-slate-300 outline-none focus:ring-1 focus:ring-primary/50"
@@ -5881,8 +5880,7 @@ export function ApplicationFullABT() {
                         </div>
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Hạn hoàn thành</label>
-                            <input
-                                type="date"
+                            <DateInputVN
                                 value={newTaskDueDate}
                                 onChange={(e) => setNewTaskDueDate(e.target.value)}
                                 className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-slate-300 outline-none focus:ring-1 focus:ring-primary/50"
@@ -6596,9 +6594,8 @@ export function ApplicationFullABT() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="space-y-2">
                             <label className="text-xs font-bold text-slate-500 uppercase">Ngày sử dụng</label>
-                            <input
+                            <DateInputVN
                                 required
-                                type="date"
                                 value={bookingDate}
                                 onChange={(e) => setBookingDate(e.target.value)}
                                 className="w-full bg-slate-950 border border-white/10 rounded-xl px-4 py-3 text-sm text-slate-300 outline-none focus:ring-1 focus:ring-primary/50"

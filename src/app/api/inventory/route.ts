@@ -74,6 +74,7 @@ export async function GET(req: NextRequest) {
       const category = String(searchParams.get("category") || "all");
       const location = String(searchParams.get("location") || "all");
       const cls = String(searchParams.get("cls") || "all");
+      const productCode = String(searchParams.get("product_code") || "").trim();
       const all = searchParams.get("all") === "1";
       const size = Math.min(500, Math.max(10, parseInt(searchParams.get("size") || "100") || 100));
       const page = Math.max(1, parseInt(searchParams.get("page") || "1") || 1);
@@ -99,14 +100,15 @@ export async function GET(req: NextRequest) {
       const where = `($3 = 'all' OR TRIM(COALESCE(manufacturer, '')) = $3)
         AND ($4 = 'all' OR TRIM(COALESCE(category, '')) = $4)
         AND ($5 = 'all' OR TRIM(COALESCE(warehouse_location, '')) = $5)
-        AND ($6 = '' OR CONCAT_WS(' ', product_code, product_name, lot_number, manufacturer, shelf_position) ILIKE '%' || $6 || '%')`;
-      const params = [today, nearDays, manufacturer, category, location, kw];
+        AND ($6 = '' OR CONCAT_WS(' ', product_code, product_name, lot_number, manufacturer, shelf_position) ILIKE '%' || $6 || '%')
+        AND ($7 = '' OR product_code = $7)`;
+      const params = [today, nearDays, manufacturer, category, location, kw, productCode];
       const [rowsRes, countRes, optRes] = await Promise.all([
         query(
           `${base} SELECT *, COUNT(*) OVER () AS total_rows FROM k
-            WHERE ${where} AND ($7 = 'all' OR klass = $7)
+            WHERE ${where} AND ($8 = 'all' OR klass = $8)
             ORDER BY product_code ASC, expiry_date ASC NULLS LAST, id ASC
-            ${all ? "" : "LIMIT $8 OFFSET $9"}`,
+            ${all ? "" : "LIMIT $9 OFFSET $10"}`,
           all ? [...params, cls] : [...params, cls, size, (page - 1) * size]
         ),
         query(`${base} SELECT klass, COUNT(*)::int AS n FROM k WHERE ${where} GROUP BY klass`, params),
@@ -320,13 +322,35 @@ export async function GET(req: NextRequest) {
         }
       });
 
+      // Mỗi mã: số lô còn tồn, lô hết hạn sớm nhất (FEFO), tổng tồn các lô (đối chiếu với tồn của mã)
+      const lotSummary = await query(`
+        SELECT product_code,
+               COUNT(*) FILTER (WHERE quantity_on_hand > 0)::int AS lot_count,
+               COALESCE(SUM(quantity_on_hand), 0)::numeric AS lots_qty,
+               (ARRAY_AGG(lot_number ORDER BY exp ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_lot,
+               (ARRAY_AGG(exp ORDER BY exp ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_expiry
+          FROM (SELECT l.*, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} AS exp FROM inventory_lots l) x
+         GROUP BY product_code
+      `).catch(() => ({ rows: [] as any[] }));
+      const lotsByProduct = new Map<string, any>(lotSummary.rows.map((r: any) => [r.product_code, r]));
+      const itemQtyByProduct = new Map<string, number>();
+      for (const it of items.rows) itemQtyByProduct.set(it.product_code, (itemQtyByProduct.get(it.product_code) || 0) + (Number(it.quantity_on_hand) || 0));
+
       // Attach incoming_po_qty & incoming_pos to items
       const enrichedItems = items.rows.map((it: any) => {
         const inc = incomingByProduct[it.product_code] || { qty: 0, pos: [] };
+        const ls = lotsByProduct.get(it.product_code);
+        const lotsQty = ls ? Number(ls.lots_qty) || 0 : null;
         return {
           ...it,
           incoming_po_qty: inc.qty,
-          incoming_pos: inc.pos
+          incoming_pos: inc.pos,
+          lot_count: ls ? ls.lot_count : 0,
+          earliest_lot: ls?.earliest_lot || null,
+          earliest_expiry: ls?.earliest_expiry || null,
+          lots_qty: lotsQty,
+          // chỉ so khi mã có sổ lô: tồn của mã phải bằng tổng tồn các lô
+          lot_mismatch: ls && lotsQty !== itemQtyByProduct.get(it.product_code) ? { product_qty: itemQtyByProduct.get(it.product_code), lots_qty: lotsQty } : null,
         };
       });
 

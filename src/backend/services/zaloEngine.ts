@@ -298,7 +298,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
 🏥 Khách Hàng: ${q.customer_name}
 👤 NVKD Phụ Trách: ${q.sales_rep_name || "Nhân viên kinh doanh"}
 💰 Tổng Tiền Duyệt: ${totalFmt} VNĐ (Đã trừ chiết khấu ${q.discount_rate}%)
-📅 Thời Điểm Duyệt: ${new Date().toLocaleString("vi-VN")}
+📅 Thời Điểm Duyệt: ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
 ✍ Người Phê Duyệt: ${senderBinding?.display_name || "Nguyễn Văn Hưng (Tổng Giám Đốc)"}
 
 Trạng thái báo giá đã được cập nhật sang [ĐÃ PHÊ DUYỆT]. NVKD có thể gửi file PDF chính thức đến khách hàng.`;
@@ -1257,7 +1257,7 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
       }
 
       const itemsText = invRes.rows.map((row: any, i: number) => {
-        const expDate = row.expiry_date ? new Date(row.expiry_date).toLocaleDateString("vi-VN") : "Chưa có HSD";
+        const expDate = row.expiry_date ? new Date(row.expiry_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Chưa có HSD";
         const availableQty = (row.quantity_on_hand || 0) - (row.quantity_allocated || 0);
         return `${i + 1}. [${row.product_code}] ${row.product_name}
    • Tồn khả dụng: ${availableQty} ${row.unit || "Hộp"} (Đang giữ chỗ: ${row.quantity_allocated || 0})
@@ -1382,7 +1382,7 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
 
 📋 Khách hàng: ${customerName}
 📦 Mặt hàng: ${requestedQty} ${matchedItem.unit} ${matchedItem.name} (${matchedItem.code})
-⏱ Thời gian giữ chỗ: 48 giờ (Hiệu lực đến: ${expiresAt.toLocaleTimeString("vi-VN", {hour: '2-digit', minute:'2-digit'})} ngày ${expiresAt.toLocaleDateString("vi-VN")})
+⏱ Thời gian giữ chỗ: 48 giờ (Hiệu lực đến: ${expiresAt.toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh",hour: '2-digit', minute:'2-digit'})} ngày ${expiresAt.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })})
 👤 NVKD Giữ Chỗ: ${reservedBy}
 
 Hệ thống đã tự động cộng số lượng ${requestedQty} ${matchedItem.unit} vào mục giữ chỗ của kho, đảm bảo không bị xuất nhầm cho đơn vị khác.`
@@ -1424,7 +1424,7 @@ Hệ thống đã tự động cộng số lượng ${requestedQty} ${matchedIte
         text: `📝 ĐÃ GHI NHẬN BÁO CÁO NHẬT KÝ NGÀY (DAILY)!
 
 👤 Nhân sự: ${senderBinding?.display_name || senderName} (${senderBinding?.department || "Kinh Doanh"})
-📅 Ngày báo cáo: ${new Date().toLocaleDateString("vi-VN")}
+📅 Ngày báo cáo: ${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
 📋 Nội dung: "${logContent}"
 
 Dữ liệu đã tự động đồng bộ vào mục [Nhật Ký Daily] trên Portal và thông báo cho Trưởng phòng xem xét chỉ đạo.`

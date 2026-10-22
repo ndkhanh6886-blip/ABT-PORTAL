@@ -59,6 +59,7 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 
 export const WarehouseModule: React.FC = () => {
   const companyConfig = useCompanyConfig();
@@ -67,6 +68,9 @@ export const WarehouseModule: React.FC = () => {
   // Người thực hiện mặc định = người đang đăng nhập (không điền sẵn tên một nhân viên cố định)
   const currentUserName = String((authUser as any)?.full_name || (authUser as any)?.name || "");
   const [subTab, setSubTab] = useState<"stock" | "lot_stock" | "movement_report" | "transactions" | "reservations" | "valuation" | "lot_trace" | "excel_center" | "bom_kits" | "rfid_hub">("stock");
+  // Mở tab Tồn theo lô đã lọc sẵn một mã (bấm "N lô" ở bảng Tồn kho)
+  const [lotStockQuery, setLotStockQuery] = useState("");
+  const openLotsOf = (productCode: string) => { setLotStockQuery(productCode); setSubTab("lot_stock"); };
 
   // Barcode & QR Label Printing Modal states
   const [isBarcodeModalOpen, setIsBarcodeModalOpen] = useState(false);
@@ -379,8 +383,10 @@ export const WarehouseModule: React.FC = () => {
   const enrichedItems = useMemo(() => {
     return items.map((item) => {
       // Dynamic properties read directly from real inventory item
-      let lot_number = item.lot_number || "";
-      let expiry_date = item.expiry_date || "";
+      // Mã nhiều lô: hiện lô hết hạn sớm nhất (FEFO) thay cho lô ghi trên dòng tồn của mã
+      const isoToVN = (v: string) => (/^\d{4}-\d{2}-\d{2}/.test(v) ? `${v.slice(8, 10)}.${v.slice(5, 7)}.${v.slice(0, 4)}` : v);
+      let lot_number = item.earliest_lot || item.lot_number || "";
+      let expiry_date = item.earliest_lot ? (item.earliest_expiry ? isoToVN(String(item.earliest_expiry)) : "") : (item.expiry_date || "");
       let storage_temp = item.storage_temp || item.storage_condition || "";
       let temp_category: "-20C" | "2-8C" | "room" = "room";
       const sTemp = storage_temp.toLowerCase();
@@ -2233,7 +2239,7 @@ export const WarehouseModule: React.FC = () => {
 
     setHandoverData({
       delivery_code: `BBBG-${Date.now().toString().slice(-6)}`,
-      date: new Date().toLocaleDateString("vi-VN"),
+      date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       order_code: outboundForm.reference_code || "SO-2026-088",
       customer_name: outboundForm.customer_name || "Bệnh viện Đa Khoa / Viện Nghiên Cứu",
       warehouse_name: outboundForm.warehouse_name || "Kho Trung Tâm",
@@ -2969,7 +2975,7 @@ export const WarehouseModule: React.FC = () => {
             </span>
           </div>
           <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-2 font-mono">
-            {riskKPIs.nearExpCount} <span className="text-xs font-semibold text-slate-500">lô cận hạn</span>
+            {riskKPIs.nearExpCount} <span className="text-xs font-semibold text-slate-500">mã có lô cận hạn</span>
           </div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
             <span>Hạn dùng &lt; 90 ngày</span>
@@ -3021,7 +3027,7 @@ export const WarehouseModule: React.FC = () => {
             </span>
           </div>
           <div className="text-2xl font-black text-cyan-700 dark:text-cyan-300 mt-2 font-mono">
-            {riskKPIs.coldChainCount} <span className="text-xs font-semibold text-slate-500">lô sinh phẩm</span>
+            {riskKPIs.coldChainCount} <span className="text-xs font-semibold text-slate-500">mã hàng</span>
           </div>
           <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center justify-between">
             <span>-20°C &amp; Kho mát 2-8°C</span>
@@ -3067,10 +3073,10 @@ export const WarehouseModule: React.FC = () => {
               : "text-slate-500 hover:text-slate-900 dark:hover:text-white"
           }`}
         >
-          <Layers className="w-4 h-4" /> Tồn Kho &amp; Rủi Ro ({filteredItems.length}/{enrichedItems.length})
+          <Layers className="w-4 h-4" /> Tồn Kho &amp; Rủi Ro ({filteredItems.length}/{enrichedItems.length} mã)
         </button>
         <button
-          onClick={() => setSubTab("lot_stock")}
+          onClick={() => { setLotStockQuery(""); setSubTab("lot_stock"); }}
           title="Tồn kho theo từng lô: Bình thường / Cận date / Hết date, lọc theo hãng, nhóm hàng; xuất Excel theo từng loại"
           className={`pb-2 pt-1 transition-all flex items-center gap-1.5 shrink-0 ${
             subTab === "lot_stock"
@@ -3185,7 +3191,7 @@ export const WarehouseModule: React.FC = () => {
         </button>
       </div>
 
-      {subTab === "lot_stock" && <LotStockView />}
+      {subTab === "lot_stock" && <LotStockView key={lotStockQuery} productCode={lotStockQuery} />}
       {subTab === "movement_report" && <MovementReportView />}
 
       {/* TAB 1: STOCK INVENTORY WITH RISK TOOLKIT */}
@@ -3489,6 +3495,11 @@ export const WarehouseModule: React.FC = () => {
                     <div className="flex items-center gap-1">
                       <span className="text-slate-400">Lô:</span>
                       <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{item.lot_number || "N/A"}</span>
+                      {item.lot_count > 1 && (
+                        <button type="button" onClick={() => openLotsOf(item.product_code)} className="px-1 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold text-[10px] cursor-pointer">
+                          {item.lot_count} lô
+                        </button>
+                      )}
                       <span className="text-slate-300 dark:text-slate-600">|</span>
                       <span className="text-slate-400">EXP:</span>
                       <span className="font-bold text-slate-700 dark:text-slate-300">{item.expiry_date || "Dài hạn"}</span>
@@ -3779,9 +3790,24 @@ export const WarehouseModule: React.FC = () => {
 
                           {/* Lot & Expiry Date (FEFO) */}
                           <td className="py-3 px-3">
-                            <div className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                            <div className="flex items-center gap-1.5 font-mono font-bold text-slate-800 dark:text-slate-200">
                               {item.lot_number}
+                              {item.lot_count > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => openLotsOf(item.product_code)}
+                                  title={`Mã này có ${item.lot_count} lô — đang hiện lô hết hạn sớm nhất. Bấm để xem tất cả lô.`}
+                                  className="font-sans px-1.5 py-0.5 rounded bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-950/60 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 text-[10px] cursor-pointer"
+                                >
+                                  {item.lot_count} lô
+                                </button>
+                              )}
                             </div>
+                            {item.lot_mismatch && (
+                              <div className="mt-0.5 text-[10px] font-sans font-bold text-rose-600 dark:text-rose-400" title="Tồn của mã khác tổng tồn các lô: kiểm tra lại phiếu nhập / xuất">
+                                ⚠ Lệch: mã {item.lot_mismatch.product_qty} ≠ tổng lô {item.lot_mismatch.lots_qty}
+                              </div>
+                            )}
                             <div className="flex items-center gap-1.5 mt-0.5">
                               <span className="font-mono text-slate-600 dark:text-slate-300">{item.expiry_date}</span>
                               {Number.isFinite(item.days_to_expiry) && item.days_to_expiry < 900 ? (
@@ -4230,7 +4256,7 @@ export const WarehouseModule: React.FC = () => {
                         {tx.performed_by || "Thủ kho TBRs"}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-slate-500">
-                        {tx.date ? tx.date.slice(0, 10) : ""}
+                        {tx.date ? formatDayVN(tx.date) : ""}
                       </td>
                       <td className="py-3.5 px-4 text-right">
                         <button
@@ -4460,10 +4486,10 @@ export const WarehouseModule: React.FC = () => {
                           </td>
                           <td className="py-3 px-3">
                             <div className="text-[11px] text-slate-500">
-                              Từ: {r.reserved_at ? r.reserved_at.slice(0, 10) : "N/A"}
+                              Từ: {r.reserved_at ? formatDayVN(r.reserved_at) : "N/A"}
                             </div>
                             <div className="font-mono font-bold text-slate-700 dark:text-slate-300 mt-0.5">
-                              Đến: {r.hold_until_date ? r.hold_until_date.slice(0, 10) : "Vô thời hạn"}
+                              Đến: {r.hold_until_date ? formatDayVN(r.hold_until_date) : "Vô thời hạn"}
                             </div>
                             {r.status === "ACTIVE" && (
                               <div className="mt-1">
@@ -6871,8 +6897,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngày Nhập Kho *</label>
-                    <input
-                      type="date"
+                    <DateInputVN
                       value={inboundForm.date}
                       onChange={(e) => setInboundForm({ ...inboundForm, date: e.target.value })}
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
@@ -7161,8 +7186,7 @@ export const WarehouseModule: React.FC = () => {
                           <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
                             Hạn Sử Dụng (EXP) *
                           </label>
-                          <input
-                            type="date"
+                          <DateInputVN
                             value={item.expiry_date || ""}
                             onChange={(e) => handleInboundItemChange(idx, "expiry_date", e.target.value)}
                             className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-emerald-600 dark:text-emerald-400"
@@ -7173,8 +7197,7 @@ export const WarehouseModule: React.FC = () => {
                           <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
                             Ngày Sản Xuất (MFG)
                           </label>
-                          <input
-                            type="date"
+                          <DateInputVN
                             value={item.manufacture_date || ""}
                             onChange={(e) => handleInboundItemChange(idx, "manufacture_date", e.target.value)}
                             className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs"
@@ -7361,8 +7384,7 @@ export const WarehouseModule: React.FC = () => {
                                             </td>
                                             <td className="py-2 px-2.5 min-w-[120px]">
                                               {comp.tracking_type === "LOT" ? (
-                                                <input
-                                                  type="date"
+                                                <DateInputVN
                                                   value={comp.expiry_date || ""}
                                                   onChange={(e) => handleInboundComponentChange(idx, cIdx, "expiry_date", e.target.value)}
                                                   className="w-full p-1.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono text-xs text-emerald-600 dark:text-emerald-400 font-semibold"
@@ -7928,7 +7950,7 @@ export const WarehouseModule: React.FC = () => {
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Giao dịch thực hiện ngày {selectedTxDetail.date ? selectedTxDetail.date.slice(0, 10) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho TBRs"}
+                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho TBRs"}
                   </p>
                 </div>
               </div>
@@ -7957,7 +7979,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Ngày Lập Chứng Từ</span>
-                  <strong className="font-mono text-slate-900 dark:text-white text-xs">{selectedTxDetail.date ? selectedTxDetail.date.slice(0, 10) : "—"}</strong>
+                  <strong className="font-mono text-slate-900 dark:text-white text-xs">{selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : "—"}</strong>
                 </div>
               </div>
 
@@ -8266,8 +8288,7 @@ export const WarehouseModule: React.FC = () => {
                     <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1">
                       Hạn giữ chỗ (Hold Until TTL) *
                     </label>
-                    <input
-                      type="date"
+                    <DateInputVN
                       value={reserveFormData.hold_until_date}
                       onChange={(e) => setReserveFormData({ ...reserveFormData, hold_until_date: e.target.value })}
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"

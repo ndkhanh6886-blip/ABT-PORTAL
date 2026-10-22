@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Download, RefreshCw, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { todayVN } from "@/backend/services/dates";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 
 /**
  * Tra cứu chi tiết hàng hóa của nhiều chứng từ trên cùng một trang (mỗi dòng hàng một dòng):
@@ -100,10 +101,10 @@ export function LineItemLookup({ sources = ["so", "po", "receipt", "px"] }: { so
         className="flex flex-wrap items-center gap-2 p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800"
       >
         <label className="flex items-center gap-1 text-slate-500">Từ
-          <input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white" />
+          <DateInputVN value={from} onChange={(e) => setFrom(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white" />
         </label>
         <label className="flex items-center gap-1 text-slate-500">Đến
-          <input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white" />
+          <DateInputVN value={to} onChange={(e) => setTo(e.target.value)} className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white" />
         </label>
         <div className="relative flex-1 min-w-[180px]">
           <Search className="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" />

@@ -100,7 +100,7 @@ export const NotificationDropdown: React.FC = () => {
             if (diffHours < 24) return `${diffHours} giờ trước`;
             if (diffDays === 1) return "Hôm qua";
             if (diffDays < 7) return `${diffDays} ngày trước`;
-            return date.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
+            return date.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit" });
         } catch (e) {
             return "Vừa xong";
         }

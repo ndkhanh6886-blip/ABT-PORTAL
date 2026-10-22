@@ -215,7 +215,7 @@ export const LegalModule: React.FC = () => {
     title: "",
     category: "Nghị Định & Luật" as LegalDocument["category"],
     issuingBody: "",
-    effectiveDate: new Date().toLocaleDateString("vi-VN"),
+    effectiveDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     summary: "",
     attachments: [] as AttachedFile[]
   });
@@ -247,7 +247,7 @@ export const LegalModule: React.FC = () => {
     manufacturer: "",
     origin: "",
     agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế",
-    issueDate: new Date().toLocaleDateString("vi-VN"),
+    issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     expiryDate: "31/12/2030",
     notes: "",
     attachments: [] as AttachedFile[]
@@ -471,8 +471,8 @@ export const LegalModule: React.FC = () => {
     setEditing(null);
     if (kind === "contract") setNewContractForm({ code: `HD-TBR-${Date.now().toString().slice(-4)}`, title: "", partnerName: "", type: "Bán hàng Bệnh Viện", value: "", requester: myName || "Nguyễn Thị Ngọc Huyền", department: user?.department || "Pháp Chế", riskNotes: "", riskLevel: "THAP", expiryDate: "31/12/2026", attachments: [] });
     if (kind === "tender") setNewTenderForm({ code: `THAU-TBR-${Date.now().toString().slice(-4)}`, hospitalName: "", packageName: "", bidValue: "", submissionDeadline: "30/11/2026", assignedLawyer: "Nguyễn Thị Ngọc Huyền", notes: "", checklist: { circulationLicense: true, loaAuthorization: true, iso13485: true, financialReport: true, gdpGspColdChain: true }, attachments: [] });
-    if (kind === "license") setNewLicenseForm({ licenseNumber: `26000${Date.now().toString().slice(-4)}/PCBB-BYT`, productName: "", deviceClass: "Loại C", manufacturer: "", origin: "", agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế", issueDate: new Date().toLocaleDateString("vi-VN"), expiryDate: "31/12/2030", notes: "", attachments: [] });
-    if (kind === "doc") setNewDocForm({ code: "", title: "", category: "Nghị Định & Luật", issuingBody: "", effectiveDate: new Date().toLocaleDateString("vi-VN"), summary: "", attachments: [] });
+    if (kind === "license") setNewLicenseForm({ licenseNumber: `26000${Date.now().toString().slice(-4)}/PCBB-BYT`, productName: "", deviceClass: "Loại C", manufacturer: "", origin: "", agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế", issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), expiryDate: "31/12/2030", notes: "", attachments: [] });
+    if (kind === "doc") setNewDocForm({ code: "", title: "", category: "Nghị Định & Luật", issuingBody: "", effectiveDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), summary: "", attachments: [] });
   };
   const editStamp = () => ({ updatedAt: new Date().toISOString(), updatedBy: myName || "Người dùng" });
 
@@ -518,7 +518,7 @@ export const LegalModule: React.FC = () => {
               size: sizeStr,
               type: file.type || "application/pdf",
               dataUrl: data.url,
-              uploadedAt: new Date().toLocaleDateString("vi-VN"),
+              uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
               note: "File đính kèm tải lên máy chủ"
             };
             setNewContractForm(prev => ({
@@ -545,7 +545,7 @@ export const LegalModule: React.FC = () => {
               size: sizeStr,
               type: file.type || "application/pdf",
               dataUrl: result,
-              uploadedAt: new Date().toLocaleDateString("vi-VN"),
+              uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
               note: "File đính kèm tải lên từ máy tính"
             };
             setNewContractForm(prev => ({
@@ -582,7 +582,7 @@ export const LegalModule: React.FC = () => {
         name: "Hop_dong_nguyen_tac_cung_ung_IVD_2026.pdf",
         size: "1.42 MB",
         type: "application/pdf",
-        uploadedAt: new Date().toLocaleDateString("vi-VN"),
+        uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
         note: "Dự thảo hợp đồng thương mại y tế theo chuẩn Bộ Y Tế"
       },
       {
@@ -590,7 +590,7 @@ export const LegalModule: React.FC = () => {
         name: "Phu_luc_01_Bang_gia_hoa_chat_realtime_PCR.pdf",
         size: "680 KB",
         type: "application/pdf",
-        uploadedAt: new Date().toLocaleDateString("vi-VN"),
+        uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
         note: "Bảng chi tiết quy cách đóng gói và đơn giá vật tư"
       },
       {
@@ -598,7 +598,7 @@ export const LegalModule: React.FC = () => {
         name: "Giay_uy_quyen_chinh_hang_LOA_Roche.pdf",
         size: "450 KB",
         type: "application/pdf",
-        uploadedAt: new Date().toLocaleDateString("vi-VN"),
+        uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
         note: "Thư ủy quyền phân phối hợp pháp tại thị trường Việt Nam"
       }
     ];
@@ -678,7 +678,7 @@ export const LegalModule: React.FC = () => {
               : `${Math.round(file.size / 1024)} KB`,
           type: file.type || "application/pdf",
           dataUrl: result,
-          uploadedAt: new Date().toLocaleDateString("vi-VN"),
+          uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
           note: "Văn bản pháp luật / biểu mẫu tải lên từ máy tính"
         };
         setNewDocForm(prev => ({
@@ -709,7 +709,7 @@ export const LegalModule: React.FC = () => {
       title: newDocForm.title,
       category: newDocForm.category,
       issuingBody: newDocForm.issuingBody || "Cơ quan quản lý",
-      effectiveDate: newDocForm.effectiveDate || new Date().toLocaleDateString("vi-VN"),
+      effectiveDate: newDocForm.effectiveDate || new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       status: "DANG_HIEU_LUC",
       summary: newDocForm.summary || "Văn bản quy phạm pháp luật / Biểu mẫu ban hành.",
       attachments: newDocForm.attachments,
@@ -723,7 +723,7 @@ export const LegalModule: React.FC = () => {
       title: "",
       category: "Nghị Định & Luật",
       issuingBody: "",
-      effectiveDate: new Date().toLocaleDateString("vi-VN"),
+      effectiveDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       summary: "",
       attachments: []
     });
@@ -749,7 +749,7 @@ export const LegalModule: React.FC = () => {
               : `${Math.round(file.size / 1024)} KB`,
           type: file.type || "application/pdf",
           dataUrl: result,
-          uploadedAt: new Date().toLocaleDateString("vi-VN"),
+          uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
           note: "Hồ sơ dự thầu tải lên"
         };
         setNewTenderForm(prev => ({
@@ -838,7 +838,7 @@ export const LegalModule: React.FC = () => {
               : `${Math.round(file.size / 1024)} KB`,
           type: file.type || "application/pdf",
           dataUrl: result,
-          uploadedAt: new Date().toLocaleDateString("vi-VN"),
+          uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
           note: "Bản scan số lưu hành / Giấy CFS"
         };
         setNewLicenseForm(prev => ({
@@ -889,7 +889,7 @@ export const LegalModule: React.FC = () => {
       manufacturer: "",
       origin: "",
       agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế",
-      issueDate: new Date().toLocaleDateString("vi-VN"),
+      issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       expiryDate: "31/12/2030",
       notes: "",
       attachments: []
@@ -921,7 +921,7 @@ export const LegalModule: React.FC = () => {
       value: newContractForm.value || "Đang thỏa thuận",
       requester: newContractForm.requester,
       department: newContractForm.department,
-      submitDate: new Date().toLocaleDateString("vi-VN"),
+      submitDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       status: "CHO_THAM_DINH",
       riskLevel: newContractForm.riskLevel,
       riskNotes: newContractForm.riskNotes || "Đã gửi dự thảo kèm file đính kèm chờ thẩm định pháp lý.",

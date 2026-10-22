@@ -18,6 +18,7 @@ import {
   Eye,
 } from "lucide-react";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { DateInputVN } from "@/frontend/components/DateInputVN";
 
 type SlipStatus = "PENDING" | "DELIVERED" | "CANCELLED";
 
@@ -616,8 +617,7 @@ export function DeliverySlipListView({
 
         <div>
           <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Từ ngày giao</label>
-          <input
-            type="date"
+          <DateInputVN
             value={from}
             onChange={(e) => setFrom(e.target.value)}
             disabled={selectedSOCode !== "all"}
@@ -626,8 +626,7 @@ export function DeliverySlipListView({
         </div>
         <div>
           <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Đến ngày giao</label>
-          <input
-            type="date"
+          <DateInputVN
             value={to}
             onChange={(e) => setTo(e.target.value)}
             disabled={selectedSOCode !== "all"}

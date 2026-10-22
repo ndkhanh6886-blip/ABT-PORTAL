@@ -2,7 +2,19 @@ import fs from "fs";
 import { syncLegacySalesData } from "./legacySalesSync";
 import { hashPassword } from "@/backend/services/passwords";
 import path from "path";
-import { Pool, PoolClient } from "pg";
+import { Pool, PoolClient, types } from "pg";
+
+/*
+ * Ngày giờ theo giờ Việt Nam (UTC+7), không phụ thuộc cấu hình múi giờ của máy chủ / CSDL:
+ * - Cột DATE trả về đúng chuỗi "YYYY-MM-DD". Trước đây thư viện đổi thành 0 giờ theo giờ máy chủ rồi gửi xuống
+ *   trình duyệt dạng UTC ("2026-10-24T17:00Z" cho ngày 25/10) -> hạn chót hiện lùi 1 ngày, và mỗi lần mở ra lưu
+ *   lại lùi thêm 1 ngày.
+ * - Cột TIMESTAMP (không múi giờ) lưu giờ Việt Nam (phiên làm việc đặt múi giờ Asia/Ho_Chi_Minh bên dưới) và
+ *   được đọc đúng là giờ Việt Nam.
+ */
+const VN_OFFSET = "+07:00";
+types.setTypeParser(1082, (v: string) => v); // date
+types.setTypeParser(1114, (v: string) => (v ? new Date(`${v.replace(" ", "T")}${VN_OFFSET}`) : (v as any))); // timestamp
 import { AsyncLocalStorage } from "async_hooks";
 
 /** Who performs the current request, for the audit log (set by setAuditActor in authz.ts). */
@@ -25,6 +37,11 @@ const pool = new Pool({
   max: 25,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
+});
+// Mọi phiên làm việc dùng giờ Việt Nam: NOW()/CURRENT_TIMESTAMP/CURRENT_DATE đúng giờ, đúng ngày ở Việt Nam
+// (trước đây máy chủ CSDL để UTC: thời gian lưu lệch 7 giờ, CURRENT_DATE còn là "hôm qua" trước 7 giờ sáng).
+pool.on("connect", (client) => {
+  client.query("SET TIME ZONE 'Asia/Ho_Chi_Minh'").catch(() => {});
 });
 
 /**
@@ -562,6 +579,39 @@ async function runIntegrityMigrations() {
         );
       }
       await setFlag("migration_fix_abt_supplier_name_v1");
+    });
+    // Dữ liệu thời gian cũ được ghi khi CSDL còn dùng múi giờ mặc định của máy chủ (UTC trên máy chủ thật):
+    // dời một lần cho đúng giờ Việt Nam. Không dời nếu máy chủ CSDL vốn đã là UTC+7.
+    await step("shift_timestamps_to_vn", async () => {
+      if (await flagDone("migration_timestamps_vn_v1")) return;
+      const tz = (await client.query("SELECT reset_val FROM pg_settings WHERE name = 'TimeZone'")).rows[0]?.reset_val || "UTC";
+      const off = await client.query(
+        "SELECT EXTRACT(EPOCH FROM ((now() AT TIME ZONE 'Asia/Ho_Chi_Minh') - (now() AT TIME ZONE $1)))::int AS sec",
+        [tz]
+      );
+      const sec = Number(off.rows[0]?.sec || 0);
+      // cả bước trong một giao dịch: lỗi giữa chừng thì không bảng nào bị dời (tránh dời hai lần khi chạy lại)
+      await client.query("BEGIN");
+      try {
+      if (sec !== 0) {
+        const cols = await client.query(
+          `SELECT table_name, column_name FROM information_schema.columns
+            WHERE table_schema = 'public' AND data_type = 'timestamp without time zone'`
+        );
+        for (const r of cols.rows) {
+          await client.query(
+            `UPDATE "${r.table_name}" SET "${r.column_name}" = "${r.column_name}" + make_interval(secs => $1) WHERE "${r.column_name}" IS NOT NULL`,
+            [sec]
+          );
+        }
+        console.log(`🕐 Đã dời dữ liệu thời gian cũ ${sec / 3600} giờ (múi giờ CSDL cũ: ${tz}) sang giờ Việt Nam.`);
+      }
+      await setFlag("migration_timestamps_vn_v1");
+      await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
+      }
     });
     await step("procurement_partial_receipts", () =>
       client.query(`

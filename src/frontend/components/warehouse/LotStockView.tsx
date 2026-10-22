@@ -35,7 +35,7 @@ const FILTER_BTN_BG: Record<"all" | ExpiryClass, string> = {
  * lọc theo hãng sản xuất, nhóm hàng, vị trí, từ khoá; xuất Excel đúng danh sách đang lọc.
  * Không cần chuyển kho bằng tay: một lô tự chuyển sang "Cận date" / "Hết date" khi đến hạn.
  */
-export function LotStockView() {
+export function LotStockView({ productCode: initialProductCode = "" }: { productCode?: string } = {}) {
   const [lots, setLots] = useState<any[]>([]);
   const [today, setToday] = useState(todayVN());
   const [loading, setLoading] = useState(false);
@@ -53,6 +53,8 @@ export function LotStockView() {
   const [category, setCategory] = useState("all");
   const [location, setLocation] = useState("all");
   const [q, setQ] = useState("");
+  // lọc đúng một mã (mở từ nút "N lô" ở bảng Tồn kho)
+  const [productCode, setProductCode] = useState(initialProductCode);
 
   const qDebounced = useDebouncedValue(q, 300);
   const [page, setPage] = useState(1);
@@ -61,7 +63,7 @@ export function LotStockView() {
   const [counts, setCounts] = useState<Record<string, number>>({ all: 0 });
   const [options, setOptions] = useState<{ manufacturers: string[]; categories: string[]; locations: string[] }>({ manufacturers: [], categories: [], locations: [] });
   const filterQs = () => {
-    const p = new URLSearchParams({ q: qDebounced, manufacturer, category, location, cls, near_days: String(nearDays) });
+    const p = new URLSearchParams({ q: qDebounced, manufacturer, category, location, cls, near_days: String(nearDays), product_code: productCode });
     return p.toString();
   };
   // Lọc, đếm và chia trang trên máy chủ: chỉ tải về một trang lô
@@ -83,8 +85,8 @@ export function LotStockView() {
       setLoading(false);
     }
   };
-  useEffect(() => { setPage(1); }, [qDebounced, manufacturer, category, location, cls, nearDays, size]);
-  useEffect(() => { load(); }, [qDebounced, manufacturer, category, location, cls, nearDays, page, size]);
+  useEffect(() => { setPage(1); }, [qDebounced, manufacturer, category, location, cls, nearDays, size, productCode]);
+  useEffect(() => { load(); }, [qDebounced, manufacturer, category, location, cls, nearDays, page, size, productCode]);
   useEffect(() => {
     try { localStorage.setItem(NEAR_DAYS_KEY, String(nearDays)); } catch {}
   }, [nearDays]);
@@ -164,6 +166,12 @@ export function LotStockView() {
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Mã hàng, tên, số lô, hãng, kệ..."
             className="w-full pl-8 pr-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700" />
         </div>
+        {productCode && (
+          <button type="button" onClick={() => setProductCode("")} title="Bỏ lọc theo mã"
+            className="px-2.5 py-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold cursor-pointer">
+            Mã: {productCode} ✕
+          </button>
+        )}
         <select value={manufacturer} onChange={(e) => setManufacturer(e.target.value)} className={sel}>
           <option value="all">Tất cả hãng sản xuất</option>
           {options.manufacturers.map((m) => <option key={m} value={m}>{m}</option>)}

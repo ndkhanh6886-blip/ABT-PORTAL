@@ -1072,7 +1072,7 @@ export const SalesEvaluationAnalytics: React.FC<SalesEvaluationAnalyticsProps> =
                                                     📅 {l.date}
                                                 </span>
                                                 <span className="text-[9px] text-slate-500">
-                                                    {l.created_at ? new Date(l.created_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) : ""}
+                                                    {l.created_at ? new Date(l.created_at).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" }) : ""}
                                                 </span>
                                             </div>
                                             <div className="text-slate-200 whitespace-pre-line text-xs font-normal leading-relaxed">

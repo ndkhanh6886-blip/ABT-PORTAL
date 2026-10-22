@@ -63,6 +63,7 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { cn } from "@/backend/services/utils";
 import { todayVN, toVNDateString, nowVNDateTime } from "@/backend/services/dates";
 import { AttachmentPicker, AttachmentList } from "@/frontend/components/AttachmentPicker";
+import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 
 // Configuration for Departments
 export const DEPARTMENTS = [
@@ -4073,7 +4074,7 @@ export const UnifiedWorkspace: React.FC = () => {
                       </td>
                       <td className="py-3 px-4 text-slate-500">{t.customer_name || "—"}</td>
                       <td className="py-3 px-4"><PriorityBadge priority={t.priority} /></td>
-                      <td className="py-3 px-4 font-mono text-slate-500">{t.deadline ? t.deadline.slice(0, 10) : "—"}</td>
+                      <td className="py-3 px-4 font-mono text-slate-500">{t.deadline ? formatDayVN(t.deadline) : "—"}</td>
                       <td className="py-3 px-4">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           t.status === "DONE" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
@@ -4398,7 +4399,7 @@ ${wf.description || ""}`}
                               )}
                             </span>
                             <span>
-                              <strong>Hạn chót:</strong> {wf.due_date ? wf.due_date.slice(0, 10) : "—"}
+                              <strong>Hạn chót:</strong> {wf.due_date ? formatDayVN(wf.due_date) : "—"}
                             </span>
                           </div>
                         </div>
@@ -5678,7 +5679,7 @@ ${wf.description || ""}`}
                               </span>
                             </div>
                             <span className="text-slate-400 font-mono text-[11px]">
-                              📅 {log.log_date ? log.log_date.slice(0, 10) : ""}
+                              📅 {log.log_date ? formatDayVN(log.log_date) : ""}
                             </span>
                           </div>
 
@@ -5775,7 +5776,7 @@ ${wf.description || ""}`}
                                 </span>
                                 {log.manager_feedback_at && (
                                   <span className="text-[10px] text-indigo-400 font-normal">
-                                    {new Date(log.manager_feedback_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+                                    {new Date(log.manager_feedback_at).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" })}
                                   </span>
                                 )}
                               </div>
@@ -5846,7 +5847,7 @@ ${wf.description || ""}`}
                                 </span>
                                 {log.staff_feedback_at && (
                                   <span className="text-[10px] text-emerald-400 font-normal">
-                                    {new Date(log.staff_feedback_at).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" })}
+                                    {new Date(log.staff_feedback_at).toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" })}
                                   </span>
                                 )}
                               </div>
@@ -6515,8 +6516,7 @@ ${wf.description || ""}`}
 
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Hạn chót</label>
-              <input
-                type="date"
+              <DateInputVN
                 value={taskForm.deadline ? taskForm.deadline.slice(0, 10) : ""}
                 onChange={(e) => setTaskForm({ ...taskForm, deadline: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
@@ -6941,8 +6941,7 @@ ${wf.description || ""}`}
 
             <div className="space-y-1">
               <label className="block font-bold text-slate-700 dark:text-slate-300">Hạn chót cần hoàn tất</label>
-              <input
-                type="date"
+              <DateInputVN
                 value={wfForm.due_date ? wfForm.due_date.slice(0, 10) : ""}
                 onChange={(e) => setWfForm({ ...wfForm, due_date: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
@@ -8174,8 +8173,7 @@ ${wf.description || ""}`}
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngày thực hiện *</label>
-              <input
-                type="date"
+              <DateInputVN
                 required
                 value={scheduleForm.date || ""}
                 onChange={(e) => setScheduleForm({ ...scheduleForm, date: e.target.value })}
@@ -8531,8 +8529,7 @@ ${wf.description || ""}`}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Ngày bắt đầu</label>
-                <input
-                  type="date"
+                <DateInputVN
                   value={labProjectForm.startDate}
                   onChange={(e) => setLabProjectForm({ ...labProjectForm, startDate: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
@@ -8541,8 +8538,7 @@ ${wf.description || ""}`}
 
               <div>
                 <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Hạn hoàn thành (Deadline)</label>
-                <input
-                  type="date"
+                <DateInputVN
                   value={labProjectForm.endDate}
                   onChange={(e) => setLabProjectForm({ ...labProjectForm, endDate: e.target.value })}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
@@ -8857,7 +8853,7 @@ const TaskCard: React.FC<{
             ⏳ Chờ phân công
           </button>
         )}
-        <span className="text-[10px] font-mono">{task.deadline ? task.deadline.slice(5, 10) : ""}</span>
+        <span className="text-[10px] font-mono">{task.deadline ? formatDayVN(task.deadline, true) : ""}</span>
       </div>
 
       <div className="flex items-center justify-end gap-1 pt-1">
