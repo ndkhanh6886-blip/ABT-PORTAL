@@ -84,6 +84,26 @@ export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
   "đội vận chuyển"
 ]);
 
+/**
+ * Tên nhân sự để so sánh: cùng một tên có thể được lưu ở dạng Unicode tổ hợp / dựng sẵn khác nhau, hoặc đặt dấu
+ * kiểu cũ / mới ("Thùy" - "Thuỳ", "Hòa" - "Hoà"), có khoảng trắng thừa. Tên ở Tài khoản và ở Nhân sự lệch nhau
+ * như vậy làm nhân viên không thấy việc được giao cho mình.
+ */
+export function canonStaffName(name: any): string {
+  let s = String(name || "").normalize("NFC").toLowerCase().replace(/[\s\u00a0\u200b]+/g, " ").trim();
+  // đặt dấu kiểu mới (dấu trên chữ thứ hai của oa, oe, uy) -> kiểu cũ, để hai cách gõ trùng nhau
+  s = s.normalize("NFD").replace(/([ou])([\u0300\u0301\u0309\u0303\u0323])([aey])/g, "$1$3$2").normalize("NFC");
+  return s;
+}
+
+/** Hai tên là cùng một người (so sánh sau chuẩn hóa; tên đầy đủ chứa tên ngắn vẫn tính là trùng). */
+export function sameStaffName(a: any, b: any): boolean {
+  const x = canonStaffName(a);
+  const y = canonStaffName(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
+}
+
 export function cleanWorkspaceAssignee(name: any): string {
   const s = String(name || "").trim();
   if (!s) return "";
@@ -1834,9 +1854,7 @@ export const UnifiedWorkspace: React.FC = () => {
     return tasks.filter((t) => {
       const cleanAssignee = cleanWorkspaceAssignee(t.assignee_name);
       if (rolePerspective === "staff") {
-        const currLower = currentStaffName.toLowerCase().trim();
-        const assLower = cleanAssignee.toLowerCase();
-        const isAssignedToMe = Boolean(cleanAssignee) && (assLower.includes(currLower) || currLower.includes(assLower));
+        const isAssignedToMe = Boolean(cleanAssignee) && sameStaffName(cleanAssignee, currentStaffName);
         const isUnassignedInMyDept = !cleanAssignee && isSameWorkspaceDept(t.department, userDept);
         if (!isAssignedToMe && !isUnassignedInMyDept) {
           return false;
@@ -1854,9 +1872,7 @@ export const UnifiedWorkspace: React.FC = () => {
       if (selectedAssignee === "__UNASSIGNED__") {
         if (cleanAssignee) return false;
       } else if (selectedAssignee !== "all") {
-        const tAssignee = cleanAssignee.toLowerCase();
-        const target = selectedAssignee.toLowerCase().trim();
-        if (!tAssignee || (!tAssignee.includes(target) && !target.includes(tAssignee))) {
+        if (!cleanAssignee || !sameStaffName(cleanAssignee, selectedAssignee)) {
           return false;
         }
       }
@@ -1879,7 +1895,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const filteredSchedules = useMemo(() => {
     return weeklySchedule.filter((s) => {
       if (rolePerspective === "staff") {
-        return s.actor && (s.actor.toLowerCase().includes(currentStaffName.toLowerCase()) || currentStaffName.toLowerCase().includes(s.actor.toLowerCase()));
+        return Boolean(s.actor) && sameStaffName(s.actor, currentStaffName);
       }
       if (rolePerspective === "manager") {
         if (selectedDept !== "all" && !isSameWorkspaceDept(s.category, selectedDept)) return false;
@@ -1910,10 +1926,8 @@ export const UnifiedWorkspace: React.FC = () => {
 
       // Filter by staff
       if (rolePerspective === "staff") {
-        const lead = (p.lead || "").toLowerCase();
-        const curr = currentStaffName.toLowerCase();
-        const isLead = lead.includes(curr) || curr.includes(lead);
-        const isCollab = Array.isArray(p.collaborators) && p.collaborators.some((c: string) => c.toLowerCase().includes(curr));
+        const isLead = sameStaffName(p.lead, currentStaffName);
+        const isCollab = Array.isArray(p.collaborators) && p.collaborators.some((c: string) => sameStaffName(c, currentStaffName));
         if (!isLead && !isCollab) return false;
       } else if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
         const lead = (p.lead || "").toLowerCase().trim();
@@ -1939,7 +1953,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const filteredSalesTargets = useMemo(() => {
     return salesTargets.filter((t) => {
       if (rolePerspective === "staff") {
-        return t.lead && (t.lead.toLowerCase().includes(currentStaffName.toLowerCase()) || currentStaffName.toLowerCase().includes(t.lead.toLowerCase()));
+        return Boolean(t.lead) && sameStaffName(t.lead, currentStaffName);
       }
       if (rolePerspective === "manager") {
         return isSameWorkspaceDept(managerDept, "Kinh Doanh");
@@ -1956,7 +1970,7 @@ export const UnifiedWorkspace: React.FC = () => {
     return dailyLogs.filter((log) => {
       if (rolePerspective === "staff") {
         const emp = log.employee_name || log.author || "";
-        return emp && (emp.toLowerCase().includes(currentStaffName.toLowerCase()) || currentStaffName.toLowerCase().includes(emp.toLowerCase()));
+        return Boolean(emp) && sameStaffName(emp, currentStaffName);
       }
       if (rolePerspective === "manager") {
         return selectedDept === "all" ? true : isSameWorkspaceDept(log.department, selectedDept);
@@ -2269,15 +2283,29 @@ export const UnifiedWorkspace: React.FC = () => {
   // Handle Save Task
   const handleSaveTask = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Sửa một việc thành việc khác (đổi hẳn tiêu đề) sẽ làm mất việc cũ: hỏi tạo việc mới thay vì ghi đè
+    let payload: any = taskForm;
+    const original = taskForm.id ? tasks.find((t: any) => t.id === taskForm.id) : null;
+    if (original && canonStaffName(original.title) !== canonStaffName(taskForm.title)) {
+      const asNew = window.confirm(
+        `Bạn đã đổi tiêu đề công việc ${original.task_code || ""}:\n"${original.title}"\n→ "${taskForm.title}"\n\n` +
+        `Bấm OK để TẠO CÔNG VIỆC MỚI (giữ nguyên việc cũ).\nBấm Cancel nếu chỉ muốn sửa tên việc cũ.`
+      );
+      if (asNew) {
+        payload = { ...taskForm, id: null, task_code: undefined, logs: [], result: "", status: "TODO" };
+      } else if (!window.confirm(`Ghi đè lên việc "${original.title}"? Nội dung cũ của việc này sẽ được thay bằng nội dung mới.`)) {
+        return;
+      }
+    }
     try {
       const res = await fetch("/api/workflows?action=task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(taskForm)
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       if (data.success) {
-        showToast(taskForm.id ? "Đã cập nhật công việc!" : "Đã tạo mới công việc!", "success");
+        showToast(payload.id ? "Đã cập nhật công việc!" : "Đã tạo mới công việc!", "success");
         const prevTask = taskForm.id ? tasks.find((t: any) => t.id === taskForm.id) : null;
         const linkedWf = (taskForm as any).related_workflow_code
           ? workflows.find((w: any) => w.workflow_code === (taskForm as any).related_workflow_code)
@@ -2295,8 +2323,8 @@ export const UnifiedWorkspace: React.FC = () => {
           });
         }
         notifyActivity({
-          title: taskForm.id ? "Cập nhật công việc" : "Giao công việc mới",
-          message: taskForm.id 
+          title: payload.id ? "Cập nhật công việc" : "Giao công việc mới",
+          message: payload.id 
             ? `${user?.name || currentStaffName} đã cập nhật công việc "${taskForm.title}".`
             : `${user?.name || currentStaffName} đã giao công việc "${taskForm.title}" cho bạn (${taskForm.department}).`,
           type: "info",
@@ -6716,6 +6744,21 @@ ${wf.description || ""}`}
             </div>
           </div>
 
+          {taskForm.id && Array.isArray((taskForm as any).logs) && (taskForm as any).logs.some((l: any) => l?.type === "change") && (
+            <details className="rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-[11px]">
+              <summary className="cursor-pointer font-bold text-slate-600 dark:text-slate-300">
+                Lịch sử thay đổi ({(taskForm as any).logs.filter((l: any) => l?.type === "change").length})
+              </summary>
+              <ul className="mt-2 space-y-1 max-h-40 overflow-y-auto">
+                {(taskForm as any).logs.filter((l: any) => l?.type === "change").slice().reverse().map((l: any, i: number) => (
+                  <li key={i} className="text-slate-600 dark:text-slate-400">
+                    <span className="font-mono text-slate-400">{l.time}</span> · <b>{l.author || "?"}</b>: {l.text}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+
           <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
@@ -6724,6 +6767,20 @@ ${wf.description || ""}`}
             >
               Hủy
             </button>
+            {taskForm.id && (
+              <button
+                type="button"
+                onClick={() => {
+                  // Dùng việc này làm mẫu cho một việc mới (việc gốc giữ nguyên)
+                  setTaskForm((prev: any) => ({ ...prev, id: null, task_code: undefined, logs: [], result: "", attachments: [], status: "TODO", title: `${prev.title} (bản sao)` }));
+                  showToast("Đã chuyển thành việc mới - sửa nội dung rồi bấm Tạo Công Việc", "info");
+                }}
+                className="px-4 py-2 rounded-xl font-bold border border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                title="Tạo việc mới từ nội dung việc này, việc gốc giữ nguyên"
+              >
+                Nhân bản thành việc mới
+              </button>
+            )}
             <button
               type="submit"
               className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"

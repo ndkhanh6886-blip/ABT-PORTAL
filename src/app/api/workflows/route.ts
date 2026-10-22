@@ -300,7 +300,22 @@ export async function POST(req: NextRequest) {
       } = body;
 
       // Báo cáo kết quả của công việc thuộc một phiếu phối hợp: đăng vào "Trao đổi nội bộ" của phiếu để bên yêu cầu thấy
-      const prevTask = id ? (await query("SELECT task_code, result, attachments, related_workflow_code FROM company_tasks WHERE id = $1", [id])).rows[0] : null;
+      const prevTask = id ? (await query("SELECT task_code, title, assignee_name, status, deadline, priority, department, result, attachments, logs, related_workflow_code FROM company_tasks WHERE id = $1", [id])).rows[0] : null;
+      // Lịch sử thay đổi tự động (ai đổi gì, lúc nào): giữ lại để không mất dấu khi việc bị sửa thành việc khác
+      let mergedLogs: any[] = Array.isArray(logs) ? logs : [];
+      if (prevTask) {
+        const prevLogs: any[] = Array.isArray(prevTask.logs) ? prevTask.logs : [];
+        if (mergedLogs.length < prevLogs.length) mergedLogs = prevLogs;
+        const label: Record<string, string> = { title: "Tiêu đề", assignee_name: "Người phụ trách", status: "Trạng thái", deadline: "Hạn", priority: "Ưu tiên", department: "Phòng ban" };
+        const next: Record<string, any> = { title, assignee_name, status, deadline, priority, department };
+        const fmt = (v: any) => (v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? "").trim());
+        const changes = Object.keys(label)
+          .filter(k => next[k] !== undefined && fmt(prevTask[k]) !== fmt(next[k]))
+          .map(k => `${label[k]}: "${fmt(prevTask[k])}" → "${fmt(next[k])}"`);
+        if (changes.length) {
+          mergedLogs = [...mergedLogs, { time: nowVNDateTime(), author: me.full_name || me.username || "", type: "change", text: changes.join("; ") }];
+        }
+      }
       const postReportToWorkflow = async (taskCode: string | null) => {
         const wfCode = String(related_workflow_code || prevTask?.related_workflow_code || "").trim();
         const text = String(result || "").trim();
@@ -340,14 +355,15 @@ export async function POST(req: NextRequest) {
             deadline || null,
             description || "",
             related_workflow_code || null,
-            JSON.stringify(logs || []),
+            JSON.stringify(mergedLogs),
             result || "",
             JSON.stringify(attachments || []),
             id
           ]
         );
         await postReportToWorkflow(prevTask?.task_code || task_code || null);
-        await logAudit("UPDATE", "TASKS", `Cập nhật công việc: ${title} (${department})`);
+        const renamed = prevTask && String(prevTask.title || "").trim() !== String(title || "").trim();
+        await logAudit("UPDATE", "TASKS", `Cập nhật công việc ${prevTask?.task_code || ""}: ${renamed ? `"${prevTask.title}" → ` : ""}${title} (${department})${prevTask && String(prevTask.assignee_name || "") !== String(assignee_name || "") ? ` [phụ trách: ${prevTask.assignee_name || "-"} → ${assignee_name || "-"}]` : ""}`);
       } else {
         const code = task_code || `TSK-${Date.now().toString().slice(-6)}`;
         await query(
