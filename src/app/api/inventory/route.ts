@@ -47,12 +47,15 @@ export async function GET(req: NextRequest) {
 
     // Tồn kho theo từng lô (số lô, HSD, vị trí) kèm hãng sản xuất / nhóm hàng / điều kiện bảo quản
     if (action === "lot_stock") {
+      await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
       const r = await query(`
         SELECT l.id, l.product_code, l.lot_number, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} AS expiry_date, l.expiry_date AS expiry_raw,
                l.warehouse_location, l.quantity_on_hand,
                COALESCE(l.is_quarantined, false) AS is_quarantined, l.quarantine_reason, l.created_at, l.last_updated,
                COALESCE(p.name, i.product_name, l.product_code) AS product_name,
-               p.category, p.manufacturer, p.unit, p.specification, p.storage_condition, p.cost_price,
+               p.category, p.manufacturer, p.unit, p.specification, p.storage_condition,
+               COALESCE(NULLIF(l.unit_cost, 0), p.cost_price, 0) AS cost_price,
+               l.unit_cost,
                i.shelf_position
           FROM inventory_lots l
           LEFT JOIN products p ON p.code = l.product_code
@@ -61,12 +64,13 @@ export async function GET(req: NextRequest) {
          ORDER BY l.product_code ASC, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC
       `);
       const rows = r.rows;
-      return NextResponse.json({ lots: canSeeCost ? rows : rows.map(({ cost_price, ...rest }: any) => rest), today: todayVN() });
+      return NextResponse.json({ lots: canSeeCost ? rows : rows.map(({ cost_price, unit_cost, ...rest }: any) => rest), today: todayVN() });
     }
 
     // Tồn theo lô, lọc + đếm + chia trang trên máy chủ (hàng chục nghìn lô không phải tải hết về trình duyệt).
     // all=1: trả toàn bộ danh sách đang lọc (xuất Excel).
     if (action === "lot_stock_page") {
+      await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
       const today = todayVN();
       const nearDays = Math.min(730, Math.max(1, parseInt(searchParams.get("near_days") || "90") || 90));
       const kw = String(searchParams.get("q") || "").trim();
@@ -84,7 +88,10 @@ export async function GET(req: NextRequest) {
                  l.warehouse_location, l.quantity_on_hand,
                  COALESCE(l.is_quarantined, false) AS is_quarantined, l.quarantine_reason, l.created_at, l.last_updated,
                  COALESCE(p.name, i.product_name, l.product_code) AS product_name,
-                 p.category, p.manufacturer, p.unit, p.specification, p.storage_condition, p.cost_price, i.shelf_position
+                 p.category, p.manufacturer, p.unit, p.specification, p.storage_condition,
+                 COALESCE(NULLIF(l.unit_cost, 0), p.cost_price, 0) AS cost_price,
+                 l.unit_cost,
+                 i.shelf_position
             FROM inventory_lots l
             LEFT JOIN products p ON p.code = l.product_code
             LEFT JOIN inventory_items i ON i.product_code = l.product_code
@@ -120,7 +127,7 @@ export async function GET(req: NextRequest) {
       const counts: Record<string, number> = { all: 0, normal: 0, near: 0, expired: 0, no_expiry: 0 };
       for (const r of countRes.rows) { counts[r.klass] = r.n; counts.all += r.n; }
       const total = Number(rowsRes.rows[0]?.total_rows || 0);
-      const lots = rowsRes.rows.map(({ total_rows, cost_price, ...rest }: any) => (canSeeCost ? { ...rest, cost_price } : rest));
+      const lots = rowsRes.rows.map(({ total_rows, cost_price, unit_cost, ...rest }: any) => (canSeeCost ? { ...rest, cost_price, unit_cost } : rest));
       return NextResponse.json({ lots, total, page, size, counts, options: optRes.rows[0], today, nearDays });
     }
 
@@ -472,7 +479,8 @@ export async function POST(req: NextRequest) {
             lotNumber: item.lot_number || item.lotNumber || null,
             expiryDate: item.expiry_date || item.expiryDate || null,
             location: item.storage_location || warehouse_name || null,
-            shelf: item.shelf_position || null
+            shelf: item.shelf_position || null,
+            unitCost: Number(item.cost_price) || Number(item.unit_price) || 0,
           });
         }
         // app_storage row is locked last (global lock order) to avoid deadlocks between concurrent receipts
@@ -903,6 +911,24 @@ export async function POST(req: NextRequest) {
              ON CONFLICT (product_code) DO NOTHING`,
             [pCode, pName || pCode]
           );
+
+          // Đồng bộ sang catalog_items (nếu để trống Giá vốn hoặc Giá bán thì giữ nguyên giá đã lưu trước đó)
+          await appendCommercialCatalogEntry({ query } as any, {
+            code: pCode,
+            name: pName || pCode,
+            category: cat || "Hàng Thương Mại",
+            brand: brand || supplierCol || "TBR Phân Phối",
+            supplier: supplierCol || brand || "",
+            origin: "Chính hãng",
+            unit: unit || "Hộp",
+            specification: spec || "",
+            costPrice: cost ?? 0,
+            price: stdPrice ?? 0,
+            priceDealer1: stdPrice ? Math.round(stdPrice * 0.85) : 0,
+            priceDealer2: stdPrice ? Math.round(stdPrice * 0.8) : 0,
+            storageCondition: storageCondition || "",
+            leadTime: "Có sẵn kho",
+          });
           importedCount++;
         }
 
@@ -1127,7 +1153,8 @@ export async function POST(req: NextRequest) {
                 lotNumber: p.lot,
                 expiryDate: p.expDate || null,
                 location: p.warehouse || null,
-                shelf: p.shelf || null
+                shelf: p.shelf || null,
+                unitCost: p.unitCost || 0,
               });
 
               const doc = docs.get(p.inboundCode) || { reference: p.reference, date: p.inboundDate, performedBy: p.performedBy, warehouse: p.warehouse, items: [] as any[], notes: [] as string[] };

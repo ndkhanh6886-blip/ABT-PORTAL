@@ -122,7 +122,18 @@ export interface ProductMasterInput {
   storage_condition?: string;
 }
 
-/** Race-free "create product if missing" (replaces SELECT-then-INSERT). Returns the product id. */
+let lotUnitCostColEnsured = false;
+async function ensureLotUnitCostCol(c: Queryable) {
+  if (lotUnitCostColEnsured) return;
+  await c.query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0");
+  lotUnitCostColEnsured = true;
+}
+
+/**
+ * Race-free "create product if missing", and when the product already exists in `products`,
+ * automatically update `cost_price` (when a new lot/inbound provides `cost_price > 0`) and
+ * `standard_price` (only when `standard_price > 0` is explicitly provided, preserving any existing End-User price).
+ */
 export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promise<{ id: number | null; created: boolean }> {
   const ins = await c.query(
     `INSERT INTO products (code, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level, storage_condition)
@@ -137,13 +148,38 @@ export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promis
       p.specification || "",
       Number(p.standard_price) || 0,
       Number(p.cost_price) || 0,
-      p.manufacturer || "TBRs Phân Phối",
+      p.manufacturer || "TBR Phân Phối",
       p.origin || "Nhập khẩu / Chính hãng",
       Number(p.min_stock_level) || 10,
       p.storage_condition || null,
     ]
   );
   if (ins.rows.length > 0) return { id: ins.rows[0].id, created: true };
+
+  const newCost = Number(p.cost_price) || 0;
+  const newStdPrice = Number(p.standard_price) || 0;
+  const newStorage = p.storage_condition ? String(p.storage_condition).trim() : "";
+  const newMfg = p.manufacturer ? String(p.manufacturer).trim() : "";
+
+  if (newCost > 0 || newStdPrice > 0 || newStorage || newMfg) {
+    const upd = await c.query(
+      `UPDATE products
+          SET cost_price = CASE WHEN $2::numeric > 0 THEN $2::numeric ELSE cost_price END,
+              standard_price = CASE WHEN $3::numeric > 0 THEN $3::numeric ELSE standard_price END,
+              storage_condition = COALESCE(NULLIF(storage_condition, ''), NULLIF($4::text, '')),
+              manufacturer = CASE
+                WHEN (manufacturer IS NULL OR manufacturer = '' OR manufacturer = 'TBR' OR manufacturer = 'VIA' OR manufacturer ILIKE '%Phân Phối%')
+                     AND $5::text <> '' AND $5::text NOT ILIKE '%Phân Phối%'
+                THEN $5::text
+                ELSE manufacturer
+              END
+        WHERE code = $1
+        RETURNING id`,
+      [p.code, newCost, newStdPrice, newStorage, newMfg]
+    );
+    if (upd.rows.length > 0) return { id: upd.rows[0].id, created: false };
+  }
+
   const sel = await c.query("SELECT id FROM products WHERE code = $1", [p.code]);
   return { id: sel.rows[0]?.id ?? null, created: false };
 }
@@ -157,6 +193,7 @@ export interface AddStockInput {
   expiryDate?: string | null;
   location?: string | null;
   shelf?: string | null;
+  unitCost?: number | null;
 }
 
 /** Inbound: upsert the lot row and the aggregate atomically (no more lot/expiry overwrite). */
@@ -165,6 +202,7 @@ export async function addStock(c: Queryable, input: AddStockInput) {
   const qty = toQty(input.qty);
   if (!code || qty <= 0) return;
 
+  await ensureLotUnitCostCol(c);
   await c.query(
     `INSERT INTO inventory_items (product_id, product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position, last_updated)
      VALUES ($1, $2, $3, 0, 0, $4, $5, now())
@@ -175,14 +213,16 @@ export async function addStock(c: Queryable, input: AddStockInput) {
   await seedLotsFromAggregate(c, code);
 
   const location = input.location || agg?.warehouse_location || DEFAULT_LOCATION;
+  const lotUnitCost = Number(input.unitCost) || 0;
   await c.query(
-    `INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, unit_cost)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (product_code, lot_number, warehouse_location) DO UPDATE
        SET quantity_on_hand = inventory_lots.quantity_on_hand + EXCLUDED.quantity_on_hand,
            expiry_date = COALESCE(EXCLUDED.expiry_date, inventory_lots.expiry_date),
+           unit_cost = CASE WHEN EXCLUDED.unit_cost > 0 THEN EXCLUDED.unit_cost ELSE COALESCE(inventory_lots.unit_cost, 0) END,
            last_updated = now()`,
-    [code, normLot(input.lotNumber), input.expiryDate || null, location, qty]
+    [code, normLot(input.lotNumber), input.expiryDate || null, location, qty, lotUnitCost]
   );
   await c.query(
     `UPDATE inventory_items

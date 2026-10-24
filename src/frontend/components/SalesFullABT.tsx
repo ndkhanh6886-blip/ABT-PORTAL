@@ -935,9 +935,10 @@ export function SalesFullABT() {
                             category2: p.category || "Khác",
                             unit: p.unit || "Hộp",
                             brand: p.manufacturer || "ABT",
-                            price: Number(p.standard_price) || 1500000,
-                            priceDealer1: Math.round((Number(p.standard_price) || 1500000) * 0.9),
-                            priceDealer2: Math.round((Number(p.standard_price) || 1500000) * 0.85),
+                            costPrice: Number(p.cost_price) || 0,
+                            price: Number(p.standard_price) || 0,
+                            priceDealer1: Number(p.standard_price) > 0 ? Math.round(Number(p.standard_price) * 0.9) : 0,
+                            priceDealer2: Number(p.standard_price) > 0 ? Math.round(Number(p.standard_price) * 0.85) : 0,
                             registrationNo: "",
                             notes: p.storage_condition ? `Bảo quản: ${p.storage_condition}` : ""
                         }));
@@ -2867,15 +2868,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     if (overview.products && Array.isArray(overview.products)) {
                         setDbMasterProducts(overview.products);
                         const dbMap: Record<string, string> = {};
+                        const dbProdMap: Record<string, any> = {};
                         overview.products.forEach((p: any) => {
-                            if (p.code && p.storage_condition) {
-                                dbMap[p.code] = p.storage_condition;
+                            if (p.code) {
+                                dbProdMap[p.code] = p;
+                                if (p.storage_condition) {
+                                    dbMap[p.code] = p.storage_condition;
+                                }
                             }
                         });
                         setCommercialProducts(prev => {
                             const updatedExisting = prev.map(p => {
+                                const dbProd = dbProdMap[p.code];
+                                if (!dbProd) return p;
                                 const dbStorage = dbMap[p.code];
-                                return dbStorage ? { ...p, storageCondition: dbStorage } : p;
+                                const dbCost = Number(dbProd.cost_price) || 0;
+                                const dbStdPrice = Number(dbProd.standard_price) || 0;
+                                const curCost = Number(p.costPrice) || 0;
+                                const curPrice = Number(p.price) || 0;
+                                const next: any = { ...p };
+                                if (dbStorage) next.storageCondition = dbStorage;
+                                if (dbCost > 0 && dbCost !== curCost) {
+                                    if (curCost > 0) next.previousCostPrice = curCost;
+                                    next.costPrice = dbCost;
+                                }
+                                if (curPrice === 0 && dbStdPrice > 0) {
+                                    next.price = dbStdPrice;
+                                    next.priceDealer1 = Math.round(dbStdPrice * 0.9);
+                                    next.priceDealer2 = Math.round(dbStdPrice * 0.85);
+                                }
+                                return next;
                             });
                             const existingCodes = new Set(updatedExisting.map(p => p.code));
                             const missingFromDb: CommercialProduct[] = overview.products
@@ -3103,7 +3125,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             .filter(p => p.code && !existingCodes.has(p.code))
             .map(p => {
                 const isMfg = p.manufacturer === "ABT" || p.manufacturer === "TBR" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC") || p.code.startsWith("TBR")));
-                const priceNum = Number(p.standard_price) || Number(p.cost_price) || 0;
+                // Tuyệt đối không lấy cost_price làm giá bán khi standard_price để trống (0)
+                const priceNum = Number(p.standard_price) || 0;
+                const costNum = Number(p.cost_price) || 0;
                 return {
                     code: p.code,
                     parent_code: p.parent_code || p.parent_item_code || undefined,
@@ -3112,9 +3136,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     brand: p.manufacturer || (isMfg ? "ABT" : "Thương mại"),
                     unit: p.unit || "Hộp",
                     supplier: p.manufacturer || (isMfg ? "ABT" : "Thương mại"),
+                    costPrice: costNum,
                     price: priceNum,
-                    priceDealer1: Math.round(priceNum * 0.9),
-                    priceDealer2: Math.round(priceNum * 0.85),
+                    priceDealer1: priceNum > 0 ? Math.round(priceNum * 0.9) : 0,
+                    priceDealer2: priceNum > 0 ? Math.round(priceNum * 0.85) : 0,
                     specification: p.specification || p.unit || "",
                     category: p.category || "Khác",
                     category2: p.category || "Khác",
@@ -20229,8 +20254,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     value={p.costPrice}
                                                                     onChangeValue={(val) => handleUpdateCommercialProductInline(p.code, 'costPrice', val)}
                                                                     className="bg-slate-900 border border-slate-750 rounded px-1.5 py-1 text-[11px] text-slate-200 font-mono font-medium w-full text-right focus:border-indigo-400 focus:outline-none"
-                                                                    placeholder="Giá vốn..."
+                                                                    placeholder="Theo lô nhập..."
                                                                 />
+                                                                {(p as any).previousCostPrice > 0 && Number((p as any).previousCostPrice) !== Number(p.costPrice) && (
+                                                                    <span className="block text-[8px] text-sky-400 font-medium text-right mt-0.5" title="Giá vốn đã tự động cập nhật theo lô nhập kho mới nhất">
+                                                                        🔄 Cũ: {Number((p as any).previousCostPrice).toLocaleString("vi-VN")}đ
+                                                                    </span>
+                                                                )}
                                                             </td>
                                                             <td className="py-2 px-2">
                                                                 <div className="relative">
@@ -20241,15 +20271,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             "rounded px-1.5 py-1 text-[11px] font-mono font-bold w-full text-right focus:outline-none transition-all",
                                                                             isUnpriced
                                                                                 ? "bg-amber-950/60 border border-amber-500 text-amber-300 placeholder:text-amber-500/70 focus:border-amber-400 ring-1 ring-amber-500/40"
+                                                                                : (Number(p.costPrice) > 0 && Number(p.price) <= Number(p.costPrice))
+                                                                                ? "bg-rose-950/60 border border-rose-500 text-rose-300 focus:border-rose-400 ring-1 ring-rose-500/40"
                                                                                 : "bg-slate-900 border border-slate-750 text-emerald-300 focus:border-emerald-400"
                                                                         )}
-                                                                        placeholder={isUnpriced ? "⚠️ Nhập giá..." : "Giá End User..."}
+                                                                        placeholder={isUnpriced ? "Giá theo đợt..." : "Giá End User..."}
                                                                     />
-                                                                    {isUnpriced && (
+                                                                    {isUnpriced ? (
                                                                         <span className="block text-[8px] text-amber-400/90 font-medium text-right mt-0.5">
-                                                                            Chờ định giá
+                                                                            Giá báo theo đợt
                                                                         </span>
-                                                                    )}
+                                                                    ) : (Number(p.costPrice) > 0 && Number(p.price) <= Number(p.costPrice)) ? (
+                                                                        <span className="block text-[8px] text-rose-400 font-bold text-right mt-0.5">
+                                                                            ⚠️ ≤ Giá vốn nhập!
+                                                                        </span>
+                                                                    ) : ((p as any).previousCostPrice > 0 && Number((p as any).previousCostPrice) !== Number(p.costPrice)) ? (
+                                                                        <span className="block text-[8px] text-amber-300 font-semibold text-right mt-0.5">
+                                                                            ⚠️ Giá nhập vừa đổi
+                                                                        </span>
+                                                                    ) : null}
                                                                 </div>
                                                             </td>
                                                             <td className="py-2 px-2 text-center font-mono font-bold">

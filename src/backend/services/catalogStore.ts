@@ -87,15 +87,59 @@ export async function replaceCatalog(c: Queryable, items: any[], canDelete: bool
   await applyCatalogPatch(c, { kind: "array", upserts, deletes, order: [] } as any, keepCosts);
 }
 
-/** Thêm mặt hàng mới về từ kho / PO (đã có thì bỏ qua). */
+/**
+ * Thêm mặt hàng mới về từ kho / PO; nếu mặt hàng đã tồn tại trong danh mục mà phiếu nhập kho / lô mới
+ * có Đơn giá nhập (costPrice > 0) hoặc Giá bán mới (price > 0) thì tự động cập nhật Giá vốn hiện hành
+ * (kèm lưu previousCostPrice nếu giá nhập thay đổi) và Giá bán (nếu có điền).
+ */
 export async function appendCatalogEntry(c: Queryable, entry: Record<string, any>): Promise<void> {
   const code = cleanCode(entry?.code);
   if (!code) return;
-  await c.query(
+  const ins = await c.query(
     `INSERT INTO catalog_items (code, data, sort_order, updated_at) VALUES ($1, $2::jsonb, $3, now())
-     ON CONFLICT (code) DO NOTHING`,
+     ON CONFLICT (code) DO NOTHING
+     RETURNING code`,
     [code, JSON.stringify({ ...entry, code }), -Date.now()]
   );
+  if ((ins.rowCount || 0) > 0) return;
+
+  const newCost = Number(entry?.costPrice ?? entry?.cost_price) || 0;
+  const newPrice = Number(entry?.price ?? entry?.standard_price) || 0;
+  const newStorage = String(entry?.storageCondition ?? entry?.storage_condition ?? "").trim();
+  if (newCost <= 0 && newPrice <= 0 && !newStorage) return;
+
+  const existingRes = await c.query("SELECT data FROM catalog_items WHERE code = $1", [code]);
+  if (existingRes.rows.length === 0) return;
+  const curData = existingRes.rows[0]?.data || {};
+  const patch: Record<string, any> = {};
+
+  if (newCost > 0) {
+    const oldCost = Number(curData.costPrice ?? curData.cost_price) || 0;
+    if (oldCost > 0 && oldCost !== newCost) {
+      patch.previousCostPrice = oldCost;
+      patch.costChangedAt = new Date().toISOString();
+    }
+    patch.costPrice = newCost;
+  }
+  if (newPrice > 0) {
+    const oldPrice = Number(curData.price) || 0;
+    if (oldPrice > 0 && oldPrice !== newPrice) {
+      patch.previousPrice = oldPrice;
+    }
+    patch.price = newPrice;
+    patch.priceDealer1 = Number(entry?.priceDealer1) || Math.round(newPrice * 0.85);
+    patch.priceDealer2 = Number(entry?.priceDealer2) || Math.round(newPrice * 0.8);
+  }
+  if (newStorage && !curData.storageCondition) {
+    patch.storageCondition = newStorage;
+  }
+
+  if (Object.keys(patch).length > 0) {
+    await c.query(
+      "UPDATE catalog_items SET data = data || $2::jsonb, updated_at = now() WHERE code = $1",
+      [code, JSON.stringify(patch)]
+    );
+  }
 }
 
 /** Cập nhật vài trường của một mặt hàng (vd. giá sửa từ trang Kho / Kinh doanh). */

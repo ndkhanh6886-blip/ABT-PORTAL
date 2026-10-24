@@ -371,10 +371,12 @@ async function runIntegrityMigrations() {
           quantity_on_hand INTEGER NOT NULL DEFAULT 0 CHECK (quantity_on_hand >= 0),
           is_quarantined BOOLEAN NOT NULL DEFAULT false,
           quarantine_reason TEXT,
+          unit_cost NUMERIC DEFAULT 0,
           created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           last_updated TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
           CONSTRAINT inventory_lots_unique UNIQUE (product_code, lot_number, warehouse_location)
         );
+        ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0;
         CREATE INDEX IF NOT EXISTS idx_inventory_lots_fefo ON inventory_lots (product_code, expiry_date);
         -- Backfill: one lot per product that has stock but no lot rows yet (idempotent)
         INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, is_quarantined, quarantine_reason)
