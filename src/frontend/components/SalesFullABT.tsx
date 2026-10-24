@@ -2815,6 +2815,131 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const DEFAULT_COMMERCIAL_PRODUCTS: CommercialProduct[] = [];
 
+    const normalizeVnCategoryText = (raw?: string | null): string => {
+        if (!raw) return "";
+        let s = String(raw).normalize("NFC").trim();
+        const repls: Array<[string, string]> = [
+            ["Hoá", "Hóa"], ["hoá", "hóa"], ["HOÁ", "HÓA"],
+            ["oá", "óa"], ["oà", "òa"], ["oả", "ỏa"], ["oã", "õa"], ["oạ", "ọa"],
+            ["OÁ", "ÓA"], ["OÀ", "ÒA"], ["OẢ", "ỎA"], ["OÃ", "ÕA"], ["OẠ", "ỌA"],
+            ["uý", "úy"], ["uỳ", "ùy"], ["uỷ", "ủy"], ["uỹ", "ũy"], ["uỵ", "ụy"],
+            ["UÝ", "ÚY"], ["UỲ", "ÙY"], ["UỶ", "ỦY"], ["UỸ", "ŨY"], ["UỴ", "ỤY"],
+            ["Kít ", "Kit "], ["kít ", "kit "],
+        ];
+        for (const [a, b] of repls) {
+            s = s.split(a).join(b);
+        }
+        return s.replace(/\s+/g, " ");
+    };
+
+    const resolveActualProductCategory = (item: { code?: string; name?: string; category?: string; subCategory?: string }): string => {
+        const cat = normalizeVnCategoryText(item?.category);
+        const cUp = String(item?.code || "").trim().toUpperCase();
+        const nLow = normalizeVnCategoryText(`${item?.name || ""} ${item?.subCategory || ""}`).toLowerCase();
+        const catLow = cat.toLowerCase();
+
+        const isGeneric =
+            !catLow ||
+            catLow === "hàng thương mại" ||
+            catLow === "hàng thương mại mua ngoài" ||
+            catLow === "vật tư y tế" ||
+            catLow === "sinh phẩm & nguyên liệu" ||
+            catLow === "vật tư & sinh phẩm" ||
+            catLow === "hàng hóa";
+        const isSuspectEquipmentFallback = catLow === "thiết bị";
+
+        if (isGeneric || isSuspectEquipmentFallback) {
+            if (
+                cUp.startsWith("EXS-") || cUp.startsWith("EXM-") || cUp.startsWith("HE-") || cUp.startsWith("HI-") || cUp.startsWith("HM-") ||
+                ["toppure", "extraction", "tách chiết", "tach chiet", "purification kit", "co-extraction", "thu nhận dna", "thu nhận rna", "hạt từ tách chiết", "isolate ii"].some(k => nLow.includes(k))
+            ) {
+                return "Kit Tách chiết";
+            }
+            if (
+                cUp.startsWith("SQH-") || cUp.startsWith("SDS-") || cUp.startsWith("SDB-") || cUp.startsWith("SDV-") ||
+                cUp.startsWith("SDP-") || cUp.startsWith("SDA-") || cUp.startsWith("SDC-") || cUp.startsWith("SDG-") ||
+                cUp.startsWith("SDT-") || cUp.startsWith("TOPK") || cUp.startsWith("KIT-") ||
+                ["topsensi", "qpcr", "real-time pcr", "realtime pcr", "pcr kit", "pcr-rdb", "genotype kit", "rt-pcr", "one-step", "master mix", "mastermix", "khuếch đại", "nucleic acid detection kit", "quantitative fluorescence diagnostic kit", "quantitative test kit", "pcr hbv", "pcr hcv", "pcr hiv"].some(k => nLow.includes(k))
+            ) {
+                return "PCR Kit";
+            }
+            if (
+                cUp.startsWith("LBC-") || cUp.startsWith("DD-") || cUp.startsWith("CH-") || cUp.startsWith("OLG-") || cUp.startsWith("PRI-") || cUp.startsWith("PRB-") || cUp.startsWith("MT-") ||
+                ["oligo", "primer", "probe", "gram staining", "staining kit", "stain solution", "thuốc nhuộm", "nhuộm", "cytology", "preservation solution", "collection medium", "hóa chất", "môi trường", "agar", "broth", "buffer", "dung dịch", "chất thử", "nước cất", "nuclease-free", "nước không nuclease", "pbs", "ethanol", "methanol", "isopropanol", "chloroform", "formalin", "xylene", "cồn ", "axit ", "acid ", "taq ", "rtaq", "dntp", "enzyme", "proteinase", "rnase", "dnase", "ladder", "marker", "loading dye", "ethidium", "sybr", "chứng dương", "chứng âm", "positive control", "negative control", "thuốc thử", "kháng huyết thanh", "kháng thể", "huyết thanh", "sinh phẩm", "kit thử", "test nhanh", "assay kit", "jetseq"].some(k => nLow.includes(k))
+            ) {
+                return "Hóa chất & Sinh phẩm";
+            }
+            if (
+                cUp.startsWith("TCF") || cUp.startsWith("TCP") || cUp.startsWith("TCD") || cUp.startsWith("CS-") || cUp.startsWith("BSH") || cUp.startsWith("CAD") || cUp.startsWith("CSS") || cUp.startsWith("DIL") || cUp.startsWith("CA0") ||
+                ["bình đựng mẫu", "đĩa đựng mẫu", "dĩa đựng mẫu", "ống nghiệm", "ồng nghiệm", "ống ly tâm", "ống pcr", "ống hút", "đầu côn", "đầu cone", "đầu tip", "đầu típ", "đầu tuýp", "filter tip", "pipette tip", "tuýp pcr", "tube", "plate", "strip 8", "lamel", "lammel", "phiến kính", "lam kính", "cuvette", "găng tay", "túi chứa", "que lấy mẫu", "que cấy", "tăm bông", "màng dán", "màng lọc", "đầu lọc", "phễu lọc", "cột lọc", "optical film", "sealing film", "microtube", "cryovial", "eppendorf", "falcon", "đĩa petri", "dĩa petri", "đĩa nuôi cấy", "petri", "nhựa tiêu hao", "plasticware", "bơm tiêm", "kim tiêm", "chai nhựa", "chai thủy tinh", "chai cấy mô", "lọ đựng", "hộp đựng", "hộp đầu", "hộp chứa tuýp", "hộp trữ lạnh", "khay đựng mẫu", "reagent reservoir", "lược mẫu", "vòng nhúng mô", "tấm xốp", "screw cap", "nắp vặn", "bao hấp", "bông gòn", "bông thấm", "bông không thấm", "bình tia", "can nhựa", "giấy lọc", "giấy lau", "khẩu trang", "áo choàng"].some(k => nLow.includes(k))
+            ) {
+                return "Vật tư tiêu hao";
+            }
+            if (
+                ["pipet", "pipette", "micropipette", "dụng cụ lấy mẫu", "giá đỡ", "giá để", "khay đỡ", "magnetic rack", "nhiệt kế", "ẩm kế", "đèn cồn", "cốc thấp thành", "cốc đốt", "bình tam giác", "bình định mức", "ống đong", "que trang", "kẹp ", "kéo ", "nhíp ", "timer"].some(k => nLow.includes(k))
+            ) {
+                return "Dụng cụ";
+            }
+            if (["phần mềm", "lims", "bản quyền", "license", "chuyển đổi số"].some(k => nLow.includes(k))) {
+                return "Chuyển đổi số";
+            }
+            if (
+                ["máy ", "tủ ", "hệ thống ", "khúc xạ kế", "quang phổ", "ly tâm", "vortex", "nồi hấp", "bể điều nhiệt", "kính hiển vi", "cân ", "đầu đọc", "reader", "tester", "penetrometer", "thiết bị", "phụ kiện của máy", "rotor", "bộ lưu điện", "ups "].some(k => nLow.includes(k))
+            ) {
+                return isSuspectEquipmentFallback ? "Thiết bị" : "Thiết bị cơ bản";
+            }
+        }
+
+        return cat || "Vật tư tiêu hao";
+    };
+
+    const getCommercialCategoryGroup = (p: { code?: string; name?: string; category?: string; subCategory?: string }): "PCR_EXTRACT" | "EQUIPMENT" | "CHEMICAL" | "CONSUMABLE_OTHER" => {
+        const catLow = normalizeVnCategoryText(resolveActualProductCategory(p)).toLowerCase();
+        if (
+            catLow.includes("pcr") ||
+            catLow.includes("tách chiết") ||
+            catLow.includes("tach chiet") ||
+            catLow.includes("extraction") ||
+            catLow.includes("toppure") ||
+            catLow.includes("topsensi") ||
+            (catLow.includes("shpt") && !catLow.includes("hóa chất") && !catLow.includes("enzyme")) ||
+            catLow.includes("kit xét nghiệm") ||
+            catLow.includes("kit chẩn đoán") ||
+            catLow === "kit test"
+        ) {
+            return "PCR_EXTRACT";
+        }
+        if (
+            catLow.includes("thiết bị") ||
+            catLow.includes("thiet bi") ||
+            catLow.includes("máy") ||
+            catLow.includes("dụng cụ") ||
+            catLow.includes("dung cu") ||
+            catLow.includes("equipment")
+        ) {
+            return "EQUIPMENT";
+        }
+        if (
+            catLow.includes("hóa chất") ||
+            catLow.includes("hoa chat") ||
+            catLow.includes("nhuộm") ||
+            catLow.includes("nhuom") ||
+            catLow.includes("sinh phẩm") ||
+            catLow.includes("sinh pham") ||
+            catLow.includes("môi trường") ||
+            catLow.includes("moi truong") ||
+            catLow.includes("enzyme") ||
+            catLow.includes("oligo") ||
+            catLow.includes("thuốc thử") ||
+            catLow.includes("kháng thể") ||
+            catLow.includes("dung dịch") ||
+            catLow.includes("giải pháp tự pha")
+        ) {
+            return "CHEMICAL";
+        }
+        return "CONSUMABLE_OTHER";
+    };
+
     const [catalogSubTab, setCatalogSubTab] = useState<"manufactured" | "commercial">("commercial");
     const [commercialProducts, setCommercialProducts] = useState<CommercialProduct[]>(() => {
         if (typeof window !== "undefined") {
@@ -2823,7 +2948,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 try {
                     const parsed = JSON.parse(saved);
                     if (Array.isArray(parsed) && parsed.length > 0) {
-                        const filtered = parsed.filter((item: any) => item && !DEMO_COMMERCIAL_CODES.has(item.code));
+                        const filtered = parsed
+                            .filter((item: any) => item && !DEMO_COMMERCIAL_CODES.has(item.code))
+                            .map((item: any) => ({ ...item, category: resolveActualProductCategory(item) }));
                         if (filtered.length > 0) {
                             const existingCodes = new Set(filtered.map((p: any) => p.code));
                             const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(d.code));
@@ -2846,15 +2973,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const enrichStorage = (list: any[]) => {
                 return list.map((p: any) => {
                     const def = DEFAULT_COMMERCIAL_PRODUCTS.find(d => d.code === p.code);
+                    const resolvedCat = resolveActualProductCategory(p);
                     let sc = p.storageCondition;
                     if (!sc || sc === "15-25°C" || sc === "15-25°C (Nhiệt độ phòng)") {
                         if (def?.storageCondition) {
                             sc = def.storageCondition;
-                        } else if ((p.category || "").includes("Hóa chất") || p.code === "LBC-021") {
+                        } else if (resolvedCat.includes("Hóa chất") || p.code === "LBC-021") {
                             sc = "2-8°C (Mát - Hóa chất, Mẫu test)";
                         }
                     }
-                    return { ...p, storageCondition: sc || "15-25°C (Nhiệt độ phòng)" };
+                    return { ...p, category: resolvedCat, storageCondition: sc || "15-25°C (Nhiệt độ phòng)" };
                 });
             };
 
@@ -2880,14 +3008,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         setCommercialProducts(prev => {
                             const updatedExisting = prev.map(p => {
                                 const dbProd = dbProdMap[p.code];
-                                if (!dbProd) return p;
+                                const next: any = { ...p };
+                                if (!dbProd) {
+                                    next.category = resolveActualProductCategory(next);
+                                    return next;
+                                }
                                 const dbStorage = dbMap[p.code];
                                 const dbCost = Number(dbProd.cost_price) || 0;
                                 const dbStdPrice = Number(dbProd.standard_price) || 0;
                                 const curCost = Number(p.costPrice) || 0;
                                 const curPrice = Number(p.price) || 0;
-                                const next: any = { ...p };
                                 if (dbStorage) next.storageCondition = dbStorage;
+                                if (dbProd.category && (!next.category || next.category === "Thiết bị" || next.category === "Hàng Thương Mại")) {
+                                    next.category = dbProd.category;
+                                }
+                                next.category = resolveActualProductCategory(next);
                                 if (dbCost > 0 && dbCost !== curCost) {
                                     if (curCost > 0) next.previousCostPrice = curCost;
                                     next.costPrice = dbCost;
@@ -2902,29 +3037,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             const existingCodes = new Set(updatedExisting.map(p => p.code));
                             const missingFromDb: CommercialProduct[] = overview.products
                                 .filter((p: any) => p.code && !existingCodes.has(p.code))
-                                .map((p: any) => ({
-                                    code: p.code,
-                                    name: p.name,
-                                    category: p.category || "Hóa chất & Sinh phẩm",
-                                    subCategory: p.category || "",
-                                    brand: p.manufacturer || "Thương mại",
-                                    origin: p.origin || "Chính hãng",
-                                    unit: p.unit || "Hộp",
-                                    specification: p.specification || p.unit || "",
-                                    costPrice: Number(p.cost_price) || 0,
-                                    price: Number(p.standard_price) || 0,
-                                    priceDealer1: Math.round((Number(p.standard_price) || 0) * 0.9),
-                                    priceDealer2: Math.round((Number(p.standard_price) || 0) * 0.85),
-                                    warranty: "12 tháng",
-                                    leadTime: "Có sẵn kho",
-                                    storageCondition: p.storage_condition || "15-25°C (Nhiệt độ phòng)",
-                                    supplier: p.manufacturer || "Nhà cung cấp",
-                                    notes: "",
-                                    imageUrl: "",
-                                    techSpecs: "",
-                                    isEquipment: (p.category ? p.category.includes("Thiết bị") : false) || (p.code ? p.code.startsWith("EQ-") : false),
-                                    configurations: []
-                                }));
+                                .map((p: any) => {
+                                    const resolvedCategory = resolveActualProductCategory({
+                                        code: p.code,
+                                        name: p.name,
+                                        category: p.category,
+                                    });
+                                    return {
+                                        code: p.code,
+                                        name: p.name,
+                                        category: resolvedCategory,
+                                        subCategory: p.category || "",
+                                        brand: p.manufacturer || "Thương mại",
+                                        origin: p.origin || "Chính hãng",
+                                        unit: p.unit || "Hộp",
+                                        specification: p.specification || p.unit || "",
+                                        costPrice: Number(p.cost_price) || 0,
+                                        price: Number(p.standard_price) || 0,
+                                        priceDealer1: Math.round((Number(p.standard_price) || 0) * 0.9),
+                                        priceDealer2: Math.round((Number(p.standard_price) || 0) * 0.85),
+                                        warranty: "12 tháng",
+                                        leadTime: "Có sẵn kho",
+                                        storageCondition: p.storage_condition || "15-25°C (Nhiệt độ phòng)",
+                                        supplier: p.manufacturer || "Nhà cung cấp",
+                                        notes: "",
+                                        imageUrl: "",
+                                        techSpecs: "",
+                                        isEquipment: getCommercialCategoryGroup({ code: p.code, name: p.name, category: resolvedCategory }) === "EQUIPMENT",
+                                        configurations: []
+                                    };
+                                });
                             return [...updatedExisting, ...missingFromDb];
                         });
                     }
@@ -8001,9 +8143,32 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }
 
                 const importedAll: CommercialProduct[] = json.map((row, idx) => {
-                    const code = String(row["Mã SKU (*)"] || row["Mã Hàng Hóa (SKU)"] || row["Mã SKU"] || row["Mã hàng"] || row["Code"] || `COMM-IMP-${idx + 1}`).trim();
-                    const name = String(row["Tên sản phẩm (*)"] || row["Tên Hàng Hóa Thương Mại"] || row["Tên hàng"] || row["Name"] || "Hàng hóa nhập khẩu").trim();
-                    const category = (row["Nhóm ngành hàng (*)"] || row["Phân Loại Chính"] || row["Phân loại"] || row["Category"] || "Thiết bị") as any;
+                    const code = String(row["Mã SKU (*)"] || row["Mã Hàng Hóa (SKU)"] || row["Mã SKU"] || row["Mã hàng"] || row["MÃ HÀNG"] || row["Code"] || `COMM-IMP-${idx + 1}`).trim();
+                    const name = String(row["Tên sản phẩm (*)"] || row["Tên Hàng Hóa Thương Mại"] || row["Tên hàng"] || row["TÊN HÀNG HÓA"] || row["Name"] || "Hàng hóa nhập khẩu").trim();
+                    const rawCategory = String(
+                        row["Nhóm ngành hàng (*)"] ||
+                        row["Nhóm ngành hàng"] ||
+                        row["Phân Loại Chính"] ||
+                        row["Phân loại ngành hàng"] ||
+                        row["Phân loại"] ||
+                        row["Ngành hàng"] ||
+                        row["Nhóm hàng"] ||
+                        row["Danh mục"] ||
+                        row["Danh mục (Category)"] ||
+                        row["Danh mục (PCR Kit/..)"] ||
+                        row["Chủng loại"] ||
+                        row["CHỦNG LOẠI"] ||
+                        row["Loại Kit"] ||
+                        row["Category"] ||
+                        row["category"] ||
+                        ""
+                    ).trim();
+                    const category = resolveActualProductCategory({
+                        code,
+                        name,
+                        category: rawCategory,
+                        subCategory: String(row["Nhóm Hàng Con"] || row["Nhóm"] || ""),
+                    }) as any;
                     const price = Number(row["Giá niêm yết End-User (VNĐ)"] || row["Giá End User (VNĐ)"] || row["Giá bán"] || row["Price"] || 0);
                     const costPrice = Number(row["Giá vốn nhập (VNĐ)"] || row["Giá Vốn (VNĐ)"] || row["Cost"] || 0);
                     const priceDealer1 = Number(row["Giá Đại lý Cấp 1 (VNĐ)"] || row["Giá Dealer Cấp 1 (VNĐ)"] || row["Giá Dealer 1"] || 0) || Math.round(price * 0.9);
@@ -13610,6 +13775,30 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setCommercialPage(1);
     }, [commercialSearchQuery, commercialCategoryFilter, commercialBrandFilter, commercialAvailabilityFilter, commercialComponentFilter, commercialStorageFilter, commercialPriceFilter]);
 
+    // Commercial Products Category Statistics & Dynamic Category List
+    const commercialCategoryStats = useMemo(() => {
+        const groupCounts = {
+            PCR_EXTRACT: 0,
+            EQUIPMENT: 0,
+            CHEMICAL: 0,
+            CONSUMABLE_OTHER: 0,
+        };
+        const catMap = new Map<string, number>();
+
+        commercialProducts.forEach(p => {
+            const grp = getCommercialCategoryGroup(p);
+            groupCounts[grp] = (groupCounts[grp] || 0) + 1;
+            const actualCat = resolveActualProductCategory(p);
+            catMap.set(actualCat, (catMap.get(actualCat) || 0) + 1);
+        });
+
+        const actualCategories = Array.from(catMap.entries())
+            .map(([category, count]) => ({ category, count }))
+            .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category, "vi"));
+
+        return { groupCounts, actualCategories };
+    }, [commercialProducts]);
+
     const filteredCommercialProducts = useMemo(() => {
         const q = commercialSearchDebounced.toLowerCase().trim();
         return commercialProducts.filter(p => {
@@ -13619,9 +13808,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 (p.brand || "").toLowerCase().includes(q) ||
                 (p.specification || "").toLowerCase().includes(q)
             );
-            const matchesCat = commercialCategoryFilter === "all" || 
-                p.category === commercialCategoryFilter ||
-                (p.category || "").toLowerCase().includes(commercialCategoryFilter.toLowerCase());
+            const actualCat = resolveActualProductCategory(p);
+            const normActualCat = normalizeVnCategoryText(actualCat).toLowerCase();
+            const normFilter = normalizeVnCategoryText(commercialCategoryFilter).toLowerCase();
+            const matchesCat =
+                commercialCategoryFilter === "all"
+                    ? true
+                    : commercialCategoryFilter.startsWith("GROUP:")
+                    ? getCommercialCategoryGroup(p) === commercialCategoryFilter.slice(6)
+                    : actualCat === commercialCategoryFilter ||
+                      normActualCat === normFilter ||
+                      normActualCat.includes(normFilter);
             const matchesBrand = commercialBrandFilter === "all" || p.brand === commercialBrandFilter;
             const matchesAvail = commercialAvailabilityFilter === "all" || (p.leadTime || "").includes(commercialAvailabilityFilter);
 
@@ -19944,9 +20141,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         {/* Summary Metric Cards */}
                             <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
-                                <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-3.5">
+                                <div
+                                    onClick={() => {
+                                        setCommercialCategoryFilter("all");
+                                        setCommercialPriceFilter("all");
+                                    }}
+                                    className={cn(
+                                        "border rounded-xl p-3.5 cursor-pointer transition-all",
+                                        commercialCategoryFilter === "all" && commercialPriceFilter === "all"
+                                            ? "bg-slate-900/70 border-orange-500/60 shadow-sm"
+                                            : "bg-slate-900/40 border-slate-800 hover:bg-slate-850"
+                                    )}
+                                    title="Bấm để hiển thị toàn bộ sản phẩm kinh doanh"
+                                >
                                     <span className="text-[10px] text-orange-400 uppercase tracking-wider font-bold block">Tổng sản phẩm kinh doanh</span>
                                     <div className="text-lg font-bold font-mono text-white mt-1">{commercialProducts.length} mặt hàng</div>
+                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                        {commercialCategoryStats.actualCategories.length} phân loại thực tế
+                                    </span>
                                 </div>
                                 <div 
                                     onClick={() => setCommercialPriceFilter(prev => prev === "unpriced" ? "all" : "unpriced")}
@@ -19971,29 +20183,77 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         {unpricedProducts.length > 0 ? "Bấm để lọc & nhập giá ➔" : "Đã đủ giá bán ✓"}
                                     </span>
                                 </div>
-                                <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-3.5">
+                                <div
+                                    onClick={() => setCommercialCategoryFilter(prev => prev === "GROUP:PCR_EXTRACT" ? "all" : "GROUP:PCR_EXTRACT")}
+                                    className={cn(
+                                        "border rounded-xl p-3.5 cursor-pointer transition-all",
+                                        commercialCategoryFilter === "GROUP:PCR_EXTRACT"
+                                            ? "bg-indigo-950/60 border-indigo-400 shadow-sm"
+                                            : "bg-slate-900/40 border-slate-800 hover:border-indigo-500/50"
+                                    )}
+                                    title="Bấm để lọc nhóm Kit PCR, qPCR, Tách chiết & Sinh học phân tử"
+                                >
                                     <span className="text-[10px] text-indigo-400 uppercase tracking-wider font-bold block">🧬 Kit PCR & Tách chiết</span>
                                     <div className="text-lg font-bold font-mono text-indigo-300 mt-1">
-                                        {commercialProducts.filter(p => (p.category || "").includes("PCR") || (p.category || "").includes("Tách chiết")).length} loại
+                                        {commercialCategoryStats.groupCounts.PCR_EXTRACT} loại
                                     </div>
+                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                        {commercialCategoryFilter === "GROUP:PCR_EXTRACT" ? "Đang lọc nhóm này (Bấm bỏ lọc)" : "Kit PCR, Tách chiết, SHPT"}
+                                    </span>
                                 </div>
-                                <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-3.5">
+                                <div
+                                    onClick={() => setCommercialCategoryFilter(prev => prev === "GROUP:EQUIPMENT" ? "all" : "GROUP:EQUIPMENT")}
+                                    className={cn(
+                                        "border rounded-xl p-3.5 cursor-pointer transition-all",
+                                        commercialCategoryFilter === "GROUP:EQUIPMENT"
+                                            ? "bg-purple-950/60 border-purple-400 shadow-sm"
+                                            : "bg-slate-900/40 border-slate-800 hover:border-purple-500/50"
+                                    )}
+                                    title="Bấm để lọc nhóm Thiết bị phòng Lab (Thiết bị cơ bản, chuyên sâu, thiết bị TM...)"
+                                >
                                     <span className="text-[10px] text-purple-400 uppercase tracking-wider font-bold block">🏢 Thiết bị phòng Lab</span>
                                     <div className="text-lg font-bold font-mono text-purple-300 mt-1">
-                                        {commercialProducts.filter(p => (p.category || "").includes("Thiết bị")).length} máy
+                                        {commercialCategoryStats.groupCounts.EQUIPMENT} máy
                                     </div>
+                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                        {commercialCategoryFilter === "GROUP:EQUIPMENT" ? "Đang lọc nhóm này (Bấm bỏ lọc)" : "Máy & Thiết bị phòng Lab"}
+                                    </span>
                                 </div>
-                                <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-3.5">
-                                    <span className="text-[10px] text-emerald-400 uppercase tracking-wider font-bold block">🧪 Hóa chất & Nhuộm</span>
+                                <div
+                                    onClick={() => setCommercialCategoryFilter(prev => prev === "GROUP:CHEMICAL" ? "all" : "GROUP:CHEMICAL")}
+                                    className={cn(
+                                        "border rounded-xl p-3.5 cursor-pointer transition-all",
+                                        commercialCategoryFilter === "GROUP:CHEMICAL"
+                                            ? "bg-emerald-950/60 border-emerald-400 shadow-sm"
+                                            : "bg-slate-900/40 border-slate-800 hover:border-emerald-500/50"
+                                    )}
+                                    title="Bấm để lọc nhóm Hóa chất, Sinh phẩm, Enzyme, Môi trường & Thuốc nhuộm"
+                                >
+                                    <span className="text-[10px] text-emerald-400 uppercase tracking-wider font-bold block">🧪 Hóa chất & Sinh phẩm</span>
                                     <div className="text-lg font-bold font-mono text-emerald-300 mt-1">
-                                        {commercialProducts.filter(p => (p.category || "").includes("Hóa chất") || (p.category || "").includes("Thuốc nhuộm")).length} loại
+                                        {commercialCategoryStats.groupCounts.CHEMICAL} loại
                                     </div>
+                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                        {commercialCategoryFilter === "GROUP:CHEMICAL" ? "Đang lọc nhóm này (Bấm bỏ lọc)" : "Hóa chất, Sinh phẩm, Nhuộm"}
+                                    </span>
                                 </div>
-                                <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-3.5">
+                                <div
+                                    onClick={() => setCommercialCategoryFilter(prev => prev === "GROUP:CONSUMABLE_OTHER" ? "all" : "GROUP:CONSUMABLE_OTHER")}
+                                    className={cn(
+                                        "border rounded-xl p-3.5 cursor-pointer transition-all",
+                                        commercialCategoryFilter === "GROUP:CONSUMABLE_OTHER"
+                                            ? "bg-cyan-950/60 border-cyan-400 shadow-sm"
+                                            : "bg-slate-900/40 border-slate-800 hover:border-cyan-500/50"
+                                    )}
+                                    title="Bấm để lọc nhóm Vật tư tiêu hao, Dụng cụ, Chuyển đổi số & Dịch vụ"
+                                >
                                     <span className="text-[10px] text-cyan-400 uppercase tracking-wider font-bold block">📦 Tiêu hao & Phần mềm</span>
                                     <div className="text-lg font-bold font-mono text-cyan-300 mt-1">
-                                        {commercialProducts.filter(p => (p.category || "").includes("tiêu hao") || (p.category || "").includes("Dụng cụ") || (p.category || "").includes("Chuyển đổi")).length} mục
+                                        {commercialCategoryStats.groupCounts.CONSUMABLE_OTHER} mục
                                     </div>
+                                    <span className="text-[9px] text-slate-400 block mt-0.5">
+                                        {commercialCategoryFilter === "GROUP:CONSUMABLE_OTHER" ? "Đang lọc nhóm này (Bấm bỏ lọc)" : "Tiêu hao, Dụng cụ, Phần mềm"}
+                                    </span>
                                 </div>
                                 <div 
                                     onClick={() => {
@@ -20050,17 +20310,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             onChange={(e) => setCommercialCategoryFilter(e.target.value)}
                                             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500 font-semibold"
                                         >
-                                            <option value="all">-- Tất cả Ngành hàng --</option>
-                                            <option value="PCR Kit">🧬 Kit PCR / qPCR</option>
-                                            <option value="Tách chiết">🧪 Kit Tách chiết</option>
-                                            <option value="Hóa chất">🧴 Hóa chất / Thuốc nhuộm</option>
-                                            <option value="Thiết bị cơ bản">🏢 Thiết bị cơ bản</option>
-                                            <option value="Thiết bị chuyên sâu">🔬 Thiết bị chuyên sâu</option>
-                                            <option value="Thiết bị TM">🛒 Thiết bị TM khác</option>
-                                            <option value="Chuyển đổi số">💻 Chuyển đổi số</option>
-                                            <option value="Vật tư tiêu hao">📦 Vật tư tiêu hao</option>
-                                            <option value="Dụng cụ">🧪 Dụng cụ</option>
-                                            <option value="Dịch vụ">🛠️ Dịch vụ & Khác</option>
+                                            <option value="all">-- Tất cả Ngành hàng ({commercialProducts.length}) --</option>
+                                            <optgroup label="📊 Nhóm thống kê tổng hợp">
+                                                <option value="GROUP:PCR_EXTRACT">🧬 Nhóm Kit PCR & Tách chiết ({commercialCategoryStats.groupCounts.PCR_EXTRACT})</option>
+                                                <option value="GROUP:EQUIPMENT">🏢 Nhóm Thiết bị phòng Lab ({commercialCategoryStats.groupCounts.EQUIPMENT})</option>
+                                                <option value="GROUP:CHEMICAL">🧪 Nhóm Hóa chất & Sinh phẩm ({commercialCategoryStats.groupCounts.CHEMICAL})</option>
+                                                <option value="GROUP:CONSUMABLE_OTHER">📦 Nhóm Tiêu hao, Dụng cụ & Phần mềm ({commercialCategoryStats.groupCounts.CONSUMABLE_OTHER})</option>
+                                            </optgroup>
+                                            <optgroup label="🏷️ Phân loại thực tế trong bảng">
+                                                {commercialCategoryStats.actualCategories.map(({ category, count }) => (
+                                                    <option key={category} value={category}>
+                                                        {category} ({count})
+                                                    </option>
+                                                ))}
+                                            </optgroup>
                                         </select>
                                     </div>
                                     <div>
@@ -20189,22 +20452,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 </div>
                                                             </td>
                                                             <td className="py-2 px-2 text-center">
-                                                                <span className={cn(
-                                                                    "px-2.5 py-1 rounded-full text-[10px] font-bold border tracking-wide inline-block",
-                                                                    p.category === "Thiết bị chuyên sâu" ? "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-900/80 dark:text-purple-100 dark:border-purple-400/80 shadow-sm" :
-                                                                    p.category === "Thiết bị cơ bản" ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-900/80 dark:text-blue-100 dark:border-blue-400/80 shadow-sm" :
-                                                                    p.category === "Thiết bị TM" ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-900/80 dark:text-amber-100 dark:border-amber-400/80 shadow-sm" :
-                                                                    p.category === "Chuyển đổi số" ? "bg-cyan-100 text-cyan-900 border-cyan-300 dark:bg-cyan-900/80 dark:text-cyan-100 dark:border-cyan-400/80 shadow-sm" :
-                                                                    p.category === "Hóa chất" ? "bg-rose-100 text-rose-900 border-rose-300 dark:bg-rose-900/80 dark:text-rose-100 dark:border-rose-400/80 shadow-sm" :
-                                                                    p.category === "Vật tư tiêu hao" ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-900/80 dark:text-emerald-100 dark:border-emerald-400/80 shadow-sm" :
-                                                                    p.category === "Dụng cụ" ? "bg-teal-100 text-teal-900 border-teal-300 dark:bg-teal-900/80 dark:text-teal-100 dark:border-teal-400/80 shadow-sm" :
-                                                                    p.category === "Thiết bị" ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-900/80 dark:text-blue-100 dark:border-blue-400/80 shadow-sm" :
-                                                                    (p.category || "").includes("PCR") ? "bg-indigo-100 text-indigo-900 border-indigo-300 dark:bg-indigo-900/80 dark:text-indigo-100 dark:border-indigo-400/80 shadow-sm" :
-                                                                    (p.category || "").includes("Tách chiết") ? "bg-sky-100 text-sky-900 border-sky-300 dark:bg-sky-900/80 dark:text-sky-100 dark:border-sky-400/80 shadow-sm" :
-                                                                    "bg-slate-100 text-slate-800 border-slate-300 dark:bg-slate-800 dark:text-slate-100 dark:border-slate-600 font-semibold"
-                                                                )}>
-                                                                    {p.category}
-                                                                </span>
+                                                                {(() => {
+                                                                    const actualCat = resolveActualProductCategory(p);
+                                                                    const grp = getCommercialCategoryGroup(p);
+                                                                    const badgeClass =
+                                                                        actualCat === "Thiết bị chuyên sâu" ? "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-900/80 dark:text-purple-100 dark:border-purple-400/80 shadow-sm" :
+                                                                        actualCat === "Thiết bị cơ bản" ? "bg-blue-100 text-blue-900 border-blue-300 dark:bg-blue-900/80 dark:text-blue-100 dark:border-blue-400/80 shadow-sm" :
+                                                                        actualCat === "Thiết bị TM" ? "bg-amber-100 text-amber-900 border-amber-300 dark:bg-amber-900/80 dark:text-amber-100 dark:border-amber-400/80 shadow-sm" :
+                                                                        grp === "PCR_EXTRACT" ? "bg-indigo-100 text-indigo-900 border-indigo-300 dark:bg-indigo-900/80 dark:text-indigo-100 dark:border-indigo-400/80 shadow-sm" :
+                                                                        grp === "CHEMICAL" ? "bg-emerald-100 text-emerald-900 border-emerald-300 dark:bg-emerald-900/80 dark:text-emerald-100 dark:border-emerald-400/80 shadow-sm" :
+                                                                        grp === "EQUIPMENT" ? "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-900/80 dark:text-purple-100 dark:border-purple-400/80 shadow-sm" :
+                                                                        "bg-cyan-100 text-cyan-900 border-cyan-300 dark:bg-cyan-900/80 dark:text-cyan-100 dark:border-cyan-400/80 shadow-sm";
+                                                                    return (
+                                                                        <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-bold border tracking-wide inline-block", badgeClass)}>
+                                                                            {actualCat}
+                                                                        </span>
+                                                                    );
+                                                                })()}
                                                             </td>
                                                             <td className="py-2 px-2 text-center font-mono">
                                                                 <span className="text-slate-900 dark:text-slate-200 font-bold">{p.unit || "Cái"}</span>
@@ -21703,14 +21967,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 onChange={(e) => setCommCategory(e.target.value)}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white outline-none font-semibold focus:border-indigo-500"
                             >
+                                <option value="PCR Kit">🧬 Kit PCR / qPCR</option>
+                                <option value="Kit Tách chiết">🧪 Kit Tách chiết</option>
+                                <option value="Hóa chất & Sinh phẩm">🧴 Hóa chất & Sinh phẩm</option>
                                 <option value="Thiết bị cơ bản">🏢 Thiết bị cơ bản (Tủ ATSH, Tủ PCR, Tiệt trùng...)</option>
-                                <option value="Thiết bị chuyên sâu">🧬 Thiết bị chuyên sâu (Tách chiết, Máy phết...)</option>
+                                <option value="Thiết bị chuyên sâu">🔬 Thiết bị chuyên sâu (Tách chiết, Máy phết...)</option>
                                 <option value="Thiết bị TM">🛒 Thiết bị TM (Sản phẩm mua lại)</option>
-                                <option value="Chuyển đổi số">💻 Chuyển đổi số (Scanner, Phần mềm...)</option>
-                                <option value="Hóa chất">🧴 Hóa chất & Sinh phẩm</option>
+                                <option value="Thiết bị">🏢 Thiết bị phòng Lab (Chung)</option>
                                 <option value="Vật tư tiêu hao">📦 Vật tư tiêu hao</option>
                                 <option value="Dụng cụ">🧪 Dụng cụ thí nghiệm</option>
+                                <option value="Chuyển đổi số">💻 Chuyển đổi số (Scanner, Phần mềm...)</option>
                                 <option value="Dịch vụ">🛠️ Dịch vụ & Bảo trì</option>
+                                {commercialCategoryStats.actualCategories
+                                    .filter(({ category }) => ![
+                                        "PCR Kit", "Kit Tách chiết", "Hóa chất & Sinh phẩm", "Hóa chất",
+                                        "Thiết bị cơ bản", "Thiết bị chuyên sâu", "Thiết bị TM", "Thiết bị",
+                                        "Vật tư tiêu hao", "Dụng cụ", "Chuyển đổi số", "Dịch vụ", "Khác"
+                                    ].includes(category))
+                                    .map(({ category }) => (
+                                        <option key={category} value={category}>🏷️ {category}</option>
+                                    ))}
                                 <option value="Khác">Khác</option>
                             </select>
                         </div>

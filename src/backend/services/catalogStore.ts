@@ -16,11 +16,108 @@ const COST_FIELDS = ["cost_price", "costPrice", "unit_cost", "unitCost", "purcha
 
 const cleanCode = (v: any) => String(v ?? "").trim();
 
+/** Chuẩn hóa chính tả tiếng Việt cho tên phân loại (đồng nhất oá/óa, uý/úy, Kít/Kit, NFC). */
+export function normalizeVnCategoryText(raw?: string | null): string {
+  if (!raw) return "";
+  let s = String(raw).normalize("NFC").trim();
+  const repls: Array<[string, string]> = [
+    ["Hoá", "Hóa"], ["hoá", "hóa"], ["HOÁ", "HÓA"],
+    ["oá", "óa"], ["oà", "òa"], ["oả", "ỏa"], ["oã", "õa"], ["oạ", "ọa"],
+    ["OÁ", "ÓA"], ["OÀ", "ÒA"], ["OẢ", "ỎA"], ["OÃ", "ÕA"], ["OẠ", "ỌA"],
+    ["uý", "úy"], ["uỳ", "ùy"], ["uỷ", "ủy"], ["uỹ", "ũy"], ["uỵ", "ụy"],
+    ["UÝ", "ÚY"], ["UỲ", "ÙY"], ["UỶ", "ỦY"], ["UỸ", "ŨY"], ["UỴ", "ỤY"],
+    ["Kít ", "Kit "], ["kít ", "kit "],
+  ];
+  for (const [a, b] of repls) {
+    s = s.split(a).join(b);
+  }
+  return s.replace(/\s+/g, " ");
+}
+
+/**
+ * Tự động suy luận phân loại thực tế khi mặt hàng đang mang phân loại mặc định chung chung
+ * ("Hàng Thương Mại", "Vật tư y tế", "Sinh Phẩm & Nguyên Liệu"...) hoặc bị rơi vào mặc định "Thiết bị"
+ * khi import file Excel không có cột phân loại ngành hàng.
+ */
+export function resolveActualProductCategory(item: { code?: string; name?: string; category?: string }): string {
+  const cat = normalizeVnCategoryText(item?.category);
+  const cUp = String(item?.code || "").trim().toUpperCase();
+  const nLow = normalizeVnCategoryText(item?.name || "").toLowerCase();
+  const catLow = cat.toLowerCase();
+
+  const isGeneric =
+    !catLow ||
+    catLow === "hàng thương mại" ||
+    catLow === "hàng thương mại mua ngoài" ||
+    catLow === "vật tư y tế" ||
+    catLow === "sinh phẩm & nguyên liệu" ||
+    catLow === "vật tư & sinh phẩm" ||
+    catLow === "hàng hóa";
+  const isSuspectEquipmentFallback = catLow === "thiết bị";
+
+  if (isGeneric || isSuspectEquipmentFallback) {
+    // 1. Kit Tách chiết
+    if (
+      cUp.startsWith("EXS-") || cUp.startsWith("EXM-") || cUp.startsWith("HE-") || cUp.startsWith("HI-") || cUp.startsWith("HM-") ||
+      ["toppure", "extraction", "tách chiết", "tach chiet", "purification kit", "co-extraction", "thu nhận dna", "thu nhận rna", "hạt từ tách chiết", "isolate ii"].some(k => nLow.includes(k))
+    ) {
+      return "Kit Tách chiết";
+    }
+    // 2. Kit PCR / qPCR
+    if (
+      cUp.startsWith("SQH-") || cUp.startsWith("SDS-") || cUp.startsWith("SDB-") || cUp.startsWith("SDV-") ||
+      cUp.startsWith("SDP-") || cUp.startsWith("SDA-") || cUp.startsWith("SDC-") || cUp.startsWith("SDG-") ||
+      cUp.startsWith("SDT-") || cUp.startsWith("TOPK") || cUp.startsWith("KIT-") ||
+      ["topsensi", "qpcr", "real-time pcr", "realtime pcr", "pcr kit", "pcr-rdb", "genotype kit", "rt-pcr", "one-step", "master mix", "mastermix", "khuếch đại", "nucleic acid detection kit", "quantitative fluorescence diagnostic kit", "quantitative test kit", "pcr hbv", "pcr hcv", "pcr hiv"].some(k => nLow.includes(k))
+    ) {
+      return "PCR Kit";
+    }
+    // 3. Hóa chất & Sinh phẩm
+    if (
+      cUp.startsWith("LBC-") || cUp.startsWith("DD-") || cUp.startsWith("CH-") || cUp.startsWith("OLG-") || cUp.startsWith("PRI-") || cUp.startsWith("PRB-") || cUp.startsWith("MT-") ||
+      ["oligo", "primer", "probe", "gram staining", "staining kit", "stain solution", "thuốc nhuộm", "nhuộm", "cytology", "preservation solution", "collection medium", "hóa chất", "môi trường", "agar", "broth", "buffer", "dung dịch", "chất thử", "nước cất", "nuclease-free", "nước không nuclease", "pbs", "ethanol", "methanol", "isopropanol", "chloroform", "formalin", "xylene", "cồn ", "axit ", "acid ", "taq ", "rtaq", "dntp", "enzyme", "proteinase", "rnase", "dnase", "ladder", "marker", "loading dye", "ethidium", "sybr", "chứng dương", "chứng âm", "positive control", "negative control", "thuốc thử", "kháng huyết thanh", "kháng thể", "huyết thanh", "sinh phẩm", "kit thử", "test nhanh", "assay kit", "jetseq"].some(k => nLow.includes(k))
+    ) {
+      return "Hóa chất & Sinh phẩm";
+    }
+    // 4. Vật tư tiêu hao
+    if (
+      cUp.startsWith("TCF") || cUp.startsWith("TCP") || cUp.startsWith("TCD") || cUp.startsWith("CS-") || cUp.startsWith("BSH") || cUp.startsWith("CAD") || cUp.startsWith("CSS") || cUp.startsWith("DIL") || cUp.startsWith("CA0") ||
+      ["bình đựng mẫu", "đĩa đựng mẫu", "dĩa đựng mẫu", "ống nghiệm", "ồng nghiệm", "ống ly tâm", "ống pcr", "ống hút", "đầu côn", "đầu cone", "đầu tip", "đầu típ", "đầu tuýp", "filter tip", "pipette tip", "tuýp pcr", "tube", "plate", "strip 8", "lamel", "lammel", "phiến kính", "lam kính", "cuvette", "găng tay", "túi chứa", "que lấy mẫu", "que cấy", "tăm bông", "màng dán", "màng lọc", "đầu lọc", "phễu lọc", "cột lọc", "optical film", "sealing film", "microtube", "cryovial", "eppendorf", "falcon", "đĩa petri", "dĩa petri", "đĩa nuôi cấy", "petri", "nhựa tiêu hao", "plasticware", "bơm tiêm", "kim tiêm", "chai nhựa", "chai thủy tinh", "chai cấy mô", "lọ đựng", "hộp đựng", "hộp đầu", "hộp chứa tuýp", "hộp trữ lạnh", "khay đựng mẫu", "reagent reservoir", "lược mẫu", "vòng nhúng mô", "tấm xốp", "screw cap", "nắp vặn", "bao hấp", "bông gòn", "bông thấm", "bông không thấm", "bình tia", "can nhựa", "giấy lọc", "giấy lau", "khẩu trang", "áo choàng"].some(k => nLow.includes(k))
+    ) {
+      return "Vật tư tiêu hao";
+    }
+    // 5. Dụng cụ
+    if (
+      ["pipet", "pipette", "micropipette", "dụng cụ lấy mẫu", "giá đỡ", "giá để", "khay đỡ", "magnetic rack", "nhiệt kế", "ẩm kế", "đèn cồn", "cốc thấp thành", "cốc đốt", "bình tam giác", "bình định mức", "ống đong", "que trang", "kẹp ", "kéo ", "nhíp ", "timer"].some(k => nLow.includes(k))
+    ) {
+      return "Dụng cụ";
+    }
+    // 6. Chuyển đổi số
+    if (["phần mềm", "lims", "bản quyền", "license", "chuyển đổi số"].some(k => nLow.includes(k))) {
+      return "Chuyển đổi số";
+    }
+    // 7. Thiết bị
+    if (
+      ["máy ", "tủ ", "hệ thống ", "khúc xạ kế", "quang phổ", "ly tâm", "vortex", "nồi hấp", "bể điều nhiệt", "kính hiển vi", "cân ", "đầu đọc", "reader", "tester", "penetrometer", "thiết bị", "phụ kiện của máy", "rotor", "bộ lưu điện", "ups "].some(k => nLow.includes(k))
+    ) {
+      return isSuspectEquipmentFallback ? "Thiết bị" : "Thiết bị cơ bản";
+    }
+  }
+
+  return cat || "Vật tư tiêu hao";
+}
+
 /** Toàn bộ danh mục theo thứ tự hiển thị (mới thêm ở trên). */
 export async function readCatalog(c?: Queryable): Promise<any[]> {
   const q = c ? c.query.bind(c) : query;
   const res = await q("SELECT data FROM catalog_items ORDER BY sort_order ASC, code ASC");
-  return res.rows.map((r: any) => r.data);
+  return res.rows.map((r: any) => {
+    const d = r.data || {};
+    return {
+      ...d,
+      category: resolveActualProductCategory(d),
+    };
+  });
 }
 
 /** Số phiên bản để trình duyệt nhận biết thay đổi (đổi mỗi khi có dòng được ghi). */
@@ -49,7 +146,13 @@ export async function applyCatalogPatch(c: Queryable, patch: StoragePatch, keepC
   const byCode = new Map<string, any>();
   for (const item of patch.upserts || []) {
     const code = cleanCode(item?.code);
-    if (code) byCode.set(code, { ...item, code });
+    if (code) {
+      byCode.set(code, {
+        ...item,
+        code,
+        category: resolveActualProductCategory({ ...item, code }),
+      });
+    }
   }
   const upserts = Array.from(byCode.values());
   if (upserts.length > 0) {
@@ -95,23 +198,30 @@ export async function replaceCatalog(c: Queryable, items: any[], canDelete: bool
 export async function appendCatalogEntry(c: Queryable, entry: Record<string, any>): Promise<void> {
   const code = cleanCode(entry?.code);
   if (!code) return;
+  const resolvedCategory = resolveActualProductCategory({ ...entry, code });
   const ins = await c.query(
     `INSERT INTO catalog_items (code, data, sort_order, updated_at) VALUES ($1, $2::jsonb, $3, now())
      ON CONFLICT (code) DO NOTHING
      RETURNING code`,
-    [code, JSON.stringify({ ...entry, code }), -Date.now()]
+    [code, JSON.stringify({ ...entry, code, category: resolvedCategory }), -Date.now()]
   );
   if ((ins.rowCount || 0) > 0) return;
 
   const newCost = Number(entry?.costPrice ?? entry?.cost_price) || 0;
   const newPrice = Number(entry?.price ?? entry?.standard_price) || 0;
   const newStorage = String(entry?.storageCondition ?? entry?.storage_condition ?? "").trim();
-  if (newCost <= 0 && newPrice <= 0 && !newStorage) return;
 
   const existingRes = await c.query("SELECT data FROM catalog_items WHERE code = $1", [code]);
   if (existingRes.rows.length === 0) return;
   const curData = existingRes.rows[0]?.data || {};
   const patch: Record<string, any> = {};
+
+  const curCatResolved = resolveActualProductCategory({ ...curData, code });
+  if (resolvedCategory && resolvedCategory !== "Hàng Thương Mại" && (!curData.category || curData.category !== curCatResolved)) {
+    patch.category = resolvedCategory;
+  } else if (curData.category && curData.category !== curCatResolved) {
+    patch.category = curCatResolved;
+  }
 
   if (newCost > 0) {
     const oldCost = Number(curData.costPrice ?? curData.cost_price) || 0;

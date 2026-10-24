@@ -21,6 +21,7 @@ const WRITE_PERMISSIONS: Record<string, string[]> = {
 import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { syncCatalogSuppliersAndProducts, unmarkSupplierDeleted } from "@/backend/services/supplierCatalogSync";
+import { resolveActualProductCategory } from "@/backend/services/catalogStore";
 import {
   addStock,
   removeStock,
@@ -437,11 +438,16 @@ export async function POST(req: NextRequest) {
         const catalogEntries: any[] = [];
         for (const item of lines) {
           const pCode = item.product_code || item.productCode;
+          const resolvedItemCat = resolveActualProductCategory({
+            code: pCode,
+            name: item.product_name || item.name || pCode,
+            category: item.category || "",
+          });
           // Yêu cầu 2: Auto-insert into products if not existing (Master Data On-The-Fly) — race-free upsert
           const { id: prodId } = await ensureProduct(c, {
             code: pCode,
             name: item.product_name || item.name || pCode,
-            category: item.category || "Hàng Thương Mại",
+            category: resolvedItemCat,
             unit: item.unit || "Hộp",
             specification: item.specification || "",
             standard_price: Number(item.standard_price) || 0, // ĐỂ TRỐNG GIÁ BÁN (0) NẾU CHƯA THIẾT LẬP ĐỂ QUẢN LÝ ĐỊNH GIÁ
@@ -456,7 +462,7 @@ export async function POST(req: NextRequest) {
           catalogEntries.push({
             code: pCode,
             name: item.product_name || item.name || pCode,
-            category: item.category || "Hàng Thương Mại",
+            category: resolvedItemCat,
             brand: item.manufacturer || item.brand || supplier_name || "TBRs Phân Phối",
             origin: item.origin || "Chính hãng",
             unit: item.unit || "Hộp",
@@ -868,10 +874,15 @@ export async function POST(req: NextRequest) {
             const n = Number(String(v).replace(/[^\d-]/g, "")); // giá VNĐ là số nguyên: bỏ dấu phân cách hàng nghìn
             return Number.isFinite(n) ? n : null;
           };
-          const pName = orNull(getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "name", "Tên hàng"]));
+          const pName = orNull(getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "Tên Hàng Hóa Thương Mại", "name", "Tên hàng", "Tên hàng hóa, dịch vụ"]));
           const supplierCol = orNull(getVal(["Nhà cung cấp (*)", "Nhà cung cấp", "Nhà Cung Cấp", "supplier", "Đơn vị cung cấp"]));
           const brand = orNull(getVal(["Hãng sản xuất (*)", "Hãng sản xuất", "Hãng Sản Xuất", "manufacturer", "Hãng SX", "Hãng", "Brand"])) || supplierCol;
-          const cat = orNull(getVal(["Nhóm ngành hàng (*)", "Nhóm ngành hàng", "category", "Ngành hàng", "Nhóm hàng"]));
+          const rawCat = orNull(getVal([
+            "Nhóm ngành hàng (*)", "Nhóm ngành hàng", "Phân Loại Chính", "Phân loại ngành hàng",
+            "Phân loại", "category", "Category", "Ngành hàng", "Nhóm hàng", "Danh mục",
+            "Danh mục (Category)", "Danh mục (PCR Kit/..)", "Chủng loại", "CHỦNG LOẠI", "Loại Kit"
+          ]));
+          const cat = resolveActualProductCategory({ code: pCode, name: pName || pCode, category: rawCat || "" });
           const spec = orNull(getVal(["Quy cách đóng gói", "specification", "Quy cách"]));
           const unit = orNull(getVal(["Đơn vị tính", "unit", "ĐVT"]));
           const cost = numOrNull(getVal(["Giá vốn nhập (VNĐ)", "Giá vốn", "cost_price", "Giá vốn (VNĐ)"]));
@@ -1111,11 +1122,16 @@ export async function POST(req: NextRequest) {
             const docs = new Map<string, { reference: string; date: string; performedBy: string; warehouse: string; items: any[]; notes: string[] }>();
             const catalogEntries: any[] = [];
             for (const p of sortByProductCode(parsedInbound, (x: any) => x.pCode)) {
+              const resolvedInboundCat = resolveActualProductCategory({
+                code: p.pCode,
+                name: p.pName,
+                category: p.r?.["Nhóm ngành hàng (*)"] || p.r?.["Nhóm ngành hàng"] || p.r?.["Phân loại"] || p.r?.["Phân Loại Chính"] || "",
+              });
               // Auto-insert product into master catalog if new (race-free)
               const { id: prodId } = await ensureProduct(c, {
                 code: p.pCode,
                 name: p.pName,
-                category: "Sinh Phẩm & Nguyên Liệu",
+                category: resolvedInboundCat,
                 unit: p.unit,
                 specification: p.spec,
                 standard_price: Number(p.r["Giá niêm yết"]) || Number(p.r["Giá bán"]) || 0, // Để trống (0) nếu chưa có giá
@@ -1130,7 +1146,7 @@ export async function POST(req: NextRequest) {
               catalogEntries.push({
                 code: p.pCode,
                 name: p.pName,
-                category: "Hàng Thương Mại",
+                category: resolvedInboundCat,
                 brand: p.supplier || "TBRs Phân Phối",
                 origin: "Chính hãng",
                 unit: p.unit || "Hộp",
