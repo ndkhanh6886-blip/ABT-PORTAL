@@ -1563,9 +1563,11 @@ export function SalesFullABT() {
             const isBlocked = !isStock && Boolean(o.isCreditBlocked || o.is_credit_blocked);
             const autoApproved = !hasZero && !isBlocked && (o.status === "Pending" || o.status === "PENDING");
 
-            let normalizedStatus = o.status || (o.delivery_status === "DELIVERED" ? "Delivered" : "Approved");
+            let normalizedStatus = o.status || (o.delivery_status === "DELIVERED" ? "Delivered" : (o.delivery_status === "CANCELLED" ? "Cancelled" : "Approved"));
             if (o.status === "Rejected") {
                 normalizedStatus = "Rejected";
+            } else if (o.status === "Cancelled" || o.status === "CANCELLED" || o.delivery_status === "CANCELLED") {
+                normalizedStatus = "Cancelled";
             } else if (isBlocked) {
                 normalizedStatus = o.status === "Delivered" ? "Delivered" : "Pending";
             } else if (autoApproved) {
@@ -1867,6 +1869,8 @@ export function SalesFullABT() {
                                 amountPaid: raw0.amount_paid !== undefined && raw0.amount_paid !== null ? Number(raw0.amount_paid) : undefined,
                                 deliveredAt: raw0.delivered_at ? toVNDateString(raw0.delivered_at) : undefined,
                                 orderNotes: raw0.order_notes ?? undefined,
+                                invoiceNotes: raw0.invoice_notes ?? undefined,
+                                invoice_notes: raw0.invoice_notes ?? undefined,
                                 invoice_status: raw0.invoice_status,
                                 invoice_no: raw0.invoice_no,
                                 invoice_date: raw0.invoice_date,
@@ -1901,7 +1905,9 @@ export function SalesFullABT() {
                         if (raw) {
                             merged.approvedBy = raw.approved_by || merged.approvedBy;
                             merged.approvedAt = raw.approved_at || merged.approvedAt;
-                            if (raw.approval_status === "REJECTED") {
+                            if (raw.delivery_status === "CANCELLED" || raw.approval_status === "CANCELLED") {
+                                merged.status = "Cancelled";
+                            } else if (raw.approval_status === "REJECTED") {
                                 merged.status = "Rejected";
                             } else if (raw.approval_status === "APPROVED" && merged.status === "Pending") {
                                 merged.status = "Approved";
@@ -2717,16 +2723,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return def.companyAddress;
     });
     const [companyPhone, setCompanyPhone] = useState(() => {
-        if (typeof window !== "undefined") return localStorage.getItem("sales_company_phone") || "";
-        return "";
+        const def = getDefaultCompanyConfig();
+        if (typeof window !== "undefined") return localStorage.getItem("sales_company_phone") || def.companyPhone;
+        return def.companyPhone;
     });
     const [companyEmail, setCompanyEmail] = useState(() => {
-        if (typeof window !== "undefined") return localStorage.getItem("sales_company_email") || "";
-        return "";
+        const def = getDefaultCompanyConfig();
+        if (typeof window !== "undefined") return localStorage.getItem("sales_company_email") || def.companyEmail;
+        return def.companyEmail;
     });
     const [companyTaxCode, setCompanyTaxCode] = useState(() => {
-        if (typeof window !== "undefined") return localStorage.getItem("sales_company_tax_code") || "";
-        return "";
+        const def = getDefaultCompanyConfig();
+        if (typeof window !== "undefined") return localStorage.getItem("sales_company_tax_code") || def.companyTaxCode;
+        return def.companyTaxCode;
     });
     const [companyRepresentative, setCompanyRepresentative] = useState(() => {
         if (typeof window !== "undefined") return localStorage.getItem("sales_company_representative") || "";
@@ -3491,6 +3500,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [vatTaxCode, setVatTaxCode] = useState("");
     const [vatAddress, setVatAddress] = useState("");
     const [vatEmail, setVatEmail] = useState("");
+    const [invoiceNotes, setInvoiceNotes] = useState("");
+    const [partialInvItemVatRates, setPartialInvItemVatRates] = useState<Record<string, number>>({});
     const [shippingMethod, setShippingMethod] = useState("Xe lạnh chuyên dụng TBRs (-20°C đến 8°C)");
     const [trackingCode, setTrackingCode] = useState("");
 
@@ -6944,10 +6955,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             notes: ""
         }]);
         
-        setQuoteValidityTerms(quote.validityTerms || defaultQuoteValidityTerms);
-        setQuoteDeliveryTerms(quote.deliveryTerms || defaultQuoteDeliveryTerms);
-        setQuotePaymentTerms(quote.paymentTerms || defaultQuotePaymentTerms);
-        setQuoteNoteTerms(quote.noteTerms || defaultQuoteNoteTerms);
+        setQuoteValidityTerms(quote.validityTerms !== undefined && quote.validityTerms !== null ? quote.validityTerms : defaultQuoteValidityTerms);
+        setQuoteDeliveryTerms(quote.deliveryTerms !== undefined && quote.deliveryTerms !== null ? quote.deliveryTerms : defaultQuoteDeliveryTerms);
+        setQuotePaymentTerms(quote.paymentTerms !== undefined && quote.paymentTerms !== null ? quote.paymentTerms : defaultQuotePaymentTerms);
+        setQuoteNoteTerms(quote.noteTerms !== undefined && quote.noteTerms !== null ? quote.noteTerms : defaultQuoteNoteTerms);
         
         setIsQuoteModalOpen(true);
     };
@@ -8228,15 +8239,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const mappedItems = (contract.items || []).map((it: any) => {
             const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
             const unitPrice = it.unitPrice !== undefined ? it.unitPrice : (it.price !== undefined ? it.price : (prod?.price || 0));
+            const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
+            const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : undefined;
             return {
                 productCode: it.productCode,
                 quantity: Number(it.quantity) || 1,
                 unitPrice: unitPrice,
+                ...(vatRate !== undefined ? { vatRate, vat: vatRate } : {}),
                 needsInvoice: it.needsInvoice !== false
             };
         });
         setFactoryOrderItems(mappedItems.length > 0 ? mappedItems : [{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, needsInvoice: true }]);
-        
+        setInvoiceNotes("");
         setIsFactoryOrderModalOpen(true);
         setActiveTab("orders");
         showToast(`Đã lấy nguyên 100% danh mục hàng hóa từ Hợp đồng ${contract.id} sang Đơn đặt hàng mới!`, "info");
@@ -8250,14 +8264,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
 
-        const mappedForFactoryOrder = selectedItems.map(it => ({
-            productCode: it.productCode,
-            quantity: Number(it.callOffQty) || 1,
-            unitPrice: Number(it.unitPrice) || 0,
-            needsInvoice: it.needsInvoice !== false
-        }));
+        const mappedForFactoryOrder = selectedItems.map(it => {
+            const rawVat = it.vatRate ?? it.vat_rate ?? it.vat;
+            const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : undefined;
+            return {
+                productCode: it.productCode,
+                quantity: Number(it.callOffQty) || 1,
+                unitPrice: Number(it.unitPrice) || 0,
+                ...(vatRate !== undefined ? { vatRate, vat: vatRate } : {}),
+                needsInvoice: it.needsInvoice !== false
+            };
+        });
 
-        setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+        setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
         const finalCust = principleCallOffCustomerName || selectedPrincipleContract.customerName || selectedPrincipleContract.partyBName || "";
         setFactoryOrderCustomerName(finalCust);
         const custExists = customers.some(c => c.name === finalCust) || salesNvkdCustomers.some(c => c.name === finalCust);
@@ -8302,7 +8321,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
 
-        setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+        setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
         setFactoryOrderCustomerName(quote.customerName || "");
         const custExists = customers.some(c => c.name === quote.customerName) || salesNvkdCustomers.some(c => c.name === quote.customerName);
         setFactoryCustomerSelectMode(custExists ? "select" : "custom");
@@ -8311,14 +8330,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setFactoryOrderNotes(String(quote.noteTerms || "").trim());
         setFactoryOrderPlanId("");
         
+        const quoteTaxRate = quote.taxRate ?? quote.tax_rate;
         const mappedItems = (quote.items || []).map((it: any) => {
             const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
             const price = Number(it.price !== undefined ? it.price : (it.unitPrice !== undefined ? it.unitPrice : (prod?.price || 0))) || 0;
             const qty = Number(it.quantity) || 1;
+            const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? it.taxRate ?? it.tax_rate ?? quoteTaxRate ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
+            const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : 8;
             return {
                 productCode: it.productCode,
                 quantity: qty,
                 unitPrice: price,
+                vatRate,
+                vat: vatRate,
                 needsInvoice: it.needsInvoice !== false
             };
         }).filter((it: any) => it.productCode);
@@ -8563,11 +8587,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 </head>
                 <body>
                     <div class="header">
-                        <div class="company-info">
-                            <div class="company-name">${companyName}</div>
-                            <div>Địa chỉ: ${companyAddress}</div>
-                            <div>Điện thoại: ${companyPhone} | Email: ${companyEmail}</div>
-                            ${companyTaxCode ? `<div>Mã số thuế: ${companyTaxCode}</div>` : ""}
+                        <div style="display: flex; align-items: center; gap: 14px;">
+                            <img src="/logo-tbrs.png" alt="Logo" style="height: 54px; width: auto; object-fit: contain;" onerror="this.style.display='none'" />
+                            <div class="company-info">
+                                <div class="company-name">${companyName}</div>
+                                <div>Địa chỉ: ${companyAddress}</div>
+                                <div>Điện thoại: ${companyPhone} | Email: ${companyEmail}</div>
+                                ${companyTaxCode ? `<div>Mã số thuế: ${companyTaxCode}</div>` : ""}
+                            </div>
                         </div>
                         <div style="font-size: 12px; text-align: right; line-height: 1.5;">
                             <strong>Mã báo giá:</strong> ${quote.id}<br>
@@ -8652,19 +8679,33 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </tr>
                         </tbody>
                     </table>
-                    <div class="terms-section">
-                        <div class="terms-title">ĐIỀU KHOẢN & CHI TIẾT BÁO GIÁ:</div>
-                        <p style="margin: 4px 0;"><strong>1. Hiệu lực báo giá:</strong> ${quote.validityTerms || "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành."}</p>
-                        <p style="margin: 4px 0;"><strong>2. Điều khoản giao hàng:</strong> ${quote.deliveryTerms || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc."}</p>
-                        <p style="margin: 4px 0;"><strong>3. Điều khoản thanh toán:</strong> ${quote.paymentTerms || "Thanh toán 100% bằng chuyển khoản trong vòng 15 ngày kể từ ngày nhận hàng và hóa đơn."}</p>
-                        ${(() => {
-                            const rawNote = quote.noteTerms || defaultQuoteNoteTerms || (isItemsPricePreVat
+                    ${(() => {
+                        const valTerms = quote.validityTerms !== undefined && quote.validityTerms !== null
+                            ? String(quote.validityTerms).trim()
+                            : (defaultQuoteValidityTerms || "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành.");
+                        const delTerms = quote.deliveryTerms !== undefined && quote.deliveryTerms !== null
+                            ? String(quote.deliveryTerms).trim()
+                            : (defaultQuoteDeliveryTerms || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.");
+                        const payTerms = quote.paymentTerms !== undefined && quote.paymentTerms !== null
+                            ? String(quote.paymentTerms).trim()
+                            : (defaultQuotePaymentTerms || "Thanh toán 100% bằng chuyển khoản trong vòng 15 ngày kể từ ngày nhận hàng và hóa đơn.");
+                        const noteTermsVal = quote.noteTerms !== undefined && quote.noteTerms !== null
+                            ? String(quote.noteTerms).trim()
+                            : (defaultQuoteNoteTerms || (isItemsPricePreVat
                                 ? "Đơn giá chưa bao gồm thuế Giá Trị Gia Tăng (VAT). Chi phí vận chuyển, hướng dẫn sử dụng theo thỏa thuận."
-                                : "Đơn giá đã bao gồm thuế Giá Trị Gia Tăng (VAT) và chi phí vận chuyển, hướng dẫn sử dụng tại cơ sở.");
-                            const cleanNote = quote.noteTerms ? quote.noteTerms : rawNote;
-                            return cleanNote ? `<p style="margin: 4px 0;"><strong>4. Ghi chú thêm:</strong> ${cleanNote}</p>` : "";
-                        })()}
-                    </div>
+                                : "Đơn giá đã bao gồm thuế Giá Trị Gia Tăng (VAT) và chi phí vận chuyển, hướng dẫn sử dụng tại cơ sở."));
+                        const termRows = [
+                            valTerms ? { label: "Hiệu lực báo giá", text: valTerms } : null,
+                            delTerms ? { label: "Điều khoản giao hàng", text: delTerms } : null,
+                            payTerms ? { label: "Điều khoản thanh toán", text: payTerms } : null,
+                            noteTermsVal ? { label: "Ghi chú thêm", text: noteTermsVal } : null,
+                        ].filter(Boolean) as { label: string; text: string }[];
+                        if (termRows.length === 0) return "";
+                        return `<div class="terms-section">
+                            <div class="terms-title">ĐIỀU KHOẢN & CHI TIẾT BÁO GIÁ:</div>
+                            ${termRows.map((tr, i) => `<p style="margin: 4px 0;"><strong>${i + 1}. ${tr.label}:</strong> ${tr.text}</p>`).join("\n")}
+                        </div>`;
+                    })()}
                     <p style="margin-top: 25px; font-style: italic; font-size: 12px; margin-bottom: 6px;">Trân trọng cảm ơn sự quan tâm của Quý khách hàng!</p>
                     <div class="contact-box">
                         <strong>Mọi chi tiết xin liên hệ Phòng Kinh doanh - ${cleanRepName} - ${repPhone} - ${repEmail}</strong>
@@ -9622,6 +9663,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const handleEditFactoryOrder = (req: any) => {
         setEditingFactoryOrderId(req.id);
         setFactoryOrderNotes(String(req.orderNotes || req.order_notes || ""));
+        setInvoiceNotes(String(req.invoiceNotes || req.invoice_notes || ""));
+        setVatRequested(Boolean(req.vat_requested || req.vatRequested));
+        setVatCompanyName(String(req.vat_company_name || req.vatCompanyName || ""));
+        setVatTaxCode(String(req.vat_tax_code || req.vatTaxCode || ""));
+        setVatAddress(String(req.vat_address || req.vatAddress || ""));
+        setVatEmail(String(req.vat_email || req.vatEmail || ""));
         setFactoryOrderCustomerName(req.customerName || "");
         setFactoryOrderContractId(req.contractId || "");
         setFactoryOrderQuoteId(req.quoteId || "");
@@ -9647,10 +9694,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const mappedItems = (req.items || []).map((it: any) => {
             const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
             const unitPrice = it.unitPrice !== undefined ? it.unitPrice : (it.price !== undefined ? it.price : (prod?.price || 0));
+            const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
+            const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : undefined;
             return {
                 productCode: it.productCode,
                 quantity: it.quantity || 1,
                 unitPrice: unitPrice,
+                ...(vatRate !== undefined ? { vatRate, vat: vatRate } : {}),
                 targetAllocations: it.targetAllocations || it.target_allocations || [],
                 needsInvoice: it.needsInvoice !== false
             };
@@ -9671,13 +9721,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setFactoryOrderDeliveryDate(todayVN());
         const lines = (req.items || []).filter((it: any) => it.status !== "CANCELLED" && it.productCode);
         if (lines.length > 0) {
-            setFactoryOrderItems(lines.map((it: any) => ({
-                productCode: it.productCode,
-                quantity: Number(it.quantity) || 1,
-                unitPrice: it.unitPrice !== undefined ? it.unitPrice : (it.price || 0),
-                targetAllocations: [],
-                needsInvoice: it.needsInvoice !== false
-            })));
+            setFactoryOrderItems(lines.map((it: any) => {
+                const rawVat = it.vatRate ?? it.vat_rate ?? it.vat;
+                const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : undefined;
+                return {
+                    productCode: it.productCode,
+                    quantity: Number(it.quantity) || 1,
+                    unitPrice: it.unitPrice !== undefined ? it.unitPrice : (it.price || 0),
+                    ...(vatRate !== undefined ? { vatRate, vat: vatRate } : {}),
+                    targetAllocations: [],
+                    needsInvoice: it.needsInvoice !== false
+                };
+            }));
         }
         showToast(`Đang tạo đơn mới từ bản sao của ${req.id}: kiểm tra lại đơn giá & số lượng trước khi lưu.`, "info");
     };
@@ -9736,6 +9791,71 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         });
     };
 
+    const handleCancelFactoryOrder = async (req: any) => {
+        if (!req) return;
+        const orderCode = req.order_code || req.id;
+        const slips = getOrderSlips(req, false);
+        const isDeliveredOrShipped = req.status === "Delivered" || req.delivery_status === "DELIVERED" || slips.length > 0;
+        const soKeys = Array.from(new Set([req.order_code, req.id, req.linkedSalesOrderId].filter(Boolean).map((x: any) => String(x).trim())));
+        const activePOs = (procurementOrders || []).filter((po: any) => {
+            const st = String(po?.status || "").toUpperCase();
+            if (!["ORDERED", "SHIPPING", "PARTIALLY_RECEIVED", "RECEIVED", "COMPLETED", "DELIVERED"].includes(st)) return false;
+            if (req.procureOrderCode && po.po_code === req.procureOrderCode) return true;
+            if (Array.isArray(po.items) && po.items.some((poi: any) => soKeys.includes(String(poi?.order_code || poi?.so_code || poi?.linked_order_code || "").trim()))) return true;
+            return false;
+        });
+
+        if (isDeliveredOrShipped || activePOs.length > 0) {
+            const blockDetail = slips.length > 0
+                ? `đã lập phiếu giao hàng (${slips.map((s: any) => s.id).join(", ")})`
+                : activePOs.length > 0
+                ? `đã phát hành PO đặt hàng NCC (${activePOs.map((p: any) => p.po_code).join(", ")})`
+                : "đã xuất kho / giao hàng";
+            showToast(`⚠️ Đơn hàng ${orderCode} ${blockDetail}. Không thể hủy trực tiếp — vui lòng thực hiện quy trình Trả hàng hoặc liên hệ bộ phận Kho / Cung ứng / Quản lý!`, "warning");
+            return;
+        }
+
+        const reason = window.prompt(`Nhập lý do hủy đơn hàng ${orderCode} (Khách: ${req.customerName}):`, "Khách hàng thay đổi nhu cầu / Hủy đơn");
+        if (reason === null) return;
+        const cleanReason = reason.trim() || "Hủy đơn hàng trước khi xuất kho / đặt NCC";
+
+        try {
+            const res = await fetch("/api/sales?action=cancel_order", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    order_code: orderCode,
+                    reason: cleanReason,
+                    cancelled_by: loggedInStaff?.full_name || user?.full_name || user?.username || "NVKD"
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                showToast(data?.error || `Không thể hủy đơn ${orderCode}`, "error");
+                return;
+            }
+            setFactoryOrders(prev => prev.map(o => {
+                if (o.id === req.id || o.order_code === orderCode) {
+                    return {
+                        ...o,
+                        status: "Cancelled",
+                        delivery_status: "CANCELLED",
+                        procureStatus: "CANCELLED",
+                        cancelReason: cleanReason,
+                        items: Array.isArray(o.items) ? o.items.map((it: any) => ({ ...it, status: "CANCELLED", cancel_reason: cleanReason })) : o.items
+                    };
+                }
+                return o;
+            }));
+            setSelectedFactoryOrdersForCombine(prev => prev.filter(id => id !== req.id && id !== orderCode));
+            fetchReservations();
+            showToast(`✅ Đã hủy đơn hàng ${orderCode}, giải phóng giữ chỗ kho và hủy PR liên kết!`, "success");
+        } catch (err: any) {
+            console.error("Failed to cancel order:", err);
+            showToast("Lỗi kết nối máy chủ khi hủy đơn hàng", "error");
+        }
+    };
+
     /** Xóa đơn trong CSDL (kèm giải phóng giữ chỗ kho); chỉ gỡ khỏi danh sách những đơn máy chủ đã xóa thành công. */
     const deleteOrdersOnServer = async (codes: string[]) => {
         const deleted: string[] = [];
@@ -9786,18 +9906,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             repName = isStock ? "Bộ Phận Kho Vận" : "Phòng Kinh Doanh";
         }
 
+        const linkedQuoteObj = factoryOrderQuoteId ? quotations.find(q => String(q.id).trim().toLowerCase() === String(factoryOrderQuoteId).trim().toLowerCase()) : null;
         const items = factoryOrderItems.map(item => {
             const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
+            const quoteItem = linkedQuoteObj?.items?.find((qi: any) => (qi.productCode || qi.product_code || qi.code) === item.productCode);
             const isComm = commercialProducts.some(p => p.code === item.productCode);
             const qty = Number(item.quantity) || 1;
             const unitPrice = Number(item.unitPrice !== undefined ? item.unitPrice : (prod?.price || 0));
             const totalPrice = qty * unitPrice;
+            const rawVat = item.vatRate ?? item.vat_rate ?? item.vat ?? quoteItem?.vatRate ?? quoteItem?.vat_rate ?? quoteItem?.vat ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
+            const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : 8;
             return {
                 productCode: item.productCode,
                 productName: prod?.name || item.productCode,
                 quantity: qty,
                 unitPrice: unitPrice,
                 totalPrice: totalPrice,
+                vatRate,
+                vat: vatRate,
                 sourceType: isComm ? "COMMERCIAL" : "MANUFACTURED",
                 brand: prod?.brand || (isComm ? "Mua ngoài" : "ABT"),
                 specification: prod?.specification || "",
@@ -9913,7 +10039,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         hasZeroPriceItems: hasZeroPrice,
                         priceApprovalStatus,
                         priceApprovalNotes,
-                        orderNotes: factoryOrderNotes.trim()
+                        orderNotes: factoryOrderNotes.trim(),
+                        invoiceNotes: invoiceNotes.trim(),
+                        invoice_notes: invoiceNotes.trim(),
+                        vat_requested: vatRequested,
+                        vat_company_name: vatCompanyName,
+                        vat_tax_code: vatTaxCode,
+                        vat_address: vatAddress,
+                        vat_email: vatEmail
                     };
                 }
                 return order;
@@ -9936,6 +10069,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     delivery_status: (targetOrd?.status === "Delivered" || targetOrd?.status === "COMPLETED") ? "DELIVERED" : (targetOrd?.status === "Ready" ? "READY" : "PENDING"),
                     notes: factoryOrderContractId ? `Hợp đồng: ${factoryOrderContractId}` : (isStockOrder ? "[SO STOCK - LƯU KHO GỐI ĐẦU]" : ""),
                     order_notes: factoryOrderNotes.trim(),
+                    invoice_notes: invoiceNotes.trim(),
+                    vat_requested: vatRequested,
+                    vat_company_name: vatCompanyName,
+                    vat_tax_code: vatTaxCode,
+                    vat_address: vatAddress,
+                    vat_email: vatEmail,
                     applied_price_policy: isStockOrder ? "STOCK" : (matchedCust?.customer_type === "DEALER" ? "DEALER" : "STANDARD"),
                     is_stock_order: isStockOrder
                 })
@@ -9961,7 +10100,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             showToast(`Đã cập nhật yêu cầu đặt hàng ${editingFactoryOrderId} thành công!`, "success");
             setIsFactoryOrderModalOpen(false);
-            setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+            setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
             setIsStockOrder(false);
             setExpandedAllocIndex(null);
             setFactoryOrderCustomerName("");
@@ -10046,6 +10185,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             priceApprovalStatus,
             priceApprovalNotes,
             orderNotes: factoryOrderNotes.trim(),
+            invoiceNotes: invoiceNotes.trim(),
+            invoice_notes: invoiceNotes.trim(),
             vat_requested: vatRequested,
             vat_company_name: vatCompanyName,
             vat_tax_code: vatTaxCode,
@@ -10074,6 +10215,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 invoice_status: "PENDING_INVOICE",
                 notes: newRequest.contractId ? `Hợp đồng: ${newRequest.contractId}` : (isStockOrder ? "[SO STOCK - LƯU KHO GỐI ĐẦU]" : ""),
                 order_notes: factoryOrderNotes.trim(),
+                invoice_notes: invoiceNotes.trim(),
                 applied_price_policy: isStockOrder ? "STOCK" : (matchedCust?.customer_type === "DEALER" ? "DEALER" : "STANDARD"),
                 vat_requested: vatRequested,
                 vat_company_name: vatCompanyName,
@@ -10139,7 +10281,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast(`Đã tạo yêu cầu đặt hàng ${newRequest.id} thành công! Đơn tự động được duyệt.`, "success");
         }
         setIsFactoryOrderModalOpen(false);
-        setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+        setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
         setIsStockOrder(false);
         setExpandedAllocIndex(null);
         setFactoryOrderCustomerName("");
@@ -11574,6 +11716,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const chosenLotNo = slipItem?.lotNo || (firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || defLot));
             const chosenExp = slipItem?.expDate || (firstLot && firstLot.expiry_date ? String(firstLot.expiry_date).slice(0, 10) : (it.expDate || defExp));
 
+            const linkedQuote = (fo?.quoteId || fo?.quote_code || target?.quoteId || target?.quote_code)
+                ? quotations.find(q => String(q.id).trim().toLowerCase() === String(fo?.quoteId || fo?.quote_code || target?.quoteId || target?.quote_code).trim().toLowerCase())
+                : null;
+            const linkedQuoteItem = linkedQuote?.items?.find((qi: any) => (qi.productCode || qi.product_code || qi.code) === code);
+            const rawVat = slipItem?.vatRate ?? slipItem?.vat_rate ?? (slipItem?.vat !== undefined && slipItem?.vat !== 8 ? slipItem.vat : undefined) ??
+                it.vatRate ?? it.vat_rate ?? (it.vat !== undefined && it.vat !== 8 ? it.vat : undefined) ??
+                linkedQuoteItem?.vatRate ?? linkedQuoteItem?.vat_rate ?? linkedQuoteItem?.vat ??
+                (prod as any)?.vatRate ?? (prod as any)?.vat_rate ??
+                slipItem?.vat ?? it.vat ?? 8;
+            const resolvedVat = !isNaN(Number(rawVat)) && Number(rawVat) >= 0 ? Number(rawVat) : 8;
+
             items.push({
                 productCode: code,
                 productName: it.productName || it.name || prod?.name || "Sản phẩm",
@@ -11590,7 +11743,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 availStock: availStock,
                 needsInvoice: slipItem?.needsInvoice !== undefined ? slipItem.needsInvoice : (it.needsInvoice !== false),
                 unitPrice: slipItem?.unitPrice ?? it.unitPrice ?? it.price ?? prod?.price ?? 0,
-                vat: slipItem?.vat ?? it.vat ?? 8,
+                vat: resolvedVat,
+                vatRate: resolvedVat,
                 isManualLot: lots.length === 0 || (slipItem?.lotNo && !lots.some((l: any) => l.lot_number === slipItem.lotNo)),
                 isExtraLot: false
             });
@@ -12506,6 +12660,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     vat_tax_code: fo.vat_tax_code || fo.vatTaxCode,
                     vat_address: fo.vat_address || fo.vatAddress,
                     vat_email: fo.vat_email || fo.vatEmail,
+                    invoice_notes: fo.invoice_notes || fo.invoiceNotes || "",
+                    invoiceNotes: fo.invoiceNotes || fo.invoice_notes || "",
                     shipping_method: fo.shipping_method || fo.shippingMethod,
                     tracking_code: fo.tracking_code || fo.trackingCode,
                     amount_paid: Number(fo.amountPaid ?? fo.amount_paid ?? 0) || 0,
@@ -12610,7 +12766,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     invoiceStatus: (existing.invoiceStatus === "ISSUED" || cand.invoiceStatus === "ISSUED") ? "ISSUED" : (existing.invoiceStatus || cand.invoiceStatus),
                     invoiceFiles: uniqueFiles,
                     deliveredAt: existing.deliveredAt || cand.deliveredAt,
-                    deliveryNotes: existing.deliveryNotes || cand.deliveryNotes || ""
+                    deliveryNotes: existing.deliveryNotes || cand.deliveryNotes || "",
+                    invoice_notes: existing.invoice_notes || cand.invoice_notes || existing.invoiceNotes || cand.invoiceNotes || "",
+                    invoiceNotes: existing.invoiceNotes || cand.invoiceNotes || existing.invoice_notes || cand.invoice_notes || ""
                 });
             }
         });
@@ -18765,8 +18923,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     const hasZeroOrGift = !isPureStock && (req.hasZeroPriceItems || (req.items && req.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
                                                     const isPendingBODApproval = hasZeroOrGift && req.priceApprovalStatus !== "APPROVED";
                                                     const isPendingCreditApproval = !isPureStock && Boolean(req.isCreditBlocked);
-                                                    const requiresApproval = isPendingBODApproval || isPendingCreditApproval;
-                                                    const isApprovedForNextSteps = !requiresApproval && req.status !== "Rejected";
+                                                    const isCancelledOrder = req.status === "Cancelled" || req.status === "CANCELLED" || req.delivery_status === "CANCELLED";
+                                                    const requiresApproval = !isCancelledOrder && (isPendingBODApproval || isPendingCreditApproval);
+                                                    const isApprovedForNextSteps = !requiresApproval && req.status !== "Rejected" && !isCancelledOrder;
 
                                                     // Dynamic safe inference for both old/mock orders and newly created ones
                                                     const hasMfg = req.hasMfg !== undefined 
@@ -18982,6 +19141,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             📝 {req.orderNotes || req.order_notes}
                                                                         </div>
                                                                     )}
+                                                                    {(req.invoiceNotes || req.invoice_notes) && (
+                                                                        <div className="text-[10px] text-sky-300/95 text-left border-t border-slate-800/60 pt-0.5 mt-0.5 w-full line-clamp-2" title={`Ghi chú xuất HĐ (Kế toán): ${req.invoiceNotes || req.invoice_notes}`}>
+                                                                            🧾 Ghi chú HĐ: {req.invoiceNotes || req.order_invoice_notes || req.invoice_notes}
+                                                                        </div>
+                                                                    )}
                                                                 </button>
                                                             </td>
                                                             <td className="p-3 text-slate-400 font-mono whitespace-nowrap">{req.requestedDeliveryDate || "—"}</td>
@@ -19031,9 +19195,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     {!requiresApproval && (
                                                                         <span className={cn(
                                                                             "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase inline-block text-center",
-                                                                            req.status === "Rejected" ? "bg-rose-600/20 text-rose-400" : stockAnalysis.statusBadgeClass
+                                                                            isCancelledOrder
+                                                                                ? "bg-rose-950/90 text-rose-300 border border-rose-500/50"
+                                                                                : req.status === "Rejected"
+                                                                                ? "bg-rose-600/20 text-rose-400"
+                                                                                : stockAnalysis.statusBadgeClass
                                                                         )}>
-                                                                            {req.status === "Rejected" ? "Từ chối" : stockAnalysis.statusBadgeText}
+                                                                            {isCancelledOrder ? "🚫 Đã hủy đơn" : req.status === "Rejected" ? "Từ chối" : stockAnalysis.statusBadgeText}
                                                                         </span>
                                                                     )}
                                                                 </div>
@@ -19044,9 +19212,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     {!isApprovedForNextSteps ? (
                                                                         <div className="p-2 rounded bg-rose-950/30 border border-rose-500/30 text-rose-300 text-[10px] space-y-0.5">
                                                                             <div className="font-bold flex items-center gap-1 text-rose-400">
-                                                                                <span>🔒 Khóa chuyển bước tiếp theo</span>
+                                                                                <span>{isCancelledOrder ? "🚫 Đơn hàng đã hủy" : "🔒 Khóa chuyển bước tiếp theo"}</span>
                                                                             </div>
                                                                             <div className="text-[9px] text-slate-400">
+                                                                                {isCancelledOrder && <div>• {req.cancelReason || "Đã giải phóng giữ chỗ kho & hủy PR liên kết"}</div>}
                                                                                 {isPendingCreditApproval && <div>• Cảnh báo nợ quá hạn: Cần Kế toán duyệt</div>}
                                                                                 {isPendingBODApproval && <div>• Đơn giá 0đ / quà tặng: Cần BGĐ duyệt</div>}
                                                                                 {req.status === "Rejected" && <div>• Đơn hàng đã bị từ chối</div>}
@@ -19307,8 +19476,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <Copy className="w-3 h-3" /> Copy
                                                                         </button>
                                                                     )}
-                                                                    {/* 3. Nút Sửa & Nút Xóa (Chỉ ADMIN / người phụ trách khi hợp lệ) */}
-                                                                    {canUserAct && canEditOrDelete && (
+                                                                    {/* 3. Nút Sửa, Nút Hủy đơn & Nút Xóa */}
+                                                                    {!isCancelledOrder && canUserAct && canEditOrDelete && (
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => handleEditFactoryOrder(req)}
@@ -19316,6 +19485,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             title="Sửa yêu cầu đặt hàng khi chưa gửi NCC/mua ngoài"
                                                                         >
                                                                             <Edit3 className="w-3 h-3" /> Sửa
+                                                                        </button>
+                                                                    )}
+                                                                    {!isCancelledOrder && req.status !== "Delivered" && req.delivery_status !== "DELIVERED" && (canUserAct || isManagerOrAdmin) && !isWarehouseStaff && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleCancelFactoryOrder(req)}
+                                                                            className="bg-orange-950/70 hover:bg-orange-900/80 text-orange-200 border border-orange-500/40 text-[10px] px-2 py-1 rounded font-bold cursor-pointer transition-colors flex items-center gap-1 shadow-sm"
+                                                                            title="Hủy đơn hàng (chỉ hủy trực tiếp khi chưa xuất kho / chưa phát hành PO NCC)"
+                                                                        >
+                                                                            <X className="w-3 h-3" /> Hủy đơn
                                                                         </button>
                                                                     )}
                                                                     {(isManagerOrAdmin && !isWarehouseStaff) && (
@@ -19330,7 +19509,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     )}
 
                                                                     {/* 4. Downstream actions ONLY when isApprovedForNextSteps */}
-                                                                    {!isApprovedForNextSteps && (
+                                                                    {!isApprovedForNextSteps && !isCancelledOrder && (
                                                                         <span className="text-[10px] text-amber-400/90 font-mono italic">
                                                                             🔒 Chờ duyệt
                                                                         </span>
@@ -20700,6 +20879,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     {ord.customer_address}
                                                                 </div>
                                                             )}
+                                                            {(ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes) && (
+                                                                <div className="mt-1 px-2 py-0.5 rounded bg-sky-950/80 border border-sky-700/60 text-[10px] text-sky-200 max-w-[240px]" title={ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes}>
+                                                                    🧾 <strong>Ghi chú HĐ:</strong> {ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes}
+                                                                </div>
+                                                            )}
                                                         </td>
                                                         <td className="p-3 text-right font-bold font-mono text-emerald-400 text-xs whitespace-nowrap">
                                                             {new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(ord.total_amount || 0)}
@@ -20769,6 +20953,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                         sel[code] = picked.length > 0 ? picked.includes(code) : it.needsInvoice !== false;
                                                                                                     });
                                                                                                     setPartialInvSelectedItems(sel);
+                                                                                                    setPartialInvItemVatRates({});
                                                                                                     setPartialInvoiceModalSlip({ order: ord, slip: sl });
                                                                                                     setPartialInvNo(String(slipInv?.invoice_no || ""));
                                                                                                     setPartialInvDate(slipInv?.invoice_date ? toVNDateString(slipInv.invoice_date) : todayVN());
@@ -20810,6 +20995,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             });
 
                                                                                             setPartialInvSelectedItems(initSelected);
+                                                                                            setPartialInvItemVatRates({});
                                                                                             setPartialInvoiceModalSlip({ order: ord, slip: sl });
                                                                                             setPartialInvNo("");
                                                                                             setPartialInvDate(todayVN());
@@ -21001,11 +21187,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const slipItems = sl.items || [];
                     const orderItems = ord.items || ord.rawOrder?.items || [];
 
+                    const linkedQuoteCode = ord.quoteId || ord.quote_code || ord.rawOrder?.quoteId || ord.rawOrder?.quote_code || "";
+                    const linkedQuote = linkedQuoteCode
+                        ? quotations.find(q => String(q.id).trim().toLowerCase() === String(linkedQuoteCode).trim().toLowerCase())
+                        : quotations.find(q => q.customerName && ord.customer_name && String(q.customerName).trim().toLowerCase() === String(ord.customer_name).trim().toLowerCase() && Array.isArray(q.items) && q.items.some((qi: any) => orderItems.some((oi: any) => getItemCode(oi) === (qi.productCode || qi.product_code || qi.code))));
+
                     const getItemDetails = (it: any, index: number) => {
                         const code = getItemCode(it) || `item_${index}`;
                         const ordItem = orderItems.find((oi: any) => getItemCode(oi) === getItemCode(it));
+                        const quoteItem = linkedQuote?.items?.find((qi: any) => (qi.productCode || qi.product_code || qi.code) === code);
+                        const prod = allSalesProducts.find(p => p.code === code) || biolabProducts.find(p => p.code === code);
                         const price = Number(it.unitPrice ?? it.price ?? ordItem?.unitPrice ?? ordItem?.price) || 0;
-                        const vatRate = Number(it.vat !== undefined ? it.vat : (ordItem?.vat !== undefined ? ordItem.vat : 8));
+                        const resolvedVat = partialInvItemVatRates[code] !== undefined
+                            ? partialInvItemVatRates[code]
+                            : (ordItem?.vatRate ?? ordItem?.vat_rate ?? (ordItem?.vat !== undefined && ordItem?.vat !== 8 ? ordItem.vat : undefined) ??
+                               quoteItem?.vatRate ?? quoteItem?.vat_rate ?? quoteItem?.vat ??
+                               it.vatRate ?? it.vat_rate ?? (it.vat !== undefined && it.vat !== 8 ? it.vat : undefined) ??
+                               (prod as any)?.vatRate ?? (prod as any)?.vat_rate ??
+                               ordItem?.vat ?? it.vat ?? 8);
+                        const vatRate = !isNaN(Number(resolvedVat)) && Number(resolvedVat) >= 0 ? Number(resolvedVat) : 8;
                         const qty = Number(it.quantity) || 0;
                         // Đơn giá trên SO là giá ĐÃ GỒM VAT: thành tiền = SL x đơn giá, tách ngược phần trước thuế để hiển thị
                         const lineTotal = Math.round(qty * price);
@@ -21181,6 +21381,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <span>Phiếu giao: <strong className="text-sky-300 font-mono">{sl.id}</strong></span>
                                     <span>Trị giá đợt giao: <strong className="text-emerald-400 font-mono">{new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(sl.totalAmount || ord.total_amount || 0)}</strong></span>
                                 </div>
+                                {(ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes) && (
+                                    <div className="pt-1.5 border-t border-slate-800 text-sky-200 bg-sky-950/50 px-2.5 py-1.5 rounded-lg border border-sky-700/40">
+                                        <strong className="text-sky-300">🧾 Ghi chú xuất hóa đơn từ Kinh doanh (dành cho Kế toán):</strong>{" "}
+                                        <span>{ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes}</span>
+                                    </div>
+                                )}
                             </div>
 
                             {hasAnySaleExcluded && (
@@ -21286,8 +21492,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <td className="p-2.5 text-right font-mono text-slate-300 text-xs">
                                                                     {d.price > 0 ? new Intl.NumberFormat("vi-VN").format(d.price) : "-"}
                                                                 </td>
-                                                                <td className="p-2.5 text-center font-mono text-xs text-slate-400">
-                                                                    {d.vatRate}%
+                                                                <td className="p-2.5 text-center font-mono text-xs text-slate-300" onClick={(e) => e.stopPropagation()}>
+                                                                    <select
+                                                                        value={d.vatRate}
+                                                                        onChange={(e) => {
+                                                                            const newRate = Number(e.target.value);
+                                                                            setPartialInvItemVatRates(prev => ({ ...prev, [d.code]: newRate }));
+                                                                        }}
+                                                                        className="bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5 text-[11px] font-mono font-bold text-amber-300 cursor-pointer focus:border-indigo-500 focus:outline-none"
+                                                                        title="Mức thuế suất VAT của mặt hàng (lấy từ Báo giá / SO, Kế toán có thể điều chỉnh nếu cần)"
+                                                                    >
+                                                                        {[0, 5, 8, 10].map(r => (
+                                                                            <option key={r} value={r}>{r}%</option>
+                                                                        ))}
+                                                                    </select>
                                                                 </td>
                                                                 <td className="p-2.5 text-right font-mono font-bold text-emerald-400 text-xs">
                                                                     {d.lineTotal > 0 ? new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND" }).format(d.lineTotal) : "-"}
@@ -24725,11 +24943,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             if (!isStockOrder && q.customerName) setFactoryOrderCustomerName(q.customerName);
                                                             // Auto-fill SO items from quotation items
                                                             if (q.items && q.items.length > 0) {
-                                                                const soItems = q.items.map((it: any) => ({
-                                                                    productCode: it.productCode || it.product_code || "",
-                                                                    quantity: Number(it.quantity) || 1,
-                                                                    unitPrice: Number(it.price || it.unitPrice || it.unit_price) || 0,
-                                                                })).filter((it: any) => it.productCode);
+                                                                const qTaxRate = q.taxRate ?? q.tax_rate;
+                                                                const soItems = q.items.map((it: any) => {
+                                                                    const code = it.productCode || it.product_code || "";
+                                                                    const prod = allSalesProducts.find(p => p.code === code) || biolabProducts.find(p => p.code === code);
+                                                                    const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? it.taxRate ?? it.tax_rate ?? qTaxRate ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
+                                                                    const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : 8;
+                                                                    return {
+                                                                        productCode: code,
+                                                                        quantity: Number(it.quantity) || 1,
+                                                                        unitPrice: Number(it.price || it.unitPrice || it.unit_price) || 0,
+                                                                        vatRate,
+                                                                        vat: vatRate,
+                                                                        needsInvoice: it.needsInvoice !== false
+                                                                    };
+                                                                }).filter((it: any) => it.productCode);
                                                                 if (soItems.length > 0) {
                                                                     setFactoryOrderItems(soItems);
                                                                     showToast(`✅ Đã nạp ${soItems.length} mặt hàng từ báo giá ${q.id}`, "success");
@@ -25267,6 +25495,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </div>
                                 </div>
                             )}
+
+                            <div className="pt-2 border-t border-slate-800/80">
+                                <label className="block text-[10px] font-bold uppercase text-sky-300 mb-1">
+                                    🧾 Ghi chú xuất hóa đơn (dành cho Kế toán)
+                                </label>
+                                <input
+                                    type="text"
+                                    placeholder="VD: Xuất hóa đơn gộp khi giao đủ hàng / Xuất VAT 5% thiết bị y tế / Lưu ý nội dung hóa đơn..."
+                                    value={invoiceNotes}
+                                    onChange={(e) => setInvoiceNotes(e.target.value)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-sky-200 placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+                                />
+                            </div>
                         </div>
 
                         {/* Order Total Price Summary Banner */}
@@ -25294,7 +25535,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             type="button"
                             onClick={() => {
                                 setIsFactoryOrderModalOpen(false);
-                                setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+                                setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
                                 setFactoryOrderContractId("");
                                 setFactoryOrderQuoteId("");
                                 setFactoryOrderPlanId("");

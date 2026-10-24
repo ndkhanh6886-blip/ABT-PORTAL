@@ -24,9 +24,12 @@ import {
     Settings
 } from "lucide-react";
 import { useNotification, Notification, TBR_PERSONNEL } from "@/frontend/contexts/NotificationContext";
+import { useAuth } from "@/frontend/contexts/AuthContext";
 
 export const NotificationDropdown: React.FC = () => {
+    const { user } = useAuth();
     const {
+        notifications,
         filteredNotifications,
         unreadCount,
         totalCount,
@@ -72,10 +75,14 @@ export const NotificationDropdown: React.FC = () => {
     const displayList = useMemo(() => {
         let list = filteredNotifications;
         if (selectedCategory === "unread") {
-            const readerId = selectedEmployeeFilter === "all" ? "current_viewer" : selectedEmployeeFilter;
-            list = list.filter(n => !(n.readBy || []).includes(readerId));
+            const readerId = selectedEmployeeFilter === "all"
+                ? "current_viewer"
+                : selectedEmployeeFilter === "MINE"
+                ? (user?.email || user?.username || user?.name || "mine_viewer")
+                : selectedEmployeeFilter;
+            list = list.filter(n => !(n.readBy || []).includes(readerId) && !(n.readBy || []).includes("current_viewer"));
         } else if (selectedCategory === "task") {
-            list = list.filter(n => n.category === "task");
+            list = list.filter(n => n.category === "task" || n.category === "workflow");
         } else if (selectedCategory === "plan_daily") {
             list = list.filter(n => n.category === "plan" || n.category === "daily");
         } else if (selectedCategory === "order_stock") {
@@ -84,7 +91,7 @@ export const NotificationDropdown: React.FC = () => {
             list = list.filter(n => n.category === "application");
         }
         return list;
-    }, [filteredNotifications, selectedCategory, selectedEmployeeFilter]);
+    }, [filteredNotifications, selectedCategory, selectedEmployeeFilter, user]);
 
     const formatRelativeTime = (isoString: string) => {
         try {
@@ -128,17 +135,83 @@ export const NotificationDropdown: React.FC = () => {
 
     const handleItemClick = (item: Notification) => {
         markAsRead(item.id);
-        if (item.link && item.link.tab) {
-            navigateTo(item.link.tab, item.link.subTab, item.link.itemId);
-            setIsOpen(false);
+
+        const combinedText = `${item.title || ""} ${item.message || ""}`;
+        const codeMatch = combinedText.match(/\b((?:WF|TASK|PR|PO|BG|SO|HD)-[A-Z0-9-]+)\b/i);
+        const extractedCode = codeMatch ? codeMatch[1] : "";
+        const quoteMatch = combinedText.match(/"([^"]{3,120})"/) || combinedText.match(/\[([^\]]{3,120})\]/);
+        const extractedTitle = quoteMatch ? quoteMatch[1] : "";
+
+        const rawTab = item.link?.tab || "";
+        const titleLower = combinedText.toLowerCase();
+        const isWorkflowNotif =
+            item.category === "workflow" ||
+            rawTab === "workflows" ||
+            item.link?.subTab === "workflows" ||
+            Boolean(item.workflowId || item.workflowCode) ||
+            extractedCode.toUpperCase().startsWith("WF-") ||
+            titleLower.includes("phối hợp") ||
+            titleLower.includes("quy trình") ||
+            titleLower.includes("stage-gate");
+
+        let targetTab = rawTab;
+        let targetSubTab = item.link?.subTab;
+
+        if (!targetTab || targetTab === "tasks" || targetTab === "workflows") {
+            if (targetTab === "tasks" || targetTab === "workflows") {
+                targetSubTab = targetTab;
+                targetTab = "workspace";
+            } else if (item.category === "delivery" || item.category === "warehouse") {
+                targetTab = "warehouse";
+            } else if (item.category === "order" || item.category === "quote") {
+                targetTab = "sales";
+            } else if (item.category === "procurement") {
+                targetTab = "procurement";
+            } else if (item.category === "application") {
+                targetTab = "application";
+            } else {
+                targetTab = "workspace";
+                targetSubTab = isWorkflowNotif ? "workflows" : item.category === "plan" ? "plans" : item.category === "daily" ? "reports" : "tasks";
+            }
+        } else if (targetTab === "workspace" && !targetSubTab) {
+            targetSubTab = isWorkflowNotif ? "workflows" : "tasks";
         }
+
+        const resolvedItemId =
+            item.taskId ||
+            item.workflowId ||
+            item.workflowCode ||
+            item.targetId ||
+            item.orderCode ||
+            item.link?.itemId ||
+            extractedCode ||
+            "";
+
+        const detailPayload = {
+            id: resolvedItemId ? String(resolvedItemId) : "",
+            code: String(item.workflowCode || item.orderCode || extractedCode || item.link?.itemId || ""),
+            title: extractedTitle || item.title || "",
+            message: item.message || "",
+            subTab: targetSubTab || (isWorkflowNotif ? "workflows" : "tasks"),
+            notification: item,
+            timestamp: Date.now()
+        };
+
+        if (typeof window !== "undefined") {
+            localStorage.setItem("workspace_open_task_detail", JSON.stringify(detailPayload));
+            window.dispatchEvent(new CustomEvent("workspace-open-detail", { detail: detailPayload }));
+        }
+
+        navigateTo(targetTab, targetSubTab, detailPayload.id || detailPayload.code || undefined);
+        setIsOpen(false);
     };
 
     const selectedStaffName = useMemo(() => {
+        if (selectedEmployeeFilter === "MINE") return user?.name ? `Của tôi (${user.name})` : "Hoạt động của tôi & Liên quan";
         if (selectedEmployeeFilter === "all") return "Tất cả nhân sự";
         const found = personnelList.find(p => p.employee_id === selectedEmployeeFilter);
         return found ? `${found.full_name} (${found.employee_id})` : selectedEmployeeFilter;
-    }, [selectedEmployeeFilter, personnelList]);
+    }, [selectedEmployeeFilter, personnelList, user]);
 
     return (
         <div className="relative inline-block" ref={dropdownRef}>
@@ -230,7 +303,8 @@ export const NotificationDropdown: React.FC = () => {
                             onChange={(e) => setSelectedEmployeeFilter(e.target.value)}
                             className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-800 dark:text-slate-200 font-semibold focus:outline-none focus:border-orange-500 shadow-xs"
                         >
-                            <option value="all">-- 👥 Tất cả hoạt động toàn công ty ({totalCount}) --</option>
+                            <option value="MINE">-- 📌 Hoạt động của tôi & Liên quan đến tôi {user?.name ? `(${user.name})` : ""} --</option>
+                            <option value="all">-- 👥 Tất cả hoạt động toàn công ty ({notifications.length}) --</option>
                             {Array.from(new Set(personnelList.map(p => p.department).filter(Boolean))).map((dept) => (
                                 <optgroup key={dept} label={dept}>
                                     {personnelList.filter(p => p.department === dept).map((p) => (
@@ -323,8 +397,12 @@ export const NotificationDropdown: React.FC = () => {
                             </div>
                         ) : (
                             displayList.map((item) => {
-                                const readerId = selectedEmployeeFilter === "all" ? "current_viewer" : selectedEmployeeFilter;
-                                const isItemUnread = !(item.readBy || []).includes(readerId);
+                                const readerId = selectedEmployeeFilter === "all"
+                                    ? "current_viewer"
+                                    : selectedEmployeeFilter === "MINE"
+                                    ? (user?.email || user?.username || user?.name || "mine_viewer")
+                                    : selectedEmployeeFilter;
+                                const isItemUnread = !(item.readBy || []).includes(readerId) && !(item.readBy || []).includes("current_viewer");
 
                                 return (
                                     <div
@@ -376,11 +454,16 @@ export const NotificationDropdown: React.FC = () => {
                                                         🎯 {item.targetEmployeeNames.join(", ")}
                                                     </span>
                                                 )}
-                                                {item.link && (
-                                                    <span className="ml-auto text-orange-600 dark:text-orange-400 font-bold hover:underline flex items-center gap-0.5">
-                                                        Đi tới xem <ArrowUpRight className="w-3 h-3" />
-                                                    </span>
-                                                )}
+                                                <button
+                                                    type="button"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleItemClick(item);
+                                                    }}
+                                                    className="ml-auto text-orange-600 dark:text-orange-400 font-bold hover:underline flex items-center gap-0.5 cursor-pointer"
+                                                >
+                                                    Đi tới xem <ArrowUpRight className="w-3 h-3" />
+                                                </button>
                                             </div>
                                         </div>
 

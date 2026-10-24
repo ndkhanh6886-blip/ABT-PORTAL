@@ -83,11 +83,11 @@ export async function exportCustomerQuotationToExcel({
     const repEmail = quote.salesRepEmail || salesPersonnelContacts[quote.salesRepId]?.email || repObj?.email || companyConfig.email || "sales@tbrscientific.com";
 
     const compName = companyConfig.companyName || "Công ty TNHH Khoa học TBR";
-    const compAddress = companyConfig.companyAddress || "51 Đường số 26, Phường An Lạc, Quận Bình Tân, TP. Hồ Chí Minh";
-    const compPhone = companyConfig.companyPhone || "028 2212 9299 - 0987 875 934";
-    const compEmail = companyConfig.companyEmail || "sales@tbrscientific.com - info@tbrscientific.com";
-    const compTaxCode = companyConfig.companyTaxCode || "0313576759";
-    const compWebsite = companyConfig.companyWebsite || "www.tbr.vn";
+    const compAddress = companyConfig.companyAddress || "Xưởng 5.04, Nhà xưởng cao tầng, Lô L2, đường Long Hậu - Hiệp Phước, KCN Long Hậu, Xã Cần Giuộc, Tỉnh Tây Ninh, Việt Nam";
+    const compPhone = companyConfig.companyPhone || "028.667.03268 - 0343.797.727";
+    const compEmail = companyConfig.companyEmail || "sales01@tbrscientific.com";
+    const compTaxCode = companyConfig.companyTaxCode || "1102031182";
+    const compWebsite = companyConfig.companyWebsite || "www.tbrscientific.com";
 
     const workbook = new ExcelJS.Workbook();
     workbook.creator = "TBR Portal Enterprise";
@@ -243,31 +243,54 @@ export async function exportCustomerQuotationToExcel({
     };
 
     // ==========================================
-    // 1. COMPANY HEADER (Rows 1-4)
+    // 1. COMPANY HEADER (Rows 1-4) + LOGO
     // ==========================================
-    sheet.mergeCells("A1:F1");
-    const cellA1 = sheet.getCell("A1");
+    let hasLogoImage = false;
+    if (typeof window !== "undefined") {
+        try {
+            const logoUrl = companyConfig.companyLogo || "/logo-tbrs.png";
+            const resp = await fetch(logoUrl);
+            if (resp.ok) {
+                const arrBuf = await resp.arrayBuffer();
+                const imgId = workbook.addImage({
+                    buffer: arrBuf,
+                    extension: "png",
+                });
+                sheet.addImage(imgId, {
+                    tl: { col: 0.08, row: 0.1 } as any,
+                    ext: { width: 56, height: 56 }
+                });
+                hasLogoImage = true;
+            }
+        } catch (err) {
+            console.warn("Could not load company logo for Excel export:", err);
+        }
+    }
+
+    const headerStartCol = hasLogoImage ? "B" : "A";
+    sheet.mergeCells(`${headerStartCol}1:F1`);
+    const cellA1 = sheet.getCell(`${headerStartCol}1`);
     cellA1.value = compName.toUpperCase();
     cellA1.font = { name: "Segoe UI", size: 13, bold: true, color: { argb: "FF1E3A8A" } };
     cellA1.alignment = { vertical: "middle", horizontal: "left" };
     sheet.getRow(1).height = 24;
 
-    sheet.mergeCells("A2:F2");
-    const cellA2 = sheet.getCell("A2");
+    sheet.mergeCells(`${headerStartCol}2:F2`);
+    const cellA2 = sheet.getCell(`${headerStartCol}2`);
     cellA2.value = `Địa chỉ: ${compAddress}`;
     cellA2.font = { name: "Segoe UI", size: 9.5, color: { argb: "FF475569" } };
     cellA2.alignment = { vertical: "middle", horizontal: "left" };
     sheet.getRow(2).height = 18;
 
-    sheet.mergeCells("A3:F3");
-    const cellA3 = sheet.getCell("A3");
+    sheet.mergeCells(`${headerStartCol}3:F3`);
+    const cellA3 = sheet.getCell(`${headerStartCol}3`);
     cellA3.value = `Hotline / Tel: ${compPhone}  •  Email: ${compEmail}`;
     cellA3.font = { name: "Segoe UI", size: 9.5, color: { argb: "FF475569" } };
     cellA3.alignment = { vertical: "middle", horizontal: "left" };
     sheet.getRow(3).height = 18;
 
-    sheet.mergeCells("A4:F4");
-    const cellA4 = sheet.getCell("A4");
+    sheet.mergeCells(`${headerStartCol}4:F4`);
+    const cellA4 = sheet.getCell(`${headerStartCol}4`);
     cellA4.value = `Mã số thuế: ${compTaxCode}  •  Website: ${compWebsite}`;
     cellA4.font = { name: "Segoe UI", size: 9.5, color: { argb: "FF475569" } };
     cellA4.alignment = { vertical: "middle", horizontal: "left" };
@@ -765,19 +788,24 @@ export async function exportCustomerQuotationToExcel({
     sheet.getRow(currentRowIdx).height = 22;
     currentRowIdx++;
 
-    const terms: string[] = [
-        `1. Hiệu lực báo giá: ${quote.validityTerms || "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành."}`,
-        `2. Thời gian & địa điểm giao hàng: ${quote.deliveryTerms || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc kể từ khi xác nhận đơn hàng/hợp đồng."}`,
-        `3. Phương thức thanh toán: ${quote.paymentTerms || "Thanh toán 100% bằng chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT."}`,
-    ];
-
-    const rawNote = quote.noteTerms || (isItemsPricePreVat
+    const defaultValidity = "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành.";
+    const defaultDelivery = "Giao hàng tận nơi trong vòng 3-5 ngày làm việc kể từ khi xác nhận đơn hàng/hợp đồng.";
+    const defaultPayment = "Thanh toán 100% bằng chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT.";
+    const defaultNote = isItemsPricePreVat
         ? "Đơn giá chưa bao gồm thuế Giá Trị Gia Tăng (VAT). Chi phí vận chuyển, hướng dẫn sử dụng theo thỏa thuận."
-        : "Đơn giá đã bao gồm thuế Giá Trị Gia Tăng (VAT) và chi phí vận chuyển, hướng dẫn sử dụng tại cơ sở.");
-    const cleanNote = quote.noteTerms ? quote.noteTerms : rawNote;
-    if (cleanNote) {
-        terms.push(`4. Ghi chú & cam kết: ${cleanNote}`);
-    }
+        : "Đơn giá đã bao gồm thuế Giá Trị Gia Tăng (VAT) và chi phí vận chuyển, hướng dẫn sử dụng tại cơ sở.";
+
+    const resolvedValidity = quote.validityTerms !== undefined && quote.validityTerms !== null ? String(quote.validityTerms).trim() : defaultValidity;
+    const resolvedDelivery = quote.deliveryTerms !== undefined && quote.deliveryTerms !== null ? String(quote.deliveryTerms).trim() : defaultDelivery;
+    const resolvedPayment = quote.paymentTerms !== undefined && quote.paymentTerms !== null ? String(quote.paymentTerms).trim() : defaultPayment;
+    const resolvedNote = quote.noteTerms !== undefined && quote.noteTerms !== null ? String(quote.noteTerms).trim() : defaultNote;
+
+    const rawTermEntries: string[] = [];
+    if (resolvedValidity) rawTermEntries.push(`Hiệu lực báo giá: ${resolvedValidity}`);
+    if (resolvedDelivery) rawTermEntries.push(`Thời gian & địa điểm giao hàng: ${resolvedDelivery}`);
+    if (resolvedPayment) rawTermEntries.push(`Phương thức thanh toán: ${resolvedPayment}`);
+    if (resolvedNote) rawTermEntries.push(`Ghi chú & cam kết: ${resolvedNote}`);
+    const terms: string[] = rawTermEntries.map((entry, idx) => `${idx + 1}. ${entry}`);
 
     terms.forEach((t) => {
         sheet.mergeCells(`A${currentRowIdx}:I${currentRowIdx}`);
@@ -785,7 +813,7 @@ export async function exportCustomerQuotationToExcel({
         cTerm.value = t;
         cTerm.font = { name: "Segoe UI", size: 9.5, color: { argb: "FF334155" } };
         cTerm.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
-        sheet.getRow(currentRowIdx).height = 20;
+        sheet.getRow(currentRowIdx).height = t.length > 115 ? 34 : 20;
         currentRowIdx++;
     });
 

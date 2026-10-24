@@ -64,11 +64,11 @@ export const useCompanyConfig = (): CompanyConfig => {
           const updated: CompanyConfig = {
             companyName: cfg.companyName || localStorage.getItem("sales_company_name") || defaults.companyName,
             companyAddress: cfg.companyAddress || localStorage.getItem("sales_company_address") || defaults.companyAddress,
-            companyPhone: cfg.companyPhone || localStorage.getItem("sales_company_phone") || "",
-            companyEmail: cfg.companyEmail || localStorage.getItem("sales_company_email") || "",
-            companyTaxCode: cfg.companyTaxCode || localStorage.getItem("sales_company_tax_code") || "",
-            companyRepresentative: cfg.companyRepresentative || localStorage.getItem("sales_company_representative") || "",
-            companyRepresentativeRole: cfg.companyRepresentativeRole || localStorage.getItem("sales_company_representative_role") || "",
+            companyPhone: cfg.companyPhone || localStorage.getItem("sales_company_phone") || defaults.companyPhone,
+            companyEmail: cfg.companyEmail || localStorage.getItem("sales_company_email") || defaults.companyEmail,
+            companyTaxCode: cfg.companyTaxCode || localStorage.getItem("sales_company_tax_code") || defaults.companyTaxCode,
+            companyRepresentative: cfg.companyRepresentative || localStorage.getItem("sales_company_representative") || defaults.companyRepresentative,
+            companyRepresentativeRole: cfg.companyRepresentativeRole || localStorage.getItem("sales_company_representative_role") || defaults.companyRepresentativeRole,
           };
           setConfig(updated);
         }

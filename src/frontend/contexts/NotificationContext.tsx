@@ -33,6 +33,17 @@ export interface Notification {
     // Target audience (specific employees or departments)
     targetEmployeeIds?: string[]; // e.g. ["KD-11", "QL-03"]
     targetEmployeeNames?: string[]; // e.g. ["Huỳnh Hồng Hạnh"]
+    targetUsers?: string[];
+    assignee?: string;
+    assignees?: string[];
+    creator?: string;
+    description?: string;
+    metadata?: any;
+    taskId?: string | number;
+    workflowId?: string | number;
+    workflowCode?: string;
+    targetId?: string | number;
+    orderCode?: string;
     recipientEmail?: string;
     recipientRole?: string;
     targetRoles?: string[];
@@ -41,7 +52,7 @@ export interface Notification {
     
     // Navigation link
     link?: {
-        tab: "sales" | "warehouse" | "application" | "procurement" | "settings" | string;
+        tab: "sales" | "warehouse" | "application" | "procurement" | "settings" | "workspace" | string;
         subTab?: string;
         itemId?: string;
     };
@@ -246,15 +257,27 @@ interface NotificationContextType {
         sender?: { id?: string; name: string; role?: string };
         targetEmployeeIds?: string[];
         targetEmployeeNames?: string[];
+        targetUsers?: string[];
+        assignee?: string;
+        assignees?: string[];
+        creator?: string;
+        description?: string;
+        metadata?: any;
+        taskId?: string | number;
+        workflowId?: string | number;
+        workflowCode?: string;
+        targetId?: string | number;
+        orderCode?: string;
         targetRoles?: string[];
         targetRole?: string;
         targetDept?: string;
         link?: {
-            tab: "sales" | "warehouse" | "application" | "procurement" | "settings" | string;
+            tab: "sales" | "warehouse" | "application" | "procurement" | "settings" | "workspace" | string;
             subTab?: string;
             itemId?: string;
         };
         linkUrl?: string;
+        [key: string]: any;
     }) => void;
     markAsRead: (id: string, readerId?: string) => void;
     markAllAsRead: (readerId?: string) => void;
@@ -284,8 +307,8 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
     const { user } = useAuth();
     const [toasts, setToasts] = useState<Toast[]>([]);
     
-    // Employee filter for notification view (default "all" or employee id)
-    const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState<string>("all");
+    // Employee filter for notification view (default "MINE" for personal & related activities)
+    const [selectedEmployeeFilter, setSelectedEmployeeFilter] = useState<string>("MINE");
 
     // All activity notifications
     const [allNotifications, setAllNotifications] = useState<Notification[]>(() => {
@@ -457,15 +480,27 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         sender?: { id?: string; name: string; role?: string };
         targetEmployeeIds?: string[];
         targetEmployeeNames?: string[];
+        targetUsers?: string[];
+        assignee?: string;
+        assignees?: string[];
+        creator?: string;
+        description?: string;
+        metadata?: any;
+        taskId?: string | number;
+        workflowId?: string | number;
+        workflowCode?: string;
+        targetId?: string | number;
+        orderCode?: string;
         targetRoles?: string[];
         targetRole?: string;
         targetDept?: string;
         link?: {
-            tab: "sales" | "warehouse" | "application" | "procurement" | "settings" | string;
+            tab: "sales" | "warehouse" | "application" | "procurement" | "settings" | "workspace" | string;
             subTab?: string;
             itemId?: string;
         };
         linkUrl?: string;
+        [key: string]: any;
     }) => {
         const {
             title,
@@ -540,6 +575,24 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             }
         }
 
+        const extractedCodeMatch = `${title || ""} ${message || ""}`.match(/\b((?:WF|TASK|PR|PO|BG|SO|HD)-[A-Z0-9-]+)\b/i);
+        const autoItemId = link?.itemId
+            || (params.taskId ? String(params.taskId) : undefined)
+            || (params.workflowId ? String(params.workflowId) : undefined)
+            || params.workflowCode
+            || (params.targetId ? String(params.targetId) : undefined)
+            || params.orderCode
+            || (extractedCodeMatch ? extractedCodeMatch[1] : undefined);
+
+        const resolvedLink = link ? {
+            ...link,
+            itemId: link.itemId || autoItemId
+        } : (category === "task" || category === "workflow" || category === "plan" || category === "daily" || (title || "").toLowerCase().includes("phối hợp") || (title || "").toLowerCase().includes("công việc")) ? {
+            tab: "workspace",
+            subTab: (category === "workflow" || (title || "").toLowerCase().includes("phối hợp") || (autoItemId || "").toUpperCase().startsWith("WF-")) ? "workflows" : "tasks",
+            itemId: autoItemId
+        } : undefined;
+
         const newNotif: Notification = {
             id: `ACT-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`,
             title,
@@ -552,10 +605,21 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             sender: sender || { name: user?.name || "Hệ thống TBRs" },
             targetEmployeeIds: resolvedEmployeeIds,
             targetEmployeeNames: resolvedEmployeeNames,
+            targetUsers: params.targetUsers,
+            assignee: params.assignee,
+            assignees: params.assignees,
+            creator: params.creator,
+            description: params.description,
+            metadata: params.metadata,
+            taskId: params.taskId,
+            workflowId: params.workflowId,
+            workflowCode: params.workflowCode,
+            targetId: params.targetId,
+            orderCode: params.orderCode,
             targetRoles: resolvedRoles,
             recipientRole: targetRole,
             recipientDept: targetDept,
-            link,
+            link: resolvedLink,
             linkUrl
         };
 
@@ -615,6 +679,108 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         if (selectedEmployeeFilter === "all") {
             return allNotifications;
         }
+
+        const matchRoleAgainstPerson = (allTargetRoles: string[], deptStr: string, posStr: string, userRoleStr?: string) => {
+            const deptLower = (deptStr || "").toLowerCase();
+            const posLower = (posStr || "").toLowerCase();
+            const uRoleLower = (userRoleStr || "").toLowerCase();
+            for (const r of allTargetRoles) {
+                const rLower = (r || "").toLowerCase();
+                if (rLower === "admin" || rLower === "director") {
+                    if (deptLower.includes("giám đốc") || deptLower.includes("bod") || uRoleLower === "admin" || uRoleLower === "director") return true;
+                } else if (rLower === "sales_head") {
+                    if (deptLower.includes("kinh doanh") && (posLower.includes("trưởng") || posLower.includes("phó") || posLower.includes("head") || posLower.includes("quản lý"))) return true;
+                } else if (rLower === "sales_rep" || rLower === "sales") {
+                    if (deptLower.includes("kinh doanh") || uRoleLower.includes("sale")) return true;
+                } else if (rLower === "warehouse" || rLower === "warehouse_lead") {
+                    if (deptLower.includes("kho") || uRoleLower.includes("warehouse")) return true;
+                } else if (rLower === "procurement") {
+                    if (deptLower.includes("cung ứng") || deptLower.includes("mua hàng") || deptLower.includes("xnk") || uRoleLower.includes("procurement")) return true;
+                } else if (rLower === "app_head") {
+                    if ((deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab")) && (posLower.includes("trưởng") || posLower.includes("head"))) return true;
+                } else if (rLower === "app_rep" || rLower === "application") {
+                    if (deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab") || uRoleLower.includes("app")) return true;
+                } else if (rLower === "accountant") {
+                    if (deptLower.includes("kế toán") || deptLower.includes("tài chính") || uRoleLower.includes("accountant") || uRoleLower.includes("finance")) return true;
+                } else if (rLower === "qa_qc") {
+                    if (deptLower.includes("chất lượng") || deptLower.includes("qa") || deptLower.includes("qc")) return true;
+                } else if (rLower === "legal") {
+                    if (deptLower.includes("pháp chế") || deptLower.includes("luật")) return true;
+                }
+            }
+            return false;
+        };
+
+        if (selectedEmployeeFilter === "MINE") {
+            const uName = ((user as any)?.full_name || user?.name || "").trim().toLowerCase();
+            const uEmail = (user?.email || "").trim().toLowerCase();
+            const uUsername = (user?.username || "").trim().toLowerCase();
+            const uDept = ((user as any)?.department || "").trim().toLowerCase();
+            const uRole = ((user as any)?.role || "").trim().toLowerCase();
+            const uEmpId = ((user as any)?.employee_id || (user as any)?.employee_code || "").trim().toLowerCase();
+
+            if (!uName && !uEmail && !uUsername && !uEmpId) {
+                return allNotifications;
+            }
+
+            const matchedPersonnel = personnelList.find(p =>
+                (uEmpId && p.employee_id.toLowerCase() === uEmpId) ||
+                (uName && p.full_name.toLowerCase() === uName) ||
+                (uEmail && p.email && p.email.toLowerCase() === uEmail) ||
+                (uName && (p.full_name.toLowerCase().includes(uName) || uName.includes(p.full_name.toLowerCase())))
+            );
+
+            const effectiveName = (matchedPersonnel?.full_name || uName).toLowerCase();
+            const effectiveEmpId = (matchedPersonnel?.employee_id || uEmpId).toLowerCase();
+            const effectiveEmail = (matchedPersonnel?.email || uEmail).toLowerCase();
+            const effectiveDept = (matchedPersonnel?.department || uDept).toLowerCase();
+            const effectivePos = (matchedPersonnel?.position || "").toLowerCase();
+
+            const nameTokens = Array.from(new Set([uName, effectiveName, uUsername, effectiveEmpId].filter(t => t && t.length >= 2)));
+
+            return allNotifications.filter(n => {
+                if (Array.isArray(n.targetEmployeeIds) && n.targetEmployeeIds.some(id => {
+                    const idLower = String(id || "").toLowerCase();
+                    return idLower === effectiveEmpId || idLower === uEmpId || idLower === effectiveEmail || idLower === uUsername || idLower === effectiveName;
+                })) return true;
+
+                const candidateNames = [
+                    ...(n.targetEmployeeNames || []),
+                    ...(n.targetUsers || []),
+                    ...(n.assignees || []),
+                    n.assignee || "",
+                    n.creator || "",
+                    n.sender?.name || "",
+                    n.sender?.id || ""
+                ].filter(Boolean).map(s => String(s).toLowerCase());
+
+                if (candidateNames.some(cand => nameTokens.some(tok => cand.includes(tok) || tok.includes(cand)))) {
+                    return true;
+                }
+
+                if (n.recipientEmail && effectiveEmail && n.recipientEmail.toLowerCase() === effectiveEmail) return true;
+                if (n.recipientDept && effectiveDept && (
+                    n.recipientDept.toLowerCase().includes(effectiveDept) ||
+                    effectiveDept.includes(n.recipientDept.toLowerCase())
+                )) return true;
+
+                const textBlob = `${n.title || ""} ${n.message || ""} ${n.description || ""} ${n.metadata ? JSON.stringify(n.metadata) : ""}`.toLowerCase();
+                if (nameTokens.some(tok => textBlob.includes(`@${tok}`) || (tok.length >= 3 && textBlob.includes(tok)))) {
+                    return true;
+                }
+                if (effectiveDept && effectiveDept.length >= 3 && (textBlob.includes(`@${effectiveDept}`) || textBlob.includes(`phòng ${effectiveDept}`) || textBlob.includes(`[${effectiveDept}]`))) {
+                    return true;
+                }
+
+                const allTargetRoles = [n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[];
+                if (allTargetRoles.length > 0 && matchRoleAgainstPerson(allTargetRoles, effectiveDept, effectivePos, uRole)) {
+                    return true;
+                }
+
+                return false;
+            });
+        }
+
         return allNotifications.filter(n => {
             if (n.targetEmployeeIds && n.targetEmployeeIds.includes(selectedEmployeeFilter)) return true;
             
@@ -622,77 +788,66 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 p.employee_id === selectedEmployeeFilter || 
                 p.full_name.toLowerCase() === selectedEmployeeFilter.toLowerCase()
             );
+            const textBlob = `${n.title || ""} ${n.message || ""} ${n.description || ""}`.toLowerCase();
             if (targetPersonnel) {
+                const fullLower = targetPersonnel.full_name.toLowerCase();
                 if (n.recipientEmail && targetPersonnel.email && n.recipientEmail.toLowerCase() === targetPersonnel.email.toLowerCase()) return true;
                 if (n.targetEmployeeNames && n.targetEmployeeNames.some(name => 
-                    name.toLowerCase().includes(targetPersonnel.full_name.toLowerCase()) ||
-                    targetPersonnel.full_name.toLowerCase().includes(name.toLowerCase())
+                    name.toLowerCase().includes(fullLower) ||
+                    fullLower.includes(name.toLowerCase())
                 )) return true;
+                if (n.targetUsers && n.targetUsers.some(name => name.toLowerCase().includes(fullLower) || fullLower.includes(name.toLowerCase()))) return true;
+                if (n.assignees && n.assignees.some(name => name.toLowerCase().includes(fullLower) || fullLower.includes(name.toLowerCase()))) return true;
+                if (n.assignee && (n.assignee.toLowerCase().includes(fullLower) || fullLower.includes(n.assignee.toLowerCase()))) return true;
                 if (n.sender?.name && (
-                    n.sender.name.toLowerCase().includes(targetPersonnel.full_name.toLowerCase()) ||
-                    targetPersonnel.full_name.toLowerCase().includes(n.sender.name.toLowerCase())
+                    n.sender.name.toLowerCase().includes(fullLower) ||
+                    fullLower.includes(n.sender.name.toLowerCase())
                 )) return true;
+                if (textBlob.includes(fullLower)) return true;
                 if (n.recipientDept && targetPersonnel.department && n.recipientDept.toLowerCase() === targetPersonnel.department.toLowerCase()) return true;
 
-                // Role matching against targetRoles or recipientRole
                 const allTargetRoles = [n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[];
-                if (allTargetRoles.length > 0) {
-                    const deptLower = (targetPersonnel.department || "").toLowerCase();
-                    const posLower = (targetPersonnel.position || "").toLowerCase();
-                    for (const r of allTargetRoles) {
-                        const rLower = r.toLowerCase();
-                        if (rLower === "admin" || rLower === "director") {
-                            if (deptLower.includes("giám đốc") || deptLower.includes("bod")) return true;
-                        } else if (rLower === "sales_head") {
-                            if (deptLower.includes("kinh doanh") && (posLower.includes("trưởng") || posLower.includes("phó") || posLower.includes("head") || posLower.includes("quản lý"))) return true;
-                        } else if (rLower === "sales_rep" || rLower === "sales") {
-                            if (deptLower.includes("kinh doanh")) return true;
-                        } else if (rLower === "warehouse" || rLower === "warehouse_lead") {
-                            if (deptLower.includes("kho")) return true;
-                        } else if (rLower === "procurement") {
-                            if (deptLower.includes("cung ứng") || deptLower.includes("mua hàng")) return true;
-                        } else if (rLower === "app_head") {
-                            if ((deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab")) && (posLower.includes("trưởng") || posLower.includes("head"))) return true;
-                        } else if (rLower === "app_rep" || rLower === "application") {
-                            if (deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab")) return true;
-                        } else if (rLower === "accountant") {
-                            if (deptLower.includes("kế toán") || deptLower.includes("tài chính")) return true;
-                        } else if (rLower === "qa_qc") {
-                            if (deptLower.includes("chất lượng") || deptLower.includes("qa") || deptLower.includes("qc")) return true;
-                        } else if (rLower === "legal") {
-                            if (deptLower.includes("pháp chế") || deptLower.includes("luật")) return true;
-                        }
-                    }
+                if (allTargetRoles.length > 0 && matchRoleAgainstPerson(allTargetRoles, targetPersonnel.department || "", targetPersonnel.position || "")) {
+                    return true;
                 }
             } else {
+                const filterLower = selectedEmployeeFilter.toLowerCase();
                 if (n.targetEmployeeNames && n.targetEmployeeNames.some(name => 
-                    name.toLowerCase().includes(selectedEmployeeFilter.toLowerCase()) ||
-                    selectedEmployeeFilter.toLowerCase().includes(name.toLowerCase())
+                    name.toLowerCase().includes(filterLower) ||
+                    filterLower.includes(name.toLowerCase())
                 )) return true;
-                if (n.sender?.name && n.sender.name.toLowerCase().includes(selectedEmployeeFilter.toLowerCase())) return true;
+                if (n.sender?.name && n.sender.name.toLowerCase().includes(filterLower)) return true;
+                if (textBlob.includes(filterLower)) return true;
             }
             
             return false;
         });
-    }, [allNotifications, selectedEmployeeFilter, personnelList]);
+    }, [allNotifications, selectedEmployeeFilter, personnelList, user]);
+
+    const getEffectiveReaderId = useCallback((customReader?: string) => {
+        if (customReader) return customReader;
+        if (selectedEmployeeFilter === "all") return "current_viewer";
+        if (selectedEmployeeFilter === "MINE") return user?.email || user?.username || user?.name || "mine_viewer";
+        return selectedEmployeeFilter;
+    }, [selectedEmployeeFilter, user]);
 
     // Calculate unread count for the active filter
     const unreadCount = useMemo(() => {
-        const readerId = selectedEmployeeFilter === "all" ? "current_viewer" : selectedEmployeeFilter;
+        const readerId = getEffectiveReaderId();
         return filteredNotifications.filter(n => {
             if (!n.readBy || n.readBy.length === 0) return true;
-            if (selectedEmployeeFilter === "all") return !n.readBy.includes("current_viewer");
-            return !n.readBy.includes(readerId);
+            return !n.readBy.includes(readerId) && !n.readBy.includes("current_viewer");
         }).length;
-    }, [filteredNotifications, selectedEmployeeFilter]);
+    }, [filteredNotifications, getEffectiveReaderId]);
 
     const markAsRead = useCallback((id: string, readerId?: string) => {
-        const effectiveReader = readerId || (selectedEmployeeFilter === "all" ? "current_viewer" : selectedEmployeeFilter);
+        const effectiveReader = getEffectiveReaderId(readerId);
         setAllNotifications(prev => {
             const updated = prev.map(n => {
                 if (n.id === id) {
                     const readSet = new Set(n.readBy || []);
                     readSet.add(effectiveReader);
+                    readSet.add("current_viewer");
                     return { ...n, readBy: Array.from(readSet) };
                 }
                 return n;
@@ -700,16 +855,17 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             saveNotifications(updated);
             return updated;
         });
-    }, [selectedEmployeeFilter, saveNotifications]);
+    }, [getEffectiveReaderId, saveNotifications]);
 
     const markAllAsRead = useCallback((readerId?: string) => {
-        const effectiveReader = readerId || (selectedEmployeeFilter === "all" ? "current_viewer" : selectedEmployeeFilter);
+        const effectiveReader = getEffectiveReaderId(readerId);
         setAllNotifications(prev => {
             const targetIds = new Set(filteredNotifications.map(n => n.id));
             const updated = prev.map(n => {
                 if (targetIds.has(n.id)) {
                     const readSet = new Set(n.readBy || []);
                     readSet.add(effectiveReader);
+                    readSet.add("current_viewer");
                     return { ...n, readBy: Array.from(readSet) };
                 }
                 return n;
@@ -717,7 +873,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             saveNotifications(updated);
             return updated;
         });
-    }, [filteredNotifications, selectedEmployeeFilter, saveNotifications]);
+    }, [filteredNotifications, getEffectiveReaderId, saveNotifications]);
 
     const deleteNotification = useCallback((id: string) => {
         setAllNotifications(prev => {

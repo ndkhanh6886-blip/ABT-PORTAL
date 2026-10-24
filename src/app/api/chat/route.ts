@@ -65,7 +65,9 @@ let chatTablesEnsured = false;
 async function ensureChatTables() {
   if (chatTablesEnsured) return;
   try {
-    await query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_id_id ON chat_messages(channel_id, id DESC)`);
+    await query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_id_id ON chat_messages(channel_id, id DESC)`).catch(() => {});
+    await query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE`).catch(() => {});
+    await query(`ALTER TABLE chat_channels ADD COLUMN IF NOT EXISTS pinned_messages JSONB DEFAULT '[]'::jsonb`).catch(() => {});
     chatTablesEnsured = true;
   } catch {}
 }
@@ -370,6 +372,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    await ensureChatTables();
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action");
     let body: any = {};
@@ -392,7 +395,7 @@ export async function POST(req: NextRequest) {
     body.user = ident.name;
     if (action === "leave_channel") body.member_name = ident.name;
 
-    const CHANNEL_SCOPED = ["send_message", "add_members", "update_channel", "remove_member", "leave_channel", "delete_channel", "toggle_pin", "mark_read"];
+    const CHANNEL_SCOPED = ["send_message", "add_members", "update_channel", "remove_member", "leave_channel", "delete_channel", "toggle_pin", "pin_message", "mark_read"];
     if (CHANNEL_SCOPED.includes(action || "")) {
       const chId = body.channel_id || searchParams.get("channel_id");
       if ((chId || body.channel_code) && !(await canAccessChannel(ident, chId, body.channel_code))) return chatForbidden();
@@ -801,30 +804,34 @@ export async function POST(req: NextRequest) {
     }
 
     // 4. Toggle Pin Message (M5: with row-lock)
-    if (action === "toggle_pin") {
-      const { message_id, channel_id } = body;
+    if (action === "toggle_pin" || action === "pin_message") {
+      const { message_id, channel_id, is_pinned } = body;
       const result = await withTransaction(async (c) => {
-        const res = await c.query("SELECT is_pinned, content, sender_name FROM chat_messages WHERE id = $1 FOR UPDATE", [message_id]);
+        const res = await c.query("SELECT is_pinned, content, sender_name, channel_id, created_at FROM chat_messages WHERE id = $1 FOR UPDATE", [message_id]);
         if (res.rows.length === 0) throw new HttpError(404, "Không tìm thấy tin nhắn");
 
-        const newPinned = !res.rows[0].is_pinned;
+        const targetChannelId = channel_id || res.rows[0].channel_id;
+        const newPinned = typeof is_pinned === "boolean" ? is_pinned : !res.rows[0].is_pinned;
         await c.query("UPDATE chat_messages SET is_pinned = $1 WHERE id = $2", [newPinned, message_id]);
 
         // Update pinned_messages array in channel with row lock
-        const chRes = await c.query("SELECT pinned_messages FROM chat_channels WHERE id = $1 FOR UPDATE", [channel_id]);
-        let pins: any[] = chRes.rows[0]?.pinned_messages || [];
-        if (newPinned) {
-          pins.push({
-            id: message_id,
-            content: res.rows[0].content,
-            sender_name: res.rows[0].sender_name,
-            pinned_at: new Date().toISOString()
-          });
-        } else {
-          pins = pins.filter((p: any) => p.id !== message_id);
+        let pins: any[] = [];
+        if (targetChannelId) {
+          const chRes = await c.query("SELECT pinned_messages FROM chat_channels WHERE id = $1 FOR UPDATE", [targetChannelId]);
+          pins = Array.isArray(chRes.rows[0]?.pinned_messages) ? [...chRes.rows[0].pinned_messages] : [];
+          pins = pins.filter((p: any) => Number(p.id) !== Number(message_id));
+          if (newPinned) {
+            pins.push({
+              id: message_id,
+              content: res.rows[0].content,
+              sender_name: res.rows[0].sender_name,
+              created_at: res.rows[0].created_at,
+              pinned_by: ident.name,
+              pinned_at: new Date().toISOString()
+            });
+          }
+          await c.query("UPDATE chat_channels SET pinned_messages = $1 WHERE id = $2", [JSON.stringify(pins), targetChannelId]);
         }
-
-        await c.query("UPDATE chat_channels SET pinned_messages = $1 WHERE id = $2", [JSON.stringify(pins), channel_id]);
         return { is_pinned: newPinned, pinned_messages: pins };
       });
       return NextResponse.json({ success: true, is_pinned: result.is_pinned, pinned_messages: result.pinned_messages });

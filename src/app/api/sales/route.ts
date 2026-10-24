@@ -286,7 +286,10 @@ function normalizeQuotationRow(r: any) {
     discountRate: Number(r.discount_rate || r.discountRate) || 0,
     taxRate: Number(r.tax_rate || r.taxRate) || 8,
     status: r.status || "Draft",
-    paymentTerms: r.terms || r.paymentTerms || "",
+    paymentTerms: extra.paymentTerms !== undefined && extra.paymentTerms !== null ? extra.paymentTerms : (r.paymentTerms !== undefined && r.paymentTerms !== null ? r.paymentTerms : (r.terms ?? "")),
+    validityTerms: extra.validityTerms !== undefined && extra.validityTerms !== null ? extra.validityTerms : (r.validityTerms ?? undefined),
+    deliveryTerms: extra.deliveryTerms !== undefined && extra.deliveryTerms !== null ? extra.deliveryTerms : (r.deliveryTerms ?? undefined),
+    noteTerms: extra.noteTerms !== undefined && extra.noteTerms !== null ? extra.noteTerms : (r.noteTerms ?? undefined),
     items: normalizedItems
   };
 }
@@ -312,10 +315,11 @@ function normalizeContractRow(r: any) {
 
 // Thông tin mở rộng của phiếu giao (đợt giao, hình thức, trạng thái xác nhận, POD...) lưu ở cột JSONB extra_data
 let deliverySlipExtraColumnEnsured = false;
+let orderInvoiceNotesColumnEnsured = false;
 const DELIVERY_SLIP_EXTRA_KEYS = [
   "batchNumber", "deliveryMode", "deliveryStatus", "isDelivered", "deliveredAt",
   "receiverName", "receiverPhone", "receiverRole", "deliveryStaff", "confirmedBy", "confirmedAt",
-  "podImages", "podDeliveryId", "invoiceNo", "invoiceStatus", "invoiceFiles",
+  "podImages", "podDeliveryId", "invoiceNo", "invoiceStatus", "invoiceFiles", "invoiceNotes", "invoice_notes",
   "cancelledAt", "cancelledBy", "cancelReason", "editedAt", "editedBy", "createdBy"
 ];
 
@@ -1168,6 +1172,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "order") {
+      if (!orderInvoiceNotesColumnEnsured) {
+        try {
+          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS invoice_notes TEXT");
+          orderInvoiceNotesColumnEnsured = true;
+        } catch (err) {
+          console.error("Failed to ensure sales_orders.invoice_notes column:", err);
+        }
+      }
       const { id, order_code, customer_id, customer_name, sales_rep_name, order_date, items, total_amount } = body;
       const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k) && body[k] !== undefined;
 
@@ -1226,6 +1238,7 @@ export async function POST(req: NextRequest) {
         if (has("total_amount")) set("total_amount", Number(total_amount) || 0);
         if (has("notes")) set("notes", body.notes);
         if (has("order_notes")) set("order_notes", body.order_notes ? String(body.order_notes).slice(0, 2000) : null);
+        if (has("invoice_notes") || has("invoiceNotes")) set("invoice_notes", (body.invoice_notes ?? body.invoiceNotes) ? String(body.invoice_notes ?? body.invoiceNotes).slice(0, 2000) : null);
         if (has("applied_price_policy")) set("applied_price_policy", body.applied_price_policy || "STANDARD");
         if (has("vat_requested")) set("vat_requested", Boolean(body.vat_requested));
         for (const col of ["vat_company_name", "vat_tax_code", "vat_address", "vat_email", "shipping_method", "tracking_code"]) {
@@ -1311,8 +1324,8 @@ export async function POST(req: NextRequest) {
           delivery_status, payment_status, invoice_status, notes,
           is_credit_blocked, credit_block_reason, has_zero_price_items, price_approval_status, applied_price_policy,
           vat_requested, vat_company_name, vat_tax_code, vat_address, vat_email, shipping_method, tracking_code, invoiced_delivery_slips,
-          pr_code, procure_status, procure_order_code, fulfillment_source, sales_rep_id, order_notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
+          pr_code, procure_status, procure_order_code, fulfillment_source, sales_rep_id, order_notes, invoice_notes
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
         RETURNING id`,
         [
           code, resolvedCustomerId, customer_name, sales_rep_name, order_date || todayVN(),
@@ -1323,7 +1336,8 @@ export async function POST(req: NextRequest) {
           body.shipping_method || "Xe lạnh chuyên dụng", body.tracking_code || null, JSON.stringify(body.invoiced_delivery_slips || []),
           body.pr_code || body.prCode || null, body.procure_status || body.procureStatus || null, body.procure_order_code || body.procureOrderCode || null, body.fulfillment_source || body.fulfillmentSource || null,
           body.sales_rep_id ? String(body.sales_rep_id) : null,
-          body.order_notes ? String(body.order_notes).slice(0, 2000) : null
+          body.order_notes ? String(body.order_notes).slice(0, 2000) : null,
+          (body.invoice_notes ?? body.invoiceNotes) ? String(body.invoice_notes ?? body.invoiceNotes).slice(0, 2000) : null
         ]
       );
       await logAudit("CREATE", "SALES_ORDER", `Tạo mới đơn hàng thương mại ${code} (${total_amount} đ)${isCreditBlocked ? " [BỊ KHÓA DO VI PHẠM CÔNG NỢ]" : ""}`);
@@ -1422,6 +1436,106 @@ export async function POST(req: NextRequest) {
       });
       await logAudit("DELETE", "SALES_ORDER", `Xóa đơn hàng ${code} (${result.deleted} bản ghi CSDL)`, me.username, me.full_name);
       return NextResponse.json({ success: true, deleted: result.deleted });
+    }
+
+    // Hủy toàn bộ đơn hàng (SO) khi khách báo hủy trước khi đặt hàng NCC / giao hàng
+    if (action === "cancel_order") {
+      const me = await getAuthorizedUser(req);
+      setAuditActor(me);
+      if (!me) return unauthorizedResponse();
+      const code = String(body.order_code || body.id || "").trim();
+      const reason = String(body.reason || "Khách hàng báo hủy đơn").trim();
+      if (!code) return NextResponse.json({ error: "Thiếu mã đơn hàng cần hủy" }, { status: 400 });
+
+      const result = await withTransaction(async (c) => {
+        const ordRes = await c.query("SELECT * FROM sales_orders WHERE order_code = $1 ORDER BY id ASC FOR UPDATE", [code]);
+        const ord = ordRes.rows[0];
+        if (!ord) {
+          const activeRes = await c.query(
+            "SELECT DISTINCT product_code FROM inventory_reservations WHERE order_code = $1 AND status = 'ACTIVE'",
+            [code]
+          );
+          for (const r of activeRes.rows) {
+            if (r.product_code) await releaseReservationsFor(c, code, r.product_code, ` • [Giải phóng giữ hàng do hủy đơn ${code}: ${reason}]`);
+          }
+          const prPattern = `%${code}%`;
+          await c.query(
+            `UPDATE workflow_requests
+                SET status = 'CANCELLED',
+                    results_summary = COALESCE(results_summary, '') || $2
+              WHERE (workflow_code = $1 OR title ILIKE $3 OR description ILIKE $3)
+                AND status IN ('PENDING', 'IN_PROGRESS', 'APPROVED')`,
+            [body.pr_code || code.replace(/^SO/, "PR"), ` • [Hủy tự động do hủy đơn ${code}: ${reason}]`, prPattern]
+          );
+          return { cancelled: true, order_code: code };
+        }
+
+        const slipRes = await c.query(
+          "SELECT slip_code, status, extra_data FROM sales_delivery_slips WHERE order_code = $1",
+          [code]
+        );
+        const activeSlips = slipRes.rows.filter((s: any) => {
+          const st = String(s.status || "").toUpperCase();
+          if (st === "CANCELLED") return false;
+          let ex: any = s.extra_data;
+          if (typeof ex === "string") { try { ex = JSON.parse(ex || "{}"); } catch { ex = {}; } }
+          if (String(ex?.deliveryStatus || "").toUpperCase() === "CANCELLED") return false;
+          return true;
+        });
+        if (activeSlips.length > 0) {
+          throw new HttpError(409, `Đơn ${code} đã phát sinh Phiếu giao hàng (${activeSlips.map((s: any) => s.slip_code).join(", ")}). Vui lòng hủy phiếu giao hàng trước khi hủy đơn!`);
+        }
+
+        const delStatus = String(ord.delivery_status || "").toUpperCase();
+        if (delStatus === "DELIVERED" || delStatus === "PARTIALLY_DELIVERED" || delStatus === "SHIPPED") {
+          throw new HttpError(409, `Đơn ${code} đã xuất kho / giao hàng (${delStatus}), không thể hủy trực tiếp.`);
+        }
+
+        const rawItems = parseJsonArray(ord.items);
+        const cancelledItems = rawItems.map((it: any) => ({
+          ...it,
+          status: "CANCELLED",
+          cancelledAt: new Date().toISOString(),
+          cancelledBy: me.full_name || me.username,
+          cancelReason: reason
+        }));
+        const cancelNote = `[HỦY ĐƠN - ${todayVN()} bởi ${me.full_name || me.username}: ${reason}]`;
+        const updatedNotes = ord.notes ? `${ord.notes} • ${cancelNote}` : cancelNote;
+
+        await c.query(
+          `UPDATE sales_orders
+              SET delivery_status = 'CANCELLED',
+                  procure_status = CASE WHEN procure_status IN ('PR_PENDING', 'PR_CREATED', 'PENDING') THEN 'CANCELLED' ELSE procure_status END,
+                  items = $1::jsonb,
+                  notes = $2
+            WHERE order_code = $3`,
+          [JSON.stringify(cancelledItems), updatedNotes, code]
+        );
+
+        const activeRes = await c.query(
+          "SELECT DISTINCT product_code FROM inventory_reservations WHERE order_code = $1 AND status = 'ACTIVE'",
+          [code]
+        );
+        for (const r of activeRes.rows) {
+          if (r.product_code) await releaseReservationsFor(c, code, r.product_code, ` • [Giải phóng giữ hàng do hủy đơn ${code}: ${reason}]`);
+        }
+
+        const prCode = ord.pr_code || body.pr_code || code.replace(/^SO/, "PR");
+        const prPattern = `%${code}%`;
+        await c.query(
+          `UPDATE workflow_requests
+              SET status = 'CANCELLED',
+                  results_summary = COALESCE(results_summary, '') || $2
+            WHERE (workflow_code = $1 OR title ILIKE $3 OR description ILIKE $3)
+              AND status IN ('PENDING', 'IN_PROGRESS', 'APPROVED')`,
+          [prCode, ` • [Hủy tự động do hủy đơn ${code}: ${reason}]`, prPattern]
+        );
+
+        return { cancelled: true, order_code: code, items: cancelledItems, notes: updatedNotes };
+      });
+
+      await logAudit("CANCEL_ORDER", "SALES_ORDER", `Hủy đơn đặt hàng ${code}: ${reason}`, me.username, me.full_name);
+      return NextResponse.json({ success: true, ...result });
     }
 
     // 1.1 Explicit Delivery Status Update with FSM Guard (Ngăn chặn lùi bước)
@@ -1748,19 +1862,27 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "update_invoice") {
-      const { order_id, invoice_no, invoice_date, invoice_status, invoice_files } = body;
+      if (!orderInvoiceNotesColumnEnsured) {
+        try {
+          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS invoice_notes TEXT");
+          orderInvoiceNotesColumnEnsured = true;
+        } catch (err) {}
+      }
+      const { order_id, invoice_no, invoice_date, invoice_status, invoice_files, invoice_notes, invoiceNotes } = body;
       const cur = await query(
         "SELECT id, invoice_status FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL AND $2::text !~ '^[0-9]+$' THEN order_code = $2::text ELSE id = $1::int END) ORDER BY id LIMIT 1",
         [numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
       );
       if (cur.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng" }, { status: 404 });
       const safeInvoiceStatus = resolveMonotonicStatus(cur.rows[0].invoice_status, invoice_status || "INVOICED", INVOICE_STATUS_HIERARCHY, Boolean(body.force_rollback));
+      const hasInvNotes = invoice_notes !== undefined || invoiceNotes !== undefined;
       await query(
         `UPDATE sales_orders
             SET invoice_no = COALESCE($1, invoice_no), invoice_date = COALESCE($2, invoice_date), invoice_status = $3,
-                invoice_files = CASE WHEN $6::boolean THEN $4::jsonb ELSE invoice_files END
+                invoice_files = CASE WHEN $6::boolean THEN $4::jsonb ELSE invoice_files END,
+                invoice_notes = CASE WHEN $7::boolean THEN $8::text ELSE invoice_notes END
           WHERE id = $5`,
-        [invoice_no || null, invoice_date || null, safeInvoiceStatus, JSON.stringify(invoice_files || []), cur.rows[0].id, invoice_files !== undefined]
+        [invoice_no || null, invoice_date || null, safeInvoiceStatus, JSON.stringify(invoice_files || []), cur.rows[0].id, invoice_files !== undefined, hasInvNotes, (invoice_notes ?? invoiceNotes) || null]
       );
       await logAudit("UPDATE_INVOICE", "SALES_ORDER", `Cập nhật HĐ ${invoice_no} cho đơn hàng ID ${order_id}`);
       return NextResponse.json({ success: true });
@@ -1795,7 +1917,7 @@ export async function POST(req: NextRequest) {
       const taxAmount = Number(body.tax_amount !== undefined ? body.tax_amount : body.totalVat) || 0;
       const totalAmount = Number(body.total_amount !== undefined ? body.total_amount : body.totalAmount) || 0;
       const status = body.status || "DRAFT";
-      const terms = body.terms || body.paymentTerms || body.noteTerms || "";
+      const terms = body.terms !== undefined ? body.terms : (body.paymentTerms !== undefined ? body.paymentTerms : "");
 
       if (discountRate < 0 || discountRate > 100) {
         return NextResponse.json({ error: "Tỷ lệ chiết khấu báo giá phải nằm trong khoảng 0% - 100%." }, { status: 400 });

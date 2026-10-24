@@ -58,7 +58,7 @@ import { DateInputVN } from "@/frontend/components/DateInputVN";
 
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
-// Comprehensive PO Status Configuration with Imports / Customs Lifecycle
+// Comprehensive PO Status Configuration with Imports / Customs Lifecycle (Logical XNK Order - Proposal 4c)
 export const PO_STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; border: string; icon: any; isImport?: boolean }> = {
   PENDING: {
     label: "Chờ xác nhận",
@@ -73,6 +73,21 @@ export const PO_STATUS_CONFIG: Record<string, { label: string; bg: string; text:
     text: "text-blue-700 dark:text-blue-400",
     border: "border-blue-200 dark:border-blue-800",
     icon: CheckCircle2
+  },
+  ORDERED: {
+    label: "Đã đặt hàng",
+    bg: "bg-sky-50 dark:bg-sky-950/50",
+    text: "text-sky-700 dark:text-sky-400",
+    border: "border-sky-200 dark:border-sky-800",
+    icon: ShoppingCart
+  },
+  PRODUCED: {
+    label: "Đã sản xuất xong",
+    bg: "bg-indigo-50 dark:bg-indigo-950/50",
+    text: "text-indigo-700 dark:text-indigo-400",
+    border: "border-indigo-200 dark:border-indigo-800",
+    icon: Package,
+    isImport: true
   },
   SHIPPED: {
     label: "Đang vận chuyển",
@@ -97,6 +112,13 @@ export const PO_STATUS_CONFIG: Record<string, { label: string; bg: string; text:
     icon: FileSearch,
     isImport: true
   },
+  PARTIALLY_RECEIVED: {
+    label: "Nhập kho 1 phần",
+    bg: "bg-teal-50 dark:bg-teal-950/50",
+    text: "text-teal-700 dark:text-teal-400",
+    border: "border-teal-200 dark:border-teal-800",
+    icon: PackageCheck
+  },
   COMPLETED: {
     label: "Đã nhập kho",
     bg: "bg-emerald-50 dark:bg-emerald-950/50",
@@ -112,6 +134,57 @@ export const PO_STATUS_CONFIG: Record<string, { label: string; bg: string; text:
     icon: XCircle
   }
 };
+
+// Standard 9-step XNK status progression for dropdowns
+export const PO_STATUS_DROPDOWN_ORDER: string[] = [
+  "PENDING",
+  "CONFIRMED",
+  "ORDERED",
+  "PRODUCED",
+  "SHIPPED",
+  "AT_CUSTOMS",
+  "CUSTOMS_CLEARING",
+  "COMPLETED",
+  "CANCELLED"
+];
+
+// Interactive Payment Status Configuration on PO Table (Requirement 6 / 4d)
+export const PO_PAYMENT_STATUS_CONFIG: Record<string, { label: string; bg: string; text: string; border: string }> = {
+  UNPAID: {
+    label: "Chưa trả",
+    bg: "bg-slate-100 dark:bg-slate-800",
+    text: "text-slate-600 dark:text-slate-400",
+    border: "border-slate-200 dark:border-slate-700"
+  },
+  PAYMENT_REQUESTED: {
+    label: "Đề nghị thanh toán",
+    bg: "bg-amber-50 dark:bg-amber-950",
+    text: "text-amber-700 dark:text-amber-400",
+    border: "border-amber-200 dark:border-amber-800"
+  },
+  PARTIAL_PAID: {
+    label: "Đã cọc / Trả 1 phần",
+    bg: "bg-blue-50 dark:bg-blue-950",
+    text: "text-blue-700 dark:text-blue-400",
+    border: "border-blue-200 dark:border-blue-800"
+  },
+  PAID: {
+    label: "Đã thanh toán",
+    bg: "bg-emerald-50 dark:bg-emerald-950",
+    text: "text-emerald-700 dark:text-emerald-400",
+    border: "border-emerald-200 dark:border-emerald-800"
+  }
+};
+
+/** Chuẩn hoá chuỗi tìm kiếm không dấu, không phân biệt hoa thường */
+const normSearch = (v: any): string =>
+  String(v ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .trim();
 
 /** Ngày từ CSDL ("2026-10-16T17:00:00.000Z" = 17/10 giờ VN) -> "YYYY-MM-DD" theo giờ Việt Nam (cắt chuỗi UTC lệch 1 ngày). */
 const dbDateVN = (v: any): string => {
@@ -140,21 +213,6 @@ const receivedOf = (po: any, i: number): number => {
   return legacyFull ? Number(po?.items?.[i]?.quantity) || 0 : 0;
 };
 
-PO_STATUS_CONFIG.ORDERED = PO_STATUS_CONFIG.ORDERED || {
-  label: "Đã đặt hàng",
-  bg: "bg-sky-50 dark:bg-sky-950/50",
-  text: "text-sky-700 dark:text-sky-400",
-  border: "border-sky-200 dark:border-sky-800",
-  icon: CheckCircle2
-};
-PO_STATUS_CONFIG.PARTIALLY_RECEIVED = PO_STATUS_CONFIG.PARTIALLY_RECEIVED || {
-  label: "Nhập kho 1 phần",
-  bg: "bg-teal-50 dark:bg-teal-950/50",
-  text: "text-teal-700 dark:text-teal-400",
-  border: "border-teal-200 dark:border-teal-800",
-  icon: PackageCheck
-};
-
 /** Trạng thái PO hải quan (gộp 1 nút lọc) và trạng thái đã đóng (không còn "đang mở"). */
 const PO_CUSTOMS_STATUSES = ["AT_CUSTOMS", "CUSTOMS_CLEARING"];
 const PO_CLOSED_STATUSES = ["COMPLETED", "CANCELLED"];
@@ -163,9 +221,17 @@ export const ProcurementModule: React.FC = () => {
   const { notifyActivity } = useNotification();
   const companyConfig = useCompanyConfig();
   const [subTab, setSubTab] = useState<"orders" | "pr" | "suppliers" | "payables" | "restock" | "lookup">("orders");
+  const [alertSubView, setAlertSubView] = useState<"restock" | "near_expiry">("restock");
+  const mainSectionRef = useRef<HTMLDivElement>(null);
+  const scrollToMainSection = () => {
+    setTimeout(() => {
+      mainSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 60);
+  };
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
+  const [allSupplierProducts, setAllSupplierProducts] = useState<any[]>([]);
   const [restockAlerts, setRestockAlerts] = useState<any[]>([]);
   const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({
@@ -191,13 +257,28 @@ export const ProcurementModule: React.FC = () => {
   const [prSearch, setPRSearch] = useState("");
   const [prStatusFilter, setPRStatusFilter] = useState("all");
   const [payableFilter, setPayableFilter] = useState("all");
+  const [restockSupplierFilter, setRestockSupplierFilter] = useState("all");
+  const [restockSearch, setRestockSearch] = useState("");
 
   // Inline Editing for Delivery Date
   const [editingDeliveryDateId, setEditingDeliveryDateId] = useState<number | null>(null);
   const [tempDeliveryDate, setTempDeliveryDate] = useState<string>("");
 
-  // Interactive Status Dropdown Popover
+  // Interactive Status & Payment Dropdown Popovers
   const [activeStatusDropdownId, setActiveStatusDropdownId] = useState<number | null>(null);
+  const [activePaymentDropdownId, setActivePaymentDropdownId] = useState<number | null>(null);
+
+  // Non-blocking supplier price notice inside PO modal (Bug 4a fix)
+  const [poSupplierNotice, setPoSupplierNotice] = useState<{
+    supplierName: string;
+    changes: { idx: number; it: any; price: number }[];
+    notSold: any[];
+    priceOf: Map<string, number>;
+  } | null>(null);
+
+  // Per-row search filter inside PR & PO modals (Issue 4 fix)
+  const [prItemSearchQueries, setPrItemSearchQueries] = useState<Record<number, string>>({});
+  const [poItemSearchQueries, setPoItemSearchQueries] = useState<Record<number, string>>({});
 
   // Expand/collapse states for PO & PR line-item lists
   const [expandedPOIds, setExpandedPOIds] = useState<Record<string, boolean>>({});
@@ -379,9 +460,61 @@ export const ProcurementModule: React.FC = () => {
     ]
   });
 
+  // Full merged product catalog combining products + allSupplierProducts (Issue 4 fix: Liferiver HD-..., Meridian, SSI, Rollmed, HiMedia, Biolabs)
+  const mergedCatalogProducts = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const p of products) {
+      const codeKey = String(p.code || "").trim().toUpperCase();
+      if (!codeKey) continue;
+      map.set(codeKey, p);
+    }
+    for (const sp of allSupplierProducts) {
+      const codeKey = String(sp.product_code || "").trim().toUpperCase();
+      if (!codeKey) continue;
+      if (!map.has(codeKey)) {
+        map.set(codeKey, {
+          id: `sp-${sp.id}`,
+          code: sp.product_code,
+          parent_code: "",
+          name: sp.product_name || sp.product_code,
+          specification: sp.specification || "",
+          unit: sp.unit || "Hộp",
+          cost_price: parseFloat(sp.purchase_price) || 0,
+          brand: sp.supplier_short_name || sp.supplier_name || "",
+          manufacturer: sp.supplier_short_name || sp.supplier_name || "",
+          supplier_id: sp.supplier_id,
+          supplier_name: sp.supplier_name || ""
+        });
+      } else {
+        const existing = map.get(codeKey);
+        if (!existing.cost_price && sp.purchase_price) {
+          existing.cost_price = parseFloat(sp.purchase_price) || 0;
+        }
+        if (!existing.supplier_id && sp.supplier_id) {
+          existing.supplier_id = sp.supplier_id;
+          existing.supplier_name = sp.supplier_name || existing.supplier_name;
+        }
+      }
+    }
+    return Array.from(map.values());
+  }, [products, allSupplierProducts]);
+
+  const filterCatalogItemsByQuery = (queryStr: string) => {
+    const q = normSearch(queryStr);
+    if (!q) return mergedCatalogProducts;
+    return mergedCatalogProducts.filter((p: any) => {
+      const hay = normSearch(
+        `${p.code || ""} ${p.parent_code || ""} ${p.name || ""} ${p.brand || ""} ${p.manufacturer || ""} ${p.supplier_name || ""} ${p.category || ""} ${p.specification || ""}`
+      );
+      return hay.includes(q);
+    });
+  };
+
   const handleOpenNewPRModal = () => {
-    const firstProd = products[0];
+    setPrItemSearchQueries({});
     setPRForm({
+      id: null,
+      workflow_code: "",
       title: "",
       priority: "MEDIUM",
       requester_name: "Phòng Cung Ứng",
@@ -392,32 +525,96 @@ export const ProcurementModule: React.FC = () => {
       items: [
         {
           is_custom: false,
-          product_code: firstProd?.code || "",
-          product_name: firstProd?.name || "",
-          specification: firstProd?.specification || "",
-          unit: firstProd?.unit || "Hộp",
+          product_code: "",
+          product_name: "",
+          specification: "",
+          unit: "Hộp",
           quantity: 1,
-          estimated_price: parseFloat(firstProd?.cost_price) || 0
+          estimated_price: 0
         }
       ]
     });
     setIsPRModalOpen(true);
   };
 
+  // Requirement 6 (4e): Edit an existing PR that has not yet been fully converted to a PO
+  const handleEditPR = (pr: any) => {
+    const existingItems = getPRItems(pr).map((it: any) => ({
+      ...it,
+      is_custom: Boolean(it.is_custom),
+      product_code: it.product_code || "",
+      product_name: cleanItemName(it.product_name || ""),
+      specification: it.specification || "",
+      unit: it.unit || "Hộp",
+      quantity: Number(it.quantity) || 1,
+      estimated_price: parseFloat(it.estimated_price || it.unit_price || 0) || 0
+    }));
+    setPrItemSearchQueries({});
+    setPRForm({
+      id: pr.id,
+      workflow_code: pr.workflow_code || "",
+      title: pr.title || "",
+      priority: pr.priority || "MEDIUM",
+      requester_name: pr.requester_name || "Phòng Cung Ứng",
+      requester_dept: pr.requester_dept || "Cung Ứng",
+      customer_name: pr.customer_name || "",
+      product_info: pr.product_info || "",
+      due_date: pr.due_date ? dbDateVN(pr.due_date) : toVNDateString(new Date(Date.now() + 7 * 86400000)),
+      description: pr.description || "",
+      items: existingItems.length > 0 ? existingItems : [
+        {
+          is_custom: false,
+          product_code: "",
+          product_name: "",
+          specification: "",
+          unit: "Hộp",
+          quantity: 1,
+          estimated_price: 0
+        }
+      ]
+    });
+    setIsPRModalOpen(true);
+  };
+
+  // Requirement 6 (4e): Cancel an existing PR that has not yet been converted to a PO
+  const handleCancelPR = async (pr: any) => {
+    const reason = window.prompt(`Nhập lý do hủy đề xuất mua hàng ${pr.workflow_code || ""}:`, "Thay đổi kế hoạch mua hàng / Hủy đề xuất");
+    if (reason === null) return;
+    try {
+      const res = await fetch("/api/procurement?action=update_pr_status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: pr.id,
+          status: "CANCELLED",
+          note: `Hủy đề xuất PR: ${reason.trim() || "Người dùng hủy"}`
+        })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setPurchaseRequests(prev => prev.map(x => x.id === pr.id ? { ...x, status: "CANCELLED" } : x));
+        fetchData();
+      } else {
+        alert(data.error || "Không thể hủy đề xuất PR");
+      }
+    } catch {
+      alert("Lỗi kết nối khi hủy đề xuất PR");
+    }
+  };
+
   const handleAddPRItem = () => {
-    const firstProd = products[0];
     setPRForm((prev: any) => ({
       ...prev,
       items: [
         ...prev.items,
         {
           is_custom: false,
-          product_code: firstProd?.code || "",
-          product_name: firstProd?.name || "",
-          specification: firstProd?.specification || "",
-          unit: firstProd?.unit || "Hộp",
+          product_code: "",
+          product_name: "",
+          specification: "",
+          unit: "Hộp",
           quantity: 1,
-          estimated_price: parseFloat(firstProd?.cost_price) || 0
+          estimated_price: 0
         }
       ]
     }));
@@ -443,15 +640,14 @@ export const ProcurementModule: React.FC = () => {
           unit: updated[index].unit || "Cái"
         };
       } else {
-        const firstProd = products[0];
         updated[index] = {
           ...updated[index],
           is_custom: false,
-          product_code: firstProd?.code || "",
-          product_name: firstProd?.name || "",
-          specification: firstProd?.specification || "",
-          unit: firstProd?.unit || "Hộp",
-          estimated_price: parseFloat(firstProd?.cost_price) || 0
+          product_code: "",
+          product_name: "",
+          specification: "",
+          unit: "Hộp",
+          estimated_price: 0
         };
       }
       return { ...prev, items: updated };
@@ -459,7 +655,7 @@ export const ProcurementModule: React.FC = () => {
   };
 
   const handleSelectExistingProduct = (index: number, code: string) => {
-    const prod = products.find((p: any) => p.code === code);
+    const prod = mergedCatalogProducts.find((p: any) => p.code === code) || products.find((p: any) => p.code === code);
     setPRForm((prev: any) => {
       const updated = [...prev.items];
       if (prod) {
@@ -469,7 +665,7 @@ export const ProcurementModule: React.FC = () => {
           product_code: prod.code,
           product_name: prod.name,
           specification: prod.specification || "",
-          unit: prod.unit || "Cái",
+          unit: prod.unit || "Hộp",
           estimated_price: parseFloat(prod.cost_price) || 0
         };
       } else {
@@ -552,6 +748,7 @@ export const ProcurementModule: React.FC = () => {
         setSuppliers(data.suppliers || []);
         setOrders(data.orders || []);
         setProducts(data.products || []);
+        setAllSupplierProducts(data.all_supplier_products || []);
         setRestockAlerts(data.restock_alerts || []);
         setPurchaseRequests(data.purchase_requests || []);
         if (data.stats) setStats(data.stats);
@@ -645,14 +842,60 @@ export const ProcurementModule: React.FC = () => {
     }
   };
 
-  // Close status dropdown on outside click
+  // Close status & payment dropdowns on outside click
   useEffect(() => {
     const handleClickOutside = () => {
       setActiveStatusDropdownId(null);
+      setActivePaymentDropdownId(null);
     };
     window.addEventListener("click", handleClickOutside);
     return () => window.removeEventListener("click", handleClickOutside);
   }, []);
+
+  // Helper to resolve PO payment status (Requirement 6 / 4d)
+  const getPOPaymentStatus = (po: any): "UNPAID" | "PAYMENT_REQUESTED" | "PARTIAL_PAID" | "PAID" => {
+    const explicit = String(po?.payment_status || "").toUpperCase();
+    const totalAmt = parseFloat(po?.total_amount) || 0;
+    const paidAmt = parseFloat(po?.amount_paid) || 0;
+    if (explicit === "PAID" || (paidAmt >= totalAmt && totalAmt > 0)) return "PAID";
+    if (explicit === "PAYMENT_REQUESTED") return "PAYMENT_REQUESTED";
+    if (explicit === "PARTIAL_PAID" || paidAmt > 0) return "PARTIAL_PAID";
+    return "UNPAID";
+  };
+
+  // Quick Change PO Payment Status directly from row (Requirement 6 / 4d)
+  const handleQuickChangePaymentStatus = async (po: any, newPayStatus: string) => {
+    setActivePaymentDropdownId(null);
+    try {
+      const res = await fetch("/api/procurement?action=update_payment_status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: po.id,
+          po_code: po.po_code,
+          payment_status: newPayStatus
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setOrders(prev =>
+          prev.map(o =>
+            o.id === po.id
+              ? {
+                  ...o,
+                  payment_status: data.payment_status || newPayStatus,
+                  amount_paid: data.amount_paid !== undefined ? data.amount_paid : o.amount_paid
+                }
+              : o
+          )
+        );
+      } else {
+        alert(data.error || "Lỗi cập nhật trạng thái thanh toán");
+      }
+    } catch {
+      alert("Lỗi kết nối khi cập nhật trạng thái thanh toán");
+    }
+  };
 
   // Receive to warehouse: always through the receipt form (lot, expiry, quantity actually received)
   const handleReceiveToWarehouse = (po: any) => openReceiveModal(po);
@@ -1057,6 +1300,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       version: po.version,
       received_qty: po.received_qty || {}
     });
+    setPoSupplierNotice(null);
+    setPoItemSearchQueries({});
     setIsPOModalOpen(true);
   };
 
@@ -1071,39 +1316,46 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     });
   };
 
-  // ---- change supplier: offer the new supplier's purchase prices for the lines it sells
+  // ---- change supplier: non-blocking inline notice (Bug 4a fix - never call window.alert on supplier switch)
   const handleChangePOSupplier = async (name: string) => {
     const sup = suppliers.find((s) => s.name === name);
     setPOForm((prev: any) => ({ ...prev, supplier_name: name, supplier_id: sup?.id || prev.supplier_id }));
+    setPoSupplierNotice(null);
     if (!sup?.id) return;
+    const current: any[] = (poForm.items || []).filter((it: any) => String(it?.product_code || "").trim() !== "");
+    if (current.length === 0) return;
     try {
       const res = await fetch(`/api/procurement?action=supplier_products&supplier_id=${sup.id}`);
       const data = await res.json();
       const catalog: any[] = Array.isArray(data?.products) ? data.products : [];
       if (catalog.length === 0) return;
-      const priceOf = new Map(catalog.map((c: any) => [String(c.product_code), Number(c.purchase_price) || 0]));
-      const current: any[] = poForm.items || [];
-      const changes = current
-        .map((it: any, idx: number) => ({ idx, it, price: priceOf.get(String(it.product_code)) }))
-        .filter(x => x.price !== undefined && x.price > 0 && x.price !== (Number(x.it.unit_price) || 0));
+      const priceOf = new Map<string, number>(catalog.map((c: any) => [String(c.product_code), Number(c.purchase_price) || 0]));
+      const changes = (poForm.items || [])
+        .map((it: any, idx: number) => ({ idx, it, price: priceOf.get(String(it.product_code)) || 0 }))
+        .filter((x: any) => x.it?.product_code && priceOf.has(String(x.it.product_code)) && x.price > 0 && x.price !== (Number(x.it.unit_price) || 0));
       const notSold = current.filter((it: any) => it.product_code && !priceOf.has(String(it.product_code)));
-      const msg: string[] = [];
-      if (changes.length > 0) msg.push(`Bảng giá của ${name} có giá khác cho ${changes.length} dòng:\n` + changes.map(x => `• ${x.it.product_code}: ${formatCurrency(x.it.unit_price)} → ${formatCurrency(x.price)}`).join("\n"));
-      if (notSold.length > 0) msg.push(`Lưu ý: ${notSold.length} mã chưa có trong bảng giá của ${name}: ${notSold.map((it: any) => it.product_code).join(", ")}`);
-      if (msg.length === 0) return;
-      if (changes.length > 0 && confirm(msg.join("\n\n") + "\n\nCập nhật đơn giá theo bảng giá nhà cung cấp mới?")) {
-        setPOForm((prev: any) => {
-          const items = prev.items.map((it: any) => {
-            const pr = priceOf.get(String(it.product_code));
-            if (pr === undefined || pr <= 0) return it;
-            return { ...it, unit_price: pr, total: (Number(it.quantity) || 0) * pr };
-          });
-          return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + (Number(b.total) || 0), 0) };
-        });
-      } else if (changes.length === 0) {
-        alert(msg.join("\n\n"));
-      }
+      if (changes.length === 0 && notSold.length === 0) return;
+      setPoSupplierNotice({
+        supplierName: name,
+        changes,
+        notSold,
+        priceOf
+      });
     } catch {}
+  };
+
+  const applyPOSupplierPriceChanges = () => {
+    if (!poSupplierNotice) return;
+    const { priceOf } = poSupplierNotice;
+    setPOForm((prev: any) => {
+      const items = prev.items.map((it: any) => {
+        const pr = priceOf.get(String(it.product_code));
+        if (pr === undefined || pr <= 0) return it;
+        return { ...it, unit_price: pr, total: (Number(it.quantity) || 0) * pr };
+      });
+      return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + (Number(b.total) || 0), 0) };
+    });
+    setPoSupplierNotice(null);
   };
 
   // ---- Excel export (a PO, or the PO list as filtered on screen)
@@ -1206,7 +1458,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     setReceiveHeader({
       receipt_date: todayVN(),
       warehouse_name: "Kho Trung Tâm",
-      received_by: user?.full_name || user?.username || "Thủ kho TBRs",
+      received_by: user?.full_name || user?.username || "Thủ kho TBR",
       vat_invoice_no: "",
       vat_invoice_date: "",
       shipping_unit: "",
@@ -1735,14 +1987,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const data = await res.json();
       if (data.success) {
         notifyActivity({
-          title: "Đề Xuất Mua Hàng Mới (PR)",
-          message: `${prForm.requester_name || "Nhân viên"} đã lập đề xuất mua hàng: ${data.code || prForm.title}`,
+          title: prForm.id ? "Cập Nhật Đề Xuất Mua Hàng (PR)" : "Đề Xuất Mua Hàng Mới (PR)",
+          message: `${prForm.requester_name || "Nhân viên"} đã ${prForm.id ? "cập nhật" : "lập"} đề xuất mua hàng: ${data.code || prForm.title}`,
           category: "procurement",
           type: "info",
-          eventKey: "pr_created",
+          eventKey: prForm.id ? "pr_updated" : "pr_created",
           link: { tab: "procurement", subTab: "pr" }
         });
-        alert(`Khởi tạo thành công Đề xuất mua hàng ${data.code}!`);
+        alert(prForm.id ? `Cập nhật thành công Đề xuất mua hàng ${data.code}!` : `Khởi tạo thành công Đề xuất mua hàng ${data.code}!`);
         setIsPRModalOpen(false);
         fetchData();
       } else {
@@ -1922,6 +2174,119 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     };
   };
 
+  // Smart Supplier & Unit Price Resolver (Requirement 3: Bug 4f & Issue 2)
+  const resolveItemSupplierAndPrice = (item: any) => {
+    const rawCode = String(item?.product_code || item?.code || "").trim();
+    const codeUpper = rawCode.toUpperCase();
+    const matchedProd = mergedCatalogProducts.find((p: any) => String(p.code || "").trim().toUpperCase() === codeUpper) ||
+                        products.find((p: any) => String(p.code || "").trim().toUpperCase() === codeUpper);
+    const spMatch = allSupplierProducts.find((sp: any) => String(sp.product_code || "").trim().toUpperCase() === codeUpper);
+
+    const pName = normSearch(item?.product_name || item?.name || matchedProd?.name || "");
+    const pCode = normSearch(rawCode);
+    const brandHint = normSearch(
+      `${item?.supplier_name || ""} ${item?.manufacturer || ""} ${item?.brand || ""} ${matchedProd?.supplier_name || ""} ${matchedProd?.manufacturer || ""} ${matchedProd?.brand || ""} ${spMatch?.supplier_name || ""} ${spMatch?.supplier_short_name || ""}`
+    );
+
+    let matchedSup: any = null;
+
+    // 1. Direct supplier_id match from supplier_products or item/product
+    const directSupId = spMatch?.supplier_id || item?.supplier_id || matchedProd?.supplier_id;
+    if (directSupId) {
+      matchedSup = suppliers.find((s: any) => Number(s.id) === Number(directSupId));
+    }
+
+    // 2. Match by supplier_name / brand / short_name against suppliers list
+    if (!matchedSup && brandHint) {
+      matchedSup = suppliers.find((s: any) => {
+        const sName = normSearch(s.name);
+        const sShort = normSearch(s.short_name);
+        return (sName && (brandHint.includes(sName) || sName.includes(brandHint))) ||
+               (sShort && sShort.length >= 2 && brandHint.includes(sShort));
+      });
+    }
+
+    // 3. Pattern matching by SKU prefix & product name keywords for medical/biotech brands
+    if (!matchedSup) {
+      const combined = `${pCode} ${pName} ${brandHint}`;
+      const matchSupplierByKeyword = (keywords: string[]) =>
+        suppliers.find((s: any) => {
+          const hay = normSearch(`${s.name || ""} ${s.short_name || ""} ${s.supplier_code || ""} ${s.product_lines || ""}`);
+          return keywords.some(kw => hay.includes(kw));
+        });
+
+      if (combined.includes("abt") || combined.includes("toppure") || combined.includes("topspec") || pCode.startsWith("dd-") || pCode.startsWith("hi-") || pCode.startsWith("eh-") || pCode.startsWith("ab-") || pCode.startsWith("vk-")) {
+        matchedSup = matchSupplierByKeyword(["abt", " viet nam", "toppure"]);
+      } else if (combined.includes("ssi") || pCode.startsWith("1110") || pCode.startsWith("84") || combined.includes("antisera") || combined.includes("salmonella")) {
+        matchedSup = matchSupplierByKeyword(["ssi", "diagnostica"]);
+      } else if (combined.includes("liferiver") || pCode.startsWith("hd-") || pCode.startsWith("od-") || pCode.startsWith("rd-") || pCode.startsWith("td-") || pCode.startsWith("zd-")) {
+        matchedSup = matchSupplierByKeyword(["liferiver", "shanghai zj"]);
+      } else if (combined.includes("meridian") || combined.includes("illumi") || combined.includes("premier") || combined.includes("immuno")) {
+        matchedSup = matchSupplierByKeyword(["meridian"]);
+      } else if (combined.includes("rollmed") || pCode.startsWith("rm-")) {
+        matchedSup = matchSupplierByKeyword(["rollmed"]);
+      } else if (combined.includes("himedia") || pCode.startsWith("m0") || pCode.startsWith("mu") || pCode.startsWith("tm")) {
+        matchedSup = matchSupplierByKeyword(["himedia"]);
+      } else if (combined.includes("biolabs") || combined.includes("neb") || pCode.startsWith("neb-")) {
+        matchedSup = matchSupplierByKeyword(["biolabs", "neb", "new england"]);
+      } else if (combined.includes("corning") || combined.includes("falcon") || combined.includes("axygen") || combined.includes("costar")) {
+        matchedSup = matchSupplierByKeyword(["corning"]);
+      } else if (combined.includes("biofil") || combined.includes("jet ")) {
+        matchedSup = matchSupplierByKeyword(["biofil", "jet"]);
+      } else if (combined.includes("biologix")) {
+        matchedSup = matchSupplierByKeyword(["biologix"]);
+      } else if (combined.includes("daan") || combined.includes("mgi")) {
+        matchedSup = matchSupplierByKeyword(["daan", "mgi"]);
+      } else if (combined.includes("bioer") || combined.includes("linegene") || combined.includes("genepure")) {
+        matchedSup = matchSupplierByKeyword(["bioer"]);
+      }
+    }
+
+    // 4. Fallback: check product_lines of suppliers
+    if (!matchedSup) {
+      matchedSup = suppliers.find((s: any) => {
+        const sLines = normSearch(s.product_lines);
+        return sLines && ((pCode && sLines.includes(pCode)) || (matchedProd?.category && sLines.includes(normSearch(matchedProd.category))));
+      }) || suppliers[0] || null;
+    }
+
+    const unitPrice =
+      parseFloat(spMatch?.purchase_price) ||
+      parseFloat(item?.cost_price) ||
+      parseFloat(matchedProd?.cost_price) ||
+      parseFloat(item?.estimated_price) ||
+      parseFloat(item?.unit_price) ||
+      parseFloat(matchedProd?.standard_price) ||
+      0;
+
+    const displayManufacturer =
+      matchedSup?.short_name ||
+      matchedSup?.name ||
+      item?.manufacturer ||
+      matchedProd?.manufacturer ||
+      matchedProd?.brand ||
+      "Chưa xác định";
+
+    return {
+      supplier: matchedSup,
+      supplierId: matchedSup?.id || 1,
+      supplierName: matchedSup?.name || displayManufacturer,
+      shortName: matchedSup?.short_name || displayManufacturer,
+      unitPrice,
+      unit: item?.unit || matchedProd?.unit || spMatch?.unit || "Hộp",
+      specification: item?.specification || matchedProd?.specification || spMatch?.specification || ""
+    };
+  };
+
+  // Requirement 5 (Issue 6): Determine if a PR has unconverted items and can be consolidated into a PO
+  const isPRConsolidatable = (pr: any): boolean => {
+    const st = String(pr?.status || "").toUpperCase();
+    if (["COMPLETED", "ORDERED", "CANCELLED", "REJECTED", "CONVERTED"].includes(st)) return false;
+    if (pr?.poCode || pr?.po_code) return false;
+    const summary = getPRPOSummary(pr);
+    return !summary.isFullyConverted;
+  };
+
   // Convert PR to PO (1-Click - Only selects unconverted items if partial)
   const handleConvertPRToPO = (pr: any) => {
     const prItems = getPRItems(pr);
@@ -1938,10 +2303,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     const prCustomer = forCustomer ? salesCustomers.find((c: any) => String(c.name || "").trim().toLowerCase() === String(pr.customer_name || "").trim().toLowerCase()) : null;
     const prOrderCode = soCodeIn(pr.title) || soCodeIn(pr.description);
     targetItems.forEach(({ it }) => {
-      const matchedProd = products.find(p => p.code === it.product_code);
-      // Giá mua: giá vốn trong danh mục trước; giá trên PR (thường là giá bán của Kinh doanh) chỉ dùng khi chưa có giá vốn
-      const costPrice = matchedProd ? parseFloat(matchedProd.cost_price) || 0 : 0;
-      const price = costPrice > 0 ? costPrice : Number(it.estimated_price || it.unit_price || it.price || 0);
+      const resolved = resolveItemSupplierAndPrice(it);
+      const price = resolved.unitPrice > 0 ? resolved.unitPrice : Number(it.estimated_price || it.unit_price || it.price || 0);
       const qty = Number(it.quantity) || 1;
       const nameWithSpec = it.specification && !it.product_name?.includes(it.specification) 
         ? `${it.product_name} (${it.specification})` 
@@ -1954,7 +2317,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         target_customer_name: forCustomer ? pr.customer_name : undefined,
         target_customer_id: prCustomer?.id,
         order_code: forCustomer && prOrderCode ? prOrderCode : undefined,
-        unit: it.unit || matchedProd?.unit || "Hộp",
+        unit: it.unit || resolved.unit || "Hộp",
         quantity: qty,
         unit_price: price,
         total: qty * price
@@ -1963,32 +2326,30 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
     const totalAmt = poItems.reduce((sum, it) => sum + (it.total || 0), 0);
     
-    // Intelligent Supplier matching
-    const searchTarget = `${pr.description || ''} ${pr.title || ''} ${JSON.stringify(targetItems.map(x => x.it))}`.toLowerCase();
-    let matchedSupplier = suppliers.find(s => 
-      (s.name && searchTarget.includes(s.name.toLowerCase())) ||
-      (s.supplier_code && searchTarget.includes(s.supplier_code.toLowerCase()))
-    );
-    if (!matchedSupplier && targetItems.length > 0) {
-      for (const { it } of targetItems) {
-        if (it.notes) {
-          const s = suppliers.find(sup => sup.name?.toLowerCase().includes(it.notes.toLowerCase()));
-          if (s) { matchedSupplier = s; break; }
-        }
-      }
+    // Intelligent Supplier matching using resolveItemSupplierAndPrice
+    let matchedSupplier: any = null;
+    if (targetItems.length > 0) {
+      matchedSupplier = resolveItemSupplierAndPrice(targetItems[0].it).supplier;
     }
     if (!matchedSupplier) {
-      matchedSupplier = suppliers.find(s => s.name?.includes("Bioer") || s.name?.includes("TopBio")) || suppliers[0];
+      const searchTarget = normSearch(`${pr.description || ''} ${pr.title || ''}`);
+      matchedSupplier = suppliers.find(s =>
+        (s.name && searchTarget.includes(normSearch(s.name))) ||
+        (s.short_name && searchTarget.includes(normSearch(s.short_name))) ||
+        (s.supplier_code && searchTarget.includes(normSearch(s.supplier_code)))
+      ) || suppliers[0];
     }
 
     const convertedIndices = targetItems.map(x => x.idx);
     const isPartialConversion = convertedIndices.length < prItems.length;
 
+    setPoSupplierNotice(null);
+    setPoItemSearchQueries({});
     setPOForm({
       id: null,
       po_code: "",
       supplier_id: matchedSupplier?.id || 1,
-      supplier_name: matchedSupplier?.name || "Bioer Technology Co., Ltd (Đại Diện VN)",
+      supplier_name: matchedSupplier?.name || suppliers[0]?.name || "",
       order_date: todayVN(),
       expected_delivery_date: pr.due_date && dbDateVN(pr.due_date) >= todayVN() ? dbDateVN(pr.due_date) : toVNDateString(new Date(Date.now() + 10 * 86400000)),
       items: poItems,
@@ -2008,58 +2369,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
   // Helper to detect supplier match for an item
   const getItemSuggestedSupplier = (item: any) => {
-    const pCode = (item.product_code || "").toLowerCase();
-    const pName = (item.product_name || "").toLowerCase();
-    const matchedProd = products.find((p) => p.code === item.product_code);
-    const manufacturer = (matchedProd?.manufacturer || "").toLowerCase();
-
-    for (const sup of suppliers) {
-      const sName = sup.name.toLowerCase();
-      const sLines = (sup.product_lines || "").toLowerCase();
-
-      // Check Bioer
-      if (
-        (sName.includes("bioer") || sLines.includes("bioer")) &&
-        (pCode.includes("eq-001") ||
-          pCode.includes("eq-002") ||
-          pName.includes("bioer") ||
-          pName.includes("linegene") ||
-          pName.includes("genepure") ||
-          pCode.includes("kit-001") ||
-          pCode.includes("kit-002") ||
-          manufacturer.includes("bioer"))
-      ) {
-        return sup;
-      }
-      // Check ABT Chemical / Biotech
-      if (
-        (sName.includes("abt") || sLines.includes("abt")) &&
-        (pCode.includes("kit") || pName.includes("topspec") || pName.includes("magpure") || manufacturer.includes("abt"))
-      ) {
-        return sup;
-      }
-      // Check Daan Gene / MGI
-      if (
-        (sName.includes("daan") || sLines.includes("daan") || sName.includes("mgi")) &&
-        (pName.includes("daan") || pName.includes("mgi") || manufacturer.includes("daan") || manufacturer.includes("mgi"))
-      ) {
-        return sup;
-      }
-      // Check general supplier line matching
-      if (sLines && (sLines.includes(pCode) || (matchedProd?.category && sLines.includes(matchedProd.category.toLowerCase())))) {
-        return sup;
-      }
-    }
-    return suppliers[0] || null;
+    return resolveItemSupplierAndPrice(item).supplier;
   };
 
   // 1-Click Auto Select All Matching Items for Target Supplier
   const handleAutoSelectBySupplier = (supplierId: string | number) => {
     const targetSup = suppliers.find((s) => String(s.id) === String(supplierId)) || suppliers[0];
     if (!targetSup) return;
-    const pendingPRs = purchaseRequests.filter(
-      (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
-    );
+    const pendingPRs = purchaseRequests.filter(isPRConsolidatable);
 
     const matchingKeys: string[] = [];
     const prsToExpand: string[] = [];
@@ -2070,6 +2387,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       let hasMatchInPR = false;
 
       items.forEach((it, idx) => {
+        if (it?.po_code) return;
         const itemSup = getItemSuggestedSupplier(it);
         if (itemSup && String(itemSup.id) === String(targetSup.id)) {
           matchingKeys.push(`${prKey}___${idx}`);
@@ -2090,7 +2408,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const togglePRSelection = (pr: any) => {
     const prKey = pr.workflow_code || String(pr.id);
     const items = getPRItems(pr);
-    const itemKeys = items.map((_, idx) => `${prKey}___${idx}`);
+    const itemKeys = items
+      .map((it, idx) => ({ it, key: `${prKey}___${idx}` }))
+      .filter(x => !x.it?.po_code)
+      .map(x => x.key);
     const allSelected = itemKeys.length > 0 && itemKeys.every((k) => selectedItemKeysForConsolidate.includes(k));
 
     if (allSelected) {
@@ -2114,7 +2435,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     );
   };
 
-  // Consolidate Multiple PRs into a Unified PO (Requirement 4 - Line-Item Level)
+  // Consolidate Multiple PRs into a Unified PO (Requirement 4 & Requirement 5)
   const handleConsolidatePRsSubmit = async () => {
     if (selectedItemKeysForConsolidate.length === 0) {
       alert("Vui lòng chọn ít nhất 1 mặt hàng cần gom vào Đơn PO!");
@@ -2128,9 +2449,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
     setIsSubmittingConsolidate(true);
     try {
-      const pendingPRs = purchaseRequests.filter(
-        (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
-      );
+      const pendingPRs = purchaseRequests.filter(isPRConsolidatable);
       let combinedItems: any[] = [];
       const involvedPRKeys = new Set<string>();
 
@@ -2142,9 +2461,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           const itemKey = `${prKey}___${idx}`;
           if (selectedItemKeysForConsolidate.includes(itemKey)) {
             involvedPRKeys.add(prKey);
-            const matchedProd = products.find((p) => p.code === it.product_code);
-            const costPrice = matchedProd ? parseFloat(matchedProd.cost_price) || 0 : 0;
-            const price = costPrice > 0 ? costPrice : (Number(it.estimated_price) || 0);
+            const resolved = resolveItemSupplierAndPrice(it);
+            const price = resolved.unitPrice > 0 ? resolved.unitPrice : (Number(it.estimated_price) || 0);
             const forCustomer = isCustomerPR(pr);
             const prOrderCode = soCodeIn(pr.title) || soCodeIn(pr.description);
             const qty = it.quantity || 1;
@@ -2156,7 +2474,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               is_stock: !forCustomer,
               target_customer_name: forCustomer ? pr.customer_name : undefined,
               order_code: forCustomer && prOrderCode ? prOrderCode : undefined,
-              unit: it.unit || "Cái",
+              unit: it.unit || resolved.unit || "Cái",
               quantity: qty,
               unit_price: price,
               total: qty * price
@@ -2202,33 +2520,75 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     }
   };
 
-  // Restock to PO (1-Click)
+  // Restock to PO (1-Click with Smart Supplier & Unit Price Resolver - Requirement 3)
   const handleRestockToPO = (item: any) => {
-    const matchedSupplier = suppliers.find(s => s.product_lines?.toLowerCase().includes(item.product_name?.toLowerCase()) || s.name?.toLowerCase().includes(item.manufacturer?.toLowerCase())) || suppliers[0];
-    const qtyNeeded = Math.max(5, (item.min_stock_level || 5) * 2 - (item.quantity_on_hand || 0));
-    const price = parseFloat(item.cost_price) || 0;
+    const resolved = resolveItemSupplierAndPrice(item);
+    const qtyNeeded = Math.max(5, (Number(item.min_stock_level) || 5) * 2 - (Number(item.quantity_on_hand) || 0));
+    const price = resolved.unitPrice;
 
+    setPoSupplierNotice(null);
+    setPoItemSearchQueries({});
     setPOForm({
       id: null,
       po_code: "",
-      supplier_id: matchedSupplier?.id || 1,
-      supplier_name: matchedSupplier?.name || "Bioer Technology Co., Ltd (Đại Diện VN)",
+      supplier_id: resolved.supplierId,
+      supplier_name: resolved.supplierName,
       order_date: todayVN(),
       expected_delivery_date: toVNDateString(new Date(Date.now() + 10 * 86400000)),
       items: [
         {
           product_code: item.product_code,
           product_name: item.product_name,
+          unit: resolved.unit,
           quantity: qtyNeeded,
           unit_price: price,
-          total: qtyNeeded * price
+          total: qtyNeeded * price,
+          is_stock: true,
+          notes: `Bổ sung tồn kho thiếu (Tồn: ${item.quantity_on_hand}, Min: ${item.min_stock_level})`
         }
       ],
       total_amount: qtyNeeded * price,
       status: "PENDING",
-      notes: `Lập đơn đặt hàng bổ sung tồn kho thiếu hụt (Tồn hiện tại: ${item.quantity_on_hand}, Ngưỡng tối thiểu: ${item.min_stock_level})`
+      notes: `Lập đơn đặt hàng bổ sung tồn kho thiếu hụt cho NCC ${resolved.supplierName} (Tồn hiện tại: ${item.quantity_on_hand}, Ngưỡng tối thiểu: ${item.min_stock_level})`
     });
 
+    setIsPOModalOpen(true);
+  };
+
+  // Bulk Restock to PO for all filtered items of a Supplier
+  const handleBulkRestockBySupplier = (itemsList: any[]) => {
+    if (!itemsList || itemsList.length === 0) return;
+    const firstResolved = resolveItemSupplierAndPrice(itemsList[0]);
+    const poItems = itemsList.map((it: any) => {
+      const res = resolveItemSupplierAndPrice(it);
+      const qtyNeeded = Math.max(5, (Number(it.min_stock_level) || 5) * 2 - (Number(it.quantity_on_hand) || 0));
+      const price = res.unitPrice;
+      return {
+        product_code: it.product_code,
+        product_name: it.product_name,
+        unit: res.unit,
+        quantity: qtyNeeded,
+        unit_price: price,
+        total: qtyNeeded * price,
+        is_stock: true,
+        notes: `Tồn: ${it.quantity_on_hand}/${it.min_stock_level}`
+      };
+    });
+    const totalAmt = poItems.reduce((s: number, x: any) => s + (x.total || 0), 0);
+    setPoSupplierNotice(null);
+    setPoItemSearchQueries({});
+    setPOForm({
+      id: null,
+      po_code: "",
+      supplier_id: firstResolved.supplierId,
+      supplier_name: firstResolved.supplierName,
+      order_date: todayVN(),
+      expected_delivery_date: toVNDateString(new Date(Date.now() + 10 * 86400000)),
+      items: poItems,
+      total_amount: totalAmt,
+      status: "PENDING",
+      notes: `Lập đơn PO mua bổ sung tổng hợp ${poItems.length} mã hàng chạm ngưỡng Min từ NCC ${firstResolved.supplierName}`
+    });
     setIsPOModalOpen(true);
   };
 
@@ -2328,7 +2688,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     }
   };
 
-  // Filtered Orders
+  // Filtered Orders (Requirement 4 - Issue 1: Deep accent-insensitive search across PO, Supplier, Brand, Manufacturer, and Line Items)
   const poSupplierInvoices = (po: any): any[] => {
     let v: any = po?.supplier_invoices;
     if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = []; } }
@@ -2336,18 +2696,36 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   };
 
   const filteredOrders = useMemo(() => {
+    const q = normSearch(orderSearch);
     return orders.filter(po => {
-      const matchSearch =
-        po.po_code?.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        po.supplier_name?.toLowerCase().includes(orderSearch.toLowerCase()) ||
-        (Array.isArray(po.items) && po.items.some((it: any) => it.product_name?.toLowerCase().includes(orderSearch.toLowerCase())));
+      let matchSearch = true;
+      if (q) {
+        const supp = suppliers.find((s: any) => s.id === po.supplier_id || s.name === po.supplier_name);
+        let poItems: any[] = po.items;
+        if (typeof poItems === "string") {
+          try { poItems = JSON.parse(poItems); } catch { poItems = []; }
+        }
+        const itemsText = Array.isArray(poItems)
+          ? poItems
+              .map((it: any) => {
+                const mp = mergedCatalogProducts.find((p: any) => String(p.code || "").toUpperCase() === String(it.product_code || "").toUpperCase());
+                return `${it.product_code || ""} ${it.product_name || ""} ${it.specification || ""} ${it.notes || ""} ${mp?.brand || ""} ${mp?.manufacturer || ""} ${mp?.supplier_name || ""} ${mp?.parent_code || ""}`;
+              })
+              .join(" ")
+          : "";
+        const hay = normSearch(
+          `${po.po_code || ""} ${po.supplier_name || ""} ${po.notes || ""} ${supp?.name || ""} ${supp?.short_name || ""} ${supp?.supplier_code || ""} ${supp?.address || ""} ${supp?.product_lines || ""} ${itemsText}`
+        );
+        matchSearch = hay.includes(q);
+      }
+
       const d = po.order_date ? String(po.order_date).slice(0, 10) : "";
       if (orderFrom && (!d || d < orderFrom)) return false;
       if (orderTo && (!d || d > orderTo)) return false;
-      const invKw = orderInvoiceSearch.trim().toLowerCase();
-      if (invKw && !poSupplierInvoices(po).some((iv: any) => String(iv.invoice_no || "").toLowerCase().includes(invKw))) return false;
-      const prodKw = orderProductSearch.trim().toLowerCase();
-      if (prodKw && !(Array.isArray(po.items) && po.items.some((it: any) => String(it.product_code || "").toLowerCase().includes(prodKw)))) return false;
+      const invKw = normSearch(orderInvoiceSearch);
+      if (invKw && !poSupplierInvoices(po).some((iv: any) => normSearch(iv.invoice_no).includes(invKw))) return false;
+      const prodKw = normSearch(orderProductSearch);
+      if (prodKw && !(Array.isArray(po.items) && po.items.some((it: any) => normSearch(`${it.product_code || ""} ${it.product_name || ""}`).includes(prodKw)))) return false;
       
       let matchStatus = true;
       if (orderStatusFilter === "all") {
@@ -2362,7 +2740,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
       return matchSearch && matchStatus;
     });
-  }, [orders, orderSearch, orderStatusFilter, orderFrom, orderTo, orderInvoiceSearch, orderProductSearch]);
+  }, [orders, suppliers, mergedCatalogProducts, orderSearch, orderStatusFilter, orderFrom, orderTo, orderInvoiceSearch, orderProductSearch]);
 
   // PR status filter counts: one bucket per PR, the buckets add up to "Tất cả"
   const prCounts = useMemo(() => {
@@ -2399,47 +2777,114 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     return c;
   }, [orders]);
 
+  // Enriched Restock Alerts with resolved Supplier & Unit Price (Requirement 3)
+  const enrichedRestockAlerts = useMemo(() => {
+    return restockAlerts.map((item: any) => {
+      const resolved = resolveItemSupplierAndPrice(item);
+      return {
+        ...item,
+        resolved_supplier_id: resolved.supplierId,
+        resolved_supplier_name: resolved.supplierName,
+        resolved_short_name: resolved.shortName,
+        resolved_unit_price: resolved.unitPrice,
+        resolved_unit: resolved.unit
+      };
+    });
+  }, [restockAlerts, suppliers, mergedCatalogProducts, allSupplierProducts]);
+
+  const restockSupplierOptions = useMemo(() => {
+    const set = new Set<string>();
+    enrichedRestockAlerts.forEach((it: any) => {
+      if (it.resolved_supplier_name) set.add(it.resolved_supplier_name);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, "vi"));
+  }, [enrichedRestockAlerts]);
+
+  const filteredRestockAlerts = useMemo(() => {
+    const q = normSearch(restockSearch);
+    return enrichedRestockAlerts.filter((it: any) => {
+      if (restockSupplierFilter !== "all" && it.resolved_supplier_name !== restockSupplierFilter) return false;
+      if (q) {
+        const hay = normSearch(`${it.product_code || ""} ${it.product_name || ""} ${it.resolved_supplier_name || ""} ${it.resolved_short_name || ""} ${it.warehouse_location || ""}`);
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [enrichedRestockAlerts, restockSupplierFilter, restockSearch]);
+
+  // Near-Expiry Alert (Cảnh Báo Cận Date / Hết Hạn - Requirement 7 / Issue 7)
+  const nearExpiryAlerts = useMemo(() => {
+    const nowMs = Date.now();
+    const list: any[] = [];
+    for (const it of inventoryItems) {
+      const qty = Number(it.quantity_on_hand) || 0;
+      if (qty <= 0 || !it.expiry_date) continue;
+      const expStr = dbDateVN(it.expiry_date);
+      if (!expStr) continue;
+      const expMs = new Date(expStr + "T00:00:00").getTime();
+      if (isNaN(expMs)) continue;
+      const daysRemaining = Math.ceil((expMs - nowMs) / 86400000);
+      if (daysRemaining <= 180) {
+        const resolved = resolveItemSupplierAndPrice(it);
+        list.push({
+          ...it,
+          expiry_date_vn: expStr,
+          days_remaining: daysRemaining,
+          resolved_supplier_name: resolved.supplierName,
+          resolved_unit_price: resolved.unitPrice,
+          resolved_unit: resolved.unit
+        });
+      }
+    }
+    return list.sort((a, b) => a.days_remaining - b.days_remaining);
+  }, [inventoryItems, suppliers, mergedCatalogProducts, allSupplierProducts]);
+
   // Header KPIs use the very same lists as the tabs, so the numbers always agree (and refresh after every edit)
   const liveStats = useMemo(() => {
     const live = orders.filter(o => o.status !== "CANCELLED");
     const totalSpend = live.reduce((a, o) => a + (parseFloat(o.total_amount) || 0), 0);
-    const totalPaid = live.reduce((a, o) => a + (parseFloat(o.amount_paid) || 0), 0);
+    const totalPaid = live.reduce((a, o) => {
+      if (getPOPaymentStatus(o) === "PAID") return a + (parseFloat(o.total_amount) || 0);
+      return a + (parseFloat(o.amount_paid) || 0);
+    }, 0);
+    const totalPayable = live.reduce((a, o) => {
+      if (getPOPaymentStatus(o) === "PAID") return a;
+      const tot = parseFloat(o.total_amount) || 0;
+      const paid = parseFloat(o.amount_paid) || 0;
+      return a + Math.max(0, tot - paid);
+    }, 0);
     return {
       total_spend: totalSpend,
       total_paid: totalPaid,
-      total_payable: Math.max(0, totalSpend - totalPaid),
+      total_payable: totalPayable,
       active_orders_count: poCounts.open,
       pending_pr_count: prCounts.pending + prCounts.partial,
       restock_alert_count: restockAlerts.length,
+      near_expiry_count: nearExpiryAlerts.length,
       total_suppliers_count: suppliers.length
     };
-  }, [orders, poCounts, prCounts, restockAlerts, suppliers]);
+  }, [orders, poCounts, prCounts, restockAlerts, nearExpiryAlerts, suppliers]);
 
   // Filtered PRs
   const filteredPRs = useMemo(() => {
+    const q = normSearch(prSearch);
     return purchaseRequests.filter(pr => {
-      const matchSearch =
-        pr.workflow_code?.toLowerCase().includes(prSearch.toLowerCase()) ||
-        pr.title?.toLowerCase().includes(prSearch.toLowerCase()) ||
-        pr.product_info?.toLowerCase().includes(prSearch.toLowerCase()) ||
-        pr.requester_name?.toLowerCase().includes(prSearch.toLowerCase());
-
-      if (!matchSearch) return false;
-
+      if (q) {
+        const hay = normSearch(`${pr.workflow_code || ""} ${pr.title || ""} ${pr.product_info || ""} ${pr.requester_name || ""} ${pr.description || ""}`);
+        if (!hay.includes(q)) return false;
+      }
       if (prStatusFilter === "all") return true;
       return getPRBucket(pr) === prStatusFilter;
     });
   }, [purchaseRequests, prSearch, prStatusFilter, orders]);
 
-  // Filtered Suppliers
+  // Filtered Suppliers (accent-insensitive search across name, short_name, supplier_code, contact_person, product_lines, address)
   const filteredSuppliers = useMemo(() => {
+    const q = normSearch(supplierSearch);
+    if (!q) return suppliers;
     return suppliers.filter(s => {
-      return (
-        s.name?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-        s.supplier_code?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-        s.contact_person?.toLowerCase().includes(supplierSearch.toLowerCase()) ||
-        s.product_lines?.toLowerCase().includes(supplierSearch.toLowerCase())
-      );
+      const hay = normSearch(`${s.name || ""} ${s.short_name || ""} ${s.supplier_code || ""} ${s.contact_person || ""} ${s.product_lines || ""} ${s.address || ""} ${s.email || ""} ${s.phone || ""}`);
+      return hay.includes(q);
     });
   }, [suppliers, supplierSearch]);
 
@@ -2449,11 +2894,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     [orders]
   );
   const filteredPayables = useMemo(() => {
-    const kw = payableSearch.trim().toLowerCase();
+    const kw = normSearch(payableSearch);
     return orders.filter(po => {
       const total = parseFloat(po.total_amount) || 0;
-      const paid = parseFloat(po.amount_paid) || 0;
-      const remaining = total - paid;
+      const paid = getPOPaymentStatus(po) === "PAID" ? total : (parseFloat(po.amount_paid) || 0);
+      const remaining = Math.max(0, total - paid);
       if (String(po.status || "").toUpperCase() === "CANCELLED" && paid <= 0) return false;
       if (payableFilter === "debt" && !(remaining > 0.5)) return false;
       if (payableFilter === "paid" && remaining > 0.5) return false;
@@ -2465,7 +2910,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         let items: any[] = po.items;
         if (typeof items === "string") { try { items = JSON.parse(items); } catch { items = []; } }
         const hay = [po.po_code, po.supplier_name, ...(Array.isArray(items) ? items.map((it: any) => `${it.product_code || ""} ${it.product_name || ""}`) : [])];
-        if (!hay.some(v => String(v || "").toLowerCase().includes(kw))) return false;
+        if (!hay.some(v => normSearch(v).includes(kw))) return false;
       }
       return true;
     });
@@ -2495,6 +2940,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
+                setPoSupplierNotice(null);
+                setPoItemSearchQueries({});
                 setPOForm({
                   id: null,
                   po_code: "",
@@ -2503,9 +2950,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   order_date: todayVN(),
                   expected_delivery_date: toVNDateString(new Date(Date.now() + 10 * 86400000)),
                   items: [
-                    { product_code: products[0]?.code || "", product_name: products[0]?.name || "", quantity: 1, unit_price: parseFloat(products[0]?.cost_price) || 0, total: parseFloat(products[0]?.cost_price) || 0 }
+                    { product_code: "", product_name: "", unit: "Hộp", quantity: 1, unit_price: 0, total: 0, is_stock: true, notes: "" }
                   ],
-                  total_amount: parseFloat(products[0]?.cost_price) || 0,
+                  total_amount: 0,
                   status: "PENDING",
                   notes: ""
                 });
@@ -2545,9 +2992,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           </div>
         </div>
 
-        {/* 5 Stat Cards */}
+        {/* 5 Interactive Stat Cards (Requirement 7 / Issue 5) */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 pt-2">
-          <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60">
+          <div
+            role="button"
+            onClick={() => {
+              setSubTab("orders");
+              setOrderStatusFilter("all");
+              scrollToMainSection();
+            }}
+            title="Bấm để xem toàn bộ danh sách Đơn Đặt Mua Hàng (PO)"
+            className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/60 cursor-pointer hover:ring-2 hover:ring-blue-400 hover:shadow-sm transition-all"
+          >
             <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-[11px] font-semibold">
               <span>Tổng Chi Mua Hàng</span>
               <DollarSign className="w-3.5 h-3.5 text-blue-500" />
@@ -2555,10 +3011,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="mt-1 text-base font-black font-mono text-slate-900 dark:text-white">
               {formatCurrency(liveStats.total_spend)}
             </div>
-            <div className="text-[10px] text-slate-400 mt-0.5">{orders.length} đơn PO toàn hệ thống</div>
+            <div className="text-[10px] text-slate-400 mt-0.5">{orders.length} đơn PO toàn hệ thống ↗</div>
           </div>
 
-          <div role="button" onClick={() => { setSubTab("orders"); setOrderStatusFilter("open"); }} title="Bấm để xem các PO đang mở" className="p-3.5 rounded-xl bg-orange-50/70 dark:bg-orange-950/40 border border-orange-200/80 dark:border-orange-800/60 cursor-pointer hover:ring-2 hover:ring-orange-300">
+          <div
+            role="button"
+            onClick={() => {
+              setSubTab("orders");
+              setOrderStatusFilter("open");
+              scrollToMainSection();
+            }}
+            title="Bấm để xem các PO đang mở"
+            className="p-3.5 rounded-xl bg-orange-50/70 dark:bg-orange-950/40 border border-orange-200/80 dark:border-orange-800/60 cursor-pointer hover:ring-2 hover:ring-orange-300 hover:shadow-sm transition-all"
+          >
             <div className="flex items-center justify-between text-orange-700 dark:text-orange-400 text-[11px] font-semibold">
               <span>PO Đang Mở</span>
               <Clock className="w-3.5 h-3.5 text-orange-500" />
@@ -2566,10 +3031,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="mt-1 text-base font-black font-mono text-orange-700 dark:text-orange-400">
               {liveStats.active_orders_count} / {orders.length} Đơn PO
             </div>
-            <div className="text-[10px] text-orange-600/70 mt-0.5">Chưa nhập kho đủ, chưa huỷ</div>
+            <div className="text-[10px] text-orange-600/70 mt-0.5">Chưa nhập kho đủ, chưa huỷ ↗</div>
           </div>
 
-          <div role="button" onClick={() => { setSubTab("pr"); setPRStatusFilter("all"); }} title="PR cần xử lý = Chờ xử lý + Đã chuyển PO 1 phần" className="p-3.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/60 cursor-pointer hover:ring-2 hover:ring-indigo-300">
+          <div
+            role="button"
+            onClick={() => {
+              setSubTab("pr");
+              setPRStatusFilter("pending");
+              scrollToMainSection();
+            }}
+            title="Bấm để xem các đề xuất mua hàng (PR) đang chờ xử lý"
+            className="p-3.5 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200/80 dark:border-indigo-800/60 cursor-pointer hover:ring-2 hover:ring-indigo-300 hover:shadow-sm transition-all"
+          >
             <div className="flex items-center justify-between text-indigo-700 dark:text-indigo-400 text-[11px] font-semibold">
               <span>PR Cần Xử Lý</span>
               <FileText className="w-3.5 h-3.5 text-indigo-500" />
@@ -2577,10 +3051,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="mt-1 text-base font-black font-mono text-indigo-700 dark:text-indigo-400">
               {liveStats.pending_pr_count} / {purchaseRequests.length} Đề Xuất
             </div>
-            <div className="text-[10px] text-indigo-600/70 mt-0.5">Chờ xử lý + đã lên PO 1 phần</div>
+            <div className="text-[10px] text-indigo-600/70 mt-0.5">Chờ xử lý + đã lên PO 1 phần ↗</div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/40 border border-rose-200/80 dark:border-rose-800/60">
+          <div
+            role="button"
+            onClick={() => {
+              setSubTab("payables");
+              setPayableFilter("debt");
+              scrollToMainSection();
+            }}
+            title="Bấm để chuyển đến bảng Quản lý Công nợ Nhà cung cấp (lọc các PO còn nợ)"
+            className="p-3.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/40 border border-rose-200/80 dark:border-rose-800/60 cursor-pointer hover:ring-2 hover:ring-rose-300 hover:shadow-sm transition-all"
+          >
             <div className="flex items-center justify-between text-rose-700 dark:text-rose-400 text-[11px] font-semibold">
               <span>Công Nợ Cần Trả NCC</span>
               <CreditCard className="w-3.5 h-3.5 text-rose-500" />
@@ -2588,10 +3071,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="mt-1 text-base font-black font-mono text-rose-700 dark:text-rose-400">
               {formatCurrency(liveStats.total_payable)}
             </div>
-            <div className="text-[10px] text-rose-600/70 mt-0.5">Đã trả: {formatCurrency(liveStats.total_paid)}</div>
+            <div className="text-[10px] text-rose-600/70 mt-0.5">Đã trả: {formatCurrency(liveStats.total_paid)} ↗</div>
           </div>
 
-          <div className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60">
+          <div
+            role="button"
+            onClick={() => {
+              setSubTab("restock");
+              setAlertSubView("restock");
+              scrollToMainSection();
+            }}
+            title="Bấm để chuyển đến tab Cảnh Báo Tồn Thiếu & Cận Date"
+            className="p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60 cursor-pointer hover:ring-2 hover:ring-amber-300 hover:shadow-sm transition-all"
+          >
             <div className="flex items-center justify-between text-amber-700 dark:text-amber-400 text-[11px] font-semibold">
               <span>Cảnh Báo Tồn Thiếu</span>
               <AlertTriangle className="w-3.5 h-3.5 text-amber-500" />
@@ -2599,13 +3091,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="mt-1 text-base font-black font-mono text-amber-700 dark:text-amber-400">
               {liveStats.restock_alert_count} Mặt Hàng
             </div>
-            <div className="text-[10px] text-amber-600/70 mt-0.5">Chạm hoặc dưới mức Min</div>
+            <div className="text-[10px] text-amber-600/70 mt-0.5">
+              Chạm Min • {liveStats.near_expiry_count > 0 ? `${liveStats.near_expiry_count} lô cận date ↗` : "Kiểm tra tồn & HSD ↗"}
+            </div>
           </div>
         </div>
       </div>
 
       {/* 2. SUBTAB NAVIGATION BAR */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-2 md:gap-6 text-xs font-bold overflow-x-auto">
+      <div ref={mainSectionRef} className="flex border-b border-slate-200 dark:border-slate-800 gap-2 md:gap-6 text-xs font-bold overflow-x-auto">
         <button
           id="subtab-btn-orders"
           onClick={() => setSubTab("orders")}
@@ -2666,9 +3160,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
         <button
           id="subtab-btn-restock"
-          onClick={() => setSubTab("restock")}
+          onClick={() => { setSubTab("restock"); setAlertSubView("restock"); }}
           className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-            subTab === "restock" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+            subTab === "restock" && alertSubView === "restock" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
           }`}
         >
           <AlertTriangle className="w-4 h-4" />
@@ -2679,6 +3173,23 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             </span>
           )}
         </button>
+
+        <button
+          id="subtab-btn-near-expiry"
+          onClick={() => { setSubTab("restock"); setAlertSubView("near_expiry"); }}
+          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            subTab === "restock" && alertSubView === "near_expiry" ? "border-b-2 border-rose-600 text-rose-600 dark:text-rose-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+          }`}
+        >
+          <Clock className="w-4 h-4 text-rose-500" />
+          <span>⏳ Cảnh Báo Cận Date</span>
+          {nearExpiryAlerts.length > 0 && (
+            <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-400 font-bold">
+              {nearExpiryAlerts.length}
+            </span>
+          )}
+        </button>
+
         <button
           id="subtab-btn-lookup"
           onClick={() => setSubTab("lookup")}
@@ -2712,7 +3223,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Tìm theo mã PO, tên NCC hoặc tên sản phẩm..."
+                  placeholder="Tìm theo mã PO, tên NCC (Meridian, Liferiver, SSI...) hoặc sản phẩm..."
                   value={orderSearch}
                   onChange={(e) => setOrderSearch(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -2728,19 +3239,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               </button>
             </div>
 
-            {/* Filter Buttons including Customs and All Lifecycle Statuses */}
+            {/* Filter Buttons including Customs and All Lifecycle Statuses (in logical XNK order) */}
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
               {[
                 { id: "all", label: "Tất cả" },
                 { id: "open", label: "Đang mở" },
                 { id: "PENDING", label: "Chờ xác nhận" },
-                { id: "ORDERED", label: "Đã đặt hàng" },
                 { id: "CONFIRMED", label: "Đã xác nhận" },
+                { id: "ORDERED", label: "Đã đặt hàng" },
+                { id: "PRODUCED", label: "Đã sản xuất xong" },
                 { id: "SHIPPED", label: "Đang vận chuyển" },
                 { id: "CUSTOMS", label: "🛃 Hải quan & Thông quan" },
                 { id: "PARTIALLY_RECEIVED", label: "Nhập kho 1 phần" },
-                { id: "COMPLETED", label: "Đã nhập kho đủ" },
-                { id: "CANCELLED", label: "Đã huỷ" }
+                { id: "COMPLETED", label: "Đã nhập kho" },
+                { id: "CANCELLED", label: "Đã hủy đơn" }
               ].filter(f => f.id === "all" || f.id === "open" || (poCounts[f.id] || 0) > 0 || orderStatusFilter === f.id).map(f => (
                 <button
                   key={f.id}
@@ -2778,7 +3290,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           </div>
 
           {/* Table */}
-          <div className="overflow-x-auto min-h-[380px] pb-16">
+          <div className="overflow-x-auto min-h-[380px] pb-24">
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
@@ -2787,7 +3299,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   <th className="py-3 px-4 min-w-[280px]">Chi Tiết Hàng Hóa Đặt Mua</th>
                   <th className="py-3 px-4 text-right w-36">Tổng Tiền PO</th>
                   <th className="py-3 px-4 w-36">Số HĐ / Ngày HĐ</th>
-                  <th className="py-3 px-4 text-center w-28">Thanh Toán</th>
+                  <th className="py-3 px-4 text-center w-36">Thanh Toán</th>
                   <th className="py-3 px-4 text-center w-44">Trạng Thái Đơn</th>
                   <th className="py-3 px-4 text-center w-36">Thao Tác</th>
                 </tr>
@@ -2805,6 +3317,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     const paidAmt = parseFloat(po.amount_paid) || 0;
                     const remainingAmt = Math.max(0, totalAmt - paidAmt);
                     const isFullyPaid = paidAmt >= totalAmt && totalAmt > 0;
+                    const payStatusKey = getPOPaymentStatus(po);
+                    const payStatusCfg = PO_PAYMENT_STATUS_CONFIG[payStatusKey] || PO_PAYMENT_STATUS_CONFIG.UNPAID;
                     const statusCfg = PO_STATUS_CONFIG[po.status] || {
                       label: po.status,
                       bg: "bg-slate-100 dark:bg-slate-800",
@@ -2814,6 +3328,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     };
                     const StatusIcon = statusCfg.icon;
                     const supp = suppliers.find((s: any) => s.id === po.supplier_id || s.name === po.supplier_name);
+                    const isRowDropdownOpen = activeStatusDropdownId === po.id || activePaymentDropdownId === po.id;
 
                     return (
                       <React.Fragment key={po.id}>
@@ -2853,7 +3368,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                         </tr>
 
                         {/* Row 2: Main PO Details */}
-                        <tr className="hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors border-b border-slate-200/60 dark:border-slate-800">
+                        <tr className={`hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors border-b border-slate-200/60 dark:border-slate-800 ${isRowDropdownOpen ? "relative z-50" : "relative z-10"}`}>
                           {/* Col 1: PO Code */}
                           <td className="py-3 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 align-top">
                             <button
@@ -3086,39 +3601,93 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             )}
                           </td>
 
-                          {/* Col 5: Payment */}
-                          <td className="py-3 px-4 text-center whitespace-nowrap align-top">
-                            {isFullyPaid ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                                <CheckCircle2 className="w-3 h-3" /> Tất toán
-                              </span>
-                            ) : paidAmt > 0 ? (
-                              <div>
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-800">
-                                  Đã trả {Math.round((paidAmt / totalAmt) * 100)}%
+                          {/* Col 5: Payment (Issue 4d: Interactive Payment Status Dropdown) */}
+                          <td className={`py-3 px-4 text-center whitespace-nowrap relative align-top ${activePaymentDropdownId === po.id ? "z-50" : "z-10"}`}>
+                            {activePaymentDropdownId === po.id && (
+                              <div
+                                className="fixed inset-0 z-30"
+                                onClick={() => setActivePaymentDropdownId(null)}
+                              />
+                            )}
+                            <div className="inline-block text-left relative" onClick={(e) => e.stopPropagation()}>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveStatusDropdownId(null);
+                                  setActivePaymentDropdownId(activePaymentDropdownId === po.id ? null : po.id);
+                                }}
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold inline-flex items-center gap-1 border transition-all cursor-pointer shadow-2xs hover:scale-105 ${payStatusCfg.bg} ${payStatusCfg.text} ${payStatusCfg.border}`}
+                                title="Bấm để chuyển nhanh trạng thái thanh toán (Chưa trả / Đã đề nghị thanh toán / Đã trả 1 phần / Đã tất toán)"
+                              >
+                                {isFullyPaid && <CheckCircle2 className="w-3 h-3" />}
+                                <span>
+                                  {payStatusKey === "PARTIAL_PAID" && totalAmt > 0 && paidAmt > 0
+                                    ? `Đã trả ${Math.round((paidAmt / totalAmt) * 100)}%`
+                                    : payStatusCfg.label}
                                 </span>
-                                <div className="text-[10px] text-rose-500 font-mono font-bold mt-0.5">
+                                <ChevronDown className="w-2.5 h-2.5 opacity-60" />
+                              </button>
+                              {!isFullyPaid && remainingAmt > 0 && paidAmt > 0 && (
+                                <div className="text-[10px] text-rose-500 font-mono font-bold mt-0.5 text-center">
                                   Còn: {formatCurrency(remainingAmt)}
                                 </div>
-                              </div>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-                                Chưa trả
-                              </span>
-                            )}
+                              )}
+
+                              {activePaymentDropdownId === po.id && (
+                                <div
+                                  className={`absolute z-[100] left-1/2 -translate-x-1/2 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
+                                    idx >= 1 && idx >= filteredOrders.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
+                                  }`}
+                                >
+                                  <div className="px-3 py-1.5 font-bold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
+                                    Trạng thái thanh toán:
+                                  </div>
+                                  {Object.entries(PO_PAYMENT_STATUS_CONFIG).map(([pKey, pCfg]) => (
+                                    <button
+                                      key={pKey}
+                                      type="button"
+                                      onClick={() => handleQuickChangePaymentStatus(po, pKey)}
+                                      className={`w-full px-3 py-2 text-left flex items-center justify-between hover:bg-slate-50 dark:hover:bg-slate-800 cursor-pointer ${
+                                        payStatusKey === pKey ? "bg-orange-50/50 dark:bg-orange-950/30 font-bold" : ""
+                                      }`}
+                                    >
+                                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${pCfg.bg} ${pCfg.text} ${pCfg.border}`}>
+                                        {pCfg.label}
+                                      </span>
+                                      {payStatusKey === pKey && <Check className="w-3.5 h-3.5 text-orange-600" />}
+                                    </button>
+                                  ))}
+                                  <div className="border-t border-slate-100 dark:border-slate-800 mt-1 pt-1 px-2 pb-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setActivePaymentDropdownId(null);
+                                        openPaymentModal(po);
+                                      }}
+                                      className="w-full px-2 py-1.5 rounded-lg text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 flex items-center gap-1.5 cursor-pointer"
+                                    >
+                                      <DollarSign className="w-3.5 h-3.5" /> Ghi sổ chi tiền chi tiết...
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
                           </td>
 
-                          {/* Col 6: Status */}
-                          <td className="py-3 px-4 text-center whitespace-nowrap relative align-top">
+                          {/* Col 6: Status (Bug 4b z-index fix & Proposal 4c XNK logical order) */}
+                          <td className={`py-3 px-4 text-center whitespace-nowrap relative align-top ${activeStatusDropdownId === po.id ? "z-50" : "z-10"}`}>
                             {activeStatusDropdownId === po.id && (
                               <div
                                 className="fixed inset-0 z-30"
                                 onClick={() => setActiveStatusDropdownId(null)}
                               />
                             )}
-                            <div className="inline-block text-left relative z-40" onClick={(e) => e.stopPropagation()}>
+                            <div className="inline-block text-left relative" onClick={(e) => e.stopPropagation()}>
                               <button
-                                onClick={() => setActiveStatusDropdownId(activeStatusDropdownId === po.id ? null : po.id)}
+                                onClick={() => {
+                                  setActivePaymentDropdownId(null);
+                                  setActiveStatusDropdownId(activeStatusDropdownId === po.id ? null : po.id);
+                                }}
                                 className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1.5 border transition-all cursor-pointer shadow-2xs hover:scale-105 ${statusCfg.bg} ${statusCfg.text} ${statusCfg.border}`}
                                 title="Bấm để thay đổi trạng thái đơn hàng"
                               >
@@ -3127,17 +3696,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <ChevronDown className="w-2.5 h-2.5 opacity-60" />
                               </button>
 
-                              {/* Dropdown Menu of All Statuses */}
+                              {/* Dropdown Menu of All Statuses in Logical XNK Order */}
                               {activeStatusDropdownId === po.id && (
                                 <div
-                                  className={`absolute z-50 left-1/2 -translate-x-1/2 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
-                                    idx >= 1 ? "bottom-full mb-1.5" : "top-full mt-1.5"
+                                  className={`absolute z-[100] left-1/2 -translate-x-1/2 w-60 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
+                                    idx >= 1 && idx >= filteredOrders.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
                                   }`}
                                 >
                                   <div className="px-3 py-1.5 font-bold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
-                                    Cập nhật trạng thái đơn:
+                                    Cập nhật tiến độ đơn PO (XNK):
                                   </div>
-                                  {Object.entries(PO_STATUS_CONFIG).map(([key, cfg]) => {
+                                  {PO_STATUS_DROPDOWN_ORDER.map((key, stepIdx) => {
+                                    const cfg = PO_STATUS_CONFIG[key];
+                                    if (!cfg) return null;
                                     const IconComp = cfg.icon;
                                     return (
                                       <button
@@ -3152,7 +3723,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                             <IconComp className="w-3 h-3" />
                                           </span>
                                           <div>
-                                            <span className="text-slate-800 dark:text-slate-200">{cfg.label}</span>
+                                            <span className="text-slate-800 dark:text-slate-200">
+                                              {stepIdx + 1}. {cfg.label}
+                                            </span>
                                             {cfg.isImport && (
                                               <span className="ml-1 text-[9px] px-1 rounded bg-cyan-100 dark:bg-cyan-950 text-cyan-700 dark:text-cyan-400 font-bold">
                                                 Nhập khẩu
@@ -3279,9 +3852,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 onClick={() => {
                   setSelectedPRIdsForConsolidate([]);
                   setSelectedItemKeysForConsolidate([]);
-                  const pendingPRs = purchaseRequests.filter(
-                    (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
-                  );
+                  const pendingPRs = purchaseRequests.filter(isPRConsolidatable);
                   setExpandedPRKeys(pendingPRs.map((pr) => pr.workflow_code || String(pr.id)));
                   if (suppliers.length > 0) setConsolidateSupplierId(suppliers[0].id);
                   setIsConsolidateModalOpen(true);
@@ -3612,7 +4183,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           {formatDate(pr.due_date)}
                         </td>
                         <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                          {summary.isFullyConverted ? (
+                          {pr.status === "CANCELLED" || pr.status === "REJECTED" ? (
+                            <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-400 border border-rose-200 flex items-center gap-1 justify-center">
+                              <XCircle className="w-3 h-3 text-rose-500" />
+                              <span>Đã Hủy</span>
+                            </span>
+                          ) : summary.isFullyConverted ? (
                             <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border border-emerald-200 flex items-center gap-1 justify-center">
                               <CheckCircle2 className="w-3 h-3 text-emerald-500" />
                               <span>Đã Hoàn Thành PO</span>
@@ -3630,7 +4206,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           )}
                         </td>
                         <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                          {summary.isFullyConverted ? (
+                          {pr.status === "CANCELLED" || pr.status === "REJECTED" ? (
+                            <span className="text-xs text-slate-400 italic">Đề xuất đã hủy</span>
+                          ) : summary.isFullyConverted ? (
                             summary.linkedPOs.length > 0 ? (
                               <button
                                 type="button"
@@ -3648,15 +4226,25 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               </span>
                             )
                           ) : summary.isPartiallyConverted ? (
-                            <div className="flex flex-col items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={() => handleConvertPRToPO(pr)}
-                                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer transition-colors"
-                                title={`Còn ${summary.pendingCount} mặt hàng chưa tạo PO. Bấm để lập đơn PO`}
-                              >
-                                <ShoppingCart className="w-3.5 h-3.5" /> Lên PO ({summary.pendingCount} mã còn lại)
-                              </button>
+                            <div className="flex flex-col items-center gap-1.5">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleConvertPRToPO(pr)}
+                                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                                  title={`Còn ${summary.pendingCount} mặt hàng chưa tạo PO. Bấm để lập đơn PO`}
+                                >
+                                  <ShoppingCart className="w-3.5 h-3.5" /> Lên PO ({summary.pendingCount} mã)
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditPR(pr)}
+                                  className="px-2 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-amber-50 hover:text-amber-700 border border-slate-200 dark:border-slate-700 cursor-pointer transition-colors"
+                                  title="Chỉnh sửa nội dung đề xuất PR"
+                                >
+                                  ✏️ Sửa
+                                </button>
+                              </div>
                               {summary.linkedPOs.length > 0 && (
                                 <button
                                   type="button"
@@ -3669,13 +4257,31 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               )}
                             </div>
                           ) : (
-                            <button
-                              type="button"
-                              onClick={() => handleConvertPRToPO(pr)}
-                              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer transition-colors"
-                            >
-                              <ShoppingCart className="w-3.5 h-3.5" /> Chuyển Thành PO
-                            </button>
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleConvertPRToPO(pr)}
+                                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                              >
+                                <ShoppingCart className="w-3.5 h-3.5" /> Chuyển Thành PO
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleEditPR(pr)}
+                                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-amber-50 hover:text-amber-700 border border-slate-200 dark:border-slate-700 cursor-pointer transition-colors"
+                                title="Sửa số lượng, mặt hàng hoặc hạn cần của PR"
+                              >
+                                ✏️ Sửa
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCancelPR(pr)}
+                                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 cursor-pointer transition-colors"
+                                title="Hủy đề xuất mua hàng này"
+                              >
+                                Hủy
+                              </button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -3699,7 +4305,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 Hồ Sơ & Đánh Giá Các Nhà Cung Cấp / Hãng Sản Xuất
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của TBRs.
+                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của TBR.
               </p>
             </div>
 
@@ -4173,83 +4779,282 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       )}
 
       {/* ========================================================= */}
-      {/* SUBTAB 5: RESTOCK ALERTS & SUGGESTIONS                    */}
+      {/* SUBTAB 5: RESTOCK ALERTS & NEAR-EXPIRY ALERTS             */}
       {/* ========================================================= */}
       {subTab === "restock" && (
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div>
-              <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2 text-amber-600 dark:text-amber-400">
-                <AlertTriangle className="w-4 h-4" />
-                Cảnh Báo Tồn Kho Dưới Định Mức & Gợi Ý Bổ Sung (Restock)
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Các sản phẩm đang có số lượng khả dụng nhỏ hơn hoặc bằng định mức an toàn (Min Stock). Click để tạo đơn PO mua bù ngay lập tức.
-              </p>
+          {/* Sub-view Switcher: Restock vs Near-Expiry (Issue 7) */}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+            <div className="flex items-center gap-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-800 text-xs">
+              <button
+                type="button"
+                onClick={() => setAlertSubView("restock")}
+                className={`px-3.5 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  alertSubView === "restock"
+                    ? "bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                <span>⚠️ Cảnh Báo Tồn Thiếu (Restock)</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-400">
+                  {enrichedRestockAlerts.length}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAlertSubView("near_expiry")}
+                className={`px-3.5 py-1.5 rounded-lg font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
+                  alertSubView === "near_expiry"
+                    ? "bg-white dark:bg-slate-900 text-rose-600 dark:text-rose-400 shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>⏳ Cảnh Báo Cận Date / Hết Hạn (≤ 180 ngày)</span>
+                <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-400">
+                  {nearExpiryAlerts.length}
+                </span>
+              </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
-                  <th className="py-3 px-4">Mã Sản Phẩm</th>
-                  <th className="py-3 px-4">Tên Hàng Hóa / Sinh Phẩm</th>
-                  <th className="py-3 px-4">Vị Trí Lưu Kho</th>
-                  <th className="py-3 px-4 text-center">Tồn Hiện Tại</th>
-                  <th className="py-3 px-4 text-center">Định Mức Tối Thiểu</th>
-                  <th className="py-3 px-4 text-center">Trạng Thái Thiếu</th>
-                  <th className="py-3 px-4">Hãng Sản Xuất Đề Xuất</th>
-                  <th className="py-3 px-4 text-right">Đơn Giá Nhập Ước Tính</th>
-                  <th className="py-3 px-4 text-center">Thao Tác</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {restockAlerts.length === 0 ? (
-                  <tr>
-                    <td colSpan={9} className="py-8 text-center text-slate-400">
-                      Tất cả các sản phẩm đều đang đạt mức tồn kho an toàn!
-                    </td>
-                  </tr>
-                ) : (
-                  restockAlerts.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">{item.product_code}</td>
-                      <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
-                        {item.product_name}
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-500">{item.warehouse_location}</td>
-                      <td className="py-3.5 px-4 text-center font-mono font-black text-rose-600 dark:text-rose-400 text-sm">
-                        {item.quantity_on_hand} {item.unit || "Cái"}
-                      </td>
-                      <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-500">
-                        {item.min_stock_level} {item.unit || "Cái"}
-                      </td>
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-400 border border-amber-200">
-                          ⚠️ Chạm ngưỡng Min
-                        </span>
-                      </td>
-                      <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300 font-medium">
-                        {item.manufacturer || "Bioer Technology"}
-                      </td>
-                      <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900 dark:text-white">
-                        {formatCurrency(item.cost_price || 0)}
-                      </td>
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <button
-                          onClick={() => handleRestockToPO(item)}
-                          className="px-3 py-1 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer"
-                        >
-                          <Plus className="w-3.5 h-3.5" /> Lập PO Mua Bổ Sung
-                        </button>
-                      </td>
+          {alertSubView === "restock" ? (
+            <>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="w-4 h-4" />
+                    Cảnh Báo Tồn Kho Dưới Định Mức & Gợi Ý Bổ Sung (Restock)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Tự động đối chiếu Nhà Cung Cấp / Hãng sản xuất và đơn giá mua từ Bảng giá NCC & Danh mục hàng hóa. Lọc theo hãng để gom đơn PO 1-click.
+                  </p>
+                </div>
+
+                {/* Supplier Filter + Search + Bulk PO Button (Issue 2 & Bug 4f) */}
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={restockSearch}
+                      onChange={(e) => setRestockSearch(e.target.value)}
+                      placeholder="Tìm mã SP, tên SP, hãng..."
+                      className="pl-8 pr-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                  <select
+                    value={restockSupplierFilter}
+                    onChange={(e) => setRestockSupplierFilter(e.target.value)}
+                    className="p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold cursor-pointer max-w-[260px]"
+                  >
+                    <option value="all">-- Tất cả Nhà Cung Cấp / Hãng ({enrichedRestockAlerts.length}) --</option>
+                    {restockSupplierOptions.map((supName) => (
+                      <option key={supName} value={supName}>
+                        {supName}
+                      </option>
+                    ))}
+                  </select>
+                  {filteredRestockAlerts.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => handleBulkRestockBySupplier(filteredRestockAlerts)}
+                      className="px-3 py-1.5 rounded-xl font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs flex items-center gap-1.5 cursor-pointer"
+                      title="Gom toàn bộ các mặt hàng đang lọc vào 1 Đơn Đặt Mua (PO) theo đúng NCC và đơn giá"
+                    >
+                      <ShoppingCart className="w-3.5 h-3.5" />
+                      <span>+ Lập PO Gom Theo NCC Đang Lọc ({filteredRestockAlerts.length})</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
+                      <th className="py-3 px-4">Mã Sản Phẩm</th>
+                      <th className="py-3 px-4">Tên Hàng Hóa / Sinh Phẩm</th>
+                      <th className="py-3 px-4">Vị Trí Lưu Kho</th>
+                      <th className="py-3 px-4 text-center">Tồn Hiện Tại</th>
+                      <th className="py-3 px-4 text-center">Định Mức Tối Thiểu</th>
+                      <th className="py-3 px-4 text-center">Trạng Thái Thiếu</th>
+                      <th className="py-3 px-4">Nhà Cung Cấp / Hãng Đề Xuất</th>
+                      <th className="py-3 px-4 text-right">Đơn Giá Nhập Ước Tính</th>
+                      <th className="py-3 px-4 text-center">Thao Tác</th>
                     </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {filteredRestockAlerts.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="py-8 text-center text-slate-400">
+                          Không có sản phẩm tồn thiếu nào phù hợp với bộ lọc hiện tại!
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredRestockAlerts.map((item) => (
+                        <tr key={item.id || item.product_code} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">{item.product_code}</td>
+                          <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                            {item.product_name}
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-500">{item.warehouse_location}</td>
+                          <td className="py-3.5 px-4 text-center font-mono font-black text-rose-600 dark:text-rose-400 text-sm">
+                            {item.quantity_on_hand} {item.unit || "Cái"}
+                          </td>
+                          <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-500">
+                            {item.min_stock_level} {item.unit || "Cái"}
+                          </td>
+                          <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-400 border border-amber-200">
+                              ⚠️ Chạm ngưỡng Min
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300 font-semibold">
+                            <div className="flex items-center gap-1.5">
+                              <Building2 className="w-3.5 h-3.5 text-orange-500 shrink-0" />
+                              <span>{item.resolved_supplier_name || item.manufacturer || "Chưa gán NCC"}</span>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-900 dark:text-white">
+                            {item.resolved_unit_price > 0 ? (
+                              formatCurrency(item.resolved_unit_price)
+                            ) : (
+                              <span className="text-slate-400 text-[11px] font-normal italic">Theo báo giá NCC</span>
+                            )}
+                          </td>
+                          <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                            <button
+                              onClick={() => handleRestockToPO(item)}
+                              className="px-3 py-1 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer"
+                            >
+                              <Plus className="w-3.5 h-3.5" /> Lập PO Mua Bổ Sung
+                            </button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : (
+            /* SUB-VIEW 2: NEAR-EXPIRY & EXPIRED INVENTORY LOTS (Issue 7) */
+            <>
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                <div>
+                  <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                    <Clock className="w-4 h-4" />
+                    Cảnh Báo Lô Hàng Cận Date / Hết Hạn (Hạn Sử Dụng ≤ 180 Ngày)
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Theo dõi các lô hóa chất, sinh phẩm và kit chẩn đoán sắp hết hạn sử dụng để chủ động báo Kinh doanh đẩy hàng hoặc lập PO mua lô mới thay thế.
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
+                      <th className="py-3 px-4">Mã SP</th>
+                      <th className="py-3 px-4">Tên Hàng Hóa / Sinh Phẩm</th>
+                      <th className="py-3 px-4">Số Lô (Lot)</th>
+                      <th className="py-3 px-4 text-center">Hạn Sử Dụng</th>
+                      <th className="py-3 px-4 text-center">Số Ngày Còn Lại</th>
+                      <th className="py-3 px-4 text-center">Tồn Lô Hiện Tại</th>
+                      <th className="py-3 px-4">Kho Lưu Trữ</th>
+                      <th className="py-3 px-4">NCC Đề Xuất</th>
+                      <th className="py-3 px-4 text-center">Hành Động Xử Lý</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {nearExpiryAlerts.length === 0 ? (
+                      <tr>
+                        <td colSpan={9} className="py-8 text-center text-slate-400">
+                          Tuyệt vời! Hiện không có lô hàng tồn kho nào có hạn sử dụng dưới 180 ngày.
+                        </td>
+                      </tr>
+                    ) : (
+                      nearExpiryAlerts.map((lot: any, idx: number) => {
+                        const isExpired = lot.days_remaining <= 0;
+                        const isCritical = lot.days_remaining > 0 && lot.days_remaining <= 60;
+                        return (
+                          <tr key={lot.id || `${lot.product_code}-${lot.lot_number}-${idx}`} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
+                            <td className="py-3.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">
+                              {lot.product_code}
+                            </td>
+                            <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
+                              {lot.product_name}
+                            </td>
+                            <td className="py-3.5 px-4 font-mono font-semibold text-indigo-600 dark:text-indigo-400">
+                              {lot.lot_number || "—"}
+                            </td>
+                            <td className="py-3.5 px-4 text-center font-mono font-bold text-slate-700 dark:text-slate-200">
+                              {lot.expiry_date_vn}
+                            </td>
+                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                              <span
+                                className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${
+                                  isExpired
+                                    ? "bg-rose-100 dark:bg-rose-950 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-800"
+                                    : isCritical
+                                    ? "bg-orange-100 dark:bg-orange-950 text-orange-800 dark:text-orange-300 border-orange-300 dark:border-orange-800"
+                                    : "bg-amber-50 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800"
+                                }`}
+                              >
+                                {isExpired
+                                  ? `⛔ Đã hết hạn (${Math.abs(lot.days_remaining)} ngày)`
+                                  : `⏳ Còn ${lot.days_remaining} ngày`}
+                              </span>
+                            </td>
+                            <td className="py-3.5 px-4 text-center font-mono font-black text-slate-900 dark:text-white">
+                              {lot.quantity_on_hand} {lot.unit || "Hộp"}
+                            </td>
+                            <td className="py-3.5 px-4 text-slate-500">
+                              {lot.warehouse_location || "Kho Chính"}
+                            </td>
+                            <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300 font-medium">
+                              {lot.resolved_supplier_name}
+                            </td>
+                            <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleRestockToPO(lot)}
+                                  className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1 cursor-pointer"
+                                  title="Tạo ngay đơn PO đặt mua lô hàng date mới thay thế"
+                                >
+                                  <Plus className="w-3 h-3" /> Lập PR/PO Thay Thế
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    notifyActivity({
+                                      title: `📢 Cảnh báo xả hàng cận date: ${lot.product_code} (Lô ${lot.lot_number || "N/A"})`,
+                                      message: `Sản phẩm ${lot.product_name} [${lot.product_code}] - Lô ${lot.lot_number || "N/A"} còn tồn ${lot.quantity_on_hand} ${lot.unit || "Hộp"} tại ${lot.warehouse_location || "Kho"}, HSD ${lot.expiry_date_vn} (${lot.days_remaining <= 0 ? "Đã hết hạn" : `còn ${lot.days_remaining} ngày`}). Đề nghị Kinh doanh ưu tiên tư vấn khách hàng / đẩy hàng.`,
+                                      targetModule: "sales",
+                                      type: "warning"
+                                    });
+                                    alert(`📢 Đã gửi thông báo đẩy hàng cận date cho bộ phận Kinh doanh:\n• Sản phẩm: [${lot.product_code}] ${lot.product_name}\n• Số lô: ${lot.lot_number || "N/A"} — HSD: ${lot.expiry_date_vn}\n• Tồn lô: ${lot.quantity_on_hand} ${lot.unit || "Hộp"}`);
+                                  }}
+                                  className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer"
+                                  title="Gửi thông báo sang phân hệ Kinh doanh để ưu tiên chào bán / xả lô cận date"
+                                >
+                                  📢 Báo Sales Xả Hàng
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -4320,6 +5125,46 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   />
                 </div>
               </div>
+
+              {/* Non-blocking Supplier Notice Banner (Bug 4a fix) */}
+              {poSupplierNotice && (
+                <div className="p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-xs flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-start gap-2 text-amber-800 dark:text-amber-200">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5">
+                      {poSupplierNotice.changes.length > 0 && (
+                        <div>
+                          Đã chuyển sang NCC <strong>{poSupplierNotice.supplierName}</strong>: có{" "}
+                          <strong>{poSupplierNotice.changes.length}</strong> dòng hàng có đơn giá mới trong bảng giá NCC.
+                        </div>
+                      )}
+                      {poSupplierNotice.notSold.length > 0 && (
+                        <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                          Lưu ý: {poSupplierNotice.notSold.map((x: any) => x.product_code).join(", ")} chưa có trong bảng giá của NCC này (bạn vẫn có thể đặt mua và nhập giá trực tiếp).
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {poSupplierNotice.changes.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={applyPOSupplierPriceChanges}
+                        className="px-3 py-1 rounded-lg text-xs font-bold bg-amber-600 text-white hover:bg-amber-700 cursor-pointer"
+                      >
+                        Cập nhật đơn giá theo NCC mới
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => setPoSupplierNotice(null)}
+                      className="px-2 py-1 rounded-lg text-xs font-semibold text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/50 cursor-pointer"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Body (scrolls): line table */}
@@ -4334,13 +5179,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     title="Trạng thái đơn (trạng thái nhập kho chỉ cập nhật qua nút Nhập kho)"
                     className="p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold cursor-pointer disabled:opacity-70"
                   >
-                    <option value="PENDING">Chờ xác nhận</option>
-                    <option value="ORDERED">Đã đặt hàng</option>
-                    <option value="CONFIRMED">Đã xác nhận</option>
-                    <option value="SHIPPED">Đang vận chuyển</option>
-                    <option value="AT_CUSTOMS">🛃 Đã đến hải quan</option>
-                    <option value="CUSTOMS_CLEARING">📋 Đang thông quan</option>
-                    {poForm.status === "PARTIALLY_RECEIVED" && <option value="PARTIALLY_RECEIVED">Nhập kho 1 phần</option>}
+                    <option value="PENDING">1. Chờ xác nhận</option>
+                    <option value="CONFIRMED">2. Đã xác nhận</option>
+                    <option value="ORDERED">3. Đã đặt hàng</option>
+                    <option value="PRODUCED">4. Đã sản xuất xong</option>
+                    <option value="SHIPPED">5. Đang vận chuyển</option>
+                    <option value="AT_CUSTOMS">6. 🛃 Đã đến hải quan</option>
+                    <option value="CUSTOMS_CLEARING">7. 📋 Đang làm thủ tục thông quan</option>
+                    {poForm.status === "PARTIALLY_RECEIVED" && <option value="PARTIALLY_RECEIVED">8. Đã nhập kho (1 phần)</option>}
                   </select>
                 </div>
                 <button
@@ -4376,6 +5222,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       const isStockOrder = item.is_stock !== false;
                       const receivedQty = Number((poForm.received_qty || {})[idx]) || 0;
                       const srcPR = itemSourcePR(item);
+                      const rowQuery = poItemSearchQueries[idx] || "";
+                      const filteredCatalogForPO = filterCatalogItemsByQuery(rowQuery);
                       const stockTitle = stockIntel
                         ? `Tồn thực tế: ${stockIntel.onHand} • Đang giữ chỗ: ${stockIntel.reserved} • Khả dụng: ${stockIntel.available} • Đang về: ${stockIntel.incoming}` +
                           (stockIntel.reservations.length > 0 ? `\nGiữ chỗ: ${stockIntel.reservations.map((r: any) => `${r.customer_name}${r.order_code ? ` (${r.order_code})` : ""}: ${r.quantity_reserved}`).join("; ")}` : "")
@@ -4383,31 +5231,53 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       return (
                         <tr key={idx} className="align-top hover:bg-slate-50/60 dark:hover:bg-slate-800/30">
                           <td className="p-2 text-center text-slate-400 font-mono pt-3">{idx + 1}</td>
-                          <td className="p-2">
+                          <td className="p-2 space-y-1">
+                            {receivedQty === 0 && (
+                              <div className="relative">
+                                <Search className="w-3 h-3 text-slate-400 absolute left-2 top-1/2 -translate-y-1/2" />
+                                <input
+                                  type="text"
+                                  value={rowQuery}
+                                  onChange={(e) => setPoItemSearchQueries(prev => ({ ...prev, [idx]: e.target.value }))}
+                                  placeholder="Gõ tìm nhanh mã hàng (VD: hd-, meridian, ssi, bioer...)"
+                                  className="w-full pl-6 pr-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-900 dark:text-white text-[11px]"
+                                />
+                              </div>
+                            )}
                             <select
                               value={item.product_code}
                               disabled={receivedQty > 0}
                               onChange={(e) => {
                                 const val = e.target.value;
-                                const prod = products.find(pp => pp.code === val);
+                                const prod = mergedCatalogProducts.find((pp: any) => pp.code === val) || products.find((pp: any) => pp.code === val);
+                                const resolved = resolveItemSupplierAndPrice({
+                                  product_code: val,
+                                  product_name: prod?.name || item.product_name,
+                                  manufacturer: prod?.manufacturer || prod?.brand || "",
+                                  cost_price: prod?.cost_price || 0
+                                });
                                 updatePOLine(idx, {
                                   product_code: val,
                                   product_name: prod?.name || item.product_name,
                                   unit: prod?.unit || item.unit || "Hộp",
-                                  unit_price: prod ? parseFloat(prod.cost_price) || 0 : item.unit_price
+                                  unit_price: resolved.unitPrice > 0 ? resolved.unitPrice : (prod ? parseFloat(prod.cost_price) || 0 : item.unit_price)
                                 });
                               }}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold cursor-pointer disabled:opacity-70"
                             >
-                              <option value="">-- Chọn mã hàng --</option>
-                              {!products.some(pp => pp.code === item.product_code) && item.product_code && (
+                              <option value="">
+                                {rowQuery
+                                  ? `-- Kết quả lọc "${rowQuery}" (${filteredCatalogForPO.length} mã) --`
+                                  : `-- Chọn mã hàng (${mergedCatalogProducts.length} SP) --`}
+                              </option>
+                              {!filteredCatalogForPO.some((pp: any) => pp.code === item.product_code) && item.product_code && (
                                 <option value={item.product_code}>
                                   {item.product_code} - {cleanItemName(item.product_name)}
                                 </option>
                               )}
-                              {products.map(pp => (
+                              {filteredCatalogForPO.map((pp: any) => (
                                 <option key={pp.code} value={pp.code}>
-                                  {pp.code} - {pp.name}
+                                  {pp.code} - {pp.name}{pp.brand || pp.manufacturer ? ` (${pp.brand || pp.manufacturer})` : ""}
                                 </option>
                               ))}
                             </select>
@@ -6055,7 +6925,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       )}
 
       {/* ========================================================= */}
-      {/* MODAL 5: CREATE PURCHASE REQUEST (PR)                     */}
+      {/* MODAL 5: CREATE / EDIT PURCHASE REQUEST (PR)              */}
       {/* ========================================================= */}
       {isPRModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
@@ -6065,10 +6935,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <FileText className="w-5 h-5" />
                 <div>
                   <h3 className="font-bold text-slate-900 dark:text-white text-base">
-                    Khởi Tạo Đề Xuất Mua Hàng (PR Mới)
+                    {prForm.id
+                      ? `Cập Nhật Đề Xuất Mua Hàng (${prForm.workflow_code || "PR"})`
+                      : "Khởi Tạo Đề Xuất Mua Hàng (PR Mới)"}
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Chọn mặt hàng có sẵn trong kho hoặc gõ mới (hàng mua lần đầu)
+                    Chọn mặt hàng có sẵn trong danh mục (gõ tìm nhanh mã hàng như HD-, Meridian, SSI...) hoặc gõ mới
                   </p>
                 </div>
               </div>
@@ -6200,25 +7072,50 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                         )}
                       </div>
 
-                      {/* Mode 1: Available Product from Catalog */}
+                      {/* Mode 1: Available Product from Catalog (Issue 4: Full catalog search before render) */}
                       {!it.is_custom ? (
                         <div className="space-y-2">
-                          <div>
-                            <label className="block text-[10px] font-bold text-slate-500 mb-1">
-                              Chọn sản phẩm từ danh mục hệ thống:
+                          <div className="space-y-1.5">
+                            <label className="block text-[10px] font-bold text-slate-500">
+                              Tìm kiếm & Chọn sản phẩm từ danh mục hệ thống ({mergedCatalogProducts.length} mã hàng):
                             </label>
-                            <select
-                              value={it.product_code}
-                              onChange={(e) => handleSelectExistingProduct(idx, e.target.value)}
-                              className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold text-xs cursor-pointer"
-                            >
-                              <option value="">-- Bấm để chọn mặt hàng trong danh mục TBRs --</option>
-                              {products.map((p: any) => (
-                                <option key={p.code} value={p.code}>
-                                  [{p.code}] {p.name} {p.specification ? `- (${p.specification})` : ""} - ĐVT: {p.unit || "Cái"}
-                                </option>
-                              ))}
-                            </select>
+                            <div className="relative">
+                              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                              <input
+                                type="text"
+                                value={prItemSearchQueries[idx] || ""}
+                                onChange={(e) => setPrItemSearchQueries(prev => ({ ...prev, [idx]: e.target.value }))}
+                                placeholder="Gõ tìm nhanh theo mã hàng, tên kit hoặc hãng (VD: hd-, liferiver, meridian, ssi...)"
+                                className="w-full pl-8 pr-3 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/30 dark:bg-slate-800 text-slate-900 dark:text-white text-xs"
+                              />
+                            </div>
+                            {(() => {
+                              const q = prItemSearchQueries[idx] || "";
+                              const filteredList = filterCatalogItemsByQuery(q);
+                              return (
+                                <select
+                                  value={it.product_code}
+                                  onChange={(e) => handleSelectExistingProduct(idx, e.target.value)}
+                                  className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-semibold text-xs cursor-pointer"
+                                >
+                                  <option value="">
+                                    {q
+                                      ? `-- Kết quả lọc "${q}" (${filteredList.length} sản phẩm phù hợp) --`
+                                      : `-- Bấm để chọn mặt hàng trong danh mục TBR (${mergedCatalogProducts.length} SP) --`}
+                                  </option>
+                                  {!filteredList.some((p: any) => p.code === it.product_code) && it.product_code && (
+                                    <option value={it.product_code}>
+                                      [{it.product_code}] {it.product_name}
+                                    </option>
+                                  )}
+                                  {filteredList.map((p: any) => (
+                                    <option key={p.code} value={p.code}>
+                                      [{p.code}] {p.name} {p.brand || p.manufacturer ? `- Hãng: ${p.brand || p.manufacturer}` : ""} {p.specification ? `- (${p.specification})` : ""} - ĐVT: {p.unit || "Cái"}
+                                    </option>
+                                  ))}
+                                </select>
+                              );
+                            })()}
                           </div>
 
                           <div className="grid grid-cols-12 gap-2">
@@ -6368,7 +7265,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 onClick={handleSavePR}
                 className="px-5 py-2 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-sm cursor-pointer"
               >
-                Gửi Đề Xuất Mua (PR)
+                {prForm.id ? "Lưu Cập Nhật PR" : "Gửi Đề Xuất Mua (PR)"}
               </button>
             </div>
           </div>
@@ -6781,9 +7678,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
               {/* Selection Summary Strip */}
               {(() => {
-                const pendingPRs = purchaseRequests.filter(
-                  (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
-                );
+                const pendingPRs = purchaseRequests.filter(isPRConsolidatable);
                 const involvedPRs = new Set<string>();
                 let totalEstAmount = 0;
 
@@ -6793,8 +7688,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   items.forEach((it, idx) => {
                     if (selectedItemKeysForConsolidate.includes(`${prKey}___${idx}`)) {
                       involvedPRs.add(prKey);
-                      const matchedProd = products.find((p) => p.code === it.product_code);
-                      const price = it.estimated_price || (matchedProd ? parseFloat(matchedProd.cost_price) || 0 : 0);
+                      const resolved = resolveItemSupplierAndPrice(it);
+                      const price = resolved.unitPrice || it.estimated_price || 0;
                       const qty = it.quantity || 1;
                       totalEstAmount += qty * price;
                     }
@@ -6805,7 +7700,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   <div className="p-3 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-3">
                       <span className="font-bold text-slate-800 dark:text-white uppercase tracking-wider text-[11px]">
-                        Danh Sách PR Đang Chờ Xử Lý ({pendingPRs.length} phiếu):
+                        Danh Sách PR Chưa Lập Đủ PO ({pendingPRs.length} phiếu):
                       </span>
                       <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono font-bold text-[11px]">
                         Đã chọn: {selectedItemKeysForConsolidate.length} mặt hàng ({involvedPRs.size} PR)
@@ -6853,15 +7748,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {(() => {
-                      const pendingPRs = purchaseRequests.filter(
-                        (pr) => pr.status !== "COMPLETED" && pr.status !== "CANCELLED" && pr.status !== "CONVERTED"
-                      );
+                      const pendingPRs = purchaseRequests.filter(isPRConsolidatable);
 
                       if (pendingPRs.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={7} className="py-6 text-center text-slate-400 italic">
-                              Không có đề xuất mua hàng nào đang chờ xử lý.
+                            <td colSpan={7} className="py-6 text-center text-slate-500 dark:text-slate-400">
+                              <div className="space-y-2">
+                                <div className="font-semibold text-emerald-600 dark:text-emerald-400">
+                                  ✓ Toàn bộ các đề xuất (PR) hiện có đều đã được chuyển thành Đơn Đặt Mua (PO) đầy đủ!
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  Bạn có thể bấm <strong>"+ Tạo PR Mới"</strong> để thêm đề xuất mua hàng mới, hoặc xem các PR đã lập PO ở danh sách bên dưới.
+                                </div>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -7083,6 +7983,53 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </tbody>
                 </table>
               </div>
+
+              {/* Already Converted PRs Reference Section (Issue 6) */}
+              {(() => {
+                const convertedPRs = purchaseRequests.filter((pr) => getPRPOSummary(pr).isFullyConverted);
+                if (convertedPRs.length === 0) return null;
+                return (
+                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                        Các Đề Xuất (PR) Đã Lập Đủ Đơn PO ({convertedPRs.length} phiếu):
+                      </span>
+                      <span className="text-[10px] text-slate-400">Đã hoàn tất chuyển đổi sang PO</span>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {convertedPRs.map((pr) => {
+                        const sum = getPRPOSummary(pr);
+                        return (
+                          <div
+                            key={pr.id}
+                            className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center gap-2 text-[11px]"
+                          >
+                            <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{pr.workflow_code}</span>
+                            <span className="text-slate-600 dark:text-slate-300 truncate max-w-[180px]">{pr.title}</span>
+                            {sum.linkedPOs.length > 0 ? (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setIsConsolidateModalOpen(false);
+                                  setSelectedPODetail(sum.linkedPOs[0]);
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-mono font-bold text-[10px] hover:underline cursor-pointer"
+                              >
+                                PO: {sum.poCodes.join(", ")} ↗
+                              </button>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-mono text-[10px]">
+                                Đã lập PO
+                              </span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Notes */}
               <div>

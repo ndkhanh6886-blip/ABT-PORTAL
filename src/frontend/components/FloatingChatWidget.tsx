@@ -14,7 +14,10 @@ import {
   ExternalLink,
   Users,
   Search,
-  Plus
+  Plus,
+  Pin,
+  FileText,
+  Image as ImageIcon
 } from "lucide-react";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { MainTab } from "@/frontend/components/Navbar";
@@ -39,40 +42,85 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
   const [activeChannelId, setActiveChannelId] = useState<number | null>(null);
   const [messages, setMessages] = useState<any[]>([]);
   const [inputText, setInputText] = useState("");
+  const [inputAttachments, setInputAttachments] = useState<Array<{ name: string; url: string; size?: number; type?: string }>>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const [filterType, setFilterType] = useState<"ALL" | "DIRECT" | "GROUP">("ALL");
   const [quickSearch, setQuickSearch] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentUserName = user?.name || (user as any)?.full_name || "Nhân viên TBRs";
   const currentUserRole = user?.role || "Thành viên";
   const currentUserDept = (user as any)?.department || "Kinh Doanh";
 
-  // Fetch Channels & Personnel on Open or when activeChannelId changes
+  const markChannelAsReadLocal = (channelId: number, lastMsgId?: number) => {
+    if (!channelId || typeof window === "undefined") return;
+    try {
+      localStorage.setItem(`chat_last_read_${channelId}_${currentUserName}`, new Date().toISOString());
+    } catch {}
+    setChannels(prev => prev.map(c => c.id === channelId ? { ...c, unread_count: 0 } : c));
+    fetch("/api/chat?action=mark_read", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channel_id: channelId, user: currentUserName, last_message_id: lastMsgId })
+    }).catch(() => {});
+  };
+
+  const getChannelUnreadCount = (c: any): number => {
+    if (!c) return 0;
+    if (isOpen && activeChannelId === c.id) return 0;
+    const apiUnread = Number(c.unread_count) || 0;
+    if (typeof window !== "undefined") {
+      try {
+        const lastReadIso = localStorage.getItem(`chat_last_read_${c.id}_${currentUserName}`);
+        if (lastReadIso && c.last_message_at) {
+          const lastReadTime = new Date(lastReadIso).getTime();
+          const lastMsgTime = new Date(c.last_message_at).getTime();
+          if (!isNaN(lastReadTime) && !isNaN(lastMsgTime) && lastReadTime >= lastMsgTime) {
+            return 0;
+          }
+          if (!isNaN(lastReadTime) && !isNaN(lastMsgTime) && lastMsgTime > lastReadTime && c.last_message_sender && c.last_message_sender !== currentUserName) {
+            return Math.max(apiUnread, 1);
+          }
+        }
+      } catch {}
+    }
+    return apiUnread;
+  };
+
+  const totalUnreadCount = channels.reduce((sum, c) => sum + getChannelUnreadCount(c), 0);
+
+  // Fetch Channels & Personnel on mount and poll every 6s even when closed so unread badge stays live
   useEffect(() => {
-    if (isOpen) {
+    const loadChannels = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       fetch(`/api/chat?action=channels&user=${encodeURIComponent(currentUserName)}`)
         .then(res => res.json())
         .then(data => {
           if (data.channels && data.channels.length > 0) {
             setChannels(data.channels);
             setPersonnel(data.personnel || []);
-            if (!activeChannelId) {
-              setActiveChannelId(data.channels[0].id);
-            }
+            setActiveChannelId(prev => prev || data.channels[0].id);
           }
         })
-        .catch(err => console.error(err));
-    }
-  }, [isOpen, currentUserName]);
+        .catch(() => {});
+    };
+    loadChannels();
+    const interval = setInterval(loadChannels, 6000);
+    return () => clearInterval(interval);
+  }, [currentUserName]);
 
   // Fetch Messages for active channel
   useEffect(() => {
     if (isOpen && activeChannelId) {
+      markChannelAsReadLocal(activeChannelId);
       fetch(`/api/chat?action=messages&channel_id=${activeChannelId}`)
         .then(res => res.json())
         .then(data => {
           if (data.messages) {
             setMessages(data.messages);
+            const lastMsg = data.messages[data.messages.length - 1];
+            if (lastMsg?.id) markChannelAsReadLocal(activeChannelId, lastMsg.id);
             setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
           }
         })
@@ -90,6 +138,8 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
         .then(data => {
           if (data.messages) {
             setMessages(data.messages);
+            const lastMsg = data.messages[data.messages.length - 1];
+            if (lastMsg?.id) markChannelAsReadLocal(activeChannelId, lastMsg.id);
           }
         })
         .catch(() => {});
@@ -97,22 +147,135 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
     return () => clearInterval(interval);
   }, [isOpen, activeChannelId]);
 
+  // Upload files / images with Base64 Data URL fallback so it never gets stuck
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Không thể đọc tệp"));
+      reader.readAsDataURL(file);
+    });
+
+  const handleUploadFiles = async (files: FileList | File[] | null) => {
+    if (!files) return;
+    const fileList = Array.isArray(files) ? files : Array.from(files);
+    if (fileList.length === 0) return;
+
+    setIsUploading(true);
+    try {
+      const uploaded: Array<{ name: string; url: string; size?: number; type?: string }> = [];
+      for (const file of fileList) {
+        let fileUrl = "";
+        let fileName = file.name;
+        let fileSize = file.size;
+        let fileType = file.type || "application/octet-stream";
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 10000);
+          const formData = new FormData();
+          formData.append("file", file);
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && (data.url || data.fileUrl)) {
+              fileUrl = data.url || data.fileUrl;
+              fileName = data.name || file.name;
+              fileSize = data.size || file.size;
+              fileType = data.type || file.type || fileType;
+            }
+          }
+        } catch {
+          // Fallback to base64 Data URL below
+        }
+
+        if (!fileUrl) {
+          fileUrl = await readFileAsDataUrl(file);
+        }
+
+        if (fileUrl) {
+          uploaded.push({
+            name: fileName,
+            url: fileUrl,
+            size: fileSize,
+            type: fileType
+          });
+        }
+      }
+      if (uploaded.length > 0) {
+        setInputAttachments(prev => [...prev, ...uploaded]);
+      }
+    } catch (err) {
+      console.error("Floating chat file upload error:", err);
+    } finally {
+      setIsUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const handlePaste = async (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items || items.length === 0) return;
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file) {
+          const ext = file.type.split("/")[1] || "png";
+          const timestamp = new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+          imageFiles.push(new File([file], `screenshot_${timestamp}_${i + 1}.${ext}`, { type: file.type }));
+        }
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      await handleUploadFiles(imageFiles);
+    }
+  };
+
+  const handleTogglePin = async (messageId: number) => {
+    if (!activeChannelId) return;
+    try {
+      const res = await fetch("/api/chat?action=toggle_pin", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message_id: messageId, channel_id: activeChannelId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMessages(prev => prev.map(m => m.id === messageId ? { ...m, is_pinned: data.is_pinned } : m));
+        setChannels(prev => prev.map(c => c.id === activeChannelId ? { ...c, pinned_messages: data.pinned_messages } : c));
+      }
+    } catch (e) {
+      console.error("Toggle pin error:", e);
+    }
+  };
+
   // Send message
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputText.trim() || !activeChannelId) return;
+    if ((!inputText.trim() && inputAttachments.length === 0) || !activeChannelId) return;
 
     const channel = channels.find(c => c.id === activeChannelId);
+    const cleanedText = inputText.replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim();
     const payload = {
       channel_id: activeChannelId,
       channel_code: channel?.channel_code || "",
       sender_name: currentUserName,
       sender_role: currentUserRole,
       sender_dept: currentUserDept,
-      content: inputText.trim()
+      content: cleanedText,
+      attachments: inputAttachments
     };
 
     setInputText("");
+    setInputAttachments([]);
     try {
       const res = await fetch("/api/chat?action=send_message", {
         method: "POST",
@@ -122,6 +285,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
       const data = await res.json();
       if (data.success && data.message) {
         setMessages(prev => [...prev, data.message]);
+        markChannelAsReadLocal(activeChannelId, data.message.id);
         setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 50);
       }
     } catch (e) {
@@ -210,10 +374,23 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
           type="button"
           onClick={() => setIsOpen(true)}
           className="w-11 h-11 lg:w-12 lg:h-12 rounded-2xl bg-gradient-to-tr from-indigo-600 via-indigo-700 to-purple-600 text-white flex items-center justify-center shadow-xl shadow-indigo-600/30 hover:scale-105 active:scale-95 transition-all cursor-pointer group relative"
-          title="Mở trò chuyện trao đổi công việc nhanh"
+          title={
+            totalUnreadCount > 0
+              ? `Bạn có ${totalUnreadCount} tin nhắn mới chưa đọc — Bấm để mở chat`
+              : "Mở trò chuyện trao đổi công việc nhanh"
+          }
         >
           <MessageSquare className="w-5 h-5 lg:w-5.5 lg:h-5.5" />
-          <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900 animate-pulse" />
+          {totalUnreadCount > 0 ? (
+            <>
+              <span className="absolute -top-1.5 -right-1.5 min-w-[20px] h-5 px-1 rounded-full bg-rose-600 text-white text-[10px] font-extrabold flex items-center justify-center border-2 border-white dark:border-slate-900 shadow-md z-10 animate-bounce">
+                {totalUnreadCount > 99 ? "99+" : totalUnreadCount}
+              </span>
+              <span className="absolute inset-0 rounded-2xl bg-rose-500/30 animate-ping pointer-events-none" />
+            </>
+          ) : (
+            <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-emerald-500 border-2 border-white dark:border-slate-900 animate-pulse" />
+          )}
         </button>
       )}
 
@@ -297,6 +474,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                   <div className="text-[10px] font-bold text-slate-400 px-1 uppercase">Kênh & Nhóm:</div>
                   {filteredChannels.map(c => {
                     const isActive = activeChannelId === c.id;
+                    const chUnread = getChannelUnreadCount(c);
                     return (
                       <button
                         key={c.id}
@@ -308,7 +486,14 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                         }`}
                       >
                         <span className="truncate">{getChannelDisplayName(c)}</span>
-                        {c.channel_type === "DIRECT" && <span className="text-[9px] opacity-75">1-1</span>}
+                        <div className="flex items-center gap-1 shrink-0">
+                          {chUnread > 0 && !isActive && (
+                            <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-extrabold flex items-center justify-center">
+                              {chUnread > 99 ? "99+" : chUnread}
+                            </span>
+                          )}
+                          {c.channel_type === "DIRECT" && <span className="text-[9px] opacity-75">1-1</span>}
+                        </div>
                       </button>
                     );
                   })}
@@ -344,19 +529,63 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
               {/* Channel Switcher Tabs in Compact mode */}
               {!isExpanded && (
                 <div className="px-2 py-1.5 bg-slate-50 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex gap-1 overflow-x-auto text-[11px] shrink-0">
-                  {channels.slice(0, 6).map(c => (
-                    <button
-                      key={c.id}
-                      onClick={() => setActiveChannelId(c.id)}
-                      className={`px-2 py-0.5 rounded-lg font-semibold truncate max-w-[110px] cursor-pointer ${
-                        activeChannelId === c.id
-                          ? "bg-indigo-600 text-white"
-                          : "text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
-                      }`}
-                    >
-                      {getChannelDisplayName(c)}
-                    </button>
-                  ))}
+                  {channels.slice(0, 6).map(c => {
+                    const chUnread = getChannelUnreadCount(c);
+                    return (
+                      <button
+                        key={c.id}
+                        onClick={() => setActiveChannelId(c.id)}
+                        className={`relative px-2 py-0.5 rounded-lg font-semibold truncate max-w-[120px] cursor-pointer flex items-center gap-1 ${
+                          activeChannelId === c.id
+                            ? "bg-indigo-600 text-white"
+                            : "text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-800"
+                        }`}
+                      >
+                        <span className="truncate">{getChannelDisplayName(c)}</span>
+                        {chUnread > 0 && activeChannelId !== c.id && (
+                          <span className="min-w-[15px] h-3.5 px-1 rounded-full bg-rose-600 text-white text-[9px] font-extrabold flex items-center justify-center shrink-0">
+                            {chUnread}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Pinned Messages Banner */}
+              {activeChannel?.pinned_messages && activeChannel.pinned_messages.length > 0 && (
+                <div className="px-2.5 py-1 bg-amber-50 dark:bg-amber-950/40 border-b border-amber-200 dark:border-amber-900/50 flex items-center justify-between gap-2 text-[11px] text-amber-900 dark:text-amber-200 shrink-0">
+                  <div
+                    onClick={() => {
+                      const lastPin = activeChannel.pinned_messages[activeChannel.pinned_messages.length - 1];
+                      if (lastPin?.id) {
+                        document.getElementById(`floating-msg-${lastPin.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+                      }
+                    }}
+                    className="flex items-center gap-1.5 truncate cursor-pointer hover:underline"
+                    title="Bấm để cuộn tới tin nhắn đã ghim"
+                  >
+                    <Pin className="w-3 h-3 text-amber-600 shrink-0" />
+                    <span className="font-bold shrink-0">📌 Ghim ({activeChannel.pinned_messages.length}):</span>
+                    <span className="truncate">
+                      {activeChannel.pinned_messages[activeChannel.pinned_messages.length - 1]?.sender_name
+                        ? `${activeChannel.pinned_messages[activeChannel.pinned_messages.length - 1].sender_name}: `
+                        : ""}
+                      {activeChannel.pinned_messages[activeChannel.pinned_messages.length - 1]?.content || "[Tệp đính kèm]"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const lastPin = activeChannel.pinned_messages[activeChannel.pinned_messages.length - 1];
+                      if (lastPin?.id) handleTogglePin(lastPin.id);
+                    }}
+                    className="text-amber-600 hover:text-rose-600 font-bold px-1 cursor-pointer shrink-0"
+                    title="Bỏ ghim tin nhắn này"
+                  >
+                    ×
+                  </button>
                 </div>
               )}
 
@@ -369,6 +598,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                   const prevDateStr = prevMsg ? formatVietnamDate(prevMsg.created_at) : null;
                   const isNewDay = !prevDateStr || currentDateStr !== prevDateStr;
                   const dateLabel = isNewDay && m.created_at ? getVietnamDateLabel(m.created_at) : "";
+                  const cleanedContent = String(m.content || "").replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim();
 
                   return (
                     <React.Fragment key={m.id || idx}>
@@ -380,7 +610,8 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                         </div>
                       )}
                       <div
-                        className={`flex flex-col ${isMe ? "items-end" : "items-start"}`}
+                        id={`floating-msg-${m.id}`}
+                        className={`flex flex-col group ${isMe ? "items-end" : "items-start"}`}
                       >
                         <div className="flex items-center gap-1 text-[10px] text-slate-400 mb-0.5 px-1">
                           <span className="font-bold">{isMe ? "Bạn" : m.sender_name}</span>
@@ -391,16 +622,61 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                           >
                             {formatVietnamTime(m.created_at)}
                           </span>
+                          {m.is_pinned && (
+                            <span className="text-[9px] font-bold text-amber-600 bg-amber-100 dark:bg-amber-950/60 px-1 rounded">
+                              📌 Đã ghim
+                            </span>
+                          )}
+                          {m.id && (
+                            <button
+                              type="button"
+                              onClick={() => handleTogglePin(m.id)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity text-[9px] font-semibold text-slate-400 hover:text-amber-600 px-1 cursor-pointer"
+                              title={m.is_pinned ? "Bỏ ghim tin nhắn" : "Ghim tin nhắn"}
+                            >
+                              📌 {m.is_pinned ? "Bỏ ghim" : "Ghim"}
+                            </button>
+                          )}
                         </div>
-                        <div
-                          className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-relaxed whitespace-pre-line shadow-2xs ${
-                            isMe
-                              ? "bg-indigo-600 text-white rounded-br-xs"
-                              : "bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-xs border border-slate-200/80 dark:border-slate-700"
-                          }`}
-                        >
-                          {m.content}
-                        </div>
+                        {cleanedContent && (
+                          <div
+                            className={`p-2.5 rounded-2xl max-w-[85%] text-xs leading-relaxed whitespace-pre-line shadow-2xs ${
+                              isMe
+                                ? "bg-indigo-600 text-white rounded-br-xs"
+                                : "bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-200 rounded-bl-xs border border-slate-200/80 dark:border-slate-700"
+                            }`}
+                          >
+                            {cleanedContent}
+                          </div>
+                        )}
+                        {Array.isArray(m.attachments) && m.attachments.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1.5 max-w-[85%]">
+                            {m.attachments.map((att: any, aIdx: number) => {
+                              const isImg = att.type?.startsWith("image/") || /\.(png|jpe?g|webp|gif)$/i.test(att.name || "");
+                              return isImg ? (
+                                <a key={aIdx} href={att.url} target="_blank" rel="noreferrer" className="block">
+                                  <img
+                                    src={att.url}
+                                    alt={att.name || "image"}
+                                    className="w-24 h-20 object-cover rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs hover:opacity-90"
+                                  />
+                                </a>
+                              ) : (
+                                <a
+                                  key={aIdx}
+                                  href={att.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  download={att.name}
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400"
+                                >
+                                  <FileText className="w-3 h-3 shrink-0" />
+                                  <span className="truncate max-w-[120px]">{att.name || "Tệp đính kèm"}</span>
+                                </a>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     </React.Fragment>
                   );
@@ -408,18 +684,57 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
                 <div ref={messagesEndRef} />
               </div>
 
+              {/* Attachment Preview & Upload Indicator */}
+              {inputAttachments.length > 0 && (
+                <div className="px-2.5 py-1.5 bg-slate-50 dark:bg-slate-950 border-t border-slate-200 dark:border-slate-800 flex flex-wrap gap-1.5 max-h-24 overflow-y-auto shrink-0">
+                  {inputAttachments.map((att, idx) => (
+                    <div key={idx} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[10px]">
+                      <span className="truncate max-w-[110px] font-semibold text-slate-700 dark:text-slate-200">{att.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setInputAttachments(prev => prev.filter((_, i) => i !== idx))}
+                        className="text-rose-500 hover:text-rose-700 font-bold cursor-pointer"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {isUploading && (
+                <div className="px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 text-[10px] font-semibold border-t border-indigo-200 dark:border-indigo-900/50 shrink-0">
+                  ⏳ Đang đính kèm tệp/hình ảnh...
+                </div>
+              )}
+
               {/* Mini Input Box */}
               <form onSubmit={handleSendMessage} className="p-2 border-t border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center gap-1.5 shrink-0">
+                <input
+                  type="file"
+                  multiple
+                  ref={fileInputRef}
+                  onChange={(e) => handleUploadFiles(e.target.files)}
+                  className="hidden"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="p-1.5 rounded-xl text-slate-500 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer shrink-0"
+                  title="Đính kèm hình ảnh hoặc tệp tài liệu"
+                >
+                  <Paperclip className="w-3.5 h-3.5" />
+                </button>
                 <input
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  placeholder={`Nhắn tin tới ${activeChannel ? getChannelDisplayName(activeChannel) : ""}...`}
+                  onPaste={handlePaste}
+                  placeholder={`Nhắn tin tới ${activeChannel ? getChannelDisplayName(activeChannel) : ""}... (Ctrl+V dán ảnh)`}
                   className="flex-1 px-3 py-1.5 rounded-xl text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 text-slate-800 dark:text-slate-200 focus:outline-hidden focus:ring-1 focus:ring-indigo-500"
                 />
                 <button
                   type="submit"
-                  disabled={!inputText.trim()}
+                  disabled={!inputText.trim() && inputAttachments.length === 0}
                   className="p-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50 transition-colors cursor-pointer shrink-0"
                 >
                   <Send className="w-3.5 h-3.5" />

@@ -35,6 +35,7 @@ async function ensureSupplierShortName() {
   if (supplierShortNameEnsured) return;
   try {
     await query("ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS short_name VARCHAR(100)");
+    await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50)");
     await query(`
       UPDATE procurement_suppliers SET short_name = 'Phù Sa' WHERE supplier_code = 'NCC0021' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Hoàng Kim' WHERE supplier_code = 'NCC0022' AND (short_name IS NULL OR short_name = '');
@@ -49,7 +50,106 @@ async function ensureSupplierShortName() {
       UPDATE procurement_suppliers SET short_name = 'Bio Basic' WHERE name ILIKE '%Bio Basic%' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'ABT' WHERE (name ILIKE '%ABT%' OR name ILIKE '%LONG HẬU%') AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'TBR' WHERE name ILIKE '%TBR%' AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'Meridian' WHERE (name ILIKE '%Meridian%' OR name ILIKE '%Bioline%') AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'Liferiver' WHERE (name ILIKE '%Liferiver%' OR name ILIKE '%Shanghai ZJ%') AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'SSI' WHERE name ILIKE '%SSI%' AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'Rollmed' WHERE name ILIKE '%Rollmed%' AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'HiMedia' WHERE name ILIKE '%HiMedia%' AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'Biolabs' WHERE (name ILIKE '%Biolabs%' OR name ILIKE '%NEB%') AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'Jet Biofil' WHERE name ILIKE '%Biofil%' AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'Biologix' WHERE name ILIKE '%Biologix%' AND (short_name IS NULL OR short_name = '');
     `);
+
+    const seedIntlSuppliers = [
+      {
+        code: "NCC-MERIDIAN",
+        name: "Meridian Bioscience Inc. (Bioline)",
+        short_name: "Meridian",
+        contact: "International Sales Dept",
+        phone: "+1-513-271-3700",
+        email: "info@meridianbioscience.com",
+        address: "Cincinnati, Ohio, USA / London, UK",
+        lines: "Nguyên liệu sinh phẩm chẩn đoán, Kháng nguyên, Kháng thể, Enzyme PCR / qPCR (Bioline)",
+        terms: "T/T 100% hoặc Công nợ 30 ngày",
+        match: "%meridian%"
+      },
+      {
+        code: "NCC-LIFERIVER",
+        name: "Shanghai ZJ Bio-Tech Co., Ltd (Liferiver)",
+        short_name: "Liferiver",
+        contact: "Export Division",
+        phone: "+86-21-34680596",
+        email: "export@liferiver.com.cn",
+        address: "Shanghai, China",
+        lines: "Kit Real-time PCR chẩn đoán IVD (HD-, RD-, ZJ-, OD-...)",
+        terms: "T/T trước khi giao hàng",
+        match: "%liferiver%"
+      },
+      {
+        code: "NCC-SSI",
+        name: "SSI Diagnostica A/S",
+        short_name: "SSI",
+        contact: "Nordic & Global Export",
+        phone: "+45-4829-9100",
+        email: "info@ssidiagnostica.com",
+        address: "Herredsvejen 2, 3400 Hillerød, Denmark",
+        lines: "Kháng huyết thanh định nhóm vi khuẩn, Môi trường & Sinh phẩm vi sinh (1110-00...)",
+        terms: "T/T 30 ngày",
+        match: "%ssi%"
+      },
+      {
+        code: "NCC-ROLLMED",
+        name: "Rollmed Co., Ltd",
+        short_name: "Rollmed",
+        contact: "Overseas Sales",
+        phone: "+86-512-6586-0000",
+        email: "sales@rollmed.com",
+        address: "Suzhou, Jiangsu, China",
+        lines: "Vật tư tiêu hao phòng Lab, Đầu côn, Ống nghiệm, Đĩa PCR",
+        terms: "T/T 30 ngày",
+        match: "%rollmed%"
+      },
+      {
+        code: "NCC-HIMEDIA",
+        name: "HiMedia Laboratories Pvt. Ltd.",
+        short_name: "HiMedia",
+        contact: "International Operations",
+        phone: "+91-22-6147-1919",
+        email: "info@himedialabs.com",
+        address: "Mumbai, Maharashtra, India",
+        lines: "Môi trường nuôi cấy vi sinh, Đĩa kháng sinh đồ & Hóa chất (KB..., M..., RM...)",
+        terms: "T/T hoặc Công nợ 30 ngày",
+        match: "%himedia%"
+      },
+      {
+        code: "NCC-NEB",
+        name: "New England Biolabs (NEB)",
+        short_name: "Biolabs",
+        contact: "International Distributors Support",
+        phone: "+1-978-927-5054",
+        email: "info@neb.com",
+        address: "Ipswich, MA, USA",
+        lines: "Enzyme giới hạn, Polymerase, Sinh phẩm sinh học phân tử (Biolabs)",
+        terms: "T/T 30 ngày",
+        match: "%biolabs%"
+      }
+    ];
+
+    for (const s of seedIntlSuppliers) {
+      const ex = await query(
+        "SELECT id FROM procurement_suppliers WHERE name ILIKE $1 OR COALESCE(short_name, '') ILIKE $1 OR supplier_code = $2 LIMIT 1",
+        [s.match, s.code]
+      );
+      if (ex.rows.length === 0) {
+        await query(
+          `INSERT INTO procurement_suppliers (supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 5)
+           ON CONFLICT (supplier_code) DO NOTHING`,
+          [s.code, s.name, s.short_name, s.contact, s.phone, s.email, s.address, s.lines, s.terms]
+        );
+      }
+    }
+
     supplierShortNameEnsured = true;
   } catch (e: any) {
     console.warn("ensureSupplierShortName warning:", e?.message);
@@ -170,7 +270,7 @@ export async function GET(req: NextRequest) {
         }
       };
 
-      const [suppliersRes, ordersRes, productsRes, inventoryRes, prRes, inventoryItemsRes, reservationsRes, customersRes, supplierProductCountsRes] = await Promise.all([
+      const [suppliersRes, ordersRes, productsRes, inventoryRes, prRes, inventoryItemsRes, reservationsRes, customersRes, supplierProductCountsRes, catalogItemsRes, allSupplierProductsRes] = await Promise.all([
         safeQuery("SELECT * FROM procurement_suppliers ORDER BY supplier_code ASC, id ASC"),
         safeQuery("SELECT * FROM procurement_orders ORDER BY id DESC"),
         safeQuery("SELECT * FROM products ORDER BY code ASC"),
@@ -184,25 +284,141 @@ export async function GET(req: NextRequest) {
         `),
         safeQuery(`
           SELECT * FROM workflow_requests
-          WHERE workflow_code LIKE 'PR%' OR workflow_type ILIKE '%PROCUREMENT%' OR workflow_type = 'PURCHASE_REQUEST'
+          WHERE workflow_code LIKE 'PR%' OR workflow_code ILIKE '%PR-%' OR workflow_type ILIKE '%PROCUREMENT%' OR workflow_type = 'PURCHASE_REQUEST' OR target_dept ILIKE '%Cung%'
           ORDER BY id DESC
         `),
         safeQuery(`
-          SELECT id, product_code, product_name, quantity_on_hand, 
-                 COALESCE(quantity_allocated, 0) as quantity_reserved, 
-                 COALESCE(quantity_on_hand - COALESCE(quantity_allocated, 0), 0) as quantity_available, 
-                 lot_number, warehouse_location 
-          FROM inventory_items ORDER BY id ASC
+          SELECT i.id, i.product_code, i.product_name, i.quantity_on_hand, 
+                 COALESCE(i.quantity_allocated, 0) as quantity_reserved, 
+                 COALESCE(i.quantity_on_hand - COALESCE(i.quantity_allocated, 0), 0) as quantity_available, 
+                 i.lot_number, i.warehouse_location, i.expiry_date,
+                 p.unit, p.manufacturer, p.cost_price, p.min_stock_level
+          FROM inventory_items i
+          LEFT JOIN products p ON i.product_code = p.code
+          ORDER BY i.id ASC
         `),
         safeQuery("SELECT * FROM inventory_reservations WHERE status = 'ACTIVE' OR status IS NULL ORDER BY id DESC"),
         safeQuery("SELECT id, customer_code, name, contact_person, phone, email, address FROM sales_customers ORDER BY name ASC"),
-        safeQuery("SELECT supplier_id, COUNT(*) as product_count FROM supplier_products GROUP BY supplier_id")
+        safeQuery("SELECT supplier_id, COUNT(*) as product_count FROM supplier_products GROUP BY supplier_id"),
+        safeQuery("SELECT code, data FROM catalog_items ORDER BY sort_order ASC, code ASC"),
+        safeQuery(`
+          SELECT sp.*, ps.name as supplier_name, ps.short_name as supplier_short_name, ps.supplier_code
+          FROM supplier_products sp
+          LEFT JOIN procurement_suppliers ps ON ps.id = sp.supplier_id
+          ORDER BY sp.last_updated_at DESC, sp.id DESC
+        `)
       ]);
 
       const suppliers = suppliersRes.rows;
       const orders = ordersRes.rows;
-      const products = allowCost ? productsRes.rows : stripCostFields(productsRes.rows);
-      const restockAlerts = allowCost ? inventoryRes.rows : stripCostFields(inventoryRes.rows);
+      const allSupplierProductsRaw = allSupplierProductsRes.rows || [];
+
+      // Build lookup maps from catalog_items and supplier_products to enrich products & restock alerts
+      const catalogMap = new Map<string, any>();
+      for (const row of (catalogItemsRes.rows || [])) {
+        const d = (row.data && typeof row.data === "object") ? row.data : {};
+        const c = String(row.code || d.code || "").trim();
+        if (c) catalogMap.set(c.toUpperCase(), { code: c, ...d });
+      }
+
+      const supplierProductByCode = new Map<string, any>();
+      for (const sp of allSupplierProductsRaw) {
+        const c = String(sp.product_code || "").trim().toUpperCase();
+        if (c && !supplierProductByCode.has(c)) {
+          supplierProductByCode.set(c, sp);
+        }
+      }
+
+      const mergedProductsMap = new Map<string, any>();
+      for (const p of (productsRes.rows || [])) {
+        const codeKey = String(p.code || "").trim().toUpperCase();
+        if (!codeKey) continue;
+        const cat = catalogMap.get(codeKey);
+        const sp = supplierProductByCode.get(codeKey);
+        const costPrice = parseFloat(p.cost_price) || parseFloat(sp?.purchase_price) || parseFloat(cat?.costPrice) || 0;
+        mergedProductsMap.set(codeKey, {
+          ...p,
+          parent_code: p.parent_code || cat?.parentCode || "",
+          brand: p.brand || cat?.brand || p.manufacturer || "",
+          manufacturer: p.manufacturer || cat?.brand || sp?.supplier_short_name || sp?.supplier_name || "",
+          supplier_id: p.supplier_id || sp?.supplier_id || null,
+          supplier_name: p.supplier_name || sp?.supplier_name || cat?.supplierName || p.manufacturer || cat?.brand || "",
+          specification: p.specification || p.packaging_spec || cat?.packaging || sp?.specification || "",
+          unit: p.unit || cat?.unit || sp?.unit || "Hộp",
+          cost_price: costPrice,
+        });
+      }
+
+      // Include all catalog_items (e.g. Liferiver HD-..., Meridian, SSI, Rollmed, HiMedia, Biolabs) not yet in products table
+      for (const [codeKey, cat] of catalogMap.entries()) {
+        if (!mergedProductsMap.has(codeKey)) {
+          const sp = supplierProductByCode.get(codeKey);
+          const costPrice = parseFloat(sp?.purchase_price) || parseFloat(cat.costPrice) || 0;
+          mergedProductsMap.set(codeKey, {
+            id: `cat-${cat.code}`,
+            code: cat.code,
+            parent_code: cat.parentCode || "",
+            name: cat.name || cat.code,
+            category: cat.category || "Sinh phẩm chẩn đoán",
+            unit: cat.unit || sp?.unit || "Hộp",
+            specification: cat.packaging || sp?.specification || "",
+            packaging_spec: cat.packaging || sp?.specification || "",
+            brand: cat.brand || "",
+            manufacturer: cat.brand || cat.supplierName || sp?.supplier_short_name || sp?.supplier_name || "",
+            supplier_id: sp?.supplier_id || null,
+            supplier_name: sp?.supplier_name || cat.supplierName || cat.brand || "",
+            origin: cat.origin || "",
+            cost_price: costPrice,
+            standard_price: parseFloat(cat.unitPrice) || costPrice,
+            min_stock_level: 5
+          });
+        }
+      }
+
+      // Also include any supplier_products not yet in mergedProductsMap
+      for (const sp of allSupplierProductsRaw) {
+        const codeKey = String(sp.product_code || "").trim().toUpperCase();
+        if (codeKey && !mergedProductsMap.has(codeKey)) {
+          const costPrice = parseFloat(sp.purchase_price) || 0;
+          mergedProductsMap.set(codeKey, {
+            id: `sp-${sp.id}`,
+            code: sp.product_code,
+            parent_code: "",
+            name: sp.product_name || sp.product_code,
+            category: "Danh mục Nhà cung cấp",
+            unit: sp.unit || "Hộp",
+            specification: sp.specification || "",
+            packaging_spec: sp.specification || "",
+            brand: sp.supplier_short_name || sp.supplier_name || "",
+            manufacturer: sp.supplier_short_name || sp.supplier_name || "",
+            supplier_id: sp.supplier_id || null,
+            supplier_name: sp.supplier_name || "",
+            cost_price: costPrice,
+            standard_price: costPrice,
+            min_stock_level: 5
+          });
+        }
+      }
+
+      const mergedProductsList = Array.from(mergedProductsMap.values());
+      const enrichedRestockRows = (inventoryRes.rows || []).map((r: any) => {
+        const codeKey = String(r.product_code || "").trim().toUpperCase();
+        const mp = mergedProductsMap.get(codeKey);
+        const sp = supplierProductByCode.get(codeKey);
+        const costPrice = parseFloat(r.cost_price) || parseFloat(sp?.purchase_price) || parseFloat(mp?.cost_price) || 0;
+        return {
+          ...r,
+          cost_price: costPrice,
+          manufacturer: r.manufacturer || mp?.manufacturer || mp?.brand || sp?.supplier_short_name || sp?.supplier_name || "",
+          brand: mp?.brand || r.manufacturer || "",
+          supplier_id: sp?.supplier_id || mp?.supplier_id || null,
+          supplier_name: sp?.supplier_name || mp?.supplier_name || r.manufacturer || mp?.brand || ""
+        };
+      });
+
+      const products = allowCost ? mergedProductsList : stripCostFields(mergedProductsList);
+      const restockAlerts = allowCost ? enrichedRestockRows : stripCostFields(enrichedRestockRows);
+      const allSupplierProducts = allowCost ? allSupplierProductsRaw : stripCostFields(allSupplierProductsRaw);
       const purchaseRequests = prRes.rows.map((pr: any) => {
         const isStock = Boolean(
           (pr.workflow_code && pr.workflow_code.includes("STOCK")) ||
@@ -249,8 +465,18 @@ export async function GET(req: NextRequest) {
       // Calculate global procurement metrics
       const liveOrders = orders.filter((o: any) => o.status !== "CANCELLED");
       const totalSpend = liveOrders.reduce((acc: number, o: any) => acc + (parseFloat(o.total_amount) || 0), 0);
-      const totalPaid = liveOrders.reduce((acc: number, o: any) => acc + (parseFloat(o.amount_amount || o.amount_paid) || 0), 0);
-      const totalPayable = Math.max(0, totalSpend - totalPaid);
+      const totalPaid = liveOrders.reduce((acc: number, o: any) => {
+        if (String(o.payment_status || "").toUpperCase() === "PAID") {
+          return acc + (parseFloat(o.total_amount) || 0);
+        }
+        return acc + (parseFloat(o.amount_amount || o.amount_paid) || 0);
+      }, 0);
+      const totalPayable = liveOrders.reduce((acc: number, o: any) => {
+        if (String(o.payment_status || "").toUpperCase() === "PAID") return acc;
+        const tot = parseFloat(o.total_amount) || 0;
+        const paid = parseFloat(o.amount_amount || o.amount_paid) || 0;
+        return acc + Math.max(0, tot - paid);
+      }, 0);
       const activeOrders = orders.filter((o: any) => o.status !== "COMPLETED" && o.status !== "CANCELLED").length;
       const pendingPRs = purchaseRequests.filter((pr: any) => pr.status === "PENDING" || pr.status === "APPROVED").length;
 
@@ -258,6 +484,7 @@ export async function GET(req: NextRequest) {
         suppliers: suppliersWithStats,
         orders,
         products,
+        all_supplier_products: allSupplierProducts,
         restock_alerts: restockAlerts,
         purchase_requests: purchaseRequests,
         inventory_items: inventoryItems,
@@ -756,9 +983,10 @@ export async function POST(req: NextRequest) {
 
         if (targetId) {
           const PO_STATUS_HIERARCHY: Record<string, number> = {
-            "DRAFT": 0, "PENDING": 1, "APPROVED": 2, "CONFIRMED": 2, "ORDERED": 2,
-            "SHIPPED": 3, "AT_CUSTOMS": 4, "CUSTOMS_CLEARING": 5,
-            "DELIVERED": 6, "RECEIVED": 6, "PARTIAL_RECEIVED": 6, "PARTIALLY_RECEIVED": 6, "COMPLETED": 7, "CANCELLED": 99
+            "DRAFT": 0, "PENDING": 1, "APPROVED": 2, "CONFIRMED": 2, "ORDERED": 3,
+            "PRODUCED": 4, "SHIPPED": 5, "SHIPPING": 5, "IN_TRANSIT": 5,
+            "AT_CUSTOMS": 6, "ARRIVED_CUSTOMS": 6, "CUSTOMS_CLEARING": 7, "CUSTOMS_CLEARANCE": 7,
+            "DELIVERED": 8, "RECEIVED": 8, "PARTIAL_RECEIVED": 8, "PARTIALLY_RECEIVED": 8, "COMPLETED": 9, "CANCELLED": 99
           };
           const existingRes = await c.query("SELECT id, status, version, po_code, items, received_qty FROM procurement_orders WHERE id = $1 FOR UPDATE", [targetId]);
           if (existingRes.rows.length === 0) {
@@ -768,13 +996,14 @@ export async function POST(req: NextRequest) {
           finalPoCode = existing.po_code;
           const existingUpper = String(existing.status || "").toUpperCase();
 
-          if (["COMPLETED", "CANCELLED"].includes(existingUpper)) {
+          if (["COMPLETED", "CANCELLED"].includes(existingUpper) && !force_rollback) {
             throw new HttpError(409, `Đơn PO đã ở trạng thái "${existing.status}", không thể chỉnh sửa!`);
           }
           if (
             ["RECEIVED", "PARTIAL_RECEIVED", "PARTIALLY_RECEIVED", "DELIVERED"].includes(existingUpper) &&
             status &&
-            ["DRAFT", "PENDING", "APPROVED", "CONFIRMED", "ORDERED", "CANCELLED"].includes(String(status).toUpperCase())
+            ["DRAFT", "PENDING", "APPROVED", "CONFIRMED", "ORDERED", "PRODUCED", "CANCELLED"].includes(String(status).toUpperCase()) &&
+            !force_rollback
           ) {
             throw new HttpError(409, `Đơn PO đã nhập kho ("${existing.status}"), không thể chuyển ngược về "${status}" hoặc hủy!`);
           }
@@ -784,10 +1013,6 @@ export async function POST(req: NextRequest) {
           }
 
           let safeStatus = status || existing.status || "PENDING";
-          // COMPLETED / PARTIALLY_RECEIVED chỉ được đặt bởi nghiệp vụ nhập kho (receive_to_inventory), nếu không tồn kho sẽ không được cộng
-          if (["COMPLETED", "PARTIALLY_RECEIVED", "PARTIAL_RECEIVED", "RECEIVED"].includes(String(safeStatus).toUpperCase()) && String(safeStatus).toUpperCase() !== existingUpper) {
-            safeStatus = existing.status;
-          }
           if (["PARTIALLY_RECEIVED", "PARTIAL_RECEIVED"].includes(existingUpper) && Array.isArray(items)) {
             const rq = existing.received_qty || {};
             const oldItems: any[] = Array.isArray(existing.items) ? existing.items : [];
@@ -802,11 +1027,11 @@ export async function POST(req: NextRequest) {
               }
             }
           }
-          // Duyệt / xác nhận đơn PO cần quyền phê duyệt
+          // Duyệt / xác nhận đơn PO cần quyền phê duyệt hoặc quyền ghi Cung ứng
           {
             const curLvl = PO_STATUS_HIERARCHY[existingUpper] ?? 0;
             const reqLvl = PO_STATUS_HIERARCHY[String(safeStatus).toUpperCase()] ?? 0;
-            if (curLvl < 2 && reqLvl >= 2 && reqLvl !== 99 && !canApprovePO(me)) safeStatus = existing.status;
+            if (curLvl < 2 && reqLvl >= 2 && reqLvl !== 99 && !canApprovePO(me) && !canWriteProcurement(me)) safeStatus = existing.status;
           }
           if (!force_rollback) {
             const currLvl = PO_STATUS_HIERARCHY[existingUpper] ?? 0;
@@ -843,11 +1068,9 @@ export async function POST(req: NextRequest) {
           });
           finalPoCode = code;
 
-          // Đơn mới không được tạo thẳng ở trạng thái đã nhập kho (tồn kho chưa được cộng), và chỉ người có quyền
-          // duyệt PO mới tạo thẳng ở trạng thái đã xác nhận / đã đặt hàng
           let createStatus = String(status || "PENDING").toUpperCase();
           if (["COMPLETED", "PARTIALLY_RECEIVED", "PARTIAL_RECEIVED", "RECEIVED"].includes(createStatus)) createStatus = "PENDING";
-          if (["APPROVED", "CONFIRMED", "ORDERED", "SHIPPED", "AT_CUSTOMS", "CUSTOMS_CLEARING"].includes(createStatus) && !canApprovePO(me)) createStatus = "PENDING";
+          if (["APPROVED", "CONFIRMED", "ORDERED", "PRODUCED", "SHIPPED", "SHIPPING", "IN_TRANSIT", "AT_CUSTOMS", "ARRIVED_CUSTOMS", "CUSTOMS_CLEARING", "CUSTOMS_CLEARANCE"].includes(createStatus) && !canApprovePO(me) && !canWriteProcurement(me)) createStatus = "PENDING";
           const ins = await c.query(
             `INSERT INTO procurement_orders (po_code, supplier_id, supplier_name, order_date, expected_delivery_date, items, total_amount, amount_paid, status, notes, version)
              VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9, 1) RETURNING id, version`,
@@ -1041,29 +1264,31 @@ export async function POST(req: NextRequest) {
     // 5. Update PO Status with FSM Protection (M3 & L2)
     if (action === "update_order_status") {
       const { id, po_code, status, expected_delivery_date, force_rollback, rollback_reason } = body;
-      if (["COMPLETED", "PARTIALLY_RECEIVED", "PARTIAL_RECEIVED", "RECEIVED"].includes(status?.toUpperCase())) {
-        throw new HttpError(400, "Trạng thái nhập kho chỉ được cập nhật qua nút 'Nhập kho' (nhập số lô, HSD, số lượng thực nhận).");
-      }
 
       const PO_STATUS_HIERARCHY: Record<string, number> = {
         "DRAFT": 0,
         "PENDING": 1,
         "APPROVED": 2,
         "CONFIRMED": 2,
-        "ORDERED": 2,
-        "SHIPPED": 3,
-        "AT_CUSTOMS": 4,
-        "CUSTOMS_CLEARING": 5,
-        "DELIVERED": 6,
-        "RECEIVED": 6,
-        "PARTIAL_RECEIVED": 6,
-        "PARTIALLY_RECEIVED": 6,
-        "COMPLETED": 7,
+        "ORDERED": 3,
+        "PRODUCED": 4,
+        "SHIPPED": 5,
+        "SHIPPING": 5,
+        "IN_TRANSIT": 5,
+        "AT_CUSTOMS": 6,
+        "ARRIVED_CUSTOMS": 6,
+        "CUSTOMS_CLEARING": 7,
+        "CUSTOMS_CLEARANCE": 7,
+        "DELIVERED": 8,
+        "RECEIVED": 8,
+        "PARTIAL_RECEIVED": 8,
+        "PARTIALLY_RECEIVED": 8,
+        "COMPLETED": 9,
         "CANCELLED": 99
       };
 
       await withTransaction(async (c) => {
-        const existingRes = await c.query("SELECT id, status FROM procurement_orders WHERE id = $1 FOR UPDATE", [id]);
+        const existingRes = await c.query("SELECT id, status, inbound_transaction_code FROM procurement_orders WHERE id = $1 FOR UPDATE", [id]);
         if (existingRes.rows.length === 0) {
           throw new HttpError(404, "Không tìm thấy đơn PO");
         }
@@ -1071,20 +1296,18 @@ export async function POST(req: NextRequest) {
         const existingUpper = String(existing.status || "").toUpperCase();
         const targetUpper = String(status || "").toUpperCase();
         if (
+          existing.inbound_transaction_code &&
           ["RECEIVED", "PARTIAL_RECEIVED", "PARTIALLY_RECEIVED", "DELIVERED", "COMPLETED"].includes(existingUpper) &&
-          ["DRAFT", "PENDING", "APPROVED", "CONFIRMED", "ORDERED", "CANCELLED"].includes(targetUpper)
+          ["DRAFT", "PENDING", "APPROVED", "CONFIRMED", "ORDERED", "PRODUCED", "CANCELLED"].includes(targetUpper) &&
+          !force_rollback
         ) {
-          throw new HttpError(409, `Đơn PO đã nhập kho ("${existing.status}"), không thể chuyển ngược về "${status}" hoặc hủy!`);
+          throw new HttpError(409, `Đơn PO đã có phiếu nhập kho ("${existing.inbound_transaction_code}"), không thể chuyển ngược về "${status}" hoặc hủy!`);
         }
 
         const currLvl = PO_STATUS_HIERARCHY[existingUpper] ?? 0;
         const nextLvl = PO_STATUS_HIERARCHY[targetUpper] ?? 0;
-        if (currLvl < 2 && nextLvl >= 2 && nextLvl !== 99 && !canApprovePO(me)) {
-          throw new HttpError(403, "Chỉ Trưởng bộ phận Cung ứng / Ban Giám Đốc mới được duyệt (xác nhận) đơn PO.");
-        }
-
-        if (!force_rollback && nextLvl < currLvl && targetUpper !== "CANCELLED") {
-          throw new HttpError(400, `[Bảo vệ tiến trình PO]: Đơn mua hàng đã ở trạng thái "${existing.status}". Không thể lùi bước về "${status}"!`);
+        if (currLvl < 2 && nextLvl >= 2 && nextLvl !== 99 && !canApprovePO(me) && !canWriteProcurement(me)) {
+          throw new HttpError(403, "Bạn không có quyền xác nhận hoặc cập nhật tiến trình đơn PO.");
         }
 
         if (expected_delivery_date) {
@@ -1102,6 +1325,62 @@ export async function POST(req: NextRequest) {
 
       await logAudit("UPDATE_STATUS", "PROCUREMENT", `Cập nhật trạng thái đơn PO ${po_code || id} thành ${status}${force_rollback ? ` [ROLLBACK: ${rollback_reason}]` : ''}`);
       return NextResponse.json({ success: true });
+    }
+
+    // 5a. Update PO Payment Status (Interactive Payment Status badge on PO table - Requirement 6 / 4d)
+    if (action === "update_payment_status") {
+      if (!canWriteProcurement(me) && !canRecordSupplierPayment(me)) {
+        return forbiddenResponse("Bạn không có quyền cập nhật trạng thái thanh toán của PO.");
+      }
+      const poId = Number(body.id || body.po_id);
+      const poCode = String(body.po_code || "").trim();
+      const rawPayStatus = String(body.payment_status || "UNPAID").trim().toUpperCase();
+      const validPayStatuses = new Set(["UNPAID", "PAYMENT_REQUESTED", "PARTIAL_PAID", "PAID"]);
+      const nextPayStatus = validPayStatuses.has(rawPayStatus) ? rawPayStatus : "UNPAID";
+
+      await ensureSupplierShortName();
+      const updated = await withTransaction(async (c) => {
+        const poRes = await c.query(
+          "SELECT id, po_code, total_amount, amount_paid, payment_status FROM procurement_orders WHERE ($1::int > 0 AND id = $1) OR ($2 <> '' AND po_code = $2) FOR UPDATE",
+          [Number.isInteger(poId) && poId > 0 ? poId : 0, poCode]
+        );
+        if (poRes.rows.length === 0) {
+          throw new HttpError(404, "Không tìm thấy đơn PO để cập nhật trạng thái thanh toán");
+        }
+        const po = poRes.rows[0];
+        const totalAmt = parseFloat(po.total_amount) || 0;
+        const currPaid = parseFloat(po.amount_paid) || 0;
+        let nextAmountPaid = currPaid;
+
+        if (nextPayStatus === "PAID") {
+          nextAmountPaid = Math.max(currPaid, totalAmt);
+        } else if (nextPayStatus === "UNPAID") {
+          const payLedger = await c.query(
+            "SELECT COALESCE(SUM(amount), 0) AS ledger_paid FROM procurement_payments WHERE po_id = $1 AND voided_at IS NULL",
+            [po.id]
+          );
+          const ledgerPaid = parseFloat(payLedger.rows[0]?.ledger_paid) || 0;
+          nextAmountPaid = ledgerPaid > 0 ? ledgerPaid : 0;
+        } else if (nextPayStatus === "PARTIAL_PAID" && currPaid >= totalAmt && totalAmt > 0) {
+          nextAmountPaid = Math.round(totalAmt * 0.5);
+        } else if (nextPayStatus === "PAYMENT_REQUESTED" && currPaid >= totalAmt && totalAmt > 0) {
+          const payLedger = await c.query(
+            "SELECT COALESCE(SUM(amount), 0) AS ledger_paid FROM procurement_payments WHERE po_id = $1 AND voided_at IS NULL",
+            [po.id]
+          );
+          const ledgerPaid = parseFloat(payLedger.rows[0]?.ledger_paid) || 0;
+          nextAmountPaid = ledgerPaid < totalAmt ? ledgerPaid : 0;
+        }
+
+        await c.query(
+          "UPDATE procurement_orders SET payment_status = $1, amount_paid = $2, version = COALESCE(version, 0) + 1 WHERE id = $3",
+          [nextPayStatus, nextAmountPaid, po.id]
+        );
+        return { id: po.id, po_code: po.po_code, payment_status: nextPayStatus, amount_paid: nextAmountPaid };
+      });
+
+      await logAudit("UPDATE_PAYMENT_STATUS", "PROCUREMENT", `Cập nhật trạng thái thanh toán PO ${updated.po_code} thành ${updated.payment_status}`);
+      return NextResponse.json({ success: true, ...updated });
     }
 
     // 5b. Update Delivery Date
@@ -1362,7 +1641,7 @@ export async function POST(req: NextRequest) {
 
         const targetWarehouse = String(warehouse_name || "Kho Trung Tâm").trim() || "Kho Trung Tâm";
         const effectiveDate = receipt_date && /^\d{4}-\d{2}-\d{2}$/.test(String(receipt_date)) ? String(receipt_date) : todayVN();
-        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho TBRs").trim();
+        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho TBR").trim();
 
         const inboundCode = await generateDocumentCode({ docType: "PNK", tagMode: "GENERAL" });
         const txItems = clean.map(x => ({
@@ -1442,7 +1721,7 @@ export async function POST(req: NextRequest) {
             code: x.pCode,
             name: pName,
             category: it.category || "Hàng Thương Mại",
-            brand: po.supplier_name || it.supplier_name || "TBRs Phân Phối",
+            brand: po.supplier_name || it.supplier_name || "TBR Phân Phối",
             origin: it.origin || "Chính hãng",
             unit: x.unit || it.unit || "Hộp",
             specification: x.specification || it.specification || "",
@@ -1514,9 +1793,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, inbound_code: result.inbound_code, status: result.status, already_received: result.already });
     }
 
-    // 8. Create Purchase Request (PR)
-    if (action === "create_pr") {
-      const { workflow_code, title, priority, requester_name, requester_dept, product_info, due_date, description, items, customer_name, is_stock } = body;
+    // 8. Create or Update Purchase Request (PR)
+    if (action === "create_pr" || action === "update_pr") {
+      const { id: prId, workflow_code, title, priority, requester_name, requester_dept, product_info, due_date, description, items, customer_name, is_stock } = body;
       
       const isStockOrder = is_stock || customer_name === "STOCK" || String(customer_name || "").includes("Kho") || String(customer_name || "").includes("Lưu Kho") || String(workflow_code || "").includes("STOCK") || String(title || "").includes("STOCK");
       
@@ -1544,12 +1823,16 @@ export async function POST(req: NextRequest) {
         }).join(" | ");
       }
 
-      // Check if PR code already exists in workflow_requests
-      const existing = await query("SELECT id, workflow_code, status, results_summary FROM workflow_requests WHERE workflow_code = $1", [code]);
+      // Check if PR already exists by id or workflow_code in workflow_requests
+      const existing = prId
+        ? await query("SELECT id, workflow_code, status, results_summary, logs FROM workflow_requests WHERE id = $1 OR workflow_code = $2", [Number(prId) || 0, code])
+        : await query("SELECT id, workflow_code, status, results_summary, logs FROM workflow_requests WHERE workflow_code = $1", [code]);
       if (existing.rows.length > 0) {
+        const existingRow = existing.rows[0];
+        code = existingRow.workflow_code || code;
         let oldItems: any[] = [];
         try {
-          const rs = existing.rows[0].results_summary;
+          const rs = existingRow.results_summary;
           oldItems = Array.isArray(rs) ? rs : (typeof rs === "string" && rs.trim().startsWith("[") ? JSON.parse(rs) : []);
         } catch {}
         const converted = oldItems.filter((it: any) => it && it.po_code);
@@ -1565,19 +1848,44 @@ export async function POST(req: NextRequest) {
         }
         const open = structuredItems.filter((it: any) => !it.po_code).length;
         const newPrStatus = converted.length === 0 ? null : (open > 0 ? "PARTIAL_CONVERTED" : "CONVERTED");
+        const logs = Array.isArray(existingRow.logs) ? existingRow.logs : [];
+        logs.push({
+          time: nowVNDateTime(),
+          actor: me.full_name || me.username || cleanRequesterName,
+          action: `Chỉnh sửa đề xuất mua hàng PR (${structuredItems.length} mặt hàng)`
+        });
         await query(
           `UPDATE workflow_requests SET 
+             title = COALESCE(NULLIF($8, ''), title),
+             priority = COALESCE(NULLIF($9, ''), priority),
+             description = COALESCE($10, description),
+             customer_name = COALESCE(NULLIF($11, ''), customer_name),
              results_summary = $1, 
              product_info = COALESCE(NULLIF($2, ''), product_info),
              due_date = COALESCE(NULLIF($3, '')::date, due_date),
              requester_name = $4,
              requester_dept = $5,
              status = COALESCE($7, status),
+             logs = $12,
              updated_at = CURRENT_TIMESTAMP
            WHERE id = $6`,
-          [JSON.stringify(structuredItems), summaryText, due_date ? due_date.slice(0, 10) : null, cleanRequesterName, cleanRequesterDept, existing.rows[0].id, newPrStatus]
+          [
+            JSON.stringify(structuredItems),
+            summaryText,
+            due_date ? due_date.slice(0, 10) : null,
+            cleanRequesterName,
+            cleanRequesterDept,
+            existingRow.id,
+            newPrStatus,
+            title || "",
+            priority || "",
+            description !== undefined ? description : null,
+            customer_name || "",
+            JSON.stringify(logs)
+          ]
         );
-        return NextResponse.json({ success: true, code });
+        await logAudit("UPDATE_PR", "PROCUREMENT", `Cập nhật phiếu đề xuất mua hàng PR ${code}: ${title || ""}`);
+        return NextResponse.json({ success: true, code, updated: true });
       }
 
       await query(
@@ -1609,9 +1917,10 @@ export async function POST(req: NextRequest) {
     if (action === "update_pr_status") {
       const { id, status, note, po_code, converted_indices } = body;
       const actor = me.full_name || me.username;
-      // Duyệt / từ chối PR cần quyền phê duyệt; gắn PR vào PO (po_code) dành cho bộ phận Cung ứng
-      if (!po_code && ["APPROVED", "REJECTED", "COMPLETED"].includes(String(status || "COMPLETED").toUpperCase()) && !canApprovePO(me)) {
-        return forbiddenResponse("Chỉ Trưởng bộ phận Cung ứng / Ban Giám Đốc mới được duyệt hoặc kết thúc đề xuất mua hàng (PR).");
+      const upperReqStatus = String(status || "COMPLETED").toUpperCase();
+      // Duyệt / từ chối PR cần quyền phê duyệt hoặc quyền ghi Cung ứng; hủy PR (CANCELLED) cho phép nhân sự Cung ứng / người tạo
+      if (!po_code && ["APPROVED", "REJECTED", "COMPLETED"].includes(upperReqStatus) && !canApprovePO(me) && !canWriteProcurement(me)) {
+        return forbiddenResponse("Chỉ bộ phận Cung ứng / Ban Giám Đốc mới được duyệt hoặc kết thúc đề xuất mua hàng (PR).");
       }
       if (po_code && !canApprovePO(me) && !hasPermission(me, "procurement.view")) {
         return forbiddenResponse("Bạn không có quyền chuyển đề xuất mua hàng thành đơn PO.");

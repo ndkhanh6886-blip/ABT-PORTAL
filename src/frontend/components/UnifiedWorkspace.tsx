@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useRef } from "react";
+import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
+  Bell,
   LayoutDashboard,
   CheckCircle2,
   Clock,
@@ -821,9 +822,10 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
   );
 };
 
-export const DEFAULT_CUSTOMERS_LIST: { name: string; customer_code?: string; [k: string]: any }[] = [];
+// Danh mục mẫu đã bỏ: khách hàng / sản phẩm chỉ lấy từ CSDL
+export const DEFAULT_CUSTOMERS_LIST: any[] = [];
 
-export const DEFAULT_PRODUCTS_LIST: { name: string; code?: string; [k: string]: any }[] = [];
+export const DEFAULT_PRODUCTS_LIST: any[] = [];
 
 export const ALL_DEPARTMENTS_OPTIONS = [
   { value: "Kinh Doanh", label: "Kinh Doanh" },
@@ -839,10 +841,30 @@ export const ALL_DEPARTMENTS_OPTIONS = [
   { value: "Hành Chính Nhân Sự", label: "Hành Chính Nhân Sự" }
 ];
 
+export const DEFAULT_KNOWN_SUPPLIERS: Array<{ id?: string; name: string; customer_code?: string; address?: string; entityType: "supplier" }> = [
+  { name: "Meridian Bioscience", customer_code: "NCC-MERIDIAN", address: "USA / Quốc tế (IVD Raw Materials & Rapid Tests)", entityType: "supplier" },
+  { name: "Liferiver (Shanghai ZJ Bio-Tech)", customer_code: "NCC-LIFERIVER", address: "Shanghai, China (Real-time PCR Kits)", entityType: "supplier" },
+  { name: "SSI Diagnostica", customer_code: "NCC-SSI", address: "Denmark (Antisera & Culture Media)", entityType: "supplier" },
+  { name: "Rollmed", customer_code: "NCC-ROLLMED", address: "Vật tư tiêu hao phòng Lab", entityType: "supplier" },
+  { name: "HiMedia Laboratories", customer_code: "NCC-HIMEDIA", address: "India (Môi trường nuôi cấy vi sinh)", entityType: "supplier" },
+  { name: "ABT (Công ty TNHH Sinh Học Á Châu)", customer_code: "NCC-ABT", address: "Việt Nam (Sinh phẩm phân tử & Tách chiết)", entityType: "supplier" },
+  { name: "Biolabs (New England Biolabs)", customer_code: "NCC-BIOLABS", address: "USA (Enzymes & Molecular Biology)", entityType: "supplier" },
+  { name: "Thermo Fisher Scientific", customer_code: "NCC-THERMO", address: "USA (Thiết bị & Hóa chất sinh học phân tử)", entityType: "supplier" },
+  { name: "Qiagen", customer_code: "NCC-QIAGEN", address: "Germany (Kit tách chiết & PCR)", entityType: "supplier" },
+  { name: "Seegene", customer_code: "NCC-SEEGENE", address: "Korea (Multiplex Real-time PCR)", entityType: "supplier" },
+  { name: "Cepheid", customer_code: "NCC-CEPHEID", address: "USA (GeneXpert System)", entityType: "supplier" },
+  { name: "Bio-Rad Laboratories", customer_code: "NCC-BIORAD", address: "USA (Thiết bị & Nội kiểm QC)", entityType: "supplier" },
+  { name: "Roche Diagnostics", customer_code: "NCC-ROCHE", address: "Switzerland (IVD Diagnostics)", entityType: "supplier" },
+  { name: "Abbott Diagnostics", customer_code: "NCC-ABBOTT", address: "USA (Rapid & Immunoassay)", entityType: "supplier" }
+];
+
 interface SearchableCustomerSelectProps {
   value: string;
   onChange: (val: string) => void;
   customerList?: any[];
+  supplierList?: any[];
+  includeSuppliers?: boolean;
+  prioritizeSuppliers?: boolean;
   placeholder?: string;
   disabled?: boolean;
 }
@@ -851,7 +873,10 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
   value,
   onChange,
   customerList = [],
-  placeholder = "Chọn hoặc gõ tìm Bệnh viện / Phòng khám...",
+  supplierList = [],
+  includeSuppliers = true,
+  prioritizeSuppliers = false,
+  placeholder = "Chọn hoặc gõ tìm Bệnh viện / Phòng khám / Đối tác...",
   disabled = false
 }) => {
   const [isOpen, setIsOpen] = useState(false);
@@ -869,14 +894,37 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
   }, []);
 
   const combinedList = useMemo(() => {
-    const merged = [...customerList];
-    DEFAULT_CUSTOMERS_LIST.forEach(dc => {
-      if (!merged.some(c => (c.name || "").toLowerCase() === dc.name.toLowerCase() || (c.customer_code && c.customer_code === dc.customer_code))) {
-        merged.push(dc);
+    const custs: any[] = [];
+    customerList.forEach(c => {
+      if (c && c.name) {
+        custs.push({ ...c, entityType: c.entityType || "customer" });
       }
     });
-    return merged;
-  }, [customerList]);
+    DEFAULT_CUSTOMERS_LIST.forEach(dc => {
+      if (!custs.some(c => (c.name || "").toLowerCase() === dc.name.toLowerCase() || (c.customer_code && c.customer_code === dc.customer_code))) {
+        custs.push({ ...dc, entityType: "customer" });
+      }
+    });
+
+    if (!includeSuppliers) return custs;
+
+    const sups: any[] = [];
+    const rawSups = [...supplierList, ...DEFAULT_KNOWN_SUPPLIERS];
+    rawSups.forEach(s => {
+      const sName = (s?.name || s?.supplier_name || "").trim();
+      if (sName && !sups.some(x => (x.name || "").toLowerCase() === sName.toLowerCase())) {
+        sups.push({
+          ...s,
+          name: sName,
+          customer_code: s.customer_code || s.supplier_code || s.code || "NCC",
+          address: s.address || s.country || "Nhà cung cấp / Đối tác",
+          entityType: "supplier"
+        });
+      }
+    });
+
+    return prioritizeSuppliers ? [...sups, ...custs] : [...custs, ...sups];
+  }, [customerList, supplierList, includeSuppliers, prioritizeSuppliers]);
 
   const filtered = useMemo(() => {
     if (!search.trim()) return combinedList;
@@ -961,12 +1009,16 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
       {isOpen && (
         <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl overflow-hidden max-h-60 overflow-y-auto">
           <div className="p-2 border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/70 flex items-center justify-between text-[11px] text-slate-500 font-bold">
-            <span>Danh sách Khách hàng / Bệnh viện ({filtered.length})</span>
+            <span>
+              {prioritizeSuppliers
+                ? `Danh mục Nhà cung cấp / Đối tác / Khách hàng (${filtered.length})`
+                : `Danh sách Khách hàng / Viện & Đối tác (${filtered.length})`}
+            </span>
             <span className="text-[10px] text-indigo-500 font-normal">Gõ để lọc hoặc chọn</span>
           </div>
           {filtered.length === 0 ? (
-            <div className="p-3 text-center text-slate-400 text-xs">
-              <p>Chưa có viện này trong danh mục</p>
+            <div className="p-3 text-center text-slate-500 text-xs">
+              <p className="text-[11px] text-slate-400">Nhập tên nhà cung cấp / đối tác / khách hàng mới:</p>
               {search && (
                 <button
                   type="button"
@@ -974,18 +1026,19 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
                     onChange(search.trim());
                     setIsOpen(false);
                   }}
-                  className="mt-1 text-xs text-indigo-500 font-bold hover:underline cursor-pointer"
+                  className="mt-1.5 px-3 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-xs text-indigo-600 dark:text-indigo-400 font-bold hover:bg-indigo-100 cursor-pointer"
                 >
-                  Sử dụng: "{search.trim()}"
+                  + Bấm để chọn tên đối tác / NCC / khách hàng: "{search.trim()}"
                 </button>
               )}
             </div>
           ) : (
             filtered.map((c: any) => {
               const isSelected = c.name === value;
+              const isSup = c.entityType === "supplier";
               return (
                 <div
-                  key={c.id || c.customer_code || c.name}
+                  key={`${c.entityType || "cust"}-${c.id || c.customer_code || c.name}`}
                   onClick={() => {
                     onChange(c.name);
                     setIsOpen(false);
@@ -997,6 +1050,15 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
                 >
                   <div className="min-w-0 pr-2">
                     <div className="flex items-center gap-1.5 flex-wrap">
+                      <span
+                        className={`text-[9px] px-1.5 py-0.2 rounded font-extrabold border ${
+                          isSup
+                            ? "bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800"
+                            : "bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800"
+                        }`}
+                      >
+                        {isSup ? "[NCC]" : "[Khách hàng]"}
+                      </span>
                       <span className="font-bold text-slate-900 dark:text-white truncate">
                         {c.name}
                       </span>
@@ -1407,7 +1469,7 @@ export const renderWorkflowResultSummary = (summary: any) => {
 };
 
 export const UnifiedWorkspace: React.FC = () => {
-  const { showToast, notifyActivity } = useNotification();
+  const { showToast, notifyActivity, filteredNotifications, markAsRead } = useNotification();
   const { user, can } = useAuth();
   // Tạo / sửa / xóa quy trình mẫu: Quản trị viên hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
   const canManageTemplates = Boolean(can && can("workspace.manage_templates"));
@@ -1462,6 +1524,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const [dailyLogs, setDailyLogs] = useState<any[]>([]);
   const [personnelList, setPersonnelList] = useState<any[]>([]);
   const [customerList, setCustomerList] = useState<any[]>(DEFAULT_CUSTOMERS_LIST);
+  const [supplierList, setSupplierList] = useState<any[]>(DEFAULT_KNOWN_SUPPLIERS);
   const [productList, setProductList] = useState<any[]>(DEFAULT_PRODUCTS_LIST);
 
   // Task Filters & Search
@@ -1769,6 +1832,51 @@ export const UnifiedWorkspace: React.FC = () => {
         if (Array.isArray(data.customers)) setCustomerList(data.customers);
         if (Array.isArray(data.products)) setProductList(data.products);
         setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
+
+        // Load suppliers from procurement API & product manufacturers
+        try {
+          const procRes = await fetch("/api/procurement");
+          const procData = await procRes.json();
+          const apiSups = Array.isArray(procData?.suppliers)
+            ? procData.suppliers
+            : Array.isArray(procData?.data?.suppliers)
+            ? procData.data.suppliers
+            : [];
+          const poSups = Array.isArray(procData?.purchaseOrders)
+            ? procData.purchaseOrders
+                .map((po: any) => ({
+                  name: po.supplier_name || po.vendor_name,
+                  customer_code: po.supplier_code || "NCC",
+                  address: po.country || "Nhà cung cấp PO"
+                }))
+                .filter((s: any) => s.name)
+            : [];
+          const prodSups = Array.isArray(data.products)
+            ? data.products
+                .map((pr: any) => ({
+                  name: pr.supplier_name || pr.manufacturer || pr.brand || pr.origin,
+                  customer_code: "NCC-SP",
+                  address: "Hãng sản xuất / Nhà cung cấp"
+                }))
+                .filter((s: any) => s.name && String(s.name).length >= 2)
+            : [];
+          const mergedSups: any[] = [...DEFAULT_KNOWN_SUPPLIERS];
+          [...apiSups, ...poSups, ...prodSups].forEach((s: any) => {
+            const sName = String(s?.name || s?.supplier_name || s?.company_name || "").trim();
+            if (sName && !mergedSups.some((m) => m.name.toLowerCase() === sName.toLowerCase())) {
+              mergedSups.push({
+                id: s.id || `sup-${sName}`,
+                name: sName,
+                customer_code: s.customer_code || s.supplier_code || s.code || "NCC",
+                address: s.address || s.country || "Nhà cung cấp / Đối tác",
+                entityType: "supplier"
+              });
+            }
+          });
+          setSupplierList(mergedSups);
+        } catch (supErr) {
+          console.warn("Could not load procurement suppliers:", supErr);
+        }
         // Load persistent weekly schedule
         try {
           const schedRes = await fetch("/api/storage?key=unified_weekly_schedule");
@@ -1983,11 +2091,17 @@ export const UnifiedWorkspace: React.FC = () => {
   // Filtered Workflows
   const filteredWorkflows = useMemo(() => {
     return workflows.filter((w) => {
-      const stepDepts = Array.isArray(w.steps) ? w.steps.map((s: any) => s?.dept).filter(Boolean) : [];
+      const stepDepts = Array.isArray(w.steps)
+        ? w.steps.flatMap((s: any) => {
+            const arr = Array.isArray(s?.departments) ? s.departments : [];
+            const split = s?.dept ? String(s.dept).split(",").map((d: string) => d.trim()) : [];
+            return [...arr, ...split].filter(Boolean);
+          })
+        : [];
       const matchDept =
         selectedDept === "all" ||
         isSameWorkspaceDept(w.requester_dept, selectedDept) ||
-        isSameWorkspaceDept(w.target_dept, selectedDept) ||
+        String(w.target_dept || "").split(",").some((d: string) => isSameWorkspaceDept(d.trim(), selectedDept)) ||
         stepDepts.some((d: string) => isSameWorkspaceDept(d, selectedDept));
       const matchSearch =
         searchQuery === "" ||
@@ -1998,6 +2112,219 @@ export const UnifiedWorkspace: React.FC = () => {
       return matchDept && matchSearch;
     });
   }, [workflows, selectedDept, searchQuery]);
+
+  // Helper to re-index & normalize multi-department / multi-assignee workflow steps
+  const reindexWorkflowSteps = useCallback((rawSteps: any[]) => {
+    return (rawSteps || []).map((st: any, idx: number) => {
+      const depts = Array.from(
+        new Set(
+          (Array.isArray(st.departments) && st.departments.length > 0
+            ? st.departments
+            : st.dept
+            ? String(st.dept).split(",").map((d: string) => d.trim())
+            : ["Application"]
+          ).filter(Boolean)
+        )
+      ) as string[];
+      const assignees = Array.from(
+        new Set(
+          (Array.isArray(st.assignees) && st.assignees.length > 0
+            ? st.assignees.map((a: string) => cleanWorkspaceAssignee(a))
+            : st.assignee_name
+            ? String(st.assignee_name).split(",").map((a: string) => cleanWorkspaceAssignee(a))
+            : []
+          ).filter(Boolean)
+        )
+      ) as string[];
+      return {
+        ...st,
+        step_index: idx,
+        departments: depts,
+        dept: depts.join(", "),
+        assignees,
+        assignee_name: assignees.join(", ")
+      };
+    });
+  }, []);
+
+  // Deep-link opener for notifications ("Đi tới xem ↗") -> opens specific Task or Workflow Detail Modal
+  const openWorkspaceItemFromNotification = useCallback((rawPayload: any): boolean => {
+    if (!rawPayload) return false;
+    const notif = rawPayload.notification || rawPayload;
+    const rawId = String(rawPayload.id || notif?.taskId || notif?.workflowId || notif?.targetId || notif?.link?.itemId || "").trim();
+    const rawCode = String(rawPayload.code || notif?.workflowCode || notif?.orderCode || notif?.link?.itemId || "").trim();
+    const rawTitle = String(rawPayload.title || notif?.title || "").trim();
+    const rawMsg = String(rawPayload.message || notif?.message || "").trim();
+    const subTab = String(rawPayload.subTab || notif?.link?.subTab || "").trim();
+    const fullText = `${rawCode} ${rawId} ${rawTitle} ${rawMsg}`.toLowerCase();
+
+    const codeMatch = `${rawCode} ${rawId} ${rawTitle} ${rawMsg}`.match(/\b((?:WF|TASK)-[A-Z0-9-]+)\b/i);
+    const extractedCode = (codeMatch ? codeMatch[1] : rawCode || rawId).toUpperCase();
+    const quoteMatches = Array.from(`${rawTitle} ${rawMsg}`.matchAll(/"([^"]{3,140})"/g)).map((m) => m[1].trim());
+
+    const findMatchingWorkflow = () => {
+      if (!workflows || workflows.length === 0) return null;
+      return (
+        workflows.find((w: any) =>
+          (rawId && String(w.id) === rawId) ||
+          (rawId && String(w.workflow_code || "").toUpperCase() === rawId.toUpperCase()) ||
+          (extractedCode && String(w.workflow_code || "").toUpperCase() === extractedCode)
+        ) ||
+        workflows.find((w: any) =>
+          w.workflow_code && fullText.includes(String(w.workflow_code).toLowerCase())
+        ) ||
+        workflows.find((w: any) =>
+          quoteMatches.some((q) => w.title && (w.title.toLowerCase() === q.toLowerCase() || w.title.toLowerCase().includes(q.toLowerCase()) || q.toLowerCase().includes(w.title.toLowerCase())))
+        ) ||
+        workflows.find((w: any) =>
+          w.title && w.title.length >= 5 && fullText.includes(String(w.title).toLowerCase())
+        )
+      );
+    };
+
+    const findMatchingTask = () => {
+      if (!tasks || tasks.length === 0) return null;
+      return (
+        tasks.find((t: any) =>
+          (rawId && String(t.id) === rawId) ||
+          (rawId && String(t.task_code || "").toUpperCase() === rawId.toUpperCase()) ||
+          (extractedCode && String(t.task_code || "").toUpperCase() === extractedCode)
+        ) ||
+        tasks.find((t: any) =>
+          t.task_code && fullText.includes(String(t.task_code).toLowerCase())
+        ) ||
+        tasks.find((t: any) =>
+          quoteMatches.some((q) => t.title && (t.title.toLowerCase() === q.toLowerCase() || t.title.toLowerCase().includes(q.toLowerCase()) || q.toLowerCase().includes(t.title.toLowerCase())))
+        ) ||
+        tasks.find((t: any) =>
+          t.title && t.title.length >= 5 && fullText.includes(String(t.title).toLowerCase())
+        )
+      );
+    };
+
+    const preferWorkflow =
+      subTab === "workflows" ||
+      extractedCode.startsWith("WF-") ||
+      fullText.includes("phối hợp") ||
+      fullText.includes("quy trình");
+
+    const matchedWf = preferWorkflow ? (findMatchingWorkflow() || null) : null;
+    const matchedTask = !matchedWf ? (findMatchingTask() || null) : null;
+    const fallbackWf = !matchedWf && !matchedTask ? findMatchingWorkflow() : null;
+
+    const finalWf = matchedWf || fallbackWf;
+    if (finalWf) {
+      setSelectedDept("all");
+      setWfStatusFilter("all");
+      setWfMineFilter("all");
+      setWfPriorityFilter("all");
+      setSearchQuery("");
+      setActiveSubTab("workflows");
+      setSelectedWorkflowDetail(finalWf);
+      setIsWorkflowDetailModalOpen(true);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("workspace_open_task_detail");
+      }
+      return true;
+    }
+
+    if (matchedTask) {
+      setSelectedDept("all");
+      setSelectedAssignee("all");
+      setStatusFilter("all");
+      setSearchQuery("");
+      setActiveSubTab("tasks");
+      openEditTask(matchedTask);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("workspace_open_task_detail");
+      }
+      return true;
+    }
+
+    if (subTab === "workflows") {
+      setSelectedDept("all");
+      setWfStatusFilter("all");
+      setWfMineFilter("all");
+      setActiveSubTab("workflows");
+    } else if (subTab === "planner" || subTab === "plans") {
+      setSelectedDept("all");
+      setActiveSubTab("planner");
+    } else if (subTab === "daily" || subTab === "reports") {
+      setSelectedDept("all");
+      setActiveSubTab("daily");
+    } else if (subTab === "tasks") {
+      setSelectedDept("all");
+      setSelectedAssignee("all");
+      setStatusFilter("all");
+      setActiveSubTab("tasks");
+    }
+
+    return false;
+  }, [workflows, tasks]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen to workspace-open-detail / tbr-navigate / via-navigate and check pending localStorage deep-link
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const tryPendingStorage = () => {
+      try {
+        const raw = localStorage.getItem("workspace_open_task_detail");
+        if (!raw) return;
+        const parsed = JSON.parse(raw);
+        if (parsed && (!parsed.timestamp || Date.now() - parsed.timestamp < 120000)) {
+          const opened = openWorkspaceItemFromNotification(parsed);
+          if (opened || (!loading && (tasks.length > 0 || workflows.length > 0))) {
+            localStorage.removeItem("workspace_open_task_detail");
+          }
+        } else {
+          localStorage.removeItem("workspace_open_task_detail");
+        }
+      } catch (e) {}
+    };
+
+    tryPendingStorage();
+
+    const handleOpenDetailEvent = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      if (customEvt.detail) {
+        openWorkspaceItemFromNotification(customEvt.detail);
+      } else {
+        tryPendingStorage();
+      }
+    };
+
+    const handleNavigateEvent = (e: Event) => {
+      const customEvt = e as CustomEvent;
+      const detail = customEvt.detail || {};
+      if (detail.tab === "workspace" || detail.tab === "tasks" || detail.tab === "workflows") {
+        setTimeout(() => {
+          const raw = localStorage.getItem("workspace_open_task_detail");
+          if (raw) {
+            try {
+              openWorkspaceItemFromNotification(JSON.parse(raw));
+              return;
+            } catch {}
+          }
+          if (detail.itemId || detail.subTab) {
+            openWorkspaceItemFromNotification({
+              id: detail.itemId,
+              code: detail.itemId,
+              subTab: detail.subTab || (detail.tab === "workflows" ? "workflows" : "tasks")
+            });
+          }
+        }, 50);
+      }
+    };
+
+    window.addEventListener("workspace-open-detail", handleOpenDetailEvent);
+    window.addEventListener("tbr-navigate", handleNavigateEvent);
+    window.addEventListener("via-navigate", handleNavigateEvent);
+    return () => {
+      window.removeEventListener("workspace-open-detail", handleOpenDetailEvent);
+      window.removeEventListener("tbr-navigate", handleNavigateEvent);
+      window.removeEventListener("via-navigate", handleNavigateEvent);
+    };
+  }, [openWorkspaceItemFromNotification, loading, tasks.length, workflows.length]);
 
   // Bộ lọc riêng của "Danh Sách Phiếu Phối Hợp": trạng thái, quá hạn, liên quan đến tôi, ưu tiên, sắp xếp
   const [templatesExpanded, setTemplatesExpanded] = useState<boolean>(() => {
@@ -2023,9 +2350,16 @@ export const UnifiedWorkspace: React.FC = () => {
   const wfInvolvesMe = (w: any, mode: "requested" | "assigned") => {
     const me = String(currentStaffName || "").trim();
     if (!me) return false;
-    if (mode === "requested") return String(w.requester_name || "").trim() === me;
+    if (mode === "requested") return sameStaffName(String(w.requester_name || "").trim(), me);
     const steps = Array.isArray(w.steps) ? w.steps : [];
-    return cleanWorkspaceAssignee(w.assignee_name) === me || steps.some((s: any) => cleanWorkspaceAssignee(s?.assignee_name) === me);
+    const topAssignees = String(w.assignee_name || "").split(",").map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean);
+    if (topAssignees.some((a: string) => sameStaffName(a, me))) return true;
+    return steps.some((s: any) => {
+      const sAssignees = Array.isArray(s?.assignees) && s.assignees.length > 0
+        ? s.assignees.map((a: string) => cleanWorkspaceAssignee(a))
+        : String(s?.assignee_name || "").split(",").map((a: string) => cleanWorkspaceAssignee(a));
+      return sAssignees.filter(Boolean).some((a: string) => sameStaffName(a, me));
+    });
   };
   const wfBase = useMemo(() => filteredWorkflows.filter((w) =>
     (wfMineFilter === "all" || wfInvolvesMe(w, wfMineFilter)) &&
@@ -2320,9 +2654,12 @@ export const UnifiedWorkspace: React.FC = () => {
             sender: { name: currentStaffName },
             targetEmployeeNames: [linkedWf.requester_name].filter(Boolean),
             targetDept: linkedWf.requester_dept,
-            link: { tab: "workspace", subTab: "workflows" }
+            workflowId: linkedWf.id,
+            workflowCode: linkedWf.workflow_code,
+            link: { tab: "workspace", subTab: "workflows", itemId: String(linkedWf.workflow_code || linkedWf.id) }
           });
         }
+        const savedTaskId = data.task?.id || payload.id || taskForm.id;
         notifyActivity({
           title: payload.id ? "Cập nhật công việc" : "Giao công việc mới",
           message: payload.id 
@@ -2331,9 +2668,10 @@ export const UnifiedWorkspace: React.FC = () => {
           type: "info",
           category: "task",
           sender: { name: user?.name || currentStaffName },
-          targetEmployeeNames: taskForm.assignee_name ? [taskForm.assignee_name] : [],
+          targetEmployeeNames: taskForm.assignee_name ? taskForm.assignee_name.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
           targetDept: taskForm.department,
-          link: { tab: "workspace", subTab: "tasks" }
+          taskId: savedTaskId,
+          link: { tab: "workspace", subTab: "tasks", itemId: String(savedTaskId || taskForm.title) }
         });
         setIsTaskModalOpen(false);
         fetchData();
@@ -2366,7 +2704,8 @@ export const UnifiedWorkspace: React.FC = () => {
         sender: { name: currentStaffName },
         targetEmployeeNames: [target.assignee_name].filter(Boolean),
         targetDept: target.department,
-        link: { tab: "workspace", subTab: "tasks" }
+        taskId: target.id,
+        link: { tab: "workspace", subTab: "tasks", itemId: String(target.id || target.task_code || target.title) }
       });
     } catch (e) {
       showToast("Lỗi khi cập nhật trạng thái", "error");
@@ -2377,25 +2716,31 @@ export const UnifiedWorkspace: React.FC = () => {
   const handleSaveWorkflow = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const isCreatorApp = isDirector || isSameWorkspaceDept(userDept, "Application");
-      const sanitizedSteps = (wfForm.steps || []).map((s: any, idx: number) => {
-        const sDept = s.dept || wfForm.target_dept || "Application";
-        let sAssignee = cleanWorkspaceAssignee(s.assignee_name);
-        if (wfForm.workflow_type === "SALES_TO_APP" && isSameWorkspaceDept(sDept, "Application") && !isCreatorApp) {
-          sAssignee = "";
-        }
+      const sanitizedSteps = reindexWorkflowSteps(wfForm.steps || []).map((s: any, idx: number) => {
+        const depts = Array.isArray(s.departments) && s.departments.length > 0
+          ? s.departments
+          : (s.dept || wfForm.target_dept || "Application").split(",").map((d: string) => d.trim()).filter(Boolean);
+        const sDept = depts.join(", ");
+        const assignees = Array.isArray(s.assignees) && s.assignees.length > 0
+          ? s.assignees.map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean)
+          : String(s.assignee_name || "").split(",").map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean);
+        const sAssignee = assignees.join(", ");
         return {
           ...s,
           step_index: idx,
+          departments: depts,
           dept: sDept,
+          assignees,
           assignee_name: sAssignee
         };
       });
       const step0Assignee = sanitizedSteps.length > 0 ? sanitizedSteps[0].assignee_name : cleanWorkspaceAssignee(wfForm.assignee_name);
+      const step0Dept = sanitizedSteps.length > 0 && sanitizedSteps[0].dept ? sanitizedSteps[0].dept : wfForm.target_dept;
       const payload = {
         ...wfForm,
+        target_dept: step0Dept || wfForm.target_dept,
         requester_name: wfForm.requester_name || currentStaffName,
-        assignee_name: wfForm.workflow_type === "SALES_TO_APP" && !isCreatorApp ? "" : step0Assignee,
+        assignee_name: step0Assignee,
         steps: sanitizedSteps
       };
 
@@ -2407,18 +2752,32 @@ export const UnifiedWorkspace: React.FC = () => {
       const data = await res.json();
       if (data.success) {
         showToast("Đã khởi tạo quy trình liên phòng ban thành công!", "success");
+        const allStepAssignees = Array.from(
+          new Set(
+            [
+              ...(payload.assignee_name ? payload.assignee_name.split(",") : []),
+              ...sanitizedSteps.flatMap((st: any) => st.assignees || [])
+            ]
+              .map((s: string) => s.trim())
+              .filter(Boolean)
+          )
+        );
         const assigneeLabel = payload.assignee_name
           ? `Phụ trách: ${payload.assignee_name}.`
           : `Trạng thái: Chờ bộ phận ${payload.target_dept} phân công nhân sự.`;
+        const createdWfId = data.workflow?.id || data.id;
+        const createdWfCode = data.workflow?.workflow_code || data.workflow_code;
         notifyActivity({
           title: "Yêu cầu phối hợp liên phòng",
           message: `${payload.requester_name} (${payload.requester_dept}) đã gửi yêu cầu phối hợp "${payload.title}" tới phòng ${payload.target_dept}. ${assigneeLabel}`,
           type: "warning",
           category: isSameWorkspaceDept(payload.target_dept, "Application") ? "application" : isSameWorkspaceDept(payload.target_dept, "Kho & Vận Hành") ? "warehouse" : "task",
           sender: { name: payload.requester_name },
-          targetEmployeeNames: payload.assignee_name ? [payload.assignee_name] : [],
+          targetEmployeeNames: allStepAssignees,
           targetDept: payload.target_dept,
-          link: { tab: "workspace", subTab: "workflows" }
+          workflowId: createdWfId,
+          workflowCode: createdWfCode,
+          link: { tab: "workspace", subTab: "workflows", itemId: String(createdWfCode || createdWfId || payload.title) }
         });
         setIsWorkflowModalOpen(false);
         fetchData();
@@ -2546,10 +2905,14 @@ export const UnifiedWorkspace: React.FC = () => {
       return;
     }
     try {
+      const normalizedPayload = {
+        ...templateForm,
+        steps: reindexWorkflowSteps(templateForm.steps || [])
+      };
       const res = await fetch("/api/workflows?action=template", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(templateForm)
+        body: JSON.stringify(normalizedPayload)
       });
       const data = await res.json();
       if (data.success) {
@@ -2590,27 +2953,29 @@ export const UnifiedWorkspace: React.FC = () => {
     const rawSteps = Array.isArray(tmpl.steps) ? tmpl.steps : [];
     const isCreatorApp = isDirector || isSameWorkspaceDept(userDept, "Application");
     const tmplCode = tmpl.code || tmpl.id;
-    const stepsCopy = rawSteps.map((s: any, idx: number) => {
-      const stepDept = s.dept || tmpl.target_dept || tmpl.targetDept || "Application";
-      let stepAssignee = cleanWorkspaceAssignee(s.assignee_name);
-      // Nếu là quy trình Sales -> App: các bước của Application để trống cho APP tự phân công; bước nghiệm thu của Kinh Doanh gán mặc định người tạo
-      if (tmplCode === "SALES_TO_APP") {
-        if (isSameWorkspaceDept(stepDept, "Application") && !isCreatorApp) {
-          stepAssignee = "";
-        } else if (isSameWorkspaceDept(stepDept, "Kinh Doanh") && !stepAssignee) {
-          stepAssignee = currentStaffName || "";
+    const stepsCopy = reindexWorkflowSteps(
+      rawSteps.map((s: any, idx: number) => {
+        const stepDept = s.dept || tmpl.target_dept || tmpl.targetDept || "Application";
+        let stepAssignee = cleanWorkspaceAssignee(s.assignee_name);
+        if (tmplCode === "SALES_TO_APP") {
+          if (isSameWorkspaceDept(stepDept, "Application") && !isCreatorApp) {
+            stepAssignee = "";
+          } else if (isSameWorkspaceDept(stepDept, "Kinh Doanh") && !stepAssignee) {
+            stepAssignee = currentStaffName || "";
+          }
         }
-      }
-      return {
-        step_index: idx,
-        title: s.title || `Bước ${idx + 1}`,
-        dept: stepDept,
-        assignee_name: stepAssignee,
-        sla_hours: s.sla_hours || 24,
-        deliverables: s.deliverables || "",
-        status: idx === 0 ? "IN_PROGRESS" : "PENDING"
-      };
-    });
+        return {
+          ...s,
+          step_index: idx,
+          title: s.title || `Bước ${idx + 1}`,
+          dept: stepDept,
+          assignee_name: stepAssignee,
+          sla_hours: s.sla_hours || 24,
+          deliverables: s.deliverables || "",
+          status: idx === 0 ? "IN_PROGRESS" : "PENDING"
+        };
+      })
+    );
 
     setWfForm({
       workflow_type: tmplCode,
@@ -2691,7 +3056,9 @@ export const UnifiedWorkspace: React.FC = () => {
             advanceStepData.nextAssigneeName
           ].filter(Boolean) as string[],
           targetDept: isLastStep ? advanceStepData.workflow?.requester_dept : advanceStepData.nextStep?.dept,
-          link: { tab: "workspace", subTab: "workflows" }
+          workflowId: advanceStepData.workflow?.id,
+          workflowCode: advanceStepData.workflow?.workflow_code,
+          link: { tab: "workspace", subTab: "workflows", itemId: String(advanceStepData.workflow?.workflow_code || advanceStepData.workflow?.id) }
         });
       } else {
         showToast(data.error || "Lỗi khi chuyển bước", "error");
@@ -2844,7 +3211,9 @@ export const UnifiedWorkspace: React.FC = () => {
           sender: { name: recordResultForm.reporter_name || currentStaffName },
           targetEmployeeNames: targetRecipients,
           targetDept: selectedWorkflowForRecord.requester_dept || selectedWorkflowForRecord.target_dept,
-          link: { tab: "workspace", subTab: "workflows" }
+          workflowId: selectedWorkflowForRecord.id,
+          workflowCode: selectedWorkflowForRecord.workflow_code,
+          link: { tab: "workspace", subTab: "workflows", itemId: String(selectedWorkflowForRecord.workflow_code || selectedWorkflowForRecord.id) }
         });
       } else {
         showToast(data.error || "Lỗi khi lưu kết quả", "error");
@@ -2907,7 +3276,9 @@ export const UnifiedWorkspace: React.FC = () => {
         sender: { name: currentStaffName },
         targetEmployeeNames: [wf.requester_name === currentStaffName ? wf.assignee_name : wf.requester_name].filter(Boolean),
         targetDept: wf.requester_name === currentStaffName ? wf.target_dept : wf.requester_dept,
-        link: { tab: "workspace", subTab: "workflows" }
+        workflowId: wf.id,
+        workflowCode: wf.workflow_code,
+        link: { tab: "workspace", subTab: "workflows", itemId: String(wf.workflow_code || wf.id) }
       });
     } catch {
       showToast("Lỗi kết nối máy chủ", "error");
@@ -2947,13 +3318,15 @@ export const UnifiedWorkspace: React.FC = () => {
         const targetEmployee = isRequester ? selectedWorkflowDetail.assignee_name : selectedWorkflowDetail.requester_name;
         notifyActivity({
           title: "Trao đổi liên phòng ban mới",
-          message: `${currentStaffName} đã gửi trao đổi trong phiếu "${selectedWorkflowDetail.title}": "${workflowCommentText.trim().slice(0, 60)}${workflowCommentText.trim().length > 60 ? '...' : ''}"`,
+          message: `${currentStaffName} đã gửi trao đổi trong phiếu "${selectedWorkflowDetail.title}" (${selectedWorkflowDetail.workflow_code}): "${workflowCommentText.trim().slice(0, 60)}${workflowCommentText.trim().length > 60 ? '...' : ''}"`,
           type: "info",
           category: "task",
           sender: { name: currentStaffName },
           targetEmployeeNames: targetEmployee ? [targetEmployee] : [],
           targetDept: isRequester ? selectedWorkflowDetail.target_dept : selectedWorkflowDetail.requester_dept,
-          link: { tab: "workspace", subTab: "workflows" }
+          workflowId: selectedWorkflowDetail.id,
+          workflowCode: selectedWorkflowDetail.workflow_code,
+          link: { tab: "workspace", subTab: "workflows", itemId: String(selectedWorkflowDetail.workflow_code || selectedWorkflowDetail.id) }
         });
       }
     } catch (e) {
@@ -3617,6 +3990,46 @@ export const UnifiedWorkspace: React.FC = () => {
             <span>Hiệu Suất &amp; KPI</span>
           </button>
         </div>
+
+        {/* Quick Activity Notifications Strip (THÔNG BÁO HOẠT ĐỘNG) */}
+        {filteredNotifications && filteredNotifications.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center gap-2 text-xs">
+            <div className="flex items-center gap-1.5 shrink-0 font-bold text-orange-600 dark:text-orange-400">
+              <Bell className="w-3.5 h-3.5 animate-pulse" />
+              <span>THÔNG BÁO HOẠT ĐỘNG CỦA TÔI:</span>
+            </div>
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar flex-1">
+              {filteredNotifications.slice(0, 3).map((notif: any) => (
+                <div
+                  key={notif.id}
+                  onClick={() => {
+                    markAsRead(notif.id);
+                    openWorkspaceItemFromNotification({
+                      id: notif.taskId || notif.workflowId || notif.targetId || notif.link?.itemId,
+                      code: notif.workflowCode || notif.orderCode || notif.link?.itemId,
+                      title: notif.title,
+                      message: notif.message,
+                      subTab: notif.link?.subTab,
+                      notification: notif
+                    });
+                  }}
+                  className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-orange-50/80 dark:bg-slate-800/80 hover:bg-orange-100/80 dark:hover:bg-slate-800 border border-orange-200/80 dark:border-slate-700 cursor-pointer shrink-0 max-w-xs sm:max-w-md transition-colors"
+                  title={`${notif.title}: ${notif.message}`}
+                >
+                  <span className="font-bold text-slate-800 dark:text-slate-200 truncate text-[11px]">
+                    {notif.title}:
+                  </span>
+                  <span className="text-slate-600 dark:text-slate-400 truncate text-[11px] max-w-[180px]">
+                    {notif.message}
+                  </span>
+                  <span className="text-orange-600 dark:text-orange-400 font-bold text-[10px] shrink-0 hover:underline">
+                    Đi tới xem ↗
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ==================== LEVEL 2: UNIFIED FILTER & ACTION BAR ==================== */}
@@ -6474,16 +6887,32 @@ ${wf.description || ""}`}
               />
             </div>
 
-            <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Khách hàng / Viện</label>
-              {/* Chọn từ danh mục khách hàng để công việc hiện trong "Hoạt động với khách hàng" */}
-              <SearchableCustomerSelect
-                value={taskForm.customer_name}
-                onChange={(val) => setTaskForm({ ...taskForm, customer_name: val })}
-                customerList={customerList}
-                placeholder="Chọn hoặc gõ tìm khách hàng (nếu có)"
-              />
-            </div>
+            {(() => {
+              const isProcTask =
+                isSameWorkspaceDept(taskForm.department, "Cung Ứng") ||
+                /po|mua hàng|nhập khẩu|ncc|cung ứng|hải quan/i.test(taskForm.task_category || "");
+              return (
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    {isProcTask
+                      ? "Nhà cung cấp / Đối tác / Khách hàng (Gõ để tìm nhanh)"
+                      : "Khách hàng / Viện / Đối tác"}
+                  </label>
+                  <SearchableCustomerSelect
+                    value={taskForm.customer_name}
+                    onChange={(val) => setTaskForm({ ...taskForm, customer_name: val })}
+                    customerList={customerList}
+                    supplierList={supplierList}
+                    prioritizeSuppliers={isProcTask}
+                    placeholder={
+                      isProcTask
+                        ? "Gõ tìm Nhà cung cấp (VD: Meridian, Liferiver, SSI...) hoặc Khách hàng..."
+                        : "Chọn hoặc gõ tìm khách hàng / đối tác (nếu có)"
+                    }
+                  />
+                </div>
+              );
+            })()}
           </div>
 
           <div className="grid grid-cols-3 gap-3">
@@ -6915,14 +7344,20 @@ ${wf.description || ""}`}
 
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className="font-bold text-slate-700 dark:text-slate-300">Khách hàng / Viện</label>
+                <label className="font-bold text-slate-700 dark:text-slate-300">
+                  {isSameWorkspaceDept(wfForm.requester_dept, "Cung Ứng") || isSameWorkspaceDept(wfForm.target_dept, "Cung Ứng")
+                    ? "Nhà cung cấp / Đối tác / Khách hàng"
+                    : "Khách hàng / Viện / Đối tác"}
+                </label>
                 <span className="text-[10px] text-indigo-400">Chọn hoặc gõ tìm</span>
               </div>
               <SearchableCustomerSelect
                 value={wfForm.customer_name}
                 onChange={(val) => setWfForm({ ...wfForm, customer_name: val })}
                 customerList={customerList}
-                placeholder="Chọn hoặc gõ tìm Bệnh viện / Viện..."
+                supplierList={supplierList}
+                prioritizeSuppliers={isSameWorkspaceDept(wfForm.requester_dept, "Cung Ứng") || isSameWorkspaceDept(wfForm.target_dept, "Cung Ứng")}
+                placeholder="Chọn hoặc gõ tìm Bệnh viện / Nhà cung cấp..."
               />
             </div>
 
@@ -6951,7 +7386,7 @@ ${wf.description || ""}`}
 
           {/* Stepper Pipeline Configuration for this ticket */}
           <div className="bg-slate-50/80 dark:bg-slate-950/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <div className="flex items-center gap-2">
                 <div className="p-1.5 rounded-lg bg-indigo-100 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-400">
                   <Layers className="w-4 h-4" />
@@ -6961,7 +7396,7 @@ ${wf.description || ""}`}
                     Các bước thực hiện theo quy trình (Stage-Gate Pipeline):
                   </span>
                   <span className="text-[11px] text-slate-400">
-                    Khi gửi yêu cầu sang Application, bộ phận Application sẽ chủ động phân công nhân sự phụ trách.
+                    Hỗ trợ sắp xếp thứ tự (↑ / ↓), chèn bước bất kỳ (+ Chèn bước dưới) và chọn nhiều phòng ban / nhiều người cùng phối hợp trong 1 bước.
                   </span>
                 </div>
               </div>
@@ -6973,99 +7408,299 @@ ${wf.description || ""}`}
                     step_index: currentSteps.length,
                     title: `Bước ${currentSteps.length + 1}: Bàn giao`,
                     dept: "Application",
+                    departments: ["Application"],
                     assignee_name: "",
+                    assignees: [],
                     sla_hours: 24,
                     deliverables: "Biên bản xác nhận",
                     status: "PENDING"
                   };
-                  setWfForm({ ...wfForm, steps: [...currentSteps, newStep] });
+                  setWfForm({ ...wfForm, steps: reindexWorkflowSteps([...currentSteps, newStep]) });
                 }}
                 className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5 transition-colors cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" />
-                <span>+ Thêm bước</span>
+                <span>+ Thêm bước cuối</span>
               </button>
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {(wfForm.steps || []).map((step: any, idx: number) => {
-                const isAppStepLockedForSales =
-                  isSameWorkspaceDept(step.dept, "Application") &&
-                  userRole !== "director" &&
-                  !isSameWorkspaceDept(userDept, "Application");
+                const totalSteps = (wfForm.steps || []).length;
+                const stepDepts: string[] =
+                  Array.isArray(step.departments) && step.departments.length > 0
+                    ? step.departments
+                    : step.dept
+                    ? String(step.dept).split(",").map((d: string) => d.trim()).filter(Boolean)
+                    : ["Application"];
+                const primaryDept = stepDepts[0] || "Application";
+                const stepAssignees: string[] =
+                  Array.isArray(step.assignees) && step.assignees.length > 0
+                    ? step.assignees.map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean)
+                    : step.assignee_name
+                    ? String(step.assignee_name).split(",").map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean)
+                    : [];
+                const primaryAssignee = stepAssignees[0] || "";
+
+                const updateStepAt = (updater: (cur: any) => any) => {
+                  const cloned = [...(wfForm.steps || [])];
+                  cloned[idx] = updater({ ...cloned[idx] });
+                  setWfForm({ ...wfForm, steps: reindexWorkflowSteps(cloned) });
+                };
+
+                const moveStep = (dir: -1 | 1) => {
+                  const targetIdx = idx + dir;
+                  if (targetIdx < 0 || targetIdx >= totalSteps) return;
+                  const cloned = [...(wfForm.steps || [])];
+                  const temp = cloned[idx];
+                  cloned[idx] = cloned[targetIdx];
+                  cloned[targetIdx] = temp;
+                  setWfForm({ ...wfForm, steps: reindexWorkflowSteps(cloned) });
+                };
+
+                const insertStepBelow = () => {
+                  const cloned = [...(wfForm.steps || [])];
+                  const newSt = {
+                    step_index: idx + 1,
+                    title: `Bước phối hợp bổ sung`,
+                    dept: primaryDept,
+                    departments: [primaryDept],
+                    assignee_name: "",
+                    assignees: [],
+                    sla_hours: 24,
+                    deliverables: "Biên bản xác nhận",
+                    status: "PENDING"
+                  };
+                  cloned.splice(idx + 1, 0, newSt);
+                  setWfForm({ ...wfForm, steps: reindexWorkflowSteps(cloned) });
+                };
+
+                // Candidate personnel filtered by any of the selected departments in this step (fallback to all personnel)
+                const matchingDeptPersonnel = personnelList.filter((p: any) =>
+                  stepDepts.some((d) => isSameWorkspaceDept(p.department, d))
+                );
+                const candidatePool = matchingDeptPersonnel.length > 0 ? matchingDeptPersonnel : personnelList;
+
                 return (
                   <div
                     key={idx}
-                    className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80 grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center text-xs shadow-2xs hover:border-indigo-500/40 transition-all"
+                    className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800/80 space-y-2.5 text-xs shadow-2xs hover:border-indigo-500/40 transition-all"
                   >
-                    <div className="md:col-span-1 flex items-center justify-center">
-                      <span className="w-7 h-7 rounded-xl bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 font-extrabold flex items-center justify-center text-xs border border-indigo-200 dark:border-indigo-800">
-                        B{idx + 1}
-                      </span>
-                    </div>
-                    <div className="md:col-span-4">
-                      <input
-                        type="text"
-                        value={step.title}
-                        onChange={(e) => {
-                          const updated = [...(wfForm.steps || [])];
-                          updated[idx].title = e.target.value;
-                          setWfForm({ ...wfForm, steps: updated });
-                        }}
-                        placeholder="Tên công việc của bước..."
-                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
-                      />
-                    </div>
-                    <div className="md:col-span-3">
-                      <DepartmentDropdownSelect
-                        value={step.dept}
-                        onChange={(val) => {
-                          const updated = [...(wfForm.steps || [])];
-                          updated[idx].dept = val;
-                          if (
-                            isSameWorkspaceDept(val, "Application") &&
-                            userRole !== "director" &&
-                            !isSameWorkspaceDept(userDept, "Application")
-                          ) {
-                            updated[idx].assignee_name = "";
-                          }
-                          setWfForm({ ...wfForm, steps: updated });
-                        }}
-                      />
-                    </div>
-                    <div className="md:col-span-3">
-                      {isAppStepLockedForSales ? (
-                        <div className="w-full px-3 py-2 rounded-xl border border-amber-200 dark:border-amber-800/70 bg-amber-50/70 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 font-bold text-[11px] flex items-center gap-1.5">
-                          <span>⏳ Do Application tự phân công</span>
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-start">
+                      <div className="md:col-span-1 flex md:flex-col items-center justify-between md:justify-center gap-1">
+                        <span className="w-7 h-7 rounded-xl bg-indigo-50 dark:bg-indigo-950 text-indigo-600 dark:text-indigo-400 font-extrabold flex items-center justify-center text-xs border border-indigo-200 dark:border-indigo-800">
+                          B{idx + 1}
+                        </span>
+                        <div className="flex items-center gap-0.5">
+                          <button
+                            type="button"
+                            disabled={idx === 0}
+                            onClick={() => moveStep(-1)}
+                            className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-slate-600 dark:text-slate-300 disabled:opacity-30 font-bold text-[10px] cursor-pointer"
+                            title="Di chuyển bước lên (↑)"
+                          >
+                            ↑
+                          </button>
+                          <button
+                            type="button"
+                            disabled={idx === totalSteps - 1}
+                            onClick={() => moveStep(1)}
+                            className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-slate-600 dark:text-slate-300 disabled:opacity-30 font-bold text-[10px] cursor-pointer"
+                            title="Di chuyển bước xuống (↓)"
+                          >
+                            ↓
+                          </button>
                         </div>
-                      ) : (
-                        <SearchablePersonnelSelect
-                          value={cleanWorkspaceAssignee(step.assignee_name)}
+                      </div>
+
+                      <div className="md:col-span-4 space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-400">Nội dung công việc bước {idx + 1}</label>
+                        <input
+                          type="text"
+                          value={step.title}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateStepAt((cur) => ({ ...cur, title: val }));
+                          }}
+                          placeholder="Tên công việc của bước..."
+                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
+                        />
+                      </div>
+
+                      {/* Multi-Department Selector */}
+                      <div className="md:col-span-3 space-y-1.5">
+                        <label className="block text-[10px] font-bold text-slate-400">
+                          Phòng ban thực hiện ({stepDepts.length} phòng)
+                        </label>
+                        <DepartmentDropdownSelect
+                          value={primaryDept}
                           onChange={(val) => {
-                            const updated = [...(wfForm.steps || [])];
-                            updated[idx].assignee_name = val;
-                            setWfForm({ ...wfForm, steps: updated });
+                            updateStepAt((cur) => {
+                              const others = stepDepts.slice(1).filter((d) => d !== val);
+                              const nextDepts = [val, ...others];
+                              return {
+                                ...cur,
+                                departments: nextDepts,
+                                dept: nextDepts.join(", ")
+                              };
+                            });
+                          }}
+                        />
+                        <div className="flex flex-wrap items-center gap-1">
+                          {stepDepts.map((dName, dIdx) => (
+                            <span
+                              key={dName + dIdx}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                            >
+                              <span>🏢 {dName}</span>
+                              {stepDepts.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    updateStepAt((cur) => {
+                                      const nextDepts = stepDepts.filter((_, i) => i !== dIdx);
+                                      return {
+                                        ...cur,
+                                        departments: nextDepts,
+                                        dept: nextDepts.join(", ")
+                                      };
+                                    });
+                                  }}
+                                  className="hover:text-rose-500 cursor-pointer"
+                                  title="Bỏ phòng ban này"
+                                >
+                                  <X className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const addDept = e.target.value;
+                              if (!addDept) return;
+                              updateStepAt((cur) => {
+                                const nextDepts = Array.from(new Set([...stepDepts, addDept]));
+                                return {
+                                  ...cur,
+                                  departments: nextDepts,
+                                  dept: nextDepts.join(", ")
+                                };
+                              });
+                            }}
+                            className="px-1.5 py-0.5 rounded-lg border border-dashed border-indigo-300 dark:border-indigo-700 bg-transparent text-[10px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer"
+                          >
+                            <option value="">+ Thêm phòng phối hợp</option>
+                            {ALL_DEPARTMENTS_OPTIONS.filter((o) => !stepDepts.includes(o.value)).map((o) => (
+                              <option key={o.value} value={o.value} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                                + {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Multi-Assignee Selector */}
+                      <div className="md:col-span-3 space-y-1.5">
+                        <label className="block text-[10px] font-bold text-slate-400">
+                          Nhân sự phối hợp ({stepAssignees.length > 0 ? `${stepAssignees.length} người` : "Tự phân công / Chọn"})
+                        </label>
+                        <SearchablePersonnelSelect
+                          value={primaryAssignee}
+                          onChange={(val) => {
+                            const cleaned = cleanWorkspaceAssignee(val);
+                            updateStepAt((cur) => {
+                              const others = stepAssignees.slice(1).filter((a) => a !== cleaned);
+                              const nextAssignees = cleaned ? [cleaned, ...others] : others;
+                              return {
+                                ...cur,
+                                assignees: nextAssignees,
+                                assignee_name: nextAssignees.join(", ")
+                              };
+                            });
                           }}
                           personnelList={personnelList}
-                          filterDepartment={step.dept}
-                          placeholder="Chờ bộ phận tiếp nhận phân công..."
+                          filterDepartment={stepDepts.length === 1 ? primaryDept : undefined}
+                          placeholder="Chọn người chủ trì (hoặc để bộ phận phân công)..."
                         />
-                      )}
-                    </div>
-                    <div className="md:col-span-1 flex justify-end">
-                      {(wfForm.steps || []).length > 1 && (
+                        <div className="flex flex-wrap items-center gap-1">
+                          {stepAssignees.map((aName, aIdx) => (
+                            <span
+                              key={aName + aIdx}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                            >
+                              <span>👤 {aName}</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  updateStepAt((cur) => {
+                                    const nextAssignees = stepAssignees.filter((_, i) => i !== aIdx);
+                                    return {
+                                      ...cur,
+                                      assignees: nextAssignees,
+                                      assignee_name: nextAssignees.join(", ")
+                                    };
+                                  });
+                                }}
+                                className="hover:text-rose-500 cursor-pointer"
+                                title="Bỏ nhân sự này"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            </span>
+                          ))}
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const addPerson = cleanWorkspaceAssignee(e.target.value);
+                              if (!addPerson) return;
+                              updateStepAt((cur) => {
+                                const nextAssignees = Array.from(new Set([...stepAssignees, addPerson]));
+                                return {
+                                  ...cur,
+                                  assignees: nextAssignees,
+                                  assignee_name: nextAssignees.join(", ")
+                                };
+                              });
+                            }}
+                            className="px-1.5 py-0.5 rounded-lg border border-dashed border-emerald-400 dark:border-emerald-700 bg-transparent text-[10px] font-bold text-emerald-600 dark:text-emerald-400 cursor-pointer max-w-[175px]"
+                          >
+                            <option value="">+ Thêm người cùng bước</option>
+                            {candidatePool
+                              .filter((p: any) => p.full_name && !stepAssignees.includes(p.full_name))
+                              .map((p: any) => (
+                                <option key={p.id || p.employee_code || p.full_name} value={p.full_name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                                  + {p.full_name} ({p.department || "TBR"})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Step Actions: Insert Below & Delete */}
+                      <div className="md:col-span-1 flex md:flex-col items-center justify-end gap-1 pt-1">
                         <button
                           type="button"
-                          onClick={() => {
-                            const updated = (wfForm.steps || []).filter((_: any, i: number) => i !== idx);
-                            setWfForm({ ...wfForm, steps: updated });
-                          }}
-                          className="p-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors cursor-pointer"
-                          title="Xóa bước này"
+                          onClick={insertStepBelow}
+                          className="px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 text-[10px] font-bold transition-colors cursor-pointer whitespace-nowrap"
+                          title="Chèn thêm 1 bước mới ngay bên dưới bước này"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          + Chèn dưới
                         </button>
-                      )}
+                        {totalSteps > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const updated = (wfForm.steps || []).filter((_: any, i: number) => i !== idx);
+                              setWfForm({ ...wfForm, steps: reindexWorkflowSteps(updated) });
+                            }}
+                            className="p-1.5 rounded-lg text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors cursor-pointer"
+                            title="Xóa bước này"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -7230,107 +7865,278 @@ ${wf.description || ""}`}
             </div>
 
             <div className="space-y-2.5">
-              {(templateForm.steps || []).map((st: any, sIdx: number) => (
-                <div
-                  key={sIdx}
-                  className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs space-y-2"
-                >
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-                    <span className="font-extrabold text-xs px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
-                      Bước {sIdx + 1}
-                    </span>
-                    {(templateForm.steps || []).length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const updated = (templateForm.steps || []).filter((_: any, i: number) => i !== sIdx);
-                          setTemplateForm({ ...templateForm, steps: updated });
-                        }}
-                        className="text-rose-500 hover:text-rose-700 text-xs font-bold flex items-center gap-1"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                        <span>Xóa bước</span>
-                      </button>
-                    )}
+              {(templateForm.steps || []).map((st: any, sIdx: number) => {
+                const totalTmplSteps = (templateForm.steps || []).length;
+                const stDepts: string[] =
+                  Array.isArray(st.departments) && st.departments.length > 0
+                    ? st.departments
+                    : st.dept
+                    ? String(st.dept).split(",").map((d: string) => d.trim()).filter(Boolean)
+                    : [templateForm.target_dept || "Application"];
+                const primaryStDept = stDepts[0] || "Application";
+                const stAssignees: string[] =
+                  Array.isArray(st.assignees) && st.assignees.length > 0
+                    ? st.assignees.map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean)
+                    : st.assignee_name
+                    ? String(st.assignee_name).split(",").map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean)
+                    : [];
+                const primaryStAssignee = stAssignees[0] || "";
+
+                const updateTmplStepAt = (updater: (cur: any) => any) => {
+                  const cloned = [...(templateForm.steps || [])];
+                  cloned[sIdx] = updater({ ...cloned[sIdx] });
+                  setTemplateForm({ ...templateForm, steps: reindexWorkflowSteps(cloned) });
+                };
+
+                const moveTmplStep = (dir: -1 | 1) => {
+                  const targetIdx = sIdx + dir;
+                  if (targetIdx < 0 || targetIdx >= totalTmplSteps) return;
+                  const cloned = [...(templateForm.steps || [])];
+                  const tmp = cloned[sIdx];
+                  cloned[sIdx] = cloned[targetIdx];
+                  cloned[targetIdx] = tmp;
+                  setTemplateForm({ ...templateForm, steps: reindexWorkflowSteps(cloned) });
+                };
+
+                const insertTmplStepBelow = () => {
+                  const cloned = [...(templateForm.steps || [])];
+                  cloned.splice(sIdx + 1, 0, {
+                    step_index: sIdx + 1,
+                    title: `Bước phối hợp bổ sung`,
+                    dept: primaryStDept,
+                    departments: [primaryStDept],
+                    assignee_name: "",
+                    assignees: [],
+                    sla_hours: 24,
+                    deliverables: "Biên bản nghiệm thu"
+                  });
+                  setTemplateForm({ ...templateForm, steps: reindexWorkflowSteps(cloned) });
+                };
+
+                return (
+                  <div
+                    key={sIdx}
+                    className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="font-extrabold text-xs px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
+                          Bước {sIdx + 1}
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            disabled={sIdx === 0}
+                            onClick={() => moveTmplStep(-1)}
+                            className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-indigo-100 text-slate-700 dark:text-slate-300 disabled:opacity-30 text-[10px] font-bold cursor-pointer"
+                            title="Di chuyển bước lên (↑)"
+                          >
+                            ↑ Lên
+                          </button>
+                          <button
+                            type="button"
+                            disabled={sIdx === totalTmplSteps - 1}
+                            onClick={() => moveTmplStep(1)}
+                            className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 hover:bg-indigo-100 text-slate-700 dark:text-slate-300 disabled:opacity-30 text-[10px] font-bold cursor-pointer"
+                            title="Di chuyển bước xuống (↓)"
+                          >
+                            ↓ Xuống
+                          </button>
+                          <button
+                            type="button"
+                            onClick={insertTmplStepBelow}
+                            className="px-2 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 text-[10px] font-bold cursor-pointer"
+                            title="Chèn thêm bước mới ngay dưới bước này"
+                          >
+                            + Chèn bước dưới
+                          </button>
+                        </div>
+                      </div>
+                      {totalTmplSteps > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const updated = (templateForm.steps || []).filter((_: any, i: number) => i !== sIdx);
+                            setTemplateForm({ ...templateForm, steps: reindexWorkflowSteps(updated) });
+                          }}
+                          className="text-rose-500 hover:text-rose-700 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          <span>Xóa bước</span>
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
+                      <div className="md:col-span-5">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Tên bước công việc *</label>
+                        <input
+                          type="text"
+                          required
+                          value={st.title}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateTmplStepAt((cur) => ({ ...cur, title: val }));
+                          }}
+                          placeholder="VD: Kiểm tra tính khả thi & tiếp nhận mẫu"
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 font-bold"
+                        />
+                      </div>
+
+                      <div className="md:col-span-4 space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                          Phòng ban thực hiện ({stDepts.length} phòng)
+                        </label>
+                        <DepartmentDropdownSelect
+                          value={primaryStDept}
+                          onChange={(val) => {
+                            updateTmplStepAt((cur) => {
+                              const others = stDepts.slice(1).filter((d) => d !== val);
+                              const nextDepts = [val, ...others];
+                              return { ...cur, departments: nextDepts, dept: nextDepts.join(", ") };
+                            });
+                          }}
+                        />
+                        <div className="flex flex-wrap items-center gap-1">
+                          {stDepts.map((dName, dIdx) => (
+                            <span
+                              key={dName + dIdx}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                            >
+                              <span>🏢 {dName}</span>
+                              {stDepts.length > 1 && (
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    updateTmplStepAt((cur) => {
+                                      const nextDepts = stDepts.filter((_, i) => i !== dIdx);
+                                      return { ...cur, departments: nextDepts, dept: nextDepts.join(", ") };
+                                    })
+                                  }
+                                  className="hover:text-rose-500 cursor-pointer"
+                                >
+                                  <X className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const addDept = e.target.value;
+                              if (!addDept) return;
+                              updateTmplStepAt((cur) => {
+                                const nextDepts = Array.from(new Set([...stDepts, addDept]));
+                                return { ...cur, departments: nextDepts, dept: nextDepts.join(", ") };
+                              });
+                            }}
+                            className="px-1.5 py-0.5 rounded-lg border border-dashed border-indigo-300 dark:border-indigo-700 bg-transparent text-[10px] font-bold text-indigo-600 dark:text-indigo-400 cursor-pointer"
+                          >
+                            <option value="">+ Thêm phòng</option>
+                            {ALL_DEPARTMENTS_OPTIONS.filter((o) => !stDepts.includes(o.value)).map((o) => (
+                              <option key={o.value} value={o.value} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                                + {o.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="md:col-span-3">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Thời hạn SLA (giờ)</label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={st.sla_hours || 24}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10) || 24;
+                            updateTmplStepAt((cur) => ({ ...cur, sla_hours: val }));
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 font-semibold"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      <div className="space-y-1">
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                          Nhân sự mặc định phụ trách ({stAssignees.length > 0 ? `${stAssignees.length} người` : "Tùy chọn"})
+                        </label>
+                        <SearchablePersonnelSelect
+                          value={primaryStAssignee}
+                          onChange={(val) => {
+                            const cleaned = cleanWorkspaceAssignee(val);
+                            updateTmplStepAt((cur) => {
+                              const others = stAssignees.slice(1).filter((a) => a !== cleaned);
+                              const nextAssignees = cleaned ? [cleaned, ...others] : others;
+                              return { ...cur, assignees: nextAssignees, assignee_name: nextAssignees.join(", ") };
+                            });
+                          }}
+                          personnelList={personnelList}
+                          placeholder="Chọn nhân sự (hoặc để trống)..."
+                        />
+                        <div className="flex flex-wrap items-center gap-1">
+                          {stAssignees.map((aName, aIdx) => (
+                            <span
+                              key={aName + aIdx}
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/70 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800"
+                            >
+                              <span>👤 {aName}</span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateTmplStepAt((cur) => {
+                                    const nextAssignees = stAssignees.filter((_, i) => i !== aIdx);
+                                    return { ...cur, assignees: nextAssignees, assignee_name: nextAssignees.join(", ") };
+                                  })
+                                }
+                                className="hover:text-rose-500 cursor-pointer"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            </span>
+                          ))}
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const addPerson = cleanWorkspaceAssignee(e.target.value);
+                              if (!addPerson) return;
+                              updateTmplStepAt((cur) => {
+                                const nextAssignees = Array.from(new Set([...stAssignees, addPerson]));
+                                return { ...cur, assignees: nextAssignees, assignee_name: nextAssignees.join(", ") };
+                              });
+                            }}
+                            className="px-1.5 py-0.5 rounded-lg border border-dashed border-emerald-400 dark:border-emerald-700 bg-transparent text-[10px] font-bold text-emerald-600 dark:text-emerald-400 cursor-pointer"
+                          >
+                            <option value="">+ Thêm người phối hợp</option>
+                            {personnelList
+                              .filter((p: any) => p.full_name && !stAssignees.includes(p.full_name))
+                              .map((p: any) => (
+                                <option key={p.id || p.employee_code || p.full_name} value={p.full_name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                                  + {p.full_name} ({p.department || "TBR"})
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Tiêu chuẩn đầu ra (Deliverable)</label>
+                        <input
+                          type="text"
+                          value={st.deliverables || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateTmplStepAt((cur) => ({ ...cur, deliverables: val }));
+                          }}
+                          placeholder="VD: Biên bản nghiệm thu có chữ ký bác sĩ / khách hàng..."
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800"
+                        />
+                      </div>
+                    </div>
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
-                    <div className="md:col-span-6">
-                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Tên bước công việc *</label>
-                      <input
-                        type="text"
-                        required
-                        value={st.title}
-                        onChange={(e) => {
-                          const updated = [...(templateForm.steps || [])];
-                          updated[sIdx].title = e.target.value;
-                          setTemplateForm({ ...templateForm, steps: updated });
-                        }}
-                        placeholder="VD: Kiểm tra tính khả thi & tiếp nhận mẫu"
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 font-bold"
-                      />
-                    </div>
-
-                    <div className="md:col-span-3">
-                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Phòng ban thực hiện</label>
-                      <DepartmentDropdownSelect
-                        value={st.dept}
-                        onChange={(val) => {
-                          const updated = [...(templateForm.steps || [])];
-                          updated[sIdx].dept = val;
-                          setTemplateForm({ ...templateForm, steps: updated });
-                        }}
-                      />
-                    </div>
-
-                    <div className="md:col-span-3">
-                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Thời hạn SLA (giờ)</label>
-                      <input
-                        type="number"
-                        min={1}
-                        value={st.sla_hours || 24}
-                        onChange={(e) => {
-                          const updated = [...(templateForm.steps || [])];
-                          updated[sIdx].sla_hours = parseInt(e.target.value, 10) || 24;
-                          setTemplateForm({ ...templateForm, steps: updated });
-                        }}
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 font-semibold"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Nhân sự mặc định phụ trách</label>
-                      <SearchablePersonnelSelect
-                        value={st.assignee_name || ""}
-                        onChange={(val) => {
-                          const updated = [...(templateForm.steps || [])];
-                          updated[sIdx].assignee_name = val;
-                          setTemplateForm({ ...templateForm, steps: updated });
-                        }}
-                        personnelList={personnelList}
-                        placeholder="Chọn nhân sự (hoặc để trống)..."
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500 mb-0.5">Tiêu chuẩn đầu ra (Deliverable)</label>
-                      <input
-                        type="text"
-                        value={st.deliverables || ""}
-                        onChange={(e) => {
-                          const updated = [...(templateForm.steps || [])];
-                          updated[sIdx].deliverables = e.target.value;
-                          setTemplateForm({ ...templateForm, steps: updated });
-                        }}
-                        placeholder="VD: Biên bản nghiệm thu có chữ ký bác sĩ / khách hàng..."
-                        className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800"
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
 

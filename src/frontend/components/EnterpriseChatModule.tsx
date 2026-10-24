@@ -423,6 +423,7 @@ export const EnterpriseChatModule: React.FC = () => {
     try {
       if (typeof window !== "undefined") {
         localStorage.setItem(`tbr_chat_read_${currentUserName}_${channelId}`, String(Date.now()));
+        localStorage.setItem(`chat_last_read_${channelId}_${currentUserName}`, new Date().toISOString());
       }
       await fetch(`/api/chat?action=mark_read&channel_id=${channelId}&user=${encodeURIComponent(currentUserName)}`, {
         method: "POST",
@@ -742,7 +743,8 @@ export const EnterpriseChatModule: React.FC = () => {
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!activeChannel) return;
-    if (!inputText.trim() && inputAttachments.length === 0) return;
+    const cleanedText = inputText.replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim();
+    if (!cleanedText && inputAttachments.length === 0) return;
 
     const payload = {
       channel_id: activeChannel.id,
@@ -750,7 +752,7 @@ export const EnterpriseChatModule: React.FC = () => {
       sender_name: currentUserName,
       sender_role: currentUserRole,
       sender_dept: currentUserDept,
-      content: inputText.trim(),
+      content: cleanedText,
       attachments: inputAttachments,
       related_work: selectedRelatedWork,
       reply_to: replyingTo ? {
@@ -829,40 +831,81 @@ export const EnterpriseChatModule: React.FC = () => {
     }
   };
 
-  // 4. File & Image Upload Handler (Supports FileList and File[])
+  // 4. File & Image Upload Handler (Supports FileList and File[] with Base64 Fallback so it never hangs)
+  const readFileAsDataUrl = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error("Không thể đọc tệp"));
+      reader.readAsDataURL(file);
+    });
+
   const handleUploadFiles = async (files: FileList | File[] | null, isSplit = false) => {
     if (!files) return;
     const fileList = Array.isArray(files) ? files : Array.from(files);
     if (fileList.length === 0) return;
 
     setIsUploading(true);
+    const safetyReset = setTimeout(() => setIsUploading(false), 15000);
     try {
       const uploaded: any[] = [];
       for (let i = 0; i < fileList.length; i++) {
         const file = fileList[i];
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await fetch("/api/upload", { method: "POST", body: formData });
-        const data = await res.json();
-        if (data.success) {
+        let fileUrl = "";
+        let fileName = file.name;
+        let fileSize = file.size;
+        let fileType = file.type || "image/png";
+
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 12000);
+          const formData = new FormData();
+          formData.append("file", file);
+          const res = await fetch("/api/upload", {
+            method: "POST",
+            body: formData,
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && (data.url || data.fileUrl)) {
+              fileUrl = data.url || data.fileUrl;
+              fileName = data.name || file.name;
+              fileSize = data.size || file.size;
+              fileType = data.type || file.type || "image/png";
+            }
+          }
+        } catch {
+          // Automatic fallback to inline base64 Data URL below
+        }
+
+        if (!fileUrl) {
+          fileUrl = await readFileAsDataUrl(file);
+        }
+
+        if (fileUrl) {
           uploaded.push({
-            name: data.name || file.name,
-            url: data.url,
-            size: data.size || file.size,
-            type: data.type || file.type || "image/png",
+            name: fileName,
+            url: fileUrl,
+            size: fileSize,
+            type: fileType,
             uploaded_at: nowVNDateTime()
           });
         }
       }
-      if (isSplit) {
-        setSplitInputAttachments(prev => [...prev, ...uploaded]);
-      } else {
-        setInputAttachments(prev => [...prev, ...uploaded]);
+      if (uploaded.length > 0) {
+        if (isSplit) {
+          setSplitInputAttachments(prev => [...prev, ...uploaded]);
+        } else {
+          setInputAttachments(prev => [...prev, ...uploaded]);
+        }
+        showToast(`Đã đính kèm ${uploaded.length} tệp/hình ảnh`, "success");
       }
-      showToast(`Đã đính kèm ${uploaded.length} tệp/hình ảnh`, "success");
     } catch (err: any) {
-      showToast("Lỗi tải tệp: " + err.message, "error");
+      showToast("Lỗi tải tệp: " + (err?.message || "Không xác định"), "error");
     } finally {
+      clearTimeout(safetyReset);
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
       if (imageInputRef.current) imageInputRef.current.value = "";
@@ -964,7 +1007,8 @@ export const EnterpriseChatModule: React.FC = () => {
       if (data.success) {
         setMessages(prev => prev.map(m => m.id === messageId ? { ...m, is_pinned: data.is_pinned } : m));
         setActiveChannel(prev => prev ? { ...prev, pinned_messages: data.pinned_messages } : null);
-        showToast(data.is_pinned ? "Đã ghim tin nhắn!" : "Đã bỏ ghim tin nhắn!", "info");
+        setChannels(prev => prev.map(c => c.id === activeChannel.id ? { ...c, pinned_messages: data.pinned_messages } : c));
+        showToast(data.is_pinned ? "📌 Đã ghim tin nhắn lên đầu kênh!" : "Đã bỏ ghim tin nhắn!", "info");
       }
     } catch (e) {
       showToast("Lỗi khi ghim tin nhắn", "error");
@@ -1924,15 +1968,41 @@ export const EnterpriseChatModule: React.FC = () => {
             </div>
 
             {/* Pinned Banner */}
-            {activeChannel.pinned_messages && activeChannel.pinned_messages.length > 0 && (
-              <div className="bg-amber-50 dark:bg-amber-950/30 px-3 py-1 border-b border-amber-200 dark:border-amber-900/40 flex items-center justify-between text-xs text-amber-900 dark:text-amber-200">
-                <div className="flex items-center gap-1.5 truncate">
-                  <Pin className="w-3 h-3 text-amber-600 shrink-0" />
-                  <span className="font-bold">Ghim:</span>
-                  <span className="truncate max-w-sm">{activeChannel.pinned_messages[activeChannel.pinned_messages.length - 1]?.content}</span>
+            {((activeChannel.pinned_messages && activeChannel.pinned_messages.length > 0) || messages.some(m => m.is_pinned)) && (() => {
+              const pinnedList = (activeChannel.pinned_messages && activeChannel.pinned_messages.length > 0)
+                ? activeChannel.pinned_messages
+                : messages.filter(m => m.is_pinned).map(m => ({ id: m.id, content: m.content, sender_name: m.sender_name }));
+              const latestPin = pinnedList[pinnedList.length - 1];
+              if (!latestPin) return null;
+              return (
+                <div className="bg-amber-50 dark:bg-amber-950/40 px-3.5 py-1.5 border-b border-amber-200 dark:border-amber-900/50 flex items-center justify-between gap-2 text-xs text-amber-900 dark:text-amber-200">
+                  <div
+                    onClick={() => latestPin.id && scrollToMessage(Number(latestPin.id))}
+                    className="flex items-center gap-1.5 truncate cursor-pointer hover:underline"
+                    title="Bấm để cuộn tới tin nhắn đã ghim"
+                  >
+                    <Pin className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                    <span className="font-extrabold shrink-0">📌 Tin đã ghim ({pinnedList.length}):</span>
+                    {latestPin.sender_name && (
+                      <span className="font-semibold text-amber-700 dark:text-amber-300 shrink-0">
+                        {latestPin.sender_name}:
+                      </span>
+                    )}
+                    <span className="truncate max-w-md">{latestPin.content || "[Tệp đính kèm / Hình ảnh]"}</span>
+                  </div>
+                  {latestPin.id && (
+                    <button
+                      type="button"
+                      onClick={() => handleTogglePin(Number(latestPin.id))}
+                      className="text-[10px] font-bold text-amber-700 hover:text-rose-600 dark:text-amber-300 px-2 py-0.5 rounded bg-amber-100/80 dark:bg-amber-900/50 hover:bg-rose-50 cursor-pointer shrink-0 transition-colors"
+                      title="Bỏ ghim tin nhắn này"
+                    >
+                      Bỏ ghim ×
+                    </button>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Messages Scroll Area */}
             <div className="flex-1 overflow-y-auto p-3.5 space-y-3.5">
@@ -2022,10 +2092,15 @@ export const EnterpriseChatModule: React.FC = () => {
                             <button
                               type="button"
                               onClick={() => handleTogglePin(msg.id)}
-                              className="p-1 text-slate-400 hover:text-amber-500 cursor-pointer"
-                              title="Ghim tin nhắn"
+                              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-0.5 cursor-pointer transition-colors ${
+                                msg.is_pinned
+                                  ? "text-amber-600 bg-amber-100 dark:bg-amber-950/60"
+                                  : "text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                              }`}
+                              title={msg.is_pinned ? "Bỏ ghim tin nhắn" : "Ghim tin nhắn lên đầu kênh"}
                             >
                               <Pin className="w-3 h-3" />
+                              <span>{msg.is_pinned ? "Bỏ ghim" : "Ghim"}</span>
                             </button>
                           </div>
 
@@ -2066,7 +2141,7 @@ export const EnterpriseChatModule: React.FC = () => {
 
                           {/* Primary Bubble */}
                           <div className="bg-gradient-to-r from-indigo-600 to-indigo-700 text-white rounded-2xl rounded-tr-xs px-4 py-2.5 shadow-xs text-xs leading-relaxed whitespace-pre-line break-words max-w-full">
-                            {msg.content}
+                            {String(msg.content || "").replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim()}
                           </div>
 
                           {/* Related Work Badge */}
@@ -2227,7 +2302,7 @@ export const EnterpriseChatModule: React.FC = () => {
                           ? "bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/60"
                           : `bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-200/70 dark:border-slate-700/60 border-l-4 ${senderPalette.bubbleBorder}`
                       }`}>
-                        {msg.content}
+                        {String(msg.content || "").replace(/Đang tải hình ảnh \/ tệp lên\.\.\. Vui lòng đợi/gi, "").trim()}
                       </div>
 
                       {/* Related Work Badge */}
@@ -2309,10 +2384,15 @@ export const EnterpriseChatModule: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => handleTogglePin(msg.id)}
-                        className="p-1 text-slate-400 hover:text-amber-500 cursor-pointer"
-                        title="Ghim tin nhắn"
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-0.5 cursor-pointer transition-colors ${
+                          msg.is_pinned
+                            ? "text-amber-600 bg-amber-100 dark:bg-amber-950/60"
+                            : "text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40"
+                        }`}
+                        title={msg.is_pinned ? "Bỏ ghim tin nhắn" : "Ghim tin nhắn lên đầu kênh"}
                       >
                         <Pin className="w-3 h-3" />
+                        <span>{msg.is_pinned ? "Bỏ ghim" : "Ghim"}</span>
                       </button>
                     </div>
                   </div>
