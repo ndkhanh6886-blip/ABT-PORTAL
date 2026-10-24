@@ -56,7 +56,7 @@ export function AttachmentList({ files, onRemove }: { files: Attachment[]; onRem
 
 /** Nút chọn & tải file (nhiều file) kèm danh sách đã đính kèm. */
 export function AttachmentPicker({
-    files, onChange, label = "Tệp đính kèm", hint, accept = "image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.zip,.rar",
+    files, onChange, label = "Tệp đính kèm", hint, accept = "image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.csv,.txt,.rtf,.xml,.zip,.rar,.7z,.tar,.gz",
 }: {
     files: Attachment[];
     onChange: (files: Attachment[]) => void;

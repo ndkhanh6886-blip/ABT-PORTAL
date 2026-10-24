@@ -7077,7 +7077,7 @@ ${wf.description || ""}`}
                     type="file"
                     multiple
                     disabled={isUploading}
-                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.xml,.csv"
+                    accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.xml,.csv,.txt,.rtf,.zip,.rar,.7z,.tar,.gz"
                     onChange={(e) => handleFileUpload(e.target.files, "task")}
                     className="hidden"
                   />
@@ -8750,7 +8750,7 @@ ${wf.description || ""}`}
                     type="file"
                     multiple
                     disabled={isUploading}
-                    accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.xml,.csv"
+                    accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.xml,.csv,.txt,.rtf,.zip,.rar,.7z,.tar,.gz"
                     onChange={(e) => handleFileUpload(e.target.files, "record")}
                     className="hidden"
                   />
@@ -8761,7 +8761,7 @@ ${wf.description || ""}`}
               <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-dashed border-slate-300 dark:border-slate-800 text-center">
                 <div className="flex items-center justify-center gap-2 text-slate-400 text-xs">
                   <Paperclip className="w-4 h-4" />
-                  <span>Hỗ trợ tải lên ảnh hiện trường (PNG, JPG), biên bản nghiệm thu (PDF), file báo giá (Excel, Word). Lưu trữ trực tiếp trên máy chủ.</span>
+                  <span>Hỗ trợ chọn nhiều tệp cùng lúc hoặc file nén (.RAR, .ZIP, .7Z), hồ sơ thầu/nghiệm thu (PDF, Word, Excel, PowerPoint), ảnh &amp; video (Tối đa 200MB/tệp).</span>
                 </div>
               </div>
 
@@ -9096,7 +9096,7 @@ ${wf.description || ""}`}
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                  accept="image/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.xml,.csv,.txt,.rtf,.zip,.rar,.7z,.tar,.gz"
                   onChange={(e) => handleFileUpload(e.target.files, "schedule")}
                   className="hidden"
                 />

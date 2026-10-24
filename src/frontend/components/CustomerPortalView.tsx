@@ -1716,7 +1716,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                     <input
                       type="file"
                       multiple
-                      accept="image/*,video/*,.pdf,.xlsx,.xls,.csv,.docx,.txt,.pcrd,.eds"
+                      accept="image/*,video/*,.pdf,.xlsx,.xls,.csv,.doc,.docx,.ppt,.pptx,.txt,.pcrd,.eds,.zip,.rar,.7z"
                       onChange={(e) => {
                         if (e.target.files) handleUploadFiles(e.target.files);
                         e.target.value = "";

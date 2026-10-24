@@ -2013,7 +2013,7 @@ export const LegalModule: React.FC = () => {
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.zip,.rar,.7z"
                   onChange={handleFileUpload}
                   className="hidden"
                 />
@@ -2195,7 +2195,7 @@ export const LegalModule: React.FC = () => {
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.png,.jpg,.jpeg"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.zip,.rar,.7z"
                   onChange={handleDocFileUpload}
                   className="hidden"
                 />
@@ -2406,7 +2406,7 @@ export const LegalModule: React.FC = () => {
                 <input
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg,.zip,.rar,.7z"
                   onChange={handleTenderFileUpload}
                   className="hidden"
                 />
