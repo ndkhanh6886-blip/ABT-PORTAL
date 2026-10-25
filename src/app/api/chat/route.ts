@@ -224,7 +224,7 @@ export async function GET(req: NextRequest) {
             u.full_name as full_name,
             COALESCE(u.department, 'Ban Giám Đốc') as department,
             'Quản trị viên hệ thống' as position,
-            COALESCE(u.email, 'admin@tbrscientific.com') as email,
+            COALESCE(u.email, 'admin@tbr.vn') as email,
             '' as phone,
             'admin' as employee_code,
             u.last_seen_at,
@@ -641,6 +641,198 @@ export async function POST(req: NextRequest) {
 
       await logAudit("CREATE", "CHAT_CHANNEL", `Tạo mới nhóm chat: ${name} (${cleanType})`);
       return NextResponse.json({ success: true, channel: created });
+    }
+
+    // 2.2 Broadcast Meeting Invitation / Reminder via Chat (Group + Direct Messages to Attendees)
+    if (action === "broadcast_meeting") {
+      const {
+        title,
+        content,
+        attendees,
+        department,
+        send_direct = true,
+        create_group = false,
+        existing_channel_id
+      } = body;
+
+      if (!content || !String(content).trim()) {
+        return NextResponse.json({ error: "Nội dung thông báo lịch họp không được để trống" }, { status: 400 });
+      }
+
+      const senderName = ident.name || "Điều phối";
+      const senderDept = ident.department || department || "Ban Giám Đốc";
+      const rawAttendees: string[] = Array.isArray(attendees) ? attendees : [];
+      const cleanAttendees = Array.from(
+        new Set(rawAttendees.map((a) => String(a || "").trim()).filter(Boolean))
+      );
+      const allMembers = Array.from(new Set([senderName, ...cleanAttendees]));
+
+      let groupChannel: any = null;
+      let directSentCount = 0;
+
+      // A) If create_group or existing_channel_id is requested, create/reuse the meeting group channel and post the message
+      if (create_group || existing_channel_id) {
+        if (existing_channel_id) {
+          const exRes = await query("SELECT * FROM chat_channels WHERE id = $1", [Number(existing_channel_id)]);
+          if (exRes.rows.length > 0) {
+            groupChannel = exRes.rows[0];
+            // Ensure all attendees are in members
+            const curMems: string[] = Array.isArray(groupChannel.members) ? groupChannel.members : [];
+            const mergedMems = Array.from(new Set([...curMems, ...allMembers]));
+            await query("UPDATE chat_channels SET members = $1, last_message_at = CURRENT_TIMESTAMP WHERE id = $2", [
+              JSON.stringify(mergedMems),
+              groupChannel.id
+            ]);
+          }
+        }
+
+        if (!groupChannel) {
+          const groupName = `📅 Họp: ${String(title || "Cuộc họp nội bộ").trim().slice(0, 60)}`;
+          // Check if a group channel with the same name already exists
+          const existGrp = await query(
+            "SELECT * FROM chat_channels WHERE channel_type = 'GROUP' AND LOWER(TRIM(name)) = LOWER(TRIM($1)) ORDER BY id DESC LIMIT 1",
+            [groupName]
+          );
+          if (existGrp.rows.length > 0) {
+            groupChannel = existGrp.rows[0];
+            const curMems: string[] = Array.isArray(groupChannel.members) ? groupChannel.members : [];
+            const mergedMems = Array.from(new Set([...curMems, ...allMembers]));
+            await query("UPDATE chat_channels SET members = $1, last_message_at = CURRENT_TIMESTAMP WHERE id = $2", [
+              JSON.stringify(mergedMems),
+              groupChannel.id
+            ]);
+          } else {
+            const slug = groupName
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .replace(/đ/g, "d")
+              .replace(/[^a-z0-9]/g, "-")
+              .replace(/-+/g, "-")
+              .replace(/^-|-$/g, "");
+            const channel_code = `mtg-${slug.slice(0, 24) || "hop"}-${Date.now().toString().slice(-4)}`;
+            const createRes = await query(
+              `INSERT INTO chat_channels (
+                 channel_code, name, channel_type, department, description, is_private, created_by, members, last_message_at
+               ) VALUES ($1, $2, 'GROUP', $3, $4, TRUE, $5, $6, CURRENT_TIMESTAMP) RETURNING *`,
+              [
+                channel_code,
+                groupName,
+                department || "Liên phòng ban",
+                `Nhóm trao đổi & thông báo lịch họp: ${title || ""}`,
+                senderName,
+                JSON.stringify(allMembers)
+              ]
+            );
+            groupChannel = createRes.rows[0];
+          }
+        }
+
+        if (groupChannel?.id) {
+          const msgRes = await query(
+            `INSERT INTO chat_messages (
+               channel_id, channel_code, sender_name, sender_role, sender_dept, content, is_pinned
+             ) VALUES ($1, $2, $3, $4, $5, $6, TRUE) RETURNING *`,
+            [
+              groupChannel.id,
+              groupChannel.channel_code || "",
+              senderName,
+              "Chủ trì cuộc họp",
+              senderDept,
+              String(content).trim()
+            ]
+          );
+          const createdMsg = msgRes.rows[0];
+          if (createdMsg?.id) {
+            await query(
+              `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
+               VALUES ($1, $2, $3, NOW())
+               ON CONFLICT (channel_id, user_name)
+               DO UPDATE SET last_read_message_id = GREATEST(chat_channel_reads.last_read_message_id, EXCLUDED.last_read_message_id),
+                             last_read_at = NOW()`,
+              [groupChannel.id, senderName, createdMsg.id]
+            ).catch(() => {});
+          }
+        }
+      }
+
+      // B) Send Direct Message to each attendee so they get a personal notification in 1-on-1 chat
+      if (send_direct && cleanAttendees.length > 0) {
+        const meAliases = ident.aliases;
+        for (const target of cleanAttendees) {
+          if (!target || meAliases.includes(target.toLowerCase())) continue;
+          const targetAliases = [target.toLowerCase()];
+          try {
+            let dmChannel: any = null;
+            const existDm = await query(
+              `SELECT * FROM chat_channels c
+                WHERE c.channel_type = 'DIRECT'
+                  AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) m WHERE LOWER(TRIM(m)) = ANY($1::text[]))
+                  AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(c.members) = 'array' THEN c.members ELSE '[]'::jsonb END) m WHERE LOWER(TRIM(m)) = ANY($2::text[]))
+                ORDER BY c.id ASC LIMIT 1`,
+              [meAliases, targetAliases]
+            );
+            if (existDm.rows.length > 0) {
+              dmChannel = existDm.rows[0];
+            } else {
+              const slug = target
+                .toLowerCase()
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "")
+                .replace(/đ/g, "d")
+                .replace(/[^a-z0-9]/g, "-")
+                .replace(/-+/g, "-")
+                .replace(/^-|-$/g, "");
+              const dmCode = `dm-${slug.slice(0, 20) || "nv"}-${Date.now().toString().slice(-4)}-${Math.floor(Math.random() * 90 + 10)}`;
+              const createDm = await query(
+                `INSERT INTO chat_channels (
+                   channel_code, name, channel_type, department, description, is_private, created_by, members, last_message_at
+                 ) VALUES ($1, $2, 'DIRECT', $3, 'Trao đổi trực tiếp & Thông báo lịch họp', TRUE, $4, $5, CURRENT_TIMESTAMP) RETURNING *`,
+                [dmCode, target, department || "Nội bộ", senderName, JSON.stringify([senderName, target])]
+              );
+              dmChannel = createDm.rows[0];
+            }
+
+            if (dmChannel?.id) {
+              const dmMsgRes = await query(
+                `INSERT INTO chat_messages (
+                   channel_id, channel_code, sender_name, sender_role, sender_dept, content
+                 ) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+                [
+                  dmChannel.id,
+                  dmChannel.channel_code || "",
+                  senderName,
+                  "Thông báo lịch họp",
+                  senderDept,
+                  String(content).trim()
+                ]
+              );
+              await query("UPDATE chat_channels SET last_message_at = CURRENT_TIMESTAMP WHERE id = $1", [dmChannel.id]);
+              const dmMsg = dmMsgRes.rows[0];
+              if (dmMsg?.id) {
+                await query(
+                  `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
+                   VALUES ($1, $2, $3, NOW())
+                   ON CONFLICT (channel_id, user_name)
+                   DO UPDATE SET last_read_message_id = GREATEST(chat_channel_reads.last_read_message_id, EXCLUDED.last_read_message_id),
+                                 last_read_at = NOW()`,
+                  [dmChannel.id, senderName, dmMsg.id]
+                ).catch(() => {});
+              }
+              directSentCount++;
+            }
+          } catch (dmErr) {
+            console.warn("[BROADCAST_MEETING_DM_ERR]:", dmErr);
+          }
+        }
+      }
+
+      return NextResponse.json({
+        success: true,
+        groupChannel,
+        directSentCount,
+        totalAttendees: cleanAttendees.length
+      });
     }
 
     // 2.5 Add Members to Channel/Group

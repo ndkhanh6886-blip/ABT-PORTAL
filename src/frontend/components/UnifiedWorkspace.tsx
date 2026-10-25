@@ -1597,6 +1597,16 @@ export const UnifiedWorkspace: React.FC = () => {
     location: string;
     linkedTaskCodes?: string[];
     autoCreateTask?: boolean;
+    eventType?: "WORK" | "MEETING";
+    meetingAgenda?: string;
+    meetingLink?: string;
+    sendChatNotify?: boolean;
+    createMeetingGroup?: boolean;
+    sendBellNotify?: boolean;
+    reminderMinutes?: number;
+    customNotifyMessage?: string;
+    chatChannelId?: number;
+    lastRemindedAt?: string;
     attachments?: Array<{ name: string; url: string; size?: number; type?: string; uploaded_at?: string }>;
   }>({
     day: "Thứ 2",
@@ -1614,8 +1624,18 @@ export const UnifiedWorkspace: React.FC = () => {
     location: "",
     linkedTaskCodes: [],
     autoCreateTask: false,
+    eventType: "WORK",
+    meetingAgenda: "",
+    meetingLink: "",
+    sendChatNotify: true,
+    createMeetingGroup: true,
+    sendBellNotify: true,
+    reminderMinutes: 30,
+    customNotifyMessage: "",
     attachments: []
   });
+  const [attendeeSearchQuery, setAttendeeSearchQuery] = useState("");
+  const [sendingMeetingRemindId, setSendingMeetingRemindId] = useState<number | string | null>(null);
   const [weeklySchedule, setWeeklySchedule] = useState<any[]>([]);
   // Lịch tuần theo NGÀY THẬT: tuần đang xem (0 = tuần này), lịch đang sửa
   const [weekOffset, setWeekOffset] = useState(0);
@@ -1676,16 +1696,24 @@ export const UnifiedWorkspace: React.FC = () => {
     }
     return result;
   }, []);
-  const openScheduleForm = (date?: string, item?: any) => {
-    const defaultActor = selectedAssignee !== "all" ? selectedAssignee : (departmentStaffList[0]?.full_name || currentStaffName);
-    const defaultCategory = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Application" : selectedDept);
+  const openScheduleForm = (date?: string, item?: any, defaultEventType: "WORK" | "MEETING" = "WORK") => {
+    const defaultActor = selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__"
+      ? selectedAssignee
+      : (currentStaffName || departmentStaffList[0]?.full_name || "");
+    const defaultCategory = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Kinh Doanh" : selectedDept);
     const today = todayVN();
     const pick = date || (viewedWeek.days.some(d => d.date === today) ? today : viewedWeek.days[0].date);
+    setAttendeeSearchQuery("");
     if (item) {
       const itemDate = item.date ? String(item.date).slice(0, 10) : (viewedWeek.days.find(d => d.name === item.day)?.date || pick);
       const itemEndDate = item.endDate ? String(item.endDate).slice(0, 10) : itemDate;
       const rawTime = String(item.time || "08:30 - 11:30").trim();
       const rangeMatch = rawTime.match(/^(\d{1,2}:\d{2})\s*[-–→]\s*(\d{1,2}:\d{2})/);
+      const parsedActors = String(item.actor || "").split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean);
+      const hostActor = parsedActors[0] || defaultActor;
+      const existingCoActors = Array.isArray(item.coActors) && item.coActors.length > 0
+        ? item.coActors
+        : parsedActors.slice(1);
       setEditingScheduleId(item.id);
       setScheduleForm({
         day: item.day,
@@ -1698,31 +1726,50 @@ export const UnifiedWorkspace: React.FC = () => {
         time: rawTime,
         category: item.category || defaultCategory,
         title: item.title || "",
-        actor: item.actor || "",
-        coActors: Array.isArray(item.coActors) ? item.coActors : [],
+        actor: hostActor,
+        coActors: existingCoActors,
         location: item.location || "",
         linkedTaskCodes: Array.isArray(item.linkedTaskCodes) ? item.linkedTaskCodes : [],
         autoCreateTask: false,
+        eventType: item.eventType || (String(item.title || "").toLowerCase().includes("họp") ? "MEETING" : "WORK"),
+        meetingAgenda: item.meetingAgenda || "",
+        meetingLink: item.meetingLink || "",
+        sendChatNotify: item.sendChatNotify !== undefined ? item.sendChatNotify : true,
+        createMeetingGroup: item.createMeetingGroup !== undefined ? item.createMeetingGroup : true,
+        sendBellNotify: item.sendBellNotify !== undefined ? item.sendBellNotify : true,
+        reminderMinutes: item.reminderMinutes !== undefined ? Number(item.reminderMinutes) : 30,
+        customNotifyMessage: item.customNotifyMessage || "",
+        chatChannelId: item.chatChannelId,
+        lastRemindedAt: item.lastRemindedAt,
         attachments: item.attachments || []
       });
     } else {
       setEditingScheduleId(null);
+      const isMeeting = defaultEventType === "MEETING";
       setScheduleForm({
         day: viewedWeek.all7Days.find(d => d.date === pick)?.name || "Thứ 2",
         date: pick,
         endDate: pick,
         selectedDates: [pick],
         dateMode: "SINGLE",
-        startTime: "08:30",
-        endTime: "11:30",
-        time: "08:30 - 11:30",
+        startTime: isMeeting ? "08:30" : "08:30",
+        endTime: isMeeting ? "10:00" : "11:30",
+        time: isMeeting ? "08:30 - 10:00" : "08:30 - 11:30",
         category: defaultCategory,
         title: "",
         actor: defaultActor,
         coActors: [],
-        location: "",
+        location: isMeeting ? "Phòng họp Công ty" : "",
         linkedTaskCodes: [],
         autoCreateTask: false,
+        eventType: defaultEventType,
+        meetingAgenda: "",
+        meetingLink: "",
+        sendChatNotify: true,
+        createMeetingGroup: isMeeting,
+        sendBellNotify: true,
+        reminderMinutes: 30,
+        customNotifyMessage: "",
         attachments: []
       });
     }
@@ -4131,11 +4178,210 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   };
 
-  // Handle Save Weekly Schedule Item (Hỗ trợ 1 ngày, Khoảng nhiều ngày Từ ngày -> Đến ngày, hoặc Chọn nhiều thứ trong tuần + Liên kết Công việc/Phiếu phối hợp)
+  // Hàm gửi Tin nhắn Chat + Thông báo Chuông cho Lịch Họp (Mời họp hoặc Nhắc lịch họp)
+  const handleBroadcastMeetingMessage = useCallback(async (
+    meetingObj: any,
+    mode: "INVITE" | "REMIND" = "INVITE",
+    options?: { sendChat?: boolean; createGroup?: boolean; sendBell?: boolean }
+  ) => {
+    const rawActors = String(meetingObj?.actor || "")
+      .split(/[,;\n]+/)
+      .map((s: string) => s.trim())
+      .filter(Boolean);
+    const coList = Array.isArray(meetingObj?.coActors)
+      ? meetingObj.coActors.map((s: string) => String(s || "").trim()).filter(Boolean)
+      : [];
+    const allParticipants = Array.from(new Set([...rawActors, ...coList]));
+    const hostName = rawActors[0] || currentStaffName || "Chủ trì";
+    const dateStr = meetingObj?.date
+      ? `${String(meetingObj.date).slice(8, 10)}/${String(meetingObj.date).slice(5, 7)}/${String(meetingObj.date).slice(0, 4)}`
+      : (meetingObj?.day || "Tuần này");
+    const dateLabel = meetingObj?.day ? `${meetingObj.day} (${dateStr})` : dateStr;
+
+    const sendChat = options?.sendChat !== undefined ? options.sendChat : (meetingObj?.sendChatNotify !== false);
+    const createGroup = options?.createGroup !== undefined ? options.createGroup : Boolean(meetingObj?.createMeetingGroup);
+    const sendBell = options?.sendBell !== undefined ? options.sendBell : (meetingObj?.sendBellNotify !== false);
+
+    const headerTitle = mode === "REMIND"
+      ? `🔔 [NHẮC LỊCH HỌP SẮP DIỄN RA] ${meetingObj?.title || "Cuộc họp nội bộ"}`
+      : `📅 [THÔNG BÁO MỜI HỌP] ${meetingObj?.title || "Cuộc họp nội bộ"}`;
+
+    const msgLines = [
+      headerTitle,
+      `⏰ Thời gian: ${meetingObj?.time || "08:30"} • ${dateLabel}`,
+      `📍 Địa điểm / Phòng họp: ${meetingObj?.location || "Phòng họp Công ty"}`,
+      meetingObj?.meetingLink ? `🔗 Link tham dự: ${meetingObj.meetingLink}` : "",
+      `👤 Chủ trì: ${hostName} (${meetingObj?.category || "Điều hành"})`,
+      `👥 Thành viên tham dự (${allParticipants.length}): ${allParticipants.join(", ")}`,
+      meetingObj?.meetingAgenda ? `📝 Nội dung / Chương trình họp: ${meetingObj.meetingAgenda}` : "",
+      meetingObj?.customNotifyMessage ? `💬 Lời nhắn: ${meetingObj.customNotifyMessage}` : "",
+      mode === "REMIND"
+        ? "👉 Đề nghị các thành viên chuẩn bị tài liệu và tham dự đúng giờ!"
+        : "👉 Vui lòng sắp xếp công việc và xác nhận tham dự đúng giờ."
+    ].filter(Boolean);
+
+    const formattedChatText = msgLines.join("\n");
+
+    let groupChannelId: number | undefined = meetingObj?.chatChannelId;
+    let directSentCount = 0;
+
+    if (sendChat && allParticipants.length > 0) {
+      try {
+        const res = await fetch("/api/chat?action=broadcast_meeting", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: meetingObj?.title || "Cuộc họp nội bộ",
+            content: formattedChatText,
+            attendees: allParticipants,
+            department: meetingObj?.category || "Liên phòng ban",
+            send_direct: true,
+            create_group: createGroup,
+            existing_channel_id: meetingObj?.chatChannelId
+          })
+        });
+        const data = await res.json();
+        if (data?.groupChannel?.id) {
+          groupChannelId = Number(data.groupChannel.id);
+        }
+        if (typeof data?.directSentCount === "number") {
+          directSentCount = data.directSentCount;
+        }
+      } catch (err) {
+        console.warn("Broadcast meeting chat warning:", err);
+      }
+    }
+
+    if (sendBell && allParticipants.length > 0) {
+      notifyActivity({
+        title: mode === "REMIND" ? `🔔 Nhắc lịch họp: ${meetingObj?.title}` : `📅 Thông báo lịch họp: ${meetingObj?.title}`,
+        message: `${mode === "REMIND" ? "[NHẮC HỌP]" : "[MỜI HỌP]"} ${dateLabel} lúc ${meetingObj?.time || "08:30"} tại ${meetingObj?.location || "Phòng họp"} • Chủ trì: ${hostName} • Thành viên (${allParticipants.length}): ${allParticipants.slice(0, 5).join(", ")}${allParticipants.length > 5 ? ` (+${allParticipants.length - 5} người)` : ""}`,
+        type: mode === "REMIND" ? "warning" : "info",
+        category: "plan",
+        sender: { name: currentStaffName || hostName },
+        targetEmployeeNames: allParticipants,
+        targetDept: meetingObj?.category || "all",
+        link: { tab: "workspace", subTab: "planner" }
+      });
+    }
+
+    return { groupChannelId, directSentCount, totalParticipants: allParticipants.length };
+  }, [currentStaffName, notifyActivity]);
+
+  // Nút 1 chạm "Nhắc lịch họp ngay" trên thẻ lịch họp
+  const handleRemindMeetingNow = useCallback(async (ev: any) => {
+    if (!ev) return;
+    setSendingMeetingRemindId(ev.id);
+    try {
+      const res = await handleBroadcastMeetingMessage(ev, "REMIND", {
+        sendChat: true,
+        createGroup: Boolean(ev.createMeetingGroup || ev.chatChannelId),
+        sendBell: true
+      });
+      const nowLabel = new Date().toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+      const updated = weeklySchedule.map((s: any) =>
+        s.id === ev.id
+          ? {
+              ...s,
+              lastRemindedAt: nowLabel,
+              chatChannelId: res.groupChannelId || s.chatChannelId
+            }
+          : s
+      );
+      setWeeklySchedule(updated);
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem("unified_weekly_schedule", JSON.stringify(updated));
+        }
+        await fetch("/api/storage?key=unified_weekly_schedule", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(updated)
+        });
+      } catch {}
+      showToast(
+        `🔔 Đã gửi tin nhắn & thông báo nhắc lịch họp "${ev.title}" tới ${res.totalParticipants} thành viên tham dự!`,
+        "success"
+      );
+    } finally {
+      setSendingMeetingRemindId(null);
+    }
+  }, [handleBroadcastMeetingMessage, weeklySchedule, showToast]);
+
+  // Tự động kiểm tra và nhắc lịch họp trước giờ diễn ra (15p / 30p / 60p / 1 ngày)
+  useEffect(() => {
+    const checkUpcomingMeetings = () => {
+      if (!Array.isArray(weeklySchedule) || weeklySchedule.length === 0) return;
+      const todayIso = todayVN();
+      const now = new Date();
+      let remindedKeys: string[] = [];
+      try {
+        const raw = typeof window !== "undefined" ? localStorage.getItem("unified_auto_reminded_meetings") : null;
+        if (raw) remindedKeys = JSON.parse(raw);
+      } catch {}
+
+      weeklySchedule.forEach((s: any) => {
+        const isMeeting = s.eventType === "MEETING" || String(s.title || "").toLowerCase().includes("họp");
+        const remindMins = s.reminderMinutes !== undefined ? Number(s.reminderMinutes) : (isMeeting ? 30 : 0);
+        if (!isMeeting || remindMins <= 0) return;
+
+        const sDate = s.date ? String(s.date).slice(0, 10) : "";
+        if (!sDate) return;
+
+        const timeMatch = String(s.time || "08:30").match(/(\d{1,2})[:h](\d{2})?/i);
+        const hh = timeMatch ? Number(timeMatch[1]) : 8;
+        const mm = timeMatch && timeMatch[2] ? Number(timeMatch[2]) : 30;
+        const meetingStart = new Date(`${sDate}T${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:00`);
+        if (isNaN(meetingStart.getTime())) return;
+
+        const diffMins = (meetingStart.getTime() - now.getTime()) / 60000;
+        const remindKey = `${s.id || s.title}-${sDate}-${remindMins}`;
+
+        if (diffMins > 0 && diffMins <= remindMins && !remindedKeys.includes(remindKey)) {
+          remindedKeys.push(remindKey);
+          try {
+            if (typeof window !== "undefined") {
+              localStorage.setItem("unified_auto_reminded_meetings", JSON.stringify(remindedKeys.slice(-100)));
+            }
+          } catch {}
+
+          const actors = String(s.actor || "").split(/[,;\n]+/).map((a: string) => a.trim()).filter(Boolean);
+          const coActors = Array.isArray(s.coActors) ? s.coActors : [];
+          const allMems = [...actors, ...coActors];
+          const isMeParticipant = !currentStaffName || allMems.some((m: string) => sameStaffName(m, currentStaffName));
+
+          if (isMeParticipant) {
+            showToast(
+              `🔔 [NHẮC LỊCH HỌP] "${s.title}" sẽ bắt đầu sau ${Math.max(1, Math.round(diffMins))} phút (${s.time}) tại ${s.location || "Phòng họp"}!`,
+              "info"
+            );
+          }
+
+          // Nếu người đang mở ứng dụng là Chủ trì cuộc họp, tự động phát tin nhắn nhắc họp
+          if (actors[0] && currentStaffName && sameStaffName(actors[0], currentStaffName) && sDate === todayIso) {
+            handleBroadcastMeetingMessage(s, "REMIND", {
+              sendChat: true,
+              createGroup: Boolean(s.createMeetingGroup || s.chatChannelId),
+              sendBell: true
+            });
+          }
+        }
+      });
+    };
+
+    const timer = setInterval(checkUpcomingMeetings, 60000);
+    const initTimer = setTimeout(checkUpcomingMeetings, 3500);
+    return () => {
+      clearInterval(timer);
+      clearTimeout(initTimer);
+    };
+  }, [weeklySchedule, currentStaffName, showToast, handleBroadcastMeetingMessage]);
+
+  // Handle Save Weekly Schedule Item / Meeting (Hỗ trợ Lịch Công Tác & Lịch Họp + Chọn thành viên tham dự + Nhắn tin thông báo họp + Nhắc lịch họp)
   const handleSaveSchedule = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!scheduleForm.title.trim()) {
-      showToast("Vui lòng nhập nội dung lịch công tác hoặc chọn từ danh sách công việc đang có", "error");
+      showToast("Vui lòng nhập tiêu đề lịch họp / nội dung công tác hoặc chọn từ công việc đang có", "error");
       return;
     }
 
@@ -4169,8 +4415,11 @@ export const UnifiedWorkspace: React.FC = () => {
       if (list.length > 0) targetIsoDates = list;
     }
 
+    const isMeeting = scheduleForm.eventType === "MEETING";
     const cleanActor = scheduleForm.actor || currentStaffName || "Nhân sự";
-    const coActorsList = Array.isArray(scheduleForm.coActors) ? scheduleForm.coActors.filter(Boolean) : [];
+    const coActorsList = Array.isArray(scheduleForm.coActors)
+      ? scheduleForm.coActors.filter((c) => Boolean(c) && !sameStaffName(c, cleanActor))
+      : [];
     const combinedActorDisplay = coActorsList.length > 0
       ? `${cleanActor}, ${coActorsList.join(", ")}`
       : cleanActor;
@@ -4185,13 +4434,13 @@ export const UnifiedWorkspace: React.FC = () => {
           body: JSON.stringify({
             title: scheduleForm.title.trim(),
             department: scheduleForm.category || "Kinh Doanh",
-            task_category: "Kế hoạch công tác tuần",
+            task_category: isMeeting ? "Lịch họp & Điều phối" : "Kế hoạch công tác tuần",
             assignee_name: combinedActorDisplay,
             customer_name: scheduleForm.location || "",
-            priority: "MEDIUM",
+            priority: isMeeting ? "HIGH" : "MEDIUM",
             status: "TODO",
             deadline: targetIsoDates[targetIsoDates.length - 1] || startIso,
-            description: `Tự động tạo từ Lịch công tác tuần (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}`
+            description: `${isMeeting ? "Tạo từ Lịch họp" : "Tự động tạo từ Lịch công tác tuần"} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}${scheduleForm.meetingAgenda ? `\nNội dung họp: ${scheduleForm.meetingAgenda}` : ""}`
           })
         });
         const taskData = await taskRes.json();
@@ -4206,7 +4455,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
     const wasEditing = editingScheduleId !== null;
     const baseId = editingScheduleId || Date.now();
-    const createdItems = targetIsoDates.map((isoDate, idx) => ({
+    let createdItems = targetIsoDates.map((isoDate, idx) => ({
       id: wasEditing && idx === 0 ? editingScheduleId : baseId + idx,
       day: getDayNameFromIso(isoDate),
       date: isoDate,
@@ -4218,8 +4467,33 @@ export const UnifiedWorkspace: React.FC = () => {
       coActors: coActorsList,
       location: scheduleForm.location,
       linkedTaskCodes: linkedCodes,
+      eventType: scheduleForm.eventType || "WORK",
+      meetingAgenda: scheduleForm.meetingAgenda || "",
+      meetingLink: scheduleForm.meetingLink || "",
+      sendChatNotify: scheduleForm.sendChatNotify !== false,
+      createMeetingGroup: Boolean(scheduleForm.createMeetingGroup),
+      sendBellNotify: scheduleForm.sendBellNotify !== false,
+      reminderMinutes: scheduleForm.reminderMinutes !== undefined ? Number(scheduleForm.reminderMinutes) : 30,
+      customNotifyMessage: scheduleForm.customNotifyMessage || "",
+      chatChannelId: scheduleForm.chatChannelId,
+      lastRemindedAt: scheduleForm.lastRemindedAt,
       attachments: scheduleForm.attachments || []
     }));
+
+    // Nếu là Lịch Họp (hoặc bật gửi tin nhắn thông báo), phát thông báo qua Chat + Chuông tới các thành viên tham dự
+    if (isMeeting && (scheduleForm.sendChatNotify || scheduleForm.sendBellNotify)) {
+      const broadcastRes = await handleBroadcastMeetingMessage(createdItems[0], "INVITE", {
+        sendChat: Boolean(scheduleForm.sendChatNotify),
+        createGroup: Boolean(scheduleForm.createMeetingGroup),
+        sendBell: Boolean(scheduleForm.sendBellNotify)
+      });
+      if (broadcastRes.groupChannelId) {
+        createdItems = createdItems.map((it) => ({
+          ...it,
+          chatChannelId: broadcastRes.groupChannelId
+        }));
+      }
+    }
 
     const updatedRaw = wasEditing
       ? [
@@ -4249,8 +4523,11 @@ export const UnifiedWorkspace: React.FC = () => {
       ? `${targetIsoDates.length} ngày (${firstDateLabel} → ${targetIsoDates[targetIsoDates.length - 1].slice(8, 10)}/${targetIsoDates[targetIsoDates.length - 1].slice(5, 7)})`
       : `${firstDayName} ${firstDateLabel}`;
 
+    const totalAttendeesCount = 1 + coActorsList.length;
     showToast(
-      wasEditing
+      isMeeting
+        ? `🎥 Đã ${wasEditing ? "cập nhật" : "tạo"} lịch họp (${rangeSummary}) & gửi thông báo tới ${totalAttendeesCount} thành viên tham dự!`
+        : wasEditing
         ? `Đã cập nhật lịch công tác (${rangeSummary})`
         : `Đã thêm lịch công tác vào ${rangeSummary}!`,
       "success"
@@ -4261,20 +4538,22 @@ export const UnifiedWorkspace: React.FC = () => {
       return;
     }
 
-    // Send Activity Notification for Weekly Schedule
-    const scheduleActors = combinedActorDisplay
-      ? combinedActorDisplay.split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean)
-      : [];
-    notifyActivity({
-      title: "Lịch Công Tác / Điều Phối Tuần Mới",
-      message: `${currentStaffName} đã lên lịch "${scheduleForm.title}" vào ${rangeSummary} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}.`,
-      type: "info",
-      category: "plan",
-      sender: { name: currentStaffName },
-      targetEmployeeNames: scheduleActors,
-      targetDept: scheduleForm.category,
-      link: { tab: "workspace", subTab: "planner" }
-    });
+    // Nếu là lịch công tác thường (không phải lịch họp đã gửi broadcast ở trên), gửi Activity Notification
+    if (!isMeeting) {
+      const scheduleActors = combinedActorDisplay
+        ? combinedActorDisplay.split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean)
+        : [];
+      notifyActivity({
+        title: "Lịch Công Tác / Điều Phối Tuần Mới",
+        message: `${currentStaffName} đã lên lịch "${scheduleForm.title}" vào ${rangeSummary} (${scheduleForm.time}) tại ${scheduleForm.location || "Công ty"}.`,
+        type: "info",
+        category: "plan",
+        sender: { name: currentStaffName },
+        targetEmployeeNames: scheduleActors,
+        targetDept: scheduleForm.category,
+        link: { tab: "workspace", subTab: "planner" }
+      });
+    }
 
     setScheduleForm((prev) => ({ ...prev, title: "", linkedTaskCodes: [], autoCreateTask: false, attachments: [] }));
   };
@@ -5018,23 +5297,24 @@ export const UnifiedWorkspace: React.FC = () => {
           {activeSubTab === "planner" && (
             <>
               {plannerView === "calendar" && (
-                <button
-                  onClick={() => {
-                    setScheduleForm({
-                      day: "Thứ 2",
-                      time: "08:30",
-                      category: rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Application" : selectedDept),
-                      title: "",
-                      actor: currentStaffName,
-                      location: "BV Chợ Rẫy"
-                    });
-                    setIsScheduleModalOpen(true);
-                  }}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xs"
-                >
-                  <Calendar className="w-3.5 h-3.5" />
-                  <span>Thêm Lịch Tuần</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => openScheduleForm(undefined, undefined, "MEETING")}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-xs cursor-pointer"
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>🎥 + Tạo Lịch Họp &amp; Mời Họp</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openScheduleForm(undefined, undefined, "WORK")}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xs cursor-pointer"
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>Thêm Lịch Tuần</span>
+                  </button>
+                </div>
               )}
 
               {plannerView === "lab_projects" && (
@@ -5953,18 +6233,159 @@ ${wf.description || ""}`}
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Lịch trực Lab, lịch demo tại bệnh viện và các đợt giao nhận hàng hóa lớn
+                    Lịch họp nội bộ / liên phòng ban, lịch trực Lab, lịch demo tại bệnh viện và các đợt giao nhận hàng hóa lớn
                   </p>
                 </div>
 
-                <button
-                  onClick={() => openScheduleForm()}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Thêm Lịch Công Tác Tuần</span>
-                </button>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => openScheduleForm(undefined, undefined, "MEETING")}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition-all cursor-pointer"
+                  >
+                    <Users className="w-3.5 h-3.5" />
+                    <span>🎥 + Tạo Lịch Họp &amp; Chọn Thành Viên</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openScheduleForm(undefined, undefined, "WORK")}
+                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>+ Thêm Lịch Công Tác Tuần</span>
+                  </button>
+                </div>
               </div>
+
+              {/* BANNER QUẢN LÝ LỊCH HỌP & NHẮC HỌP TRONG TUẦN ĐANG XEM */}
+              {(() => {
+                const weekMeetings = filteredSchedules.filter((s: any) => {
+                  const isMtg = s.eventType === "MEETING" || String(s.title || "").toLowerCase().includes("họp");
+                  if (!isMtg) return false;
+                  return viewedWeek.all7Days.some((wd) => scheduleOnDay(s, wd));
+                });
+                if (weekMeetings.length === 0) return null;
+                return (
+                  <div className="mb-4 p-3.5 rounded-2xl bg-gradient-to-r from-rose-50/90 via-indigo-50/60 to-purple-50/80 dark:from-rose-950/30 dark:via-slate-900 dark:to-indigo-950/30 border border-rose-200/80 dark:border-rose-900/60 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-0.5 rounded-lg bg-rose-600 text-white text-[11px] font-extrabold">
+                          🎥 LỊCH HỌP TUẦN NÀY ({weekMeetings.length})
+                        </span>
+                        <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          Theo dõi thành viên tham dự, gửi tin nhắn thông báo họp &amp; nhắc lịch họp 1 chạm
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => openScheduleForm(undefined, undefined, "MEETING")}
+                        className="text-xs font-bold text-rose-600 dark:text-rose-400 hover:underline cursor-pointer"
+                      >
+                        + Đặt lịch họp mới
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                      {weekMeetings.map((mtg: any) => {
+                        const rawActors = String(mtg.actor || "").split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean);
+                        const coList = Array.isArray(mtg.coActors) ? mtg.coActors : [];
+                        const allAttendees = Array.from(new Set([...rawActors, ...coList]));
+                        const isReminding = sendingMeetingRemindId === mtg.id;
+                        return (
+                          <div
+                            key={`mtg-banner-${mtg.id}`}
+                            className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-rose-200/70 dark:border-slate-800 shadow-2xs flex flex-col justify-between gap-2 text-xs"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center justify-between gap-2 flex-wrap">
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="px-2 py-0.5 rounded bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 font-mono font-extrabold text-[10px]">
+                                    📅 {mtg.day} {mtg.date ? `(${String(mtg.date).slice(8, 10)}/${String(mtg.date).slice(5, 7)})` : ""} • ⏰ {mtg.time}
+                                  </span>
+                                  {mtg.reminderMinutes > 0 && (
+                                    <span className="px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 text-[10px] font-bold">
+                                      🔔 Tự nhắc trước {mtg.reminderMinutes >= 1440 ? "1 ngày" : `${mtg.reminderMinutes}p`}
+                                    </span>
+                                  )}
+                                  {mtg.lastRemindedAt && (
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold">
+                                      ✓ Đã nhắc lúc {mtg.lastRemindedAt}
+                                    </span>
+                                  )}
+                                </div>
+                                <span className="text-[10px] font-bold text-slate-500">
+                                  📍 {mtg.location || "Phòng họp"}
+                                </span>
+                              </div>
+                              <div className="font-extrabold text-slate-900 dark:text-white text-xs">
+                                {mtg.title}
+                              </div>
+                              {mtg.meetingAgenda && (
+                                <p className="text-[11px] text-slate-600 dark:text-slate-400 line-clamp-2">
+                                  📝 Nội dung: {mtg.meetingAgenda}
+                                </p>
+                              )}
+                              {mtg.meetingLink && (
+                                <a
+                                  href={mtg.meetingLink.startsWith("http") ? mtg.meetingLink : `https://${mtg.meetingLink}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline"
+                                >
+                                  <ExternalLink className="w-3 h-3" />
+                                  <span>Link phòng họp trực tuyến</span>
+                                </a>
+                              )}
+                              <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                                <span className="text-[10px] font-bold text-slate-500">
+                                  👥 Thành viên tham dự ({allAttendees.length}):
+                                </span>
+                                {allAttendees.slice(0, 6).map((mem: string, mIdx: number) => (
+                                  <span
+                                    key={mem}
+                                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                      mIdx === 0
+                                        ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300"
+                                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                                    }`}
+                                  >
+                                    {mIdx === 0 ? `⭐ ${mem} (Chủ trì)` : mem}
+                                  </span>
+                                ))}
+                                {allAttendees.length > 6 && (
+                                  <span className="px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-[10px] font-bold">
+                                    +{allAttendees.length - 6} người
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-end gap-1.5 pt-2 border-t border-slate-100 dark:border-slate-800">
+                              <button
+                                type="button"
+                                disabled={isReminding}
+                                onClick={() => handleRemindMeetingNow(mtg)}
+                                className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] flex items-center gap-1 shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                                title="Gửi tin nhắn Chat và thông báo chuông nhắc lịch họp ngay cho tất cả thành viên tham dự"
+                              >
+                                <Bell className="w-3 h-3" />
+                                <span>{isReminding ? "Đang gửi nhắc họp..." : "🔔 Nhắc lịch họp ngay"}</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openScheduleForm(undefined, mtg, "MEETING")}
+                                className="px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 text-slate-700 dark:text-slate-300 font-bold text-[11px] flex items-center gap-1 transition-colors cursor-pointer"
+                              >
+                                <Pencil className="w-3 h-3" />
+                                <span>Sửa / Mời thêm</span>
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* Quick Staff Member Filter for Weekly Schedule */}
               {(rolePerspective === "manager" || rolePerspective === "director") && departmentStaffList.length > 0 && (
@@ -6034,15 +6455,21 @@ ${wf.description || ""}`}
 
                         <div className="space-y-1.5">
                           {dayEvents.map((ev) => {
+                            const isMeeting = ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp");
                             const isApp = ev.category === "Application";
                             const isSales = ev.category === "Kinh Doanh";
                             const isWh = ev.category === "Kho & Vận Hành";
+                            const rawActors = String(ev.actor || "").split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean);
+                            const coList = Array.isArray(ev.coActors) ? ev.coActors : [];
+                            const allAttendees = Array.from(new Set([...rawActors, ...coList]));
 
                             return (
                               <div
                                 key={ev.id}
                                 className={`group relative rounded-lg p-2 text-[11px] font-medium border transition-all ${
-                                  isApp
+                                  isMeeting
+                                    ? "bg-rose-100/90 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-100 shadow-2xs"
+                                    : isApp
                                     ? "bg-purple-100/80 dark:bg-purple-950/60 border-purple-300 dark:border-purple-800 text-purple-950 dark:text-purple-200"
                                     : isSales
                                     ? "bg-orange-100/80 dark:bg-orange-950/60 border-orange-300 dark:border-orange-800 text-orange-950 dark:text-orange-200"
@@ -6052,25 +6479,47 @@ ${wf.description || ""}`}
                                 }`}
                               >
                                 <div className="flex items-center justify-between gap-1 mb-0.5">
-                                  <span className="font-bold font-mono text-[10px]">⏰ {ev.time}</span>
+                                  <div className="flex items-center gap-1 flex-wrap">
+                                    {isMeeting && (
+                                      <span className="px-1.5 py-0.2 rounded bg-rose-600 text-white text-[9px] font-extrabold uppercase">
+                                        🎥 HỌP
+                                      </span>
+                                    )}
+                                    <span className="font-bold font-mono text-[10px]">⏰ {ev.time}</span>
+                                  </div>
                                   <span className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button
+                                      type="button"
+                                      onClick={() => handleRemindMeetingNow(ev)}
+                                      title="Nhắn tin & Gửi thông báo nhắc lịch ngay"
+                                      className="hover:text-amber-600 p-0.5 cursor-pointer"
+                                    >
+                                      <Bell className="w-3 h-3" />
+                                    </button>
+                                    <button
+                                      type="button"
                                       onClick={() => openScheduleForm(undefined, ev)}
                                       title="Sửa lịch trình"
-                                      className="hover:text-indigo-600 p-0.5"
+                                      className="hover:text-indigo-600 p-0.5 cursor-pointer"
                                     >
                                       <Pencil className="w-3 h-3" />
                                     </button>
                                     <button
+                                      type="button"
                                       onClick={() => { if (confirm("Xóa lịch trình này?")) handleDeleteSchedule(ev.id); }}
                                       title="Xóa lịch trình"
-                                      className="hover:text-rose-600 p-0.5"
+                                      className="hover:text-rose-600 p-0.5 cursor-pointer"
                                     >
                                       <X className="w-3 h-3" />
                                     </button>
                                   </span>
                                 </div>
                                 <div className="font-semibold leading-tight">{ev.title}</div>
+                                {ev.meetingAgenda && (
+                                  <div className="text-[10px] opacity-85 mt-0.5 line-clamp-2 italic">
+                                    📝 {ev.meetingAgenda}
+                                  </div>
+                                )}
                                 {Array.isArray(ev.linkedTaskCodes) && ev.linkedTaskCodes.length > 0 && (
                                   <div className="flex flex-wrap gap-1 mt-1">
                                     {ev.linkedTaskCodes.map((code: string) => (
@@ -6084,10 +6533,29 @@ ${wf.description || ""}`}
                                     ))}
                                   </div>
                                 )}
-                                <div className="text-[10px] opacity-75 mt-1 flex items-center justify-between gap-1">
-                                  <span className="truncate" title={ev.actor}>👤 {ev.actor}</span>
+                                <div className="text-[10px] opacity-85 mt-1 flex items-center justify-between gap-1 flex-wrap">
+                                  <span className="truncate font-semibold" title={`Thành viên: ${allAttendees.join(", ")}`}>
+                                    {allAttendees.length > 1 ? `👥 ${allAttendees[0]} (+${allAttendees.length - 1} TV)` : `👤 ${ev.actor}`}
+                                  </span>
                                   {ev.location && <span className="truncate shrink-0">📍 {ev.location}</span>}
                                 </div>
+                                {isMeeting && (
+                                  <div className="mt-1.5 pt-1 border-t border-current/15 flex items-center justify-between gap-1">
+                                    <button
+                                      type="button"
+                                      disabled={sendingMeetingRemindId === ev.id}
+                                      onClick={() => handleRemindMeetingNow(ev)}
+                                      className="px-1.5 py-0.5 rounded bg-white/80 dark:bg-slate-900/80 hover:bg-white text-rose-700 dark:text-rose-300 font-bold text-[9px] flex items-center gap-1 cursor-pointer transition-colors"
+                                      title="Gửi tin nhắn Chat & thông báo nhắc lịch họp cho các thành viên"
+                                    >
+                                      <Bell className="w-2.5 h-2.5" />
+                                      <span>{sendingMeetingRemindId === ev.id ? "Đang nhắc..." : "🔔 Nhắc họp"}</span>
+                                    </button>
+                                    {ev.lastRemindedAt && (
+                                      <span className="text-[9px] opacity-75 font-mono">Đã nhắc {ev.lastRemindedAt}</span>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                             );
                           })}
@@ -6100,13 +6568,22 @@ ${wf.description || ""}`}
                         </div>
                       </div>
 
-                      <div className="pt-2 border-t border-slate-200/50 dark:border-slate-700/50 mt-2">
+                      <div className="pt-2 border-t border-slate-200/50 dark:border-slate-700/50 mt-2 grid grid-cols-2 gap-1">
                         <button
-                          onClick={() => openScheduleForm(wd.date)}
-                          className="w-full py-1 text-[10px] font-bold text-slate-400 hover:text-indigo-600 hover:bg-indigo-50/50 dark:hover:bg-slate-800 rounded transition-colors flex items-center justify-center gap-1"
+                          type="button"
+                          onClick={() => openScheduleForm(wd.date, undefined, "WORK")}
+                          className="py-1 text-[10px] font-bold text-slate-400 hover:text-indigo-600 hover:bg-indigo-50/50 dark:hover:bg-slate-800 rounded transition-colors flex items-center justify-center gap-0.5 cursor-pointer"
                         >
                           <Plus className="w-3 h-3" />
-                          <span>Thêm vào {day}</span>
+                          <span>+ Công tác</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openScheduleForm(wd.date, undefined, "MEETING")}
+                          className="py-1 text-[10px] font-bold text-rose-500 hover:text-rose-600 hover:bg-rose-50/60 dark:hover:bg-slate-800 rounded transition-colors flex items-center justify-center gap-0.5 cursor-pointer"
+                        >
+                          <Users className="w-3 h-3" />
+                          <span>🎥 + Họp</span>
                         </button>
                       </div>
                     </div>
@@ -10040,16 +10517,83 @@ ${wf.description || ""}`}
         );
       })()}
 
-      {/* ==================== MODAL 4: THÊM LỊCH CÔNG TÁC TUẦN ==================== */}
+      {/* ==================== MODAL 4: THÊM LỊCH CÔNG TÁC TUẦN & TẠO LỊCH HỌP ==================== */}
       <Modal
         isOpen={isScheduleModalOpen}
         onClose={() => setIsScheduleModalOpen(false)}
-        title={editingScheduleId ? "SỬA LỊCH CÔNG TÁC & ĐIỀU PHỐI TUẦN" : "THÊM LỊCH CÔNG TÁC & ĐIỀU PHỐI TUẦN"}
+        title={
+          scheduleForm.eventType === "MEETING"
+            ? editingScheduleId
+              ? "🎥 CẬP NHẬT LỊCH HỌP & THÀNH VIÊN THAM DỰ"
+              : "🎥 TẠO LỊCH HỌP, CHỌN THÀNH VIÊN & GỬI THÔNG BÁO HỌP"
+            : editingScheduleId
+            ? "SỬA LỊCH CÔNG TÁC & ĐIỀU PHỐI TUẦN"
+            : "THÊM LỊCH CÔNG TÁC & ĐIỀU PHỐI TUẦN"
+        }
         size="lg"
       >
         {(() => {
+          const isMeetingMode = scheduleForm.eventType === "MEETING";
           const activeActorName = rolePerspective === "staff" ? currentStaffName : (scheduleForm.actor || currentStaffName);
           const staffSourceList = departmentStaffList && departmentStaffList.length > 0 ? departmentStaffList : personnelList;
+
+          // Danh sách phòng ban phục vụ chọn nhanh thành viên họp theo phòng
+          const allDeptGroups = Array.from(
+            new Set(
+              (personnelList || [])
+                .map((p: any) => String(p.department || "").trim())
+                .filter(Boolean)
+            )
+          );
+
+          const filteredPersonnelForMeeting = (personnelList || []).filter((p: any) => {
+            const name = String(p.full_name || p || "").trim();
+            if (!name || sameStaffName(name, activeActorName)) return false;
+            if (!attendeeSearchQuery.trim()) return true;
+            const q = canonStaffName(attendeeSearchQuery);
+            return (
+              canonStaffName(name).includes(q) ||
+              canonStaffName(p.department || "").includes(q) ||
+              canonStaffName(p.position || "").includes(q) ||
+              canonStaffName(p.employee_code || "").includes(q)
+            );
+          });
+
+          const toggleAttendeeSelection = (staffName: string) => {
+            if (!staffName || sameStaffName(staffName, activeActorName)) return;
+            const cur = Array.isArray(scheduleForm.coActors) ? scheduleForm.coActors : [];
+            const exists = cur.some((c) => sameStaffName(c, staffName));
+            const next = exists
+              ? cur.filter((c) => !sameStaffName(c, staffName))
+              : [...cur, staffName];
+            setScheduleForm({ ...scheduleForm, coActors: next });
+          };
+
+          const toggleDepartmentAttendees = (deptName: string) => {
+            const deptMembers = (personnelList || [])
+              .filter((p: any) => {
+                const name = String(p.full_name || p || "").trim();
+                if (!name || sameStaffName(name, activeActorName)) return false;
+                if (deptName === "ALL") return true;
+                return isSameWorkspaceDept(deptName, p.department || "");
+              })
+              .map((p: any) => String(p.full_name || p || "").trim());
+
+            if (deptMembers.length === 0) return;
+            const cur = Array.isArray(scheduleForm.coActors) ? scheduleForm.coActors : [];
+            const allPicked = deptMembers.every((m) => cur.some((c) => sameStaffName(c, m)));
+            let next: string[];
+            if (allPicked) {
+              next = cur.filter((c) => !deptMembers.some((m) => sameStaffName(m, c)));
+            } else {
+              const merged = [...cur];
+              deptMembers.forEach((m) => {
+                if (!merged.some((c) => sameStaffName(c, m))) merged.push(m);
+              });
+              next = merged;
+            }
+            setScheduleForm({ ...scheduleForm, coActors: next });
+          };
 
           // 1. Lấy danh sách Công việc (Tasks) + Phiếu phối hợp (Workflows) + Chuyên đề (Projects) đang mở của nhân sự đang chọn
           const personOpenTasks = (tasks || []).filter((t: any) => {
@@ -10157,7 +10701,7 @@ ${wf.description || ""}`}
               : scheduleForm.title;
             const firstWithLoc = selectedObjs.find(o => o.location);
             const firstDept = selectedObjs[0]?.dept;
-            const validCategories = ["Application", "Kinh Doanh", "Kho & Vận Hành", "Cung Ứng"];
+            const validCategories = ["Application", "Kinh Doanh", "Kho & Vận Hành", "Cung Ứng", "Họp & Giao Ban"];
             const matchedCat = firstDept && validCategories.includes(firstDept) ? firstDept : scheduleForm.category;
 
             setScheduleForm({
@@ -10171,45 +10715,298 @@ ${wf.description || ""}`}
 
           return (
             <form onSubmit={handleSaveSchedule} className="space-y-3.5 p-1 text-xs">
-              {/* BƯỚC 1: NHÂN SỰ PHỤ TRÁCH & NGƯỜI ĐI CÙNG + BỘ PHẬN */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                    1. Nhân viên phụ trách chính *
-                    {rolePerspective === "staff" && <span className="text-emerald-600 dark:text-emerald-400 text-[10px] ml-1 font-semibold">(Cá nhân)</span>}
-                  </label>
-                  {rolePerspective === "staff" ? (
+              {/* THANH CHUYỂN CHẾ ĐỘ: LỊCH CÔNG TÁC TUẦN vs TẠO LỊCH HỌP & MỜI THÀNH VIÊN */}
+              <div className="grid grid-cols-2 gap-2 p-1.5 rounded-2xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setScheduleForm({
+                      ...scheduleForm,
+                      eventType: "WORK",
+                      category: scheduleForm.category === "Họp & Giao Ban" ? "Application" : scheduleForm.category
+                    })
+                  }
+                  className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    !isMeetingMode
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  <span>🛠️ Lịch Công Tác / Điều Phối Tuần</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setScheduleForm({
+                      ...scheduleForm,
+                      eventType: "MEETING",
+                      category: "Họp & Giao Ban",
+                      location: scheduleForm.location || "Phòng họp chính Công ty",
+                      sendChatNotify: true,
+                      sendBellNotify: true
+                    })
+                  }
+                  className={`py-2 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+                    isMeetingMode
+                      ? "bg-rose-600 text-white shadow-sm"
+                      : "text-slate-600 dark:text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                  }`}
+                >
+                  <span>🎥 Tạo Lịch Họp &amp; Chọn Thành Viên Tham Dự</span>
+                </button>
+              </div>
+
+              {/* CHỌN NHANH MẪU CUỘC HỌP (KHI Ở CHẾ ĐỘ LỊCH HỌP) */}
+              {isMeetingMode && (
+                <div className="p-2.5 rounded-xl bg-rose-50/70 dark:bg-rose-950/25 border border-rose-200/80 dark:border-rose-900/60 space-y-1.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-rose-800 dark:text-rose-300">
+                      ⚡ Chọn nhanh loại cuộc họp mẫu:
+                    </span>
+                    <span className="text-[10px] text-rose-600 dark:text-rose-400 font-semibold">
+                      Tự động điền tiêu đề, khung giờ &amp; phòng họp
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      {
+                        label: "📊 Họp giao ban đầu tuần",
+                        title: "Họp giao ban đầu tuần & Rà soát kế hoạch tuần",
+                        time: "08:30 - 10:00",
+                        st: "08:30",
+                        et: "10:00",
+                        loc: "Phòng họp chính Công ty",
+                        agenda: "1. Báo cáo kết quả tuần trước\n2. Rà soát tiến độ các dự án & thầu trọng điểm\n3. Phân công kế hoạch tuần mới"
+                      },
+                      {
+                        label: "🏛️ Họp Ban Giám Đốc",
+                        title: "Họp Ban Giám Đốc & Trưởng bộ phận",
+                        time: "14:00 - 16:00",
+                        st: "14:00",
+                        et: "16:00",
+                        loc: "Phòng họp VIP Ban Giám Đốc",
+                        agenda: "1. Đánh giá chỉ số KPI & Doanh thu\n2. Phê duyệt ngân sách & hồ sơ thầu chiến lược"
+                      },
+                      {
+                        label: "🔄 Họp phối hợp KD - App - Kho",
+                        title: "Họp phối hợp Kinh Doanh - Application - Kho Vận",
+                        time: "09:00 - 10:30",
+                        st: "09:00",
+                        et: "10:30",
+                        loc: "Phòng họp chính Công ty",
+                        agenda: "1. Điều phối lịch demo máy & giao hàng cho Bệnh viện\n2. Kiểm tra tồn kho hóa chất & vật tư đi kèm"
+                      },
+                      {
+                        label: "🏥 Họp phương án Thầu / Dự án KH",
+                        title: "Họp triển khai Hồ sơ thầu & Phương án kỹ thuật KH",
+                        time: "15:00 - 16:30",
+                        st: "15:00",
+                        et: "16:30",
+                        loc: "Phòng họp chính Công ty",
+                        agenda: "1. Rà soát cấu hình kỹ thuật & bảng giá chào thầu\n2. Phân công chuẩn bị hồ sơ pháp lý & chứng chỉ hãng"
+                      },
+                      {
+                        label: "💻 Họp trực tuyến Online",
+                        title: "Họp trực tuyến (Google Meet / Zoom / Teams)",
+                        time: "10:00 - 11:30",
+                        st: "10:00",
+                        et: "11:30",
+                        loc: "Họp Online (Google Meet / Zoom)",
+                        agenda: "Trao đổi trực tuyến với các thành viên & đối tác từ xa"
+                      }
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() =>
+                          setScheduleForm({
+                            ...scheduleForm,
+                            title: preset.title,
+                            time: preset.time,
+                            startTime: preset.st,
+                            endTime: preset.et,
+                            location: preset.loc,
+                            meetingAgenda: scheduleForm.meetingAgenda || preset.agenda
+                          })
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 hover:bg-rose-600 hover:text-white text-slate-700 dark:text-slate-200 border border-rose-200 dark:border-rose-800/70 text-[10px] font-bold transition-colors cursor-pointer"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* BƯỚC 1: NHÂN SỰ CHỦ TRÌ / PHỤ TRÁCH & CHỌN THÀNH VIÊN THAM DỰ */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                      {isMeetingMode ? "1. Người chủ trì cuộc họp *" : "1. Nhân viên phụ trách chính *"}
+                      {rolePerspective === "staff" && <span className="text-emerald-600 dark:text-emerald-400 text-[10px] ml-1 font-semibold">(Cá nhân)</span>}
+                    </label>
+                    {rolePerspective === "staff" ? (
+                      <input
+                        type="text"
+                        disabled
+                        value={currentStaffName}
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-500 font-bold cursor-not-allowed"
+                      />
+                    ) : (
+                      <select
+                        value={scheduleForm.actor}
+                        onChange={(e) => setScheduleForm({ ...scheduleForm, actor: e.target.value, linkedTaskCodes: [] })}
+                        className="w-full px-3 py-2 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+                      >
+                        <option value="">-- Chọn người chủ trì / phụ trách --</option>
+                        {staffSourceList.map((p: any) => {
+                          const name = p.full_name || p;
+                          const code = p.employee_code ? ` (${p.employee_code})` : "";
+                          const dept = p.department ? ` - ${p.department}` : "";
+                          return (
+                            <option key={p.id || p.employee_code || name} value={name}>
+                              {name}{code}{dept}
+                            </option>
+                          );
+                        })}
+                      </select>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                      Phân loại bộ phận / Mục đích *
+                    </label>
+                    <select
+                      value={scheduleForm.category}
+                      onChange={(e) => setScheduleForm({ ...scheduleForm, category: e.target.value })}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+                    >
+                      <option value="Họp & Giao Ban">🎥 Họp &amp; Giao Ban: Họp nội bộ / Họp liên phòng / Họp Ban Giám Đốc</option>
+                      <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Trực Lab</option>
+                      <option value="Kinh Doanh">💼 Kinh Doanh: Đàm phán KH / Chăm sóc bệnh viện / Triển khai thầu</option>
+                      <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành: Soạn xuất hàng lớn / Nhập kho container / Kiểm kê</option>
+                      <option value="Cung Ứng">🛒 Cung Ứng: Làm việc NCC / Thủ tục hải quan</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* BẢNG CHỌN THÀNH VIÊN THAM DỰ HỌP (CHUYÊN BIỆT KHI TẠO LỊCH HỌP HOẶC CHỌN NGƯỜI PHỐI HỢP) */}
+                {isMeetingMode ? (
+                  <div className="p-3 rounded-xl bg-white dark:bg-slate-950 border border-rose-200 dark:border-rose-900/70 space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-rose-700 dark:text-rose-300 text-xs">
+                          👥 Chọn thành viên tham dự cuộc họp:
+                        </span>
+                        <span className="px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 font-bold text-[10px] border border-rose-200 dark:border-rose-800">
+                          Đã chọn {(scheduleForm.coActors || []).length + (activeActorName ? 1 : 0)} người (gồm Chủ trì)
+                        </span>
+                      </div>
+                      {(scheduleForm.coActors || []).length > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setScheduleForm({ ...scheduleForm, coActors: [] })}
+                          className="text-[10px] font-bold text-rose-600 hover:underline cursor-pointer"
+                        >
+                          Bỏ chọn tất cả thành viên ({(scheduleForm.coActors || []).length})
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Nút chọn nhanh theo Phòng ban / Toàn công ty */}
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] font-semibold text-slate-500">Chọn nhanh theo phòng:</span>
+                      <button
+                        type="button"
+                        onClick={() => toggleDepartmentAttendees("ALL")}
+                        className="px-2 py-0.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold cursor-pointer"
+                      >
+                        + Toàn công ty
+                      </button>
+                      {allDeptGroups.map((dept) => (
+                        <button
+                          key={dept}
+                          type="button"
+                          onClick={() => toggleDepartmentAttendees(dept)}
+                          className="px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-900 hover:bg-indigo-600 hover:text-white text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 text-[10px] font-semibold transition-colors cursor-pointer"
+                        >
+                          + {dept}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Ô tìm kiếm nhân sự nhanh */}
                     <input
                       type="text"
-                      disabled
-                      value={currentStaffName}
-                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-slate-500 font-bold cursor-not-allowed"
+                      value={attendeeSearchQuery}
+                      onChange={(e) => setAttendeeSearchQuery(e.target.value)}
+                      placeholder="🔍 Tìm nhanh tên nhân sự, mã NV hoặc phòng ban để tích chọn tham dự..."
+                      className="w-full px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white text-[11px]"
                     />
-                  ) : (
-                    <select
-                      value={scheduleForm.actor}
-                      onChange={(e) => setScheduleForm({ ...scheduleForm, actor: e.target.value, linkedTaskCodes: [] })}
-                      className="w-full px-3 py-2 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
-                    >
-                      <option value="">-- Chọn nhân sự phụ trách --</option>
-                      {staffSourceList.map((p: any) => {
-                        const name = p.full_name || p;
-                        const code = p.employee_code ? ` (${p.employee_code})` : "";
-                        const dept = p.department ? ` - ${p.department}` : "";
+
+                    {/* Danh sách checkbox nhân sự */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-1.5 max-h-40 overflow-y-auto pr-1">
+                      {filteredPersonnelForMeeting.map((p: any) => {
+                        const name = String(p.full_name || p || "").trim();
+                        const dept = p.department || "Nhân sự";
+                        const checked = (scheduleForm.coActors || []).some((c) => sameStaffName(c, name));
                         return (
-                          <option key={p.id || p.employee_code || name} value={name}>
-                            {name}{code}{dept}
-                          </option>
+                          <button
+                            key={p.id || p.employee_code || name}
+                            type="button"
+                            onClick={() => toggleAttendeeSelection(name)}
+                            className={`text-left px-2.5 py-1.5 rounded-lg border flex items-center gap-2 transition-all cursor-pointer ${
+                              checked
+                                ? "bg-rose-600 text-white border-rose-500 shadow-2xs"
+                                : "bg-slate-50 dark:bg-slate-900/70 hover:bg-rose-50 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 border-slate-200 dark:border-slate-800"
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              readOnly
+                              checked={checked}
+                              className="w-3.5 h-3.5 rounded accent-rose-600 pointer-events-none shrink-0"
+                            />
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold text-[11px] truncate">{name}</div>
+                              <div className={`text-[9px] truncate ${checked ? "text-rose-100" : "text-slate-500"}`}>
+                                {dept}
+                              </div>
+                            </div>
+                          </button>
                         );
                       })}
-                    </select>
-                  )}
+                    </div>
 
-                  {/* Chọn thêm người phối hợp / đi công tác cùng */}
-                  <div className="mt-2">
+                    {/* Hiển thị các thẻ thành viên đã chọn */}
+                    {Array.isArray(scheduleForm.coActors) && scheduleForm.coActors.length > 0 && (
+                      <div className="flex flex-wrap gap-1 pt-1 border-t border-slate-100 dark:border-slate-800">
+                        {scheduleForm.coActors.map((co) => (
+                          <span
+                            key={co}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/80 text-rose-700 dark:text-rose-300 text-[10px] font-bold border border-rose-200 dark:border-rose-800"
+                          >
+                            <span>👤 {co}</span>
+                            <button
+                              type="button"
+                              onClick={() => toggleAttendeeSelection(co)}
+                              className="hover:text-rose-900 dark:hover:text-white font-bold cursor-pointer"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  /* Chế độ Lịch công tác thường: Chọn người đi cùng gọn nhẹ */
+                  <div>
                     <div className="flex items-center justify-between gap-2 mb-1">
                       <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                        Người đi cùng / Phối hợp (Tùy chọn):
+                        Người đi cùng / Phối hợp công tác (Tùy chọn):
                       </span>
                       <select
                         value=""
@@ -10221,7 +11018,7 @@ ${wf.description || ""}`}
                             setScheduleForm({ ...scheduleForm, coActors: [...cur, picked] });
                           }
                         }}
-                        className="px-2 py-0.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 cursor-pointer"
+                        className="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 cursor-pointer"
                       >
                         <option value="">+ Thêm đồng nghiệp đi cùng...</option>
                         {personnelList.map((p: any) => {
@@ -10260,30 +11057,14 @@ ${wf.description || ""}`}
                       </div>
                     )}
                   </div>
-                </div>
-
-                <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
-                    Phân loại bộ phận / Mục đích *
-                  </label>
-                  <select
-                    value={scheduleForm.category}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, category: e.target.value })}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
-                  >
-                    <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Trực Lab</option>
-                    <option value="Kinh Doanh">💼 Kinh Doanh: Họp giao ban / Đàm phán KH / Chăm sóc bệnh viện</option>
-                    <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành: Soạn xuất hàng lớn / Nhập kho container / Kiểm kê</option>
-                    <option value="Cung Ứng">🛒 Cung Ứng: Làm việc NCC / Thủ tục hải quan</option>
-                  </select>
-                </div>
+                )}
               </div>
 
               {/* BƯỚC 2: CHỌN NHANH TỪ CÁC CÔNG VIỆC / PHIẾU PHỐI HỢP ĐANG CÓ CỦA NHÂN SỰ ĐÓ */}
               <div className="p-3 rounded-xl bg-indigo-50/50 dark:bg-indigo-950/25 border border-indigo-200/80 dark:border-indigo-900/60 space-y-2">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
                   <label className="font-bold text-indigo-900 dark:text-indigo-300 flex items-center gap-1.5 text-[11px]">
-                    <span>📋 2. Chọn từ công việc đang có của {activeActorName || "nhân sự"} để lên kế hoạch</span>
+                    <span>📋 2. Chọn từ công việc đang có của {activeActorName || "nhân sự"} để đưa vào lịch / cuộc họp</span>
                     <span className="px-1.5 py-0.5 rounded-full bg-indigo-100 dark:bg-indigo-900/80 text-indigo-700 dark:text-indigo-200 font-mono text-[10px]">
                       {selectableWorkItems.length} đầu việc đang mở
                     </span>
@@ -10301,10 +11082,10 @@ ${wf.description || ""}`}
 
                 {selectableWorkItems.length === 0 ? (
                   <p className="text-[11px] text-slate-500 italic">
-                    Hiện {activeActorName || "nhân sự này"} chưa có công việc tồn đọng nào trong danh sách. Bạn có thể nhập trực tiếp nội dung công tác ở mục 4 bên dưới.
+                    Hiện {activeActorName || "nhân sự này"} chưa có công việc tồn đọng nào trong danh sách. Bạn có thể nhập trực tiếp nội dung ở mục 4 bên dưới.
                   </p>
                 ) : (
-                  <div className="max-h-36 overflow-y-auto space-y-1.5 pr-1">
+                  <div className="max-h-32 overflow-y-auto space-y-1.5 pr-1">
                     {selectableWorkItems.map((item) => {
                       const isPicked = (scheduleForm.linkedTaskCodes || []).includes(item.code);
                       return (
@@ -10503,7 +11284,7 @@ ${wf.description || ""}`}
                 {/* Cột phải: Khung giờ thực hiện linh hoạt (Chọn Từ giờ -> Đến giờ + Chọn nhanh Ca + Gõ tự do) */}
                 <div className="space-y-2">
                   <label className="block font-bold text-slate-700 dark:text-slate-200">
-                    Khung giờ thực hiện (Chọn khoảng giờ hoặc gõ tự do) *
+                    Khung giờ {isMeetingMode ? "họp" : "thực hiện"} (Chọn khoảng giờ hoặc gõ tự do) *
                   </label>
 
                   {/* Chọn nhanh Từ giờ -> Đến giờ */}
@@ -10556,18 +11337,18 @@ ${wf.description || ""}`}
                     required
                     value={scheduleForm.time}
                     onChange={(e) => setScheduleForm({ ...scheduleForm, time: e.target.value })}
-                    placeholder="Gõ tự do VD: 08:30 - 11:30, Sáng 8h-11h, Đầu giờ chiều..."
+                    placeholder="Gõ tự do VD: 08:30 - 10:00, Sáng 8h30-10h, Đầu giờ chiều..."
                     className="w-full px-3 py-1.5 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono font-bold"
                   />
 
-                  {/* Các nút chọn nhanh Ca làm việc */}
+                  {/* Các nút chọn nhanh Ca làm việc / Khung giờ họp */}
                   <div className="flex flex-wrap gap-1">
                     {[
-                      { label: "🌅 Sáng (08:00 - 12:00)", val: "08:00 - 12:00", st: "08:00", et: "12:00" },
-                      { label: "☀️ Chiều (13:30 - 17:30)", val: "13:30 - 17:30", st: "13:30", et: "17:30" },
-                      { label: "🗓️ Cả ngày (08:00 - 17:30)", val: "08:00 - 17:30", st: "08:00", et: "17:30" },
-                      { label: "⚡ Đầu giờ (08:30 - 09:30)", val: "08:30 - 09:30", st: "08:30", et: "09:30" },
-                      { label: "🌙 Trực tối (18:00 - 21:00)", val: "18:00 - 21:00", st: "18:00", et: "21:00" }
+                      { label: "⚡ Họp sáng (08:30 - 10:00)", val: "08:30 - 10:00", st: "08:30", et: "10:00" },
+                      { label: "🌅 Ca Sáng (08:00 - 12:00)", val: "08:00 - 12:00", st: "08:00", et: "12:00" },
+                      { label: "☀️ Họp chiều (14:00 - 15:30)", val: "14:00 - 15:30", st: "14:00", et: "15:30" },
+                      { label: "🌤️ Ca Chiều (13:30 - 17:30)", val: "13:30 - 17:30", st: "13:30", et: "17:30" },
+                      { label: "🗓️ Cả ngày (08:00 - 17:30)", val: "08:00 - 17:30", st: "08:00", et: "17:30" }
                     ].map((preset) => (
                       <button
                         key={preset.val}
@@ -10606,34 +11387,174 @@ ${wf.description || ""}`}
                 </div>
               )}
 
-              {/* BƯỚC 4: TIÊU ĐỀ NỘI DUNG CÔNG TÁC & ĐỊA ĐIỂM */}
-              <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
-                <div className="md:col-span-8">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    4. Tiêu đề &amp; Nội dung công tác *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={scheduleForm.title}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, title: e.target.value })}
-                    placeholder="VD: Demo máy Real-time PCR tại BV Chợ Rẫy, Giao 20 kit cho Pasteur..."
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
-                  />
+              {/* BƯỚC 4: TIÊU ĐỀ NỘI DUNG & ĐỊA ĐIỂM / PHÒNG HỌP + LINK HỌP + AGENDA */}
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                  <div className="md:col-span-7">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      {isMeetingMode ? "4. Chủ đề / Tiêu đề cuộc họp *" : "4. Tiêu đề & Nội dung công tác *"}
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={scheduleForm.title}
+                      onChange={(e) => setScheduleForm({ ...scheduleForm, title: e.target.value })}
+                      placeholder={
+                        isMeetingMode
+                          ? "VD: Họp giao ban đầu tuần, Họp phương án thầu BV Chợ Rẫy..."
+                          : "VD: Demo máy Real-time PCR tại BV Chợ Rẫy, Giao 20 kit cho Pasteur..."
+                      }
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
+                    />
+                  </div>
+                  <div className="md:col-span-5">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      {isMeetingMode ? "Phòng họp / Địa điểm họp" : "Địa điểm / Bệnh viện / KH"}
+                    </label>
+                    <input
+                      type="text"
+                      value={scheduleForm.location}
+                      onChange={(e) => setScheduleForm({ ...scheduleForm, location: e.target.value })}
+                      placeholder={isMeetingMode ? "VD: Phòng họp chính Tầng 2, Online..." : "VD: BV Chợ Rẫy, Viện Pasteur..."}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
+                    />
+                  </div>
                 </div>
-                <div className="md:col-span-4">
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
-                    Địa điểm / Bệnh viện / KH
-                  </label>
-                  <input
-                    type="text"
-                    value={scheduleForm.location}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, location: e.target.value })}
-                    placeholder="VD: BV Chợ Rẫy, Viện Pasteur..."
-                    className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
-                  />
-                </div>
+
+                {/* Mở rộng cho Lịch Họp: Link họp trực tuyến & Nội dung chuẩn bị (Agenda) */}
+                {isMeetingMode && (
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 p-3 rounded-xl bg-rose-50/40 dark:bg-rose-950/20 border border-rose-200/70 dark:border-rose-900/50">
+                    <div className="md:col-span-5 space-y-1">
+                      <label className="block font-bold text-slate-700 dark:text-slate-300">
+                        🔗 Link họp trực tuyến (Google Meet / Zoom / Teams)
+                      </label>
+                      <input
+                        type="text"
+                        value={scheduleForm.meetingLink || ""}
+                        onChange={(e) => setScheduleForm({ ...scheduleForm, meetingLink: e.target.value })}
+                        placeholder="https://meet.google.com/... hoặc link Zoom (nếu có)"
+                        className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono text-[11px]"
+                      />
+                      <p className="text-[10px] text-slate-500">
+                        Link họp sẽ được đính kèm trực tiếp vào tin nhắn mời họp &amp; nhắc họp.
+                      </p>
+                    </div>
+                    <div className="md:col-span-7 space-y-1">
+                      <label className="block font-bold text-slate-700 dark:text-slate-300">
+                        📝 Nội dung chương trình họp &amp; Yêu cầu chuẩn bị (Agenda)
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={scheduleForm.meetingAgenda || ""}
+                        onChange={(e) => setScheduleForm({ ...scheduleForm, meetingAgenda: e.target.value })}
+                        placeholder="Ghi chú các nội dung chính cần thảo luận hoặc tài liệu các thành viên cần chuẩn bị trước khi họp..."
+                        className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-[11px]"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* BƯỚC 5: CẤU HÌNH NHẮN TIN THÔNG BÁO HỌP & TỰ ĐỘNG NHẮC LỊCH HỌP */}
+              {(isMeetingMode || (scheduleForm.coActors && scheduleForm.coActors.length > 0)) && (
+                <div className="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-rose-50/60 to-amber-50/70 dark:from-indigo-950/40 dark:via-rose-950/25 dark:to-amber-950/25 border border-indigo-200 dark:border-indigo-800/80 space-y-2.5">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div className="font-extrabold text-indigo-950 dark:text-indigo-200 text-xs flex items-center gap-1.5">
+                      <span>💬 5. Nhắn tin thông báo mời họp &amp; Cài đặt nhắc lịch họp</span>
+                    </div>
+                    {editingScheduleId && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleRemindMeetingNow({
+                            id: editingScheduleId,
+                            title: scheduleForm.title,
+                            date: scheduleForm.date,
+                            endDate: scheduleForm.endDate,
+                            time: scheduleForm.time,
+                            location: scheduleForm.location,
+                            actor: activeActorName,
+                            coActors: scheduleForm.coActors,
+                            meetingAgenda: scheduleForm.meetingAgenda,
+                            meetingLink: scheduleForm.meetingLink,
+                            createMeetingGroup: scheduleForm.createMeetingGroup,
+                            chatChannelId: scheduleForm.chatChannelId
+                          })
+                        }
+                        className="px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[10px] flex items-center gap-1 shadow-xs cursor-pointer"
+                      >
+                        <span>🔔 Gửi tin nhắn nhắc lịch họp ngay bây giờ</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    <label className="flex items-start gap-2 p-2 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(scheduleForm.sendChatNotify)}
+                        onChange={(e) => setScheduleForm({ ...scheduleForm, sendChatNotify: e.target.checked })}
+                        className="w-4 h-4 mt-0.5 rounded accent-rose-600 cursor-pointer"
+                      />
+                      <div>
+                        <div className="font-bold text-slate-800 dark:text-slate-100 text-[11px]">
+                          💬 Nhắn tin thông báo qua Chat nội bộ cho từng thành viên
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Tự động gửi tin nhắn mời họp vào hộp thư Chat 1-1 của từng người tham dự (hiện số tin nhắn chưa đọc).
+                        </div>
+                      </div>
+                    </label>
+
+                    <label className="flex items-start gap-2 p-2 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(scheduleForm.createMeetingGroup)}
+                        onChange={(e) => setScheduleForm({ ...scheduleForm, createMeetingGroup: e.target.checked })}
+                        className="w-4 h-4 mt-0.5 rounded accent-indigo-600 cursor-pointer"
+                      />
+                      <div>
+                        <div className="font-bold text-slate-800 dark:text-slate-100 text-[11px]">
+                          👥 Tạo Nhóm Chat riêng cho cuộc họp này
+                        </div>
+                        <div className="text-[10px] text-slate-500">
+                          Tạo phòng chat nhóm <strong>&ldquo;📅 Họp: {scheduleForm.title || "..."}&rdquo;</strong> gồm tất cả thành viên để trao đổi tài liệu &amp; biên bản.
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center pt-1">
+                    <div className="md:col-span-5 flex items-center gap-2">
+                      <label className="font-bold text-slate-700 dark:text-slate-200 text-[11px] shrink-0">
+                        ⏰ Tự động nhắc trước:
+                      </label>
+                      <select
+                        value={scheduleForm.reminderMinutes ?? 30}
+                        onChange={(e) => setScheduleForm({ ...scheduleForm, reminderMinutes: Number(e.target.value) })}
+                        className="w-full px-2.5 py-1.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold text-[11px] cursor-pointer"
+                      >
+                        <option value={15}>🔔 Trước 15 phút (Nhắc qua Chat &amp; Chuông)</option>
+                        <option value={30}>🔔 Trước 30 phút (Khuyên dùng)</option>
+                        <option value={60}>🔔 Trước 1 giờ</option>
+                        <option value={120}>🔔 Trước 2 giờ</option>
+                        <option value={1440}>🔔 Trước 1 ngày (24 giờ)</option>
+                        <option value={0}>🔕 Không tự động nhắc (Chỉ nhắc thủ công)</option>
+                      </select>
+                    </div>
+
+                    <div className="md:col-span-7">
+                      <input
+                        type="text"
+                        value={scheduleForm.customNotifyMessage || ""}
+                        onChange={(e) => setScheduleForm({ ...scheduleForm, customNotifyMessage: e.target.value })}
+                        placeholder="💬 Lời nhắn kèm theo thông báo mời họp (VD: Anh/chị mang theo laptop và số liệu tuần nhé)..."
+                        className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white text-[11px]"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Tùy chọn tự động tạo Nhiệm vụ (Task) nếu lịch này chưa gắn với công việc có sẵn */}
               {!editingScheduleId && (!scheduleForm.linkedTaskCodes || scheduleForm.linkedTaskCodes.length === 0) && (
@@ -10645,17 +11566,21 @@ ${wf.description || ""}`}
                     className="w-4 h-4 rounded accent-emerald-600 cursor-pointer"
                   />
                   <span className="text-[11px] font-semibold text-emerald-900 dark:text-emerald-300">
-                    ⚡ Đồng thời tạo luôn <strong>Nhiệm vụ (Task)</strong> mới giao cho <strong>{activeActorName || "nhân sự này"}</strong> trong Bảng Công Việc
+                    ⚡ Đồng thời tạo luôn <strong>Nhiệm vụ (Task)</strong> mới giao cho{" "}
+                    <strong>
+                      {[activeActorName, ...(scheduleForm.coActors || [])].filter(Boolean).join(", ") || "nhân sự này"}
+                    </strong>{" "}
+                    trong Bảng Công Việc
                   </span>
                 </label>
               )}
 
-              {/* Đính kèm tài liệu kế hoạch */}
+              {/* Đính kèm tài liệu kế hoạch / tài liệu họp */}
               <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <div className="flex items-center justify-between">
                   <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <Paperclip className="w-3.5 h-3.5 text-indigo-600" />
-                    <span>Đính kèm tài liệu kế hoạch (PDF, Word, Ảnh)</span>
+                    <span>Đính kèm tài liệu {isMeetingMode ? "cuộc họp / biên bản" : "kế hoạch"} (PDF, Word, Ảnh)</span>
                   </label>
                   <label className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
                     <span>+ Đính kèm file</span>
@@ -10736,9 +11661,17 @@ ${wf.description || ""}`}
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30 cursor-pointer"
+                  className={`px-5 py-2 rounded-xl font-bold text-white shadow-md cursor-pointer ${
+                    isMeetingMode
+                      ? "bg-rose-600 hover:bg-rose-700 shadow-rose-600/30"
+                      : "bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/30"
+                  }`}
                 >
-                  Lưu Vào Lịch Tuần
+                  {isMeetingMode
+                    ? editingScheduleId
+                      ? "💾 Cập Nhật Lịch Họp & Gửi Thông Báo"
+                      : "🎥 Tạo Lịch Họp & Gửi Tin Nhắn Mời Họp"
+                    : "Lưu Vào Lịch Tuần"}
                 </button>
               </div>
             </form>
