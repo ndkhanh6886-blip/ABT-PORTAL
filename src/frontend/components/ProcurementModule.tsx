@@ -460,9 +460,50 @@ export const ProcurementModule: React.FC = () => {
     ]
   });
 
-  // Full merged product catalog combining products + allSupplierProducts (Issue 4 fix: Liferiver HD-..., Meridian, SSI, Rollmed, HiMedia, Biolabs)
+  // Full merged product catalog combining products + allSupplierProducts + Make-to-order Oligo/Custom templates
   const mergedCatalogProducts = useMemo(() => {
     const map = new Map<string, any>();
+    const defaultCustomTemplates = [
+      {
+        id: "tpl-oligo-primer",
+        code: "OLIGO-PRIMER",
+        parent_code: "",
+        name: "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')",
+        specification: "Nhập trình tự 5'-...-3' | Scale (25/50/100 nmol) | Tinh sạch (DSL/HPLC/PAGE)",
+        unit: "Tube",
+        cost_price: 120000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
+        id: "tpl-oligo-probe",
+        code: "OLIGO-PROBE",
+        parent_code: "",
+        name: "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')",
+        specification: "Nhập trình tự 5'[Reporter]-...-[Quencher]3' (VD: FAM-BHQ1 / HEX-BHQ1 / CY5-BHQ2 | HPLC)",
+        unit: "Tube",
+        cost_price: 950000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
+        id: "tpl-custom-order",
+        code: "CUSTOM-ORDER",
+        parent_code: "",
+        name: "Hàng hóa / Sinh phẩm đặt riêng theo thông số đặc thù (Make-to-Order)",
+        specification: "Nhập quy cách / đặc tính kỹ thuật riêng của lần đặt hàng này",
+        unit: "Bộ",
+        cost_price: 0,
+        brand: "Theo đơn đặt",
+        manufacturer: "Theo đơn đặt",
+        storage_condition: "2-8°C (Kho mát - Hóa chất, Kháng thể)"
+      }
+    ];
+    for (const tpl of defaultCustomTemplates) {
+      map.set(tpl.code, tpl);
+    }
     for (const p of products) {
       const codeKey = String(p.code || "").trim().toUpperCase();
       if (!codeKey) continue;
@@ -5272,6 +5313,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 updatePOLine(idx, {
                                   product_code: val,
                                   product_name: prod?.name || item.product_name,
+                                  specification: item.specification && item.product_code === val ? item.specification : (prod?.specification || ""),
                                   unit: prod?.unit || item.unit || "Hộp",
                                   unit_price: resolved.unitPrice > 0 ? resolved.unitPrice : (prod ? parseFloat(prod.cost_price) || 0 : item.unit_price)
                                 });
@@ -5295,9 +5337,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               ))}
                             </select>
                             <div className="flex items-center gap-1.5 mt-0.5 px-0.5">
-                              <span className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={cleanItemName(item.product_name)}>
-                                {cleanItemName(item.product_name)}
-                              </span>
+                              <input
+                                type="text"
+                                value={item.specification || ""}
+                                onChange={(e) => updatePOLine(idx, { specification: e.target.value })}
+                                placeholder="Quy cách / Trình tự 5'→3' / Đặc tính riêng..."
+                                title={item.specification || "Nhập quy cách hoặc trình tự Primer/Probe riêng cho dòng này"}
+                                className="flex-1 min-w-0 px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/80 text-[11px] text-slate-700 dark:text-slate-200 font-mono focus:border-orange-500 focus:outline-none"
+                              />
                               {srcPR && (
                                 <span className="shrink-0 text-[9px] font-mono font-bold px-1 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800" title="Đề xuất mua (PR) nguồn của dòng này">
                                   {srcPR}
