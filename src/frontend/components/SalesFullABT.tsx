@@ -1833,6 +1833,17 @@ export function SalesFullABT() {
             }
 
             try {
+                if (Array.isArray(overviewData.customers)) {
+                    const parsedCusts = overviewData.customers.map((c: any) => ({
+                        ...c,
+                        contacts: typeof c.contacts === "string"
+                            ? (() => { try { return JSON.parse(c.contacts); } catch { return []; } })()
+                            : (Array.isArray(c.contacts) ? c.contacts : [])
+                    }));
+                    setCustomers(parsedCusts);
+                    try { localStorage.setItem("sales_custom_customers", JSON.stringify(parsedCusts)); } catch {}
+                }
+
                 // 1. Quotations: relational rows first, app_storage-only quotes kept (never local-only copies)
                 const quoteMap = new Map<string, any>();
                 normalizeQuotations(Array.isArray(overviewData.quotations) ? overviewData.quotations : []).forEach((q: any) => quoteMap.set(q.id, q));
@@ -7003,21 +7014,76 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
     };
 
+    const normalizeCustMatchName = (s: any): string =>
+        String(s || "")
+            .toLowerCase()
+            .replace(/[\u2010-\u2015\u2212]/g, "-")
+            .replace(/\s+/g, " ")
+            .trim();
+
     // Danh sách người liên hệ của 1 khách hàng (bảng contacts + người liên hệ chính cũ contact_person)
     const getQuoteCustomerContacts = (custId: string): { name: string; position?: string; phone?: string; email?: string; is_primary?: boolean }[] => {
         if (!custId) return [];
-        const cust: any = customers.find(c => String(c.id) === String(custId)) || salesNvkdCustomers.find(c => String(c.id) === String(custId));
-        if (!cust) return [];
-        const raw: any[] = Array.isArray(cust.contacts)
-            ? cust.contacts
-            : (typeof cust.contacts === "string" ? (() => { try { const p = JSON.parse(cust.contacts); return Array.isArray(p) ? p : []; } catch { return []; } })() : []);
-        const list = raw
-            .filter(ct => ct && String(ct.name || "").trim())
-            .map(ct => ({ name: String(ct.name).trim(), position: ct.position || "", phone: ct.phone || "", email: ct.email || "", is_primary: !!ct.is_primary }));
-        const legacyName = String(cust.contact_person || "").trim();
-        if (legacyName && !list.some(ct => ct.name.toLowerCase() === legacyName.toLowerCase())) {
-            list.push({ name: legacyName, position: cust.contact_position || "", phone: cust.phone || "", email: cust.email || "", is_primary: list.length === 0 });
-        }
+        const rawKey = String(custId).trim();
+        const normKey = normalizeCustMatchName(rawKey);
+        const primaryMatch: any =
+            customers.find(c => String(c.id) === rawKey || String(c.customer_code || c.code || "").toLowerCase() === rawKey.toLowerCase()) ||
+            salesNvkdCustomers.find(c => String(c.id) === rawKey || String(c.customer_code || c.code || "").toLowerCase() === rawKey.toLowerCase()) ||
+            (normKey ? customers.find(c => normalizeCustMatchName(c.name) === normKey) : null) ||
+            (normKey ? salesNvkdCustomers.find(c => normalizeCustMatchName(c.name) === normKey) : null);
+        if (!primaryMatch) return [];
+
+        const targetName = normalizeCustMatchName(primaryMatch.name);
+        const targetCode = String(primaryMatch.customer_code || primaryMatch.code || "").trim().toLowerCase();
+        const allCandidates = [...customers, ...salesNvkdCustomers, ...(selectedCustomer ? [selectedCustomer] : [])].filter(c => {
+            if (!c) return false;
+            if (String(c.id) === String(primaryMatch.id)) return true;
+            if (targetCode && String(c.customer_code || c.code || "").trim().toLowerCase() === targetCode) return true;
+            if (targetName && normalizeCustMatchName(c.name) === targetName) return true;
+            return false;
+        });
+
+        const list: { name: string; position?: string; phone?: string; email?: string; is_primary?: boolean }[] = [];
+        const addContact = (nameRaw: any, positionRaw: any, phoneRaw: any, emailRaw: any, isPrimary: boolean) => {
+            const n = String(nameRaw || "").trim();
+            if (!n) return;
+            const existing = list.find(x => x.name.toLowerCase() === n.toLowerCase());
+            if (!existing) {
+                list.push({
+                    name: n,
+                    position: String(positionRaw || "").trim(),
+                    phone: String(phoneRaw || "").trim(),
+                    email: String(emailRaw || "").trim(),
+                    is_primary: isPrimary
+                });
+            } else {
+                if (!existing.position && positionRaw) existing.position = String(positionRaw).trim();
+                if (!existing.phone && phoneRaw) existing.phone = String(phoneRaw).trim();
+                if (!existing.email && emailRaw) existing.email = String(emailRaw).trim();
+                if (isPrimary) existing.is_primary = true;
+            }
+        };
+
+        allCandidates.forEach(cust => {
+            const raw: any[] = Array.isArray(cust.contacts)
+                ? cust.contacts
+                : (typeof cust.contacts === "string" ? (() => { try { const p = JSON.parse(cust.contacts); return Array.isArray(p) ? p : []; } catch { return []; } })() : []);
+            raw.forEach(ct => {
+                if (!ct) return;
+                addContact(
+                    ct.name || ct.full_name || ct.contact_person || ct.contactName,
+                    ct.position || ct.department || ct.role_type,
+                    ct.phone || ct.mobile,
+                    ct.email,
+                    Boolean(ct.is_primary)
+                );
+            });
+            const legacyName = String(cust.contact_person || cust.contact_name || "").trim();
+            if (legacyName) {
+                addContact(legacyName, cust.contact_position || "", cust.phone || "", cust.email || "", list.length === 0);
+            }
+        });
+
         return list;
     };
 
@@ -10126,10 +10192,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const hasMfg = items.some(it => it.sourceType === "MANUFACTURED");
         const hasComm = items.some(it => it.sourceType === "COMMERCIAL");
 
+        const normOrderCustName = normalizeCustMatchName(factoryOrderCustomerName);
         const matchedCust = customers.find(c =>
-            (c.name && c.name.trim().toLowerCase() === factoryOrderCustomerName.trim().toLowerCase()) ||
+            (c.name && normalizeCustMatchName(c.name) === normOrderCustName) ||
             (c.customer_code && c.customer_code.trim().toLowerCase() === factoryOrderCustomerName.trim().toLowerCase()) ||
             (c.customer_code && factoryOrderCustomerName.includes(c.customer_code))
+        ) || salesNvkdCustomers.find(c =>
+            (c.name && normalizeCustMatchName(c.name) === normOrderCustName) ||
+            (c.customer_code && String(c.customer_code).trim().toLowerCase() === factoryOrderCustomerName.trim().toLowerCase())
         );
         const realCustomerCode = matchedCust?.customer_code || matchedCust?.code || (isStockOrder ? "STOCK" : "KH-01");
         const realCustomerName = matchedCust?.name || factoryOrderCustomerName.trim() || (isStockOrder ? defaultStockCustomer : "Khách hàng");
@@ -10345,6 +10415,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             order_code: generatedCode,
             linkedSalesOrderId: generatedCode,
             date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+            customerId: matchedCust?.id || "",
             customerName: realCustomerName,
             customerCode: realCustomerCode,
             requestedDeliveryDate: factoryOrderDeliveryDate || new Date(Date.now() + 7*24*60*60*1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
@@ -10773,66 +10844,116 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return fo.salesRepId === loggedInStaff.employee_id;
     };
 
-    // Danh sách người liên hệ của khách hàng thuộc đơn hàng (CRM contacts + contact_person + đơn hàng)
+    // Danh sách người liên hệ của khách hàng thuộc đơn hàng (CRM contacts + contact_person + báo giá + đơn hàng)
     const getOrderCustomerContacts = (ord: any): { name: string; position?: string; department?: string; phone?: string; email?: string; is_primary?: boolean }[] => {
         if (!ord) return [];
         const fo = resolveFactoryOrder(ord);
-        const custId = ord.customerId || ord.customer_id || fo?.customerId || fo?.customer_id;
-        const custCode = ord.customerCode || ord.customer_code || fo?.customerCode || fo?.customer_code;
-        const custName = ord.customerName || ord.customer_name || fo?.customerName || fo?.customer_name;
+        const quoteCode = String(ord.quoteId || ord.quote_code || fo?.quoteId || fo?.quote_code || "").trim().toLowerCase();
+        const linkedQuote = quoteCode
+            ? quotations.find(q => String(q.id || q.quote_code || "").trim().toLowerCase() === quoteCode)
+            : null;
 
-        let cust: any = null;
-        if (custId) {
-            cust = customers.find(c => String(c.id) === String(custId)) || salesNvkdCustomers.find(c => String(c.id) === String(custId));
-        }
-        if (!cust && custCode) {
-            cust = customers.find(c => c.customer_code === custCode || c.code === custCode) || salesNvkdCustomers.find(c => c.customer_code === custCode || c.code === custCode);
-        }
-        if (!cust && custName) {
-            cust = customers.find(c => c.name === custName) || salesNvkdCustomers.find(c => c.name === custName);
-        }
-        if (!cust && selectedCustomer && (selectedCustomer.name === custName || String(selectedCustomer.id) === String(custId))) {
-            cust = selectedCustomer;
-        }
+        const custId = String(ord.customerId || ord.customer_id || fo?.customerId || fo?.customer_id || linkedQuote?.customerId || linkedQuote?.customer_id || "").trim();
+        const rawCustCode = String(ord.customerCode || ord.customer_code || fo?.customerCode || fo?.customer_code || linkedQuote?.customerCode || linkedQuote?.customer_code || "").trim();
+        const custName = String(ord.customerName || ord.customer_name || fo?.customerName || fo?.customer_name || linkedQuote?.customerName || linkedQuote?.customer_name || "").trim();
+        const normCustName = normalizeCustMatchName(custName);
+        const custTax = String(ord.vat_tax_code || ord.tax_code || fo?.vat_tax_code || fo?.tax_code || "").trim().toLowerCase();
+
+        // Không dùng mã mặc định "KH-01" / "STOCK" để dò khách hàng khi đơn là của khách hàng thương mại thực tế
+        const isGenericFallbackCode = (rawCustCode === "KH-01" || rawCustCode === "STOCK") && normCustName && !normCustName.includes("kho trung tâm");
+        const custCode = isGenericFallbackCode ? "" : rawCustCode;
+
+        const allPools: any[] = [
+            ...(selectedCustomer ? [selectedCustomer] : []),
+            ...(customers || []),
+            ...(salesNvkdCustomers || [])
+        ];
+
+        const matchedCusts = allPools.filter(c => {
+            if (!c) return false;
+            const cNameNorm = normalizeCustMatchName(c.name);
+            const cCode = String(c.customer_code || c.code || "").trim().toLowerCase();
+            const cId = String(c.id ?? "").trim();
+            const cTax = String(c.tax_code || c.taxCode || "").trim().toLowerCase();
+
+            // Tránh khớp nhầm khách hàng thực tế với Kho Trung Tâm (KH-01)
+            if (normCustName && !normCustName.includes("kho trung tâm") && (cCode === "kh-01" || cNameNorm === "kho trung tâm")) {
+                return false;
+            }
+
+            if (custId && (cId === custId || (cCode && cCode === custId.toLowerCase()))) return true;
+            if (custCode && ((cCode && cCode === custCode.toLowerCase()) || cId.toLowerCase() === custCode.toLowerCase())) return true;
+            if (normCustName && cNameNorm && (cNameNorm === normCustName || cNameNorm.includes(normCustName) || normCustName.includes(cNameNorm))) return true;
+            if (custTax && cTax && cTax === custTax) return true;
+            return false;
+        });
 
         const list: { name: string; position?: string; department?: string; phone?: string; email?: string; is_primary?: boolean }[] = [];
-        if (cust) {
+        const addContact = (nameRaw: any, positionRaw: any, deptRaw: any, phoneRaw: any, emailRaw: any, isPrimary: boolean) => {
+            const n = String(nameRaw || "").trim();
+            if (!n) return;
+            const existing = list.find(ct => ct.name.toLowerCase() === n.toLowerCase());
+            if (!existing) {
+                list.push({
+                    name: n,
+                    position: String(positionRaw || deptRaw || "").trim(),
+                    department: String(deptRaw || "").trim(),
+                    phone: String(phoneRaw || "").trim(),
+                    email: String(emailRaw || "").trim(),
+                    is_primary: isPrimary
+                });
+            } else {
+                if (!existing.position && (positionRaw || deptRaw)) existing.position = String(positionRaw || deptRaw).trim();
+                if (!existing.department && deptRaw) existing.department = String(deptRaw).trim();
+                if (!existing.phone && phoneRaw) existing.phone = String(phoneRaw).trim();
+                if (!existing.email && emailRaw) existing.email = String(emailRaw).trim();
+                if (isPrimary) existing.is_primary = true;
+            }
+        };
+
+        matchedCusts.forEach(cust => {
             const raw: any[] = Array.isArray(cust.contacts)
                 ? cust.contacts
                 : (typeof cust.contacts === "string" ? (() => { try { const p = JSON.parse(cust.contacts); return Array.isArray(p) ? p : []; } catch { return []; } })() : []);
-            raw.filter(ct => ct && String(ct.name || "").trim()).forEach(ct => {
-                list.push({
-                    name: String(ct.name).trim(),
-                    position: ct.position || ct.department || "",
-                    department: ct.department || "",
-                    phone: ct.phone || "",
-                    email: ct.email || "",
-                    is_primary: !!ct.is_primary
-                });
+            raw.forEach(ct => {
+                if (!ct) return;
+                addContact(
+                    ct.name || ct.full_name || ct.contact_person || ct.contactName,
+                    ct.position || ct.department || ct.role_type,
+                    ct.department,
+                    ct.phone || ct.mobile,
+                    ct.email,
+                    Boolean(ct.is_primary)
+                );
             });
             const legacyName = String(cust.contact_person || cust.contact_name || "").trim();
-            if (legacyName && !list.some(ct => ct.name.toLowerCase() === legacyName.toLowerCase())) {
-                list.push({
-                    name: legacyName,
-                    position: cust.contact_position || "",
-                    department: "",
-                    phone: cust.phone || "",
-                    email: cust.email || "",
-                    is_primary: list.length === 0
-                });
+            if (legacyName) {
+                addContact(legacyName, cust.contact_position || "", "", cust.phone || "", cust.email || "", list.length === 0);
             }
+        });
+
+        const quoteContact = String(linkedQuote?.contactPerson || linkedQuote?.contact_person || "").trim();
+        if (quoteContact) {
+            addContact(
+                quoteContact,
+                linkedQuote?.contactPosition || "Người liên hệ báo giá",
+                "",
+                linkedQuote?.contactPhone || "",
+                linkedQuote?.contactEmail || "",
+                list.length === 0
+            );
         }
 
         const orderContact = String(ord.customerContact || ord.contact_person || fo?.customerContact || "").trim();
-        if (orderContact && !list.some(ct => ct.name.toLowerCase() === orderContact.toLowerCase())) {
-            list.push({
-                name: orderContact,
-                position: "Người liên hệ đơn hàng",
-                department: "",
-                phone: ord.customerPhone || fo?.customerPhone || "",
-                email: "",
-                is_primary: list.length === 0
-            });
+        if (orderContact) {
+            addContact(
+                orderContact,
+                "Người liên hệ đơn hàng",
+                "",
+                ord.customerPhone || fo?.customerPhone || "",
+                "",
+                list.length === 0
+            );
         }
         return list;
     };
@@ -11957,6 +12078,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
 
         const targetContacts = getOrderCustomerContacts(target);
+        if (targetContacts.length === 0) {
+            fetchCustomers();
+        }
         const initialName = editSlip?.customerContact || editSlip?.receiverName || "";
         const initialPhone = editSlip?.customerPhone || editSlip?.receiverPhone || "";
         if (initialName) {
@@ -11982,6 +12106,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setDeliveryItems(items);
         setIsDeliveryModalOpen(true);
     };
+
+    // Tự động nạp người nhận mặc định từ danh bạ KH nếu danh sách khách hàng tải xong sau khi mở modal lập phiếu giao
+    useEffect(() => {
+        if (!isDeliveryModalOpen || !deliveryTargetOrder || editingDeliverySlip) return;
+        if (!deliveryReceiverName.trim()) {
+            const contacts = getOrderCustomerContacts(deliveryTargetOrder);
+            if (contacts.length > 0) {
+                const primary = contacts.find(c => c.is_primary) || contacts[0];
+                if (primary?.name) {
+                    setDeliveryReceiverName(primary.name);
+                    if (primary.phone && !deliveryReceiverPhone.trim()) {
+                        setDeliveryReceiverPhone(primary.phone);
+                    }
+                }
+            }
+        }
+    }, [isDeliveryModalOpen, deliveryTargetOrder, customers, salesNvkdCustomers]);
 
     const handleAddLotForProduct = (sourceIdx: number) => {
         const baseItem = deliveryItems[sourceIdx];

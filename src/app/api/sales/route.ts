@@ -355,6 +355,138 @@ function normalizeDeliverySlipRow(r: any) {
   };
 }
 
+const normalizeCustomerMatchKey = (s: any): string =>
+  String(s || "")
+    .toLowerCase()
+    .replace(/[\u2010-\u2015\u2212]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+
+async function enrichCustomerRowsWithContacts(customerRows: any[]): Promise<any[]> {
+  if (!Array.isArray(customerRows) || customerRows.length === 0) return customerRows;
+  let relationalContacts: any[] = [];
+  try {
+    const res = await query("SELECT * FROM customer_contacts ORDER BY is_primary DESC, id ASC");
+    relationalContacts = res.rows || [];
+  } catch {
+    relationalContacts = [];
+  }
+
+  const parseContactsField = (raw: any): any[] => {
+    if (Array.isArray(raw)) return raw;
+    if (typeof raw === "string" && raw.trim()) {
+      try {
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  // Group all known contacts by customer_id, customer_code, and normalized customer name
+  const byId = new Map<string, any[]>();
+  const byCode = new Map<string, any[]>();
+  const byName = new Map<string, any[]>();
+
+  const pushContact = (map: Map<string, any[]>, key: string, ct: any) => {
+    if (!key || !ct || !String(ct.name || "").trim()) return;
+    const list = map.get(key) || [];
+    const normName = String(ct.name).trim().toLowerCase();
+    const existing = list.find(x => String(x.name || "").trim().toLowerCase() === normName);
+    if (!existing) {
+      list.push({
+        id: ct.id || undefined,
+        name: String(ct.name).trim(),
+        position: ct.position || "",
+        department: ct.department || "",
+        phone: ct.phone || "",
+        email: ct.email || "",
+        role_type: ct.role_type || "Kỹ thuật / Quyết định mua",
+        is_primary: Boolean(ct.is_primary),
+        notes: ct.notes || ""
+      });
+      map.set(key, list);
+    } else {
+      if (!existing.phone && ct.phone) existing.phone = ct.phone;
+      if (!existing.position && ct.position) existing.position = ct.position;
+      if (!existing.department && ct.department) existing.department = ct.department;
+      if (!existing.email && ct.email) existing.email = ct.email;
+      if (ct.is_primary) existing.is_primary = true;
+    }
+  };
+
+  for (const row of customerRows) {
+    const idKey = row.id !== undefined && row.id !== null ? String(row.id) : "";
+    const codeKey = String(row.customer_code || "").trim().toLowerCase();
+    const nameKey = normalizeCustomerMatchKey(row.name);
+    const jsonContacts = parseContactsField(row.contacts);
+    for (const ct of jsonContacts) {
+      if (idKey) pushContact(byId, idKey, ct);
+      if (codeKey) pushContact(byCode, codeKey, ct);
+      if (nameKey) pushContact(byName, nameKey, ct);
+    }
+  }
+
+  for (const rc of relationalContacts) {
+    const idKey = rc.customer_id !== undefined && rc.customer_id !== null ? String(rc.customer_id) : "";
+    const codeKey = String(rc.customer_code || "").trim().toLowerCase();
+    if (idKey) pushContact(byId, idKey, rc);
+    if (codeKey) pushContact(byCode, codeKey, rc);
+  }
+
+  return customerRows.map(row => {
+    const idKey = row.id !== undefined && row.id !== null ? String(row.id) : "";
+    const codeKey = String(row.customer_code || "").trim().toLowerCase();
+    const nameKey = normalizeCustomerMatchKey(row.name);
+
+    const mergedMap = new Map<string, any>();
+    const addList = (arr?: any[]) => {
+      if (!Array.isArray(arr)) return;
+      for (const ct of arr) {
+        const k = String(ct?.name || "").trim().toLowerCase();
+        if (!k) continue;
+        const prev = mergedMap.get(k);
+        if (!prev) {
+          mergedMap.set(k, { ...ct });
+        } else {
+          if (!prev.phone && ct.phone) prev.phone = ct.phone;
+          if (!prev.position && ct.position) prev.position = ct.position;
+          if (!prev.department && ct.department) prev.department = ct.department;
+          if (!prev.email && ct.email) prev.email = ct.email;
+          if (ct.is_primary) prev.is_primary = true;
+        }
+      }
+    };
+
+    addList(parseContactsField(row.contacts));
+    if (idKey) addList(byId.get(idKey));
+    if (codeKey) addList(byCode.get(codeKey));
+    if (nameKey) addList(byName.get(nameKey));
+
+    const legacyPerson = String(row.contact_person || "").trim();
+    if (legacyPerson && !mergedMap.has(legacyPerson.toLowerCase())) {
+      mergedMap.set(legacyPerson.toLowerCase(), {
+        id: `CT-${row.customer_code || row.id || "1"}-PRIMARY`,
+        name: legacyPerson,
+        position: row.contact_position || "",
+        department: "",
+        phone: row.phone || "",
+        email: row.email || "",
+        role_type: "Kỹ thuật / Quyết định mua",
+        is_primary: mergedMap.size === 0,
+        notes: ""
+      });
+    }
+
+    return {
+      ...row,
+      contacts: Array.from(mergedMap.values())
+    };
+  });
+}
+
 export async function GET(req: NextRequest) {
   try {
     // Phiên phải còn hiệu lực (tài khoản chưa bị khóa, mật khẩu chưa đổi): proxy chỉ kiểm tra chữ ký cookie
@@ -392,9 +524,11 @@ export async function GET(req: NextRequest) {
         )).rows;
       } catch { slipPayments = []; }
 
+      const enrichedCustomers = await enrichCustomerRowsWithContacts(customers.rows);
+
       return NextResponse.json({
         slip_payments: slipPayments,
-        customers: customers.rows,
+        customers: enrichedCustomers,
         orders: orders.rows,
         quotations: quotations.rows.map(normalizeQuotationRow),
         products: canSeeCost ? products.rows : stripCostFields(products.rows),
@@ -487,7 +621,8 @@ export async function GET(req: NextRequest) {
 
     if (action === "customers") {
       const res = await query("SELECT * FROM sales_customers ORDER BY id DESC");
-      return NextResponse.json({ customers: res.rows });
+      const enrichedCustomers = await enrichCustomerRowsWithContacts(res.rows);
+      return NextResponse.json({ customers: enrichedCustomers });
     }
 
     if (action === "orders") {
