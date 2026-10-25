@@ -513,13 +513,25 @@ export const ProcurementModule: React.FC = () => {
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
+        id: "tpl-oligo-pur",
+        code: "OLIGO-PUR",
+        parent_code: "",
+        name: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
+        specification: "[Tên trình tự] Tinh sạch: HPLC / PAGE / Cartridge / Desalt",
+        unit: "Tube",
+        cost_price: 200000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
+        storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
+      },
+      {
         id: "tpl-oligo-svc",
         code: "OLIGO-SVC",
         parent_code: "",
-        name: "Dịch vụ điều chế & tinh sạch Oligo (HPLC, PAGE, Desalt, Đông khô...)",
-        specification: "[Tên trình tự] Dịch vụ cộng thêm: Tinh sạch HPLC / PAGE / Đông khô",
+        name: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
+        specification: "[Tên trình tự] Dịch vụ điều chế: Đông khô / Pha sẵn chuẩn 100 µM",
         unit: "Tube",
-        cost_price: 220000,
+        cost_price: 80000,
         brand: "IDT / Macrogen / PhuSa",
         manufacturer: "IDT / Macrogen / PhuSa",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"

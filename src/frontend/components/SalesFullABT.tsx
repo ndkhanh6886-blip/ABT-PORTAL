@@ -3243,23 +3243,42 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             notes: "Mã khung thành phần 2: Tính theo nhãn biến đổi huỳnh quang / quencher gắn vào trình tự"
         },
         {
-            code: "OLIGO-SVC",
-            name: "Dịch vụ điều chế & tinh sạch Oligo (HPLC, PAGE, Desalt, Đông khô...)",
+            code: "OLIGO-PUR",
+            name: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
             brand: "IDT / Macrogen / PhuSa",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
-            specification: "[Tên trình tự] Dịch vụ cộng thêm: Tinh sạch HPLC / PAGE / Đông khô",
-            costPrice: 220000,
-            price: 350000,
-            priceDealer1: 320000,
-            priceDealer2: 300000,
+            specification: "[Tên trình tự] Tinh sạch: HPLC / PAGE / Cartridge / Desalt",
+            costPrice: 200000,
+            price: 300000,
+            priceDealer1: 280000,
+            priceDealer2: 260000,
             warranty: "Theo COA từng tube",
             leadTime: "Đặt tổng hợp 3-7 ngày",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
             supplier: "Nhà cung cấp tổng hợp Oligo",
-            notes: "Mã khung thành phần 3: Phí dịch vụ tinh sạch HPLC/PAGE, đông khô hoặc pha chuẩn cộng thêm"
+            notes: "Mã khung thành phần 3: Phí dịch vụ tinh sạch Oligo (HPLC / PAGE / Cartridge / Desalt)"
+        },
+        {
+            code: "OLIGO-SVC",
+            name: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
+            category: "Hóa chất & Sinh phẩm",
+            subCategory: "Oligo / Primer & Probe",
+            brand: "IDT / Macrogen / PhuSa",
+            origin: "Tổng hợp theo trình tự đặt hàng",
+            unit: "Tube",
+            specification: "[Tên trình tự] Dịch vụ điều chế: Đông khô / Pha sẵn chuẩn 100 µM",
+            costPrice: 80000,
+            price: 150000,
+            priceDealer1: 135000,
+            priceDealer2: 120000,
+            warranty: "Theo COA từng tube",
+            leadTime: "Đặt tổng hợp 3-7 ngày",
+            storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
+            supplier: "Nhà cung cấp tổng hợp Oligo",
+            notes: "Mã khung thành phần 4: Phí dịch vụ đông khô hoặc pha sẵn chuẩn nồng độ (100 µM / 10 µM)"
         },
         {
             code: "CUSTOM-ORDER",
@@ -3448,6 +3467,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         } else if (resolvedCat.includes("Hóa chất") || p.code === "LBC-021") {
                             sc = "2-8°C (Mát - Hóa chất, Mẫu test)";
                         }
+                    }
+                    if (p.code === "OLIGO-SVC" && String(p.name || "").includes("tinh sạch")) {
+                        return { ...def, ...p, name: def?.name || p.name, specification: def?.specification || p.specification, notes: def?.notes || p.notes, category: resolvedCat, storageCondition: sc || "15-25°C (Nhiệt độ phòng)" };
                     }
                     return { ...p, category: resolvedCat, storageCondition: sc || "15-25°C (Nhiệt độ phòng)" };
                 });
@@ -7476,7 +7498,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
     };
 
-    // --- OLIGO SEQUENCE BUILDER (Hỗ trợ cả 2 chế độ: Tách 3 mã thành phần HOẶC Gộp 1 dòng theo trình tự) ---
+    // --- OLIGO SEQUENCE BUILDER (Hỗ trợ cả 2 chế độ: Tách 4 mã thành phần HOẶC Gộp 1 dòng theo trình tự) ---
     const [openOligoBuilderTarget, setOpenOligoBuilderTarget] = useState<"QUOTE" | "ORDER" | null>(null);
     const [oligoSeqName, setOligoSeqName] = useState("");
     const [oligoSeqRaw, setOligoSeqRaw] = useState("");
@@ -7484,14 +7506,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [oligoTubeCount, setOligoTubeCount] = useState<number>(1);
     const [oligoBaseCount, setOligoBaseCount] = useState<number>(20);
     const [oligoBasePrice, setOligoBasePrice] = useState<number>(8000);
+    // 2. Mã đánh dấu biến đổi (OLIGO-MOD)
     const [oligoHasMod, setOligoHasMod] = useState<boolean>(false);
     const [oligoModSpec, setOligoModSpec] = useState("5'-FAM / 3'-BHQ1");
     const [oligoModQty, setOligoModQty] = useState<number>(1);
     const [oligoModPrice, setOligoModPrice] = useState<number>(650000);
+    // 3. Mã tinh sạch chuyên sâu (OLIGO-PUR)
+    const [oligoHasPur, setOligoHasPur] = useState<boolean>(false);
+    const [oligoPurSpec, setOligoPurSpec] = useState("Tinh sạch HPLC");
+    const [oligoPurQty, setOligoPurQty] = useState<number>(1);
+    const [oligoPurPrice, setOligoPurPrice] = useState<number>(300000);
+    // 4. Mã dịch vụ Đông khô / Pha sẵn (OLIGO-SVC)
     const [oligoHasSvc, setOligoHasSvc] = useState<boolean>(false);
-    const [oligoSvcSpec, setOligoSvcSpec] = useState("Tinh sạch HPLC + Đông khô");
+    const [oligoSvcSpec, setOligoSvcSpec] = useState("Đông khô (Lyophilized)");
     const [oligoSvcQty, setOligoSvcQty] = useState<number>(1);
-    const [oligoSvcPrice, setOligoSvcPrice] = useState<number>(350000);
+    const [oligoSvcPrice, setOligoSvcPrice] = useState<number>(150000);
 
     const countNucleotideBases = (rawSeq: string): { cleanSeq: string; count: number } => {
         // Loại bỏ phần ghi chú trong ngoặc [...], (...), ký hiệu 5', 3' ở đầu/cuối rồi lấy các ký tự IUPAC nucleotide
@@ -7511,11 +7540,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
         const baseProd = commercialProducts.find(p => p.code === "OLIGO-BASE");
         const modProd = commercialProducts.find(p => p.code === "OLIGO-MOD");
+        const purProd = commercialProducts.find(p => p.code === "OLIGO-PUR");
         const svcProd = commercialProducts.find(p => p.code === "OLIGO-SVC");
         const tier = target === "QUOTE" ? quotePriceTier : "price";
         if (baseProd) setOligoBasePrice(Number((baseProd as any)[tier] || baseProd.price || 8000));
         if (modProd) setOligoModPrice(Number((modProd as any)[tier] || modProd.price || 650000));
-        if (svcProd) setOligoSvcPrice(Number((svcProd as any)[tier] || svcProd.price || 350000));
+        if (purProd) setOligoPurPrice(Number((purProd as any)[tier] || purProd.price || 300000));
+        if (svcProd) setOligoSvcPrice(Number((svcProd as any)[tier] || svcProd.price || 150000));
         setOpenOligoBuilderTarget(target);
     };
 
@@ -7528,12 +7559,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const bPrice = Math.max(0, Number(oligoBasePrice) || 0);
         const mQty = Math.max(1, Number(oligoModQty) || 1);
         const mPrice = Math.max(0, Number(oligoModPrice) || 0);
+        const pQty = Math.max(1, Number(oligoPurQty) || 1);
+        const pPrice = Math.max(0, Number(oligoPurPrice) || 0);
         const sQty = Math.max(1, Number(oligoSvcQty) || 1);
         const sPrice = Math.max(0, Number(oligoSvcPrice) || 0);
 
         const baseSpec = `[${seqLabel}] ${formattedSeq} (${bases} bp | Scale ${oligoScale}${tubes > 1 ? ` | ${tubes} Tube` : ""})`;
         const modSpecText = `[${seqLabel}] Nhãn biến đổi: ${oligoModSpec.trim() || "5'/3' Modification"} (${formattedSeq})`;
-        const svcSpecText = `[${seqLabel}] Dịch vụ: ${oligoSvcSpec.trim() || "Tinh sạch HPLC + Đông khô"} (${formattedSeq})`;
+        const purSpecText = `[${seqLabel}] Tinh sạch: ${oligoPurSpec.trim() || "Tinh sạch HPLC"} (${formattedSeq})`;
+        const svcSpecText = `[${seqLabel}] Dịch vụ điều chế: ${oligoSvcSpec.trim() || "Đông khô / Pha sẵn chuẩn 100 µM"} (${formattedSeq})`;
 
         if (target === "QUOTE") {
             const newRows: any[] = [];
@@ -7564,15 +7598,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         ...financesToQuoteFields(finMod)
                     });
                 }
+                if (oligoHasPur) {
+                    const finPur = computeQuoteItemFinances(pPrice, pQty * tubes, 8, 0);
+                    newRows.push({
+                        productCode: "OLIGO-PUR",
+                        productName: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
+                        unit: "Tube",
+                        manufacturer: "IDT / Macrogen / PhuSa",
+                        specification: purSpecText,
+                        notes: `Tinh sạch cho trình tự [${seqLabel}]`,
+                        quantity: pQty * tubes,
+                        price: pPrice,
+                        ...financesToQuoteFields(finPur)
+                    });
+                }
                 if (oligoHasSvc) {
                     const finSvc = computeQuoteItemFinances(sPrice, sQty * tubes, 8, 0);
                     newRows.push({
                         productCode: "OLIGO-SVC",
-                        productName: "Dịch vụ điều chế & tinh sạch Oligo (HPLC, PAGE, Đông khô...)",
+                        productName: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
                         unit: "Tube",
                         manufacturer: "IDT / Macrogen / PhuSa",
                         specification: svcSpecText,
-                        notes: `Dịch vụ điều chế cộng thêm cho trình tự [${seqLabel}]`,
+                        notes: `Dịch vụ đông khô / pha sẵn cho trình tự [${seqLabel}]`,
                         quantity: sQty * tubes,
                         price: sPrice,
                         ...financesToQuoteFields(finSvc)
@@ -7583,10 +7631,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const bundledName = oligoHasMod
                     ? "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')"
                     : "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')";
-                const perTubePrice = (bases * bPrice) + (oligoHasMod ? mQty * mPrice : 0) + (oligoHasSvc ? sQty * sPrice : 0);
+                const perTubePrice = (bases * bPrice) + (oligoHasMod ? mQty * mPrice : 0) + (oligoHasPur ? pQty * pPrice : 0) + (oligoHasSvc ? sQty * sPrice : 0);
                 const fullParts = [
                     `${formattedSeq} (${bases} bp | ${oligoScale})`,
                     oligoHasMod ? `Mod: ${oligoModSpec.trim()}` : "",
+                    oligoHasPur ? `Tinh sạch: ${oligoPurSpec.trim()}` : "",
                     oligoHasSvc ? `DV: ${oligoSvcSpec.trim()}` : ""
                 ].filter(Boolean).join(" | ");
                 const bundledSpec = `[${seqLabel}] ${fullParts}`;
@@ -7617,12 +7666,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         notes: `${new Intl.NumberFormat("vi-VN").format(mQty * tubes * mPrice)}đ`
                     });
                 }
+                if (oligoHasPur) {
+                    breakdownConfigs.push({
+                        id: `cfg-pur-${Date.now() + 2}`,
+                        name: `Dịch vụ tinh sạch Oligo: ${oligoPurSpec.trim()} (${pQty} x ${new Intl.NumberFormat("vi-VN").format(pPrice)}đ)`,
+                        model: "OLIGO-PUR",
+                        brandOrigin: "Purification",
+                        quantity: pQty * tubes,
+                        unit: "Tube",
+                        isStandard: true,
+                        isIncluded: true,
+                        notes: `${new Intl.NumberFormat("vi-VN").format(pQty * tubes * pPrice)}đ`
+                    });
+                }
                 if (oligoHasSvc) {
                     breakdownConfigs.push({
-                        id: `cfg-svc-${Date.now() + 2}`,
-                        name: `Dịch vụ điều chế & tinh sạch: ${oligoSvcSpec.trim()} (${sQty} x ${new Intl.NumberFormat("vi-VN").format(sPrice)}đ)`,
+                        id: `cfg-svc-${Date.now() + 3}`,
+                        name: `Dịch vụ Đông khô / Pha sẵn: ${oligoSvcSpec.trim()} (${sQty} x ${new Intl.NumberFormat("vi-VN").format(sPrice)}đ)`,
                         model: "OLIGO-SVC",
-                        brandOrigin: "Purification/Service",
+                        brandOrigin: "Formulation/Service",
                         quantity: sQty * tubes,
                         unit: "Tube",
                         isStandard: true,
@@ -7636,7 +7698,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     unit: "Tube",
                     manufacturer: "IDT / Macrogen / PhuSa",
                     specification: bundledSpec,
-                    notes: `Trình tự [${seqLabel}] hoàn chỉnh (${bases} bp${oligoHasMod ? ` + ${oligoModSpec.trim()}` : ""}${oligoHasSvc ? ` + ${oligoSvcSpec.trim()}` : ""})`,
+                    notes: `Trình tự [${seqLabel}] hoàn chỉnh (${bases} bp${oligoHasMod ? ` + ${oligoModSpec.trim()}` : ""}${oligoHasPur ? ` + ${oligoPurSpec.trim()}` : ""}${oligoHasSvc ? ` + ${oligoSvcSpec.trim()}` : ""})`,
                     quantity: tubes,
                     price: perTubePrice,
                     configurations: breakdownConfigs,
@@ -7685,13 +7747,28 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         needsInvoice: true
                     });
                 }
+                if (oligoHasPur) {
+                    newOrderRows.push({
+                        productCode: "OLIGO-PUR",
+                        productName: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
+                        unit: "Tube",
+                        specification: purSpecText,
+                        notes: `Tinh sạch cho trình tự [${seqLabel}]`,
+                        quantity: pQty * tubes,
+                        unitPrice: pPrice,
+                        vatRate: 8,
+                        vat: 8,
+                        targetAllocations: [],
+                        needsInvoice: true
+                    });
+                }
                 if (oligoHasSvc) {
                     newOrderRows.push({
                         productCode: "OLIGO-SVC",
-                        productName: "Dịch vụ điều chế & tinh sạch Oligo (HPLC, PAGE, Đông khô...)",
+                        productName: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
                         unit: "Tube",
                         specification: svcSpecText,
-                        notes: `Dịch vụ cộng thêm cho trình tự [${seqLabel}]`,
+                        notes: `Dịch vụ đông khô / pha sẵn cho trình tự [${seqLabel}]`,
                         quantity: sQty * tubes,
                         unitPrice: sPrice,
                         vatRate: 8,
@@ -7705,10 +7782,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const bundledName = oligoHasMod
                     ? "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')"
                     : "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')";
-                const perTubePrice = (bases * bPrice) + (oligoHasMod ? mQty * mPrice : 0) + (oligoHasSvc ? sQty * sPrice : 0);
+                const perTubePrice = (bases * bPrice) + (oligoHasMod ? mQty * mPrice : 0) + (oligoHasPur ? pQty * pPrice : 0) + (oligoHasSvc ? sQty * sPrice : 0);
                 const fullParts = [
                     `${formattedSeq} (${bases} bp | ${oligoScale})`,
                     oligoHasMod ? `Mod: ${oligoModSpec.trim()}` : "",
+                    oligoHasPur ? `Tinh sạch: ${oligoPurSpec.trim()}` : "",
                     oligoHasSvc ? `DV: ${oligoSvcSpec.trim()}` : ""
                 ].filter(Boolean).join(" | ");
                 newOrderRows.push({
@@ -7716,7 +7794,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     productName: bundledName,
                     unit: "Tube",
                     specification: `[${seqLabel}] ${fullParts}`,
-                    notes: `Gộp giá 1 tube hoàn chỉnh: ${bases}bp x ${new Intl.NumberFormat("vi-VN").format(bPrice)}đ${oligoHasMod ? ` + Mod ${new Intl.NumberFormat("vi-VN").format(mQty * mPrice)}đ` : ""}${oligoHasSvc ? ` + DV ${new Intl.NumberFormat("vi-VN").format(sQty * sPrice)}đ` : ""}`,
+                    notes: `Gộp giá 1 tube hoàn chỉnh: ${bases}bp x ${new Intl.NumberFormat("vi-VN").format(bPrice)}đ${oligoHasMod ? ` + Mod ${new Intl.NumberFormat("vi-VN").format(mQty * mPrice)}đ` : ""}${oligoHasPur ? ` + Tinh sạch ${new Intl.NumberFormat("vi-VN").format(pQty * pPrice)}đ` : ""}${oligoHasSvc ? ` + DV ${new Intl.NumberFormat("vi-VN").format(sQty * sPrice)}đ` : ""}`,
                     quantity: tubes,
                     unitPrice: perTubePrice,
                     vatRate: 8,
@@ -7759,8 +7837,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const tubes = Math.max(1, Number(oligoTubeCount) || 1);
         const baseSub = bases * (Number(oligoBasePrice) || 0);
         const modSub = oligoHasMod ? (Math.max(1, Number(oligoModQty) || 1) * (Number(oligoModPrice) || 0)) : 0;
+        const purSub = oligoHasPur ? (Math.max(1, Number(oligoPurQty) || 1) * (Number(oligoPurPrice) || 0)) : 0;
         const svcSub = oligoHasSvc ? (Math.max(1, Number(oligoSvcQty) || 1) * (Number(oligoSvcPrice) || 0)) : 0;
-        const singleTubeTotal = baseSub + modSub + svcSub;
+        const singleTubeTotal = baseSub + modSub + purSub + svcSub;
         const grandTotal = singleTubeTotal * tubes;
 
         return (
@@ -7773,7 +7852,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 Bảng tính & Chèn nhanh trình tự Oligo (Primer / Probe)
                             </h5>
                             <p className="text-[10px] text-slate-400">
-                                Hỗ trợ tự động đếm số Base ($5'\rightarrow 3'$) và xuất ra Báo giá / Hóa đơn theo <strong>Tách từng mã thành phần</strong> hoặc <strong>Gộp 1 dòng theo trình tự</strong>
+                                Hỗ trợ tự động đếm số Base ($5'\rightarrow 3'$) và xuất ra Báo giá / Hóa đơn theo <strong>Tách từng mã thành phần (Chuỗi chuẩn, Biến đổi, Tinh sạch, Đông khô/Pha sẵn)</strong> hoặc <strong>Gộp 1 dòng theo trình tự</strong>
                             </p>
                         </div>
                     </div>
@@ -7848,8 +7927,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     </div>
                 </div>
 
-                {/* Dòng 2: 3 Thành phần cấu thành giá (OLIGO-BASE, OLIGO-MOD, OLIGO-SVC) */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+                {/* Dòng 2: 4 Thành phần cấu thành giá (OLIGO-BASE, OLIGO-MOD, OLIGO-PUR, OLIGO-SVC) */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2.5">
                     {/* 1. Mã trình tự chuẩn OLIGO-BASE */}
                     <div className="p-2.5 rounded-lg bg-slate-950/90 border border-slate-800 space-y-2">
                         <div className="flex items-center justify-between">
@@ -7890,7 +7969,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     onChange={(e) => {
                                         const checked = e.target.checked;
                                         setOligoHasMod(checked);
-                                        if (checked && !oligoHasSvc) setOligoHasSvc(true);
+                                        if (checked && !oligoHasPur) setOligoHasPur(true);
                                     }}
                                     className="w-3.5 h-3.5 rounded accent-amber-500 cursor-pointer"
                                 />
@@ -7950,7 +8029,70 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                     </div>
 
-                    {/* 3. Mã dịch vụ cộng thêm OLIGO-SVC */}
+                    {/* 3. Mã tinh sạch riêng OLIGO-PUR */}
+                    <div className={`p-2.5 rounded-lg border space-y-2 transition-colors ${oligoHasPur ? "bg-slate-950/90 border-cyan-600/60" : "bg-slate-950/40 border-slate-800/70 opacity-75"}`}>
+                        <div className="flex items-center justify-between">
+                            <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                                <input
+                                    type="checkbox"
+                                    checked={oligoHasPur}
+                                    onChange={(e) => setOligoHasPur(e.target.checked)}
+                                    className="w-3.5 h-3.5 rounded accent-cyan-500 cursor-pointer"
+                                />
+                                <span className="text-[11px] font-bold text-cyan-300 font-mono">3. OLIGO-PUR (Tinh sạch)</span>
+                            </label>
+                            <span className="text-[10px] font-mono text-cyan-300 font-bold">
+                                {oligoHasPur ? `${new Intl.NumberFormat("vi-VN").format(purSub)}đ` : "Không dùng"}
+                            </span>
+                        </div>
+                        <div className="space-y-1.5">
+                            <div className="flex gap-1">
+                                <input
+                                    type="text"
+                                    disabled={!oligoHasPur}
+                                    value={oligoPurSpec}
+                                    onChange={(e) => setOligoPurSpec(e.target.value)}
+                                    placeholder="VD: Tinh sạch HPLC"
+                                    className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
+                                />
+                                <select
+                                    disabled={!oligoHasPur}
+                                    value=""
+                                    onChange={(e) => { if (e.target.value) setOligoPurSpec(e.target.value); }}
+                                    className="w-20 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-cyan-300"
+                                    title="Chọn phương pháp tinh sạch Oligo"
+                                >
+                                    <option value="">Mẫu...</option>
+                                    <option value="Tinh sạch HPLC">HPLC</option>
+                                    <option value="Tinh sạch PAGE">PAGE</option>
+                                    <option value="Tinh sạch Cartridge (OPC)">OPC</option>
+                                    <option value="Tinh sạch Desalt">Desalt</option>
+                                </select>
+                            </div>
+                            <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        disabled={!oligoHasPur}
+                                        value={oligoPurQty}
+                                        onChange={(e) => setOligoPurQty(Math.max(1, Number(e.target.value) || 1))}
+                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono text-center"
+                                        title="Số lượng dịch vụ tinh sạch"
+                                    />
+                                </div>
+                                <div>
+                                    <FormattedNumberInput
+                                        value={oligoPurPrice}
+                                        onChangeValue={(v) => setOligoPurPrice(v)}
+                                        className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-cyan-300 font-mono font-bold text-right"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* 4. Mã dịch vụ Đông khô / Pha sẵn riêng OLIGO-SVC */}
                     <div className={`p-2.5 rounded-lg border space-y-2 transition-colors ${oligoHasSvc ? "bg-slate-950/90 border-purple-600/60" : "bg-slate-950/40 border-slate-800/70 opacity-75"}`}>
                         <div className="flex items-center justify-between">
                             <label className="flex items-center gap-1.5 cursor-pointer select-none">
@@ -7960,7 +8102,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     onChange={(e) => setOligoHasSvc(e.target.checked)}
                                     className="w-3.5 h-3.5 rounded accent-purple-500 cursor-pointer"
                                 />
-                                <span className="text-[11px] font-bold text-purple-300 font-mono">3. OLIGO-SVC (HPLC/Đông khô)</span>
+                                <span className="text-[11px] font-bold text-purple-300 font-mono">4. OLIGO-SVC (Đông khô/Pha)</span>
                             </label>
                             <span className="text-[10px] font-mono text-purple-300 font-bold">
                                 {oligoHasSvc ? `${new Intl.NumberFormat("vi-VN").format(svcSub)}đ` : "Không dùng"}
@@ -7973,7 +8115,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     disabled={!oligoHasSvc}
                                     value={oligoSvcSpec}
                                     onChange={(e) => setOligoSvcSpec(e.target.value)}
-                                    placeholder="VD: Tinh sạch HPLC + Đông khô"
+                                    placeholder="VD: Đông khô / Pha sẵn 100 µM"
                                     className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
                                 />
                                 <select
@@ -7981,13 +8123,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     value=""
                                     onChange={(e) => { if (e.target.value) setOligoSvcSpec(e.target.value); }}
                                     className="w-20 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-purple-300"
-                                    title="Chọn mẫu dịch vụ điều chế"
+                                    title="Chọn mẫu dịch vụ đông khô hoặc pha sẵn"
                                 >
                                     <option value="">Mẫu...</option>
-                                    <option value="Tinh sạch HPLC + Đông khô">HPLC + Đông khô</option>
-                                    <option value="Tinh sạch PAGE + Đông khô">PAGE + Đông khô</option>
-                                    <option value="Desalt + Đông khô">Desalt + Đông khô</option>
-                                    <option value="Pha chuẩn 100 µM (TE Buffer)">Pha sẵn 100 µM</option>
+                                    <option value="Đông khô (Lyophilized)">Đông khô</option>
+                                    <option value="Pha sẵn chuẩn 100 µM (TE Buffer)">Pha 100 µM (TE)</option>
+                                    <option value="Pha sẵn chuẩn 10 µM (Nuclease-free H2O)">Pha 10 µM (H2O)</option>
+                                    <option value="Đông khô + Chia 2 tube (Aliquot)">Đông khô + Chia tube</option>
                                 </select>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
@@ -7999,7 +8141,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         value={oligoSvcQty}
                                         onChange={(e) => setOligoSvcQty(Math.max(1, Number(e.target.value) || 1))}
                                         className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs text-white font-mono text-center"
-                                        title="Số lượng dịch vụ"
+                                        title="Số lượng dịch vụ đông khô / pha sẵn"
                                     />
                                 </div>
                                 <div>
@@ -8033,9 +8175,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             type="button"
                             onClick={() => handleInsertOligoSequence("SPLIT_CODES", target)}
                             className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold flex items-center gap-1.5 shadow cursor-pointer transition-colors"
-                            title="Tách thành các dòng mã OLIGO-BASE, OLIGO-MOD, OLIGO-SVC riêng biệt (Dành cho KH yêu cầu báo giá & bảng kê hóa đơn theo từng mã)"
+                            title="Tách thành các dòng mã OLIGO-BASE, OLIGO-MOD, OLIGO-PUR, OLIGO-SVC riêng biệt (Dành cho KH yêu cầu báo giá & bảng kê hóa đơn theo từng mã)"
                         >
-                            <span>📑 Chèn TÁCH THEO TỪNG MÃ ({1 + (oligoHasMod ? 1 : 0) + (oligoHasSvc ? 1 : 0)} dòng)</span>
+                            <span>📑 Chèn TÁCH THEO TỪNG MÃ ({1 + (oligoHasMod ? 1 : 0) + (oligoHasPur ? 1 : 0) + (oligoHasSvc ? 1 : 0)} dòng)</span>
                         </button>
                         <button
                             type="button"
@@ -21394,9 +21536,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         ? "bg-emerald-600 text-white border-emerald-400"
                                         : "bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border-emerald-700/60"
                                 )}
-                                title="Lọc nhanh 6 mã khung Oligo (OLIGO-BASE, OLIGO-MOD, OLIGO-SVC, OLIGO-PRIMER, OLIGO-PROBE) và Hàng đặt riêng (CUSTOM-ORDER) để xem & chỉnh sửa đơn giá chuẩn"
+                                title="Lọc nhanh 7 mã khung Oligo (OLIGO-BASE, OLIGO-MOD, OLIGO-PUR, OLIGO-SVC, OLIGO-PRIMER, OLIGO-PROBE) và Hàng đặt riêng (CUSTOM-ORDER) để xem & chỉnh sửa đơn giá chuẩn"
                             >
-                                <span>🧬 {commercialCategoryFilter === "GROUP:OLIGO_MTO" ? "Đang lọc: Mã khung Oligo (Bỏ lọc)" : "Mã khung Oligo / Đặt riêng (6 mã)"}</span>
+                                <span>🧬 {commercialCategoryFilter === "GROUP:OLIGO_MTO" ? "Đang lọc: Mã khung Oligo (Bỏ lọc)" : "Mã khung Oligo / Đặt riêng (7 mã)"}</span>
                             </button>
                             <button
                                 onClick={openAddCommercialModal}
@@ -24797,9 +24939,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 type="button"
                                 onClick={() => handleOpenOligoBuilder("QUOTE")}
                                 className="text-xs bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/60 text-emerald-300 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                                title="Mở công cụ tính & chèn nhanh trình tự Oligo (Hỗ trợ cả Tách 3 mã thành phần hoặc Gộp 1 dòng theo trình tự)"
+                                title="Mở công cụ tính & chèn nhanh trình tự Oligo (Hỗ trợ cả Tách 4 mã thành phần hoặc Gộp 1 dòng theo trình tự)"
                             >
-                                <span>🧬 + Thêm trình tự Oligo (Tách 3 mã / Gộp 1 dòng)</span>
+                                <span>🧬 + Thêm trình tự Oligo (Tách 4 mã / Gộp 1 dòng)</span>
                             </button>
                         </div>
                         {renderOligoBuilderPanel("QUOTE")}
@@ -27079,9 +27221,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     type="button"
                                     onClick={() => handleOpenOligoBuilder("ORDER")}
                                     className="text-xs bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-600/60 text-emerald-300 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                                    title="Mở công cụ tính & chèn nhanh trình tự Oligo (Hỗ trợ cả Tách 3 mã thành phần hoặc Gộp 1 dòng theo trình tự)"
+                                    title="Mở công cụ tính & chèn nhanh trình tự Oligo (Hỗ trợ cả Tách 4 mã thành phần hoặc Gộp 1 dòng theo trình tự)"
                                 >
-                                    <span>🧬 + Thêm trình tự Oligo (Tách 3 mã / Gộp 1 dòng)</span>
+                                    <span>🧬 + Thêm trình tự Oligo (Tách 4 mã / Gộp 1 dòng)</span>
                                 </button>
                             </div>
                         </div>
