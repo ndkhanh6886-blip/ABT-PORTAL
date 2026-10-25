@@ -74,6 +74,8 @@ export const DEPARTMENTS = [
   { id: "Kho & Vận Hành", name: "Kho & Vận Hành", icon: Package },
   { id: "Cung Ứng", name: "Cung Ứng", icon: ShoppingCart },
   { id: "Pháp Chế", name: "Pháp Chế & Tuân Thủ", icon: ShieldCheck },
+  { id: "Kế Toán", name: "Kế Toán - Tài Chính", icon: DollarSign },
+  { id: "Ban Giám Đốc", name: "Ban Giám Đốc", icon: Award },
 ];
 
 export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
@@ -119,10 +121,11 @@ export function normalizeWorkspaceDept(raw: any): string {
   if (s === "all") return "all";
   const l = s.toLowerCase();
   if (l.includes("ứng dụng") || l.includes("application") || l.includes("kỹ thuật")) return "Application";
-  if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse")) return "Kho & Vận Hành";
+  if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
   if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
   if (l.includes("kinh doanh") || l.includes("sales") || l.includes("marketing")) return "Kinh Doanh";
   if (l.includes("pháp chế") || l.includes("legal") || l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "Pháp Chế";
+  if (l.includes("kế toán") || l.includes("tài chính") || l.includes("accounting")) return "Kế Toán";
   if (l.includes("giám đốc") || l.includes("bod")) return "Ban Giám Đốc";
   return s;
 }
@@ -684,9 +687,24 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
   }, []);
 
   const filtered = useMemo(() => {
-    let list = personnelList;
+    let list = Array.isArray(personnelList) ? [...personnelList] : [];
     if (filterDepartment && filterDepartment !== "all") {
       list = list.filter(p => isSameWorkspaceDept(p.department, filterDepartment));
+      const normDept = normalizeWorkspaceDept(filterDepartment);
+      if (normDept && DEPARTMENT_STAFF[normDept]) {
+        DEPARTMENT_STAFF[normDept].forEach(rawName => {
+          const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
+          const posMatch = rawName.match(/\((.*?)\)/);
+          if (!list.some(p => sameStaffName(p.full_name, cleanName))) {
+            list.push({
+              full_name: cleanName,
+              employee_code: "",
+              position: posMatch ? posMatch[1] : `Nhân sự ${normDept}`,
+              department: normDept
+            });
+          }
+        });
+      }
     }
     if (!search.trim()) return list;
     const q = search.toLowerCase();
@@ -748,6 +766,12 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
 
       {isOpen && (
         <div className="absolute z-50 left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-xl overflow-hidden">
+          {filterDepartment && filterDepartment !== "all" && (
+            <div className="px-2.5 py-1.5 bg-indigo-50/80 dark:bg-indigo-950/60 border-b border-indigo-100 dark:border-indigo-900/60 flex items-center justify-between text-[10px] font-bold text-indigo-700 dark:text-indigo-300">
+              <span>🏢 Phòng ban: {filterDepartment}</span>
+              <span>{filtered.length} nhân sự</span>
+            </div>
+          )}
           <div className="p-2 border-b border-slate-100 dark:border-slate-800 flex items-center gap-2 bg-slate-50/50 dark:bg-slate-950/50">
             <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
             <input
@@ -1874,13 +1898,23 @@ export const UnifiedWorkspace: React.FC = () => {
 
   const [selectedDailyDay, setSelectedDailyDay] = useState<string>(getInitialDailyDay());
   const [selectedDailyStaff, setSelectedDailyStaff] = useState<string>("");
+  const [dailySourceFilter, setDailySourceFilter] = useState<string>("all");
+  const [dailyLogStaffScope, setDailyLogStaffScope] = useState<"selected_staff" | "dept">("dept");
   const [analyticsPeriod, setAnalyticsPeriod] = useState<"today" | "week" | "month" | "all">("month");
   const [dailyPlanItems, setDailyPlanItems] = useState<Array<{
     id: string | number;
     title: string;
-    source: "schedule" | "task" | "extra";
+    source: "schedule" | "task" | "workflow" | "extra";
+    origin_tab?: "planner_schedule" | "planner_thematic" | "workflows" | "tasks" | "extra";
+    origin_badge?: string;
+    origin_detail?: string;
     task_id?: number;
     task_code?: string;
+    workflow_id?: number;
+    workflow_code?: string;
+    project_code?: string;
+    schedule_id?: number | string;
+    time_slot?: string;
     category?: string;
     location?: string;
     status: "completed" | "partial" | "pending";
@@ -2068,30 +2102,71 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   }, [selectedDept]);
 
-  // Dynamic list of staff for the active department
+  // Dynamic list of staff for the active department (chỉ trả về đúng nhân sự thuộc phòng ban đang chọn)
   const departmentStaffList = useMemo(() => {
     const currentDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all");
 
-    if (personnelList && personnelList.length > 0) {
-      if (!currentDept || currentDept === "all") {
-        return personnelList;
-      }
-      const filtered = personnelList.filter((p: any) => isSameWorkspaceDept(p.department, currentDept));
-      if (filtered.length > 0) return filtered;
+    if (!currentDept || currentDept === "all") {
+      return personnelList || [];
     }
 
     const normDept = normalizeWorkspaceDept(currentDept);
-    if (normDept && normDept !== "all" && DEPARTMENT_STAFF[normDept]) {
-      return DEPARTMENT_STAFF[normDept].map(name => ({
-        full_name: name.replace(/\s*\(.*?\)/, ""),
-        employee_code: "",
-        position: "",
-        department: normDept
-      }));
+    const list: any[] = [];
+
+    if (personnelList && personnelList.length > 0) {
+      personnelList.forEach((p: any) => {
+        if (isSameWorkspaceDept(p.department, currentDept)) {
+          list.push(p);
+        }
+      });
     }
 
-    return personnelList || [];
+    if (normDept && normDept !== "all" && DEPARTMENT_STAFF[normDept]) {
+      DEPARTMENT_STAFF[normDept].forEach(rawName => {
+        const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
+        const posMatch = rawName.match(/\((.*?)\)/);
+        if (!list.some((p: any) => sameStaffName(p.full_name || p, cleanName))) {
+          list.push({
+            full_name: cleanName,
+            employee_code: "",
+            position: posMatch ? posMatch[1] : `Nhân sự ${normDept}`,
+            department: normDept
+          });
+        }
+      });
+    }
+
+    return list;
   }, [personnelList, selectedDept, rolePerspective, managerDept]);
+
+  // Tự động đồng bộ nhân sự đang chọn ở Bảng việc & Nhật ký Daily khi chuyển Phòng ban
+  useEffect(() => {
+    if (rolePerspective === "staff") return;
+    const currentDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all");
+    if (currentDept && currentDept !== "all") {
+      if (
+        selectedAssignee !== "all" &&
+        selectedAssignee !== "__UNASSIGNED__" &&
+        !departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, selectedAssignee))
+      ) {
+        setSelectedAssignee("all");
+      }
+      if (
+        !selectedDailyStaff ||
+        !departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, selectedDailyStaff))
+      ) {
+        const firstStaff = departmentStaffList[0]?.full_name || "";
+        setSelectedDailyStaff(firstStaff);
+      }
+    }
+  }, [selectedDept, departmentStaffList, rolePerspective, managerDept, selectedAssignee, selectedDailyStaff]);
+
+  // Đồng bộ khi người dùng chọn 1 nhân sự cụ thể trên thanh lọc chung
+  useEffect(() => {
+    if (selectedAssignee && selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__") {
+      setSelectedDailyStaff(selectedAssignee);
+    }
+  }, [selectedAssignee]);
 
   // RBAC Filtered Tasks:
   // - Staff: Views their assigned tasks + unassigned tasks in their department (so they can see incoming Demo/coordination requests)
@@ -2215,16 +2290,22 @@ export const UnifiedWorkspace: React.FC = () => {
   // - Director: Sees whole company or selected department
   const filteredDailyLogs = useMemo(() => {
     return dailyLogs.filter((log) => {
+      const emp = log.employee_name || log.author || "";
       if (rolePerspective === "staff") {
-        const emp = log.employee_name || log.author || "";
         return Boolean(emp) && sameStaffName(emp, currentStaffName);
       }
-      if (rolePerspective === "manager") {
-        return selectedDept === "all" ? true : isSameWorkspaceDept(log.department, selectedDept);
+      const activeDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all");
+      if (activeDept !== "all") {
+        const matchLogDept = isSameWorkspaceDept(log.department, activeDept);
+        const matchStaffDept = departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, emp));
+        if (!matchLogDept && !matchStaffDept) return false;
       }
-      return selectedDept === "all" || isSameWorkspaceDept(log.department, selectedDept);
+      if (dailyLogStaffScope === "selected_staff" && selectedDailyStaff) {
+        if (!emp || !sameStaffName(emp, selectedDailyStaff)) return false;
+      }
+      return true;
     });
-  }, [dailyLogs, rolePerspective, managerDept, selectedDept, currentStaffName]);
+  }, [dailyLogs, rolePerspective, managerDept, selectedDept, currentStaffName, departmentStaffList, dailyLogStaffScope, selectedDailyStaff]);
 
   // Filtered Workflows
   const filteredWorkflows = useMemo(() => {
@@ -3588,28 +3669,157 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   };
 
-  // Sync daily items when day or staff changes (Kết nối Lịch Công Tác Tuần theo đúng ngày/tuần + Bảng Công Việc)
+  // Nhân sự đang được chọn để xem/báo cáo tại Tab Nhật Ký Daily (luôn khớp với Phòng ban đang lọc)
+  const activeDailyStaff = useMemo(() => {
+    if (rolePerspective === "staff") return currentStaffName;
+    const activeDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all");
+    if (activeDept !== "all") {
+      if (selectedDailyStaff && departmentStaffList.some((p: any) => sameStaffName(p.full_name || p, selectedDailyStaff))) {
+        return selectedDailyStaff;
+      }
+      return departmentStaffList[0]?.full_name || "";
+    }
+    return selectedDailyStaff || currentStaffName;
+  }, [rolePerspective, currentStaffName, selectedDept, managerDept, selectedDailyStaff, departmentStaffList]);
+
+  // Hàm phân tích nguồn gốc công việc từ Tab nào (hỗ trợ cả dữ liệu trực tiếp lẫn nhật ký đã lưu trong DB)
+  const getDailyItemOriginMeta = useCallback((item: any) => {
+    const rawTitle = String(item?.title || "");
+    const rawCode = String(item?.task_code || "");
+    const wfMatch = rawTitle.match(/\b(WF-[A-Z0-9-]+)\b/i) || String(item?.workflow_code || "").match(/\b(WF-[A-Z0-9-]+)\b/i);
+    const thematicMatch = rawCode.match(/^TSK-(.+)-S(\d+)$/i) || rawTitle.match(/\[([A-Z]+-[A-Z]+-\d+)\s*•\s*GĐ/i);
+    const taskMatch = rawCode || (rawTitle.match(/\[(TSK-[A-Z0-9-]+)\]/i)?.[1] ?? "");
+
+    if (item?.origin_tab === "workflows" || item?.source === "workflow" || wfMatch) {
+      const wfCode = item?.workflow_code || (wfMatch ? wfMatch[1].toUpperCase() : "");
+      return {
+        originTab: "workflows" as const,
+        badgeLabel: "🔄 Nguồn: Tab Quy Trình Phối Hợp",
+        subDetail: item?.origin_detail || [wfCode ? `Phiếu: ${wfCode}` : "", taskMatch ? `Mã CV: ${taskMatch}` : ""].filter(Boolean).join(" • "),
+        actionLabel: wfCode ? `↗ Mở phiếu ${wfCode}` : "↗ Xem tại Tab Quy Trình Phối Hợp",
+        badgeClass: "bg-purple-100 dark:bg-purple-950/80 text-purple-800 dark:text-purple-300 border border-purple-300 dark:border-purple-800"
+      };
+    }
+
+    if (item?.origin_tab === "planner_thematic" || item?.project_code || thematicMatch) {
+      const prjCode = item?.project_code || (thematicMatch ? thematicMatch[1].toUpperCase() : "");
+      return {
+        originTab: "planner_thematic" as const,
+        badgeLabel: "🎯 Nguồn: Tab Lịch & Kế Hoạch (Chuyên đề)",
+        subDetail: item?.origin_detail || [prjCode ? `Chuyên đề: ${prjCode}` : "", taskMatch ? `Mã giai đoạn: ${taskMatch}` : ""].filter(Boolean).join(" • "),
+        actionLabel: prjCode ? `↗ Mở chuyên đề ${prjCode}` : "↗ Xem tại Tab Lịch & Kế Hoạch",
+        badgeClass: "bg-fuchsia-100 dark:bg-fuchsia-950/80 text-fuchsia-800 dark:text-fuchsia-300 border border-fuchsia-300 dark:border-fuchsia-800"
+      };
+    }
+
+    if (item?.origin_tab === "planner_schedule" || item?.source === "schedule") {
+      return {
+        originTab: "planner_schedule" as const,
+        badgeLabel: "📅 Nguồn: Tab Lịch & Kế Hoạch (Lịch tuần)",
+        subDetail: item?.origin_detail || (item?.time_slot ? `⏰ Khung giờ: ${item.time_slot}` : "Lịch công tác tuần"),
+        actionLabel: "↗ Xem tại Lịch Công Tác Tuần",
+        badgeClass: "bg-indigo-100 dark:bg-indigo-950/80 text-indigo-800 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-800"
+      };
+    }
+
+    if (item?.origin_tab === "tasks" || item?.source === "task" || taskMatch) {
+      return {
+        originTab: "tasks" as const,
+        badgeLabel: "📋 Nguồn: Tab Bảng Công Việc",
+        subDetail: item?.origin_detail || (taskMatch ? `Mã công việc: ${taskMatch}` : "Nhiệm vụ trên Bảng Công Việc"),
+        actionLabel: taskMatch ? `↗ Mở việc ${taskMatch}` : "↗ Xem tại Tab Bảng Công Việc",
+        badgeClass: "bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800"
+      };
+    }
+
+    return {
+      originTab: "extra" as const,
+      badgeLabel: "⚡ Nguồn: Phát sinh trực tiếp tại Nhật Ký",
+      subDetail: item?.origin_detail || "Việc phát sinh ngoài kế hoạch trong ngày",
+      actionLabel: "",
+      badgeClass: "bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800"
+    };
+  }, []);
+
+  // Điều hướng 1 chạm từ đầu việc trong Nhật Ký về đúng Tab / Modal gốc
+  const handleOpenDailyItemSource = useCallback((item: any) => {
+    const meta = getDailyItemOriginMeta(item);
+    const rawTitle = String(item?.title || "");
+    const rawCode = String(item?.task_code || (rawTitle.match(/\[(TSK-[A-Z0-9-]+)\]/i)?.[1] ?? "")).trim();
+    const wfCode = String(item?.workflow_code || (rawTitle.match(/\b(WF-[A-Z0-9-]+)\b/i)?.[1] ?? "")).trim();
+
+    if (meta.originTab === "workflows") {
+      const matchedWf = workflows.find(
+        (w: any) =>
+          (item?.workflow_id && Number(w.id) === Number(item.workflow_id)) ||
+          (wfCode && String(w.workflow_code || "").toUpperCase() === wfCode.toUpperCase())
+      );
+      if (matchedWf) {
+        setSelectedWorkflowDetail(matchedWf);
+        return;
+      }
+      setActiveSubTab("workflows");
+      return;
+    }
+
+    if (meta.originTab === "planner_thematic") {
+      setActiveSubTab("planner");
+      setPlannerView("lab_projects");
+      return;
+    }
+
+    if (meta.originTab === "planner_schedule") {
+      setActiveSubTab("planner");
+      setPlannerView("calendar");
+      return;
+    }
+
+    if (meta.originTab === "tasks") {
+      const matchedTask = tasks.find(
+        (t: any) =>
+          (item?.task_id && Number(t.id) === Number(item.task_id)) ||
+          (rawCode && String(t.task_code || "").toUpperCase() === rawCode.toUpperCase())
+      );
+      if (matchedTask) {
+        openEditTask(matchedTask);
+        return;
+      }
+      setActiveSubTab("tasks");
+    }
+  }, [getDailyItemOriginMeta, workflows, tasks]);
+
+  // Sync daily items when day or staff changes (Kết nối Lịch Công Tác Tuần + Bảng Công Việc + Quy Trình Phối Hợp + Chuyên đề)
   useEffect(() => {
-    const targetStaff = selectedDailyStaff || currentStaffName;
-    const targetDept = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "" : selectedDept);
+    const targetStaff = activeDailyStaff;
+    const targetDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "");
     const targetDayObj = viewedWeek.days.find(d => d.name === selectedDailyDay) || { name: selectedDailyDay, date: todayVN() };
 
     const matchingSchedules = weeklySchedule.filter(s => {
       if (!scheduleOnDay(s, targetDayObj)) return false;
-      if (targetDept && !isSameWorkspaceDept(s.category, targetDept) && rolePerspective === "manager") return false;
       if (targetStaff) {
-        if (sameStaffName(s.actor, targetStaff)) return true;
-        const actor = (s.actor || "").toLowerCase().trim();
-        const target = targetStaff.toLowerCase().trim();
-        return Boolean(actor && target && (actor.includes(target) || target.includes(actor)));
+        const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
+        if (actors.some((a: string) => sameStaffName(a, targetStaff))) return true;
+        const actorLower = String(s.actor || "").toLowerCase().trim();
+        const targetLower = targetStaff.toLowerCase().trim();
+        return Boolean(actorLower && targetLower && (actorLower.includes(targetLower) || targetLower.includes(actorLower)));
       }
+      if (targetDept && !isSameWorkspaceDept(s.category, targetDept)) return false;
       return true;
     });
 
     const itemsFromSchedule = matchingSchedules.map((s, idx) => ({
       id: `sched-${s.id || idx}`,
+      schedule_id: s.id,
+      time_slot: s.time || "",
+      task_code: s.linked_task_code || "",
       title: s.title || `Công tác ${s.category || ""}`,
       source: "schedule" as const,
+      origin_tab: "planner_schedule" as const,
+      origin_badge: "📅 Nguồn: Tab Lịch & Kế Hoạch (Lịch tuần)",
+      origin_detail: [
+        s.time ? `⏰ Khung giờ: ${s.time}` : "Lịch công tác tuần",
+        s.linked_task_code ? `🔗 Gắn mã việc: ${s.linked_task_code}` : ""
+      ].filter(Boolean).join(" • "),
       category: s.category,
       location: s.location,
       status: "completed" as const,
@@ -3619,7 +3829,7 @@ export const UnifiedWorkspace: React.FC = () => {
       proportionality: "balanced" as const
     }));
 
-    // Kéo thêm các Công việc đang thực hiện / đến hạn từ Bảng Công Việc (company_tasks) của nhân sự này
+    // Kéo các Công việc đang thực hiện / đến hạn từ Bảng Công Việc (company_tasks) của đúng nhân sự đang chọn
     const matchingTasks = tasks.filter((t: any) => {
       const cleanAssignee = cleanWorkspaceAssignee(t.assignee_name);
       if (targetStaff) {
@@ -3634,23 +3844,125 @@ export const UnifiedWorkspace: React.FC = () => {
       return false;
     });
 
-    const itemsFromTasks = matchingTasks.map((t: any) => ({
-      id: `task-${t.id}`,
-      task_id: t.id,
-      task_code: t.task_code,
-      title: `${t.task_code ? `[${t.task_code}] ` : ""}${t.title || ""}`,
-      source: "task" as const,
-      category: t.department,
-      location: t.customer_name || "",
-      status: (t.status === "DONE" ? "completed" : "partial") as "completed" | "partial" | "pending",
-      result: t.result || "",
-      issues: "",
-      work_hours: 2,
-      proportionality: "balanced" as const
-    }));
+    const itemsFromTasks = matchingTasks.map((t: any) => {
+      const relCode = String(t.related_workflow_code || "").trim();
+      const tCode = String(t.task_code || "").trim();
+      const wfMatch = relCode.match(/^WF-/i) || String(t.title || "").match(/\b(WF-[A-Z0-9-]+)\b/i);
+      const thematicStageMatch = tCode.match(/^TSK-(.+)-S(\d+)$/i);
+      const isThematic = Boolean(
+        thematicStageMatch ||
+        t.task_category === "Kế hoạch chuyên đề" ||
+        (relCode && !relCode.toUpperCase().startsWith("WF-") && labProjects.some((p: any) => String(p.id).toUpperCase() === relCode.toUpperCase()))
+      );
 
-    setDailyPlanItems([...itemsFromSchedule, ...itemsFromTasks]);
-  }, [selectedDailyDay, selectedDailyStaff, weeklySchedule, tasks, viewedWeek, rolePerspective, managerDept, selectedDept, currentStaffName]);
+      let origin_tab: "workflows" | "planner_thematic" | "tasks" = "tasks";
+      let origin_badge = "📋 Nguồn: Tab Bảng Công Việc";
+      let origin_detail = [
+        tCode ? `Mã CV: ${tCode}` : "",
+        t.task_category ? `Phân loại: ${t.task_category}` : "",
+        t.deadline ? `Hạn: ${formatDayVN(String(t.deadline).slice(0, 10))}` : ""
+      ].filter(Boolean).join(" • ");
+      let workflow_code = "";
+      let project_code = "";
+
+      if (wfMatch) {
+        origin_tab = "workflows";
+        workflow_code = relCode.toUpperCase().startsWith("WF-") ? relCode : (wfMatch[1] || relCode);
+        origin_badge = "🔄 Nguồn: Tab Quy Trình Phối Hợp";
+        origin_detail = [
+          workflow_code ? `Phiếu liên phòng: ${workflow_code}` : "",
+          tCode ? `Mã việc đồng bộ: ${tCode}` : ""
+        ].filter(Boolean).join(" • ");
+      } else if (isThematic) {
+        origin_tab = "planner_thematic";
+        project_code = relCode || (thematicStageMatch ? thematicStageMatch[1] : "");
+        origin_badge = "🎯 Nguồn: Tab Lịch & Kế Hoạch (Chuyên đề)";
+        origin_detail = [
+          project_code ? `Chuyên đề: ${project_code}` : "",
+          tCode ? `Mã giai đoạn: ${tCode}` : ""
+        ].filter(Boolean).join(" • ");
+      }
+
+      return {
+        id: `task-${t.id}`,
+        task_id: t.id,
+        task_code: t.task_code,
+        workflow_code,
+        project_code,
+        title: `${t.task_code ? `[${t.task_code}] ` : ""}${t.title || ""}`,
+        source: "task" as const,
+        origin_tab,
+        origin_badge,
+        origin_detail,
+        category: t.department,
+        location: t.customer_name || "",
+        status: (t.status === "DONE" ? "completed" : "partial") as "completed" | "partial" | "pending",
+        result: t.result || "",
+        issues: "",
+        work_hours: 2,
+        proportionality: "balanced" as const
+      };
+    });
+
+    // Kéo thêm các Phiếu phối hợp liên phòng (Tab Quy Trình Phối Hợp) đang giao cho nhân sự này (nếu chưa có trong danh sách task)
+    const representedWfCodes = new Set(
+      itemsFromTasks.map(it => String(it.workflow_code || "").toUpperCase()).filter(Boolean)
+    );
+    const matchingWorkflows = workflows.filter((w: any) => {
+      if (w.status === "COMPLETED" || w.status === "REJECTED") return false;
+      const wCode = String(w.workflow_code || "").toUpperCase();
+      if (wCode && representedWfCodes.has(wCode)) return false;
+      const steps = Array.isArray(w.steps) ? w.steps : [];
+      const curIdx = typeof w.current_step_index === "number" ? w.current_step_index : 0;
+      const curStep = steps[curIdx];
+      const stepAssignees = curStep
+        ? [
+            ...(Array.isArray(curStep.assignees) ? curStep.assignees : []),
+            ...String(curStep.assignee_name || "").split(",")
+          ].map(a => cleanWorkspaceAssignee(a)).filter(Boolean)
+        : [];
+      const mainAssignee = cleanWorkspaceAssignee(w.assignee_name);
+      if (targetStaff) {
+        return (
+          (mainAssignee && sameStaffName(mainAssignee, targetStaff)) ||
+          stepAssignees.some(a => sameStaffName(a, targetStaff))
+        );
+      }
+      if (targetDept) {
+        return isSameWorkspaceDept(w.target_dept, targetDept) || (curStep && isSameWorkspaceDept(curStep.dept, targetDept));
+      }
+      return false;
+    });
+
+    const itemsFromWorkflows = matchingWorkflows.map((w: any) => {
+      const steps = Array.isArray(w.steps) ? w.steps : [];
+      const curIdx = typeof w.current_step_index === "number" ? w.current_step_index : 0;
+      const curStep = steps[curIdx];
+      return {
+        id: `wf-${w.id}`,
+        workflow_id: w.id,
+        workflow_code: w.workflow_code,
+        title: `[${w.workflow_code}] ${w.title}${curStep?.title ? ` — Bước ${curIdx + 1}: ${curStep.title}` : ""}`,
+        source: "workflow" as const,
+        origin_tab: "workflows" as const,
+        origin_badge: "🔄 Nguồn: Tab Quy Trình Phối Hợp",
+        origin_detail: [
+          `Phiếu: ${w.workflow_code}`,
+          `${w.requester_dept || "Phòng yêu cầu"} ➔ ${w.target_dept || "Phòng xử lý"}`,
+          curStep?.title ? `Bước ${curIdx + 1}: ${curStep.title}` : ""
+        ].filter(Boolean).join(" • "),
+        category: w.target_dept || targetDept,
+        location: w.customer_name || "",
+        status: "partial" as const,
+        result: "",
+        issues: "",
+        work_hours: 2,
+        proportionality: "balanced" as const
+      };
+    });
+
+    setDailyPlanItems([...itemsFromSchedule, ...itemsFromTasks, ...itemsFromWorkflows]);
+  }, [selectedDailyDay, activeDailyStaff, weeklySchedule, tasks, workflows, labProjects, viewedWeek, rolePerspective, managerDept, selectedDept]);
 
   // Auto-calculate daily total hours from plan items
   useEffect(() => {
@@ -3665,11 +3977,15 @@ export const UnifiedWorkspace: React.FC = () => {
   };
 
   const handleAddDailyExtraItem = () => {
+    const activeDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "Khác");
     const newItem = {
       id: `extra-${Date.now()}`,
       title: "",
       source: "extra" as const,
-      category: rolePerspective === "manager" ? managerDept : "Khác",
+      origin_tab: "extra" as const,
+      origin_badge: "⚡ Nguồn: Phát sinh trực tiếp tại Nhật Ký",
+      origin_detail: "Việc phát sinh ngoài kế hoạch trong ngày",
+      category: activeDept,
       location: "",
       status: "completed" as const,
       result: "",
@@ -3687,8 +4003,13 @@ export const UnifiedWorkspace: React.FC = () => {
   // Handle Save Daily Log with Plan Items and Evaluation
   const handleSaveDaily = async (e: React.FormEvent) => {
     e.preventDefault();
-    const targetStaff = selectedDailyStaff || currentStaffName || "Nhân viên";
-    const targetDept = rolePerspective === "manager" ? managerDept : (dailyForm.department || "Kinh Doanh");
+    const targetStaff = activeDailyStaff || currentStaffName || "Nhân viên";
+    const staffObj = personnelList.find((p: any) => sameStaffName(p.full_name, targetStaff));
+    const targetDept = selectedDept !== "all"
+      ? selectedDept
+      : (staffObj?.department
+          ? normalizeWorkspaceDept(staffObj.department)
+          : (rolePerspective === "manager" ? managerDept : (dailyForm.department || "Kinh Doanh")));
 
     const completedItems = dailyPlanItems.filter(p => p.status === "completed");
     
@@ -4533,7 +4854,11 @@ export const UnifiedWorkspace: React.FC = () => {
                       ? "📦 Kho & Vận Hành"
                       : d.id === "Cung Ứng"
                       ? "🛒 Mua Hàng & Cung Ứng"
-                      : "⚖️ Pháp Chế & Tuân Thủ"}
+                      : d.id === "Pháp Chế"
+                      ? "⚖️ Pháp Chế & Tuân Thủ"
+                      : d.id === "Kế Toán"
+                      ? "💰 Kế Toán - Tài Chính"
+                      : "🏛️ Ban Giám Đốc"}
                   </option>
                 ))}
               </select>
@@ -6186,7 +6511,7 @@ ${wf.description || ""}`}
       {activeSubTab === "daily" && (
         <div className="space-y-5">
           {/* Top Control Bar: Weekday Navigator & Personnel Filter */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs space-y-3.5">
             <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
               {/* Weekday Switcher */}
               <div className="space-y-1.5 w-full lg:w-auto">
@@ -6200,22 +6525,24 @@ ${wf.description || ""}`}
                   {["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"].map((day) => {
                     const isSelected = selectedDailyDay === day;
                     const dayObj = viewedWeek.days.find(d => d.name === day) || { name: day, date: todayVN(), label: "" };
-                    const staff = selectedDailyStaff || currentStaffName;
+                    const staff = activeDailyStaff;
+                    const activeDept = selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "");
                     // Count planned items for this exact date in the current viewed week + active tasks
                     const schedCount = weeklySchedule.filter(s => {
                       if (!scheduleOnDay(s, dayObj)) return false;
                       if (staff && s.actor) {
-                        if (sameStaffName(s.actor, staff)) return true;
+                        const actors = String(s.actor || "").split(",").map((a: string) => a.trim()).filter(Boolean);
+                        if (actors.some((a: string) => sameStaffName(a, staff))) return true;
                         return s.actor.toLowerCase().includes(staff.toLowerCase()) || staff.toLowerCase().includes(s.actor.toLowerCase());
                       }
-                      if (rolePerspective === "manager" && !isSameWorkspaceDept(s.category, managerDept)) return false;
+                      if (activeDept && !isSameWorkspaceDept(s.category, activeDept)) return false;
                       return true;
                     }).length;
                     const taskCountForDay = tasks.filter((t: any) => {
                       const cleanA = cleanWorkspaceAssignee(t.assignee_name);
                       if (staff) {
                         if (!cleanA || !sameStaffName(cleanA, staff)) return false;
-                      } else if (rolePerspective === "manager" && !isSameWorkspaceDept(t.department, managerDept)) {
+                      } else if (activeDept && !isSameWorkspaceDept(t.department, activeDept)) {
                         return false;
                       }
                       const dl = t.deadline ? String(t.deadline).slice(0, 10) : "";
@@ -6253,27 +6580,23 @@ ${wf.description || ""}`}
                 </div>
               </div>
 
-              {/* Staff / Department Context */}
+              {/* Staff / Department Context (Chỉ hiển thị đúng nhân sự thuộc Phòng ban đang chọn) */}
               <div className="flex flex-wrap items-center gap-3 w-full lg:w-auto shrink-0">
-                {rolePerspective === "director" ? (
-                  <div className="flex items-center gap-2 min-w-[280px]">
-                    <span className="text-xs text-slate-500 font-semibold shrink-0">Nhân sự:</span>
+                {rolePerspective === "director" || rolePerspective === "manager" ? (
+                  <div className="flex items-center gap-2 min-w-[290px]">
+                    <span className="text-xs text-slate-500 font-semibold shrink-0">
+                      Nhân sự ({selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "Toàn công ty")}):
+                    </span>
                     <SearchablePersonnelSelect
-                      value={selectedDailyStaff}
+                      value={activeDailyStaff}
                       onChange={(val) => setSelectedDailyStaff(val)}
-                      personnelList={personnelList}
-                      placeholder="Chọn nhân viên để theo dõi..."
-                    />
-                  </div>
-                ) : rolePerspective === "manager" ? (
-                  <div className="flex items-center gap-2 min-w-[260px]">
-                    <span className="text-xs text-slate-500 font-semibold shrink-0">Nhân sự ({managerDept}):</span>
-                    <SearchablePersonnelSelect
-                      value={selectedDailyStaff || currentStaffName}
-                      onChange={(val) => setSelectedDailyStaff(val)}
-                      personnelList={personnelList}
-                      filterDepartment={managerDept}
-                      placeholder={`Chọn nhân viên phòng ${managerDept}...`}
+                      personnelList={departmentStaffList}
+                      filterDepartment={selectedDept !== "all" ? selectedDept : (rolePerspective === "manager" ? managerDept : "all")}
+                      placeholder={
+                        selectedDept !== "all"
+                          ? `Chọn nhân sự thuộc ${selectedDept} (${departmentStaffList.length} người)...`
+                          : "Chọn nhân sự để theo dõi..."
+                      }
                     />
                   </div>
                 ) : (
@@ -6284,6 +6607,49 @@ ${wf.description || ""}`}
                 )}
               </div>
             </div>
+
+            {/* Quick Department-Scoped Staff Chips in Daily Log */}
+            {(rolePerspective === "director" || rolePerspective === "manager") && departmentStaffList.length > 0 && (
+              <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar text-xs">
+                <span className="text-[11px] font-bold text-slate-500 shrink-0 mr-1 flex items-center gap-1">
+                  <Users className="w-3.5 h-3.5 text-indigo-500" />
+                  <span>
+                    Nhân sự {selectedDept !== "all" ? `phòng ${selectedDept}` : "toàn công ty"} ({departmentStaffList.length}):
+                  </span>
+                </span>
+                {departmentStaffList.map((p: any) => {
+                  const name = p.full_name || p;
+                  const isSelected = sameStaffName(activeDailyStaff, name);
+                  const activeTaskCount = tasks.filter((t: any) => {
+                    const cleanA = cleanWorkspaceAssignee(t.assignee_name);
+                    return cleanA && sameStaffName(cleanA, name) && t.status !== "DONE";
+                  }).length;
+                  return (
+                    <button
+                      key={p.id || p.employee_code || name}
+                      type="button"
+                      onClick={() => setSelectedDailyStaff(name)}
+                      className={`flex items-center gap-1.5 px-3 py-1 rounded-xl text-xs transition-all shrink-0 cursor-pointer border ${
+                        isSelected
+                          ? "bg-indigo-600 text-white border-indigo-600 font-bold shadow-xs"
+                          : "bg-slate-50 dark:bg-slate-800/70 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-300"
+                      }`}
+                    >
+                      <span>{name}</span>
+                      {activeTaskCount > 0 && (
+                        <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-bold font-mono ${
+                          isSelected
+                            ? "bg-white/20 text-white"
+                            : "bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300"
+                        }`}>
+                          {activeTaskCount}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Main 2-Column Grid */}
@@ -6291,15 +6657,20 @@ ${wf.description || ""}`}
             {/* Left Column (7 cols): Planned Items & Quick Input & Evaluation */}
             <div className="lg:col-span-7 space-y-4">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 gap-2 flex-wrap">
                   <div className="flex items-center gap-2">
                     <ListChecks className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                     <div>
-                      <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                        Công Việc Kế Hoạch Tuần &amp; Bảng Việc • {selectedDailyDay}
+                      <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2 flex-wrap">
+                        <span>Công Việc Trong Ngày • {selectedDailyDay}</span>
+                        {activeDailyStaff && (
+                          <span className="px-2 py-0.5 rounded-lg text-xs font-extrabold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                            👤 {activeDailyStaff}
+                          </span>
+                        )}
                       </h3>
                       <p className="text-[11px] text-slate-500">
-                        Tự động tổng hợp từ Lịch công tác tuần &amp; Bảng công việc • Khi bấm Đạt sẽ tự động cập nhật tiến độ Task
+                        Hiển thị rõ nguồn gốc công việc từ từng Tab • Bấm vào nhãn nguồn để mở xem chi tiết tại Tab gốc
                       </p>
                     </div>
                   </div>
@@ -6313,61 +6684,125 @@ ${wf.description || ""}`}
                   </button>
                 </div>
 
+                {/* Source Tab Filter & Legend Bar */}
+                {dailyPlanItems.length > 0 && (
+                  <div className="flex items-center gap-1.5 flex-wrap pb-1 text-[11px]">
+                    <span className="font-bold text-slate-400 mr-1">Lọc theo Tab nguồn:</span>
+                    {[
+                      { id: "all", label: "Tất cả nguồn", count: dailyPlanItems.length },
+                      {
+                        id: "tasks",
+                        label: "📋 Tab Bảng Công Việc",
+                        count: dailyPlanItems.filter(it => getDailyItemOriginMeta(it).originTab === "tasks").length
+                      },
+                      {
+                        id: "workflows",
+                        label: "🔄 Tab Quy Trình Phối Hợp",
+                        count: dailyPlanItems.filter(it => getDailyItemOriginMeta(it).originTab === "workflows").length
+                      },
+                      {
+                        id: "planner_schedule",
+                        label: "📅 Tab Lịch & Kế Hoạch (Lịch tuần)",
+                        count: dailyPlanItems.filter(it => getDailyItemOriginMeta(it).originTab === "planner_schedule").length
+                      },
+                      {
+                        id: "planner_thematic",
+                        label: "🎯 Tab Lịch & Kế Hoạch (Chuyên đề)",
+                        count: dailyPlanItems.filter(it => getDailyItemOriginMeta(it).originTab === "planner_thematic").length
+                      },
+                      {
+                        id: "extra",
+                        label: "⚡ Phát sinh tại Nhật ký",
+                        count: dailyPlanItems.filter(it => getDailyItemOriginMeta(it).originTab === "extra").length
+                      }
+                    ]
+                      .filter(f => f.id === "all" || f.count > 0)
+                      .map(f => (
+                        <button
+                          key={f.id}
+                          type="button"
+                          onClick={() => setDailySourceFilter(f.id)}
+                          className={`px-2.5 py-1 rounded-lg font-bold transition-all cursor-pointer border ${
+                            dailySourceFilter === f.id
+                              ? "bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 dark:border-white shadow-2xs"
+                              : "bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                          }`}
+                        >
+                          {f.label} ({f.count})
+                        </button>
+                      ))}
+                  </div>
+                )}
+
                 {/* List of Planned Items */}
                 <div className="space-y-3">
-                  {dailyPlanItems.length > 0 ? (
-                    dailyPlanItems.map((item, idx) => (
-                      <div
-                        key={item.id}
-                        className={`p-3.5 rounded-xl border transition-all space-y-2.5 ${
-                          item.status === "completed"
-                            ? "bg-slate-50/80 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/80"
-                            : item.status === "partial"
-                            ? "bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60"
-                            : "bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/60"
-                        }`}
-                      >
-                        {/* Top row: Status switcher + Title + Category + Remove */}
-                        <div className="flex items-start justify-between gap-2 flex-wrap">
-                          <div className="flex-1 min-w-[220px]">
-                            <div className="flex items-center gap-2 flex-wrap mb-1">
-                              <span className="font-mono text-[11px] font-extrabold text-slate-400">
-                                #{idx + 1}
-                              </span>
-                              <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
-                                item.source === "schedule"
-                                  ? "bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300"
-                                  : item.source === "task"
-                                  ? "bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300"
-                                  : "bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300"
-                              }`}>
-                                {item.source === "schedule" ? "Lịch tuần" : item.source === "task" ? "Bảng CV" : "Phát sinh"}
-                              </span>
-                              {item.category && (
-                                <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                                  {item.category}
-                                </span>
-                              )}
-                              {item.location && (
-                                <span className="text-[10px] text-slate-500 font-medium">
-                                  📍 {item.location}
-                                </span>
-                              )}
-                            </div>
-                            {item.source === "extra" ? (
-                              <input
-                                type="text"
-                                value={item.title}
-                                onChange={(e) => updateDailyPlanItem(item.id, "title", e.target.value)}
-                                placeholder="Nhập tên công việc phát sinh..."
-                                className="w-full px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                              />
-                            ) : (
-                              <div className="font-bold text-xs text-slate-900 dark:text-white leading-snug">
-                                {item.title}
+                  {dailyPlanItems.filter(it => dailySourceFilter === "all" || getDailyItemOriginMeta(it).originTab === dailySourceFilter).length > 0 ? (
+                    dailyPlanItems
+                      .filter(it => dailySourceFilter === "all" || getDailyItemOriginMeta(it).originTab === dailySourceFilter)
+                      .map((item, idx) => {
+                        const originMeta = getDailyItemOriginMeta(item);
+                        return (
+                          <div
+                            key={item.id}
+                            className={`p-3.5 rounded-xl border transition-all space-y-2.5 ${
+                              item.status === "completed"
+                                ? "bg-slate-50/80 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700/80"
+                                : item.status === "partial"
+                                ? "bg-amber-50/50 dark:bg-amber-950/20 border-amber-200 dark:border-amber-800/60"
+                                : "bg-rose-50/40 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800/60"
+                            }`}
+                          >
+                            {/* Top row: Source Tab Banner + Status switcher + Title + Category + Remove */}
+                            <div className="flex items-start justify-between gap-2 flex-wrap">
+                              <div className="flex-1 min-w-[220px]">
+                                {/* Crystal-clear Source Tab Identification Row */}
+                                <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                                  <span className="font-mono text-[11px] font-extrabold text-slate-400">
+                                    #{idx + 1}
+                                  </span>
+                                  <span className={`px-2 py-0.5 rounded-md text-[10px] font-extrabold ${originMeta.badgeClass}`}>
+                                    {originMeta.badgeLabel}
+                                  </span>
+                                  {originMeta.subDetail && (
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                      {originMeta.subDetail}
+                                    </span>
+                                  )}
+                                  {item.category && (
+                                    <span className="px-2 py-0.5 rounded-md text-[10px] font-semibold bg-slate-200/80 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                                      🏢 {item.category}
+                                    </span>
+                                  )}
+                                  {item.location && (
+                                    <span className="text-[10px] text-slate-500 font-medium">
+                                      📍 {item.location}
+                                    </span>
+                                  )}
+                                  {originMeta.actionLabel && (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenDailyItemSource(item)}
+                                      className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-indigo-50 dark:bg-indigo-950/80 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 border border-indigo-200 dark:border-indigo-800 transition-colors cursor-pointer"
+                                      title="Mở xem công việc này tại Tab nguồn"
+                                    >
+                                      {originMeta.actionLabel}
+                                    </button>
+                                  )}
+                                </div>
+                                {item.source === "extra" ? (
+                                  <input
+                                    type="text"
+                                    value={item.title}
+                                    onChange={(e) => updateDailyPlanItem(item.id, "title", e.target.value)}
+                                    placeholder="Nhập tên công việc phát sinh..."
+                                    className="w-full px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                                  />
+                                ) : (
+                                  <div className="font-bold text-xs text-slate-900 dark:text-white leading-snug">
+                                    {item.title}
+                                  </div>
+                                )}
                               </div>
-                            )}
-                          </div>
 
                           {/* Status buttons */}
                           <div className="flex items-center gap-1 shrink-0">
@@ -6470,11 +6905,12 @@ ${wf.description || ""}`}
                           </div>
                         </div>
                       </div>
-                    ))
+                        );
+                      })
                   ) : (
                     <div className="p-6 text-center border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl space-y-2">
                       <div className="text-slate-400 text-xs italic">
-                        Chưa có công việc nào trong kế hoạch tuần của {selectedDailyDay} ({selectedDailyStaff || currentStaffName}).
+                        Chưa có công việc nào trong kế hoạch tuần hoặc bảng việc của {selectedDailyDay} ({activeDailyStaff || currentStaffName}).
                       </div>
                       <button
                         type="button"
@@ -6589,7 +7025,7 @@ ${wf.description || ""}`}
             {/* Right Column (5 cols): Daily Logs History & 2-Way Feedback Thread */}
             <div className="lg:col-span-5 space-y-4">
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs space-y-4">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 gap-2 flex-wrap">
                   <div>
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                       Nhật Ký &amp; Chỉ Đạo Điều Hành
@@ -6598,9 +7034,37 @@ ${wf.description || ""}`}
                       Trao đổi 2 chiều: Chỉ đạo của Quản lý ⇄ Phản hồi của Nhân sự
                     </p>
                   </div>
-                  <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                    {filteredDailyLogs.length} báo cáo
-                  </span>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {(rolePerspective === "director" || rolePerspective === "manager") && activeDailyStaff && (
+                      <div className="inline-flex rounded-lg p-0.5 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[10px] font-bold">
+                        <button
+                          type="button"
+                          onClick={() => setDailyLogStaffScope("dept")}
+                          className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                            dailyLogStaffScope === "dept"
+                              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-2xs"
+                              : "text-slate-500 hover:text-slate-700"
+                          }`}
+                        >
+                          🏢 {selectedDept !== "all" ? selectedDept : "Cả công ty"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDailyLogStaffScope("selected_staff")}
+                          className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
+                            dailyLogStaffScope === "selected_staff"
+                              ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-2xs"
+                              : "text-slate-500 hover:text-slate-700"
+                          }`}
+                        >
+                          👤 {activeDailyStaff}
+                        </button>
+                      </div>
+                    )}
+                    <span className="text-xs font-mono font-bold px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                      {filteredDailyLogs.length} báo cáo
+                    </span>
+                  </div>
                 </div>
 
                 <div className="space-y-4 max-h-[850px] overflow-y-auto pr-1">
@@ -6661,31 +7125,55 @@ ${wf.description || ""}`}
                           <div className="space-y-1.5">
                             <span className="text-[11px] font-bold text-slate-500 block">Các đầu việc thực hiện:</span>
                             <div className="space-y-1">
-                              {parsedItems.map((pi: any, pIdx: number) => (
-                                <div
-                                  key={pIdx}
-                                  className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 text-[11px] space-y-1"
-                                >
-                                  <div className="flex items-center justify-between gap-1">
-                                    <span className="font-bold text-slate-800 dark:text-slate-200">
+                              {parsedItems.map((pi: any, pIdx: number) => {
+                                const piOrigin = getDailyItemOriginMeta(pi);
+                                return (
+                                  <div
+                                    key={pIdx}
+                                    className="p-2.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 text-[11px] space-y-1.5"
+                                  >
+                                    <div className="flex items-center justify-between gap-1.5 flex-wrap">
+                                      <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${piOrigin.badgeClass}`}>
+                                          {piOrigin.badgeLabel}
+                                        </span>
+                                        {piOrigin.subDetail && (
+                                          <span className="text-[9px] font-semibold text-slate-500">
+                                            {piOrigin.subDetail}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1.5">
+                                        {piOrigin.actionLabel && (
+                                          <button
+                                            type="button"
+                                            onClick={() => handleOpenDailyItemSource(pi)}
+                                            className="text-[9px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                                          >
+                                            {piOrigin.actionLabel}
+                                          </button>
+                                        )}
+                                        {pi.work_hours && (
+                                          <span className="text-slate-400 font-mono text-[10px]">{pi.work_hours}h</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="font-bold text-slate-800 dark:text-slate-200">
                                       {pi.status === "completed" ? "🟢" : pi.status === "partial" ? "🟡" : "🔴"} {pi.title}
-                                    </span>
-                                    {pi.work_hours && (
-                                      <span className="text-slate-400 font-mono text-[10px]">{pi.work_hours}h</span>
+                                    </div>
+                                    {pi.result && (
+                                      <div className="text-emerald-700 dark:text-emerald-400 font-medium">
+                                        ↳ Kết quả: {pi.result}
+                                      </div>
+                                    )}
+                                    {pi.issues && (
+                                      <div className="text-amber-700 dark:text-amber-400 font-medium">
+                                        ↳ Vướng mắc: {pi.issues}
+                                      </div>
                                     )}
                                   </div>
-                                  {pi.result && (
-                                    <div className="text-emerald-700 dark:text-emerald-400 font-medium">
-                                      ↳ Kết quả: {pi.result}
-                                    </div>
-                                  )}
-                                  {pi.issues && (
-                                    <div className="text-amber-700 dark:text-amber-400 font-medium">
-                                      ↳ Vướng mắc: {pi.issues}
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </div>
                         ) : (
