@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useTheme } from "@/frontend/contexts/ThemeContext";
 import { NotificationDropdown } from "./NotificationDropdown";
 import { useAuth } from "@/frontend/contexts/AuthContext";
@@ -41,7 +41,18 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const [isSecurityOpen, setIsSecurityOpen] = useState(false);
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
+  const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const activeUser = user || currentUser;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const onUnread = (e: any) => {
+      const cnt = Number(e?.detail?.count) || 0;
+      setChatUnreadCount(cnt);
+    };
+    window.addEventListener("tbr-chat-unread-updated", onUnread as EventListener);
+    return () => window.removeEventListener("tbr-chat-unread-updated", onUnread as EventListener);
+  }, []);
 
   return (
     <>
@@ -167,7 +178,13 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 >
                   <MessageSquare className="w-3.5 h-3.5 shrink-0" />
                   <span>Chat Nội Bộ</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  {chatUnreadCount > 0 ? (
+                    <span className="min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] font-extrabold flex items-center justify-center shrink-0">
+                      {chatUnreadCount > 99 ? "99+" : chatUnreadCount}
+                    </span>
+                  ) : (
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
+                  )}
                 </button>
               )}
 

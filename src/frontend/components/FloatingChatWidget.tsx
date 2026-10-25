@@ -50,13 +50,17 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const currentUserName = user?.name || (user as any)?.full_name || "Nhân viên TBRs";
+  const currentUserKey = String((user as any)?.username || currentUserName).trim().toLowerCase();
   const currentUserRole = user?.role || "Thành viên";
   const currentUserDept = (user as any)?.department || "Kinh Doanh";
 
   const markChannelAsReadLocal = (channelId: number, lastMsgId?: number) => {
     if (!channelId || typeof window === "undefined") return;
     try {
-      localStorage.setItem(`chat_last_read_${channelId}_${currentUserName}`, new Date().toISOString());
+      localStorage.setItem(`chat_last_read_${channelId}_${currentUserKey}`, new Date().toISOString());
+      if (lastMsgId && Number(lastMsgId) > 0) {
+        localStorage.setItem(`chat_last_read_id_${channelId}_${currentUserKey}`, String(lastMsgId));
+      }
     } catch {}
     setChannels(prev => prev.map(c => c.id === channelId ? { ...c, unread_count: 0 } : c));
     fetch("/api/chat?action=mark_read", {
@@ -69,19 +73,13 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
   const getChannelUnreadCount = (c: any): number => {
     if (!c) return 0;
     if (isOpen && activeChannelId === c.id) return 0;
-    const apiUnread = Number(c.unread_count) || 0;
-    if (typeof window !== "undefined") {
+    const apiUnread = Math.max(0, Number(c.unread_count) || 0);
+    const lastMsgId = Number(c.last_message_id) || 0;
+    if (typeof window !== "undefined" && lastMsgId > 0) {
       try {
-        const lastReadIso = localStorage.getItem(`chat_last_read_${c.id}_${currentUserName}`);
-        if (lastReadIso && c.last_message_at) {
-          const lastReadTime = new Date(lastReadIso).getTime();
-          const lastMsgTime = new Date(c.last_message_at).getTime();
-          if (!isNaN(lastReadTime) && !isNaN(lastMsgTime) && lastReadTime >= lastMsgTime) {
-            return 0;
-          }
-          if (!isNaN(lastReadTime) && !isNaN(lastMsgTime) && lastMsgTime > lastReadTime && c.last_message_sender && c.last_message_sender !== currentUserName) {
-            return Math.max(apiUnread, 1);
-          }
+        const localReadId = Number(localStorage.getItem(`chat_last_read_id_${c.id}_${currentUserKey}`)) || 0;
+        if (localReadId >= lastMsgId) {
+          return 0;
         }
       } catch {}
     }
@@ -89,6 +87,13 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
   };
 
   const totalUnreadCount = channels.reduce((sum, c) => sum + getChannelUnreadCount(c), 0);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.dispatchEvent(new CustomEvent("tbr-chat-unread-updated", { detail: { count: totalUnreadCount, userKey: currentUserKey } }));
+    } catch {}
+  }, [totalUnreadCount, currentUserKey]);
 
   // Fetch Channels & Personnel on mount and poll every 6s even when closed so unread badge stays live
   useEffect(() => {

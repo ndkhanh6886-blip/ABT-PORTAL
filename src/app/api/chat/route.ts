@@ -65,6 +65,15 @@ let chatTablesEnsured = false;
 async function ensureChatTables() {
   if (chatTablesEnsured) return;
   try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS chat_channel_reads (
+        channel_id INT NOT NULL,
+        user_name VARCHAR(255) NOT NULL,
+        last_read_message_id INT DEFAULT 0,
+        last_read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (channel_id, user_name)
+      )
+    `).catch(() => {});
     await query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_id_id ON chat_messages(channel_id, id DESC)`).catch(() => {});
     await query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE`).catch(() => {});
     await query(`ALTER TABLE chat_channels ADD COLUMN IF NOT EXISTS pinned_messages JSONB DEFAULT '[]'::jsonb`).catch(() => {});
@@ -133,20 +142,27 @@ export async function GET(req: NextRequest) {
           COALESCE((
             SELECT COUNT(*) 
             FROM chat_messages m
-            LEFT JOIN chat_channel_reads r ON (r.channel_id = c.id AND (
-              TRIM(LOWER(r.user_name)) = TRIM(LOWER($1))
-              ${isAdminUser ? "OR (r.user_name ILIKE '%admin%' OR r.user_name ILIKE '%quản trị%')" : ""}
-            ))
             WHERE m.channel_id = c.id
-              AND TRIM(LOWER(m.sender_name)) != TRIM(LOWER($1))
-              ${isAdminUser ? "AND NOT (m.sender_name ILIKE '%admin%' OR m.sender_name ILIKE '%quản trị%')" : ""}
+              AND NOT (LOWER(TRIM(COALESCE(m.sender_name, ''))) = ANY($2::text[]))
               AND m.sender_name != 'Hệ Thống'
               AND m.content NOT ILIKE 'Bắt đầu cuộc trò chuyện%'
               AND m.content NOT ILIKE 'Đã tạo nhóm%'
               AND m.content NOT ILIKE 'Chào mừng đến với%'
               AND (
-                (r.last_read_message_id IS NOT NULL AND m.id > r.last_read_message_id)
-                OR (r.last_read_message_id IS NULL AND m.created_at >= NOW() - INTERVAL '14 days' AND c.created_by != $1)
+                m.id > COALESCE((
+                  SELECT MAX(r.last_read_message_id)
+                  FROM chat_channel_reads r
+                  WHERE r.channel_id = c.id
+                    AND LOWER(TRIM(r.user_name)) = ANY($2::text[])
+                ), 0)
+              )
+              AND (
+                EXISTS (
+                  SELECT 1 FROM chat_channel_reads r2
+                  WHERE r2.channel_id = c.id
+                    AND LOWER(TRIM(r2.user_name)) = ANY($2::text[])
+                )
+                OR m.created_at >= NOW() - INTERVAL '14 days'
               )
           ), 0) as unread_count
         `;
@@ -156,12 +172,14 @@ export async function GET(req: NextRequest) {
         SELECT c.*, 
           (SELECT COUNT(*) FROM chat_messages m WHERE m.channel_id = c.id) as message_count,
           ${unreadSubquery},
+          lm.last_message_id,
           lm.last_message_content,
           lm.last_message_sender,
           lm.last_message_time
         FROM chat_channels c
         LEFT JOIN LATERAL (
-          SELECT content AS last_message_content,
+          SELECT id AS last_message_id,
+                 content AS last_message_content,
                  sender_name AS last_message_sender,
                  created_at AS last_message_time
           FROM chat_messages m
