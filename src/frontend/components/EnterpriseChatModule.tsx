@@ -217,13 +217,7 @@ export const getSenderPalette = (name: string) => {
   return SENDER_PALETTES[idx];
 };
 
-const DEFAULT_FALLBACK_CHANNELS: ChatChannel[] = [
-  { id: 1, channel_code: "general", name: "toan-cong-ty", channel_type: "CHANNEL", department: "Toàn công ty", description: "Kênh thảo luận chung toàn thể cán bộ nhân viên TBRs", is_private: false, created_by: "Hệ thống", members: [] },
-  { id: 2, channel_code: "sales", name: "kinh-doanh", channel_type: "CHANNEL", department: "Kinh Doanh", description: "Kênh trao đổi nội bộ phòng Kinh Doanh", is_private: false, created_by: "Hệ thống", members: [] },
-  { id: 3, channel_code: "application", name: "application-lab", channel_type: "CHANNEL", department: "Application", description: "Kênh phòng Kỹ thuật & Ứng dụng Lab", is_private: false, created_by: "Hệ thống", members: [] },
-  { id: 4, channel_code: "warehouse", name: "kho-van-hanh", channel_type: "CHANNEL", department: "Kho & Vận Hành", description: "Kênh phòng Kho vận & Điều vận", is_private: false, created_by: "Hệ thống", members: [] },
-  { id: 5, channel_code: "procurement", name: "cung-ung-procurement", channel_type: "CHANNEL", department: "Cung Ứng", description: "Kênh phòng Mua hàng & Cung ứng", is_private: false, created_by: "Hệ thống", members: [] }
-];
+const STANDARD_DEPT_CHANNEL_ORDER = ["general", "sales", "application", "warehouse", "procurement"];
 
 export const EnterpriseChatModule: React.FC = () => {
   const { user } = useAuth();
@@ -234,9 +228,17 @@ export const EnterpriseChatModule: React.FC = () => {
   const currentUserDept = (user as any)?.department || "Kinh Doanh";
 
   // Channels & Active Channel (Primary pane)
-  const [channels, setChannels] = useState<ChatChannel[]>(DEFAULT_FALLBACK_CHANNELS);
-  const [activeChannel, setActiveChannel] = useState<ChatChannel | null>(DEFAULT_FALLBACK_CHANNELS[0]);
+  const [channels, setChannels] = useState<ChatChannel[]>([]);
+  const [activeChannel, setActiveChannel] = useState<ChatChannel | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+
+  // Refs to prevent race conditions and cross-channel message bleed
+  const activeChannelIdRef = useRef<number | null>(null);
+  const activeChannelCodeRef = useRef<string>("");
+  const splitChannelIdRef = useRef<number | null>(null);
+  const splitChannelCodeRef = useRef<string>("");
+  const fetchAbortRef = useRef<AbortController | null>(null);
+  const splitFetchAbortRef = useRef<AbortController | null>(null);
   const [personnelList, setPersonnelList] = useState<any[]>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -535,6 +537,29 @@ export const EnterpriseChatModule: React.FC = () => {
     };
   };
 
+  const buildMessagesSignature = (list: ChatMessage[]): string => {
+    if (!Array.isArray(list) || list.length === 0) return "empty";
+    return list
+      .map(
+        (m) =>
+          `${m.id}:${m.channel_id}:${m.channel_code || ""}:${m.is_pinned ? 1 : 0}:${
+            m.reactions ? JSON.stringify(m.reactions) : ""
+          }`
+      )
+      .join("|");
+  };
+
+  // Sync activeChannel & splitChannel refs immediately
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannel?.id ?? null;
+    activeChannelCodeRef.current = String(activeChannel?.channel_code || "").trim().toLowerCase();
+  }, [activeChannel?.id, activeChannel?.channel_code]);
+
+  useEffect(() => {
+    splitChannelIdRef.current = splitChannel?.id ?? null;
+    splitChannelCodeRef.current = String(splitChannel?.channel_code || "").trim().toLowerCase();
+  }, [splitChannel?.id, splitChannel?.channel_code]);
+
   // 1. Fetch Channels & System metadata (Initial or explicit select)
   const fetchChannels = async (selectChannelCode?: string) => {
     try {
@@ -566,6 +591,8 @@ export const EnterpriseChatModule: React.FC = () => {
         if (selectChannelCode) {
           const found = data.channels.find((c: ChatChannel) => c.channel_code === selectChannelCode);
           if (found) {
+            activeChannelIdRef.current = found.id;
+            activeChannelCodeRef.current = String(found.channel_code || "").trim().toLowerCase();
             setActiveChannel(found);
             markChannelAsRead(found.id, Number(found.message_count) || 0);
           }
@@ -577,17 +604,26 @@ export const EnterpriseChatModule: React.FC = () => {
                 const foundSaved = data.channels.find((c: ChatChannel) => c.channel_code === savedCode);
                 if (foundSaved) {
                   localStorage.removeItem("tbr_active_chat_channel");
+                  activeChannelIdRef.current = foundSaved.id;
+                  activeChannelCodeRef.current = String(foundSaved.channel_code || "").trim().toLowerCase();
                   markChannelAsRead(foundSaved.id, Number(foundSaved.message_count) || 0);
                   return foundSaved;
                 }
               }
-              const defaultCh = data.channels[0];
+              const defaultCh =
+                data.channels.find((c: ChatChannel) => c.channel_code === "general" && c.channel_type === "CHANNEL") ||
+                data.channels.find((c: ChatChannel) => c.channel_type === "CHANNEL") ||
+                data.channels[0];
               if (defaultCh) {
+                activeChannelIdRef.current = defaultCh.id;
+                activeChannelCodeRef.current = String(defaultCh.channel_code || "").trim().toLowerCase();
                 markChannelAsRead(defaultCh.id, Number(defaultCh.message_count) || 0);
               }
               return defaultCh;
             }
-            const still = data.channels.find((c: ChatChannel) => c.id === current.id || c.channel_code === current.channel_code);
+            const still =
+              data.channels.find((c: ChatChannel) => c.channel_code === current.channel_code) ||
+              data.channels.find((c: ChatChannel) => c.id === current.id);
             return still || current;
           });
         }
@@ -605,52 +641,132 @@ export const EnterpriseChatModule: React.FC = () => {
   }, [currentUserName]);
 
   // 2. Fetch Messages for Active Channel (Primary)
-  const fetchMessages = async (channelId: number) => {
+  const fetchMessages = async (channelId: number, channelCode?: string) => {
+    if (!channelId && !channelCode) return;
+    if (fetchAbortRef.current) {
+      fetchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    fetchAbortRef.current = controller;
+    const requestedId = Number(channelId);
+    const requestedCode = String(channelCode || activeChannelCodeRef.current || "").trim().toLowerCase();
+
     try {
       setMessagesLoading(true);
-      const res = await fetch(`/api/chat?action=messages&channel_id=${channelId}&user=${encodeURIComponent(currentUserName)}`);
-      const data = await res.json();
-      if (data.messages) {
-        setMessages(data.messages);
-        markChannelAsRead(channelId, data.messages.length);
-        setTimeout(scrollToBottom, 80);
+      const res = await fetch(
+        `/api/chat?action=messages&channel_id=${requestedId}&channel_code=${encodeURIComponent(requestedCode)}&user=${encodeURIComponent(currentUserName)}`,
+        { signal: controller.signal }
+      );
+      if (
+        activeChannelIdRef.current !== requestedId &&
+        (!requestedCode || activeChannelCodeRef.current !== requestedCode)
+      ) {
+        return;
       }
-    } catch (err) {
-      console.error("Failed to load messages:", err);
+      if (!res.ok) {
+        setMessages([]);
+        return;
+      }
+      const data = await res.json();
+      if (
+        activeChannelIdRef.current !== requestedId &&
+        (!requestedCode || activeChannelCodeRef.current !== requestedCode)
+      ) {
+        return;
+      }
+      if (data.messages && Array.isArray(data.messages)) {
+        setMessages(data.messages);
+        markChannelAsRead(requestedId, data.messages.length);
+        setTimeout(scrollToBottom, 80);
+      } else {
+        setMessages([]);
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("Failed to load messages:", err);
+      }
     } finally {
-      setMessagesLoading(false);
+      if (activeChannelIdRef.current === requestedId) {
+        setMessagesLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     if (activeChannel) {
-      fetchMessages(activeChannel.id);
+      activeChannelIdRef.current = activeChannel.id;
+      activeChannelCodeRef.current = String(activeChannel.channel_code || "").trim().toLowerCase();
+      setMessages([]);
+      setReplyingTo(null);
+      fetchMessages(activeChannel.id, activeChannel.channel_code);
+    } else {
+      setMessages([]);
     }
-  }, [activeChannel?.id]);
+  }, [activeChannel?.id, activeChannel?.channel_code]);
 
   // 2b. Fetch Messages for Split Channel (Song song)
-  const fetchSplitMessages = async (channelId: number) => {
+  const fetchSplitMessages = async (channelId: number, channelCode?: string) => {
+    if (!channelId && !channelCode) return;
+    if (splitFetchAbortRef.current) {
+      splitFetchAbortRef.current.abort();
+    }
+    const controller = new AbortController();
+    splitFetchAbortRef.current = controller;
+    const requestedId = Number(channelId);
+    const requestedCode = String(channelCode || splitChannelCodeRef.current || "").trim().toLowerCase();
+
     try {
       setSplitMessagesLoading(true);
-      const res = await fetch(`/api/chat?action=messages&channel_id=${channelId}&user=${encodeURIComponent(currentUserName)}`);
-      const data = await res.json();
-      if (data.messages) {
-        setSplitMessages(data.messages);
-        markChannelAsRead(channelId, data.messages.length);
-        setTimeout(scrollSplitToBottom, 80);
+      const res = await fetch(
+        `/api/chat?action=messages&channel_id=${requestedId}&channel_code=${encodeURIComponent(requestedCode)}&user=${encodeURIComponent(currentUserName)}`,
+        { signal: controller.signal }
+      );
+      if (
+        splitChannelIdRef.current !== requestedId &&
+        (!requestedCode || splitChannelCodeRef.current !== requestedCode)
+      ) {
+        return;
       }
-    } catch (err) {
-      console.error("Failed to load split messages:", err);
+      if (!res.ok) {
+        setSplitMessages([]);
+        return;
+      }
+      const data = await res.json();
+      if (
+        splitChannelIdRef.current !== requestedId &&
+        (!requestedCode || splitChannelCodeRef.current !== requestedCode)
+      ) {
+        return;
+      }
+      if (data.messages && Array.isArray(data.messages)) {
+        setSplitMessages(data.messages);
+        markChannelAsRead(requestedId, data.messages.length);
+        setTimeout(scrollSplitToBottom, 80);
+      } else {
+        setSplitMessages([]);
+      }
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("Failed to load split messages:", err);
+      }
     } finally {
-      setSplitMessagesLoading(false);
+      if (splitChannelIdRef.current === requestedId) {
+        setSplitMessagesLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     if (splitChannel) {
-      fetchSplitMessages(splitChannel.id);
+      splitChannelIdRef.current = splitChannel.id;
+      splitChannelCodeRef.current = String(splitChannel.channel_code || "").trim().toLowerCase();
+      setSplitMessages([]);
+      setSplitReplyingTo(null);
+      fetchSplitMessages(splitChannel.id, splitChannel.channel_code);
+    } else {
+      setSplitMessages([]);
     }
-  }, [splitChannel?.id]);
+  }, [splitChannel?.id, splitChannel?.channel_code]);
 
   // Real-time synchronization loop: Channels + Messages + Presence every 3.5s
   useEffect(() => {
@@ -676,7 +792,7 @@ export const EnterpriseChatModule: React.FC = () => {
               ) {
                 // New message from someone else!
                 playNotificationChime();
-                if (activeChannel?.id !== c.id && splitChannel?.id !== c.id) {
+                if (activeChannelIdRef.current !== c.id && splitChannelIdRef.current !== c.id) {
                   showToast(`💬 ${c.last_message_sender}: ${c.last_message_content || "Tin nhắn mới"}`, "info");
                 }
               }
@@ -694,18 +810,36 @@ export const EnterpriseChatModule: React.FC = () => {
 
         // B. Active Channel messages polling
         if (activeChannel) {
-          const mRes = await fetch(`/api/chat?action=messages&channel_id=${activeChannel.id}&user=${encodeURIComponent(currentUserName)}`);
-          if (mRes.ok) {
+          const polledId = activeChannel.id;
+          const polledCode = String(activeChannel.channel_code || "").trim().toLowerCase();
+          const mRes = await fetch(
+            `/api/chat?action=messages&channel_id=${polledId}&channel_code=${encodeURIComponent(polledCode)}&user=${encodeURIComponent(currentUserName)}`
+          );
+          if (
+            mRes.ok &&
+            activeChannelIdRef.current === polledId &&
+            (!polledCode || activeChannelCodeRef.current === polledCode)
+          ) {
             const mData = await mRes.json();
-            if (mData.messages && Array.isArray(mData.messages)) {
+            if (
+              activeChannelIdRef.current === polledId &&
+              (!polledCode || activeChannelCodeRef.current === polledCode) &&
+              mData.messages &&
+              Array.isArray(mData.messages)
+            ) {
               setMessages(prev => {
-                if (mData.messages.length !== prev.length) {
-                  const latestMsg = mData.messages[mData.messages.length - 1];
-                  if (latestMsg && normalizeUserName(latestMsg.sender_name) !== currentUserName) {
-                    playNotificationChime();
+                if (activeChannelIdRef.current !== polledId) return prev;
+                const prevSig = buildMessagesSignature(prev);
+                const nextSig = buildMessagesSignature(mData.messages);
+                if (prevSig !== nextSig) {
+                  if (mData.messages.length > prev.length) {
+                    const latestMsg = mData.messages[mData.messages.length - 1];
+                    if (latestMsg && normalizeUserName(latestMsg.sender_name) !== currentUserName) {
+                      playNotificationChime();
+                    }
+                    setTimeout(scrollToBottom, 80);
                   }
-                  markChannelAsRead(activeChannel.id, mData.messages.length);
-                  setTimeout(scrollToBottom, 80);
+                  markChannelAsRead(polledId, mData.messages.length);
                   return mData.messages;
                 }
                 return prev;
@@ -716,14 +850,32 @@ export const EnterpriseChatModule: React.FC = () => {
 
         // C. Split Channel messages polling
         if (splitChannel) {
-          const smRes = await fetch(`/api/chat?action=messages&channel_id=${splitChannel.id}&user=${encodeURIComponent(currentUserName)}`);
-          if (smRes.ok) {
+          const polledSplitId = splitChannel.id;
+          const polledSplitCode = String(splitChannel.channel_code || "").trim().toLowerCase();
+          const smRes = await fetch(
+            `/api/chat?action=messages&channel_id=${polledSplitId}&channel_code=${encodeURIComponent(polledSplitCode)}&user=${encodeURIComponent(currentUserName)}`
+          );
+          if (
+            smRes.ok &&
+            splitChannelIdRef.current === polledSplitId &&
+            (!polledSplitCode || splitChannelCodeRef.current === polledSplitCode)
+          ) {
             const smData = await smRes.json();
-            if (smData.messages && Array.isArray(smData.messages)) {
+            if (
+              splitChannelIdRef.current === polledSplitId &&
+              (!polledSplitCode || splitChannelCodeRef.current === polledSplitCode) &&
+              smData.messages &&
+              Array.isArray(smData.messages)
+            ) {
               setSplitMessages(prev => {
-                if (smData.messages.length !== prev.length) {
-                  markChannelAsRead(splitChannel.id, smData.messages.length);
-                  setTimeout(scrollSplitToBottom, 80);
+                if (splitChannelIdRef.current !== polledSplitId) return prev;
+                const prevSig = buildMessagesSignature(prev);
+                const nextSig = buildMessagesSignature(smData.messages);
+                if (prevSig !== nextSig) {
+                  if (smData.messages.length > prev.length) {
+                    setTimeout(scrollSplitToBottom, 80);
+                  }
+                  markChannelAsRead(polledSplitId, smData.messages.length);
                   return smData.messages;
                 }
                 return prev;
@@ -737,7 +889,7 @@ export const EnterpriseChatModule: React.FC = () => {
     }, 3500);
 
     return () => clearInterval(syncInterval);
-  }, [currentUserName, activeChannel?.id, splitChannel?.id]);
+  }, [currentUserName, activeChannel?.id, activeChannel?.channel_code, splitChannel?.id, splitChannel?.channel_code]);
 
   // 3. Send Message (Primary)
   const handleSendMessage = async (e?: React.FormEvent) => {
@@ -1063,27 +1215,42 @@ export const EnterpriseChatModule: React.FC = () => {
     }
   };
 
+  // Strict 2-party Direct Message matcher
+  const isDirectChannelForPair = useCallback(
+    (c: ChatChannel | undefined | null, userA: string, userB: string): boolean => {
+      if (!c || c.channel_type !== "DIRECT") return false;
+      const normA = normalizeUserName(userA);
+      const normB = normalizeUserName(userB);
+      if (!normA || !normB || normA === normB) return false;
+
+      if (Array.isArray(c.members) && c.members.length > 0) {
+        const normMembers = c.members.map(m => normalizeUserName(m));
+        return normMembers.includes(normA) && normMembers.includes(normB);
+      }
+
+      const nameNorm = normalizeUserName(c.name);
+      const creatorNorm = normalizeUserName(c.created_by);
+      return (
+        (nameNorm === normB && creatorNorm === normA) ||
+        (nameNorm === normA && creatorNorm === normB)
+      );
+    },
+    []
+  );
+
   // 8. Open Direct Message with a colleague
   const handleOpenDirectMessage = async (personName: string) => {
     const targetNorm = normalizeUserName(personName);
     if (targetNorm === currentUserName) return;
 
-    const existing = channels.find(c => {
-      if (c.channel_type !== "DIRECT") return false;
-      if (Array.isArray(c.members) && c.members.length > 0) {
-        const normMembers = c.members.map(m => normalizeUserName(m));
-        return normMembers.includes(targetNorm) && normMembers.includes(currentUserName);
-      }
-      // Kênh cũ không có danh sách thành viên: chỉ nhận khi đúng cặp người tạo / người nhận
-      const nameNorm = normalizeUserName(c.name);
-      const creatorNorm = normalizeUserName(c.created_by);
-      return (nameNorm === targetNorm && creatorNorm === currentUserName) || (nameNorm === currentUserName && creatorNorm === targetNorm);
-    });
+    const existing = channels.find(c => isDirectChannelForPair(c, currentUserName, personName));
 
     if (existing) {
+      activeChannelIdRef.current = existing.id;
+      activeChannelCodeRef.current = String(existing.channel_code || "").trim().toLowerCase();
+      setMessages([]);
       setActiveChannel(existing);
       setIsStartDMModalOpen(false);
-      fetchMessages(existing.id);
     } else {
       try {
         const res = await fetch("/api/chat?action=create_channel", {
@@ -1102,6 +1269,9 @@ export const EnterpriseChatModule: React.FC = () => {
         const data = await res.json();
         if (data.success && data.channel) {
           setIsStartDMModalOpen(false);
+          activeChannelIdRef.current = data.channel.id;
+          activeChannelCodeRef.current = String(data.channel.channel_code || "").trim().toLowerCase();
+          setMessages([]);
           setActiveChannel(data.channel);
           setChannels(prev => {
             const idx = prev.findIndex(c => c.id === data.channel.id || c.channel_code === data.channel.channel_code);
@@ -1112,7 +1282,6 @@ export const EnterpriseChatModule: React.FC = () => {
             }
             return [data.channel, ...prev];
           });
-          fetchMessages(data.channel.id);
           await fetchChannels(data.channel.channel_code);
         } else {
           showToast(data.error || "Không thể kết nối cuộc trò chuyện", "error");
@@ -1323,7 +1492,21 @@ export const EnterpriseChatModule: React.FC = () => {
 
   // Filtered Channels for sidebar
   const departmentChannels = useMemo(() => {
-    return channels.filter(c => c.channel_type === "CHANNEL" && c.name.toLowerCase().includes(searchChannelQuery.toLowerCase()));
+    return channels
+      .filter(
+        c =>
+          c.channel_type === "CHANNEL" &&
+          !String(c.channel_code || "").toLowerCase().startsWith("dm-") &&
+          c.name.toLowerCase().includes(searchChannelQuery.toLowerCase())
+      )
+      .sort((a, b) => {
+        const idxA = STANDARD_DEPT_CHANNEL_ORDER.indexOf(String(a.channel_code || "").toLowerCase());
+        const idxB = STANDARD_DEPT_CHANNEL_ORDER.indexOf(String(b.channel_code || "").toLowerCase());
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return a.id - b.id;
+      });
   }, [channels, searchChannelQuery]);
 
   const projectAndGroupChannels = useMemo(() => {
@@ -1361,12 +1544,9 @@ export const EnterpriseChatModule: React.FC = () => {
 
     // Map each colleague with existing direct channel (if any) and presence
     const mapped = colleagues.map(p => {
-      const targetNorm = normalizeUserName(p.full_name);
-      const matchingChannel = channels.find(c => {
-        if (c.channel_type !== "DIRECT") return false;
-        const otherName = getChannelDisplayName(c);
-        return normalizeUserName(otherName) === targetNorm;
-      });
+      const matchingChannel = channels.find(c =>
+        isDirectChannelForPair(c, currentUserName, p.full_name)
+      );
       const presence = getUserPresence(p.full_name);
       const unreadCount = getChannelUnreadCount(matchingChannel);
 
@@ -1512,11 +1692,48 @@ export const EnterpriseChatModule: React.FC = () => {
       .slice(0, 12);
   }, [uniquePersonnel, currentUserName]);
 
-  // Filter messages by search
+  // Strict helper to verify a message genuinely belongs to a specific channel
+  const isMessageBelongingToChannel = useCallback(
+    (m: ChatMessage, channel?: ChatChannel | null): boolean => {
+      if (!m || !channel) return false;
+      const mCode = String(m.channel_code || "").trim().toLowerCase();
+      const chCode = String(channel.channel_code || "").trim().toLowerCase();
+
+      // Prevent DM messages from leaking into Department Channels
+      if (channel.channel_type === "CHANNEL" && mCode.startsWith("dm-")) {
+        return false;
+      }
+      // Prevent Department Channel messages from leaking into Direct Messages
+      if (channel.channel_type === "DIRECT" && mCode && STANDARD_DEPT_CHANNEL_ORDER.includes(mCode)) {
+        return false;
+      }
+
+      if (m.channel_id && Number(m.channel_id) === Number(channel.id)) {
+        if (mCode && chCode && mCode !== chCode) {
+          return false;
+        }
+        return true;
+      }
+      if (mCode && chCode && mCode === chCode) {
+        return true;
+      }
+      return false;
+    },
+    []
+  );
+
+  // Filter messages by channel ownership & search
   const displayedMessages = useMemo(() => {
-    if (!messageSearchQuery.trim()) return messages;
-    return messages.filter(m => m.content.toLowerCase().includes(messageSearchQuery.toLowerCase()));
-  }, [messages, messageSearchQuery]);
+    const channelFiltered = messages.filter(m => isMessageBelongingToChannel(m, activeChannel));
+    if (!messageSearchQuery.trim()) return channelFiltered;
+    return channelFiltered.filter(m =>
+      String(m.content || "").toLowerCase().includes(messageSearchQuery.toLowerCase())
+    );
+  }, [messages, activeChannel, messageSearchQuery, isMessageBelongingToChannel]);
+
+  const displayedSplitMessages = useMemo(() => {
+    return splitMessages.filter(m => isMessageBelongingToChannel(m, splitChannel));
+  }, [splitMessages, splitChannel, isMessageBelongingToChannel]);
 
   const recipientProfile = activeChannel?.channel_type === "DIRECT" ? getRecipientProfile(activeChannel) : null;
   const splitRecipientProfile = splitChannel?.channel_type === "DIRECT" ? getRecipientProfile(splitChannel) : null;
@@ -1604,7 +1821,15 @@ export const EnterpriseChatModule: React.FC = () => {
                 return (
                   <div key={c.id} className="group/item flex items-center gap-1">
                     <button
-                      onClick={() => setActiveChannel(c)}
+                      onClick={() => {
+                        if (activeChannel?.id !== c.id) {
+                          activeChannelIdRef.current = c.id;
+                          activeChannelCodeRef.current = String(c.channel_code || "").trim().toLowerCase();
+                          setMessages([]);
+                          setActiveChannel(c);
+                        }
+                        markChannelAsRead(c.id, Number(c.message_count) || 0);
+                      }}
                       className={`flex-1 flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left font-semibold transition-all cursor-pointer ${
                         isActive
                           ? "bg-indigo-600 text-white shadow-xs"
@@ -1682,9 +1907,13 @@ export const EnterpriseChatModule: React.FC = () => {
                     <button
                       onClick={() => {
                         if (item.channel) {
-                          setActiveChannel(item.channel);
+                          if (activeChannel?.id !== item.channel.id) {
+                            activeChannelIdRef.current = item.channel.id;
+                            activeChannelCodeRef.current = String(item.channel.channel_code || "").trim().toLowerCase();
+                            setMessages([]);
+                            setActiveChannel(item.channel);
+                          }
                           markChannelAsRead(item.channel.id, Number(item.channel.message_count) || 0);
-                          fetchMessages(item.channel.id);
                         } else {
                           handleOpenDirectMessage(colleagueName);
                         }
@@ -1782,7 +2011,12 @@ export const EnterpriseChatModule: React.FC = () => {
                   <div key={c.id} className="group/ch flex items-center gap-1">
                     <button
                       onClick={() => {
-                        setActiveChannel(c);
+                        if (activeChannel?.id !== c.id) {
+                          activeChannelIdRef.current = c.id;
+                          activeChannelCodeRef.current = String(c.channel_code || "").trim().toLowerCase();
+                          setMessages([]);
+                          setActiveChannel(c);
+                        }
                         markChannelAsRead(c.id, Number(c.message_count) || 0);
                       }}
                       className={`flex-1 flex items-center justify-between px-2.5 py-1.5 rounded-xl text-left font-semibold transition-all cursor-pointer ${
@@ -2675,13 +2909,13 @@ export const EnterpriseChatModule: React.FC = () => {
                 </div>
               )}
 
-              {splitMessages.map((msg, index) => {
+              {displayedSplitMessages.map((msg, index) => {
                 const isMe = normalizeUserName(msg.sender_name) === currentUserName;
                 const isDirect = splitChannel.channel_type === "DIRECT";
                 const palette = getSenderPalette(msg.sender_name);
 
                 // Date separator calculation (Vietnam timezone)
-                const prevMsg = index > 0 ? splitMessages[index - 1] : null;
+                const prevMsg = index > 0 ? displayedSplitMessages[index - 1] : null;
                 const currentDateStr = formatVietnamDate(msg.created_at);
                 const prevDateStr = prevMsg ? formatVietnamDate(prevMsg.created_at) : null;
                 const isNewDay = !prevDateStr || currentDateStr !== prevDateStr;

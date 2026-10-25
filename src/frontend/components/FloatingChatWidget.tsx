@@ -48,6 +48,11 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
   const [quickSearch, setQuickSearch] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeChannelIdRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    activeChannelIdRef.current = activeChannelId;
+  }, [activeChannelId]);
 
   const currentUserName = user?.name || (user as any)?.full_name || "Nhân viên TBRs";
   const currentUserKey = String((user as any)?.username || currentUserName).trim().toLowerCase();
@@ -105,7 +110,14 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
           if (data.channels && data.channels.length > 0) {
             setChannels(data.channels);
             setPersonnel(data.personnel || []);
-            setActiveChannelId(prev => prev || data.channels[0].id);
+            setActiveChannelId(prev => {
+              if (prev) return prev;
+              const defaultCh =
+                data.channels.find((c: any) => c.channel_code === "general" && c.channel_type === "CHANNEL") ||
+                data.channels.find((c: any) => c.channel_type === "CHANNEL") ||
+                data.channels[0];
+              return defaultCh ? defaultCh.id : null;
+            });
           }
         })
         .catch(() => {});
@@ -118,39 +130,55 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
   // Fetch Messages for active channel
   useEffect(() => {
     if (isOpen && activeChannelId) {
-      markChannelAsReadLocal(activeChannelId);
-      fetch(`/api/chat?action=messages&channel_id=${activeChannelId}`)
+      const requestedId = activeChannelId;
+      activeChannelIdRef.current = requestedId;
+      const ch = channels.find(c => c.id === requestedId);
+      const chCode = ch?.channel_code || "";
+      setMessages([]);
+      markChannelAsReadLocal(requestedId);
+      fetch(
+        `/api/chat?action=messages&channel_id=${requestedId}&channel_code=${encodeURIComponent(chCode)}&user=${encodeURIComponent(currentUserName)}`
+      )
         .then(res => res.json())
         .then(data => {
-          if (data.messages) {
+          if (activeChannelIdRef.current !== requestedId) return;
+          if (data.messages && Array.isArray(data.messages)) {
             setMessages(data.messages);
             const lastMsg = data.messages[data.messages.length - 1];
-            if (lastMsg?.id) markChannelAsReadLocal(activeChannelId, lastMsg.id);
+            if (lastMsg?.id) markChannelAsReadLocal(requestedId, lastMsg.id);
             setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+          } else {
+            setMessages([]);
           }
         })
         .catch(err => console.error(err));
     }
-  }, [isOpen, activeChannelId]);
+  }, [isOpen, activeChannelId, currentUserName]);
 
   // Periodic polling when chat widget is open
   useEffect(() => {
     if (!isOpen || !activeChannelId) return;
+    const polledId = activeChannelId;
+    const ch = channels.find(c => c.id === polledId);
+    const chCode = ch?.channel_code || "";
     const interval = setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
-      fetch(`/api/chat?action=messages&channel_id=${activeChannelId}`)
+      fetch(
+        `/api/chat?action=messages&channel_id=${polledId}&channel_code=${encodeURIComponent(chCode)}&user=${encodeURIComponent(currentUserName)}`
+      )
         .then(res => res.json())
         .then(data => {
-          if (data.messages) {
+          if (activeChannelIdRef.current !== polledId) return;
+          if (data.messages && Array.isArray(data.messages)) {
             setMessages(data.messages);
             const lastMsg = data.messages[data.messages.length - 1];
-            if (lastMsg?.id) markChannelAsReadLocal(activeChannelId, lastMsg.id);
+            if (lastMsg?.id) markChannelAsReadLocal(polledId, lastMsg.id);
           }
         })
         .catch(() => {});
     }, 4000);
     return () => clearInterval(interval);
-  }, [isOpen, activeChannelId]);
+  }, [isOpen, activeChannelId, currentUserName, channels]);
 
   // Upload files / images with Base64 Data URL fallback so it never gets stuck
   const readFileAsDataUrl = (file: File): Promise<string> =>
@@ -596,9 +624,11 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
 
               {/* Messages Stream */}
               <div className="flex-1 overflow-y-auto p-3 space-y-2.5 text-xs">
-                {messages.map((m, idx) => {
+                {messages
+                  .filter(m => !activeChannelId || Number(m.channel_id) === Number(activeChannelId))
+                  .map((m, idx, arr) => {
                   const isMe = m.sender_name === currentUserName;
-                  const prevMsg = idx > 0 ? messages[idx - 1] : null;
+                  const prevMsg = idx > 0 ? arr[idx - 1] : null;
                   const currentDateStr = formatVietnamDate(m.created_at);
                   const prevDateStr = prevMsg ? formatVietnamDate(prevMsg.created_at) : null;
                   const isNewDay = !prevDateStr || currentDateStr !== prevDateStr;

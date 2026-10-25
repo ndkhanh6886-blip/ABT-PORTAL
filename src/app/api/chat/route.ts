@@ -47,19 +47,80 @@ function channelAccessSql(aliasParam: string) {
 }
 
 async function canAccessChannel(ident: ChatIdentity, channelId: any, channelCode?: any): Promise<number | null> {
-  const res = await query(
-    `SELECT c.id FROM chat_channels c
-      WHERE (($1::int IS NOT NULL AND c.id = $1::int) OR ($1::int IS NULL AND c.channel_code = $2))
-        AND ${channelAccessSql("$3::text[]")}
-      LIMIT 1`,
-    [channelId && !isNaN(Number(channelId)) ? Number(channelId) : null, channelCode || null, ident.aliases]
-  );
-  return res.rows[0]?.id ?? null;
+  const numId = channelId && !isNaN(Number(channelId)) ? Number(channelId) : null;
+  const cleanCode = channelCode ? String(channelCode).trim() : null;
+
+  // If both channelId and channelCode are provided, prefer exact match on channelCode if channelId points to a different channel_code
+  if (cleanCode) {
+    const codeRes = await query(
+      `SELECT c.id FROM chat_channels c
+        WHERE c.channel_code = $1
+          AND ${channelAccessSql("$2::text[]")}
+        LIMIT 1`,
+      [cleanCode, ident.aliases]
+    );
+    if (codeRes.rows[0]?.id) {
+      return Number(codeRes.rows[0].id);
+    }
+  }
+
+  if (numId !== null) {
+    const idRes = await query(
+      `SELECT c.id, c.channel_code FROM chat_channels c
+        WHERE c.id = $1::int
+          AND ${channelAccessSql("$2::text[]")}
+        LIMIT 1`,
+      [numId, ident.aliases]
+    );
+    if (idRes.rows[0]?.id) {
+      // Guard against stale fallback IDs: if caller explicitly asked for a standard department channel_code
+      // but this ID in DB is a DIRECT/different channel, do NOT return the wrong channel!
+      if (cleanCode && idRes.rows[0].channel_code && idRes.rows[0].channel_code !== cleanCode) {
+        return null;
+      }
+      return Number(idRes.rows[0].id);
+    }
+  }
+
+  return null;
 }
 
 function chatForbidden() {
   return NextResponse.json({ error: "Bạn không phải thành viên của cuộc trò chuyện này." }, { status: 403 });
 }
+
+const DEFAULT_DEPARTMENT_CHANNELS = [
+  {
+    channel_code: "general",
+    name: "toan-cong-ty",
+    department: "Toàn công ty",
+    description: "Kênh thảo luận, thông báo chung cho toàn thể cán bộ nhân viên"
+  },
+  {
+    channel_code: "sales",
+    name: "kinh-doanh",
+    department: "Kinh Doanh",
+    description: "Trao đổi chiến lược bán hàng, chăm sóc khách hàng, chào giá và cập nhật tiến độ deal"
+  },
+  {
+    channel_code: "application",
+    name: "application-lab",
+    department: "Application",
+    description: "Kênh phòng Kỹ thuật & Ứng dụng Lab"
+  },
+  {
+    channel_code: "warehouse",
+    name: "kho-van-hanh",
+    department: "Kho & Vận Hành",
+    description: "Kênh phòng Kho vận & Điều vận"
+  },
+  {
+    channel_code: "procurement",
+    name: "cung-ung-procurement",
+    department: "Cung Ứng",
+    description: "Kênh phòng Mua hàng & Cung ứng"
+  }
+];
 
 let chatTablesEnsured = false;
 async function ensureChatTables() {
@@ -77,6 +138,44 @@ async function ensureChatTables() {
     await query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_id_id ON chat_messages(channel_id, id DESC)`).catch(() => {});
     await query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE`).catch(() => {});
     await query(`ALTER TABLE chat_channels ADD COLUMN IF NOT EXISTS pinned_messages JSONB DEFAULT '[]'::jsonb`).catch(() => {});
+
+    // Ensure all 5 standard department channels exist in chat_channels and have correct type/privacy
+    for (const ch of DEFAULT_DEPARTMENT_CHANNELS) {
+      await query(
+        `INSERT INTO chat_channels (channel_code, name, channel_type, department, description, is_private, created_by, members)
+         SELECT $1::varchar, $2::varchar, 'CHANNEL', $3::varchar, $4::text, FALSE, 'Hệ Thống', '[]'::jsonb
+         WHERE NOT EXISTS (SELECT 1 FROM chat_channels WHERE channel_code = $1::varchar)`,
+        [ch.channel_code, ch.name, ch.department, ch.description]
+      ).catch(() => {});
+    }
+
+    // Ensure standard department channels always have channel_type = 'CHANNEL' and is_private = FALSE
+    await query(`
+      UPDATE chat_channels
+      SET channel_type = 'CHANNEL', is_private = FALSE
+      WHERE channel_code IN ('general', 'sales', 'application', 'warehouse', 'procurement')
+        AND (channel_type IS DISTINCT FROM 'CHANNEL' OR is_private IS DISTINCT FROM FALSE)
+    `).catch(() => {});
+
+    // Ensure DM channels always have channel_type = 'DIRECT', is_private = TRUE, and department = 'Tin nhắn riêng'
+    await query(`
+      UPDATE chat_channels
+      SET channel_type = 'DIRECT', is_private = TRUE, department = 'Tin nhắn riêng'
+      WHERE channel_code LIKE 'dm-%'
+        AND (channel_type IS DISTINCT FROM 'DIRECT' OR is_private IS DISTINCT FROM TRUE OR department IS DISTINCT FROM 'Tin nhắn riêng')
+    `).catch(() => {});
+
+    // Re-align any messages whose channel_code explicitly matches a channel in chat_channels but whose channel_id drifted
+    await query(`
+      UPDATE chat_messages m
+      SET channel_id = c.id
+      FROM chat_channels c
+      WHERE m.channel_code IS NOT NULL
+        AND m.channel_code <> ''
+        AND m.channel_code = c.channel_code
+        AND m.channel_id IS DISTINCT FROM c.id
+    `).catch(() => {});
+
     chatTablesEnsured = true;
   } catch {}
 }
@@ -143,7 +242,7 @@ export async function GET(req: NextRequest) {
             SELECT COUNT(*) 
             FROM chat_messages m
             WHERE m.channel_id = c.id
-              AND NOT (LOWER(TRIM(COALESCE(m.sender_name, ''))) = ANY($2::text[]))
+              AND NOT (LOWER(TRIM(COALESCE(m.sender_name, ''))) = ANY($1::text[]))
               AND m.sender_name != 'Hệ Thống'
               AND m.content NOT ILIKE 'Bắt đầu cuộc trò chuyện%'
               AND m.content NOT ILIKE 'Đã tạo nhóm%'
@@ -153,14 +252,14 @@ export async function GET(req: NextRequest) {
                   SELECT MAX(r.last_read_message_id)
                   FROM chat_channel_reads r
                   WHERE r.channel_id = c.id
-                    AND LOWER(TRIM(r.user_name)) = ANY($2::text[])
+                    AND LOWER(TRIM(r.user_name)) = ANY($1::text[])
                 ), 0)
               )
               AND (
                 EXISTS (
                   SELECT 1 FROM chat_channel_reads r2
                   WHERE r2.channel_id = c.id
-                    AND LOWER(TRIM(r2.user_name)) = ANY($2::text[])
+                    AND LOWER(TRIM(r2.user_name)) = ANY($1::text[])
                 )
                 OR m.created_at >= NOW() - INTERVAL '14 days'
               )
@@ -188,8 +287,8 @@ export async function GET(req: NextRequest) {
           LIMIT 1
         ) lm ON true
       `;
-      const params: any[] = [cleanUser, ident.aliases];
-      channelsQuery += ` WHERE ${channelAccessSql("$2::text[]")}`;
+      const params: any[] = [ident.aliases];
+      channelsQuery += ` WHERE ${channelAccessSql("$1::text[]")}`;
       channelsQuery += ` ORDER BY c.last_message_at DESC NULLS LAST, c.id ASC`;
 
       const [channelsRes, personnelRes, tasksRes, workflowsRes] = await Promise.all([
@@ -305,37 +404,59 @@ export async function GET(req: NextRequest) {
       const channelId = searchParams.get("channel_id");
       const channelCode = searchParams.get("channel_code");
       const user = ident.name;
-      if ((channelId || channelCode) && !(await canAccessChannel(ident, channelId, channelCode))) return chatForbidden();
-
-      let res;
-      if (channelId) {
-        res = await query(
-          "SELECT * FROM chat_messages WHERE channel_id = $1 ORDER BY id ASC LIMIT 200",
-          [channelId]
-        );
-      } else if (channelCode) {
-        res = await query(
-          "SELECT * FROM chat_messages WHERE channel_code = $1 ORDER BY id ASC LIMIT 200",
-          [channelCode]
-        );
-      } else {
+      if (!channelId && !channelCode) {
         return NextResponse.json({ error: "Thiếu channel_id hoặc channel_code" }, { status: 400 });
       }
 
+      const resolvedChannelId = await canAccessChannel(ident, channelId, channelCode);
+      if (!resolvedChannelId) return chatForbidden();
+
+      const chMetaRes = await query(
+        "SELECT id, channel_code, channel_type FROM chat_channels WHERE id = $1 LIMIT 1",
+        [resolvedChannelId]
+      );
+      const chMeta = chMetaRes.rows[0];
+      const resolvedCode = chMeta?.channel_code || channelCode || "";
+      const resolvedType = chMeta?.channel_type || "CHANNEL";
+
+      // Strict channel isolation: never mix DM messages into CHANNEL or CHANNEL messages into DIRECT
+      const res = await query(
+        `SELECT * FROM chat_messages m
+         WHERE m.channel_id = $1
+           AND (
+             $2::text = ''
+             OR m.channel_code IS NULL
+             OR m.channel_code = ''
+             OR m.channel_code = $2::text
+           )
+           AND (
+             ($3::text = 'CHANNEL' AND COALESCE(m.channel_code, '') NOT LIKE 'dm-%')
+             OR ($3::text = 'DIRECT' AND COALESCE(m.channel_code, '') NOT IN ('general', 'sales', 'application', 'warehouse', 'procurement'))
+             OR ($3::text NOT IN ('CHANNEL', 'DIRECT'))
+           )
+         ORDER BY m.id ASC
+         LIMIT 200`,
+        [resolvedChannelId, resolvedCode, resolvedType]
+      );
+
       if (user && res.rows.length > 0) {
         const lastMsgId = res.rows[res.rows.length - 1].id;
-        const targetChanId = channelId || res.rows[0].channel_id;
         await query(
           `INSERT INTO chat_channel_reads (channel_id, user_name, last_read_message_id, last_read_at)
            VALUES ($1, $2, $3, NOW())
            ON CONFLICT (channel_id, user_name)
            DO UPDATE SET last_read_message_id = GREATEST(chat_channel_reads.last_read_message_id, EXCLUDED.last_read_message_id),
                          last_read_at = NOW()`,
-          [targetChanId, user, lastMsgId]
+          [resolvedChannelId, user, lastMsgId]
         ).catch(() => {});
       }
 
-      return NextResponse.json({ messages: res.rows });
+      return NextResponse.json({
+        channel_id: resolvedChannelId,
+        channel_code: resolvedCode,
+        channel_type: resolvedType,
+        messages: res.rows
+      });
     }
 
     // 2.5 Mark channel messages as read explicitly
@@ -450,17 +571,14 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Nội dung tin nhắn hoặc tệp đính kèm không được rỗng" }, { status: 400 });
       }
 
-      // Check or resolve channel
-      let resolvedChannelId = channel_id;
-      if (!resolvedChannelId && channel_code) {
-        const cRes = await query("SELECT id FROM chat_channels WHERE channel_code = $1", [channel_code]);
-        if (cRes.rows.length > 0) resolvedChannelId = cRes.rows[0].id;
-      }
-
+      // Check or resolve channel strictly (preferring channel_code consistency if both are provided)
+      const resolvedChannelId = await canAccessChannel(ident, channel_id, channel_code);
       if (!resolvedChannelId) {
-        return NextResponse.json({ error: "Không tìm thấy kênh chat" }, { status: 404 });
+        return NextResponse.json({ error: "Không tìm thấy kênh chat hoặc bạn không có quyền truy cập" }, { status: 404 });
       }
 
+      const chInfoRes = await query("SELECT id, channel_code FROM chat_channels WHERE id = $1 LIMIT 1", [resolvedChannelId]);
+      const canonicalChannelCode = chInfoRes.rows[0]?.channel_code || channel_code || "";
 
       const res = await query(
         `INSERT INTO chat_messages (
@@ -469,7 +587,7 @@ export async function POST(req: NextRequest) {
          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
         [
           resolvedChannelId,
-          channel_code || "",
+          canonicalChannelCode,
           sender_id || "",
           sender_name || "Nhân viên",
           sender_avatar || "",
@@ -562,7 +680,7 @@ export async function POST(req: NextRequest) {
                   )
                 )
               )
-            ORDER BY c.id ASC
+            ORDER BY (SELECT COUNT(*) FROM chat_messages m WHERE m.channel_id = c.id) DESC, c.last_message_at DESC NULLS LAST, c.id ASC
             LIMIT 1`,
           [meAliases, targetAliases]
         );
@@ -593,7 +711,7 @@ export async function POST(req: NextRequest) {
           channel_code,
           name.trim(),
           cleanType,
-          department || (cleanType === "GROUP" ? "Liên phòng ban" : "Toàn công ty"),
+          cleanType === "DIRECT" ? "Tin nhắn riêng" : (department || (cleanType === "GROUP" ? "Liên phòng ban" : "Toàn công ty")),
           description || "",
           cleanType === "DIRECT" || cleanType === "GROUP" ? true : !!is_private,
           created_by || "Nhân viên",
@@ -788,7 +906,7 @@ export async function POST(req: NextRequest) {
                 `INSERT INTO chat_channels (
                    channel_code, name, channel_type, department, description, is_private, created_by, members, last_message_at
                  ) VALUES ($1, $2, 'DIRECT', $3, 'Trao đổi trực tiếp & Thông báo lịch họp', TRUE, $4, $5, CURRENT_TIMESTAMP) RETURNING *`,
-                [dmCode, target, department || "Nội bộ", senderName, JSON.stringify([senderName, target])]
+                [dmCode, target, "Tin nhắn riêng", senderName, JSON.stringify([senderName, target])]
               );
               dmChannel = createDm.rows[0];
             }
