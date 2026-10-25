@@ -6258,13 +6258,6 @@ ${wf.description || ""}`}
             <div className="ml-auto flex items-center gap-1.5">
               <button
                 type="button"
-                onClick={handleOpenCreateTemplate}
-                className="px-2.5 py-1 rounded-lg text-xs font-bold border border-dashed border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 cursor-pointer"
-              >
-                + Quy trình mới
-              </button>
-              <button
-                type="button"
                 onClick={() => setTemplatesExpanded(v => { const n = !v; try { localStorage.setItem("ws_templates_expanded", n ? "1" : "0"); } catch {} return n; })}
                 className="px-2.5 py-1 rounded-lg text-xs font-bold bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer flex items-center gap-1"
               >
@@ -6868,25 +6861,6 @@ ${wf.description || ""}`}
                     Lịch họp nội bộ / liên phòng ban, lịch trực Lab, lịch demo tại bệnh viện và các đợt giao nhận hàng hóa lớn
                   </p>
                 </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  <button
-                    type="button"
-                    onClick={() => openScheduleForm(undefined, undefined, "MEETING")}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-xs transition-all cursor-pointer"
-                  >
-                    <Users className="w-3.5 h-3.5" />
-                    <span>🎥 + Tạo Lịch Họp &amp; Chọn Thành Viên</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openScheduleForm(undefined, undefined, "WORK")}
-                    className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs transition-all cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>+ Thêm Lịch Công Tác Tuần</span>
-                  </button>
-                </div>
               </div>
 
               {/* BANNER QUẢN LÝ LỊCH HỌP & NHẮC HỌP TRONG TUẦN ĐANG XEM */}
@@ -7245,14 +7219,6 @@ ${wf.description || ""}`}
                     </p>
                   </div>
                 </div>
-
-                <button
-                  onClick={() => openCreateThematicModal()}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow-xs transition-all cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Tạo Kế Hoạch Chuyên Đề Mới</span>
-                </button>
               </div>
 
               {/* Thematic Category Filter Chips */}
@@ -7548,24 +7514,6 @@ ${wf.description || ""}`}
                     </p>
                   </div>
                 </div>
-
-                <button
-                  onClick={() => {
-                    setSalesTargetForm({
-                      customer: "",
-                      amount: "2.5 Tỷ VNĐ",
-                      quarter: "Q4/2026",
-                      lead: currentStaffName || departmentStaffList[0]?.full_name || "",
-                      description: "",
-                      stage: "Đang chào giá & Demo"
-                    });
-                    setIsSalesTargetModalOpen(true);
-                  }}
-                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-orange-600 hover:bg-orange-700 text-white shadow-xs transition-all"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Đặt Mục Tiêu Doanh Số</span>
-                </button>
               </div>
 
               {filteredSalesTargets.length === 0 ? (
@@ -9133,23 +9081,6 @@ ${wf.description || ""}`}
                     {cat.label}
                   </button>
                 ))}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => openCreateAnnouncementModal("DECISION")}
-                  className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
-                >
-                  <span>📜 + Ban Hành Quyết Định</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openCreateAnnouncementModal("ANNOUNCEMENT")}
-                  className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
-                >
-                  <span>📢 + Tạo Thông Báo Mới</span>
-                </button>
               </div>
             </div>
 
