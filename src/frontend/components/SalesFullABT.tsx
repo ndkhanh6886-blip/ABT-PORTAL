@@ -2434,7 +2434,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     // Dynamic items state for Multi-product reports
     const [retailSaleItems, setRetailSaleItems] = useState<any[]>([
-        { productCode: BIOLAB_PRODUCTS[0].code, quantity: 1, price: BIOLAB_PRODUCTS[0].price }
+        { productCode: "", quantity: 1, price: 0 }
     ]);
 
     // Add customer CRM modal states
@@ -2527,15 +2527,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     // Form input states for Office 13B Allocation & Retail
     const [giveStockEmployee, setGiveStockEmployee] = useState("");
-    const [giveStockProductCode, setGiveStockProductCode] = useState(BIOLAB_PRODUCTS[0].code);
+    const [giveStockProductCode, setGiveStockProductCode] = useState("");
     const [giveStockQty, setGiveStockQty] = useState<number>(1);
 
     const [retailSaleEmployee, setRetailSaleEmployee] = useState("");
     const [retailSaleCustomer, setRetailSaleCustomer] = useState("");
     const [retailSaleCustomerPhone, setRetailSaleCustomerPhone] = useState("");
-    const [retailSaleProductCode, setRetailSaleProductCode] = useState(BIOLAB_PRODUCTS[0].code);
+    const [retailSaleProductCode, setRetailSaleProductCode] = useState("");
     const [retailSaleQty, setRetailSaleQty] = useState<number>(1);
-    const [retailSalePrice, setRetailSalePrice] = useState<number>(BIOLAB_PRODUCTS[0].price);
+    const [retailSalePrice, setRetailSalePrice] = useState<number>(0);
 
     // New Sales Ops Helper States
     // Modal & Form states for Báo giá & Hợp đồng
@@ -2610,7 +2610,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const [isStaffContactModalOpen, setIsStaffContactModalOpen] = useState(false);
 
-    const [quoteItems, setQuoteItems] = useState<any[]>([{ productCode: BIOLAB_PRODUCTS[0].code, specification: BIOLAB_PRODUCTS[0].specification || "", quantity: 1, price: BIOLAB_PRODUCTS[0].price }]);
+    const [quoteItems, setQuoteItems] = useState<any[]>([{ productCode: "", specification: "", manufacturer: "", quantity: 1, price: 0, vatRate: 8, priceBeforeVat: 0, totalBeforeVat: 0, discountRate: 0, discountAmount: 0, total: 0, vatAmount: 0, notes: "" }]);
     const [expandedConfigIndex, setExpandedConfigIndex] = useState<number | null>(null);
     const [quoteValidityTerms, setQuoteValidityTerms] = useState(() => {
         if (typeof window !== "undefined") return localStorage.getItem("sales_default_quote_validity_terms") || "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành.";
@@ -3335,7 +3335,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     // Ghi chú chung của đơn (lấy từ "Ghi chú bổ sung" của báo giá khi tạo SO từ báo giá)
     const [factoryOrderNotes, setFactoryOrderNotes] = useState("");
     const [factoryOrderFulfillmentSource, setFactoryOrderFulfillmentSource] = useState<"AUTO" | "STOCK" | "PROCURE">("AUTO");
-    const [factoryOrderItems, setFactoryOrderItems] = useState<any[]>([{ productCode: BIOLAB_PRODUCTS[0].code, quantity: 10, unitPrice: BIOLAB_PRODUCTS[0]?.price || 0, needsInvoice: true }]);
+    const [factoryOrderItems, setFactoryOrderItems] = useState<any[]>([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
     const [selectedFactoryOrdersForCombine, setSelectedFactoryOrdersForCombine] = useState<string[]>([]);
     const [isCombineOrderModalOpen, setIsCombineOrderModalOpen] = useState(false);
     const [combineMfgNotes, setCombineMfgNotes] = useState("");
@@ -6094,7 +6094,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setIsRetailSaleModalOpen(false);
         setRetailSaleCustomer("");
         setRetailSaleCustomerPhone("");
-        setRetailSaleItems([{ productCode: biolabProducts[0].code, quantity: 1, price: biolabProducts[0].price }]);
+        setRetailSaleItems([{ productCode: "", quantity: 1, price: 0 }]);
     };
 
     const loggedInStaff = useMemo(() => {
@@ -6690,6 +6690,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (it?.specification && String(it.specification).trim() && String(it.specification).trim() !== "—") {
             return String(it.specification).trim();
         }
+        if (!it?.productCode && !it?.productName) return "";
         const prod = allSalesProducts.find(p => 
             (it?.productCode && p.code.toLowerCase() === it.productCode.toLowerCase()) ||
             (it?.productName && p.name.toLowerCase() === it.productName.toLowerCase())
@@ -6780,6 +6781,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     const getProductManufacturer = (it: any) => {
+        if (!it?.manufacturer && !it?.productCode && !it?.productName) return "";
         let raw = "";
         if (it?.manufacturer && String(it.manufacturer).trim()) {
             raw = String(it.manufacturer).trim();
@@ -7107,25 +7109,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setQuoteEmployee(initialRepId);
         setQuoteRepPhone(salesPersonnelContacts[initialRepId]?.phone || "");
         setQuoteRepEmail(salesPersonnelContacts[initialRepId]?.email || salesPersonnel.find(p => p.employee_id === initialRepId)?.email || "");
-        const defaultProd = allSalesProducts[0] || biolabProducts[0];
-        const defaultSpec = defaultProd ? (defaultProd.specification || (defaultProd.name.toLowerCase().includes("kit") ? "50 test/hộp" : defaultProd.unit || "")) : "50 test/hộp";
-        const defaultMfg = formatSupplierShortName(defaultProd?.isCommercial ? ((defaultProd as any).brand || (defaultProd as any).supplier || "ABT") : "ABT");
-        const defaultPrice = defaultProd ? (defaultProd[quotePriceTier] || defaultProd.price) : 1500000;
-        const defaultFin = computeQuoteItemFinances(defaultPrice, 1, 8, 0);
         setQuoteItems([{ 
-            productCode: defaultProd?.code || "INV-KI-001", 
-            specification: defaultSpec,
-            manufacturer: defaultMfg,
+            productCode: "", 
+            specification: "",
+            manufacturer: "",
             quantity: 1, 
-            price: defaultPrice,
-            vatRate: defaultFin.vatRate,
-            priceBeforeVat: defaultFin.priceBeforeVat,
-            totalBeforeVat: defaultFin.totalBeforeVat,
-            discountRate: defaultFin.discountRate,
-            discountAmount: defaultFin.discountAmount,
-            total: defaultFin.total,
+            price: 0,
+            vatRate: 8,
+            priceBeforeVat: 0,
+            totalBeforeVat: 0,
+            discountRate: 0,
+            discountAmount: 0,
+            total: 0,
+            vatAmount: 0,
             notes: ""
         }]);
+        setQuoteProductSearchQueries({});
         setQuoteValidityTerms(defaultQuoteValidityTerms);
         setQuoteDeliveryTerms(defaultQuoteDeliveryTerms);
         setQuotePaymentTerms(defaultQuotePaymentTerms);
@@ -7171,22 +7170,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 isEquipment: it.isEquipment || isEquipmentProduct(prod, it.productCode)
             };
         });
-        const fallbackFin = computeQuoteItemFinances(1500000, 1, 8, 0);
         setQuoteItems(mappedItems.length > 0 ? mappedItems : [{
-            productCode: allSalesProducts[0]?.code || biolabProducts[0]?.code || "ABT-01",
-            parentCode: allSalesProducts[0]?.parent_code || biolabProducts[0]?.parent_code || undefined,
+            productCode: "",
+            parentCode: undefined,
             quantity: 1,
-            price: 1500000,
+            price: 0,
             vatRate: 8,
-            priceBeforeVat: fallbackFin.priceBeforeVat,
-            totalBeforeVat: fallbackFin.totalBeforeVat,
+            priceBeforeVat: 0,
+            totalBeforeVat: 0,
             discountRate: 0,
             discountAmount: 0,
-            total: fallbackFin.total,
-            specification: "50 test/hộp",
-            manufacturer: "ABT",
+            total: 0,
+            vatAmount: 0,
+            specification: "",
+            manufacturer: "",
             notes: ""
         }]);
+        setQuoteProductSearchQueries({});
         
         setQuoteValidityTerms(quote.validityTerms !== undefined && quote.validityTerms !== null ? quote.validityTerms : defaultQuoteValidityTerms);
         setQuoteDeliveryTerms(quote.deliveryTerms !== undefined && quote.deliveryTerms !== null ? quote.deliveryTerms : defaultQuoteDeliveryTerms);
@@ -7200,6 +7200,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         e.preventDefault();
         if (!quoteCustomerId) {
             showToast("Vui lòng chọn khách hàng!", "warning");
+            return;
+        }
+        const validQuoteItems = quoteItems.filter(it => it.productCode && String(it.productCode).trim() !== "");
+        if (validQuoteItems.length === 0) {
+            showToast("Vui lòng chọn ít nhất một sản phẩm trong danh mục báo giá!", "warning");
+            return;
+        }
+        if (validQuoteItems.length < quoteItems.length) {
+            showToast("Có dòng sản phẩm trong báo giá chưa được chọn mã hàng. Vui lòng chọn sản phẩm hoặc xóa dòng trống!", "warning");
             return;
         }
         const repId = quoteEmployee || loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "NV-001";
@@ -7504,7 +7513,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             setContractPartyBPhone("");
             setContractPartyBEmail("");
             setContractPartyBTaxCode("");
-            setDirectContractItems([{ productCode: biolabProducts[0].code, quantity: 1, price: biolabProducts[0].price }]);
+            setDirectContractItems([{ productCode: "", quantity: 1, price: 0 }]);
             return;
         }
 
@@ -7545,7 +7554,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 quantity: it.quantity,
                 price: it.price
             }));
-            setDirectContractItems(mappedItems.length > 0 ? mappedItems : [{ productCode: biolabProducts[0].code, quantity: 1, price: biolabProducts[0].price }]);
+            setDirectContractItems(mappedItems.length > 0 ? mappedItems : [{ productCode: "", quantity: 1, price: 0 }]);
 
             if (quote.deliveryTerms) setContractDeliveryTerms(quote.deliveryTerms);
             if (quote.paymentTerms) setContractPaymentTerms(quote.paymentTerms);
@@ -8505,7 +8514,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 needsInvoice: it.needsInvoice !== false
             };
         });
-        setFactoryOrderItems(mappedItems.length > 0 ? mappedItems : [{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, needsInvoice: true }]);
+        setFactoryOrderItems(mappedItems.length > 0 ? mappedItems : [{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+        setProductSearchQueries({});
         setInvoiceNotes("");
         setIsFactoryOrderModalOpen(true);
         setActiveTab("orders");
@@ -8603,7 +8613,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             };
         }).filter((it: any) => it.productCode);
 
-        setFactoryOrderItems(mappedItems.length > 0 ? mappedItems : [{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, needsInvoice: true }]);
+        setFactoryOrderItems(mappedItems.length > 0 ? mappedItems : [{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+        setProductSearchQueries({});
         
         setIsFactoryOrderModalOpen(true);
         setActiveTab("orders");
@@ -9428,10 +9439,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             price: it.price || 0
         }));
         setDirectContractItems(mappedItems.length > 0 ? mappedItems : [{
-            productCode: biolabProducts[0]?.code || "ABT-01",
+            productCode: "",
             quantity: 1,
-            price: 1500000
+            price: 0
         }]);
+        setContractProductSearchQueries({});
         
         setContractAttachedFiles(contract.contract_files || (contract.signedFileUrl ? [{ name: "Scan_Signed_Contract.pdf", url: contract.signedFileUrl, uploaded_at: new Date().toISOString() }] : []));
         setContractValidUntil(contract.valid_until || contract.validUntil || toVNDateString(new Date(Date.now() + 365 * 24 * 3600 * 1000)));
@@ -9744,12 +9756,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             totalAmount = selectedQuoteForContract.totalAmount;
             customerName = selectedQuoteForContract.customerName;
         } else {
+            const validDirectItems = directContractItems.filter(it => it.productCode && String(it.productCode).trim() !== "");
+            if (validDirectItems.length === 0) {
+                showToast("Vui lòng chọn ít nhất một sản phẩm trong danh mục hợp đồng!", "warning");
+                return;
+            }
+            if (validDirectItems.length < directContractItems.length) {
+                showToast("Có dòng sản phẩm trong hợp đồng chưa được chọn mã hàng. Vui lòng chọn sản phẩm hoặc xóa dòng trống!", "warning");
+                return;
+            }
             const custSi = customers.find(c => String(c.id) === String(directContractCustomerId));
             const custLe = salesNvkdCustomers.find(c => String(c.id) === String(directContractCustomerId));
             customerName = custSi ? custSi.name : (custLe ? custLe.name : directContractCustomerId || "Khách hàng trực tiếp");
             
-            items = directContractItems.map(item => {
-                const prod = biolabProducts.find(p => p.code === item.productCode);
+            items = validDirectItems.map(item => {
+                const prod = allSalesProducts.find(p => p.code === item.productCode) || biolabProducts.find(p => p.code === item.productCode);
                 return {
                     productCode: item.productCode,
                     productName: prod?.name || item.productCode,
@@ -9961,7 +9982,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 needsInvoice: it.needsInvoice !== false
             };
         });
-        setFactoryOrderItems(mappedItems.length > 0 ? mappedItems : [{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, targetAllocations: [], needsInvoice: true }]);
+        setFactoryOrderItems(mappedItems.length > 0 ? mappedItems : [{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
         setFactoryOrderFulfillmentSource(req.fulfillmentSource || (req.procureStatus === "STOCK_DELIVERY" ? "STOCK" : "AUTO"));
         setProductSearchQueries({});
         setIsFactoryOrderModalOpen(true);
@@ -10146,8 +10167,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast("Vui lòng nhập tên khách hàng!", "warning");
             return;
         }
-        if (factoryOrderItems.length === 0) {
-            showToast("Vui lòng chọn ít nhất một sản phẩm!", "warning");
+        const validFactoryItems = factoryOrderItems.filter(it => it.productCode && String(it.productCode).trim() !== "");
+        if (validFactoryItems.length === 0) {
+            showToast("Vui lòng chọn ít nhất một sản phẩm trong danh mục đặt hàng!", "warning");
+            return;
+        }
+        if (validFactoryItems.length < factoryOrderItems.length) {
+            showToast("Có dòng mặt hàng chưa được chọn mã sản phẩm. Vui lòng chọn sản phẩm hoặc xóa dòng trống!", "warning");
             return;
         }
 
@@ -10368,7 +10394,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             setFactoryOrderQuoteId("");
             setFactoryOrderPlanId("");
             setFactoryOrderFulfillmentSource("AUTO");
-            setFactoryOrderItems([{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, targetAllocations: [], needsInvoice: true }]);
+            setFactoryOrderItems([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+            setProductSearchQueries({});
             return;
         }
 
@@ -10550,7 +10577,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setFactoryOrderQuoteId("");
         setFactoryOrderPlanId("");
         setFactoryOrderFulfillmentSource("AUTO");
-        setFactoryOrderItems([{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, needsInvoice: true }]);
+        setFactoryOrderItems([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+        setProductSearchQueries({});
     };
 
     // Quản lý Luồng Sản xuất Nhà máy (ABT Manufacturing)
@@ -13281,9 +13309,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             setAppReqCustomerId(customers[0] ? String(customers[0].id) : "");
             setAppReqCustomerName(customers[0] ? customers[0].name : "");
         }
-        const defaultProd = biolabProducts.find(p => p.code === "INV-KI-001") || biolabProducts[0] || commercialProducts[0];
-        setAppReqProductCode(defaultProd?.code || "INV-KI-001");
-        setAppReqProductSearch(defaultProd ? `${defaultProd.name} (${defaultProd.code})` : "");
+        setAppReqProductCode("");
+        setAppReqProductSearch("");
         setIsAppReqProductDropdownOpen(false);
         setAppReqProductLot("");
         setAppReqPriority("High");
@@ -18282,7 +18309,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     setContractTaxCode("");
                                     setContractRepresentative("");
                                     setDirectContractCustomerId("");
-                                    setDirectContractItems([{ productCode: biolabProducts[0].code, quantity: 1, price: biolabProducts[0].price }]);
+                                    setDirectContractItems([{ productCode: "", quantity: 1, price: 0 }]);
+                                    setContractProductSearchQueries({});
                                     
                                     // Populate defaults
                                     setContractPartyAName(companyName);
@@ -19096,7 +19124,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     setFactoryOrderQuoteId("");
                                     setFactoryOrderPlanId("");
                                     setFactoryOrderFulfillmentSource("AUTO");
-                                    setFactoryOrderItems([{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, needsInvoice: true }]);
+                                    setFactoryOrderItems([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+                                    setProductSearchQueries({});
                                     setIsFactoryOrderModalOpen(true); 
                                 }}
                                 className="flex items-center gap-1.5 bg-slate-100 hover:bg-white text-slate-950 text-xs font-bold px-4 py-2 rounded-lg transition-all shadow-md cursor-pointer"
@@ -19114,7 +19143,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     setFactoryOrderQuoteId("");
                                     setFactoryOrderPlanId("");
                                     setFactoryOrderFulfillmentSource("AUTO");
-                                    setFactoryOrderItems([{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 20, unitPrice: biolabProducts[0]?.price || 0, targetAllocations: [], needsInvoice: true }]);
+                                    setFactoryOrderItems([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+                                    setProductSearchQueries({});
                                     setIsFactoryOrderModalOpen(true); 
                                 }}
                                 className="flex items-center gap-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition-all shadow-md shadow-cyan-950/30 cursor-pointer"
@@ -23044,7 +23074,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <div className="w-20 shrink-0">
                                                     <input
                                                         type="text"
-                                                        value={item.manufacturer !== undefined ? formatSupplierShortName(item.manufacturer) : getProductManufacturer(item)}
+                                                        value={item.manufacturer !== undefined ? (item.manufacturer ? formatSupplierShortName(item.manufacturer) : "") : getProductManufacturer(item)}
                                                         onChange={(e) => updateQuoteItemAt(index, { manufacturer: e.target.value })}
                                                         placeholder="Hãng SX"
                                                         title="Hãng sản xuất (ABT nếu do công ty sản xuất)"
@@ -23567,25 +23597,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <button
                             type="button"
                             onClick={() => {
-                                const defaultProd = allSalesProducts[0] || biolabProducts[0];
-                                const defaultPrice = defaultProd ? (defaultProd[quotePriceTier] || defaultProd.price) : 1500000;
-                                const defaultSpec = defaultProd ? (defaultProd.specification || (defaultProd.name.toLowerCase().includes("kit") ? "50 test/hộp" : defaultProd.unit || "")) : "50 test/hộp";
-                                const defaultMfg = defaultProd?.isCommercial ? ((defaultProd as any).brand || (defaultProd as any).supplier || "ABT") : "ABT";
-                                const defaultFin = computeQuoteItemFinances(defaultPrice, 1, 8, 0);
                                 setQuoteItems(prev => [...prev, { 
-                                    productCode: defaultProd?.code || "INV-KI-001", 
-                                    specification: defaultSpec,
-                                    manufacturer: defaultMfg,
+                                    productCode: "", 
+                                    specification: "",
+                                    manufacturer: "",
                                     notes: "",
                                     quantity: 1, 
-                                    price: defaultPrice,
-                                    vatRate: defaultFin.vatRate,
-                                    priceBeforeVat: defaultFin.priceBeforeVat,
-                                    totalBeforeVat: defaultFin.totalBeforeVat,
-                                    discountRate: defaultFin.discountRate,
-                                    discountAmount: defaultFin.discountAmount,
-                                    total: defaultFin.total,
-                                    vatAmount: defaultFin.vatAmount
+                                    price: 0,
+                                    vatRate: 8,
+                                    priceBeforeVat: 0,
+                                    totalBeforeVat: 0,
+                                    discountRate: 0,
+                                    discountAmount: 0,
+                                    total: 0,
+                                    vatAmount: 0
                                 }]);
                             }}
                             className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
@@ -24362,9 +24387,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        const defaultProd = biolabProducts[0];
-                                        const defaultPrice = defaultProd ? (defaultProd[contractPriceTier] || defaultProd.price) : 1500000;
-                                        setDirectContractItems(prev => [...prev, { productCode: defaultProd.code, quantity: 1, price: defaultPrice }]);
+                                        setDirectContractItems(prev => [...prev, { productCode: "", quantity: 1, price: 0 }]);
                                     }}
                                     className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 mt-2"
                                 >
@@ -25008,7 +25031,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 setIsStockOrder(false);
                 setExpandedAllocIndex(null);
                 setFactoryOrderFulfillmentSource("AUTO");
-                setFactoryOrderItems([{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, targetAllocations: [], needsInvoice: true }]);
+                setFactoryOrderItems([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+                setProductSearchQueries({});
             }} title={editingFactoryOrderId ? `CHỈNH SỬA YÊU CẦU ĐẶT HÀNG: ${editingFactoryOrderId}` : (isStockOrder ? "📦 YÊU CẦU ĐẶT HÀNG GỐI ĐẦU / LƯU KHO DỰ PHÒNG (SO STOCK)" : "YÊU CẦU ĐẶT HÀNG NCC / HÃNG (SO)")} size="4xl">
                 <form onSubmit={handleCreateFactoryOrder} className="space-y-4 p-2 text-slate-100">
                     <DraftBanner draft={factoryOrderDraft} />
@@ -25666,25 +25690,31 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                     {/* ── Live Stock Intelligence Badge & Allocation Trigger ── */}
                                     <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-[10px]">
-                                        <div className="flex flex-wrap items-center gap-1.5 font-mono">
-                                            <span className="text-slate-400 font-sans font-bold flex items-center gap-1">
-                                                📊 Tồn kho:
-                                            </span>
-                                            <span className="px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 border border-slate-800">
-                                                📦 Thực tế: <strong className="text-white">{stockIntel.onHand}</strong>
-                                            </span>
-                                            <span className="px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 border border-slate-800">
-                                                🔒 Giữ chỗ: <strong className="text-amber-300">{stockIntel.reserved}</strong>
-                                            </span>
-                                            <span className={`px-1.5 py-0.5 rounded font-bold border ${stockIntel.atp > 0 ? "bg-emerald-950/80 text-emerald-300 border-emerald-500/40" : "bg-rose-950/80 text-rose-300 border-rose-500/40"}`}>
-                                                🟢 Khả dụng (ATP): <strong>{stockIntel.atp}</strong> {stockIntel.atp <= 0 ? "⚠️ Hết hàng" : ""}
-                                            </span>
-                                            {stockIntel.incomingQty > 0 ? (
-                                                <span className="px-1.5 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-500/40">
-                                                    🚚 PO Đang về: <strong>{stockIntel.incomingQty}</strong>
+                                        {item.productCode ? (
+                                            <div className="flex flex-wrap items-center gap-1.5 font-mono">
+                                                <span className="text-slate-400 font-sans font-bold flex items-center gap-1">
+                                                    📊 Tồn kho:
                                                 </span>
-                                            ) : null}
-                                        </div>
+                                                <span className="px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 border border-slate-800">
+                                                    📦 Thực tế: <strong className="text-white">{stockIntel.onHand}</strong>
+                                                </span>
+                                                <span className="px-1.5 py-0.5 rounded bg-slate-950 text-slate-300 border border-slate-800">
+                                                    🔒 Giữ chỗ: <strong className="text-amber-300">{stockIntel.reserved}</strong>
+                                                </span>
+                                                <span className={`px-1.5 py-0.5 rounded font-bold border ${stockIntel.atp > 0 ? "bg-emerald-950/80 text-emerald-300 border-emerald-500/40" : "bg-rose-950/80 text-rose-300 border-rose-500/40"}`}>
+                                                    🟢 Khả dụng (ATP): <strong>{stockIntel.atp}</strong> {stockIntel.atp <= 0 ? "⚠️ Hết hàng" : ""}
+                                                </span>
+                                                {stockIntel.incomingQty > 0 ? (
+                                                    <span className="px-1.5 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-500/40">
+                                                        🚚 PO Đang về: <strong>{stockIntel.incomingQty}</strong>
+                                                    </span>
+                                                ) : null}
+                                            </div>
+                                        ) : (
+                                            <div className="text-slate-500 italic flex items-center gap-1">
+                                                <span>🔍 Vui lòng chọn sản phẩm để tra cứu tồn kho khả dụng (ATP)...</span>
+                                            </div>
+                                        )}
 
                                         {isStockOrder && (
                                             <div className="flex items-center gap-2">
@@ -25835,8 +25865,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <button
                                 type="button"
                                 onClick={() => {
-                                    const nextProd = allSalesProducts[factoryOrderItems.length % allSalesProducts.length] || biolabProducts[0];
-                                    setFactoryOrderItems(prev => [...prev, { productCode: nextProd?.code || "ABT-01", quantity: 10, unitPrice: nextProd?.price || 0, targetAllocations: [], needsInvoice: true }]);
+                                    setFactoryOrderItems(prev => [...prev, { productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
                                 }}
                                 className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
                             >
@@ -25999,7 +26028,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 setFactoryOrderCustomerName("");
                                 setIsStockOrder(false);
                                 setExpandedAllocIndex(null);
-                                setFactoryOrderItems([{ productCode: biolabProducts[0]?.code || "ABT-01", quantity: 10, unitPrice: biolabProducts[0]?.price || 0, needsInvoice: true }]);
+                                setFactoryOrderItems([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+                                setProductSearchQueries({});
                             }}
                             className="bg-slate-850 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg font-bold text-xs"
                         >
@@ -32725,12 +32755,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             type="button"
                             onClick={() => {
                                 setInboundType("commercial");
-                                const firstComm = commercialProducts[0];
-                                if (firstComm) {
-                                    setInboundProductCode(firstComm.code);
-                                    setInboundUnitPrice(firstComm.costPrice || 0);
-                                    setInboundSupplier(firstComm.supplier || firstComm.brand || "");
-                                }
+                                setInboundProductCode("");
+                                setInboundProductSearchQuery("");
+                                setInboundUnitPrice(0);
+                                setInboundSupplier("");
                             }}
                             className={cn(
                                 "flex-1 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer",
@@ -32745,9 +32773,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             type="button"
                             onClick={() => {
                                 setInboundType("production");
-                                setInboundProductCode(biolabProducts[0]?.code || "INV-KI-001");
+                                setInboundProductCode("");
+                                setInboundProductSearchQuery("");
                                 setInboundUnitPrice(0);
-                                setInboundSupplier("Nhà Cung Cấp / Hãng Phân Phối");
+                                setInboundSupplier("");
                             }}
                             className={cn(
                                 "flex-1 py-1.5 text-xs font-bold rounded-md transition-all cursor-pointer",
@@ -33362,7 +33391,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 onClick={() => {
                                     setRetailSaleItems(prev => [
                                         ...prev,
-                                        { productCode: biolabProducts[0].code, quantity: 1, price: biolabProducts[0].price }
+                                        { productCode: "", quantity: 1, price: 0 }
                                     ]);
                                 }}
                                 className="text-[10px] bg-slate-950 border border-slate-850 hover:bg-slate-900 text-indigo-400 px-2 py-1 rounded font-bold"
