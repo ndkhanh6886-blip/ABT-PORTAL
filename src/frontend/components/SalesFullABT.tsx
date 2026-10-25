@@ -7499,6 +7499,155 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     // --- OLIGO SEQUENCE BUILDER (Hỗ trợ cả 2 chế độ: Tách 4 mã thành phần HOẶC Gộp 1 dòng theo trình tự) ---
+    interface OligoPresetItem {
+        id: string;
+        category: "MOD" | "PUR" | "SVC";
+        label: string;
+        spec: string;
+        defaultPrice: number;
+        defaultQty: number;
+    }
+
+    const DEFAULT_OLIGO_PRESETS: OligoPresetItem[] = [
+        // 1. Loại đánh dấu biến đổi (OLIGO-MOD)
+        { id: "mod-fam-bhq1", category: "MOD", label: "FAM-BHQ1", spec: "5'-FAM / 3'-BHQ1", defaultPrice: 650000, defaultQty: 1 },
+        { id: "mod-hex-bhq1", category: "MOD", label: "HEX-BHQ1", spec: "5'-HEX / 3'-BHQ1", defaultPrice: 650000, defaultQty: 1 },
+        { id: "mod-vic-bhq1", category: "MOD", label: "VIC-BHQ1", spec: "5'-VIC / 3'-BHQ1", defaultPrice: 750000, defaultQty: 1 },
+        { id: "mod-cy5-bhq2", category: "MOD", label: "CY5-BHQ2", spec: "5'-CY5 / 3'-BHQ2", defaultPrice: 850000, defaultQty: 1 },
+        { id: "mod-rox-bhq2", category: "MOD", label: "ROX-BHQ2", spec: "5'-ROX / 3'-BHQ2", defaultPrice: 750000, defaultQty: 1 },
+        { id: "mod-fam-mgb", category: "MOD", label: "FAM-MGB (TaqMan)", spec: "5'-FAM / 3'-MGBNFQ", defaultPrice: 1450000, defaultQty: 1 },
+        { id: "mod-vic-mgb", category: "MOD", label: "VIC-MGB (TaqMan)", spec: "5'-VIC / 3'-MGBNFQ", defaultPrice: 1550000, defaultQty: 1 },
+        { id: "mod-fam-zen", category: "MOD", label: "FAM-ZEN-IBFQ", spec: "5'-6-FAM / ZEN / 3'-IBFQ", defaultPrice: 950000, defaultQty: 1 },
+        { id: "mod-biotin-5", category: "MOD", label: "5'-Biotin", spec: "5'-Biotin", defaultPrice: 450000, defaultQty: 1 },
+        { id: "mod-fam-single", category: "MOD", label: "5'-FAM (Đơn nhãn)", spec: "5'-6-FAM", defaultPrice: 400000, defaultQty: 1 },
+        { id: "mod-phos-5", category: "MOD", label: "5'-Phosphate", spec: "5'-Phosphate (5'-P)", defaultPrice: 250000, defaultQty: 1 },
+        { id: "mod-amine-c6", category: "MOD", label: "5'-Amine (C6)", spec: "5'-Amino Modifier C6", defaultPrice: 350000, defaultQty: 1 },
+        // 2. Phương pháp tinh sạch (OLIGO-PUR)
+        { id: "pur-hplc", category: "PUR", label: "HPLC", spec: "Tinh sạch HPLC", defaultPrice: 300000, defaultQty: 1 },
+        { id: "pur-page", category: "PUR", label: "PAGE", spec: "Tinh sạch PAGE", defaultPrice: 450000, defaultQty: 1 },
+        { id: "pur-opc", category: "PUR", label: "OPC (Cartridge)", spec: "Tinh sạch Cartridge (OPC)", defaultPrice: 200000, defaultQty: 1 },
+        { id: "pur-desalt", category: "PUR", label: "Desalt (Cơ bản)", spec: "Tinh sạch Desalt", defaultPrice: 100000, defaultQty: 1 },
+        // 3. Dịch vụ Đông khô / Pha sẵn (OLIGO-SVC)
+        { id: "svc-lyo", category: "SVC", label: "Đông khô", spec: "Đông khô (Lyophilized)", defaultPrice: 150000, defaultQty: 1 },
+        { id: "svc-te100", category: "SVC", label: "Pha 100 µM (TE)", spec: "Pha sẵn chuẩn 100 µM (TE Buffer)", defaultPrice: 150000, defaultQty: 1 },
+        { id: "svc-h2o10", category: "SVC", label: "Pha 10 µM (H2O)", spec: "Pha sẵn chuẩn 10 µM (Nuclease-free H2O)", defaultPrice: 150000, defaultQty: 1 },
+        { id: "svc-aliquot", category: "SVC", label: "Đông khô + Chia tube", spec: "Đông khô + Chia 2 tube (Aliquot)", defaultPrice: 200000, defaultQty: 1 },
+    ];
+
+    const [oligoPresets, setOligoPresets] = useState<OligoPresetItem[]>(() => {
+        if (typeof window !== "undefined") {
+            try {
+                const raw = localStorage.getItem("sales_oligo_presets_v1");
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+                }
+            } catch (e) {}
+        }
+        return DEFAULT_OLIGO_PRESETS;
+    });
+    const [showOligoPresetSettings, setShowOligoPresetSettings] = useState<boolean>(false);
+    const [oligoPresetTab, setOligoPresetTab] = useState<"MOD" | "PUR" | "SVC">("MOD");
+    const [newPresetLabel, setNewPresetLabel] = useState("");
+    const [newPresetSpec, setNewPresetSpec] = useState("");
+    const [newPresetPrice, setNewPresetPrice] = useState<number>(650000);
+    const [newPresetQty, setNewPresetQty] = useState<number>(1);
+
+    useEffect(() => {
+        if (typeof window === "undefined") return;
+        fetch("/api/storage?key=sales_oligo_presets_v1")
+            .then(r => r.ok ? r.json() : null)
+            .then(res => {
+                if (res && Array.isArray(res.data) && res.data.length > 0) {
+                    setOligoPresets(res.data);
+                    try { localStorage.setItem("sales_oligo_presets_v1", JSON.stringify(res.data)); } catch (e) {}
+                }
+            })
+            .catch(() => {});
+    }, []);
+
+    const saveOligoPresetsList = (nextList: OligoPresetItem[]) => {
+        setOligoPresets(nextList);
+        try { localStorage.setItem("sales_oligo_presets_v1", JSON.stringify(nextList)); } catch (e) {}
+        fetch("/api/storage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key: "sales_oligo_presets_v1", data: nextList })
+        }).catch(() => {});
+    };
+
+    const handleAddOligoPreset = (cat: "MOD" | "PUR" | "SVC") => {
+        const cleanLabel = newPresetLabel.trim() || newPresetSpec.trim();
+        const cleanSpec = newPresetSpec.trim() || newPresetLabel.trim();
+        if (!cleanLabel) {
+            showToast("Vui lòng nhập Tên loại đánh dấu / quy cách cần thêm!", "error");
+            return;
+        }
+        const newItem: OligoPresetItem = {
+            id: `${cat.toLowerCase()}-${Date.now()}`,
+            category: cat,
+            label: cleanLabel,
+            spec: cleanSpec,
+            defaultPrice: Math.max(0, Number(newPresetPrice) || 0),
+            defaultQty: Math.max(1, Number(newPresetQty) || 1)
+        };
+        const nextList = [...oligoPresets, newItem];
+        saveOligoPresetsList(nextList);
+        // Nếu thêm loại đánh dấu thì điền luôn vào ô đang chọn để tiện dùng ngay
+        if (cat === "MOD") {
+            setOligoHasMod(true);
+            setOligoModSpec(newItem.spec);
+            setOligoModPrice(newItem.defaultPrice);
+            setOligoModQty(newItem.defaultQty);
+        } else if (cat === "PUR") {
+            setOligoHasPur(true);
+            setOligoPurSpec(newItem.spec);
+            setOligoPurPrice(newItem.defaultPrice);
+            setOligoPurQty(newItem.defaultQty);
+        } else if (cat === "SVC") {
+            setOligoHasSvc(true);
+            setOligoSvcSpec(newItem.spec);
+            setOligoSvcPrice(newItem.defaultPrice);
+            setOligoSvcQty(newItem.defaultQty);
+        }
+        setNewPresetLabel("");
+        setNewPresetSpec("");
+        showToast(`✅ Đã thêm "${newItem.label}" vào danh mục cài đặt!`, "success");
+    };
+
+    const handleQuickSaveCurrentPreset = (cat: "MOD" | "PUR" | "SVC") => {
+        const specVal = cat === "MOD" ? oligoModSpec.trim() : cat === "PUR" ? oligoPurSpec.trim() : oligoSvcSpec.trim();
+        const priceVal = cat === "MOD" ? oligoModPrice : cat === "PUR" ? oligoPurPrice : oligoSvcPrice;
+        const qtyVal = cat === "MOD" ? oligoModQty : cat === "PUR" ? oligoPurQty : oligoSvcQty;
+        if (!specVal) {
+            showToast("Vui lòng nhập nội dung vào ô trước khi lưu mẫu!", "error");
+            return;
+        }
+        const existingIdx = oligoPresets.findIndex(p => p.category === cat && (p.spec.toLowerCase() === specVal.toLowerCase() || p.label.toLowerCase() === specVal.toLowerCase()));
+        if (existingIdx >= 0) {
+            const updated = [...oligoPresets];
+            updated[existingIdx] = {
+                ...updated[existingIdx],
+                spec: specVal,
+                defaultPrice: Math.max(0, Number(priceVal) || 0),
+                defaultQty: Math.max(1, Number(qtyVal) || 1)
+            };
+            saveOligoPresetsList(updated);
+            showToast(`💾 Đã cập nhật đơn giá mẫu "${updated[existingIdx].label}" (${new Intl.NumberFormat("vi-VN").format(priceVal)}đ)!`, "success");
+        } else {
+            const newItem: OligoPresetItem = {
+                id: `${cat.toLowerCase()}-${Date.now()}`,
+                category: cat,
+                label: specVal.length > 22 ? specVal.slice(0, 22) : specVal,
+                spec: specVal,
+                defaultPrice: Math.max(0, Number(priceVal) || 0),
+                defaultQty: Math.max(1, Number(qtyVal) || 1)
+            };
+            saveOligoPresetsList([...oligoPresets, newItem]);
+            showToast(`💾 Đã lưu "${specVal}" (${new Intl.NumberFormat("vi-VN").format(priceVal)}đ) vào danh sách mẫu!`, "success");
+        }
+    };
+
     const [openOligoBuilderTarget, setOpenOligoBuilderTarget] = useState<"QUOTE" | "ORDER" | null>(null);
     const [oligoSeqName, setOligoSeqName] = useState("");
     const [oligoSeqRaw, setOligoSeqRaw] = useState("");
@@ -7842,6 +7991,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const singleTubeTotal = baseSub + modSub + purSub + svcSub;
         const grandTotal = singleTubeTotal * tubes;
 
+        const modPresets = oligoPresets.filter(p => p.category === "MOD");
+        const purPresets = oligoPresets.filter(p => p.category === "PUR");
+        const svcPresets = oligoPresets.filter(p => p.category === "SVC");
+        const activeTabPresets = oligoPresets.filter(p => p.category === oligoPresetTab);
+
         return (
             <div className="mt-2 p-3.5 bg-gradient-to-br from-emerald-950/40 via-slate-900/90 to-cyan-950/30 border border-emerald-600/50 rounded-xl space-y-3 shadow-lg">
                 <div className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-800/50 pb-2">
@@ -7852,18 +8006,236 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 Bảng tính & Chèn nhanh trình tự Oligo (Primer / Probe)
                             </h5>
                             <p className="text-[10px] text-slate-400">
-                                Hỗ trợ tự động đếm số Base ($5'\rightarrow 3'$) và xuất ra Báo giá / Hóa đơn theo <strong>Tách từng mã thành phần (Chuỗi chuẩn, Biến đổi, Tinh sạch, Đông khô/Pha sẵn)</strong> hoặc <strong>Gộp 1 dòng theo trình tự</strong>
+                                Hỗ trợ tự động đếm số Base (5&apos; → 3&apos;) và xuất ra Báo giá / Hóa đơn theo <strong>Tách từng mã thành phần (Chuỗi chuẩn, Biến đổi, Tinh sạch, Đông khô/Pha sẵn)</strong> hoặc <strong>Gộp 1 dòng theo trình tự</strong>
                             </p>
                         </div>
                     </div>
-                    <button
-                        type="button"
-                        onClick={() => setOpenOligoBuilderTarget(null)}
-                        className="text-xs text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800/80 cursor-pointer"
-                    >
-                        ✕ Đóng
-                    </button>
+                    <div className="flex items-center gap-2">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setOligoPresetTab("MOD");
+                                setShowOligoPresetSettings(prev => !prev);
+                            }}
+                            className={`text-xs px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer border transition-colors ${
+                                showOligoPresetSettings
+                                    ? "bg-amber-600 text-white border-amber-400"
+                                    : "bg-amber-950/70 hover:bg-amber-900/80 text-amber-300 border-amber-700/60"
+                            }`}
+                            title="Cài đặt bổ sung / chỉnh sửa các loại Đánh dấu biến đổi (OLIGO-MOD), Tinh sạch (OLIGO-PUR) và Đông khô / Pha sẵn (OLIGO-SVC)"
+                        >
+                            <span>⚙️ {showOligoPresetSettings ? "Đóng cài đặt mẫu" : `Cài đặt loại Đánh dấu (${modPresets.length}) & Dịch vụ`}</span>
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setOpenOligoBuilderTarget(null)}
+                            className="text-xs text-slate-400 hover:text-white px-2 py-1 rounded bg-slate-800/80 cursor-pointer"
+                        >
+                            ✕ Đóng
+                        </button>
+                    </div>
                 </div>
+
+                {/* KHUNG CÀI ĐẶT BỔ SUNG LOẠI ĐÁNH DẤU / TINH SẠCH / ĐÔNG KHÔ */}
+                {showOligoPresetSettings && (
+                    <div className="p-3 rounded-xl bg-slate-950/95 border border-amber-600/60 space-y-3 shadow-inner">
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                                <button
+                                    type="button"
+                                    onClick={() => { setOligoPresetTab("MOD"); setNewPresetPrice(650000); }}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                                        oligoPresetTab === "MOD"
+                                            ? "bg-amber-600 text-white"
+                                            : "bg-slate-900 text-amber-300 hover:bg-slate-800 border border-slate-700"
+                                    }`}
+                                >
+                                    🏷️ Loại Đánh dấu (OLIGO-MOD) ({modPresets.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { setOligoPresetTab("PUR"); setNewPresetPrice(300000); }}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                                        oligoPresetTab === "PUR"
+                                            ? "bg-cyan-600 text-white"
+                                            : "bg-slate-900 text-cyan-300 hover:bg-slate-800 border border-slate-700"
+                                    }`}
+                                >
+                                    🧪 Phương pháp Tinh sạch (OLIGO-PUR) ({purPresets.length})
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { setOligoPresetTab("SVC"); setNewPresetPrice(150000); }}
+                                    className={`px-2.5 py-1 rounded-lg text-[11px] font-bold cursor-pointer transition-colors ${
+                                        oligoPresetTab === "SVC"
+                                            ? "bg-purple-600 text-white"
+                                            : "bg-slate-900 text-purple-300 hover:bg-slate-800 border border-slate-700"
+                                    }`}
+                                >
+                                    ❄️ Đông khô / Pha sẵn (OLIGO-SVC) ({svcPresets.length})
+                                </button>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    saveOligoPresetsList(DEFAULT_OLIGO_PRESETS);
+                                    showToast("↺ Đã khôi phục danh sách mẫu Đánh dấu / Tinh sạch / Dịch vụ về mặc định!", "info");
+                                }}
+                                className="text-[10px] text-slate-400 hover:text-amber-300 underline cursor-pointer"
+                            >
+                                ↺ Khôi phục mặc định
+                            </button>
+                        </div>
+
+                        {/* Form thêm nhanh loại mới */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-2 items-end bg-slate-900/70 p-2.5 rounded-lg border border-slate-800">
+                            <div className="md:col-span-3">
+                                <label className="block text-[10px] font-bold uppercase text-amber-300 mb-1">
+                                    {oligoPresetTab === "MOD" ? "Tên gọi tắt trong menu *" : oligoPresetTab === "PUR" ? "Tên phương pháp tinh sạch *" : "Tên dịch vụ *"}
+                                </label>
+                                <input
+                                    type="text"
+                                    value={newPresetLabel}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setNewPresetLabel(val);
+                                        if (!newPresetSpec) setNewPresetSpec(val);
+                                    }}
+                                    placeholder={oligoPresetTab === "MOD" ? "VD: Cy5.5-BHQ3, VIC-MGB..." : oligoPresetTab === "PUR" ? "VD: Dual-HPLC..." : "VD: Pha 50 µM TE..."}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white font-mono"
+                                />
+                            </div>
+                            <div className="md:col-span-4">
+                                <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
+                                    Quy cách in trên Báo giá / Hóa đơn *
+                                </label>
+                                <input
+                                    type="text"
+                                    value={newPresetSpec}
+                                    onChange={(e) => setNewPresetSpec(e.target.value)}
+                                    placeholder={oligoPresetTab === "MOD" ? "VD: 5'-Cy5.5 / 3'-BHQ3" : oligoPresetTab === "PUR" ? "VD: Tinh sạch Dual-HPLC" : "VD: Pha sẵn 50 µM TE Buffer"}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-amber-200 font-mono"
+                                />
+                            </div>
+                            <div className="md:col-span-2">
+                                <label className="block text-[10px] font-bold uppercase text-slate-300 mb-1">
+                                    Đơn giá mặc định (đ)
+                                </label>
+                                <FormattedNumberInput
+                                    value={newPresetPrice}
+                                    onChangeValue={(v) => setNewPresetPrice(v)}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2.5 py-1.5 text-xs text-emerald-300 font-mono font-bold text-right"
+                                />
+                            </div>
+                            <div className="md:col-span-1">
+                                <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                                    SL
+                                </label>
+                                <input
+                                    type="number"
+                                    min={1}
+                                    value={newPresetQty}
+                                    onChange={(e) => setNewPresetQty(Math.max(1, Number(e.target.value) || 1))}
+                                    className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1.5 text-xs text-white font-mono text-center"
+                                />
+                            </div>
+                            <div className="md:col-span-2">
+                                <button
+                                    type="button"
+                                    onClick={() => handleAddOligoPreset(oligoPresetTab)}
+                                    className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs py-1.5 px-3 rounded-lg cursor-pointer transition-colors shadow"
+                                >
+                                    + Bổ sung mới
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Danh sách hiện có (cho phép sửa trực tiếp Tên, Quy cách, Đơn giá hoặc Xóa) */}
+                        <div className="max-h-48 overflow-y-auto space-y-1.5 pr-1">
+                            {activeTabPresets.map((item, idx) => (
+                                <div key={item.id} className="grid grid-cols-12 gap-2 items-center bg-slate-900/50 hover:bg-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-800/80 text-xs">
+                                    <div className="col-span-3 flex items-center gap-1.5">
+                                        <span className="text-[10px] text-slate-500 font-mono w-4">{idx + 1}.</span>
+                                        <input
+                                            type="text"
+                                            value={item.label}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                const next = oligoPresets.map(p => p.id === item.id ? { ...p, label: val } : p);
+                                                saveOligoPresetsList(next);
+                                            }}
+                                            className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded px-2 py-1 text-[11px] text-amber-300 font-mono font-bold"
+                                            title="Tên hiển thị trong menu chọn mẫu"
+                                        />
+                                    </div>
+                                    <div className="col-span-5">
+                                        <input
+                                            type="text"
+                                            value={item.spec}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                const next = oligoPresets.map(p => p.id === item.id ? { ...p, spec: val } : p);
+                                                saveOligoPresetsList(next);
+                                            }}
+                                            className="w-full bg-slate-950 border border-slate-800 focus:border-amber-500 rounded px-2 py-1 text-[11px] text-white font-mono"
+                                            title="Quy cách hiển thị trên Báo giá / Đơn hàng"
+                                        />
+                                    </div>
+                                    <div className="col-span-2">
+                                        <FormattedNumberInput
+                                            value={item.defaultPrice}
+                                            onChangeValue={(v) => {
+                                                const next = oligoPresets.map(p => p.id === item.id ? { ...p, defaultPrice: v } : p);
+                                                saveOligoPresetsList(next);
+                                            }}
+                                            className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded px-2 py-1 text-[11px] text-emerald-300 font-mono font-bold text-right"
+                                        />
+                                    </div>
+                                    <div className="col-span-2 flex items-center justify-end gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                if (item.category === "MOD") {
+                                                    setOligoHasMod(true);
+                                                    setOligoModSpec(item.spec);
+                                                    if (item.defaultPrice > 0) setOligoModPrice(item.defaultPrice);
+                                                    if (item.defaultQty > 0) setOligoModQty(item.defaultQty);
+                                                } else if (item.category === "PUR") {
+                                                    setOligoHasPur(true);
+                                                    setOligoPurSpec(item.spec);
+                                                    if (item.defaultPrice > 0) setOligoPurPrice(item.defaultPrice);
+                                                    if (item.defaultQty > 0) setOligoPurQty(item.defaultQty);
+                                                } else if (item.category === "SVC") {
+                                                    setOligoHasSvc(true);
+                                                    setOligoSvcSpec(item.spec);
+                                                    if (item.defaultPrice > 0) setOligoSvcPrice(item.defaultPrice);
+                                                    if (item.defaultQty > 0) setOligoSvcQty(item.defaultQty);
+                                                }
+                                                showToast(`⚡ Đã chọn mẫu "${item.label}"!`, "info");
+                                            }}
+                                            className="px-2 py-0.5 rounded bg-emerald-900/60 hover:bg-emerald-700 text-emerald-200 text-[10px] font-bold cursor-pointer"
+                                            title="Áp dụng ngay mẫu này vào bảng tính bên dưới"
+                                        >
+                                            Chọn
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const next = oligoPresets.filter(p => p.id !== item.id);
+                                                saveOligoPresetsList(next);
+                                                showToast(`🗑️ Đã xóa mẫu "${item.label}"`, "info");
+                                            }}
+                                            className="px-1.5 py-0.5 rounded bg-rose-950/70 hover:bg-rose-700 text-rose-300 text-[10px] cursor-pointer"
+                                            title="Xóa mẫu này khỏi danh sách"
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* Dòng 1: Tên mồi/Probe + Chuỗi trình tự 5'->3' + Scale + Số Tube */}
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5">
@@ -7975,9 +8347,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 />
                                 <span className="text-[11px] font-bold text-amber-300 font-mono">2. OLIGO-MOD (Đánh dấu)</span>
                             </label>
-                            <span className="text-[10px] font-mono text-amber-300 font-bold">
-                                {oligoHasMod ? `${new Intl.NumberFormat("vi-VN").format(modSub)}đ` : "Không dùng"}
-                            </span>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setOligoPresetTab("MOD");
+                                        setShowOligoPresetSettings(true);
+                                    }}
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/80 hover:bg-amber-800 text-amber-300 border border-amber-700/60 cursor-pointer"
+                                    title="Mở cài đặt để bổ sung / chỉnh sửa các loại đánh dấu biến đổi"
+                                >
+                                    ⚙️ Cài đặt
+                                </button>
+                                <span className="text-[10px] font-mono text-amber-300 font-bold">
+                                    {oligoHasMod ? `${new Intl.NumberFormat("vi-VN").format(modSub)}đ` : "Không dùng"}
+                                </span>
+                            </div>
                         </div>
                         <div className="space-y-1.5">
                             <div className="flex gap-1">
@@ -7989,21 +8374,45 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     placeholder="VD: 5'-FAM / 3'-BHQ1"
                                     className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
                                 />
-                                <select
+                                <button
+                                    type="button"
                                     disabled={!oligoHasMod}
-                                    value=""
-                                    onChange={(e) => { if (e.target.value) setOligoModSpec(e.target.value); }}
-                                    className="w-20 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-amber-300"
-                                    title="Chọn mẫu nhãn biến đổi phổ biến"
+                                    onClick={() => handleQuickSaveCurrentPreset("MOD")}
+                                    className="px-1.5 py-1 rounded bg-slate-800 hover:bg-amber-700 text-[10px] text-amber-300 hover:text-white border border-slate-700 cursor-pointer"
+                                    title="Lưu nhanh loại đánh dấu và đơn giá đang nhập vào danh sách Mẫu"
                                 >
-                                    <option value="">Mẫu...</option>
-                                    <option value="5'-FAM / 3'-BHQ1">FAM-BHQ1</option>
-                                    <option value="5'-HEX / 3'-BHQ1">HEX-BHQ1</option>
-                                    <option value="5'-VIC / 3'-BHQ1">VIC-BHQ1</option>
-                                    <option value="5'-CY5 / 3'-BHQ2">CY5-BHQ2</option>
-                                    <option value="5'-ROX / 3'-BHQ2">ROX-BHQ2</option>
-                                    <option value="5'-FAM / 3'-MGB">FAM-MGB</option>
-                                    <option value="5'-Biotin">5&apos;-Biotin</option>
+                                    💾
+                                </button>
+                                <select
+                                    value=""
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === "__ADD_NEW__") {
+                                            setOligoPresetTab("MOD");
+                                            setShowOligoPresetSettings(true);
+                                            return;
+                                        }
+                                        const found = modPresets.find(p => p.id === val);
+                                        if (found) {
+                                            if (!oligoHasMod) {
+                                                setOligoHasMod(true);
+                                                if (!oligoHasPur) setOligoHasPur(true);
+                                            }
+                                            setOligoModSpec(found.spec);
+                                            if (found.defaultPrice > 0) setOligoModPrice(found.defaultPrice);
+                                            if (found.defaultQty > 0) setOligoModQty(found.defaultQty);
+                                        }
+                                    }}
+                                    className="w-24 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-amber-300 cursor-pointer"
+                                    title="Chọn loại đánh dấu biến đổi hoặc bấm '+ Cài đặt thêm loại mới...'"
+                                >
+                                    <option value="">Mẫu ({modPresets.length})...</option>
+                                    {modPresets.map(p => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.label} ({new Intl.NumberFormat("vi-VN").format(p.defaultPrice)}đ)
+                                        </option>
+                                    ))}
+                                    <option value="__ADD_NEW__">➕ + Cài đặt / Thêm loại đánh dấu...</option>
                                 </select>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
@@ -8041,9 +8450,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 />
                                 <span className="text-[11px] font-bold text-cyan-300 font-mono">3. OLIGO-PUR (Tinh sạch)</span>
                             </label>
-                            <span className="text-[10px] font-mono text-cyan-300 font-bold">
-                                {oligoHasPur ? `${new Intl.NumberFormat("vi-VN").format(purSub)}đ` : "Không dùng"}
-                            </span>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setOligoPresetTab("PUR");
+                                        setShowOligoPresetSettings(true);
+                                    }}
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-950/80 hover:bg-cyan-800 text-cyan-300 border border-cyan-700/60 cursor-pointer"
+                                    title="Mở cài đặt để bổ sung / chỉnh sửa phương pháp tinh sạch"
+                                >
+                                    ⚙️
+                                </button>
+                                <span className="text-[10px] font-mono text-cyan-300 font-bold">
+                                    {oligoHasPur ? `${new Intl.NumberFormat("vi-VN").format(purSub)}đ` : "Không dùng"}
+                                </span>
+                            </div>
                         </div>
                         <div className="space-y-1.5">
                             <div className="flex gap-1">
@@ -8055,18 +8477,42 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     placeholder="VD: Tinh sạch HPLC"
                                     className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
                                 />
-                                <select
+                                <button
+                                    type="button"
                                     disabled={!oligoHasPur}
+                                    onClick={() => handleQuickSaveCurrentPreset("PUR")}
+                                    className="px-1.5 py-1 rounded bg-slate-800 hover:bg-cyan-700 text-[10px] text-cyan-300 hover:text-white border border-slate-700 cursor-pointer"
+                                    title="Lưu nhanh phương pháp tinh sạch và đơn giá đang nhập vào danh sách Mẫu"
+                                >
+                                    💾
+                                </button>
+                                <select
                                     value=""
-                                    onChange={(e) => { if (e.target.value) setOligoPurSpec(e.target.value); }}
-                                    className="w-20 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-cyan-300"
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === "__ADD_NEW__") {
+                                            setOligoPresetTab("PUR");
+                                            setShowOligoPresetSettings(true);
+                                            return;
+                                        }
+                                        const found = purPresets.find(p => p.id === val);
+                                        if (found) {
+                                            if (!oligoHasPur) setOligoHasPur(true);
+                                            setOligoPurSpec(found.spec);
+                                            if (found.defaultPrice > 0) setOligoPurPrice(found.defaultPrice);
+                                            if (found.defaultQty > 0) setOligoPurQty(found.defaultQty);
+                                        }
+                                    }}
+                                    className="w-24 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-cyan-300 cursor-pointer"
                                     title="Chọn phương pháp tinh sạch Oligo"
                                 >
-                                    <option value="">Mẫu...</option>
-                                    <option value="Tinh sạch HPLC">HPLC</option>
-                                    <option value="Tinh sạch PAGE">PAGE</option>
-                                    <option value="Tinh sạch Cartridge (OPC)">OPC</option>
-                                    <option value="Tinh sạch Desalt">Desalt</option>
+                                    <option value="">Mẫu ({purPresets.length})...</option>
+                                    {purPresets.map(p => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.label} ({new Intl.NumberFormat("vi-VN").format(p.defaultPrice)}đ)
+                                        </option>
+                                    ))}
+                                    <option value="__ADD_NEW__">➕ + Cài đặt thêm...</option>
                                 </select>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
@@ -8104,9 +8550,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 />
                                 <span className="text-[11px] font-bold text-purple-300 font-mono">4. OLIGO-SVC (Đông khô/Pha)</span>
                             </label>
-                            <span className="text-[10px] font-mono text-purple-300 font-bold">
-                                {oligoHasSvc ? `${new Intl.NumberFormat("vi-VN").format(svcSub)}đ` : "Không dùng"}
-                            </span>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setOligoPresetTab("SVC");
+                                        setShowOligoPresetSettings(true);
+                                    }}
+                                    className="text-[10px] px-1.5 py-0.5 rounded bg-purple-950/80 hover:bg-purple-800 text-purple-300 border border-purple-700/60 cursor-pointer"
+                                    title="Mở cài đặt để bổ sung / chỉnh sửa dịch vụ Đông khô / Pha sẵn"
+                                >
+                                    ⚙️
+                                </button>
+                                <span className="text-[10px] font-mono text-purple-300 font-bold">
+                                    {oligoHasSvc ? `${new Intl.NumberFormat("vi-VN").format(svcSub)}đ` : "Không dùng"}
+                                </span>
+                            </div>
                         </div>
                         <div className="space-y-1.5">
                             <div className="flex gap-1">
@@ -8118,18 +8577,42 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     placeholder="VD: Đông khô / Pha sẵn 100 µM"
                                     className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono"
                                 />
-                                <select
+                                <button
+                                    type="button"
                                     disabled={!oligoHasSvc}
+                                    onClick={() => handleQuickSaveCurrentPreset("SVC")}
+                                    className="px-1.5 py-1 rounded bg-slate-800 hover:bg-purple-700 text-[10px] text-purple-300 hover:text-white border border-slate-700 cursor-pointer"
+                                    title="Lưu nhanh dịch vụ Đông khô / Pha sẵn và đơn giá đang nhập vào danh sách Mẫu"
+                                >
+                                    💾
+                                </button>
+                                <select
                                     value=""
-                                    onChange={(e) => { if (e.target.value) setOligoSvcSpec(e.target.value); }}
-                                    className="w-20 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-purple-300"
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === "__ADD_NEW__") {
+                                            setOligoPresetTab("SVC");
+                                            setShowOligoPresetSettings(true);
+                                            return;
+                                        }
+                                        const found = svcPresets.find(p => p.id === val);
+                                        if (found) {
+                                            if (!oligoHasSvc) setOligoHasSvc(true);
+                                            setOligoSvcSpec(found.spec);
+                                            if (found.defaultPrice > 0) setOligoSvcPrice(found.defaultPrice);
+                                            if (found.defaultQty > 0) setOligoSvcQty(found.defaultQty);
+                                        }
+                                    }}
+                                    className="w-24 bg-slate-900 border border-slate-700 rounded px-1 py-1 text-[10px] text-purple-300 cursor-pointer"
                                     title="Chọn mẫu dịch vụ đông khô hoặc pha sẵn"
                                 >
-                                    <option value="">Mẫu...</option>
-                                    <option value="Đông khô (Lyophilized)">Đông khô</option>
-                                    <option value="Pha sẵn chuẩn 100 µM (TE Buffer)">Pha 100 µM (TE)</option>
-                                    <option value="Pha sẵn chuẩn 10 µM (Nuclease-free H2O)">Pha 10 µM (H2O)</option>
-                                    <option value="Đông khô + Chia 2 tube (Aliquot)">Đông khô + Chia tube</option>
+                                    <option value="">Mẫu ({svcPresets.length})...</option>
+                                    {svcPresets.map(p => (
+                                        <option key={p.id} value={p.id}>
+                                            {p.label} ({new Intl.NumberFormat("vi-VN").format(p.defaultPrice)}đ)
+                                        </option>
+                                    ))}
+                                    <option value="__ADD_NEW__">➕ + Cài đặt thêm...</option>
                                 </select>
                             </div>
                             <div className="grid grid-cols-2 gap-2">
