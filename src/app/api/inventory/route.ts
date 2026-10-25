@@ -49,9 +49,26 @@ export async function GET(req: NextRequest) {
     // Tồn kho theo từng lô (số lô, HSD, vị trí) kèm hãng sản xuất / nhóm hàng / điều kiện bảo quản
     if (action === "lot_stock") {
       await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
+      await query(`
+        INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, is_quarantined, quarantine_reason)
+        SELECT i.product_code,
+               COALESCE(NULLIF(TRIM(i.lot_number), ''), 'NO-LOT'),
+               i.expiry_date,
+               COALESCE(NULLIF(i.warehouse_location, ''), 'Kho Trung Tâm'),
+               GREATEST(COALESCE(i.quantity_on_hand, 0), 0),
+               COALESCE(i.is_quarantined, false),
+               i.quarantine_reason
+          FROM inventory_items i
+         WHERE COALESCE(i.quantity_on_hand, 0) > 0
+           AND NOT EXISTS (SELECT 1 FROM inventory_lots l WHERE l.product_code = i.product_code)
+        ON CONFLICT DO NOTHING
+      `).catch(() => {});
       const r = await query(`
         SELECT l.id, l.product_code, l.lot_number, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} AS expiry_date, l.expiry_date AS expiry_raw,
                l.warehouse_location, l.quantity_on_hand,
+               COALESCE(res.lot_reserved, 0)::numeric AS quantity_allocated,
+               GREATEST(0, COALESCE(l.quantity_on_hand, 0) - COALESCE(res.lot_reserved, 0))::numeric AS available_quantity,
+               COALESCE(i.quantity_allocated, 0)::numeric AS product_quantity_allocated,
                COALESCE(l.is_quarantined, false) AS is_quarantined, l.quarantine_reason, l.created_at, l.last_updated,
                COALESCE(p.name, i.product_name, l.product_code) AS product_name,
                p.category, p.manufacturer, p.unit, p.specification, p.storage_condition,
@@ -60,7 +77,15 @@ export async function GET(req: NextRequest) {
                i.shelf_position
           FROM inventory_lots l
           LEFT JOIN products p ON p.code = l.product_code
-          LEFT JOIN inventory_items i ON i.product_code = l.product_code
+          LEFT JOIN LATERAL (
+            SELECT * FROM inventory_items i0 WHERE i0.product_code = l.product_code ORDER BY i0.id ASC LIMIT 1
+          ) i ON TRUE
+          LEFT JOIN (
+            SELECT product_code, LOWER(TRIM(lot_number)) AS norm_lot, SUM(COALESCE(quantity_reserved, 0)) AS lot_reserved
+              FROM inventory_reservations
+             WHERE status = 'ACTIVE' AND lot_number IS NOT NULL AND TRIM(lot_number) <> ''
+             GROUP BY product_code, LOWER(TRIM(lot_number))
+          ) res ON LOWER(TRIM(res.product_code)) = LOWER(TRIM(l.product_code)) AND res.norm_lot = LOWER(TRIM(l.lot_number))
          WHERE l.quantity_on_hand > 0
          ORDER BY l.product_code ASC, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC
       `);

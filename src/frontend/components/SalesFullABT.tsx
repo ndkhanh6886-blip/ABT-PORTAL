@@ -2228,30 +2228,221 @@ export function SalesFullABT() {
     // Lô tồn kho thật (bảng inventory_lots): số lô, HSD, vị trí. Sắp theo hạn dùng gần nhất trước (FEFO);
     // lô đã hết hạn hoặc đang cách ly không được chọn để giao.
     const [warehouseLots, setWarehouseLots] = useState<any[]>([]);
-    const getAvailableLotsForProduct = (prodCode: string) => {
-        const clean = (prodCode || "").trim().toLowerCase();
-        if (!clean) return [];
+    const [reservations, setReservations] = useState<any[]>([]);
+
+    const normalizeLotExpiryIso = (raw?: any): string => {
+        const s = String(raw || "").trim();
+        if (!s) return "";
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+        const m = s.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})/);
+        if (m) {
+            return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+        }
+        return "";
+    };
+
+    // Tổng hợp toàn bộ các lô đang có tồn khả dụng trong kho (từ inventory_lots + fallback inventory_items + inboundLogs13b)
+    // kèm số lượng khả dụng thực tế theo từng lô (quantity_on_hand - quantity_allocated của các đơn khác).
+    const getAllAvailableWarehouseLots = (forOrderCode?: string) => {
         const today = todayVN();
-        return (warehouseLots || [])
-            .filter((l: any) => String(l.product_code || "").trim().toLowerCase() === clean
-                && (Number(l.quantity_on_hand) || 0) > 0
-                && !l.is_quarantined
-                && !(l.expiry_date && String(l.expiry_date).slice(0, 10) < today))
-            .map((l: any) => ({ ...l, quantity_allocated: 0 }))
+        const targetOrd = String(forOrderCode || "").trim().toLowerCase();
+        const activeRes = (reservations || []).filter((r: any) => String(r.status || "").toUpperCase() === "ACTIVE");
+
+        const rawLots: any[] = [];
+        const seenLotKeys = new Set<string>();
+
+        (warehouseLots || []).forEach((l: any) => {
+            const pCode = String(l.product_code || "").trim();
+            const lotNo = String(l.lot_number || "").trim();
+            if (!pCode || !lotNo) return;
+            const loc = String(l.warehouse_location || "Kho Trung Tâm").trim();
+            const key = `${pCode.toLowerCase()}__${lotNo.toLowerCase()}__${loc.toLowerCase()}`;
+            seenLotKeys.add(key);
+            rawLots.push(l);
+        });
+
+        // Bổ sung lô từ bảng tồn tổng (inventory_items) nếu chưa có dòng tương ứng trong inventory_lots
+        (warehouseInventoryItems || []).forEach((it: any) => {
+            const pCode = String(it.product_code || it.code || "").trim();
+            const lotNo = String(it.lot_number || it.earliest_lot || "").trim();
+            const onHand = Number(it.quantity_on_hand) || 0;
+            if (!pCode || !lotNo || onHand <= 0) return;
+            const loc = String(it.warehouse_location || "Kho Trung Tâm").trim();
+            const hasAnyLotForProduct = (warehouseLots || []).some(
+                (l: any) => String(l.product_code || "").trim().toLowerCase() === pCode.toLowerCase() && (Number(l.quantity_on_hand) || 0) > 0
+            );
+            const key = `${pCode.toLowerCase()}__${lotNo.toLowerCase()}__${loc.toLowerCase()}`;
+            if (!seenLotKeys.has(key) && !hasAnyLotForProduct) {
+                seenLotKeys.add(key);
+                rawLots.push({
+                    id: `agg-${it.id || pCode}`,
+                    product_code: pCode,
+                    product_name: it.product_name || it.name || pCode,
+                    lot_number: lotNo,
+                    expiry_date: it.expiry_date || it.earliest_expiry || "",
+                    warehouse_location: loc,
+                    quantity_on_hand: onHand,
+                    quantity_allocated: Number(it.quantity_allocated) || 0,
+                    unit: it.unit || "Hộp",
+                    specification: it.specification || "",
+                    is_quarantined: Boolean(it.is_quarantined),
+                    shelf_position: it.shelf_position || ""
+                });
+            }
+        });
+
+        // Bổ sung lô từ nhật ký nhập kho 13B (nếu có lô nhập nội bộ chưa nằm trong inventory_lots)
+        (inboundLogs13b || []).forEach((lg: any) => {
+            const pCode = String(lg.productCode || "").trim();
+            const lotNo = String(lg.lotOrSerial || "").trim();
+            const qty = Number(lg.quantity) || 0;
+            if (!pCode || !lotNo || qty <= 0) return;
+            const loc = "Kho Trung Tâm";
+            const key = `${pCode.toLowerCase()}__${lotNo.toLowerCase()}__${loc.toLowerCase()}`;
+            const existsInWarehouse = rawLots.some(
+                (r: any) => String(r.product_code || "").trim().toLowerCase() === pCode.toLowerCase() &&
+                            String(r.lot_number || "").trim().toLowerCase() === lotNo.toLowerCase()
+            );
+            if (!seenLotKeys.has(key) && !existsInWarehouse) {
+                seenLotKeys.add(key);
+                rawLots.push({
+                    id: `13b-${lg.id || lotNo}`,
+                    product_code: pCode,
+                    product_name: lg.productName || pCode,
+                    lot_number: lotNo,
+                    expiry_date: lg.expDate || "",
+                    warehouse_location: loc,
+                    quantity_on_hand: qty,
+                    quantity_allocated: 0,
+                    unit: "Hộp",
+                    specification: lg.specification || "",
+                    is_quarantined: false
+                });
+            }
+        });
+
+        return rawLots
+            .filter((l: any) => {
+                const onHand = Number(l.quantity_on_hand) || 0;
+                if (onHand <= 0 || l.is_quarantined) return false;
+                const expIso = normalizeLotExpiryIso(l.expiry_date || l.expiry_raw);
+                if (expIso && expIso < today) return false;
+                return true;
+            })
+            .map((l: any) => {
+                const pCodeLower = String(l.product_code || "").trim().toLowerCase();
+                const lotNoLower = String(l.lot_number || "").trim().toLowerCase();
+                const onHand = Number(l.quantity_on_hand) || 0;
+
+                // Tính SL đang giữ chỗ trên lô này (không trừ phần giữ chỗ của chính đơn hàng đang lập phiếu giao)
+                let allocatedOnLot = 0;
+                if (activeRes.length > 0) {
+                    allocatedOnLot = activeRes
+                        .filter((r: any) => {
+                            const rProd = String(r.product_code || "").trim().toLowerCase();
+                            const rLot = String(r.lot_number || "").trim().toLowerCase();
+                            const rOrd = String(r.order_code || "").trim().toLowerCase();
+                            if (rProd !== pCodeLower || !rLot || rLot !== lotNoLower) return false;
+                            if (targetOrd && rOrd === targetOrd) return false;
+                            return true;
+                        })
+                        .reduce((s: number, r: any) => s + (Number(r.quantity_reserved) || 0), 0);
+                } else {
+                    allocatedOnLot = Number(l.quantity_allocated) || 0;
+                }
+
+                const expIso = normalizeLotExpiryIso(l.expiry_date || l.expiry_raw);
+                const availQty = Math.max(0, onHand - allocatedOnLot);
+                const prodCatalog = (allSalesProducts || []).find(
+                    (p: any) => String(p.code || "").trim().toLowerCase() === pCodeLower
+                );
+
+                return {
+                    ...l,
+                    expiry_date: expIso || (l.expiry_date ? String(l.expiry_date).slice(0, 10) : ""),
+                    quantity_on_hand: onHand,
+                    quantity_allocated: allocatedOnLot,
+                    available_qty: availQty,
+                    unit: l.unit || prodCatalog?.unit || "Hộp",
+                    product_name: l.product_name || prodCatalog?.name || l.product_code,
+                    parent_code: (prodCatalog as any)?.parent_code || (prodCatalog as any)?.parent_item_code || undefined
+                };
+            })
+            .filter((l: any) => l.available_qty > 0 || l.quantity_on_hand > 0)
             .sort((a: any, b: any) => String(a.expiry_date || "9999").localeCompare(String(b.expiry_date || "9999")));
     };
 
-    // Tồn khả dụng của mã hàng = tồn tổng - đang giữ chỗ (theo bảng tồn tổng), không cộng lô hết hạn
-    const getAvailableStockForProduct = (prodCode: string) => {
+    const getAvailableLotsForProduct = (prodCode: string, prodName?: string, forOrderCode?: string) => {
         const clean = (prodCode || "").trim().toLowerCase();
-        const agg = (warehouseInventoryItems || []).find((it: any) => String(it.product_code || it.code || "").trim().toLowerCase() === clean);
+        const cleanName = (prodName || "").trim().toLowerCase();
+        if (!clean && !cleanName) return [];
+
+        const normCode = clean.replace(/[-\s_.]/g, "");
+        const baseCode = clean.split(".size.")[0].replace(/\.[a-z0-9]+$/i, "").trim();
+        const prodCatalog: any = (allSalesProducts || []).find(
+            (p: any) => String(p.code || "").trim().toLowerCase() === clean
+        );
+        const targetParent = String(prodCatalog?.parent_code || prodCatalog?.parent_item_code || "").trim().toLowerCase();
+        const resolvedName = cleanName || String(prodCatalog?.name || "").trim().toLowerCase();
+
+        const allLots = getAllAvailableWarehouseLots(forOrderCode);
+        return allLots.filter((l: any) => {
+            const lCode = String(l.product_code || "").trim().toLowerCase();
+            const lNorm = lCode.replace(/[-\s_.]/g, "");
+            const lBase = lCode.split(".size.")[0].replace(/\.[a-z0-9]+$/i, "").trim();
+            const lParent = String(l.parent_code || "").trim().toLowerCase();
+            const lName = String(l.product_name || "").trim().toLowerCase();
+
+            if (clean && lCode === clean) return true;
+            if (normCode.length >= 3 && lNorm === normCode) return true;
+            if (targetParent && (lCode === targetParent || lParent === targetParent)) return true;
+            if (clean && lParent === clean) return true;
+            if (baseCode.length >= 4 && (lCode === baseCode || lBase === baseCode) && resolvedName && lName === resolvedName) return true;
+            if (resolvedName.length >= 5 && lName === resolvedName) return true;
+            return false;
+        });
+    };
+
+    // Tồn khả dụng của mã hàng = tồn tổng - đang giữ chỗ bởi đơn khác, không cộng lô hết hạn
+    const getAvailableStockForProduct = (prodCode: string, prodName?: string, forOrderCode?: string) => {
+        const clean = (prodCode || "").trim().toLowerCase();
+        const targetOrd = String(forOrderCode || "").trim().toLowerCase();
+        const matchingLots = getAvailableLotsForProduct(prodCode, prodName, forOrderCode);
+        const lotsAvailSum = matchingLots.reduce((s: number, l: any) => s + (Number(l.available_qty ?? l.quantity_on_hand) || 0), 0);
+
+        const agg = (warehouseInventoryItems || []).find((it: any) => {
+            const itCode = String(it.product_code || it.code || "").trim().toLowerCase();
+            if (itCode === clean) return true;
+            if (prodName && String(it.product_name || it.name || "").trim().toLowerCase() === prodName.trim().toLowerCase()) return true;
+            return false;
+        });
         if (agg) {
             const today = todayVN();
+            const aggCode = String(agg.product_code || agg.code || clean).trim().toLowerCase();
             const expired = (warehouseLots || [])
-                .filter((l: any) => String(l.product_code || "").trim().toLowerCase() === clean && l.expiry_date && String(l.expiry_date).slice(0, 10) < today)
+                .filter((l: any) => {
+                    if (String(l.product_code || "").trim().toLowerCase() !== aggCode) return false;
+                    const expIso = normalizeLotExpiryIso(l.expiry_date || l.expiry_raw);
+                    return Boolean(expIso && expIso < today);
+                })
                 .reduce((s: number, l: any) => s + (Number(l.quantity_on_hand) || 0), 0);
-            return Math.max(0, (Number(agg.quantity_on_hand) || 0) - (Number(agg.quantity_allocated) || 0) - expired);
+
+            // Nếu đơn hàng đang xét có phiếu giữ chỗ ACTIVE cho chính nó thì cộng trả lại phần giữ chỗ đó vào khả dụng giao của đơn
+            const heldForThisOrder = targetOrd
+                ? (reservations || [])
+                    .filter((r: any) =>
+                        String(r.status || "").toUpperCase() === "ACTIVE" &&
+                        String(r.product_code || "").trim().toLowerCase() === aggCode &&
+                        String(r.order_code || "").trim().toLowerCase() === targetOrd
+                    )
+                    .reduce((s: number, r: any) => s + (Number(r.quantity_reserved) || 0), 0)
+                : 0;
+
+            const effectiveAllocated = Math.max(0, (Number(agg.quantity_allocated) || 0) - heldForThisOrder);
+            const aggAvail = Math.max(0, (Number(agg.quantity_on_hand) || 0) - effectiveAllocated - expired);
+            return Math.max(aggAvail, lotsAvailSum);
         }
+        if (lotsAvailSum > 0) return lotsAvailSum;
         return Number(stock13b[prodCode] || 0);
     };
 
@@ -3431,7 +3622,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [deliveryCreatorName, setDeliveryCreatorName] = useState("");
     const [deliveryReceiverName, setDeliveryReceiverName] = useState("");
     const [deliveryReceiverPhone, setDeliveryReceiverPhone] = useState("");
-    const [deliveryItems, setDeliveryItems] = useState<{ productCode: string; productName: string; quantity: number; unit?: string; specification?: string; storageCondition?: string; lotNo?: string; expDate?: string; notes?: string; orderedQty?: number; prevAllocatedQty?: number; remainingQty?: number; needsInvoice?: boolean; availStock?: number; isExtraLot?: boolean; isManualLot?: boolean }[]>([]);
+    const [deliveryItems, setDeliveryItems] = useState<{ productCode: string; productName: string; quantity: number; unit?: string; specification?: string; storageCondition?: string; lotNo?: string; expDate?: string; notes?: string; orderedQty?: number; prevAllocatedQty?: number; remainingQty?: number; needsInvoice?: boolean; availStock?: number; selectedLotAvail?: number; selectedLotProductCode?: string; isExtraLot?: boolean; isManualLot?: boolean }[]>([]);
+    const [openDeliveryLotDropdownIndex, setOpenDeliveryLotDropdownIndex] = useState<number | null>(null);
+    const [deliveryLotSearchQueries, setDeliveryLotSearchQueries] = useState<Record<number, string>>({});
     const [selectedViewDeliverySlip, setSelectedViewDeliverySlip] = useState<any>(null);
     const [slipPrintWithPrice, setSlipPrintWithPrice] = useState(false);
     const [slipPrintLandscape, setSlipPrintLandscape] = useState(false);
@@ -3759,7 +3952,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [partialInvIsFinal, setPartialInvIsFinal] = useState(false);
     const [isSubmittingPartialInvoice, setIsSubmittingPartialInvoice] = useState(false);
 
-    const [reservations, setReservations] = useState<any[]>([]);
     const [isReservationsModalOpen, setIsReservationsModalOpen] = useState(false);
     const [reservationFilterRep, setReservationFilterRep] = useState("all");
     const [reservationFilterStatus, setReservationFilterStatus] = useState("all");
@@ -12049,11 +12241,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     ? pg.remaining
                     : Math.max(0, Math.min(pg.remaining, Number(opts?.presetQtys?.[code] ?? pg.remaining)));
             
-            const lots = getAvailableLotsForProduct(code);
-            const availStock = getAvailableStockForProduct(code);
+            const itemName = it.productName || it.name || prod?.name || "Sản phẩm";
+            const lots = getAvailableLotsForProduct(code, itemName, target.order_code);
+            const availStock = getAvailableStockForProduct(code, itemName, target.order_code);
             const firstLot = lots.length > 0 ? lots[0] : null;
             const chosenLotNo = slipItem?.lotNo || (firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || defLot));
             const chosenExp = slipItem?.expDate || (firstLot && firstLot.expiry_date ? String(firstLot.expiry_date).slice(0, 10) : (it.expDate || defExp));
+            const matchedChosenLot = lots.find((l: any) => l.lot_number === chosenLotNo) || firstLot;
 
             const linkedQuote = (fo?.quoteId || fo?.quote_code || target?.quoteId || target?.quote_code)
                 ? quotations.find(q => String(q.id).trim().toLowerCase() === String(fo?.quoteId || fo?.quote_code || target?.quoteId || target?.quote_code).trim().toLowerCase())
@@ -12068,7 +12262,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             items.push({
                 productCode: code,
-                productName: it.productName || it.name || prod?.name || "Sản phẩm",
+                productName: itemName,
                 quantity: qty,
                 unit: it.unit || prod?.unit || "Bộ",
                 specification: it.specification || prod?.specification || "",
@@ -12080,11 +12274,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 prevAllocatedQty: pg.allocated,
                 remainingQty: pg.remaining,
                 availStock: availStock,
+                selectedLotAvail: matchedChosenLot ? (Number(matchedChosenLot.available_qty ?? matchedChosenLot.quantity_on_hand) || 0) : undefined,
+                selectedLotProductCode: matchedChosenLot?.product_code || undefined,
                 needsInvoice: slipItem?.needsInvoice !== undefined ? slipItem.needsInvoice : (it.needsInvoice !== false),
                 unitPrice: slipItem?.unitPrice ?? it.unitPrice ?? it.price ?? prod?.price ?? 0,
                 vat: resolvedVat,
                 vatRate: resolvedVat,
-                isManualLot: lots.length === 0 || (slipItem?.lotNo && !lots.some((l: any) => l.lot_number === slipItem.lotNo)),
+                isManualLot: false,
                 isExtraLot: false
             });
         });
@@ -12093,6 +12289,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast(`Đơn ${target.order_code} đã lập phiếu giao đủ số lượng. Vui lòng chờ NVKD xác nhận đã giao các phiếu đang chờ.`, "info");
             return;
         }
+
+        // Làm mới tức thì danh sách lô tồn kho khi mở modal lập phiếu giao
+        fetch("/api/inventory?action=lot_stock")
+            .then(res => res.json())
+            .then(d => { if (Array.isArray(d?.lots)) setWarehouseLots(d.lots); })
+            .catch(() => {});
+        fetch("/api/inventory?action=overview")
+            .then(res => res.json())
+            .then(overview => {
+                if (overview?.items && Array.isArray(overview.items)) {
+                    setWarehouseInventoryItems(overview.items);
+                }
+            })
+            .catch(() => {});
+        fetchReservations();
 
         // Số đợt giao
         let batchNo = 1;
@@ -12120,6 +12331,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             setDeliveryReceiverPhone(primary?.phone || target.customerPhone || "");
         }
 
+        setOpenDeliveryLotDropdownIndex(null);
+        setDeliveryLotSearchQueries({});
         setDeliveryTargetOrder(target);
         setEditingDeliverySlip(editSlip);
         setDeliverySlipMode(mode);
@@ -12152,11 +12365,33 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
     }, [isDeliveryModalOpen, deliveryTargetOrder, customers, salesNvkdCustomers]);
 
+    // Tự động đồng bộ tồn khả dụng và điền lô FEFO nếu dữ liệu lô kho tải xong sau khi mở modal lập phiếu giao
+    useEffect(() => {
+        if (!isDeliveryModalOpen || !deliveryTargetOrder) return;
+        const ordCode = deliveryTargetOrder.order_code;
+        setDeliveryItems(prev => prev.map(it => {
+            const lots = getAvailableLotsForProduct(it.productCode, it.productName, ordCode);
+            const avail = getAvailableStockForProduct(it.productCode, it.productName, ordCode);
+            const firstLot = lots.length > 0 ? lots[0] : null;
+            const autoLot = (!editingDeliverySlip && !it.lotNo && firstLot) ? firstLot.lot_number : it.lotNo;
+            const autoExp = (!editingDeliverySlip && !it.expDate && firstLot?.expiry_date) ? String(firstLot.expiry_date).slice(0, 10) : it.expDate;
+            const matchedLot = lots.find((l: any) => l.lot_number === autoLot);
+            return {
+                ...it,
+                availStock: avail,
+                lotNo: autoLot,
+                expDate: autoExp,
+                selectedLotAvail: matchedLot ? (Number(matchedLot.available_qty ?? matchedLot.quantity_on_hand) || 0) : it.selectedLotAvail,
+                selectedLotProductCode: matchedLot?.product_code || it.selectedLotProductCode
+            };
+        }));
+    }, [isDeliveryModalOpen, warehouseLots, warehouseInventoryItems, reservations]);
+
     const handleAddLotForProduct = (sourceIdx: number) => {
         const baseItem = deliveryItems[sourceIdx];
         if (!baseItem) return;
         const code = baseItem.productCode;
-        const lots = getAvailableLotsForProduct(code);
+        const lots = getAvailableLotsForProduct(code, baseItem.productName, deliveryTargetOrder?.order_code);
         const usedLots = new Set(deliveryItems.filter(it => it.productCode === code).map(it => it.lotNo));
         const nextLot = lots.find((l: any) => !usedLots.has(l.lot_number)) || lots[0];
 
@@ -12168,7 +12403,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             quantity: 0,
             lotNo: nextLot ? nextLot.lot_number : defLot,
             expDate: nextLot && nextLot.expiry_date ? String(nextLot.expiry_date).slice(0, 10) : defExp,
-            isManualLot: !nextLot,
+            selectedLotAvail: nextLot ? (Number(nextLot.available_qty ?? nextLot.quantity_on_hand) || 0) : undefined,
+            selectedLotProductCode: nextLot?.product_code || undefined,
+            isManualLot: false,
             isExtraLot: true
         };
 
@@ -12213,7 +12450,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho TBRs",
                     warehouse_name: is13B ? "Kho Trung Tâm" : (slip.dispatchLocation || "Kho Trung Tâm"),
                     items: valid.map((it: any) => ({
-                        product_code: getItemCode(it),
+                        product_code: it.selectedLotProductCode || getItemCode(it),
                         product_name: it.productName,
                         quantity: Number(it.quantity) || 0,
                         lot_number: it.lotNo || it.lotNumber || "",
@@ -12226,6 +12463,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (!res.ok && res.status !== 409) {
                 const err = await res.json().catch(() => ({}));
                 showToast(`Chưa ghi nhận được ${isInbound ? "nhập" : "xuất"} kho cho phiếu ${slip.id}: ${err.error || res.status}`, "warning");
+            } else {
+                try { window.dispatchEvent(new CustomEvent("inventory_updated")); } catch (e) {}
             }
         } catch (err) {
             console.error("Lỗi ghi nhận biến động kho theo phiếu giao:", err);
@@ -27620,7 +27859,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             </Modal>
 
             {/* 8. DELIVERY MODAL (TẠO PHIẾU GIAO HÀNG VỚI SỐ LOT; MÃ PXYYMM-xxxx DO MÁY CHỦ CẤP) */}
-            <Modal isOpen={isDeliveryModalOpen} onClose={() => { setIsDeliveryModalOpen(false); setEditingDeliverySlip(null); }} title={editingDeliverySlip ? `SỬA PHIẾU GIAO HÀNG ${editingDeliverySlip.id} - ĐỢT ${deliveryBatchNumber}` : `LẬP PHIẾU GIAO HÀNG - ĐỢT GIAO SỐ ${deliveryBatchNumber}`} size="3xl">
+            <Modal isOpen={isDeliveryModalOpen} onClose={() => { setIsDeliveryModalOpen(false); setEditingDeliverySlip(null); setOpenDeliveryLotDropdownIndex(null); }} title={editingDeliverySlip ? `SỬA PHIẾU GIAO HÀNG ${editingDeliverySlip.id} - ĐỢT ${deliveryBatchNumber}` : `LẬP PHIẾU GIAO HÀNG - ĐỢT GIAO SỐ ${deliveryBatchNumber}`} size="5xl">
                 <form onSubmit={handleCreateDeliverySlip} className="space-y-4 p-2 text-slate-100">
                     {deliveryTargetOrder && (
                         <div className="bg-slate-900/50 p-3 rounded-lg border border-slate-800 text-xs space-y-2">
@@ -27827,7 +28066,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <span className="text-[10px] text-slate-500 italic">Kiểm tra và điền chính xác số Lot & Hạn dùng của sản phẩm xuất giao</span>
                         </div>
 
-                        <div className="overflow-x-auto border border-slate-800 rounded-xl bg-slate-950/40">
+                        <div className={cn("border border-slate-800 rounded-xl bg-slate-950/40", openDeliveryLotDropdownIndex !== null ? "overflow-visible" : "overflow-x-auto")}>
                             <table className="w-full text-left text-xs border-collapse">
                                 <thead>
                                     <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/40">
@@ -27839,15 +28078,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <th className="py-2 px-2 w-20 text-center text-teal-400 font-bold">Tồn Khả Dụng</th>
                                         <th className="py-2 px-2 w-16 text-center text-emerald-400">SL Giao</th>
                                         <th className="py-2 px-2 w-20 text-center text-amber-400 font-bold">Xuất HĐ</th>
-                                        <th className="py-2 px-2 w-44 text-center text-amber-400">Số Lô (Lot No) *</th>
+                                        <th className="py-2 px-2 w-56 text-center text-amber-400">Số Lô (Lot No) *</th>
                                         <th className="py-2 px-2 w-32 text-center text-indigo-400">Hạn dùng (Exp)</th>
                                         <th className="py-2 px-2 w-36 text-center text-sky-400">Ghi chú cho KH</th>
                                     </tr>
                                 </thead>
                                 <tbody className="text-slate-300">
                                     {deliveryItems.map((item, idx) => {
-                                        const availLots = getAvailableLotsForProduct(item.productCode);
-                                        const availStock = item.availStock ?? getAvailableStockForProduct(item.productCode);
+                                        const ordCode = deliveryTargetOrder?.order_code;
+                                        const availLots = getAvailableLotsForProduct(item.productCode, item.productName, ordCode);
+                                        const allWarehouseLots = getAllAvailableWarehouseLots(ordCode);
+                                        const cleanTypedLot = String(item.lotNo || "").trim().toLowerCase();
+                                        const matchedWarehouseLot = cleanTypedLot
+                                            ? (availLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot) ||
+                                               allWarehouseLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot))
+                                            : null;
+                                        const selectedLotAvailQty = matchedWarehouseLot
+                                            ? (Number(matchedWarehouseLot.available_qty ?? matchedWarehouseLot.quantity_on_hand) || 0)
+                                            : item.selectedLotAvail;
+                                        const baseAvailStock = item.availStock ?? getAvailableStockForProduct(item.productCode, item.productName, ordCode);
+                                        const availStock = (selectedLotAvailQty !== undefined && baseAvailStock <= 0) ? selectedLotAvailQty : baseAvailStock;
                                         const isEnough = availStock >= (item.remainingQty ?? 1);
                                         const sameCodeCount = deliveryItems.filter(it => it.productCode === item.productCode).length;
 
@@ -27954,64 +28204,233 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         </span>
                                                     </label>
                                                 </td>
-                                                <td className="py-2 px-2">
-                                                    <div className="space-y-1">
-                                                        {availLots.length > 0 && !item.isManualLot ? (
-                                                            <div className="space-y-1">
-                                                                <select
-                                                                    value={item.lotNo || ""}
-                                                                    onChange={(e) => {
-                                                                        const val = e.target.value;
-                                                                        if (val === "__MANUAL__") {
-                                                                            setDeliveryItems(prev => prev.map((it, i) => i === idx ? { ...it, isManualLot: true } : it));
-                                                                        } else {
-                                                                            const selLot = availLots.find((l: any) => l.lot_number === val);
+                                                <td className="py-2 px-2 align-top">
+                                                    <div className="relative min-w-[200px]">
+                                                        <div className="relative flex items-center">
+                                                            <input
+                                                                type="text"
+                                                                required
+                                                                value={item.lotNo || ""}
+                                                                placeholder={availLots.length > 0 ? `Chọn hoặc nhập lô (${availLots.length} lô)...` : "Chọn lô kho / Nhập số lô..."}
+                                                                onFocus={() => {
+                                                                    setOpenDeliveryLotDropdownIndex(idx);
+                                                                    setDeliveryLotSearchQueries(prev => ({ ...prev, [idx]: "" }));
+                                                                }}
+                                                                onChange={(e) => {
+                                                                    const val = e.target.value;
+                                                                    const cleanVal = val.trim().toLowerCase();
+                                                                    const matched = cleanVal
+                                                                        ? (availLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanVal) ||
+                                                                           allWarehouseLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanVal))
+                                                                        : null;
+                                                                    setDeliveryItems(prev => prev.map((it, i) => i === idx ? {
+                                                                        ...it,
+                                                                        lotNo: val,
+                                                                        expDate: matched?.expiry_date ? String(matched.expiry_date).slice(0, 10) : it.expDate,
+                                                                        selectedLotAvail: matched ? (Number(matched.available_qty ?? matched.quantity_on_hand) || 0) : undefined,
+                                                                        selectedLotProductCode: matched?.product_code || undefined
+                                                                    } : it));
+                                                                    setDeliveryLotSearchQueries(prev => ({ ...prev, [idx]: val }));
+                                                                    if (openDeliveryLotDropdownIndex !== idx) {
+                                                                        setOpenDeliveryLotDropdownIndex(idx);
+                                                                    }
+                                                                }}
+                                                                className="w-full bg-slate-900 border border-amber-700/80 rounded-lg pl-2.5 pr-16 py-1.5 text-xs font-mono font-bold text-amber-300 outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-500/30"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    setOpenDeliveryLotDropdownIndex(prev => prev === idx ? null : idx);
+                                                                    setDeliveryLotSearchQueries(prev => ({ ...prev, [idx]: "" }));
+                                                                }}
+                                                                className="absolute right-1 top-1/2 -translate-y-1/2 px-1.5 py-0.5 rounded bg-amber-950/90 hover:bg-amber-900 text-amber-300 border border-amber-700/60 text-[9px] font-sans font-bold flex items-center gap-0.5 cursor-pointer transition-colors"
+                                                                title="Chọn từ danh sách lô đang có trong kho (hiển thị kèm số lượng khả dụng theo lô)"
+                                                            >
+                                                                <span>{availLots.length > 0 ? `${availLots.length} lô` : `Kho (${allWarehouseLots.length})`}</span>
+                                                                <span>▾</span>
+                                                            </button>
+                                                        </div>
+
+                                                        {matchedWarehouseLot && (
+                                                            <div className="mt-1 flex items-center justify-between gap-1 px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-800 text-[10px]">
+                                                                <span className="text-slate-400">Khả dụng lô này:</span>
+                                                                <span className={cn(
+                                                                    "font-mono font-bold",
+                                                                    (selectedLotAvailQty ?? 0) >= (Number(item.quantity) || 1)
+                                                                        ? "text-emerald-400"
+                                                                        : "text-amber-400"
+                                                                )}>
+                                                                    {selectedLotAvailQty} {matchedWarehouseLot.unit || item.unit || "Bộ"}
+                                                                </span>
+                                                            </div>
+                                                        )}
+
+                                                        {openDeliveryLotDropdownIndex === idx && (
+                                                            <>
+                                                                <div className="fixed inset-0 z-40" onClick={() => setOpenDeliveryLotDropdownIndex(null)} />
+                                                                <div className="absolute z-50 left-0 sm:right-0 w-[420px] max-w-[85vw] mt-1.5 max-h-80 overflow-y-auto bg-slate-950/98 backdrop-blur-md border-2 border-amber-500/60 rounded-xl shadow-2xl divide-y divide-slate-800/80 scrollbar-thin">
+                                                                    <div className="p-2 bg-slate-900 text-[10px] text-slate-300 font-bold px-3 flex items-center justify-between border-b border-slate-800 sticky top-0 z-10">
+                                                                        <span className="text-amber-300">📦 DANH SÁCH LÔ TRONG KHO & SL KHẢ DỤNG</span>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => setOpenDeliveryLotDropdownIndex(null)}
+                                                                            className="text-slate-400 hover:text-white text-[10px] px-1.5 py-0.5 rounded bg-slate-800 cursor-pointer"
+                                                                        >
+                                                                            Đóng ✕
+                                                                        </button>
+                                                                    </div>
+                                                                    {(() => {
+                                                                        const rawSearch = (deliveryLotSearchQueries[idx] || "").trim().toLowerCase();
+                                                                        const filterLotFn = (l: any) => {
+                                                                            if (!rawSearch) return true;
+                                                                            const lNo = String(l.lot_number || "").toLowerCase();
+                                                                            const pCode = String(l.product_code || "").toLowerCase();
+                                                                            const pName = String(l.product_name || "").toLowerCase();
+                                                                            const loc = String(l.warehouse_location || "").toLowerCase();
+                                                                            return lNo.includes(rawSearch) || pCode.includes(rawSearch) || pName.includes(rawSearch) || loc.includes(rawSearch);
+                                                                        };
+
+                                                                        const productLotKeys = new Set(
+                                                                            availLots.map((l: any) => `${String(l.product_code || "").toLowerCase()}__${String(l.lot_number || "").toLowerCase()}`)
+                                                                        );
+                                                                        const filteredProductLots = availLots.filter(filterLotFn);
+                                                                        const filteredOtherLots = allWarehouseLots
+                                                                            .filter((l: any) => !productLotKeys.has(`${String(l.product_code || "").toLowerCase()}__${String(l.lot_number || "").toLowerCase()}`))
+                                                                            .filter(filterLotFn);
+
+                                                                        const handleSelectLotOption = (l: any) => {
+                                                                            const lotAvail = Number(l.available_qty ?? Math.max(0, (Number(l.quantity_on_hand) || 0) - (Number(l.quantity_allocated) || 0)));
+                                                                            const expStr = l.expiry_date ? String(l.expiry_date).slice(0, 10) : "";
                                                                             setDeliveryItems(prev => prev.map((it, i) => i === idx ? {
                                                                                 ...it,
-                                                                                lotNo: val,
-                                                                                expDate: selLot?.expiry_date ? String(selLot.expiry_date).slice(0, 10) : it.expDate
+                                                                                lotNo: l.lot_number,
+                                                                                expDate: expStr || it.expDate,
+                                                                                selectedLotAvail: lotAvail,
+                                                                                selectedLotProductCode: l.product_code || it.productCode
                                                                             } : it));
-                                                                        }
-                                                                    }}
-                                                                    className="w-full bg-slate-900 border border-amber-800/80 rounded px-1.5 py-1 text-[11px] font-mono font-bold text-amber-300 outline-none focus:border-amber-500"
-                                                                >
-                                                                    <option value="" disabled>-- Chọn Lô tồn kho --</option>
-                                                                    {availLots.map((l: any, lIdx: number) => {
-                                                                        const lotAvail = Math.max(0, (Number(l.quantity_on_hand) || 0) - (Number(l.quantity_allocated) || 0));
-                                                                        const expStr = l.expiry_date ? String(l.expiry_date).slice(0, 10) : "";
+                                                                            setOpenDeliveryLotDropdownIndex(null);
+                                                                            setDeliveryLotSearchQueries(prev => {
+                                                                                const next = { ...prev };
+                                                                                delete next[idx];
+                                                                                return next;
+                                                                            });
+                                                                        };
+
                                                                         return (
-                                                                            <option key={lIdx} value={l.lot_number}>
-                                                                                {l.lot_number} (Tồn: {lotAvail}{expStr ? ` • HSD: ${expStr}` : ""})
-                                                                            </option>
+                                                                            <div className="divide-y divide-slate-800/70">
+                                                                                {filteredProductLots.length > 0 ? (
+                                                                                    <div>
+                                                                                        <div className="px-3 py-1.5 bg-emerald-950/40 text-[10px] font-bold text-emerald-300 flex items-center justify-between">
+                                                                                            <span>🎯 Lô tồn kho của {item.productCode} ({filteredProductLots.length} lô)</span>
+                                                                                            <span className="text-[9px] font-normal text-emerald-400/80">Ưu tiên FEFO</span>
+                                                                                        </div>
+                                                                                        <div className="divide-y divide-slate-800/60">
+                                                                                            {filteredProductLots.map((l: any, lIdx: number) => {
+                                                                                                const lotAvail = Number(l.available_qty ?? Math.max(0, (Number(l.quantity_on_hand) || 0) - (Number(l.quantity_allocated) || 0)));
+                                                                                                const onHand = Number(l.quantity_on_hand) || 0;
+                                                                                                const alloc = Number(l.quantity_allocated) || 0;
+                                                                                                const expStr = l.expiry_date ? String(l.expiry_date).slice(0, 10) : "";
+                                                                                                const isSelected = String(item.lotNo || "").trim().toLowerCase() === String(l.lot_number || "").trim().toLowerCase();
+                                                                                                return (
+                                                                                                    <div
+                                                                                                        key={`prod-lot-${lIdx}`}
+                                                                                                        onClick={() => handleSelectLotOption(l)}
+                                                                                                        className={cn(
+                                                                                                            "px-3 py-2 hover:bg-slate-900 cursor-pointer transition-colors flex items-center justify-between gap-2",
+                                                                                                            isSelected ? "bg-amber-950/30 border-l-2 border-amber-400" : ""
+                                                                                                        )}
+                                                                                                    >
+                                                                                                        <div className="min-w-0 flex-1">
+                                                                                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                                                <span className="font-mono font-bold text-xs text-amber-300">{l.lot_number}</span>
+                                                                                                                {lIdx === 0 && (
+                                                                                                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-bold">FEFO</span>
+                                                                                                                )}
+                                                                                                                {expStr && (
+                                                                                                                    <span className="text-[10px] font-mono text-indigo-300">HSD: {expStr}</span>
+                                                                                                                )}
+                                                                                                            </div>
+                                                                                                            <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-2 flex-wrap">
+                                                                                                                <span>📍 {l.warehouse_location || "Kho Trung Tâm"}</span>
+                                                                                                                {l.shelf_position && <span>• Kệ: {l.shelf_position}</span>}
+                                                                                                                {alloc > 0 && <span className="text-amber-400/90">• Tồn: {onHand} (Đang giữ: {alloc})</span>}
+                                                                                                            </div>
+                                                                                                        </div>
+                                                                                                        <div className="text-right shrink-0">
+                                                                                                            <span className={cn(
+                                                                                                                "inline-block px-2 py-0.5 rounded font-mono font-bold text-[11px] border",
+                                                                                                                lotAvail >= (Number(item.quantity) || 1)
+                                                                                                                    ? "bg-emerald-950/90 text-emerald-300 border-emerald-600/60"
+                                                                                                                    : "bg-amber-950/90 text-amber-300 border-amber-600/60"
+                                                                                                            )}>
+                                                                                                                Khả dụng: {lotAvail} {l.unit || item.unit || "Bộ"}
+                                                                                                            </span>
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    <div className="px-3 py-2 bg-amber-950/20 text-[10px] text-amber-300/90">
+                                                                                        ℹ️ Mã <strong className="font-mono">{item.productCode}</strong> chưa có lô khớp trực tiếp — bạn có thể chọn từ danh sách các lô đang có trong kho bên dưới hoặc gõ trực tiếp số lô vào ô nhập.
+                                                                                    </div>
+                                                                                )}
+
+                                                                                {filteredOtherLots.length > 0 && (
+                                                                                    <div>
+                                                                                        <div className="px-3 py-1.5 bg-slate-900/90 text-[10px] font-bold text-slate-300 flex items-center justify-between">
+                                                                                            <span>📦 {filteredProductLots.length > 0 ? "Các lô hàng khác đang có trong kho" : "Danh sách lô đang có trong kho"} ({filteredOtherLots.length} lô)</span>
+                                                                                            <span className="text-[9px] font-normal text-slate-400">Click để chọn</span>
+                                                                                        </div>
+                                                                                        <div className="divide-y divide-slate-800/60">
+                                                                                            {filteredOtherLots.map((l: any, oIdx: number) => {
+                                                                                                const lotAvail = Number(l.available_qty ?? Math.max(0, (Number(l.quantity_on_hand) || 0) - (Number(l.quantity_allocated) || 0)));
+                                                                                                const expStr = l.expiry_date ? String(l.expiry_date).slice(0, 10) : "";
+                                                                                                const isSelected = String(item.lotNo || "").trim().toLowerCase() === String(l.lot_number || "").trim().toLowerCase();
+                                                                                                return (
+                                                                                                    <div
+                                                                                                        key={`other-lot-${oIdx}`}
+                                                                                                        onClick={() => handleSelectLotOption(l)}
+                                                                                                        className={cn(
+                                                                                                            "px-3 py-2 hover:bg-slate-900 cursor-pointer transition-colors flex items-center justify-between gap-2",
+                                                                                                            isSelected ? "bg-amber-950/30 border-l-2 border-amber-400" : ""
+                                                                                                        )}
+                                                                                                    >
+                                                                                                        <div className="min-w-0 flex-1">
+                                                                                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                                                <span className="font-mono font-bold text-xs text-amber-300">{l.lot_number}</span>
+                                                                                                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-indigo-300 font-mono font-bold">{l.product_code}</span>
+                                                                                                                {expStr && (
+                                                                                                                    <span className="text-[10px] font-mono text-slate-400">HSD: {expStr}</span>
+                                                                                                                )}
+                                                                                                            </div>
+                                                                                                            <div className="text-[10px] text-slate-300 truncate mt-0.5">
+                                                                                                                {l.product_name} <span className="text-slate-500">• 📍 {l.warehouse_location || "Kho Trung Tâm"}</span>
+                                                                                                            </div>
+                                                                                                        </div>
+                                                                                                        <div className="text-right shrink-0">
+                                                                                                            <span className="inline-block px-2 py-0.5 rounded font-mono font-bold text-[11px] bg-teal-950/90 text-teal-300 border border-teal-700/60">
+                                                                                                                Khả dụng: {lotAvail} {l.unit || "Hộp"}
+                                                                                                            </span>
+                                                                                                        </div>
+                                                                                                    </div>
+                                                                                                );
+                                                                                            })}
+                                                                                        </div>
+                                                                                    </div>
+                                                                                )}
+
+                                                                                {filteredProductLots.length === 0 && filteredOtherLots.length === 0 && (
+                                                                                    <div className="p-4 text-center text-xs text-slate-400 italic">
+                                                                                        Không tìm thấy lô khớp từ khóa "{deliveryLotSearchQueries[idx]}". Bạn có thể nhập trực tiếp số lô vào ô trên.
+                                                                                    </div>
+                                                                                )}
+                                                                            </div>
                                                                         );
-                                                                    })}
-                                                                    <option value="__MANUAL__">✏️ Nhập số lô khác...</option>
-                                                                </select>
-                                                            </div>
-                                                        ) : (
-                                                            <div className="flex items-center gap-1">
-                                                                <input
-                                                                    type="text"
-                                                                    required
-                                                                    value={item.lotNo || ""}
-                                                                    placeholder="Nhập số lô..."
-                                                                    onChange={(e) => {
-                                                                        const val = e.target.value;
-                                                                        setDeliveryItems(prev => prev.map((it, i) => i === idx ? { ...it, lotNo: val } : it));
-                                                                    }}
-                                                                    className="w-full bg-slate-900 border border-amber-800/60 rounded px-2 py-1 text-xs font-mono font-bold text-amber-300 outline-none focus:border-amber-500"
-                                                                />
-                                                                {availLots.length > 0 && (
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => setDeliveryItems(prev => prev.map((it, i) => i === idx ? { ...it, isManualLot: false } : it))}
-                                                                        className="text-[9px] text-slate-400 hover:text-white px-1.5 py-1 rounded bg-slate-800 shrink-0"
-                                                                        title="Chọn lại từ danh sách lô kho"
-                                                                    >
-                                                                        ↩ Chọn lô
-                                                                    </button>
-                                                                )}
-                                                            </div>
+                                                                    })()}
+                                                                </div>
+                                                            </>
                                                         )}
                                                     </div>
                                                 </td>
