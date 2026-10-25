@@ -996,14 +996,14 @@ export const ProcurementModule: React.FC = () => {
           }
           .header-table {
             width: 100%;
-            border-bottom: 2px solid #0c4a97;
+            border-bottom: 2px solid #ea580c;
             padding-bottom: 12px;
             margin-bottom: 18px;
           }
           .company-name {
             font-size: 16px;
             font-weight: 900;
-            color: #0c4a97;
+            color: #ea580c;
             text-transform: uppercase;
             letter-spacing: -0.3px;
           }
@@ -1025,7 +1025,7 @@ export const ProcurementModule: React.FC = () => {
           .po-code {
             font-size: 14px;
             font-weight: 900;
-            color: #0c4a97;
+            color: #ea580c;
             margin-top: 4px;
             font-variant-numeric: tabular-nums;
           }
@@ -1080,10 +1080,10 @@ export const ProcurementModule: React.FC = () => {
           .notes-box {
             margin-bottom: 20px;
             padding: 10px 14px;
-            background: #eef4fc;
-            border-left: 3px solid #0c4a97;
+            background: #fff7ed;
+            border-left: 3px solid #ea580c;
             font-size: 11px;
-            color: #0b356a;
+            color: #9a3412;
             border-radius: 4px;
           }
           .signatures {
@@ -1170,7 +1170,7 @@ export const ProcurementModule: React.FC = () => {
             ${items.map((it: any, i: number) => `
               <tr>
                 <td class="text-center">${i + 1}</td>
-                <td class="font-mono font-bold" style="color: #0c4a97;">${it.product_code || ''}</td>
+                <td class="font-mono font-bold" style="color: #ea580c;">${it.product_code || ''}</td>
                 <td style="font-weight: 500;">${esc(cleanItemName(it.product_name))}</td>
                 <td class="text-center">${esc(it.unit || '')}</td>
                 <td class="text-center font-bold">${it.quantity || 1}</td>
@@ -1183,7 +1183,7 @@ export const ProcurementModule: React.FC = () => {
           <tfoot>
             <tr class="total-row">
               <td colspan="6" class="text-right uppercase">TỔNG CỘNG TIỀN HÀNG (CHƯA VAT):</td>
-              <td class="text-right font-mono font-bold" style="color: #0c4a97; font-size: 13px;">
+              <td class="text-right font-mono font-bold" style="color: #ea580c; font-size: 13px;">
                 ${Number(totalAmount).toLocaleString('vi-VN')} đ
               </td>
               ${hasLineNotes ? '<td></td>' : ''}
@@ -2076,10 +2076,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       );
       if (!notesMatch) return false;
       const poItems = Array.isArray(o.items) ? o.items : [];
-      return poItems.some((poIt: any) => 
-        (itCode && poIt.product_code === itCode) || 
-        (itName && poIt.product_name && (poIt.product_name.includes(itName) || itName.includes(poIt.product_name)))
-      );
+      const itSpec = String(it?.specification || "").trim();
+      return poItems.some((poIt: any) => {
+        const codeMatch = Boolean(itCode && poIt.product_code === itCode);
+        const nameMatch = Boolean(itName && poIt.product_name && (poIt.product_name.includes(itName) || itName.includes(poIt.product_name)));
+        if (!codeMatch && !nameMatch) return false;
+        if (itSpec && poIt.specification) {
+          return String(poIt.specification).trim() === itSpec;
+        }
+        if (itSpec && poIt.product_name && poIt.product_name.includes("(")) {
+          return poIt.product_name.includes(itSpec);
+        }
+        return true;
+      });
     });
 
     if (matchedPO) {
@@ -2312,6 +2321,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       poItems.push({
         product_code: it.product_code || "TBR-PR-ITEM",
         product_name: nameWithSpec,
+        specification: it.specification || "",
+        notes: it.notes || "",
         source_pr_code: pr.workflow_code || undefined,
         is_stock: !forCustomer,
         target_customer_name: forCustomer ? pr.customer_name : undefined,
@@ -2470,6 +2481,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             combinedItems.push({
               product_code: it.product_code || "TBR-ITEM",
               product_name: nameWithSpec,
+              specification: it.specification || "",
+              notes: it.notes || "",
               source_pr_code: pr.workflow_code || undefined,
               is_stock: !forCustomer,
               target_customer_name: forCustomer ? pr.customer_name : undefined,

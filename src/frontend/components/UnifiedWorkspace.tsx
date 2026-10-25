@@ -177,7 +177,7 @@ export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
     "Rà soát tính hợp pháp Hồ sơ Thầu Bệnh viện",
     "Quản lý Giấy phép lưu hành & CFS / COA IVD",
     "Thỏa thuận Bảo mật & Hợp đồng Đại lý",
-    "Bảo hộ Sở hữu trí tuệ thương hiệu TBRs",
+    "Bảo hộ Sở hữu trí tuệ thương hiệu TBR",
     "Tư vấn Pháp luật Doanh nghiệp & Lao động",
     "Khác"
   ]
@@ -446,7 +446,7 @@ export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]>
         { name: "Kiểm tra bộ chứng từ xuất nhập khẩu (Invoice, Packing List, CO, CQ, BL)", estimatedDays: 2 },
         { name: "Đăng ký kiểm tra chất lượng nhà nước / Giấy phép nhập khẩu BYT", estimatedDays: 3 },
         { name: "Truyền tờ khai hải quan điện tử & Phối hợp thông quan tại cửa khẩu", estimatedDays: 2 },
-        { name: "Điều xe lạnh chuyên dụng vận chuyển hàng về kho TBRs an toàn", estimatedDays: 1 }
+        { name: "Điều xe lạnh chuyên dụng vận chuyển hàng về kho TBR an toàn", estimatedDays: 1 }
       ]
     },
     {
@@ -521,7 +521,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     sourceDept: "Kinh Doanh",
     targetDept: "Application",
     icon: "FlaskConical",
-    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab TBRs hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
+    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab TBR hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
     sla_days: 5,
     steps: [
       { step_index: 0, title: "Tiếp nhận & Thẩm định mẫu / Thiết bị", dept: "Application", assignee_name: "", sla_hours: 24, deliverables: "Xác nhận loại mẫu sinh học, hóa chất tương thích, phân công nhân sự & lịch Demo" },
@@ -556,7 +556,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     steps: [
       { step_index: 0, title: "Tiếp nhận đề xuất PR & Khảo sát nhà cung cấp", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
       { step_index: 1, title: "Trình duyệt ban giám đốc & Phát hành đơn PO", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Đơn đặt hàng PO có chữ ký phê duyệt" },
-      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho TBRs", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
+      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho TBR", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
     ]
   },
   {
@@ -805,7 +805,7 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
                         )}
                       </div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        {p.position || "Nhân sự TBRs"} • {p.department || "TBR"}
+                        {p.position || "Nhân sự TBR"} • {p.department || "TBR"}
                       </div>
                     </div>
                     {isSelected && (
@@ -1483,7 +1483,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const userRole = (user?.role || "").toLowerCase();
   const rawUserDept = (user as any)?.department || "Kinh Doanh";
   const userDept = normalizeWorkspaceDept(rawUserDept) || "Kinh Doanh";
-  const currentStaffName = user?.name || (user as any)?.full_name || "Cán bộ TBRs";
+  const currentStaffName = user?.name || (user as any)?.full_name || "Cán bộ TBR";
 
   const isDirector = useMemo(() => {
     return userRole === "admin" || userRole.includes("director") || userRole.includes("giám đốc") || rawUserDept.toLowerCase().includes("giám đốc");
@@ -1600,6 +1600,26 @@ export const UnifiedWorkspace: React.FC = () => {
   // Lịch cũ chỉ lưu "Thứ 2"... (không có ngày): hiển thị ở tuần hiện tại
   const scheduleOnDay = (s: any, day: { name: string; date: string }) =>
     s.date ? String(s.date).slice(0, 10) === day.date : (weekOffset === 0 && s.day === day.name);
+
+  // Khử trùng lặp thẻ lịch công tác tuần (do đồng bộ nhiều lần từ báo cáo tuần Kinh Doanh / Application)
+  const dedupeWeeklySchedules = useCallback((rawList: any[]): any[] => {
+    if (!Array.isArray(rawList)) return [];
+    const seen = new Set<string>();
+    const result: any[] = [];
+    for (const s of rawList) {
+      if (!s || typeof s !== "object") continue;
+      const dateOrDay = s.date ? String(s.date).slice(0, 10) : String(s.day || "").trim();
+      const timeStr = String(s.time || "").trim();
+      const actorStr = canonStaffName(s.actor || "");
+      const titleStr = canonStaffName(s.title || "");
+      const locStr = canonStaffName(s.location || "");
+      const sig = `${dateOrDay}|${timeStr}|${actorStr}|${titleStr}|${locStr}`;
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      result.push(s);
+    }
+    return result;
+  }, []);
   const openScheduleForm = (date?: string, item?: any) => {
     const defaultActor = selectedAssignee !== "all" ? selectedAssignee : (departmentStaffList[0]?.full_name || currentStaffName);
     const defaultCategory = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Application" : selectedDept);
@@ -1791,10 +1811,13 @@ export const UnifiedWorkspace: React.FC = () => {
 
   const [selectedDailyDay, setSelectedDailyDay] = useState<string>(getInitialDailyDay());
   const [selectedDailyStaff, setSelectedDailyStaff] = useState<string>("");
+  const [analyticsPeriod, setAnalyticsPeriod] = useState<"today" | "week" | "month" | "all">("month");
   const [dailyPlanItems, setDailyPlanItems] = useState<Array<{
     id: string | number;
     title: string;
     source: "schedule" | "task" | "extra";
+    task_id?: number;
+    task_code?: string;
     category?: string;
     location?: string;
     status: "completed" | "partial" | "pending";
@@ -1825,7 +1848,8 @@ export const UnifiedWorkspace: React.FC = () => {
       const res = await fetch("/api/workflows?action=overview");
       const data = await res.json();
       if (data) {
-        setTasks(data.tasks || []);
+        const fetchedTasks: any[] = data.tasks || [];
+        setTasks(fetchedTasks);
         setWorkflows(data.workflows || []);
         setDailyLogs(data.daily || []);
         if (data.personnel) setPersonnelList(data.personnel);
@@ -1877,36 +1901,87 @@ export const UnifiedWorkspace: React.FC = () => {
         } catch (supErr) {
           console.warn("Could not load procurement suppliers:", supErr);
         }
-        // Load persistent weekly schedule
+        // Load persistent weekly schedule & auto-deduplicate
         try {
           const schedRes = await fetch("/api/storage?key=unified_weekly_schedule");
           const schedData = await schedRes.json();
+          let rawSched: any[] = [];
           if (Array.isArray(schedData?.data)) {
-            setWeeklySchedule(schedData.data);
+            rawSched = schedData.data;
           } else {
             const local = typeof window !== "undefined" ? localStorage.getItem("unified_weekly_schedule") : null;
-            if (local) setWeeklySchedule(JSON.parse(local));
+            if (local) rawSched = JSON.parse(local);
+          }
+          const cleanedSched = dedupeWeeklySchedules(rawSched);
+          setWeeklySchedule(cleanedSched);
+          if (cleanedSched.length !== rawSched.length) {
+            if (typeof window !== "undefined") {
+              localStorage.setItem("unified_weekly_schedule", JSON.stringify(cleanedSched));
+            }
+            fetch("/api/storage?key=unified_weekly_schedule", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(cleanedSched)
+            }).catch(() => {});
           }
         } catch (err) {
           console.warn("Could not load weekly schedule:", err);
           const local = typeof window !== "undefined" ? localStorage.getItem("unified_weekly_schedule") : null;
-          if (local) setWeeklySchedule(JSON.parse(local));
+          if (local) setWeeklySchedule(dedupeWeeklySchedules(JSON.parse(local)));
         }
 
-        // Load persistent thematic projects
+        // Load persistent thematic projects & sync stage progress with linked company_tasks
         try {
           const prjRes = await fetch("/api/storage?key=unified_thematic_projects");
           const prjData = await prjRes.json();
+          let rawPrjs: any[] = [];
           if (Array.isArray(prjData?.data)) {
-            setLabProjects(prjData.data);
+            rawPrjs = prjData.data;
           } else {
             const local = typeof window !== "undefined" ? localStorage.getItem("unified_thematic_projects") : null;
-            if (local) setLabProjects(JSON.parse(local));
+            if (local) rawPrjs = JSON.parse(local);
           }
+          const syncedPrjs = rawPrjs.map((prj: any) => {
+            const prjIdUpper = String(prj.id || "").toUpperCase();
+            const linked = fetchedTasks.filter((t: any) =>
+              String(t.related_workflow_code || "").toUpperCase() === prjIdUpper ||
+              String(t.task_code || "").toUpperCase().startsWith(`TSK-${prjIdUpper}-S`)
+            );
+            const stages = (prj.stages || []).map((stg: any, idx: number) => {
+              const stageTaskCode = `TSK-${prjIdUpper}-S${idx + 1}`;
+              const matchedTask = linked.find((t: any) => String(t.task_code || "").toUpperCase() === stageTaskCode);
+              if (matchedTask) {
+                const stgStatus = matchedTask.status === "DONE" ? "completed" : matchedTask.status === "IN_PROGRESS" ? "in_progress" : stg.status;
+                return { ...stg, status: stgStatus };
+              }
+              return stg;
+            });
+            return {
+              ...prj,
+              stages,
+              tasksCount: Math.max(linked.length, stages.length, Number(prj.tasksCount) || 0)
+            };
+          });
+          setLabProjects(syncedPrjs);
         } catch (err) {
           console.warn("Could not load thematic projects:", err);
           const local = typeof window !== "undefined" ? localStorage.getItem("unified_thematic_projects") : null;
           if (local) setLabProjects(JSON.parse(local));
+        }
+
+        // Load persistent sales targets
+        try {
+          const stRes = await fetch("/api/storage?key=unified_sales_targets");
+          const stData = await stRes.json();
+          if (Array.isArray(stData?.data)) {
+            setSalesTargets(stData.data);
+          } else {
+            const localSt = typeof window !== "undefined" ? localStorage.getItem("unified_sales_targets") : null;
+            if (localSt) setSalesTargets(JSON.parse(localSt));
+          }
+        } catch (err) {
+          const localSt = typeof window !== "undefined" ? localStorage.getItem("unified_sales_targets") : null;
+          if (localSt) setSalesTargets(JSON.parse(localSt));
         }
       }
     } catch (e) {
@@ -2406,25 +2481,66 @@ export const UnifiedWorkspace: React.FC = () => {
   const analyticsData = useMemo(() => {
     const isDeptScoped = selectedDept !== "all";
     const currentScopeDept = rolePerspective === "manager" ? managerDept : selectedDept;
+    const todayStr = todayVN();
+    const currentMonthPrefix = todayStr.slice(0, 7); // YYYY-MM
+    const weekStartStr = viewedWeek.days[0]?.date || todayStr;
+    const weekEndStr = viewedWeek.days[viewedWeek.days.length - 1]?.date || todayStr;
+    const q = searchQuery.trim().toLowerCase();
+
+    const matchesPeriod = (dateVal: any): boolean => {
+      if (analyticsPeriod === "all") return true;
+      if (!dateVal) return true;
+      const dStr = String(dateVal).slice(0, 10);
+      if (dStr.length < 7) return true;
+      if (analyticsPeriod === "today") return dStr === todayStr;
+      if (analyticsPeriod === "week") return dStr >= weekStartStr && dStr <= weekEndStr;
+      if (analyticsPeriod === "month") return dStr.startsWith(currentMonthPrefix);
+      return true;
+    };
+
+    const matchesSearch = (...fields: any[]): boolean => {
+      if (!q) return true;
+      return fields.some(f => f && String(f).toLowerCase().includes(q));
+    };
 
     const scopeTasks = tasks.filter(t => {
-      if (selectedDept === "all") return true;
-      return isSameWorkspaceDept(t.department, selectedDept);
+      if (selectedDept !== "all" && !isSameWorkspaceDept(t.department, selectedDept)) return false;
+      if (selectedAssignee === "__UNASSIGNED__" && cleanWorkspaceAssignee(t.assignee_name)) return false;
+      if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !sameStaffName(cleanWorkspaceAssignee(t.assignee_name), selectedAssignee)) return false;
+      if (!matchesSearch(t.title, t.task_code, t.assignee_name, t.customer_name, t.department)) return false;
+      return true;
     });
 
     const scopeWorkflows = workflows.filter(w => {
-      if (selectedDept === "all") return true;
-      return isSameWorkspaceDept(w.requester_dept, selectedDept) || isSameWorkspaceDept(w.target_dept, selectedDept);
+      if (selectedDept !== "all") {
+        const stepDepts = Array.isArray(w.steps)
+          ? w.steps.flatMap((s: any) => [
+              ...(Array.isArray(s?.departments) ? s.departments : []),
+              ...(s?.dept ? String(s.dept).split(",").map((d: string) => d.trim()) : [])
+            ])
+          : [];
+        const matchWfDept =
+          isSameWorkspaceDept(w.requester_dept, selectedDept) ||
+          String(w.target_dept || "").split(",").some((d: string) => isSameWorkspaceDept(d.trim(), selectedDept)) ||
+          stepDepts.some((d: string) => isSameWorkspaceDept(d, selectedDept));
+        if (!matchWfDept) return false;
+      }
+      if (!matchesSearch(w.title, w.workflow_code, w.requester_name, w.assignee_name, w.customer_name, w.product_info)) return false;
+      return true;
     });
 
     const scopeDailyLogs = dailyLogs.filter(d => {
-      if (selectedDept === "all") return true;
-      return isSameWorkspaceDept(d.department, selectedDept);
+      if (selectedDept !== "all" && !isSameWorkspaceDept(d.department, selectedDept)) return false;
+      if (selectedAssignee !== "all" && selectedAssignee !== "__UNASSIGNED__" && !sameStaffName(d.employee_name, selectedAssignee)) return false;
+      if (!matchesPeriod(d.log_date || d.created_at)) return false;
+      if (!matchesSearch(d.employee_name, d.work_content, d.result, d.issues, d.department)) return false;
+      return true;
     });
 
     const scopeThematicPlans = labProjects.filter(p => {
-      if (selectedDept === "all") return true;
-      return isSameWorkspaceDept(p.dept, selectedDept);
+      if (selectedDept !== "all" && !isSameWorkspaceDept(p.dept, selectedDept)) return false;
+      if (!matchesSearch(p.id, p.name, p.lead, p.dept, p.description)) return false;
+      return true;
     });
 
     const scopePersonnel = personnelList.filter(p => {
@@ -2438,16 +2554,38 @@ export const UnifiedWorkspace: React.FC = () => {
     const inProgressTasks = scopeTasks.filter(t => t.status === "IN_PROGRESS").length;
     const todoTasks = scopeTasks.filter(t => t.status === "TODO").length;
     const taskCompletionRate = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
+    // Điểm tiến độ thực thi (công việc đang làm tính 50% trọng số tiến độ)
+    const taskExecutionScore = totalTasks > 0 ? Math.round(((doneTasks + inProgressTasks * 0.5) / totalTasks) * 100) : 0;
 
-    // Workflow metrics & SLA
+    // Workflow metrics & SLA (Đếm đầy đủ PENDING, ACCEPTED, IN_PROGRESS, REVIEW, COMPLETED, CANCELLED/REJECTED)
     const totalWf = scopeWorkflows.length;
-    const doneWf = scopeWorkflows.filter(w => w.status === "COMPLETED").length;
-    const pendingWf = scopeWorkflows.filter(w => w.status === "PENDING" || w.status === "ACCEPTED").length;
-    const overdueWf = scopeWorkflows.filter(w => {
-      if (w.status === "COMPLETED") return false;
+    const doneWf = scopeWorkflows.filter(w => String(w.status || "").toUpperCase() === "COMPLETED").length;
+    const cancelledWf = scopeWorkflows.filter(w => ["CANCELLED", "REJECTED"].includes(String(w.status || "").toUpperCase())).length;
+    const pendingWf = Math.max(0, totalWf - doneWf - cancelledWf);
+
+    const overdueWorkflowList = scopeWorkflows.filter(w => {
+      const st = String(w.status || "").toUpperCase();
+      if (st === "CANCELLED" || st === "REJECTED") return false;
       if (!w.due_date) return false;
-      return new Date(w.due_date) < new Date();
-    }).length;
+      const dueStr = String(w.due_date).slice(0, 10);
+      if (st === "COMPLETED") {
+        const doneDateStr = w.updated_at ? String(w.updated_at).slice(0, 10) : "";
+        return Boolean(doneDateStr && doneDateStr > dueStr);
+      }
+      return dueStr < todayStr;
+    });
+    const overdueWf = overdueWorkflowList.length;
+    const overdueDepts = Array.from(
+      new Set(
+        overdueWorkflowList
+          .map(w => {
+            const steps = Array.isArray(w.steps) ? w.steps : [];
+            const idx = typeof w.current_step_index === "number" ? w.current_step_index : 0;
+            return steps[idx]?.dept || w.target_dept || "Các bộ phận liên quan";
+          })
+          .filter(Boolean)
+      )
+    );
     const wfSlaRate = totalWf > 0 ? Math.max(0, Math.round(((totalWf - overdueWf) / totalWf) * 100)) : 0;
 
     // Thematic Plans progress
@@ -2461,9 +2599,15 @@ export const UnifiedWorkspace: React.FC = () => {
     });
     const planProgressRate = totalStagesCount > 0 ? Math.round((completedStagesCount / totalStagesCount) * 100) : (totalPlans > 0 ? 50 : 0);
 
-    // Daily discipline
+    // Daily discipline: Đếm số nhân sự DUY NHẤT đã nộp báo cáo Daily trong kỳ (không lấy tổng bản ghi lịch sử chia cho nhân sự)
     const staffCount = Math.max(1, scopePersonnel.length);
-    const dailySubmittedCount = scopeDailyLogs.length;
+    const uniqueDailyStaffSet = new Set(
+      scopeDailyLogs
+        .map(l => canonStaffName(l.employee_name || l.author || ""))
+        .filter(Boolean)
+    );
+    const dailySubmittedCount = uniqueDailyStaffSet.size;
+    const totalDailyReportsCount = scopeDailyLogs.length;
     const dailyDisciplineRate = Math.min(100, Math.round((dailySubmittedCount / staffCount) * 100));
 
     // Difficulties extracted from real daily logs
@@ -2476,20 +2620,20 @@ export const UnifiedWorkspace: React.FC = () => {
       .filter(l => l.next_day_plan && l.next_day_plan.trim() !== "")
       .map(l => ({ staff: l.employee_name || "Nhân viên", dept: l.department, plan: l.next_day_plan }));
 
-    // Composite Score
-    const hasData = totalTasks > 0 || totalWf > 0 || dailySubmittedCount > 0 || totalPlans > 0;
+    // Composite Score (Chuẩn hóa 4 trụ cột: Thực thi 40% + Phối hợp SLA 30% + Kế hoạch/Lịch 15% + Kỷ luật Daily 15% = 100%)
+    const hasData = totalTasks > 0 || totalWf > 0 || totalDailyReportsCount > 0 || totalPlans > 0;
     let compositeScore = 0;
     if (hasData) {
       const weights = {
-        task: totalTasks > 0 ? 0.4 : 0,
-        wf: totalWf > 0 ? 0.3 : 0,
+        task: totalTasks > 0 ? 0.40 : 0,
+        wf: totalWf > 0 ? 0.30 : 0,
         plan: totalPlans > 0 ? 0.15 : 0,
-        daily: dailySubmittedCount > 0 ? 0.3 : 0
+        daily: 0.15
       };
       const totalWeight = weights.task + weights.wf + weights.plan + weights.daily;
       if (totalWeight > 0) {
         compositeScore = Math.round(
-          ((taskCompletionRate * weights.task) +
+          ((taskExecutionScore * weights.task) +
           (wfSlaRate * weights.wf) +
           (planProgressRate * weights.plan) +
           (dailyDisciplineRate * weights.daily)) / totalWeight
@@ -2518,16 +2662,36 @@ export const UnifiedWorkspace: React.FC = () => {
       }
     }
 
-    // Department Breakdown Scorecard (4 core depts)
-    const departments = ["Application", "Kinh Doanh", "Kho & Vận Hành", "Cung Ứng"];
+    // Department Breakdown Scorecard (4 core depts + Khối Hành Chính / Khác nếu có task để tổng số việc luôn khớp 100% với 26/26 việc)
+    const coreDepts = ["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng"];
+    const isCoreDept = (deptName: string) => coreDepts.some(c => isSameWorkspaceDept(deptName, c));
+    const otherTasksCheck = scopeTasks.filter(t => !isCoreDept(t.department));
+    const otherStaffCheck = scopePersonnel.filter(p => !isCoreDept(p.department));
+    const departments = (otherTasksCheck.length > 0 || otherStaffCheck.length > 0)
+      ? [...coreDepts, "Khối Hành Chính & Khác"]
+      : coreDepts;
+
     const deptScorecards = departments.map(dName => {
-      const dTasks = tasks.filter(t => isSameWorkspaceDept(t.department, dName));
+      const isOtherGroup = dName === "Khối Hành Chính & Khác";
+      const matchDeptFn = (deptVal: string) => isOtherGroup ? !isCoreDept(deptVal) : isSameWorkspaceDept(deptVal, dName);
+
+      const dTasks = scopeTasks.filter(t => matchDeptFn(t.department));
       const dDone = dTasks.filter(t => t.status === "DONE").length;
       const dInProg = dTasks.filter(t => t.status === "IN_PROGRESS").length;
       const dTodo = dTasks.filter(t => t.status === "TODO").length;
       const dTaskPercent = dTasks.length > 0 ? Math.round((dDone / dTasks.length) * 100) : 0;
+      const dTaskExecScore = dTasks.length > 0 ? Math.round(((dDone + dInProg * 0.5) / dTasks.length) * 100) : 0;
 
-      const dPlans = labProjects.filter(p => isSameWorkspaceDept(p.dept, dName));
+      const dWfs = scopeWorkflows.filter(w =>
+        matchDeptFn(w.target_dept) || matchDeptFn(w.requester_dept)
+      );
+      const dOverdueWfs = overdueWorkflowList.filter(w =>
+        matchDeptFn(w.target_dept) || matchDeptFn(w.requester_dept)
+      );
+      const dWfSlaPercent = dWfs.length > 0 ? Math.max(0, Math.round(((dWfs.length - dOverdueWfs.length) / dWfs.length) * 100)) : 100;
+
+      const dPlans = scopeThematicPlans.filter(p => matchDeptFn(p.dept));
+      const dSchedules = weeklySchedule.filter(s => matchDeptFn(s.dept));
       let dStagesTotal = 0;
       let dStagesDone = 0;
       dPlans.forEach(p => {
@@ -2535,19 +2699,27 @@ export const UnifiedWorkspace: React.FC = () => {
         dStagesTotal += st.length;
         dStagesDone += st.filter((s: any) => s.status === "completed").length;
       });
-      const dPlanPercent = dStagesTotal > 0 ? Math.round((dStagesDone / dStagesTotal) * 100) : (dPlans.length > 0 ? 50 : 0);
+      const dPlanPercent = dStagesTotal > 0
+        ? Math.round((dStagesDone / dStagesTotal) * 100)
+        : dPlans.length > 0
+        ? 50
+        : dSchedules.length > 0
+        ? Math.min(100, 60 + dSchedules.length * 10)
+        : dTaskExecScore;
 
-      const dStaff = personnelList.filter(p => isSameWorkspaceDept(p.department, dName));
-      const dLogs = dailyLogs.filter(l => isSameWorkspaceDept(l.department, dName));
-      const dDailyPercent = dStaff.length > 0 ? Math.min(100, Math.round((dLogs.length / dStaff.length) * 100)) : 0;
+      const dStaff = scopePersonnel.filter(p => matchDeptFn(p.department));
+      const dLogs = scopeDailyLogs.filter(l => matchDeptFn(l.department));
+      const dUniqueStaffSet = new Set(dLogs.map(l => canonStaffName(l.employee_name || l.author || "")).filter(Boolean));
+      const dUniqueDailyCount = dUniqueStaffSet.size;
+      const dDailyPercent = dStaff.length > 0 ? Math.min(100, Math.round((dUniqueDailyCount / dStaff.length) * 100)) : (dLogs.length > 0 ? 100 : 0);
 
-      const hasDeptData = dTasks.length > 0 || dLogs.length > 0 || dPlans.length > 0;
+      const hasDeptData = dTasks.length > 0 || dLogs.length > 0 || dPlans.length > 0 || dWfs.length > 0 || dSchedules.length > 0;
       let dScore = 0;
       let dGrade = "Chưa đánh giá";
       let dGradeClass = "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400";
 
       if (hasDeptData) {
-        dScore = Math.round(dTaskPercent * 0.4 + dPlanPercent * 0.3 + dDailyPercent * 0.3);
+        dScore = Math.round(dTaskExecScore * 0.35 + dWfSlaPercent * 0.20 + dPlanPercent * 0.25 + dDailyPercent * 0.20);
         if (dScore >= 90) {
           dGrade = "Xuất sắc (A+)";
           dGradeClass = "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300";
@@ -2573,10 +2745,15 @@ export const UnifiedWorkspace: React.FC = () => {
         todoTasks: dTodo,
         doneTasks: dDone,
         taskPercent: dTaskPercent,
+        wfCount: dWfs.length,
+        overdueWfCount: dOverdueWfs.length,
+        wfSlaPercent: dWfSlaPercent,
         plansCount: dPlans.length,
+        schedulesCount: dSchedules.length,
         planPercent: dPlanPercent,
         staffCount: dStaff.length,
-        dailyCount: dLogs.length,
+        dailyCount: dUniqueDailyCount,
+        totalDailyReports: dLogs.length,
         dailyPercent: dDailyPercent,
         score: dScore,
         grade: dGrade,
@@ -2585,18 +2762,31 @@ export const UnifiedWorkspace: React.FC = () => {
       };
     });
 
+    const periodLabel =
+      analyticsPeriod === "today"
+        ? `Hôm nay (${todayStr.slice(8, 10)}/${todayStr.slice(5, 7)}/${todayStr.slice(0, 4)})`
+        : analyticsPeriod === "week"
+        ? `Tuần ${viewedWeek.weekNo}/${viewedWeek.year}`
+        : analyticsPeriod === "month"
+        ? `Tháng ${todayStr.slice(5, 7)}/${todayStr.slice(0, 4)}`
+        : "Toàn thời gian";
+
     return {
       scopeTitle: isDeptScoped ? `Phòng ${currentScopeDept}` : "Toàn Công Ty",
+      periodLabel,
       scopeThematicPlans,
       totalTasks,
       doneTasks,
       inProgressTasks,
       todoTasks,
       taskCompletionRate,
+      taskExecutionScore,
       totalWf,
       doneWf,
       pendingWf,
+      cancelledWf,
       overdueWf,
+      overdueDepts,
       wfSlaRate,
       totalPlans,
       completedStagesCount,
@@ -2604,6 +2794,7 @@ export const UnifiedWorkspace: React.FC = () => {
       planProgressRate,
       staffCount,
       dailySubmittedCount,
+      totalDailyReportsCount,
       dailyDisciplineRate,
       realIssues,
       realNextDayPlans,
@@ -2613,7 +2804,7 @@ export const UnifiedWorkspace: React.FC = () => {
       scoreColor,
       deptScorecards
     };
-  }, [tasks, workflows, dailyLogs, labProjects, personnelList, selectedDept, rolePerspective, managerDept]);
+  }, [tasks, workflows, dailyLogs, labProjects, personnelList, selectedDept, selectedAssignee, rolePerspective, managerDept, searchQuery, analyticsPeriod, viewedWeek]);
 
   // Handle Save Task
   const handleSaveTask = async (e: React.FormEvent) => {
@@ -3334,18 +3525,20 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   };
 
-  // Sync daily items when day or staff changes
+  // Sync daily items when day or staff changes (Kết nối Lịch Công Tác Tuần theo đúng ngày/tuần + Bảng Công Việc)
   useEffect(() => {
     const targetStaff = selectedDailyStaff || currentStaffName;
     const targetDept = rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "" : selectedDept);
+    const targetDayObj = viewedWeek.days.find(d => d.name === selectedDailyDay) || { name: selectedDailyDay, date: todayVN() };
 
     const matchingSchedules = weeklySchedule.filter(s => {
-      if (s.day !== selectedDailyDay) return false;
-      if (targetDept && s.category !== targetDept && rolePerspective === "manager") return false;
+      if (!scheduleOnDay(s, targetDayObj)) return false;
+      if (targetDept && !isSameWorkspaceDept(s.category, targetDept) && rolePerspective === "manager") return false;
       if (targetStaff) {
+        if (sameStaffName(s.actor, targetStaff)) return true;
         const actor = (s.actor || "").toLowerCase().trim();
         const target = targetStaff.toLowerCase().trim();
-        return actor.includes(target) || target.includes(actor);
+        return Boolean(actor && target && (actor.includes(target) || target.includes(actor)));
       }
       return true;
     });
@@ -3363,8 +3556,38 @@ export const UnifiedWorkspace: React.FC = () => {
       proportionality: "balanced" as const
     }));
 
-    setDailyPlanItems(itemsFromSchedule);
-  }, [selectedDailyDay, selectedDailyStaff, weeklySchedule, rolePerspective, managerDept, selectedDept, currentStaffName]);
+    // Kéo thêm các Công việc đang thực hiện / đến hạn từ Bảng Công Việc (company_tasks) của nhân sự này
+    const matchingTasks = tasks.filter((t: any) => {
+      const cleanAssignee = cleanWorkspaceAssignee(t.assignee_name);
+      if (targetStaff) {
+        if (!cleanAssignee || !sameStaffName(cleanAssignee, targetStaff)) return false;
+      } else if (targetDept && !isSameWorkspaceDept(t.department, targetDept)) {
+        return false;
+      }
+      const dl = t.deadline ? String(t.deadline).slice(0, 10) : "";
+      if (t.status === "IN_PROGRESS") return true;
+      if (t.status === "TODO" && (!dl || dl <= targetDayObj.date)) return true;
+      if (t.status === "DONE" && dl === targetDayObj.date) return true;
+      return false;
+    });
+
+    const itemsFromTasks = matchingTasks.map((t: any) => ({
+      id: `task-${t.id}`,
+      task_id: t.id,
+      task_code: t.task_code,
+      title: `${t.task_code ? `[${t.task_code}] ` : ""}${t.title || ""}`,
+      source: "task" as const,
+      category: t.department,
+      location: t.customer_name || "",
+      status: (t.status === "DONE" ? "completed" : "partial") as "completed" | "partial" | "pending",
+      result: t.result || "",
+      issues: "",
+      work_hours: 2,
+      proportionality: "balanced" as const
+    }));
+
+    setDailyPlanItems([...itemsFromSchedule, ...itemsFromTasks]);
+  }, [selectedDailyDay, selectedDailyStaff, weeklySchedule, tasks, viewedWeek, rolePerspective, managerDept, selectedDept, currentStaffName]);
 
   // Auto-calculate daily total hours from plan items
   useEffect(() => {
@@ -3546,9 +3769,10 @@ export const UnifiedWorkspace: React.FC = () => {
       attachments: scheduleForm.attachments || []
     };
     const wasEditing = editingScheduleId !== null;
-    const updated = wasEditing
+    const updatedRaw = wasEditing
       ? weeklySchedule.map((s) => (s.id === editingScheduleId ? { ...s, ...newItem } : s))
       : [...weeklySchedule, newItem];
+    const updated = dedupeWeeklySchedules(updatedRaw);
     setWeeklySchedule(updated);
     setEditingScheduleId(null);
     try {
@@ -3635,7 +3859,7 @@ export const UnifiedWorkspace: React.FC = () => {
       slot: "Toàn thời gian (Theo tiến trình)",
       priority: "Cao",
       status: "Active",
-      tasksCount: 0,
+      tasksCount: defaultStages.length,
       budget: "",
       description: firstType?.sampleObjectives || "",
       stages: defaultStages
@@ -3659,7 +3883,7 @@ export const UnifiedWorkspace: React.FC = () => {
       slot: prj.slot || "Toàn thời gian (Theo tiến trình)",
       priority: prj.priority || "Cao",
       status: prj.status || "Active",
-      tasksCount: prj.tasksCount || 0,
+      tasksCount: prj.tasksCount || (prj.stages || []).length || 0,
       budget: prj.budget || "",
       description: prj.description || "",
       stages: prj.stages || []
@@ -3687,7 +3911,8 @@ export const UnifiedWorkspace: React.FC = () => {
       typeId: firstType?.id || "",
       typeName: firstType?.name || "",
       description: firstType?.sampleObjectives || "",
-      stages: defaultStages
+      stages: defaultStages,
+      tasksCount: defaultStages.length
     }));
   };
 
@@ -3707,8 +3932,49 @@ export const UnifiedWorkspace: React.FC = () => {
       typeName: typeDef.name,
       id: newId,
       description: typeDef.sampleObjectives,
-      stages: defaultStages
+      stages: defaultStages,
+      tasksCount: defaultStages.length
     }));
+  };
+
+  // Đồng bộ các giai đoạn của Kế hoạch chuyên đề sang Bảng Công Việc (company_tasks)
+  const syncThematicProjectTasks = async (prj: any) => {
+    const stages = Array.isArray(prj.stages) ? prj.stages : [];
+    const prjId = String(prj.id || "").trim();
+    if (!prjId || stages.length === 0) return;
+
+    const prioMap: Record<string, string> = { "Cao": "HIGH", "Trung bình": "MEDIUM", "Bình thường": "LOW" };
+    const taskPriority = prioMap[prj.priority] || "HIGH";
+
+    for (let idx = 0; idx < stages.length; idx++) {
+      const stg = stages[idx];
+      const stageTaskCode = `TSK-${prjId}-S${idx + 1}`;
+      const existingTask = tasks.find((t: any) => String(t.task_code || "").toUpperCase() === stageTaskCode.toUpperCase());
+      const taskStatus = stg.status === "completed" ? "DONE" : stg.status === "in_progress" ? "IN_PROGRESS" : (idx === 0 ? "IN_PROGRESS" : "TODO");
+      const payload = {
+        id: existingTask?.id || null,
+        task_code: stageTaskCode,
+        title: `[${prjId} • GĐ${idx + 1}/${stages.length}] ${stg.name} — ${prj.name}`,
+        department: prj.dept || "Application",
+        task_category: prj.typeName || "Kế hoạch chuyên đề",
+        assignee_name: stg.assignee || prj.lead || currentStaffName,
+        customer_name: "",
+        priority: taskPriority,
+        status: existingTask?.status === "DONE" && stg.status === "completed" ? "DONE" : taskStatus,
+        deadline: prj.endDate || todayVN(),
+        description: `Thuộc chuyên đề [${prjId}]: ${prj.name}\nMục tiêu: ${prj.description || ""}\nGiai đoạn ${idx + 1}: ${stg.name}${stg.estimatedDays ? ` (Dự kiến ${stg.estimatedDays} ngày)` : ""}`,
+        related_workflow_code: prjId,
+        result: existingTask?.result || (stg.status === "completed" ? "Đã nghiệm thu giai đoạn chuyên đề" : ""),
+        attachments: existingTask?.attachments || []
+      };
+      try {
+        await fetch("/api/workflows?action=task", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+      } catch {}
+    }
   };
 
   // Handle Save / Update Thematic Project
@@ -3718,6 +3984,7 @@ export const UnifiedWorkspace: React.FC = () => {
       showToast("Vui lòng nhập tên kế hoạch chuyên đề", "error");
       return;
     }
+    const stagesList = labProjectForm.stages || [];
     const projectData = {
       id: labProjectForm.id || `PRJ-0${labProjects.length + 1}`,
       name: labProjectForm.name.trim(),
@@ -3731,16 +3998,16 @@ export const UnifiedWorkspace: React.FC = () => {
       slot: labProjectForm.slot,
       priority: labProjectForm.priority,
       status: labProjectForm.status || "Active",
-      tasksCount: labProjectForm.tasksCount || 0,
+      tasksCount: Math.max(stagesList.length, labProjectForm.tasksCount || 0),
       budget: labProjectForm.budget,
       description: labProjectForm.description,
-      stages: labProjectForm.stages || []
+      stages: stagesList
     };
 
     let updated: any[];
     if (editingThematicId) {
       updated = labProjects.map(p => p.id === editingThematicId ? { ...p, ...projectData } : p);
-      showToast(`Đã cập nhật chuyên đề: ${projectData.name}!`, "success");
+      showToast(`Đã cập nhật chuyên đề & đồng bộ ${stagesList.length} công việc giai đoạn!`, "success");
       notifyActivity({
         title: "Cập nhật Kế hoạch Chuyên đề",
         message: `${currentStaffName} đã cập nhật chuyên đề [${projectData.id}] "${projectData.name}".`,
@@ -3753,7 +4020,7 @@ export const UnifiedWorkspace: React.FC = () => {
       });
     } else {
       updated = [...labProjects, projectData];
-      showToast(`Đã tạo kế hoạch chuyên đề: ${projectData.name}!`, "success");
+      showToast(`Đã tạo kế hoạch chuyên đề & sinh ${stagesList.length} công việc trên Bảng Công Việc!`, "success");
       notifyActivity({
         title: "Kế hoạch Chuyên đề Mới",
         message: `${currentStaffName} đã giao/tạo chuyên đề [${projectData.id}] "${projectData.name}" cho chủ trì ${projectData.lead}.`,
@@ -3776,6 +4043,8 @@ export const UnifiedWorkspace: React.FC = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated)
       });
+      await syncThematicProjectTasks(projectData);
+      fetchData();
     } catch (err) {
       console.warn("Error saving thematic projects:", err);
     }
@@ -3786,7 +4055,8 @@ export const UnifiedWorkspace: React.FC = () => {
   // Handle Toggle Stage Completion directly from Project Card or Modal with Regression Guard
   const handleToggleStage = async (projectId: string, stageId: string) => {
     const targetPrj = labProjects.find(p => p.id === projectId);
-    const targetStage = (targetPrj?.stages || []).find((s: any) => s.id === stageId);
+    const stageIdx = (targetPrj?.stages || []).findIndex((s: any) => s.id === stageId);
+    const targetStage = stageIdx >= 0 ? targetPrj?.stages[stageIdx] : null;
     
     // Safety Guard: Chống lùi bước vô ý khi click nhầm vào giai đoạn đã hoàn thành
     if (targetStage?.status === "completed") {
@@ -3796,12 +4066,13 @@ export const UnifiedWorkspace: React.FC = () => {
       if (!confirmReopen) return;
     }
 
+    const nextStageStatus = targetStage?.status === "completed" ? "pending" : "completed";
+
     const updated = labProjects.map(p => {
       if (p.id !== projectId) return p;
       const updatedStages = (p.stages || []).map((stg: any) => {
         if (stg.id !== stageId) return stg;
-        const nextStatus = stg.status === "completed" ? "pending" : "completed";
-        return { ...stg, status: nextStatus };
+        return { ...stg, status: nextStageStatus };
       });
       const allCompleted = updatedStages.length > 0 && updatedStages.every((s: any) => s.status === "completed");
       const anyCompleted = updatedStages.some((s: any) => s.status === "completed" || s.status === "in_progress");
@@ -3821,15 +4092,41 @@ export const UnifiedWorkspace: React.FC = () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updated)
       });
+
+      // Đồng bộ trạng thái giai đoạn sang Bảng Công Việc (company_tasks)
+      if (targetPrj && stageIdx >= 0) {
+        const stageTaskCode = `TSK-${projectId}-S${stageIdx + 1}`;
+        const existingTask = tasks.find((t: any) => String(t.task_code || "").toUpperCase() === stageTaskCode.toUpperCase());
+        await fetch("/api/workflows?action=task", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            id: existingTask?.id || null,
+            task_code: stageTaskCode,
+            title: existingTask?.title || `[${projectId} • GĐ${stageIdx + 1}/${(targetPrj.stages || []).length}] ${targetStage?.name || ""} — ${targetPrj.name}`,
+            department: targetPrj.dept || "Application",
+            task_category: targetPrj.typeName || "Kế hoạch chuyên đề",
+            assignee_name: existingTask?.assignee_name || targetStage?.assignee || targetPrj.lead || currentStaffName,
+            customer_name: existingTask?.customer_name || "",
+            priority: existingTask?.priority || "HIGH",
+            status: nextStageStatus === "completed" ? "DONE" : "IN_PROGRESS",
+            deadline: existingTask?.deadline || targetPrj.endDate || todayVN(),
+            description: existingTask?.description || `Thuộc chuyên đề [${projectId}]: ${targetPrj.name}`,
+            related_workflow_code: projectId,
+            result: nextStageStatus === "completed" ? (existingTask?.result || "Đã nghiệm thu giai đoạn chuyên đề") : (existingTask?.result || ""),
+            attachments: existingTask?.attachments || []
+          })
+        });
+        fetchData();
+      }
     } catch (err) {
       console.warn("Error updating thematic stage:", err);
     }
-    showToast("Đã cập nhật tiến độ giai đoạn chuyên đề!", "info");
+    showToast("Đã cập nhật tiến độ giai đoạn chuyên đề & đồng bộ Bảng Công Việc!", "info");
 
     const prjAfter = labProjects.find(p => p.id === projectId);
     if (prjAfter) {
-      const targetStage = (prjAfter.stages || []).find((s: any) => s.id === stageId);
-      const isNowCompleted = targetStage?.status !== "completed";
+      const isNowCompleted = nextStageStatus === "completed";
       notifyActivity({
         title: isNowCompleted ? "Hoàn thành giai đoạn chuyên đề" : "Cập nhật giai đoạn chuyên đề",
         message: `${currentStaffName} đã cập nhật giai đoạn "${targetStage?.name || 'Giai đoạn'}" của chuyên đề "${prjAfter.name}" (${isNowCompleted ? 'Hoàn thành' : 'Đang xử lý'}).`,
@@ -3862,8 +4159,8 @@ export const UnifiedWorkspace: React.FC = () => {
     showToast("Đã xóa chuyên đề thành công", "info");
   };
 
-  // Handle Save Sales Target
-  const handleSaveSalesTarget = (e: React.FormEvent) => {
+  // Handle Save Sales Target (Lưu bền vững xuống Database storage)
+  const handleSaveSalesTarget = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!salesTargetForm.customer.trim()) {
       showToast("Vui lòng nhập tên khách hàng / bệnh viện", "error");
@@ -3879,13 +4176,40 @@ export const UnifiedWorkspace: React.FC = () => {
       amount: formattedAmount,
       rawAmount: rawVal,
       quarter: salesTargetForm.quarter,
-      lead: salesTargetForm.lead,
+      lead: salesTargetForm.lead || currentStaffName,
       description: salesTargetForm.description,
       stage: salesTargetForm.stage
     };
-    setSalesTargets((prev) => [...prev, newTarget]);
+    const updated = [...salesTargets, newTarget];
+    setSalesTargets(updated);
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("unified_sales_targets", JSON.stringify(updated));
+      }
+      await fetch("/api/storage?key=unified_sales_targets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated)
+      });
+    } catch {}
     showToast(`Đã thiết lập mục tiêu cho ${newTarget.customer}!`, "success");
     setIsSalesTargetModalOpen(false);
+  };
+
+  const handleDeleteSalesTarget = async (targetId: number | string) => {
+    const updated = salesTargets.filter((t: any) => t.id !== targetId);
+    setSalesTargets(updated);
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("unified_sales_targets", JSON.stringify(updated));
+      }
+      await fetch("/api/storage?key=unified_sales_targets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updated)
+      });
+    } catch {}
+    showToast("Đã xóa mục tiêu doanh số", "info");
   };
 
   return (
@@ -4758,7 +5082,7 @@ ${wf.description || ""}`}
 
                           <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
                             <span>
-                              <strong>Khách hàng:</strong> {wf.customer_name || "Nội bộ TBRs"}
+                              <strong>Khách hàng:</strong> {wf.customer_name || "Nội bộ TBR"}
                             </span>
                             {wf.product_info && (
                               <span>
@@ -5582,11 +5906,19 @@ ${wf.description || ""}`}
                         {/* Card Footer */}
                         <div className="mt-4 pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
                           <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                            {prj.tasksCount || 0} công việc liên kết
+                            {Math.max(
+                              tasks.filter((t: any) =>
+                                String(t.related_workflow_code || "").toUpperCase() === String(prj.id || "").toUpperCase() ||
+                                String(t.task_code || "").toUpperCase().startsWith(`TSK-${String(prj.id || "").toUpperCase()}-S`)
+                              ).length,
+                              prj.tasksCount || 0,
+                              stages.length
+                            )} công việc liên kết
                           </span>
                           <button
                             onClick={() => {
                               setSelectedDept(prj.dept);
+                              setSearchQuery(prj.id);
                               setActiveSubTab("tasks");
                             }}
                             className="font-bold text-purple-600 dark:text-purple-400 hover:text-purple-700 hover:underline flex items-center gap-1 cursor-pointer"
@@ -5613,11 +5945,11 @@ ${wf.description || ""}`}
                     <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
                       <span>Kế Hoạch Khách Hàng Mục Tiêu &amp; Doanh Số (Kinh Doanh)</span>
                       <span className="px-2.5 py-0.5 text-[11px] font-bold rounded-full bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800">
-                        Target Q4: {salesTargets.reduce((acc, t) => acc + (t.rawAmount || 0), 0).toFixed(1)} Tỷ VNĐ
+                        Target: {salesTargets.reduce((acc, t) => acc + (t.rawAmount || 0), 0).toFixed(1)} Tỷ VNĐ
                       </span>
                     </h3>
                     <p className="text-xs text-slate-500">
-                      Mục tiêu doanh số quý 4 và tiến độ các gói thầu bệnh viện trọng điểm
+                      Mục tiêu doanh số quý và tiến độ các gói thầu bệnh viện trọng điểm
                     </p>
                   </div>
                 </div>
@@ -5628,7 +5960,7 @@ ${wf.description || ""}`}
                       customer: "",
                       amount: "2.5 Tỷ VNĐ",
                       quarter: "Q4/2026",
-                      lead: "Nguyễn Văn A",
+                      lead: currentStaffName || departmentStaffList[0]?.full_name || "",
                       description: "",
                       stage: "Đang chào giá & Demo"
                     });
@@ -5641,27 +5973,49 @@ ${wf.description || ""}`}
                 </button>
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {filteredSalesTargets.map((st) => (
-                  <div key={st.id} className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 p-4 rounded-xl flex flex-col justify-between shadow-xs hover:border-orange-300 transition-all">
-                    <div>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-[11px] uppercase font-extrabold text-slate-400 block truncate max-w-[170px]">{st.customer}</span>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300">
-                          {st.stage || "Đang chào giá"}
-                        </span>
+              {filteredSalesTargets.length === 0 ? (
+                <div className="text-center py-10 px-4 border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl bg-slate-50/50 dark:bg-slate-950/30">
+                  <Target className="w-10 h-10 text-slate-300 dark:text-slate-600 mx-auto mb-2" />
+                  <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Chưa có mục tiêu doanh số nào được thiết lập
+                  </h4>
+                  <p className="text-xs text-slate-500 max-w-md mx-auto">
+                    Bấm <strong>"+ Đặt Mục Tiêu Doanh Số"</strong> để đăng ký chỉ tiêu khách hàng trọng điểm và theo dõi tiến độ thực hiện.
+                  </p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {filteredSalesTargets.map((st) => (
+                    <div key={st.id} className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 p-4 rounded-xl flex flex-col justify-between shadow-xs hover:border-orange-300 transition-all group">
+                      <div>
+                        <div className="flex items-center justify-between mb-1 gap-2">
+                          <span className="text-[11px] uppercase font-extrabold text-slate-400 block truncate max-w-[170px]">{st.customer}</span>
+                          <div className="flex items-center gap-1">
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300">
+                              {st.stage || "Đang chào giá"}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteSalesTarget(st.id)}
+                              className="p-1 text-slate-400 hover:text-rose-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Xóa mục tiêu"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="text-lg font-black text-slate-900 dark:text-white">{st.amount}</div>
+                        <p className="text-xs text-slate-500 mt-1 leading-relaxed">{st.description}</p>
                       </div>
-                      <div className="text-lg font-black text-slate-900 dark:text-white">{st.amount}</div>
-                      <p className="text-xs text-slate-500 mt-1 leading-relaxed">{st.description}</p>
-                    </div>
 
-                    <div className="mt-3 pt-2.5 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between text-[11px] text-slate-500">
-                      <span>👤 Phụ trách: <strong>{st.lead}</strong></span>
-                      <span className="font-mono font-bold text-slate-400">{st.quarter}</span>
+                      <div className="mt-3 pt-2.5 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between text-[11px] text-slate-500">
+                        <span>👤 Phụ trách: <strong>{st.lead}</strong></span>
+                        <span className="font-mono font-bold text-slate-400">{st.quarter}</span>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -5678,22 +6032,38 @@ ${wf.description || ""}`}
                 <div className="flex items-center gap-2">
                   <CalendarDays className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
                   <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
-                    Chọn ngày báo cáo theo Kế hoạch tuần:
+                    Chọn ngày báo cáo theo Kế hoạch tuần (Tuần {viewedWeek.weekNo}):
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
                   {["Thứ 2", "Thứ 3", "Thứ 4", "Thứ 5", "Thứ 6", "Thứ 7"].map((day) => {
                     const isSelected = selectedDailyDay === day;
-                    // Count planned items for this day
-                    const dayItemCount = weeklySchedule.filter(s => {
-                      if (s.day !== day) return false;
-                      const staff = selectedDailyStaff || currentStaffName;
+                    const dayObj = viewedWeek.days.find(d => d.name === day) || { name: day, date: todayVN(), label: "" };
+                    const staff = selectedDailyStaff || currentStaffName;
+                    // Count planned items for this exact date in the current viewed week + active tasks
+                    const schedCount = weeklySchedule.filter(s => {
+                      if (!scheduleOnDay(s, dayObj)) return false;
                       if (staff && s.actor) {
+                        if (sameStaffName(s.actor, staff)) return true;
                         return s.actor.toLowerCase().includes(staff.toLowerCase()) || staff.toLowerCase().includes(s.actor.toLowerCase());
                       }
-                      if (rolePerspective === "manager" && s.category !== managerDept) return false;
+                      if (rolePerspective === "manager" && !isSameWorkspaceDept(s.category, managerDept)) return false;
                       return true;
                     }).length;
+                    const taskCountForDay = tasks.filter((t: any) => {
+                      const cleanA = cleanWorkspaceAssignee(t.assignee_name);
+                      if (staff) {
+                        if (!cleanA || !sameStaffName(cleanA, staff)) return false;
+                      } else if (rolePerspective === "manager" && !isSameWorkspaceDept(t.department, managerDept)) {
+                        return false;
+                      }
+                      const dl = t.deadline ? String(t.deadline).slice(0, 10) : "";
+                      if (t.status === "IN_PROGRESS") return true;
+                      if (t.status === "TODO" && (!dl || dl <= dayObj.date)) return true;
+                      if (t.status === "DONE" && dl === dayObj.date) return true;
+                      return false;
+                    }).length;
+                    const dayItemCount = schedCount + taskCountForDay;
 
                     return (
                       <button
@@ -5706,7 +6076,7 @@ ${wf.description || ""}`}
                             : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
                         }`}
                       >
-                        <span>{day}</span>
+                        <span>{day}{dayObj.label ? ` (${dayObj.label})` : ""}</span>
                         {dayItemCount > 0 && (
                           <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
                             isSelected
@@ -5765,10 +6135,10 @@ ${wf.description || ""}`}
                     <ListChecks className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                     <div>
                       <h3 className="text-sm font-bold text-slate-900 dark:text-white">
-                        Công Việc Kế Hoạch Tuần • {selectedDailyDay}
+                        Công Việc Kế Hoạch Tuần &amp; Bảng Việc • {selectedDailyDay}
                       </h3>
                       <p className="text-[11px] text-slate-500">
-                        Nhập nhanh kết quả, định lượng thời gian &amp; mức độ tương xứng kết quả thực tế
+                        Tự động tổng hợp từ Lịch công tác tuần &amp; Bảng công việc • Khi bấm Đạt sẽ tự động cập nhật tiến độ Task
                       </p>
                     </div>
                   </div>
@@ -5806,9 +6176,11 @@ ${wf.description || ""}`}
                               <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
                                 item.source === "schedule"
                                   ? "bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300"
+                                  : item.source === "task"
+                                  ? "bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300"
                                   : "bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300"
                               }`}>
-                                {item.source === "schedule" ? "Lịch tuần" : "Phát sinh"}
+                                {item.source === "schedule" ? "Lịch tuần" : item.source === "task" ? "Bảng CV" : "Phát sinh"}
                               </span>
                               {item.category && (
                                 <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
@@ -6336,15 +6708,38 @@ ${wf.description || ""}`}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
               <div className="space-y-1.5">
-                <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold border border-indigo-200 dark:border-indigo-800">
-                  <Activity className="w-3.5 h-3.5" />
-                  <span>BÁO CÁO HIỆU SUẤT ĐIỀU HÀNH • {analyticsData.scopeTitle.toUpperCase()}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 text-xs font-bold border border-indigo-200 dark:border-indigo-800">
+                    <Activity className="w-3.5 h-3.5" />
+                    <span>BÁO CÁO HIỆU SUẤT ĐIỀU HÀNH • {analyticsData.scopeTitle.toUpperCase()}</span>
+                  </div>
+                  <div className="inline-flex items-center bg-slate-100 dark:bg-slate-800 p-0.5 rounded-xl border border-slate-200 dark:border-slate-700">
+                    {([
+                      { id: "today", label: "Hôm nay" },
+                      { id: "week", label: "Tuần này" },
+                      { id: "month", label: "Tháng này" },
+                      { id: "all", label: "Tất cả" }
+                    ] as const).map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setAnalyticsPeriod(p.id)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all ${
+                          analyticsPeriod === p.id
+                            ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-2xs"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
                 <h2 className="text-lg sm:text-xl font-black text-slate-900 dark:text-white tracking-tight">
-                  Phân Tích Hiệu Suất Tổng Hợp: Công Việc • Kế Hoạch • Nhật Ký Daily
+                  Phân Tích Hiệu Suất Tổng Hợp: Công Việc • Quy Trình SLA • Kế Hoạch • Nhật Ký Daily
                 </h2>
                 <p className="text-xs text-slate-600 dark:text-slate-400 max-w-3xl leading-relaxed">
-                  Hệ thống đối soát chéo 3 chiều dựa trên dữ liệu thực tế: Tiến độ thực thi task, mức độ bám sát kế hoạch/chuyên đề và kỷ luật phản ánh khó khăn qua báo cáo Daily.
+                  Hệ thống đối soát chéo 4 trụ cột theo dữ liệu thực tế ({analyticsData.periodLabel}): Thực thi công việc (35%) • Phối hợp liên phòng SLA (20%) • Kế hoạch/Lịch tuần (25%) • Kỷ luật báo cáo Daily (20%).
                 </p>
               </div>
 
@@ -6398,7 +6793,7 @@ ${wf.description || ""}`}
                 </div>
                 <span className="text-[10px] text-slate-400 block pt-0.5">
                   {analyticsData.totalWf > 0
-                    ? `${analyticsData.doneWf} xong • ${analyticsData.pendingWf} đang chạy${analyticsData.overdueWf > 0 ? ` • ${analyticsData.overdueWf} trễ` : ""}`
+                    ? `${analyticsData.doneWf} xong • ${analyticsData.pendingWf} đang chạy${analyticsData.cancelledWf > 0 ? ` • ${analyticsData.cancelledWf} hủy` : ""}${analyticsData.overdueWf > 0 ? ` • ${analyticsData.overdueWf} trễ` : ""}`
                     : "Chưa có quy trình luân chuyển"}
                 </span>
               </div>
@@ -6437,9 +6832,10 @@ ${wf.description || ""}`}
                   <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${analyticsData.dailyDisciplineRate}%` }} />
                 </div>
                 <span className="text-[10px] text-slate-400 block pt-0.5">
+                  {analyticsData.totalDailyReportsCount} báo cáo đã nộp •{" "}
                   {analyticsData.realIssues.length > 0
-                    ? `Ghi nhận ${analyticsData.realIssues.length} vướng mắc phát sinh`
-                    : "Không có khó khăn phát sinh"}
+                    ? `${analyticsData.realIssues.length} vướng mắc phát sinh`
+                    : "0 vướng mắc"}
                 </span>
               </div>
             </div>
@@ -6457,7 +6853,7 @@ ${wf.description || ""}`}
                     1. Phân Tích Thực Thi Công Việc (Task Execution &amp; Workflows)
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Chi tiết phân bổ khối lượng, tỷ lệ hoàn tất và tốc độ giải quyết việc giữa 4 phòng ban
+                    Chi tiết phân bổ khối lượng, tỷ lệ hoàn tất và tốc độ giải quyết việc giữa các khối phòng ban ({analyticsData.totalTasks} việc)
                   </p>
                 </div>
               </div>
@@ -6466,52 +6862,50 @@ ${wf.description || ""}`}
               </span>
             </div>
 
-            {/* Department Breakdown Grid */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-              {[
-                { name: "Kinh Doanh", icon: Briefcase },
-                { name: "Application", icon: FlaskConical },
-                { name: "Kho & Vận Hành", icon: Package },
-                { name: "Cung Ứng", icon: ShoppingCart }
-              ].map((dept) => {
-                const deptTasks = tasks.filter(t => t.department === dept.name);
-                const doneCount = deptTasks.filter(t => t.status === "DONE").length;
-                const inProgCount = deptTasks.filter(t => t.status === "IN_PROGRESS").length;
-                const todoCount = deptTasks.filter(t => t.status === "TODO").length;
-                const total = deptTasks.length;
-                const percent = total > 0 ? Math.round((doneCount / total) * 100) : 0;
-                const Icon = dept.icon;
+            {/* Department Breakdown Grid - Synchronized 100% with analyticsData.deptScorecards */}
+            <div className={`grid grid-cols-1 gap-3 ${analyticsData.deptScorecards.length > 4 ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
+              {analyticsData.deptScorecards.map((ds) => {
+                const Icon =
+                  ds.dept === "Kinh Doanh"
+                    ? Briefcase
+                    : ds.dept === "Application"
+                    ? FlaskConical
+                    : ds.dept === "Kho & Vận Hành"
+                    ? Package
+                    : ds.dept === "Cung Ứng"
+                    ? ShoppingCart
+                    : Building2;
 
                 return (
-                  <div key={dept.name} className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-xl p-3.5 space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5">
-                        <Icon className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-                        <span className="text-xs font-bold text-slate-900 dark:text-white">{dept.name}</span>
+                  <div key={ds.dept} className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between gap-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <Icon className="w-4 h-4 text-slate-600 dark:text-slate-300 shrink-0" />
+                        <span className="text-xs font-bold text-slate-900 dark:text-white truncate">{ds.dept}</span>
                       </div>
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                        {total} việc
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 shrink-0">
+                        {ds.totalTasks} việc
                       </span>
                     </div>
 
                     <div className="flex items-baseline justify-between text-xs">
                       <span className="text-slate-500">Hoàn thành:</span>
-                      <span className="font-mono font-black text-slate-900 dark:text-white">{doneCount}/{total} ({percent}%)</span>
+                      <span className="font-mono font-black text-slate-900 dark:text-white">{ds.doneTasks}/{ds.totalTasks} ({ds.taskPercent}%)</span>
                     </div>
 
                     <div className="w-full bg-slate-200 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                      <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${percent}%` }} />
+                      <div className="bg-indigo-600 h-full rounded-full transition-all" style={{ width: `${ds.taskPercent}%` }} />
                     </div>
 
                     <div className="grid grid-cols-3 gap-1 text-[10px] text-center pt-1 border-t border-slate-200/60 dark:border-slate-700/60">
                       <div className="bg-amber-100/60 dark:bg-amber-950/40 rounded p-1 text-amber-800 dark:text-amber-300">
-                        <strong>{todoCount}</strong> Cần làm
+                        <strong>{ds.todoTasks}</strong> Cần làm
                       </div>
                       <div className="bg-blue-100/60 dark:bg-blue-950/40 rounded p-1 text-blue-800 dark:text-blue-300">
-                        <strong>{inProgCount}</strong> Đang chạy
+                        <strong>{ds.inProgTasks}</strong> Đang chạy
                       </div>
                       <div className="bg-emerald-100/60 dark:bg-emerald-950/40 rounded p-1 text-emerald-800 dark:text-emerald-300">
-                        <strong>{doneCount}</strong> Xong
+                        <strong>{ds.doneTasks}</strong> Xong
                       </div>
                     </div>
                   </div>
@@ -6530,7 +6924,7 @@ ${wf.description || ""}`}
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
                   {analyticsData.totalWf > 0
-                    ? `Hệ thống ghi nhận ${analyticsData.totalWf} phiếu phối hợp luân chuyển liên phòng ban. Tỷ lệ xử lý đúng cam kết thời gian đạt ${analyticsData.wfSlaRate}%, trong đó có ${analyticsData.doneWf} phiếu đã hoàn tất dứt điểm.`
+                    ? `Hệ thống ghi nhận ${analyticsData.totalWf} phiếu phối hợp luân chuyển liên phòng ban (${analyticsData.doneWf} hoàn tất, ${analyticsData.pendingWf} đang xử lý${analyticsData.cancelledWf > 0 ? `, ${analyticsData.cancelledWf} đã hủy` : ""}). Tỷ lệ xử lý đúng cam kết SLA đạt ${analyticsData.wfSlaRate}%.`
                     : "Chưa có phiếu luân chuyển phối hợp liên phòng ban nào trong phạm vi được chọn. Khi các phòng ban khởi tạo yêu cầu ở tab 'Quy Trình Phối Hợp', dữ liệu thời gian SLA và tốc độ chuyển tiếp sẽ được tự động tổng hợp tại đây."}
                 </p>
               </div>
@@ -6544,7 +6938,7 @@ ${wf.description || ""}`}
                 </div>
                 <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed">
                   {analyticsData.overdueWf > 0
-                    ? `Có ${analyticsData.overdueWf} phiếu luân chuyển đang vượt quá thời hạn cam kết xử lý (due date). Đề nghị các Trưởng bộ phận liên quan rà soát và tháo gỡ điểm nghẽn cho nhân sự phụ trách.`
+                    ? `Có ${analyticsData.overdueWf} phiếu luân chuyển đang vượt quá thời hạn cam kết xử lý tại bước của: ${analyticsData.overdueDepts.join(", ") || "bộ phận phụ trách"}. Đề nghị Trưởng bộ phận liên quan rà soát và tháo gỡ ngay.`
                     : analyticsData.totalWf > 0
                     ? "Không phát hiện điểm nghẽn ách tắc: 100% các phiếu phối hợp liên phòng đang được luân chuyển và xử lý trong khung thời hạn SLA cho phép."
                     : "Hệ thống vận hành thông suốt, chưa phát sinh điểm nghẽn hay ách tắc công việc nào."}
@@ -6633,7 +7027,7 @@ ${wf.description || ""}`}
                     3. Phân Tích Nhật Ký Daily &amp; Kỷ Luật Vận Hành Nhân Sự
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Đánh giá tính kỷ luật báo cáo ngày, trích xuất các vướng mắc phát sinh và kế hoạch ngày tiếp theo
+                    Đánh giá tính kỷ luật báo cáo theo số nhân sự duy nhất đã nộp trong kỳ ({analyticsData.periodLabel}), trích xuất vướng mắc và kế hoạch tiếp theo
                   </p>
                 </div>
               </div>
@@ -6645,13 +7039,13 @@ ${wf.description || ""}`}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
               {/* Daily Submission by Department */}
               <div className="p-3.5 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2">
-                <span className="font-bold text-slate-700 dark:text-slate-300 block">📊 Tỷ Lệ Nộp Báo Cáo Daily</span>
+                <span className="font-bold text-slate-700 dark:text-slate-300 block">📊 Tỷ Lệ Nhân Sự Nộp Báo Cáo Daily</span>
                 <div className="space-y-1.5 pt-1">
                   {analyticsData.deptScorecards.map((ds) => (
                     <div key={ds.dept} className="flex justify-between text-[11px]">
                       <span>{ds.dept}:</span>
                       <strong className={ds.dailyCount > 0 ? "text-emerald-600" : "text-slate-400"}>
-                        {ds.dailyCount}/{ds.staffCount} ({ds.dailyPercent}%)
+                        {ds.dailyCount}/{ds.staffCount} NS ({ds.dailyPercent}%)
                       </strong>
                     </div>
                   ))}
@@ -6708,12 +7102,12 @@ ${wf.description || ""}`}
                     4. Bảng Tổng Hợp Đánh Giá KPI &amp; Khuyến Nghị Điều Hành Từ Ban Giám Đốc
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Bảng điểm trọng số tính toán tự động: Thực thi công việc (40%) + Bám sát kế hoạch (30%) + Kỷ luật Daily (30%)
+                    Bảng điểm 4 trụ cột đồng nhất: Thực thi công việc (35%) + Phối hợp SLA (20%) + Kế hoạch/Lịch tuần (25%) + Kỷ luật Daily (20%)
                   </p>
                 </div>
               </div>
               <span className="text-xs font-mono font-bold text-slate-500">
-                Kỳ đánh giá: Tháng 09/2026
+                Kỳ đánh giá: {analyticsData.periodLabel}
               </span>
             </div>
 
@@ -6725,7 +7119,8 @@ ${wf.description || ""}`}
                     <th className="py-2.5 px-3">Phòng ban</th>
                     <th className="py-2.5 px-3">Số lượng việc</th>
                     <th className="py-2.5 px-3">Tỷ lệ hoàn tất</th>
-                    <th className="py-2.5 px-3">Tiến độ Kế hoạch / Chuyên đề</th>
+                    <th className="py-2.5 px-3">Phối hợp SLA</th>
+                    <th className="py-2.5 px-3">Kế hoạch / Lịch tuần</th>
                     <th className="py-2.5 px-3">Kỷ luật Daily</th>
                     <th className="py-2.5 px-3">Điểm KPI Tổng</th>
                     <th className="py-2.5 px-3 text-right">Xếp loại</th>
@@ -6733,8 +7128,26 @@ ${wf.description || ""}`}
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {analyticsData.deptScorecards.map((ds) => {
-                    const Icon = ds.dept === "Application" ? FlaskConical : ds.dept === "Kinh Doanh" ? Briefcase : ds.dept === "Kho & Vận Hành" ? Package : ShoppingCart;
-                    const iconColor = ds.dept === "Application" ? "text-purple-600" : ds.dept === "Kinh Doanh" ? "text-orange-600" : ds.dept === "Kho & Vận Hành" ? "text-emerald-600" : "text-blue-600";
+                    const Icon =
+                      ds.dept === "Application"
+                        ? FlaskConical
+                        : ds.dept === "Kinh Doanh"
+                        ? Briefcase
+                        : ds.dept === "Kho & Vận Hành"
+                        ? Package
+                        : ds.dept === "Cung Ứng"
+                        ? ShoppingCart
+                        : Building2;
+                    const iconColor =
+                      ds.dept === "Application"
+                        ? "text-purple-600"
+                        : ds.dept === "Kinh Doanh"
+                        ? "text-orange-600"
+                        : ds.dept === "Kho & Vận Hành"
+                        ? "text-emerald-600"
+                        : ds.dept === "Cung Ứng"
+                        ? "text-blue-600"
+                        : "text-slate-600";
 
                     return (
                       <tr key={ds.dept} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
@@ -6747,11 +7160,20 @@ ${wf.description || ""}`}
                         <td className="py-2.5 px-3 font-bold text-emerald-600">
                           {ds.totalTasks > 0 ? `${ds.taskPercent}%` : "0%"}
                         </td>
+                        <td className="py-2.5 px-3 font-semibold text-purple-600">
+                          {ds.wfCount > 0
+                            ? `${ds.wfCount} phiếu (${ds.wfSlaPercent}% SLA${ds.overdueWfCount > 0 ? ` • ${ds.overdueWfCount} trễ` : ""})`
+                            : "Chưa phát sinh"}
+                        </td>
                         <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300">
-                          {ds.plansCount > 0 ? `${ds.plansCount} chuyên đề (${ds.planPercent}%)` : "Chưa thiết lập"}
+                          {ds.plansCount > 0
+                            ? `${ds.plansCount} chuyên đề (${ds.planPercent}%)`
+                            : ds.schedulesCount > 0
+                            ? `${ds.schedulesCount} lịch tuần (${ds.planPercent}%)`
+                            : "Chưa thiết lập"}
                         </td>
                         <td className="py-2.5 px-3 font-bold text-indigo-600">
-                          {ds.dailyCount}/{ds.staffCount} ({ds.dailyPercent}%)
+                          {ds.dailyCount}/{ds.staffCount} NS ({ds.dailyPercent}%)
                         </td>
                         <td className="py-2.5 px-3 font-mono font-black text-indigo-600 text-sm">
                           {ds.hasData ? `${ds.score} / 100` : "0 / 100"}
@@ -6790,11 +7212,12 @@ ${wf.description || ""}`}
                 ) : (
                   <>
                     <li>
-                      <strong>Thúc đẩy hoàn thành công việc:</strong> Tập trung đẩy nhanh tiến độ {analyticsData.inProgressTasks} đầu việc đang thực hiện trên toàn hệ thống để nâng cao tỷ lệ hoàn thành chung.
+                      <strong>Thúc đẩy hoàn thành công việc:</strong> Tập trung đẩy nhanh tiến độ {analyticsData.inProgressTasks} đầu việc đang thực hiện và {analyticsData.todoTasks} việc chờ xử lý trên toàn hệ thống để nâng cao tỷ lệ hoàn thành chung ({analyticsData.taskCompletionRate}%).
                     </li>
                     {analyticsData.overdueWf > 0 && (
                       <li>
-                        <strong>Xử lý phiếu luân chuyển trễ hạn:</strong> Khối Cung ứng &amp; Kho cần ưu tiên xử lý dứt điểm {analyticsData.overdueWf} phiếu phối hợp đang quá hạn SLA.
+                        <strong>Xử lý phiếu luân chuyển trễ hạn:</strong> Bộ phận{" "}
+                        <strong>{analyticsData.overdueDepts.join(", ") || "liên quan"}</strong> cần ưu tiên xử lý dứt điểm {analyticsData.overdueWf} phiếu phối hợp đang quá hạn SLA.
                       </li>
                     )}
                     {analyticsData.realIssues.length > 0 && (
@@ -6803,7 +7226,7 @@ ${wf.description || ""}`}
                       </li>
                     )}
                     <li>
-                      <strong>Duy trì kỷ luật báo cáo:</strong> Tiếp tục đôn đốc tỷ lệ nộp báo cáo daily đạt chỉ tiêu 100% nhân sự toàn công ty.
+                      <strong>Duy trì kỷ luật báo cáo:</strong> Tiếp tục đôn đốc tỷ lệ nộp báo cáo daily ({analyticsData.dailySubmittedCount}/{analyticsData.staffCount} nhân sự trong kỳ) hướng tới mục tiêu 100% nhân sự toàn công ty.
                     </li>
                   </>
                 )}
@@ -8650,7 +9073,7 @@ ${wf.description || ""}`}
                 {selectedWorkflowForRecord.title}
               </h3>
               <div className="text-slate-500 text-[11px] mt-1 flex flex-wrap gap-3">
-                <span>Khách hàng: <strong>{selectedWorkflowForRecord.customer_name || "Nội bộ TBRs"}</strong></span>
+                <span>Khách hàng: <strong>{selectedWorkflowForRecord.customer_name || "Nội bộ TBR"}</strong></span>
                 {selectedWorkflowForRecord.product_info && <span>Thiết bị / SP: <strong>{selectedWorkflowForRecord.product_info}</strong></span>}
                 <span>Người yêu cầu: <strong>{selectedWorkflowForRecord.requester_name}</strong></span>
               </div>
@@ -8951,7 +9374,7 @@ ${wf.description || ""}`}
                     <FileText className="w-12 h-12 text-indigo-400 mx-auto" />
                     <div className="font-bold text-white text-sm">{activeName}</div>
                     <p className="text-xs text-slate-400">
-                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ TBRs Portal.
+                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ TBR Portal.
                     </p>
                     <a
                       href={activeUrl}
@@ -9078,7 +9501,7 @@ ${wf.description || ""}`}
                 type="text"
                 value={scheduleForm.location}
                 onChange={(e) => setScheduleForm({ ...scheduleForm, location: e.target.value })}
-                placeholder="VD: BV Chợ Rẫy, Kho TBRs..."
+                placeholder="VD: BV Chợ Rẫy, Kho TBR..."
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
               />
             </div>

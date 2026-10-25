@@ -75,7 +75,7 @@ const DEFAULT_DB_WORKFLOW_TEMPLATES = [
     source_dept: "Kinh Doanh",
     target_dept: "Application",
     icon: "FlaskConical",
-    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab TBRs hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
+    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab TBR hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
     sla_days: 5,
     steps: [
       { step_index: 0, title: "Tiếp nhận & Thẩm định mẫu / Thiết bị", dept: "Application", assignee_name: "", sla_hours: 24, deliverables: "Xác nhận loại mẫu sinh học, hóa chất tương thích, phân công nhân sự & lịch Demo" },
@@ -108,7 +108,7 @@ const DEFAULT_DB_WORKFLOW_TEMPLATES = [
     steps: [
       { step_index: 0, title: "Tiếp nhận đề xuất PR & Khảo sát nhà cung cấp", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
       { step_index: 1, title: "Trình duyệt ban giám đốc & Phát hành đơn PO", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Đơn đặt hàng PO có chữ ký phê duyệt" },
-      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho TBRs", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
+      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho TBR", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
     ]
   },
   {
@@ -187,6 +187,21 @@ async function ensureFictionalAssigneesCleaned() {
         }
       }
     }
+    // Tự động đóng các Task của những bước đã nghiệm thu hoặc phiếu đã hoàn tất từ trước
+    await query(`
+      UPDATE company_tasks t
+      SET status = 'DONE'
+      FROM workflow_requests w
+      WHERE t.related_workflow_code = w.workflow_code
+        AND t.status != 'DONE'
+        AND (
+          w.status = 'COMPLETED'
+          OR (
+            COALESCE(w.current_step_index, 0) > 0
+            AND t.task_code != ('TSK-' || w.workflow_code || '-S' || (COALESCE(w.current_step_index, 0) + 1)::text)
+          )
+        )
+    `);
     const tmplRows = await query(`SELECT id, steps FROM workflow_templates WHERE steps IS NOT NULL`);
     for (const row of tmplRows.rows) {
       if (Array.isArray(row.steps)) {
@@ -319,22 +334,125 @@ export async function POST(req: NextRequest) {
       const postReportToWorkflow = async (taskCode: string | null) => {
         const wfCode = String(related_workflow_code || prevTask?.related_workflow_code || "").trim();
         const text = String(result || "").trim();
-        if (!wfCode || !text || text === String(prevTask?.result || "").trim()) return;
-        const prevAtt: any[] = Array.isArray(prevTask?.attachments) ? prevTask.attachments : [];
-        const seen = new Set(prevAtt.map((a: any) => String(a?.url || a?.name || "")));
-        const newAtt = (Array.isArray(attachments) ? attachments : []).filter((a: any) => !seen.has(String(a?.url || a?.name || "")));
-        const comment = {
-          author: me.full_name || me.username || assignee_name || "Nhân viên",
-          time: nowVNDateTime(),
-          text,
-          attachments: newAtt,
-          source: "task",
-          task_code: taskCode || null
-        };
-        await query(
-          `UPDATE workflow_requests SET comments = COALESCE(comments, '[]'::jsonb) || $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE workflow_code = $2`,
-          [JSON.stringify([comment]), wfCode]
-        );
+        const effectiveTaskCode = String(taskCode || prevTask?.task_code || "").trim();
+        const actorName = me.full_name || me.username || assignee_name || "Nhân viên";
+
+        // 1. Đẩy báo cáo kết quả vào luồng Trao đổi nội bộ của Phiếu phối hợp
+        if (wfCode && text && text !== String(prevTask?.result || "").trim()) {
+          const prevAtt: any[] = Array.isArray(prevTask?.attachments) ? prevTask.attachments : [];
+          const seen = new Set(prevAtt.map((a: any) => String(a?.url || a?.name || "")));
+          const newAtt = (Array.isArray(attachments) ? attachments : []).filter((a: any) => !seen.has(String(a?.url || a?.name || "")));
+          const comment = {
+            author: actorName,
+            time: nowVNDateTime(),
+            text,
+            attachments: newAtt,
+            source: "task",
+            task_code: effectiveTaskCode || null
+          };
+          await query(
+            `UPDATE workflow_requests SET comments = COALESCE(comments, '[]'::jsonb) || $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE workflow_code = $2`,
+            [JSON.stringify([comment]), wfCode]
+          );
+        }
+
+        // 2. Đồng bộ trạng thái Task (IN_PROGRESS / DONE) ngược về Phiếu phối hợp (workflow_requests)
+        if (wfCode && status && (!prevTask || prevTask.status !== status || (text && text !== String(prevTask?.result || "").trim()))) {
+          const wfRes = await query("SELECT * FROM workflow_requests WHERE workflow_code = $1 LIMIT 1", [wfCode]);
+          if (wfRes.rows.length > 0) {
+            const wfRow = wfRes.rows[0];
+            const wfSteps = Array.isArray(wfRow.steps) ? [...wfRow.steps] : [];
+            const currIdx = typeof wfRow.current_step_index === "number" ? wfRow.current_step_index : 0;
+            const stepMatch = effectiveTaskCode.match(/-S(\d+)$/i);
+            const targetStepIdx = stepMatch ? Math.max(0, Number(stepMatch[1]) - 1) : currIdx;
+            const wfLogs = Array.isArray(wfRow.logs) ? [...wfRow.logs] : [];
+            let nextWfStatus = wfRow.status;
+
+            if (status === "IN_PROGRESS") {
+              if (nextWfStatus === "PENDING") nextWfStatus = "IN_PROGRESS";
+              if (wfSteps[targetStepIdx] && wfSteps[targetStepIdx].status === "PENDING") {
+                wfSteps[targetStepIdx] = { ...wfSteps[targetStepIdx], status: "IN_PROGRESS" };
+              }
+            } else if (status === "DONE") {
+              if (wfSteps[targetStepIdx]) {
+                wfSteps[targetStepIdx] = {
+                  ...wfSteps[targetStepIdx],
+                  task_completed: true,
+                  deliverables_note: text || wfSteps[targetStepIdx].deliverables_note || "Đã hoàn thành trên Bảng Công Việc"
+                };
+              }
+              if (prevTask?.status !== "DONE") {
+                wfLogs.push({
+                  time: nowVNDateTime(),
+                  action: `[Bảng Công Việc]: ${actorName} đã hoàn thành công việc ${effectiveTaskCode || ""}${text ? ` — Kết quả: ${text}` : ""}`,
+                  actor: actorName
+                });
+              }
+              // Nếu quy trình 1 bước (không cấu hình nhiều bước) và không phải PR cần quyền duyệt riêng -> hoàn tất phiếu
+              if (wfSteps.length === 0 && !isPurchaseRequest(wfRow) && nextWfStatus !== "COMPLETED") {
+                nextWfStatus = "COMPLETED";
+              } else if (nextWfStatus === "PENDING") {
+                nextWfStatus = "IN_PROGRESS";
+              }
+            }
+
+            await query(
+              `UPDATE workflow_requests
+               SET status = $1, steps = $2, logs = $3,
+                   results_summary = CASE WHEN $4 != '' AND NOT $5 THEN COALESCE(NULLIF(results_summary, '') || E'\n' || $4, $4) ELSE results_summary END,
+                   updated_at = CURRENT_TIMESTAMP
+               WHERE id = $6`,
+              [
+                nextWfStatus,
+                JSON.stringify(wfSteps),
+                JSON.stringify(wfLogs),
+                text && status === "DONE" ? `[${effectiveTaskCode || "Task"}]: ${text}` : "",
+                isPurchaseRequest(wfRow),
+                wfRow.id
+              ]
+            );
+          }
+        }
+
+        // 3. Đồng bộ trạng thái Task ngược về Kế hoạch chuyên đề (unified_thematic_projects trong app_storage)
+        const prjCodeMatch = effectiveTaskCode.match(/^TSK-(.+)-S(\d+)$/i);
+        const prjIdCandidate = prjCodeMatch ? prjCodeMatch[1] : wfCode;
+        if (prjIdCandidate && status) {
+          try {
+            const stRes = await query("SELECT value FROM system_settings WHERE key = 'unified_thematic_projects' LIMIT 1");
+            if (stRes.rows.length > 0 && stRes.rows[0].value) {
+              const projects = typeof stRes.rows[0].value === "string" ? JSON.parse(stRes.rows[0].value) : stRes.rows[0].value;
+              if (Array.isArray(projects)) {
+                let changed = false;
+                const updatedProjects = projects.map((p: any) => {
+                  if (String(p.id).toUpperCase() !== String(prjIdCandidate).toUpperCase()) return p;
+                  const stages = Array.isArray(p.stages) ? [...p.stages] : [];
+                  if (prjCodeMatch) {
+                    const stgIdx = Math.max(0, Number(prjCodeMatch[2]) - 1);
+                    if (stages[stgIdx]) {
+                      const nextStgStatus = status === "DONE" ? "completed" : status === "IN_PROGRESS" ? "in_progress" : "pending";
+                      if (stages[stgIdx].status !== nextStgStatus) {
+                        stages[stgIdx] = { ...stages[stgIdx], status: nextStgStatus };
+                        changed = true;
+                      }
+                    }
+                  }
+                  const allDone = stages.length > 0 && stages.every((s: any) => s.status === "completed");
+                  const anyActive = stages.some((s: any) => s.status === "completed" || s.status === "in_progress");
+                  const nextPrjStatus = allDone ? "Completed" : (anyActive && p.status === "Planning" ? "Active" : p.status);
+                  if (nextPrjStatus !== p.status) changed = true;
+                  return { ...p, stages, status: nextPrjStatus };
+                });
+                if (changed) {
+                  await query(
+                    `UPDATE system_settings SET value = $1, updated_at = CURRENT_TIMESTAMP WHERE key = 'unified_thematic_projects'`,
+                    [JSON.stringify(updatedProjects)]
+                  );
+                }
+              }
+            }
+          } catch {}
+        }
       };
 
       if (id) {
@@ -783,28 +901,63 @@ export async function POST(req: NextRequest) {
           actor: actor || "Hệ Thống"
         });
 
-        // Create or update task for next step
-        const nextTaskCode = `TSK-${wf.workflow_code}-S${nextIdx + 1}`;
+        // Đóng các Task thuộc bước vừa hoàn thành trước khi sinh Task cho bước kế tiếp
+        const prevStepTaskCode = currentIdx === 0 ? `TSK-${wf.workflow_code}` : `TSK-${wf.workflow_code}-S${currentIdx + 1}`;
         await c.query(
-          `INSERT INTO company_tasks (
-             task_code, title, department, task_category, assignee_name, customer_name,
-             priority, status, deadline, description, related_workflow_code, logs
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+          `UPDATE company_tasks
+           SET status = 'DONE',
+               result = CASE WHEN COALESCE(result, '') = '' THEN $1 ELSE result END,
+               logs = COALESCE(logs, '[]'::jsonb) || $2::jsonb
+           WHERE related_workflow_code = $3 AND (task_code = $4 OR status != 'DONE')`,
           [
-            nextTaskCode,
-            `[Bước ${nextIdx + 1}/${steps.length}] ${steps[nextIdx].title} (${wf.workflow_code})`,
-            newTargetDept,
-            "Phối hợp liên phòng ban",
-            newAssigneeName,
-            wf.customer_name || "",
-            wf.priority || "MEDIUM",
-            "TODO",
-            null,
-            `Nhiệm vụ: ${steps[nextIdx].deliverables || steps[nextIdx].title}\nKết quả bước trước: ${step_result || "Đã nghiệm thu"}`,
+            step_result || `Đã nghiệm thu Bước ${currentIdx + 1}: ${steps[currentIdx].title}`,
+            JSON.stringify([{ time: nowVNDateTime(), action: `Hoàn tất & nghiệm thu Bước ${currentIdx + 1} (${steps[currentIdx].title})`, actor: actor || "Hệ Thống" }]),
             wf.workflow_code,
-            JSON.stringify([{ time: nowVNDateTime(), action: `Tiếp nhận chuyển giao từ Bước ${currentIdx + 1}`, actor: actor || "Hệ Thống" }])
+            prevStepTaskCode
           ]
         );
+
+        // Create or update task for next step
+        const nextTaskCode = `TSK-${wf.workflow_code}-S${nextIdx + 1}`;
+        const existingNextTask = await c.query("SELECT id FROM company_tasks WHERE task_code = $1 LIMIT 1", [nextTaskCode]);
+        if (existingNextTask.rows.length > 0) {
+          await c.query(
+            `UPDATE company_tasks
+             SET title = $1, department = $2, assignee_name = $3, status = 'TODO',
+                 description = $4,
+                 logs = COALESCE(logs, '[]'::jsonb) || $5::jsonb
+             WHERE id = $6`,
+            [
+              `[Bước ${nextIdx + 1}/${steps.length}] ${steps[nextIdx].title} (${wf.workflow_code})`,
+              newTargetDept,
+              newAssigneeName,
+              `Nhiệm vụ: ${steps[nextIdx].deliverables || steps[nextIdx].title}\nKết quả bước trước: ${step_result || "Đã nghiệm thu"}`,
+              JSON.stringify([{ time: nowVNDateTime(), action: `Kích hoạt lại Bước ${nextIdx + 1} sau nghiệm thu Bước ${currentIdx + 1}`, actor: actor || "Hệ Thống" }]),
+              existingNextTask.rows[0].id
+            ]
+          );
+        } else {
+          await c.query(
+            `INSERT INTO company_tasks (
+               task_code, title, department, task_category, assignee_name, customer_name,
+               priority, status, deadline, description, related_workflow_code, logs
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+            [
+              nextTaskCode,
+              `[Bước ${nextIdx + 1}/${steps.length}] ${steps[nextIdx].title} (${wf.workflow_code})`,
+              newTargetDept,
+              "Phối hợp liên phòng ban",
+              newAssigneeName,
+              wf.customer_name || "",
+              wf.priority || "MEDIUM",
+              "TODO",
+              wf.due_date || null,
+              `Nhiệm vụ: ${steps[nextIdx].deliverables || steps[nextIdx].title}\nKết quả bước trước: ${step_result || "Đã nghiệm thu"}`,
+              wf.workflow_code,
+              JSON.stringify([{ time: nowVNDateTime(), action: `Tiếp nhận chuyển giao từ Bước ${currentIdx + 1}`, actor: actor || "Hệ Thống" }])
+            ]
+          );
+        }
       } else {
         // All steps completed
         if (isPurchaseRequest(wf) && !canApprovePurchaseRequest(me)) {
@@ -895,6 +1048,25 @@ export async function POST(req: NextRequest) {
              target_dept = $3, assignee_name = $4, logs = $5, updated_at = CURRENT_TIMESTAMP
          WHERE id = $6`,
         [JSON.stringify(steps), prevIdx, newTargetDept, newAssigneeName, JSON.stringify(currentLogs), id]
+      );
+
+      // Đồng bộ Bảng Công Việc khi lùi bước: mở lại Task của bước trước về IN_PROGRESS và thu hồi Task bước bị lùi
+      const prevTaskCode = prevIdx === 0 ? `TSK-${wf.workflow_code}` : `TSK-${wf.workflow_code}-S${prevIdx + 1}`;
+      const currTaskCode = `TSK-${wf.workflow_code}-S${currentIdx + 1}`;
+      await c.query(
+        `DELETE FROM company_tasks WHERE task_code = $1 AND COALESCE(result, '') = '' AND status != 'DONE'`,
+        [currTaskCode]
+      );
+      await c.query(
+        `UPDATE company_tasks
+         SET status = 'IN_PROGRESS',
+             logs = COALESCE(logs, '[]'::jsonb) || $1::jsonb
+         WHERE related_workflow_code = $2 AND task_code = $3`,
+        [
+          JSON.stringify([{ time: nowVNDateTime(), action: `[Lùi bước từ Bước ${currentIdx + 1}]: ${rollback_reason}`, actor: actor || "Quản trị viên" }]),
+          wf.workflow_code,
+          prevTaskCode
+        ]
       );
 
       await logAudit("ROLLBACK_STEP", "WORKFLOW", `Lùi bước phiếu ${wf.workflow_code} từ B${currentIdx + 1} về B${prevIdx + 1}. Lý do: ${rollback_reason}`);
@@ -1098,6 +1270,47 @@ export async function POST(req: NextRequest) {
         proportionality_score
       } = body;
 
+      const syncDailyPlanItemsToTasks = async (items: any[], logDateStr: string, empName: string) => {
+        if (!Array.isArray(items) || items.length === 0) return;
+        for (const item of items) {
+          const tId = item?.task_id ? Number(item.task_id) : null;
+          const tCode = item?.task_code ? String(item.task_code).trim() : "";
+          if (!tId && !tCode) continue;
+          const itemStatus = String(item.status || "").toLowerCase();
+          const itemResult = String(item.result || "").trim();
+          const itemIssues = String(item.issues || "").trim();
+          if (itemStatus !== "completed" && itemStatus !== "partial" && !itemResult && !itemIssues) continue;
+
+          const nextTaskStatus = itemStatus === "completed" ? "DONE" : "IN_PROGRESS";
+          const logEntry = {
+            time: nowVNDateTime(),
+            author: empName || me.full_name || "Nhân viên",
+            type: "daily_sync",
+            text: `[Nhật ký Daily ${logDateStr}] ${itemStatus === "completed" ? "Hoàn thành (100%)" : "Thực hiện một phần"}${itemResult ? ` — Kết quả: ${itemResult}` : ""}${itemIssues ? ` — Vướng mắc: ${itemIssues}` : ""}`
+          };
+
+          if (tId && !isNaN(tId)) {
+            await query(
+              `UPDATE company_tasks
+               SET status = CASE WHEN $1 = 'DONE' THEN 'DONE' WHEN status = 'TODO' THEN 'IN_PROGRESS' ELSE status END,
+                   result = CASE WHEN $2 != '' THEN $2 ELSE result END,
+                   logs = COALESCE(logs, '[]'::jsonb) || $3::jsonb
+               WHERE id = $4`,
+              [nextTaskStatus, itemResult, JSON.stringify([logEntry]), tId]
+            );
+          } else if (tCode) {
+            await query(
+              `UPDATE company_tasks
+               SET status = CASE WHEN $1 = 'DONE' THEN 'DONE' WHEN status = 'TODO' THEN 'IN_PROGRESS' ELSE status END,
+                   result = CASE WHEN $2 != '' THEN $2 ELSE result END,
+                   logs = COALESCE(logs, '[]'::jsonb) || $3::jsonb
+               WHERE task_code = $4`,
+              [nextTaskStatus, itemResult, JSON.stringify([logEntry]), tCode]
+            );
+          }
+        }
+      };
+
       if (id) {
         await query(
           `UPDATE company_daily_logs
@@ -1123,6 +1336,7 @@ export async function POST(req: NextRequest) {
             id
           ]
         );
+        await syncDailyPlanItemsToTasks(plan_items || [], log_date || todayVN(), employee_name);
         await logAudit("UPDATE", "DAILY_LOG", `Cập nhật nhật ký ngày: ${employee_name} (${department})`);
         return NextResponse.json({ success: true });
       }
@@ -1155,6 +1369,7 @@ export async function POST(req: NextRequest) {
           proportionality_score || null
         ]
       );
+      await syncDailyPlanItemsToTasks(plan_items || [], log_date || todayVN(), employee_name);
       await logAudit("CREATE", "DAILY_LOG", `Báo cáo nhật ký ngày ${log_date}: ${employee_name} (${department})`);
       return NextResponse.json({ success: true });
     }
