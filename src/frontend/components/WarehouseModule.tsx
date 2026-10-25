@@ -7732,7 +7732,7 @@ export const WarehouseModule: React.FC = () => {
       {/* ==================== MODAL 1: TẠO PHIẾU ĐỀ XUẤT MUA HÀNG (PR) SANG PHÒNG CUNG ỨNG ==================== */}
       {isPRModalOpen && selectedPRItem && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-4 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-2xl w-full p-6 space-y-4 animate-fade-in">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
@@ -7840,7 +7840,7 @@ export const WarehouseModule: React.FC = () => {
       {/* ==================== MODAL 2: TẠO PHIẾU PHỐI HỢP ĐẨY BÁN (SALES) SANG PHÒNG KINH DOANH ==================== */}
       {isPushSalesModalOpen && selectedPushItem && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-4 animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-2xl w-full p-6 space-y-4 animate-fade-in">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded-xl bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold">
@@ -8083,7 +8083,7 @@ export const WarehouseModule: React.FC = () => {
       {/* ==================== MODAL: TẠO GIỮ CHỖ TỒN KHO CHO SALES THEO LÔ ==================== */}
       {isReserveModalOpen && selectedReserveItem && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full overflow-hidden">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full overflow-hidden">
             {/* Modal Header */}
             <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 bg-indigo-50/50 dark:bg-indigo-950/30">
               <div className="flex items-center gap-2.5">
@@ -8125,7 +8125,7 @@ export const WarehouseModule: React.FC = () => {
                   </span>
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 font-mono text-[11px]">
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2 border-t border-slate-200/60 dark:border-slate-700/60 font-mono text-[11px]">
                   <div>
                     <span className="text-slate-400 block text-[10px]">Số Lô (LOT):</span>
                     <strong className="text-orange-600 dark:text-orange-400">{selectedReserveItem.lot_number}</strong>
@@ -8384,7 +8384,7 @@ export const WarehouseModule: React.FC = () => {
       {/* ==================== MODAL: THÊM / CHỈNH SỬA THÀNH PHẦN CON TRONG BỘ (BOM) ==================== */}
       {isComponentModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-xl w-full my-auto overflow-hidden animate-fade-in text-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full my-auto overflow-hidden animate-fade-in text-xs">
             <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 bg-purple-50/50 dark:bg-purple-950/30">
               <div className="flex items-center gap-2.5">
                 <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-purple-900/60 text-purple-700 dark:text-purple-300 flex items-center justify-center font-bold">

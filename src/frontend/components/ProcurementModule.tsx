@@ -4687,7 +4687,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* Sửa số hóa đơn / ngày hóa đơn đầu vào của PO */}
       {invoiceEditPO && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-5 space-y-3 text-xs">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-2xl w-full p-5 sm:p-6 space-y-3 text-xs">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
               <h3 className="font-bold text-slate-900 dark:text-white text-sm">
                 Hóa đơn đầu vào — <span className="font-mono text-orange-600">{invoiceEditPO.po_code}</span>
@@ -5065,7 +5065,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {isPOModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-6xl w-full max-h-[96vh] flex flex-col">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-[96vw] 2xl:max-w-[1440px] w-full max-h-[96vh] flex flex-col">
             {/* Header (fixed): title + supplier / dates / status always visible */}
             <div className="shrink-0 px-5 pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
@@ -5201,19 +5201,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               </div>
 
               <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-x-auto">
-                <table className="w-full text-left text-xs min-w-[980px]">
+                <table className="w-full table-fixed text-left text-xs min-w-[1180px]">
                   <thead>
                     <tr className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[11px]">
-                      <th className="p-2 w-8 text-center">#</th>
-                      <th className="p-2 min-w-[260px]">Mã hàng / Sản phẩm</th>
-                      <th className="p-2 w-14 text-center">ĐVT</th>
-                      <th className="p-2 w-28 text-center" title="Tồn khả dụng / Đang về (rê chuột để xem chi tiết giữ chỗ)">Tồn KD / Đang về</th>
-                      <th className="p-2 w-20 text-center">SL đặt</th>
-                      <th className="p-2 w-32 text-right">Đơn giá</th>
-                      <th className="p-2 w-32 text-right">Thành tiền</th>
-                      <th className="p-2 w-44">Mục đích</th>
-                      <th className="p-2 min-w-[150px]">Ghi chú dòng</th>
-                      <th className="p-2 w-8"></th>
+                      <th className="p-2.5 w-9 text-center">#</th>
+                      <th className="p-2.5 w-[29%]">Mã hàng / Sản phẩm</th>
+                      <th className="p-2.5 w-16 text-center">ĐVT</th>
+                      <th className="p-2.5 w-28 text-center" title="Tồn khả dụng / Đang về (rê chuột để xem chi tiết giữ chỗ)">Tồn KD / Đang về</th>
+                      <th className="p-2.5 w-24 text-center">SL đặt</th>
+                      <th className="p-2.5 w-36 text-right">Đơn giá</th>
+                      <th className="p-2.5 w-40 text-right">Thành tiền</th>
+                      <th className="p-2.5 w-48">Mục đích</th>
+                      <th className="p-2.5 w-[16%]">Ghi chú dòng</th>
+                      <th className="p-2.5 w-9"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -5324,7 +5324,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-xs"
                             />
                           </td>
-                          <td className="p-2 pt-3 text-right font-mono font-bold text-slate-800 dark:text-slate-100">
+                          <td className="p-2 pt-3 text-right font-mono font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">
                             {formatCurrency((Number(item.quantity) || 0) * (Number(item.unit_price) || 0))}
                           </td>
                           <td className="p-2">
@@ -5430,7 +5430,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         const totalD = parseFloat(d.total_amount) || dItems.reduce((s: number, it: any) => s + (Number(it.line_total) || (Number(it.quantity || 1) * Number(it.unit_price || 0))), 0);
         return (
           <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4" onClick={() => setSelectedPODetail(null)}>
-            <div className="bg-white rounded-2xl shadow-2xl max-w-5xl w-full max-h-[96vh] flex flex-col text-slate-900 border border-slate-200" onClick={(e) => e.stopPropagation()}>
+            <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[96vh] flex flex-col text-slate-900 border border-slate-200" onClick={(e) => e.stopPropagation()}>
               {/* Action bar (fixed) */}
               <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3">
                 <div className="flex items-center gap-2">
@@ -5835,7 +5835,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {isSupplierModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full p-6 sm:p-7 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-orange-600">
                 <Building2 className="w-5 h-5" />
@@ -5875,7 +5875,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
+                <div className="flex flex-col justify-between">
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tên Đầy Đủ NCC / Hãng Sản Xuất</label>
                   <input
                     type="text"
@@ -5885,7 +5885,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 font-bold text-slate-900 dark:text-white"
                   />
                 </div>
-                <div>
+                <div className="flex flex-col justify-between">
                   <label className="block font-bold text-orange-600 dark:text-orange-400 mb-1">Tên Viết Tắt / Brand (Hiện trên Báo giá)</label>
                   <input
                     type="text"
@@ -6340,7 +6340,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {isAddEditProductModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-5 space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-2xl w-full p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
                 <Package className="w-5 h-5" />
@@ -6477,7 +6477,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {isAdjustPriceModalOpen && adjustPriceTarget && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-5 space-y-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-2xl w-full p-6 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
                 <SlidersHorizontal className="w-5 h-5" />
@@ -6640,7 +6640,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {isPriceHistoryModalOpen && priceHistoryTarget && (
         <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-xl w-full p-5 space-y-4 max-h-[85vh] flex flex-col">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full p-6 space-y-4 max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-amber-500">
                 <History className="w-5 h-5" />
@@ -6777,7 +6777,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       )}
       {isPaymentModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-lg w-full p-6 space-y-4 max-h-[92vh] overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-2xl w-full p-6 space-y-4 max-h-[92vh] overflow-y-auto">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-emerald-600">
                 <DollarSign className="w-5 h-5" />
@@ -6929,7 +6929,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {isPRModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full p-6 space-y-4 my-8">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-5xl w-full p-6 sm:p-7 space-y-4 my-8">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
                 <FileText className="w-5 h-5" />
@@ -7277,7 +7277,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {selectedPRDetail && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-3xl w-full p-6 space-y-4 my-8">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-5xl w-full p-6 sm:p-7 space-y-4 my-8">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
                 <FileText className="w-5 h-5" />
