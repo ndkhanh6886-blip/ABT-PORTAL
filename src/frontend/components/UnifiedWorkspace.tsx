@@ -5959,26 +5959,16 @@ export const UnifiedWorkspace: React.FC = () => {
             </>
           )}
 
-          {/* TAB 5: THÔNG BÁO & QUYẾT ĐỊNH -> Nút Ban Hành Quyết Định & Tạo Thông Báo Nội Bộ */}
+          {/* TAB 5: THÔNG BÁO & QUYẾT ĐỊNH -> Gộp thành 1 nút duy nhất Ban Hành Thông Báo / Quyết Định */}
           {activeSubTab === "announcements" && (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => openCreateAnnouncementModal("DECISION")}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-xs cursor-pointer"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span>📜 + Ban Hành Quyết Định</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => openCreateAnnouncementModal("ANNOUNCEMENT")}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xs cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>📢 + Tạo Thông Báo / Quy Chế</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => openCreateAnnouncementModal("DECISION")}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-xs cursor-pointer"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>📜 Ban Hành Thông Báo / Quyết Định</span>
+            </button>
           )}
         </div>
       </div>
@@ -9098,20 +9088,13 @@ ${wf.description || ""}`}
                     Ban Giám Đốc và Trưởng bộ phận có thể ban hành Quyết định (`QĐ`), Thông báo hành chính (`TB`), Quy trình chuẩn (`SOP`), hoặc Chính sách kinh doanh (`CS`) kèm file đóng dấu, tự động nhắn tin Chat thông báo và theo dõi danh sách nhân sự xác nhận đã đọc.
                   </p>
                 </div>
-                <div className="flex items-center justify-center gap-2 pt-2">
+                <div className="flex items-center justify-center pt-2">
                   <button
                     type="button"
                     onClick={() => openCreateAnnouncementModal("DECISION")}
                     className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs cursor-pointer shadow-sm"
                   >
-                    📜 + Ban Hành Quyết Định Đầu Tiên
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => openCreateAnnouncementModal("ANNOUNCEMENT")}
-                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer shadow-sm"
-                  >
-                    📢 + Đăng Thông Báo Nội Bộ
+                    📜 + Ban Hành Thông Báo / Quyết Định Mới
                   </button>
                 </div>
               </div>
