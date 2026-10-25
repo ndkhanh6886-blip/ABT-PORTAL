@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, ensurePersonnelTable, withTransaction, httpErrorStatus, HttpError } from "@/backend/db/db";
 import { hashPassword } from "@/backend/services/passwords";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
-import { hasPermission } from "@/backend/services/permissions";
+import { hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 
@@ -1331,70 +1331,7 @@ export async function POST(req: NextRequest) {
             "Role"
           ]);
 
-          const normalizeRole = (val: string, deptStr: string, posStr: string): string => {
-            const v = val.toLowerCase().trim();
-            if (v === "admin" || v === "root" || v.includes("quản trị") || v.includes("giám đốc") || v.includes("director") || v.includes("ceo")) {
-              return "admin";
-            }
-            if (v === "accountant" || v.includes("kế toán") || v.includes("tài chính")) {
-              return "accountant";
-            }
-            if (v === "warehouse" || v.includes("thủ kho") || v.includes("kho vận") || v.includes("kho")) {
-              return "warehouse";
-            }
-            if (v === "procurement" || v.includes("mua hàng") || v.includes("cung ứng") || v.includes("thu mua")) {
-              return "procurement";
-            }
-            if (v === "app_head" || v.includes("kỹ thuật") || v.includes("ứng dụng") || v.includes("application") || v.includes("kỹ sư")) {
-              return "app_head";
-            }
-            if (v === "sales_head" || v.includes("trưởng phòng kinh doanh") || v.includes("sales head") || v.includes("head of sales")) {
-              return "sales_head";
-            }
-            if (v === "sales_rep" || v.includes("sales admin") || v.includes("kinh doanh") || v.includes("sales") || v.includes("nvd") || v.includes("bán hàng")) {
-              return "sales_rep";
-            }
-            if (v === "qa_qc" || v.includes("qa") || v.includes("qc") || v.includes("chất lượng") || v.includes("kiểm định") || v.includes("iso")) {
-              return "qa_qc";
-            }
-            if (v) return v;
-
-            // Fallback heuristic if role column was empty in Excel
-            const lowerDept = deptStr.toLowerCase();
-            const lowerPos = posStr.toLowerCase();
-
-            // 1. Check Accounting FIRST so "Kế toán kho" is NOT misclassified as warehouse
-            if (lowerPos.includes("kế toán") || lowerDept.includes("kế toán") || lowerPos.includes("tài chính")) {
-              return "accountant";
-            }
-            // 2. Check Leadership (exclude "sales admin" / "admin kinh doanh")
-            if (lowerPos.includes("tổng giám đốc") || lowerPos.includes("phó giám đốc") || lowerPos.includes("giám đốc") || lowerDept.includes("ban giám đốc") || lowerPos.includes("root") || (lowerPos.includes("admin") && !lowerPos.includes("sales admin") && !lowerPos.includes("admin kinh doanh"))) {
-              return "admin";
-            }
-            // 3. Sales Leadership
-            if (lowerPos.includes("trưởng phòng kinh doanh") || lowerPos.includes("sales head") || lowerPos.includes("trưởng bộ phận kinh doanh")) {
-              return "sales_head";
-            }
-            // 4. Warehouse
-            if (lowerPos.includes("kho") || lowerDept.includes("kho")) {
-              return "warehouse";
-            }
-            // 5. Procurement
-            if (lowerPos.includes("mua hàng") || lowerDept.includes("cung ứng") || lowerDept.includes("mua") || lowerPos.includes("procurement")) {
-              return "procurement";
-            }
-            // 6. Application / Technical
-            if (lowerPos.includes("kỹ thuật") || lowerDept.includes("ứng dụng") || lowerDept.includes("kỹ sư") || lowerDept.includes("application")) {
-              return "app_head";
-            }
-            // 7. QA / QC
-            if (lowerPos.includes("qa") || lowerPos.includes("qc") || lowerDept.includes("qa") || lowerDept.includes("chất lượng") || lowerDept.includes("iso")) {
-              return "qa_qc";
-            }
-            return "sales_rep";
-          };
-
-          const role = normalizeRole(rawRole, dept, position);
+          const role = inferSystemRoleFromPosition(dept, position, rawRole);
 
           const phone = getVal(["Số điện thoại", "phone", "SĐT", "Điện thoại"]);
           const statusRaw = (getVal(["Trạng thái", "status"]) || "ACTIVE").toUpperCase();

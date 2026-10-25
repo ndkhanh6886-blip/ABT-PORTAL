@@ -401,12 +401,12 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "warehouse.inbound": true,
     "warehouse.outbound": true,
     "warehouse.reserve": true,
-    "warehouse.view_cost_price": false,
+    "warehouse.view_cost_price": true,
     "warehouse.print_barcode": true,
     "procurement.view": true,
     "procurement.create_pr": true,
     "procurement.approve_po": false,
-    "sales.view": false,
+    "sales.view": true,
     "sales.create": false,
     "sales.edit": false,
     "sales.delete": false,
@@ -424,7 +424,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "settings.manage_users": false,
     "settings.view_audit": false,
     "chat.view": true,
-    "zalo.view": false
+    "zalo.view": true,
+    "workspace.manage_templates": true
   },
   warehouse_specialist: {
     "warehouse.view": true,
@@ -433,8 +434,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "warehouse.reserve": true,
     "warehouse.view_cost_price": false,
     "warehouse.print_barcode": true,
-    "procurement.view": true,
-    "procurement.create_pr": true,
+    "procurement.view": false,
+    "procurement.create_pr": false,
     "procurement.approve_po": false,
     "sales.view": false,
     "sales.create": false,
@@ -484,7 +485,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "settings.manage_users": false,
     "settings.view_audit": false,
     "chat.view": true,
-    "zalo.view": false
+    "zalo.view": true,
+    "workspace.manage_templates": true
   },
   app_rep: {
     "application.view": true,
@@ -516,7 +518,7 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "chat.view": true,
     "zalo.view": false
   },
-  legal: {
+  legal_head: {
     "legal.view": true,
     "legal.create": true,
     "legal.approve": true,
@@ -544,7 +546,69 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "settings.manage_users": false,
     "settings.view_audit": false,
     "chat.view": true,
+    "zalo.view": true,
+    "workspace.manage_templates": true
+  },
+  legal: {
+    "legal.view": true,
+    "legal.create": true,
+    "legal.approve": false,
+    "sales.view": true,
+    "sales.create": false,
+    "sales.edit": false,
+    "sales.delete": false,
+    "sales.approve_discount": false,
+    "sales.approve_orders": false,
+    "sales.export_excel": false,
+    "procurement.view": true,
+    "procurement.create_pr": false,
+    "procurement.approve_po": false,
+    "warehouse.view": false,
+    "warehouse.inbound": false,
+    "warehouse.outbound": false,
+    "warehouse.reserve": false,
+    "warehouse.view_cost_price": false,
+    "warehouse.print_barcode": false,
+    "application.view": false,
+    "application.create": false,
+    "application.assign": false,
+    "application.approve": false,
+    "settings.view": false,
+    "settings.manage_users": false,
+    "settings.view_audit": false,
+    "chat.view": true,
     "zalo.view": false
+  },
+  accountant_head: {
+    "sales.view": true,
+    "sales.create": false,
+    "sales.edit": false,
+    "sales.delete": false,
+    "sales.approve_discount": true,
+    "sales.approve_orders": true,
+    "sales.export_excel": true,
+    "warehouse.view": true,
+    "warehouse.inbound": false,
+    "warehouse.outbound": false,
+    "warehouse.reserve": false,
+    "warehouse.view_cost_price": true,
+    "warehouse.print_barcode": false,
+    "application.view": false,
+    "application.create": false,
+    "application.assign": false,
+    "application.approve": false,
+    "procurement.view": true,
+    "procurement.create_pr": false,
+    "procurement.approve_po": true,
+    "legal.view": true,
+    "legal.create": false,
+    "legal.approve": false,
+    "settings.view": false,
+    "settings.manage_users": false,
+    "settings.view_audit": true,
+    "chat.view": true,
+    "zalo.view": true,
+    "workspace.manage_templates": true
   },
   accountant: {
     "sales.view": true,
@@ -575,6 +639,37 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "settings.view_audit": false,
     "chat.view": true,
     "zalo.view": false
+  },
+  qa_qc_lead: {
+    "warehouse.view": true,
+    "warehouse.inbound": true,
+    "warehouse.outbound": true,
+    "warehouse.reserve": true,
+    "warehouse.view_cost_price": false,
+    "warehouse.print_barcode": true,
+    "application.view": true,
+    "application.create": false,
+    "application.assign": false,
+    "application.approve": true,
+    "sales.view": false,
+    "sales.create": false,
+    "sales.edit": false,
+    "sales.delete": false,
+    "sales.approve_discount": false,
+    "sales.approve_orders": false,
+    "sales.export_excel": false,
+    "procurement.view": false,
+    "procurement.create_pr": false,
+    "procurement.approve_po": false,
+    "legal.view": true,
+    "legal.create": false,
+    "legal.approve": true,
+    "settings.view": false,
+    "settings.manage_users": false,
+    "settings.view_audit": false,
+    "chat.view": true,
+    "zalo.view": true,
+    "workspace.manage_templates": true
   },
   qa_qc: {
     "warehouse.view": true,
@@ -671,13 +766,164 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
 // Aliases cho các vai trò thường dùng
 ROLE_PRESETS.sales = ROLE_PRESETS.sales_rep;
 ROLE_PRESETS.warehouse = ROLE_PRESETS.warehouse_specialist;
-ROLE_PRESETS.procurement = ROLE_PRESETS.procurement_lead;
+ROLE_PRESETS.procurement = ROLE_PRESETS.procurement_specialist;
 ROLE_PRESETS.application = ROLE_PRESETS.app_rep;
+ROLE_PRESETS.chief_accountant = ROLE_PRESETS.accountant_head;
+
+/**
+ * Suy luận mã Vai trò hệ thống (System Role) chuẩn hóa từ Phòng ban, Chức vụ và Vai trò khai báo (nếu có).
+ * Phân tách rõ ràng cấp Quản lý (Head / Lead) và cấp Chuyên viên / Nhân viên (Rep / Specialist / Staff).
+ */
+export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, explicitRole?: string): string {
+  const rawRole = (explicitRole || "").toLowerCase().trim();
+  const dept = (deptStr || "").toLowerCase().trim();
+  const pos = (posStr || "").toLowerCase().trim();
+
+  const isLeaderPos =
+    pos.includes("trưởng") ||
+    pos.includes("phó phòng") ||
+    pos.includes("phó bộ phận") ||
+    pos.includes("head") ||
+    pos.includes("lead") ||
+    pos.includes("chief") ||
+    (pos.includes("manager") && !pos.includes("product manager") && !pos.includes("account manager"));
+
+  // Nếu cột Vai trò hệ thống đã chỉ định rõ mã chuẩn có phân cấp
+  const canonicalRoles = new Set([
+    "admin",
+    "sales_head",
+    "sales_rep",
+    "warehouse_lead",
+    "warehouse",
+    "warehouse_specialist",
+    "procurement_lead",
+    "procurement_specialist",
+    "app_head",
+    "app_rep",
+    "accountant_head",
+    "accountant",
+    "qa_qc_lead",
+    "qa_qc",
+    "legal_head",
+    "legal",
+  ]);
+
+  if (canonicalRoles.has(rawRole)) {
+    // Nếu trong file cũ ghi "app_head" nhưng chức vụ thực tế là Kỹ sư (không phải Trưởng/Phó/Head) thì chuẩn hóa về "app_rep"
+    if (rawRole === "app_head" && pos && !isLeaderPos && (pos.includes("kỹ sư") || pos.includes("chuyên viên") || pos.includes("nhân viên") || pos.includes("specialist") || pos.includes("engineer"))) {
+      return "app_rep";
+    }
+    // Nếu ghi chung "warehouse" nhưng chức vụ là Trưởng bộ phận kho -> "warehouse_lead"
+    if (rawRole === "warehouse" && isLeaderPos) {
+      return "warehouse_lead";
+    }
+    // Nếu ghi chung "accountant" nhưng chức vụ là Kế toán trưởng -> "accountant_head"
+    if (rawRole === "accountant" && isLeaderPos) {
+      return "accountant_head";
+    }
+    // Nếu ghi chung "qa_qc" nhưng chức vụ là Trưởng bộ phận QA/QC -> "qa_qc_lead"
+    if (rawRole === "qa_qc" && isLeaderPos) {
+      return "qa_qc_lead";
+    }
+    // Nếu ghi chung "legal" nhưng chức vụ là Trưởng bộ phận Pháp chế -> "legal_head"
+    if (rawRole === "legal" && isLeaderPos) {
+      return "legal_head";
+    }
+    return rawRole === "warehouse_specialist" ? "warehouse" : rawRole;
+  }
+
+  // Nếu cột Vai trò ghi chung "procurement" -> phân tách theo chức vụ
+  if (rawRole === "procurement") {
+    return isLeaderPos ? "procurement_lead" : "procurement_specialist";
+  }
+
+  const combined = `${rawRole} ${pos} ${dept}`;
+
+  // 1. Kế toán / Tài chính (kiểm tra trước để "Kế toán kho" không bị nhận nhầm sang Kho vận)
+  if (pos.includes("kế toán") || dept.includes("kế toán") || pos.includes("tài chính") || dept.includes("tài chính") || rawRole.includes("accountant") || rawRole.includes("chief accountant")) {
+    return isLeaderPos || rawRole.includes("chief") || rawRole.includes("head") || rawRole.includes("trưởng")
+      ? "accountant_head"
+      : "accountant";
+  }
+
+  // 2. Ban Giám Đốc / Admin (loại trừ "Sales Admin" / "Admin Kinh Doanh")
+  const isSalesAdmin = pos.includes("sales admin") || pos.includes("sale admin") || pos.includes("admin kinh doanh") || rawRole.includes("sales admin");
+  if (
+    !isSalesAdmin &&
+    (rawRole === "director" ||
+      rawRole === "root" ||
+      pos.includes("tổng giám đốc") ||
+      pos.includes("phó giám đốc") ||
+      pos.includes("giám đốc") ||
+      dept.includes("ban giám đốc") ||
+      dept === "bod" ||
+      rawRole.includes("giám đốc") ||
+      rawRole.includes("director") ||
+      rawRole.includes("ceo") ||
+      (dept.includes("nhân sự") && isLeaderPos))
+  ) {
+    return "admin";
+  }
+
+  // 3. Kinh Doanh & Marketing
+  if (
+    dept.includes("kinh doanh") ||
+    dept.includes("sales") ||
+    dept.includes("marketing") ||
+    pos.includes("kinh doanh") ||
+    pos.includes("sales") ||
+    pos.includes("product manager") ||
+    rawRole.includes("sales")
+  ) {
+    return isLeaderPos || rawRole.includes("head") ? "sales_head" : "sales_rep";
+  }
+
+  // 4. Kho Vận & Chuỗi Lạnh
+  if (dept.includes("kho") || dept.includes("warehouse") || dept.includes("logistics") || pos.includes("kho") || pos.includes("giao nhận") || rawRole.includes("warehouse")) {
+    return isLeaderPos || rawRole.includes("lead") || rawRole.includes("manager") ? "warehouse_lead" : "warehouse";
+  }
+
+  // 5. Mua Hàng & Cung Ứng
+  if (dept.includes("cung ứng") || dept.includes("mua hàng") || dept.includes("procurement") || pos.includes("mua hàng") || pos.includes("cung ứng") || rawRole.includes("procurement")) {
+    return isLeaderPos || rawRole.includes("lead") || rawRole.includes("head") ? "procurement_lead" : "procurement_specialist";
+  }
+
+  // 6. Kỹ Thuật & Ứng Dụng (Application)
+  if (
+    dept.includes("kỹ thuật") ||
+    dept.includes("ứng dụng") ||
+    dept.includes("application") ||
+    pos.includes("kỹ thuật") ||
+    pos.includes("ứng dụng") ||
+    pos.includes("kỹ sư") ||
+    pos.includes("service engineer") ||
+    rawRole.includes("app") ||
+    rawRole.includes("application")
+  ) {
+    return isLeaderPos || rawRole.includes("head") ? "app_head" : "app_rep";
+  }
+
+  // 7. QA / QC
+  if (dept.includes("qa") || dept.includes("qc") || dept.includes("chất lượng") || pos.includes("qa") || pos.includes("qc") || pos.includes("chất lượng") || pos.includes("iso") || combined.includes("qa_qc")) {
+    return isLeaderPos || rawRole.includes("lead") || rawRole.includes("manager") ? "qa_qc_lead" : "qa_qc";
+  }
+
+  // 8. Pháp Chế
+  if (dept.includes("pháp chế") || dept.includes("legal") || pos.includes("pháp chế") || pos.includes("pháp lý") || rawRole.includes("legal")) {
+    return isLeaderPos || rawRole.includes("head") || rawRole.includes("lead") ? "legal_head" : "legal";
+  }
+
+  return "sales_rep";
+}
 
 // Hàm phân giải vai trò linh hoạt theo Tên chức danh và Phòng ban
 export function resolveRolePreset(roleName?: string, deptName?: string): Record<string, boolean> {
   const role = (roleName || "").toLowerCase().trim();
   const dept = (deptName || "").toLowerCase().trim();
+
+  if (ROLE_PRESETS[role]) {
+    return ROLE_PRESETS[role];
+  }
 
   // 1. Ban Giám Đốc / Admin
   if (
@@ -703,7 +949,7 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
     dept.includes("purchasing") ||
     dept.includes("thu mua")
   ) {
-    if (role.includes("lead") || role.includes("trưởng") || role.includes("head")) {
+    if (role.includes("lead") || role.includes("trưởng") || role.includes("head") || role.includes("manager")) {
       return ROLE_PRESETS.procurement_lead;
     }
     return ROLE_PRESETS.procurement_specialist;
@@ -717,7 +963,7 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
     dept.includes("kinh doanh") || 
     dept.includes("sales")
   ) {
-    if (role.includes("head") || role.includes("trưởng") || role.includes("phó") || role.includes("manager")) {
+    if (role.includes("head") || role.includes("trưởng") || role.includes("phó") || (role.includes("manager") && !role.includes("product manager"))) {
       return ROLE_PRESETS.sales_head;
     }
     return ROLE_PRESETS.sales_rep;
@@ -730,7 +976,7 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
     dept.includes("kho") || 
     dept.includes("warehouse")
   ) {
-    if (role.includes("lead") || role.includes("trưởng") || role.includes("phụ trách")) {
+    if (role.includes("lead") || role.includes("trưởng") || role.includes("phụ trách") || role.includes("manager")) {
       return ROLE_PRESETS.warehouse_lead;
     }
     return ROLE_PRESETS.warehouse_specialist;
@@ -746,7 +992,7 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
     dept.includes("ứng dụng") || 
     dept.includes("kỹ thuật")
   ) {
-    if (role.includes("head") || role.includes("trưởng")) {
+    if (role.includes("head") || role.includes("trưởng") || role.includes("manager")) {
       return ROLE_PRESETS.app_head;
     }
     return ROLE_PRESETS.app_rep;
@@ -759,6 +1005,9 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
     dept.includes("pháp chế") || 
     dept.includes("legal")
   ) {
+    if (role.includes("head") || role.includes("lead") || role.includes("trưởng")) {
+      return ROLE_PRESETS.legal_head;
+    }
     return ROLE_PRESETS.legal;
   }
 
@@ -768,11 +1017,17 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
     role.includes("kế toán") || 
     dept.includes("kế toán")
   ) {
+    if (role.includes("head") || role.includes("chief") || role.includes("trưởng")) {
+      return ROLE_PRESETS.accountant_head;
+    }
     return ROLE_PRESETS.accountant;
   }
 
   // 8. QA/QC
   if (role.includes("qa") || role.includes("qc") || dept.includes("qa") || dept.includes("qc")) {
+    if (role.includes("lead") || role.includes("head") || role.includes("trưởng") || role.includes("manager")) {
+      return ROLE_PRESETS.qa_qc_lead;
+    }
     return ROLE_PRESETS.qa_qc;
   }
 
@@ -910,6 +1165,8 @@ export function hasPermission(user: any, permissionKey: string): boolean {
       role.includes("manager") || 
       role.includes("sales_head") || 
       role.includes("head") || 
+      role.includes("lead") || 
+      role.includes("chief") || 
       role.includes("trưởng") || 
       role.includes("phó")
     ) {

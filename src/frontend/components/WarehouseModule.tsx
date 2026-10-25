@@ -1262,7 +1262,7 @@ export const WarehouseModule: React.FC = () => {
         "Mật khẩu khởi tạo": "123456",
         "Phòng ban (*)": "Mua Hàng & Cung Ứng",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Mua Hàng Quốc Tế",
-        "Vai trò hệ thống (*)": "procurement",
+        "Vai trò hệ thống (*)": "procurement_specialist",
         "Email (*)": "thang.lv@tbrscientific.com",
         "Số điện thoại": "0933221100",
         "Trạng thái": "ACTIVE"
@@ -1274,7 +1274,7 @@ export const WarehouseModule: React.FC = () => {
         "Mật khẩu khởi tạo": "123456",
         "Phòng ban (*)": "Kỹ Thuật & Ứng Dụng",
         "Chức vụ / Vị trí (*)": "Kỹ Sư Ứng Dụng PCR",
-        "Vai trò hệ thống (*)": "app_head",
+        "Vai trò hệ thống (*)": "app_rep",
         "Email (*)": "trong.vd@tbrscientific.com",
         "Số điện thoại": "0944556677",
         "Trạng thái": "ACTIVE"
@@ -1334,9 +1334,9 @@ export const WarehouseModule: React.FC = () => {
       {
         "Phòng Ban": "Kho Vận",
         "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận",
-        "Vai Trò Hệ Thống": "warehouse",
+        "Vai Trò Hệ Thống": "warehouse_lead",
         "Tên Tiếng Anh": "Warehouse Manager",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho TBRs, ký duyệt phiếu xuất nhập kho, điều chuyển vị trí kho lạnh, quản lý cảnh báo tồn kho và HSD."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho TBRs, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
       },
       {
         "Phòng Ban": "Kho Vận",
@@ -1355,58 +1355,79 @@ export const WarehouseModule: React.FC = () => {
       {
         "Phòng Ban": "Mua Hàng & Cung Ứng",
         "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Cung Ứng",
-        "Vai Trò Hệ Thống": "procurement",
+        "Vai Trò Hệ Thống": "procurement_lead",
         "Tên Tiếng Anh": "Procurement Lead",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý danh mục nhà cung cấp (Bioer, Biologix, Corning...), thương thảo hợp đồng mua hàng, duyệt đơn PO và theo dõi tiến độ nhập khẩu."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý danh mục nhà cung cấp (Bioer, Biologix, Corning...), thương thảo hợp đồng mua hàng, phê duyệt đơn PO (approve_po) và theo dõi tiến độ nhập khẩu."
       },
       {
         "Phòng Ban": "Mua Hàng & Cung Ứng",
         "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Mua Hàng Quốc Tế / Trong Nước",
-        "Vai Trò Hệ Thống": "procurement",
+        "Vai Trò Hệ Thống": "procurement_specialist",
         "Tên Tiếng Anh": "Procurement Specialist",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Lập đơn PO mua hàng, nạp đơn hàng PO bằng Excel, theo dõi lịch giao hàng dự kiến, kiểm soát hồ sơ chứng từ CO/CQ và thông quan Hải quan."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Lập đề xuất PR & dự thảo đơn PO mua hàng (không tự phê duyệt PO), theo dõi lịch giao hàng dự kiến, kiểm soát hồ sơ chứng từ CO/CQ và thông quan Hải quan."
       },
       {
         "Phòng Ban": "Kỹ Thuật & Ứng Dụng",
         "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kỹ Thuật & Ứng Dụng",
         "Vai Trò Hệ Thống": "app_head",
         "Tên Tiếng Anh": "Head of Application",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý đào tạo kỹ thuật, demo máy xét nghiệm cho bệnh viện, nghiệm thu chạy thử thiết bị, tư vấn giải pháp sinh học phân tử cho khách hàng."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý đào tạo kỹ thuật, phân công kỹ sư (assign), ký duyệt nghiệm thu thiết bị & tài liệu kỹ thuật thầu (approve), tư vấn giải pháp SHPT."
       },
       {
         "Phòng Ban": "Kỹ Thuật & Ứng Dụng",
         "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Ứng Dụng PCR / Sinh Học Phân Tử",
-        "Vai Trò Hệ Thống": "app_head",
+        "Vai Trò Hệ Thống": "app_rep",
         "Tên Tiếng Anh": "Application Specialist",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Cài đặt quy trình xét nghiệm qPCR/tách chiết, hỗ trợ khách hàng xử lý sự cố kỹ thuật kết quả xét nghiệm, viết tài liệu hướng dẫn sử dụng."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Cài đặt quy trình xét nghiệm qPCR/tách chiết, mượn máy/hóa chất demo, hỗ trợ khách hàng xử lý sự cố kỹ thuật kết quả xét nghiệm."
       },
       {
         "Phòng Ban": "Kỹ Thuật & Ứng Dụng",
         "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Dịch Vụ Thiết Bị (Service Engineer)",
-        "Vai Trò Hệ Thống": "app_head",
+        "Vai Trò Hệ Thống": "app_rep",
         "Tên Tiếng Anh": "Service Engineer",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Lắp đặt, hiệu chuẩn (calibration), bảo dưỡng định kỳ và sửa chữa máy Real-time PCR, máy tách chiết tự động."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Lắp đặt, hiệu chuẩn (calibration), bảo dưỡng định kỳ và sửa chữa máy Real-time PCR, máy tách chiết tự động theo phân công."
       },
       {
         "Phòng Ban": "Kế Toán",
         "Chức Vụ / Vị Trí Công Việc": "Kế Toán Trưởng",
-        "Vai Trò Hệ Thống": "accountant",
+        "Vai Trò Hệ Thống": "accountant_head",
         "Tên Tiếng Anh": "Chief Accountant",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý dòng tiền, kiểm soát công nợ phải thu/phải trả, chốt kỳ kế toán, phê duyệt hóa đơn tài chính và theo dõi hạn mức tín dụng khách hàng."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý dòng tiền, phê duyệt hạn mức tín dụng & giải tỏa công nợ đơn hàng, phê duyệt ngân sách PO, chốt kỳ kế toán và kiểm soát báo cáo tài chính."
       },
       {
         "Phòng Ban": "Kế Toán",
         "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kế Toán Kho & Công Nợ",
         "Vai Trò Hệ Thống": "accountant",
         "Tên Tiếng Anh": "Receivable & Inventory Accountant",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Đối soát giá trị kho, định giá tồn kho theo FIFO, theo dõi tuổi nợ khách hàng và nhắc nợ theo kỳ hạn thanh toán."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Đối soát giá trị kho, định giá tồn kho theo FIFO, phát hành hóa đơn VAT, theo dõi tuổi nợ khách hàng và nhắc nợ theo kỳ hạn thanh toán."
+      },
+      {
+        "Phòng Ban": "QA / QC",
+        "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận QA/QC (QA/QC Manager)",
+        "Vai Trò Hệ Thống": "qa_qc_lead",
+        "Tên Tiếng Anh": "QA/QC Manager",
+        "Quyền Hạn & Phạm Vi Truy Cập": "Chỉ đạo hệ thống chất lượng ISO 13485, phê duyệt kết quả thẩm định chất lượng lô, ký lệnh thu hồi Lô khẩn cấp và giải phóng hàng cách ly (Quarantine)."
       },
       {
         "Phòng Ban": "QA / QC",
         "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Quản Lý Chất Lượng & ISO 13485",
         "Vai Trò Hệ Thống": "qa_qc",
         "Tên Tiếng Anh": "QA/QC Specialist",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Kiểm soát hồ sơ COA, phát lệnh thu hồi Lô khẩn cấp khi có sự cố, cách ly hàng lỗi (Quarantine), phân tích khiếu nại khách hàng."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Kiểm soát hồ sơ COA, lập biên bản kiểm định lô nhập kho, ghi nhận hàng lỗi cách ly (Quarantine) và phân tích khiếu nại chất lượng."
+      },
+      {
+        "Phòng Ban": "Pháp Chế",
+        "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Pháp Chế",
+        "Vai Trò Hệ Thống": "legal_head",
+        "Tên Tiếng Anh": "Head of Legal",
+        "Quyền Hạn & Phạm Vi Truy Cập": "Thẩm định và phê duyệt pháp lý hợp đồng kinh tế (legal.approve), kiểm soát rủi ro đấu thầu và phê duyệt hồ sơ lưu hành trang thiết bị y tế IVD."
+      },
+      {
+        "Phòng Ban": "Pháp Chế",
+        "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Pháp Chế & Tuân Thủ",
+        "Vai Trò Hệ Thống": "legal",
+        "Tên Tiếng Anh": "Legal Specialist",
+        "Quyền Hạn & Phạm Vi Truy Cập": "Soạn thảo hợp đồng mua bán/đại lý (legal.create), chuẩn bị hồ sơ công bố lưu hành IVD, bảo lãnh dự thầu và kiểm tra tính hợp lệ chứng từ."
       }
     ];
 

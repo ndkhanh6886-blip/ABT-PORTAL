@@ -838,14 +838,19 @@ async function ensurePersonnelTableImpl() {
           $1 AS password_hash,
           p.full_name,
           CASE 
-            WHEN p.department = 'Ban Giám Đốc' THEN 'admin'
-            WHEN p.department = 'Kế Toán' THEN 'accountant'
-            WHEN p.department = 'Kho Vận' OR LOWER(p.department) LIKE '%kho%' THEN 'warehouse'
-            WHEN p.department = 'Pháp Chế' THEN 'legal'
-            WHEN p.department = 'Mua Hàng & Cung Ứng' THEN 'procurement'
-            WHEN p.department = 'Quản Lý Chất Lượng' OR p.department = 'QA/QC' THEN 'qa_qc'
-            WHEN p.department LIKE '%Ứng Dụng%' OR p.department LIKE '%Application%' THEN 
-              CASE WHEN LOWER(p.position) LIKE '%trưởng%' THEN 'app_head' ELSE 'app_rep' END
+            WHEN p.department = 'Ban Giám Đốc' OR LOWER(p.position) LIKE '%giám đốc%' THEN 'admin'
+            WHEN p.department = 'Kế Toán' OR LOWER(p.department) LIKE '%kế toán%' THEN 
+              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%chief%' THEN 'accountant_head' ELSE 'accountant' END
+            WHEN p.department = 'Kho Vận' OR LOWER(p.department) LIKE '%kho%' THEN 
+              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%phụ trách%' OR LOWER(p.position) LIKE '%manager%' THEN 'warehouse_lead' ELSE 'warehouse' END
+            WHEN p.department = 'Pháp Chế' OR LOWER(p.department) LIKE '%pháp chế%' THEN 
+              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'legal_head' ELSE 'legal' END
+            WHEN p.department = 'Mua Hàng & Cung Ứng' OR LOWER(p.department) LIKE '%cung ứng%' OR LOWER(p.department) LIKE '%mua hàng%' THEN 
+              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%head%' THEN 'procurement_lead' ELSE 'procurement_specialist' END
+            WHEN p.department = 'Quản Lý Chất Lượng' OR p.department = 'QA/QC' OR p.department = 'QA / QC' OR LOWER(p.department) LIKE '%chất lượng%' THEN 
+              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%manager%' THEN 'qa_qc_lead' ELSE 'qa_qc' END
+            WHEN p.department LIKE '%Ứng Dụng%' OR p.department LIKE '%Application%' OR p.department LIKE '%Kỹ Thuật%' THEN 
+              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'app_head' ELSE 'app_rep' END
             WHEN p.department = 'Kinh Doanh' OR p.department = 'Marketing' THEN 
               CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%phó%' OR LOWER(p.position) LIKE '%giám đốc%' THEN 'sales_head' ELSE 'sales_rep' END
             ELSE 'sales_rep'

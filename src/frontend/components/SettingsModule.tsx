@@ -60,33 +60,42 @@ import {
   Smartphone
 } from "lucide-react";
 import { formatDate } from "@/backend/services/utils";
-import { PERMISSION_GROUPS, ROLE_PRESETS, DEPARTMENT_MODULES, DepartmentModule, resolveRolePreset, getDefaultDepartmentPermissions, getEffectivePermissions, hasPermission } from "@/backend/services/permissions";
+import { PERMISSION_GROUPS, ROLE_PRESETS, DEPARTMENT_MODULES, DepartmentModule, resolveRolePreset, getDefaultDepartmentPermissions, getEffectivePermissions, hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { useNotification, NotificationMatrixEvent } from "@/frontend/contexts/NotificationContext";
 import { PaymentMethodsSettings } from "@/frontend/components/PaymentMethodsSettings";
 
 const ROLE_LABELS: Record<string, { label: string; color: string; desc: string }> = {
   admin: { label: "Giám Đốc (Director)", color: "bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800", desc: "Toàn quyền quản trị, phê duyệt và giám sát toàn công ty" },
   Director: { label: "Giám Đốc (Director)", color: "bg-orange-100 dark:bg-orange-950/60 text-orange-700 dark:text-orange-400 border-orange-200 dark:border-orange-800", desc: "Toàn quyền quản trị, phê duyệt và giám sát toàn công ty" },
-  sales_head: { label: "Trưởng / Phó GĐ Kinh Doanh", color: "bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800", desc: "Quản lý mục tiêu, đơn hàng, duyệt báo giá & hợp đồng" },
-  "Head of Sales": { label: "Trưởng / Phó GĐ Kinh Doanh", color: "bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800", desc: "Quản lý mục tiêu, đơn hàng, duyệt báo giá & hợp đồng" },
-  sales_rep: { label: "Chuyên Viên Kinh Doanh", color: "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800", desc: "Tạo đơn hàng, theo dõi khách hàng và kế hoạch cá nhân" },
-  "Sales Specialist": { label: "Chuyên Viên Kinh Doanh", color: "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800", desc: "Tạo đơn hàng, theo dõi khách hàng và kế hoạch cá nhân" },
-  app_head: { label: "Trưởng Phòng Application", color: "bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800", desc: "Quản lý phòng lab, mẫu xét nghiệm, hỗ trợ kỹ thuật khách hàng" },
-  "Head of Application": { label: "Trưởng Phòng Application", color: "bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800", desc: "Quản lý phòng lab, mẫu xét nghiệm, hỗ trợ kỹ thuật khách hàng" },
-  app_rep: { label: "Chuyên Viên Application", color: "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800", desc: "Thực hiện test mẫu, vận hành thiết bị demo tại bệnh viện" },
-  "Application Specialist": { label: "Chuyên Viên Application", color: "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800", desc: "Thực hiện test mẫu, vận hành thiết bị demo tại bệnh viện" },
-  warehouse_lead: { label: "Phụ Trách Kho Vận", color: "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Xuất nhập kho, thẻ kho điện tử, giám sát chuỗi lạnh & FEFO" },
-  "Warehouse Specialist": { label: "Phụ Trách Kho Vận", color: "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Xuất nhập kho, thẻ kho điện tử, giám sát chuỗi lạnh & FEFO" },
-  procurement: { label: "Trưởng Bộ Phận Cung Ứng", color: "bg-cyan-100 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800", desc: "Quản lý nhà cung cấp, mua hàng PR/PO và chuỗi cung ứng" },
-  "Procurement Lead": { label: "Trưởng Bộ Phận Cung Ứng", color: "bg-cyan-100 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800", desc: "Quản lý nhà cung cấp, mua hàng PR/PO và chuỗi cung ứng" },
-  accountant: { label: "Kế Toán / Kế Toán Trưởng", color: "bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Sổ hóa đơn VAT tập trung, đối soát chứng từ và doanh thu" },
-  "Chief Accountant": { label: "Kế Toán / Kế Toán Trưởng", color: "bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Sổ hóa đơn VAT tập trung, đối soát chứng từ và doanh thu" },
-  warehouse: { label: "Thủ Kho / Kho Vận", color: "bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Xuất nhập kho, quản lý số Lô & HSD, kiểm soát chuỗi lạnh & FEFO" },
-  qa_qc: { label: "Quản Lý Chất Lượng (QA/QC)", color: "bg-teal-100 dark:bg-teal-950/60 text-teal-700 dark:text-teal-400 border-teal-200 dark:border-teal-800", desc: "Kiểm soát COA, thẩm định chất lượng lô, phát lệnh thu hồi ISO 13485" },
-  "QA/QC Specialist": { label: "Quản Lý Chất Lượng (QA/QC)", color: "bg-teal-100 dark:bg-teal-950/60 text-teal-700 dark:text-teal-400 border-teal-200 dark:border-teal-800", desc: "Kiểm soát COA, thẩm định chất lượng lô, phát lệnh thu hồi ISO 13485" },
-  legal: { label: "Pháp Chế & Tuân Thủ (Legal)", color: "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800", desc: "Thẩm định pháp lý hợp đồng, kiểm soát hồ sơ lưu hành IVD và tuân thủ quy chuẩn y tế" },
-  "Legal Specialist": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" },
-  "Chuyên Viên Pháp Chế": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" }
+  sales_head: { label: "Trưởng / Phó Phòng Kinh Doanh", color: "bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800", desc: "Quản lý mục tiêu, đơn hàng, duyệt báo giá, chiết khấu & hợp đồng" },
+  "Head of Sales": { label: "Trưởng / Phó Phòng Kinh Doanh", color: "bg-indigo-100 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-400 border-indigo-200 dark:border-indigo-800", desc: "Quản lý mục tiêu, đơn hàng, duyệt báo giá, chiết khấu & hợp đồng" },
+  sales_rep: { label: "Chuyên Viên Kinh Doanh / PM / Admin KD", color: "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800", desc: "Tạo báo giá, đơn hàng, theo dõi khách hàng và kế hoạch cá nhân" },
+  "Sales Specialist": { label: "Chuyên Viên Kinh Doanh", color: "bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800", desc: "Tạo báo giá, đơn hàng, theo dõi khách hàng và kế hoạch cá nhân" },
+  app_head: { label: "Trưởng Phòng Kỹ Thuật & Ứng Dụng", color: "bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800", desc: "Phân công kỹ sư (assign), ký duyệt nghiệm thu & tài liệu thầu (approve)" },
+  "Head of Application": { label: "Trưởng Phòng Kỹ Thuật & Ứng Dụng", color: "bg-purple-100 dark:bg-purple-950/60 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800", desc: "Phân công kỹ sư (assign), ký duyệt nghiệm thu & tài liệu thầu (approve)" },
+  app_rep: { label: "Kỹ Sư Ứng Dụng / Kỹ Sư Dịch Vụ", color: "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800", desc: "Thực hiện test mẫu, lắp đặt/bảo trì máy & hỗ trợ kỹ thuật tại bệnh viện" },
+  "Application Specialist": { label: "Kỹ Sư Ứng Dụng / Kỹ Sư Dịch Vụ", color: "bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800", desc: "Thực hiện test mẫu, lắp đặt/bảo trì máy & hỗ trợ kỹ thuật tại bệnh viện" },
+  warehouse_lead: { label: "Trưởng Bộ Phận Kho Vận", color: "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700", desc: "Quản lý toàn diện kho, duyệt phiếu xuất/nhập, xem giá vốn lô & tạo PR mua bù" },
+  "Warehouse Manager": { label: "Trưởng Bộ Phận Kho Vận", color: "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700", desc: "Quản lý toàn diện kho, duyệt phiếu xuất/nhập, xem giá vốn lô & tạo PR mua bù" },
+  warehouse: { label: "Thủ Kho / NV Giao Nhận Chuỗi Lạnh", color: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Tạo phiếu xuất/nhập kho, quản lý số Lô & HSD, kiểm soát chuỗi lạnh & giao hàng" },
+  "Warehouse Specialist": { label: "Thủ Kho / NV Giao Nhận Chuỗi Lạnh", color: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Tạo phiếu xuất/nhập kho, quản lý số Lô & HSD, kiểm soát chuỗi lạnh & giao hàng" },
+  procurement_lead: { label: "Trưởng Bộ Phận Cung Ứng", color: "bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700", desc: "Quản lý nhà cung cấp, thương thảo hợp đồng & phê duyệt đơn đặt hàng PO (approve_po)" },
+  "Procurement Lead": { label: "Trưởng Bộ Phận Cung Ứng", color: "bg-cyan-100 dark:bg-cyan-950/60 text-cyan-800 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700", desc: "Quản lý nhà cung cấp, thương thảo hợp đồng & phê duyệt đơn đặt hàng PO (approve_po)" },
+  procurement_specialist: { label: "Chuyên Viên Mua Hàng & Cung Ứng", color: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800", desc: "Lập đề xuất PR & dự thảo đơn PO, theo dõi tiến độ hàng về & hồ sơ CO/CQ" },
+  "Procurement Specialist": { label: "Chuyên Viên Mua Hàng & Cung Ứng", color: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800", desc: "Lập đề xuất PR & dự thảo đơn PO, theo dõi tiến độ hàng về & hồ sơ CO/CQ" },
+  procurement: { label: "Chuyên Viên Mua Hàng & Cung Ứng", color: "bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-400 border-cyan-200 dark:border-cyan-800", desc: "Lập đề xuất PR & dự thảo đơn PO, theo dõi tiến độ hàng về & hồ sơ CO/CQ" },
+  accountant_head: { label: "Kế Toán Trưởng (Chief Accountant)", color: "bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700", desc: "Phê duyệt công nợ vượt hạn mức, duyệt ngân sách PO, chốt kỳ kế toán & báo cáo tài chính" },
+  "Chief Accountant": { label: "Kế Toán Trưởng (Chief Accountant)", color: "bg-rose-100 dark:bg-rose-950/60 text-rose-800 dark:text-rose-300 border-rose-300 dark:border-rose-700", desc: "Phê duyệt công nợ vượt hạn mức, duyệt ngân sách PO, chốt kỳ kế toán & báo cáo tài chính" },
+  accountant: { label: "Chuyên Viên Kế Toán Kho & Công Nợ", color: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Đối soát tồn kho FIFO, phát hành hóa đơn VAT, theo dõi & nhắc thu hồi công nợ" },
+  "Receivable & Inventory Accountant": { label: "Chuyên Viên Kế Toán Kho & Công Nợ", color: "bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-400 border-rose-200 dark:border-rose-800", desc: "Đối soát tồn kho FIFO, phát hành hóa đơn VAT, theo dõi & nhắc thu hồi công nợ" },
+  qa_qc_lead: { label: "Trưởng Bộ Phận QA/QC", color: "bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border-teal-300 dark:border-teal-700", desc: "Phê duyệt kết quả thẩm định lô, ký lệnh thu hồi Lô khẩn cấp & giải phóng hàng cách ly" },
+  "QA/QC Manager": { label: "Trưởng Bộ Phận QA/QC", color: "bg-teal-100 dark:bg-teal-950/60 text-teal-800 dark:text-teal-300 border-teal-300 dark:border-teal-700", desc: "Phê duyệt kết quả thẩm định lô, ký lệnh thu hồi Lô khẩn cấp & giải phóng hàng cách ly" },
+  qa_qc: { label: "Chuyên Viên QA/QC & ISO 13485", color: "bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-400 border-teal-200 dark:border-teal-800", desc: "Kiểm soát COA, lập biên bản kiểm định chất lượng lô, ghi nhận sự cố chất lượng" },
+  "QA/QC Specialist": { label: "Chuyên Viên QA/QC & ISO 13485", color: "bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-400 border-teal-200 dark:border-teal-800", desc: "Kiểm soát COA, lập biên bản kiểm định chất lượng lô, ghi nhận sự cố chất lượng" },
+  legal_head: { label: "Trưởng Bộ Phận Pháp Chế", color: "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700", desc: "Thẩm định & phê duyệt pháp lý hợp đồng, kiểm soát hồ sơ lưu hành IVD & đấu thầu" },
+  legal: { label: "Chuyên Viên Pháp Chế & Tuân Thủ", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, chuẩn bị hồ sơ lưu hành IVD và kiểm soát tuân thủ y tế" },
+  "Legal Specialist": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" },
+  "Chuyên Viên Pháp Chế": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" }
 };
 
 export const DEPARTMENT_POSITIONS: Record<string, {
@@ -130,10 +139,10 @@ export const DEPARTMENT_POSITIONS: Record<string, {
     badgeColor: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-400 dark:border-purple-800",
     borderTheme: "border-purple-500",
     positions: [
-      { title: "Trưởng Phòng Kỹ Thuật & Ứng Dụng", defaultRole: "app_head", level: "Manager", desc: "Chỉ đạo demo lâm sàng, kiểm định chất lượng test kit lô mới và phê duyệt tài liệu kỹ thuật thầu" },
-      { title: "Kỹ Sư Ứng Dụng PCR / Sinh Học Phân Tử", defaultRole: "app_head", level: "Specialist", desc: "Tối ưu hóa protocol chạy máy Real-time PCR, thẩm định độ nhạy/độ đặc hiệu và hỗ trợ kỹ thuật khách hàng" },
-      { title: "Kỹ Sư Dịch Vụ Thiết Bị (Service Engineer)", defaultRole: "app_head", level: "Specialist", desc: "Lắp đặt, hiệu chuẩn (calibration), bảo dưỡng định kỳ và sửa chữa máy Real-time PCR, máy tách chiết tự động" },
-      { title: "Chuyên Viên Quản Lý Hồ Sơ Thầu Kỹ Thuật", defaultRole: "app_head", level: "Specialist", desc: "Chuẩn bị đầy đủ hồ sơ pháp lý & kỹ thuật thầu: COA, ISO 13485, CFS, kết quả thử nghiệm lâm sàng" }
+      { title: "Trưởng Phòng Kỹ Thuật & Ứng Dụng", defaultRole: "app_head", level: "Manager", desc: "Chỉ đạo demo lâm sàng, phân công kỹ sư (assign) và phê duyệt nghiệm thu & tài liệu kỹ thuật thầu (approve)" },
+      { title: "Kỹ Sư Ứng Dụng PCR / Sinh Học Phân Tử", defaultRole: "app_rep", level: "Specialist", desc: "Tối ưu hóa protocol chạy máy Real-time PCR, thẩm định độ nhạy/độ đặc hiệu và hỗ trợ kỹ thuật khách hàng" },
+      { title: "Kỹ Sư Dịch Vụ Thiết Bị (Service Engineer)", defaultRole: "app_rep", level: "Specialist", desc: "Lắp đặt, hiệu chuẩn (calibration), bảo dưỡng định kỳ và sửa chữa máy Real-time PCR, máy tách chiết tự động" },
+      { title: "Chuyên Viên Quản Lý Hồ Sơ Thầu Kỹ Thuật", defaultRole: "app_rep", level: "Specialist", desc: "Chuẩn bị đầy đủ hồ sơ pháp lý & kỹ thuật thầu: COA, ISO 13485, CFS, kết quả thử nghiệm lâm sàng" }
     ]
   },
   "Mua Hàng & Cung Ứng": {
@@ -143,11 +152,11 @@ export const DEPARTMENT_POSITIONS: Record<string, {
     badgeColor: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-950/50 dark:text-cyan-400 dark:border-cyan-800",
     borderTheme: "border-cyan-500",
     positions: [
-      { title: "Trưởng Bộ Phận Mua Hàng & Cung Ứng", defaultRole: "procurement", level: "Manager", desc: "Đàm phán hợp đồng phân phối độc quyền, giá nhập FOB/CIF và hạn mức công nợ với các hãng quốc tế" },
-      { title: "Chuyên Viên Mua Hàng Quốc Tế / Trong Nước", defaultRole: "procurement", level: "Specialist", desc: "Thực hiện thủ tục hải quan, mở L/C, kiểm soát giấy phép lưu hành IVD và chứng chỉ CO/CQ sinh phẩm" },
-      { title: "Chuyên Viên Mua Hàng Quốc Tế (Import Specialist)", defaultRole: "procurement", level: "Specialist", desc: "Thực hiện thủ tục hải quan, mở L/C, kiểm soát giấy phép lưu hành IVD và chứng chỉ CO/CQ sinh phẩm" },
-      { title: "Chuyên Viên Mua Hàng Trong Nước", defaultRole: "procurement", level: "Staff", desc: "Tìm kiếm và mua sắm vật tư tiêu hao, hóa chất phụ trợ, thiết bị văn phòng và dịch vụ logistics nội địa" },
-      { title: "Chuyên Viên Điều Phối Chuỗi Cung Ứng", defaultRole: "procurement", level: "Specialist", desc: "Hoạch định nhu cầu dự trữ tồn kho an toàn, theo dõi tiến độ giao hàng và giảm thiểu rủi ro đứt gãy" }
+      { title: "Trưởng Bộ Phận Cung Ứng", defaultRole: "procurement_lead", level: "Manager", desc: "Đàm phán hợp đồng phân phối độc quyền, giá nhập FOB/CIF, phê duyệt đơn đặt hàng PO (approve_po)" },
+      { title: "Chuyên Viên Mua Hàng Quốc Tế / Trong Nước", defaultRole: "procurement_specialist", level: "Specialist", desc: "Lập đề xuất PR & dự thảo đơn PO, thực hiện thủ tục hải quan, kiểm soát giấy phép lưu hành IVD và CO/CQ" },
+      { title: "Chuyên Viên Mua Hàng Quốc Tế (Import Specialist)", defaultRole: "procurement_specialist", level: "Specialist", desc: "Thực hiện thủ tục hải quan, mở L/C, kiểm soát giấy phép lưu hành IVD và chứng chỉ CO/CQ sinh phẩm" },
+      { title: "Chuyên Viên Mua Hàng Trong Nước", defaultRole: "procurement_specialist", level: "Staff", desc: "Tìm kiếm và mua sắm vật tư tiêu hao, hóa chất phụ trợ, thiết bị văn phòng và dịch vụ logistics nội địa" },
+      { title: "Chuyên Viên Điều Phối Chuỗi Cung Ứng", defaultRole: "procurement_specialist", level: "Specialist", desc: "Hoạch định nhu cầu dự trữ tồn kho an toàn, theo dõi tiến độ giao hàng và giảm thiểu rủi ro đứt gãy" }
     ]
   },
   "Kho Vận": {
@@ -157,10 +166,10 @@ export const DEPARTMENT_POSITIONS: Record<string, {
     badgeColor: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800",
     borderTheme: "border-amber-500",
     positions: [
-      { title: "Trưởng Bộ Phận Kho Vận", defaultRole: "warehouse_lead", level: "Manager", desc: "Chịu trách nhiệm tiêu chuẩn thực hành tốt bảo quản GSP, an toàn kho chuỗi lạnh và tối ưu diện tích lưu kho" },
-      { title: "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", defaultRole: "warehouse", level: "Specialist", desc: "Thực hiện nhập xuất kho vật lý, ký phiếu xuất kho (PXK), ghi chép thẻ kho điện tử và đối soát tồn kho" },
-      { title: "Nhân Viên Quản Lý Chuỗi Lạnh & FEFO", defaultRole: "warehouse", level: "Staff", desc: "Theo dõi nhật ký nhiệt độ tủ âm sâu 24/7, kích hoạt cảnh báo cận date FEFO (<90 ngày) để đẩy bán" },
-      { title: "Nhân Viên Điều Vận & Giao Hàng Y Tế", defaultRole: "warehouse", level: "Staff", desc: "Đóng gói thùng xốp đá gel chuẩn y tế, vận chuyển và bàn giao trực tiếp tận khoa xét nghiệm bệnh viện" }
+      { title: "Trưởng Bộ Phận Kho Vận", defaultRole: "warehouse_lead", level: "Manager", desc: "Chịu trách nhiệm tiêu chuẩn GSP, ký duyệt phiếu xuất/nhập kho, xem giá vốn lô nhập và tạo PR mua bù tồn kho" },
+      { title: "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", defaultRole: "warehouse", level: "Specialist", desc: "Thực hiện nhập xuất kho vật lý, lập phiếu xuất kho (PXK), ghi chép thẻ kho điện tử và đối soát tồn kho" },
+      { title: "Nhân Viên Giao Nhận & Vận Chuyển Lạnh", defaultRole: "warehouse", level: "Staff", desc: "Đóng gói thùng xốp đá gel chuẩn y tế, kiểm soát thiết bị nhiệt độ và bàn giao tận khoa xét nghiệm bệnh viện" },
+      { title: "Nhân Viên Quản Lý Chuỗi Lạnh & FEFO", defaultRole: "warehouse", level: "Staff", desc: "Theo dõi nhật ký nhiệt độ tủ âm sâu 24/7, kích hoạt cảnh báo cận date FEFO (<90 ngày) để đẩy bán" }
     ]
   },
   "Kế Toán": {
@@ -170,7 +179,7 @@ export const DEPARTMENT_POSITIONS: Record<string, {
     badgeColor: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:border-rose-800",
     borderTheme: "border-rose-500",
     positions: [
-      { title: "Kế Toán Trưởng", defaultRole: "accountant", level: "Manager", desc: "Tổ chức công tác tài chính kế toán, kiểm soát chi phí, báo cáo tài chính kiểm toán và quyết toán thuế" },
+      { title: "Kế Toán Trưởng", defaultRole: "accountant_head", level: "Manager", desc: "Tổ chức công tác tài chính kế toán, phê duyệt hạn mức tín dụng/công nợ, duyệt ngân sách PO và chốt kỳ kế toán" },
       { title: "Chuyên Viên Kế Toán Kho & Công Nợ", defaultRole: "accountant", level: "Specialist", desc: "Đối soát giá trị kho, định giá tồn kho theo FIFO, theo dõi tuổi nợ khách hàng và nhắc nợ theo kỳ hạn thanh toán" },
       { title: "Kế Toán Tổng Hợp", defaultRole: "accountant", level: "Specialist", desc: "Kiểm tra định khoản, đối chiếu sổ phụ ngân hàng, tổng hợp doanh thu - chi phí và hạch toán sổ cái" },
       { title: "Kế Toán Bán Hàng & Hóa Đơn VAT", defaultRole: "accountant", level: "Staff", desc: "Xuất hóa đơn điện tử GTGT cho đơn hàng bệnh viện, đính kèm file PDF hóa đơn đối soát tức thì" },
@@ -184,8 +193,8 @@ export const DEPARTMENT_POSITIONS: Record<string, {
     badgeColor: "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800",
     borderTheme: "border-emerald-500",
     positions: [
-      { title: "Trưởng Bộ Phận Pháp Chế", defaultRole: "legal", level: "Manager", desc: "Chỉ đạo công tác pháp lý công ty, xử lý tranh chấp hợp đồng và bảo vệ quyền sở hữu trí tuệ thương hiệu" },
-      { title: "Chuyên viên pháp chế", defaultRole: "legal", level: "Specialist", desc: "Soạn thảo hợp đồng, kiểm soát hồ sơ pháp lý lưu hành sản phẩm IVD, thủ tục công bố tiêu chuẩn chất lượng" },
+      { title: "Trưởng Bộ Phận Pháp Chế", defaultRole: "legal_head", level: "Manager", desc: "Chỉ đạo công tác pháp lý công ty, phê duyệt hợp đồng kinh tế (legal.approve) và xử lý tranh chấp pháp lý" },
+      { title: "Chuyên Viên Pháp Chế & Tuân Thủ", defaultRole: "legal", level: "Specialist", desc: "Soạn thảo hợp đồng, kiểm soát hồ sơ pháp lý lưu hành sản phẩm IVD, thủ tục công bố tiêu chuẩn chất lượng" },
       { title: "Chuyên Viên Pháp Lý & Tuân Thủ (Compliance)", defaultRole: "legal", level: "Specialist", desc: "Kiểm soát tuân thủ quy định y tế, thẩm định tính hợp lệ hồ sơ dự thầu và quản lý giấy phép lưu hành" }
     ]
   },
@@ -207,8 +216,8 @@ export const DEPARTMENT_POSITIONS: Record<string, {
     badgeColor: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-950/50 dark:text-teal-400 dark:border-teal-800",
     borderTheme: "border-teal-500",
     positions: [
-      { title: "Trưởng Bộ Phận QA/QC (QA/QC Manager)", defaultRole: "qa_qc", level: "Manager", desc: "Chỉ đạo hệ thống quản lý chất lượng ISO 13485, phê duyệt lệnh cách ly và thu hồi sản phẩm khẩn cấp" },
-      { title: "Chuyên Viên Quản Lý Chất Lượng & ISO 13485", defaultRole: "qa_qc", level: "Specialist", desc: "Kiểm soát hồ sơ COA, kiểm nghiệm đạt chuẩn sinh phẩm, giám sát CAPA và phát lệnh thu hồi Lô khẩn cấp" },
+      { title: "Trưởng Bộ Phận QA/QC (QA/QC Manager)", defaultRole: "qa_qc_lead", level: "Manager", desc: "Chỉ đạo hệ thống quản lý chất lượng ISO 13485, phê duyệt thẩm định lô và lệnh cách ly / thu hồi khẩn cấp" },
+      { title: "Chuyên Viên Quản Lý Chất Lượng & ISO 13485", defaultRole: "qa_qc", level: "Specialist", desc: "Kiểm soát hồ sơ COA, kiểm nghiệm đạt chuẩn sinh phẩm, giám sát CAPA và ghi nhận sự cố chất lượng" },
       { title: "Chuyên Viên Đảm Bảo Chất Lượng (QA Specialist)", defaultRole: "qa_qc", level: "Specialist", desc: "Xây dựng quy trình SOP, hồ sơ kiểm soát thay đổi, giám sát tuân thủ quy chuẩn nhà xưởng và kho lạnh" }
     ]
   },
@@ -665,9 +674,35 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       }
     ];
 
+    const roleMappingData = [
+      { "Phòng Ban": "Ban Giám Đốc", "Chức Vụ / Vị Trí Công Việc": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)", "Vai Trò Hệ Thống": "admin", "Tên Tiếng Anh": "Director / CEO" },
+      { "Phòng Ban": "Ban Giám Đốc", "Chức Vụ / Vị Trí Công Việc": "Phó Giám Đốc", "Vai Trò Hệ Thống": "admin", "Tên Tiếng Anh": "Vice Director" },
+      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kinh Doanh", "Vai Trò Hệ Thống": "sales_head", "Tên Tiếng Anh": "Head of Sales" },
+      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Phó Phòng Kinh Doanh", "Vai Trò Hệ Thống": "sales_head", "Tên Tiếng Anh": "Deputy Head of Sales" },
+      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kinh Doanh (Senior/Junior)", "Vai Trò Hệ Thống": "sales_rep", "Tên Tiếng Anh": "Sales Specialist / Sales Rep" },
+      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Quản Lý Sản Phẩm (Product Manager - PM)", "Vai Trò Hệ Thống": "sales_rep", "Tên Tiếng Anh": "Product Manager (PM)" },
+      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Admin Kinh Doanh (Sales Admin)", "Vai Trò Hệ Thống": "sales_rep", "Tên Tiếng Anh": "Sales Admin" },
+      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận", "Vai Trò Hệ Thống": "warehouse_lead", "Tên Tiếng Anh": "Warehouse Manager" },
+      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", "Vai Trò Hệ Thống": "warehouse", "Tên Tiếng Anh": "Warehouse Specialist" },
+      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Nhân Viên Giao Nhận & Vận Chuyển Lạnh", "Vai Trò Hệ Thống": "warehouse", "Tên Tiếng Anh": "Logistics & Cold Chain Staff" },
+      { "Phòng Ban": "Mua Hàng & Cung Ứng", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Cung Ứng", "Vai Trò Hệ Thống": "procurement_lead", "Tên Tiếng Anh": "Procurement Lead" },
+      { "Phòng Ban": "Mua Hàng & Cung Ứng", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Mua Hàng Quốc Tế / Trong Nước", "Vai Trò Hệ Thống": "procurement_specialist", "Tên Tiếng Anh": "Procurement Specialist" },
+      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kỹ Thuật & Ứng Dụng", "Vai Trò Hệ Thống": "app_head", "Tên Tiếng Anh": "Head of Application" },
+      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Ứng Dụng PCR / Sinh Học Phân Tử", "Vai Trò Hệ Thống": "app_rep", "Tên Tiếng Anh": "Application Specialist" },
+      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Dịch Vụ Thiết Bị (Service Engineer)", "Vai Trò Hệ Thống": "app_rep", "Tên Tiếng Anh": "Service Engineer" },
+      { "Phòng Ban": "Kế Toán", "Chức Vụ / Vị Trí Công Việc": "Kế Toán Trưởng", "Vai Trò Hệ Thống": "accountant_head", "Tên Tiếng Anh": "Chief Accountant" },
+      { "Phòng Ban": "Kế Toán", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kế Toán Kho & Công Nợ", "Vai Trò Hệ Thống": "accountant", "Tên Tiếng Anh": "Receivable & Inventory Accountant" },
+      { "Phòng Ban": "QA / QC", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận QA/QC (QA/QC Manager)", "Vai Trò Hệ Thống": "qa_qc_lead", "Tên Tiếng Anh": "QA/QC Manager" },
+      { "Phòng Ban": "QA / QC", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Quản Lý Chất Lượng & ISO 13485", "Vai Trò Hệ Thống": "qa_qc", "Tên Tiếng Anh": "QA/QC Specialist" },
+      { "Phòng Ban": "Pháp Chế", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Pháp Chế", "Vai Trò Hệ Thống": "legal_head", "Tên Tiếng Anh": "Head of Legal" },
+      { "Phòng Ban": "Pháp Chế", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Pháp Chế & Tuân Thủ", "Vai Trò Hệ Thống": "legal", "Tên Tiếng Anh": "Legal Specialist" }
+    ];
+
     const ws = XLSX.utils.json_to_sheet(sampleData);
+    const wsRoles = XLSX.utils.json_to_sheet(roleMappingData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Danh_Ba_Nhan_Su");
+    XLSX.utils.book_append_sheet(wb, wsRoles, "Bảng_Tham_Chiếu_Chức_Vụ");
 
     ws["!cols"] = [
       { wch: 18 }, // Mã NV
@@ -678,8 +713,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       { wch: 16 }, // SĐT
       { wch: 14 }  // Trạng thái
     ];
+    wsRoles["!cols"] = [
+      { wch: 24 },
+      { wch: 44 },
+      { wch: 24 },
+      { wch: 34 }
+    ];
 
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_NhanSu_TBR.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_NhanSu_TBRs.xlsx");
   };
 
   const handleImportPersonnelExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1685,9 +1726,9 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               <div>
                 <span className="text-[11px] font-bold text-slate-400 uppercase block">Ban Quản Lý &amp; BGĐ</span>
                 <span className="text-2xl font-black font-mono text-indigo-600 dark:text-indigo-400 mt-1 block">
-                  {users.filter(u => ["admin", "Director", "sales_head", "app_head"].includes(u.role)).length}
+                  {users.filter(u => ["admin", "Director", "sales_head", "app_head", "warehouse_lead", "procurement_lead", "accountant_head", "qa_qc_lead", "legal_head"].includes(u.role)).length}
                 </span>
-                <span className="text-[10px] text-indigo-500">Quyền phê duyệt cao cấp</span>
+                <span className="text-[10px] text-indigo-500">Quyền phê duyệt cấp quản lý</span>
               </div>
               <div className="w-10 h-10 rounded-xl bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 flex items-center justify-center font-bold">
                 <Shield className="w-5 h-5" />
@@ -2132,38 +2173,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                         ) : (
                           <button
                             onClick={() => {
-                              const pDept = (p.department || "").toLowerCase();
-                              const isApp = pDept.includes("ứng dụng") || pDept.includes("kỹ thuật") || pDept.includes("application");
-                              const isProc = pDept.includes("mua hàng") || pDept.includes("cung ứng") || pDept.includes("procurement");
-                              const isWh = pDept.includes("kho");
-                              const isAcc = pDept.includes("kế toán") || pDept.includes("tài chính");
-                              const isBod = pDept.includes("giám đốc") || pDept.includes("bod");
-                              const isSales = pDept.includes("kinh doanh") || pDept.includes("sales");
-                              const isQa = pDept.includes("qa") || pDept.includes("qc") || pDept.includes("chất lượng");
-                              const isLegal = pDept.includes("pháp chế") || pDept.includes("legal");
-
-                              const autoRole =
-                                isBod || p.position?.includes("Giám Đốc")
-                                  ? "admin"
-                                  : p.position?.includes("Trưởng") && isSales
-                                  ? "sales_head"
-                                  : p.position?.includes("Trưởng") && isApp
-                                  ? "app_head"
-                                  : isSales
-                                  ? "sales_rep"
-                                  : isApp
-                                  ? "app_rep"
-                                  : isProc
-                                  ? "procurement"
-                                  : isWh
-                                  ? "warehouse_lead"
-                                  : isAcc
-                                  ? "accountant"
-                                  : isQa
-                                  ? "qa_qc"
-                                  : isLegal
-                                  ? "legal"
-                                  : "sales_rep";
+                              const autoRole = inferSystemRoleFromPosition(p.department, p.position);
 
                               setFormData({
                                 id: null,
@@ -3262,38 +3272,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       if (!selectedCode) return;
                       const emp = personnel.find((p) => p.employee_code === selectedCode);
                       if (emp) {
-                        const empDept = (emp.department || "").toLowerCase();
-                        const isApp = empDept.includes("ứng dụng") || empDept.includes("kỹ thuật") || empDept.includes("application");
-                        const isProc = empDept.includes("mua hàng") || empDept.includes("cung ứng") || empDept.includes("procurement");
-                        const isWh = empDept.includes("kho");
-                        const isAcc = empDept.includes("kế toán") || empDept.includes("tài chính");
-                        const isBod = empDept.includes("giám đốc") || empDept.includes("bod");
-                        const isSales = empDept.includes("kinh doanh") || empDept.includes("sales");
-                        const isQa = empDept.includes("qa") || empDept.includes("qc") || empDept.includes("chất lượng");
-                        const isLegal = empDept.includes("pháp chế") || empDept.includes("legal");
-
-                        const autoRole =
-                          isBod || emp.position?.includes("Giám Đốc")
-                            ? "admin"
-                            : emp.position?.includes("Trưởng") && isSales
-                            ? "sales_head"
-                            : emp.position?.includes("Trưởng") && isApp
-                            ? "app_head"
-                            : isSales
-                            ? "sales_rep"
-                            : isApp
-                            ? "app_rep"
-                            : isProc
-                            ? "procurement"
-                            : isWh
-                            ? "warehouse_lead"
-                            : isAcc
-                            ? "accountant"
-                            : isQa
-                            ? "qa_qc"
-                            : isLegal
-                            ? "legal"
-                            : "sales_rep";
+                        const autoRole = inferSystemRoleFromPosition(emp.department, emp.position);
 
                         setFormData({
                           ...formData,
@@ -3398,16 +3377,37 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
                   >
-                    <option value="admin">Giám Đốc (admin)</option>
-                    <option value="sales_head">Trưởng/Phó GĐ Kinh Doanh (sales_head)</option>
-                    <option value="sales_rep">Chuyên Viên Kinh Doanh (sales_rep)</option>
-                    <option value="app_head">Trưởng Phòng Application (app_head)</option>
-                    <option value="app_rep">Chuyên Viên Application (app_rep)</option>
-                    <option value="warehouse_lead">Phụ Trách Kho Vận (warehouse_lead)</option>
-                    <option value="procurement">Trưởng Bộ Phận Cung Ứng (procurement)</option>
-                    <option value="accountant">Kế Toán Trưởng (accountant)</option>
-                    <option value="legal">Pháp Chế & Tuân Thủ (legal)</option>
-                    <option value="qa_qc">Quản Lý Chất Lượng QA/QC (qa_qc)</option>
+                    <optgroup label="👑 Ban Giám Đốc">
+                      <option value="admin">Tổng Giám Đốc / Phó Giám Đốc (admin)</option>
+                    </optgroup>
+                    <optgroup label="💼 Phòng Kinh Doanh">
+                      <option value="sales_head">Trưởng / Phó Phòng Kinh Doanh (sales_head)</option>
+                      <option value="sales_rep">Chuyên Viên KD / PM / Sales Admin (sales_rep)</option>
+                    </optgroup>
+                    <optgroup label="📦 Bộ Phận Kho Vận">
+                      <option value="warehouse_lead">Trưởng Bộ Phận Kho Vận (warehouse_lead)</option>
+                      <option value="warehouse">Thủ Kho / NV Giao Nhận Chuỗi Lạnh (warehouse)</option>
+                    </optgroup>
+                    <optgroup label="🛒 Mua Hàng & Cung Ứng">
+                      <option value="procurement_lead">Trưởng Bộ Phận Cung Ứng (procurement_lead)</option>
+                      <option value="procurement_specialist">Chuyên Viên Mua Hàng (procurement_specialist)</option>
+                    </optgroup>
+                    <optgroup label="🧬 Kỹ Thuật & Ứng Dụng (Application)">
+                      <option value="app_head">Trưởng Phòng Kỹ Thuật & Ứng Dụng (app_head)</option>
+                      <option value="app_rep">Kỹ Sư Ứng Dụng / Kỹ Sư Dịch Vụ (app_rep)</option>
+                    </optgroup>
+                    <optgroup label="💰 Phòng Kế Toán">
+                      <option value="accountant_head">Kế Toán Trưởng (accountant_head)</option>
+                      <option value="accountant">Chuyên Viên Kế Toán Kho & Công Nợ (accountant)</option>
+                    </optgroup>
+                    <optgroup label="🛡️ Quản Lý Chất Lượng (QA/QC)">
+                      <option value="qa_qc_lead">Trưởng Bộ Phận QA/QC (qa_qc_lead)</option>
+                      <option value="qa_qc">Chuyên Viên QA/QC & ISO 13485 (qa_qc)</option>
+                    </optgroup>
+                    <optgroup label="⚖️ Bộ Phận Pháp Chế">
+                      <option value="legal_head">Trưởng Bộ Phận Pháp Chế (legal_head)</option>
+                      <option value="legal">Chuyên Viên Pháp Chế & Tuân Thủ (legal)</option>
+                    </optgroup>
                   </select>
                 </div>
               </div>

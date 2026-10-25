@@ -3,6 +3,7 @@ import { query, logAudit, ensurePersonnelTable } from "@/backend/db/db";
 import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { hashPassword } from "@/backend/services/passwords";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
+import { inferSystemRoleFromPosition } from "@/backend/services/permissions";
 
 // Mật khẩu khởi tạo cho tài khoản mới (được băm scrypt khi lưu; người dùng nên đổi ngay sau lần đăng nhập đầu)
 const DEFAULT_INITIAL_PASSWORD = "123456";
@@ -33,14 +34,19 @@ async function syncPersonnelToUsers() {
       $1 AS password_hash,
       p.full_name,
       CASE 
-        WHEN p.department = 'Ban Giám Đốc' THEN 'admin'
-        WHEN p.department = 'Kế Toán' THEN 'accountant'
-        WHEN p.department = 'Kho Vận' OR LOWER(p.department) LIKE '%kho%' THEN 'warehouse'
-        WHEN p.department = 'Pháp Chế' THEN 'legal'
-        WHEN p.department = 'Mua Hàng & Cung Ứng' THEN 'procurement'
-        WHEN p.department = 'Quản Lý Chất Lượng' OR p.department = 'QA/QC' THEN 'qa_qc'
-        WHEN p.department LIKE '%Ứng Dụng%' OR p.department LIKE '%Application%' THEN 
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' THEN 'app_head' ELSE 'app_rep' END
+        WHEN p.department = 'Ban Giám Đốc' OR LOWER(p.position) LIKE '%giám đốc%' THEN 'admin'
+        WHEN p.department = 'Kế Toán' OR LOWER(p.department) LIKE '%kế toán%' THEN 
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%chief%' THEN 'accountant_head' ELSE 'accountant' END
+        WHEN p.department = 'Kho Vận' OR LOWER(p.department) LIKE '%kho%' THEN 
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%phụ trách%' OR LOWER(p.position) LIKE '%manager%' THEN 'warehouse_lead' ELSE 'warehouse' END
+        WHEN p.department = 'Pháp Chế' OR LOWER(p.department) LIKE '%pháp chế%' THEN 
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'legal_head' ELSE 'legal' END
+        WHEN p.department = 'Mua Hàng & Cung Ứng' OR LOWER(p.department) LIKE '%cung ứng%' OR LOWER(p.department) LIKE '%mua hàng%' THEN 
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%head%' THEN 'procurement_lead' ELSE 'procurement_specialist' END
+        WHEN p.department = 'Quản Lý Chất Lượng' OR p.department = 'QA/QC' OR p.department = 'QA / QC' OR LOWER(p.department) LIKE '%chất lượng%' THEN 
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%manager%' THEN 'qa_qc_lead' ELSE 'qa_qc' END
+        WHEN p.department LIKE '%Ứng Dụng%' OR p.department LIKE '%Application%' OR p.department LIKE '%Kỹ Thuật%' THEN 
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'app_head' ELSE 'app_rep' END
         WHEN p.department = 'Kinh Doanh' OR p.department = 'Marketing' THEN 
           CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%phó%' OR LOWER(p.position) LIKE '%giám đốc%' THEN 'sales_head' ELSE 'sales_rep' END
         ELSE 'sales_rep'
@@ -55,6 +61,7 @@ async function syncPersonnelToUsers() {
     ON CONFLICT (username) DO UPDATE SET
       full_name = EXCLUDED.full_name,
       department = EXCLUDED.department,
+      role = CASE WHEN users.role = 'admin' THEN 'admin' ELSE EXCLUDED.role END,
       email = COALESCE(EXCLUDED.email, users.email);
   `, [hashPassword(DEFAULT_INITIAL_PASSWORD)]);
 }
@@ -152,7 +159,7 @@ export async function POST(req: NextRequest) {
       const { id, employee_code, full_name, department, position, email, phone, status } = body;
       const cleanEmail = email ? String(email).trim().toLowerCase() : "";
       const cleanName = full_name ? String(full_name).trim() : "";
-      const role = department === "Ban Giám Đốc" ? "Director" : (position?.includes("Trưởng") ? "lead" : "member");
+      const role = inferSystemRoleFromPosition(department, position);
 
       if (id) {
         await query(
@@ -262,8 +269,10 @@ export async function POST(req: NextRequest) {
         const phone = getVal(["Số điện thoại", "phone", "SĐT", "Điện thoại"]);
         const dept = getVal(["Phòng ban (*)", "Phòng ban", "department"]) || "Kinh Doanh";
         const position = getVal(["Chức vụ / Vị trí (*)", "Chức vụ / Vị trí", "Chức vụ", "Vị trí", "position"]) || "Chuyên viên";
+        const rawRole = getVal(["Vai trò hệ thống (*)", "Vai trò hệ thống", "Vai Trò Hệ Thống", "Vai trò", "role", "Role"]);
         const statusRaw = (getVal(["Trạng thái", "status"]) || "ACTIVE").toUpperCase();
         const status = statusRaw.includes("NGHỈ") || statusRaw.includes("INACTIVE") ? "INACTIVE" : "ACTIVE";
+        const resolvedRole = inferSystemRoleFromPosition(dept, position, rawRole);
 
         // 1. Upsert into personnel (Single Source of Truth)
         await query(
@@ -277,6 +286,18 @@ export async function POST(req: NextRequest) {
                phone = EXCLUDED.phone,
                status = EXCLUDED.status`,
           [empCode, fullName, dept, position, email, phone, status]
+        );
+
+        await query(
+          `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (username) DO UPDATE
+           SET full_name = EXCLUDED.full_name,
+               department = EXCLUDED.department,
+               role = CASE WHEN users.role = 'admin' AND $4 != 'admin' THEN 'admin' ELSE EXCLUDED.role END,
+               email = COALESCE(NULLIF(EXCLUDED.email, ''), users.email),
+               is_active = EXCLUDED.is_active`,
+          [empCode, hashPassword(DEFAULT_INITIAL_PASSWORD), fullName, resolvedRole, dept, email, status === "ACTIVE"]
         );
 
         count++;

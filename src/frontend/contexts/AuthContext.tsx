@@ -43,8 +43,17 @@ function mapDbRole(dbRole: string): string {
         : dbRole === "sales_head" ? "Head of Sales"
         : dbRole === "sales_rep" ? "Sales Specialist"
         : dbRole === "app_head" ? "Head of Application"
-        : dbRole === "procurement" ? "Procurement Lead"
-        : dbRole === "accountant" ? "Chief Accountant"
+        : dbRole === "app_rep" ? "Application Specialist"
+        : dbRole === "warehouse_lead" ? "Warehouse Manager"
+        : dbRole === "warehouse" || dbRole === "warehouse_specialist" ? "Warehouse Specialist"
+        : dbRole === "procurement_lead" ? "Procurement Lead"
+        : dbRole === "procurement_specialist" || dbRole === "procurement" ? "Procurement Specialist"
+        : dbRole === "accountant_head" ? "Chief Accountant"
+        : dbRole === "accountant" ? "Receivable & Inventory Accountant"
+        : dbRole === "qa_qc_lead" ? "QA/QC Manager"
+        : dbRole === "qa_qc" ? "QA/QC Specialist"
+        : dbRole === "legal_head" ? "Head of Legal"
+        : dbRole === "legal" ? "Legal Specialist"
         : dbRole;
 }
 

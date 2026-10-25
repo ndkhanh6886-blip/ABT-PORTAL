@@ -692,19 +692,19 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                     if (deptLower.includes("kinh doanh") && (posLower.includes("trưởng") || posLower.includes("phó") || posLower.includes("head") || posLower.includes("quản lý"))) return true;
                 } else if (rLower === "sales_rep" || rLower === "sales") {
                     if (deptLower.includes("kinh doanh") || uRoleLower.includes("sale")) return true;
-                } else if (rLower === "warehouse" || rLower === "warehouse_lead") {
+                } else if (rLower === "warehouse" || rLower === "warehouse_lead" || rLower === "warehouse_specialist") {
                     if (deptLower.includes("kho") || uRoleLower.includes("warehouse")) return true;
-                } else if (rLower === "procurement") {
+                } else if (rLower === "procurement" || rLower === "procurement_lead" || rLower === "procurement_specialist") {
                     if (deptLower.includes("cung ứng") || deptLower.includes("mua hàng") || deptLower.includes("xnk") || uRoleLower.includes("procurement")) return true;
                 } else if (rLower === "app_head") {
                     if ((deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab")) && (posLower.includes("trưởng") || posLower.includes("head"))) return true;
                 } else if (rLower === "app_rep" || rLower === "application") {
                     if (deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab") || uRoleLower.includes("app")) return true;
-                } else if (rLower === "accountant") {
+                } else if (rLower === "accountant" || rLower === "accountant_head") {
                     if (deptLower.includes("kế toán") || deptLower.includes("tài chính") || uRoleLower.includes("accountant") || uRoleLower.includes("finance")) return true;
-                } else if (rLower === "qa_qc") {
+                } else if (rLower === "qa_qc" || rLower === "qa_qc_lead") {
                     if (deptLower.includes("chất lượng") || deptLower.includes("qa") || deptLower.includes("qc")) return true;
-                } else if (rLower === "legal") {
+                } else if (rLower === "legal" || rLower === "legal_head") {
                     if (deptLower.includes("pháp chế") || deptLower.includes("luật")) return true;
                 }
             }
