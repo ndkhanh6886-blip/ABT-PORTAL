@@ -3421,7 +3421,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         if (filtered.length > 0) {
                             const existingCodes = new Set(filtered.map((p: any) => p.code));
                             const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(d.code));
-                            return [...filtered, ...missingDefaults];
+                            return [...missingDefaults, ...filtered];
                         }
                     }
                 } catch (e) {
@@ -3577,7 +3577,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const neverInitialised = data?.data === null || data?.data === undefined;
                     if (Array.isArray(data?.data)) {
                         const cleanData = data.data.filter((item: any) => item && !DEMO_COMMERCIAL_CODES.has(item.code));
-                        const merged = enrichStorage(cleanData);
+                        const enriched = enrichStorage(cleanData);
+                        const existingCodes = new Set(enriched.map((p: any) => p.code));
+                        const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(d.code));
+                        const merged = [...missingDefaults, ...enriched];
                         setCommercialProducts(merged);
                         try { localStorage.setItem("sales_commercial_products", JSON.stringify(merged)); } catch (e) {}
                     } else if (neverInitialised) {
@@ -15118,6 +15121,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const matchesCat =
                 commercialCategoryFilter === "all"
                     ? true
+                    : commercialCategoryFilter === "GROUP:OLIGO_MTO"
+                    ? (String(p.code || "").toUpperCase().startsWith("OLIGO-") || String(p.code || "").toUpperCase() === "CUSTOM-ORDER")
                     : commercialCategoryFilter.startsWith("GROUP:")
                     ? getCommercialCategoryGroup(p) === commercialCategoryFilter.slice(6)
                     : actualCat === commercialCategoryFilter ||
@@ -21380,6 +21385,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             >
                                 <Download className="w-3.5 h-3.5" />
                                 Xuất Excel
+                            </button>
+                            <button
+                                onClick={() => setCommercialCategoryFilter(prev => prev === "GROUP:OLIGO_MTO" ? "all" : "GROUP:OLIGO_MTO")}
+                                className={cn(
+                                    "px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors shadow cursor-pointer border",
+                                    commercialCategoryFilter === "GROUP:OLIGO_MTO"
+                                        ? "bg-emerald-600 text-white border-emerald-400"
+                                        : "bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border-emerald-700/60"
+                                )}
+                                title="Lọc nhanh 6 mã khung Oligo (OLIGO-BASE, OLIGO-MOD, OLIGO-SVC, OLIGO-PRIMER, OLIGO-PROBE) và Hàng đặt riêng (CUSTOM-ORDER) để xem & chỉnh sửa đơn giá chuẩn"
+                            >
+                                <span>🧬 {commercialCategoryFilter === "GROUP:OLIGO_MTO" ? "Đang lọc: Mã khung Oligo (Bỏ lọc)" : "Mã khung Oligo / Đặt riêng (6 mã)"}</span>
                             </button>
                             <button
                                 onClick={openAddCommercialModal}
