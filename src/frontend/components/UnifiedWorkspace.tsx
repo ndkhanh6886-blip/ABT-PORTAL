@@ -1522,10 +1522,60 @@ export const UnifiedWorkspace: React.FC = () => {
   const rolePerspective = isDirector ? "director" : isManager ? "manager" : "staff";
   const managerDept = userDept && userDept !== "Ban Giám Đốc" ? userDept : "Application";
 
-  const [activeSubTab, setActiveSubTab] = useState<"tasks" | "workflows" | "planner" | "daily" | "analytics">("tasks");
+  const [activeSubTab, setActiveSubTab] = useState<"tasks" | "workflows" | "planner" | "daily" | "announcements" | "analytics">("tasks");
   const [selectedDept, setSelectedDept] = useState<string>("all");
   const [plannerView, setPlannerView] = useState<"calendar" | "lab_projects" | "sales_targets">("calendar");
   const [loading, setLoading] = useState(true);
+
+  // State cho Tab Thông Báo & Quyết Định Nội Bộ (Enterprise Announcements & Decisions)
+  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const [announcementCategoryFilter, setAnnouncementCategoryFilter] = useState<string>("all");
+  const [isAnnouncementModalOpen, setIsAnnouncementModalOpen] = useState(false);
+  const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | number | null>(null);
+  const [selectedAnnouncementDetail, setSelectedAnnouncementDetail] = useState<any>(null);
+  const [announcementCommentText, setAnnouncementCommentText] = useState("");
+  const [sendingAnnouncementRemindId, setSendingAnnouncementRemindId] = useState<string | number | null>(null);
+  const [announcementForm, setAnnouncementForm] = useState<{
+    docCode: string;
+    docType: "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION";
+    priority: "URGENT" | "IMPORTANT" | "NORMAL";
+    pinned: boolean;
+    title: string;
+    summary: string;
+    content: string;
+    issuerName: string;
+    issuerRole: string;
+    issuerDept: string;
+    targetScope: "ALL" | "DEPARTMENTS" | "INDIVIDUALS";
+    targetDepts: string[];
+    targetStaff: string[];
+    issueDate: string;
+    effectiveDate: string;
+    requireAck: boolean;
+    sendChatNotify: boolean;
+    sendBellNotify: boolean;
+    attachments: Array<{ name: string; url: string; size?: number; type?: string; uploaded_at?: string }>;
+  }>({
+    docCode: `TB-${new Date().getFullYear()}/001`,
+    docType: "ANNOUNCEMENT",
+    priority: "IMPORTANT",
+    pinned: true,
+    title: "",
+    summary: "",
+    content: "",
+    issuerName: "",
+    issuerRole: "Ban Giám Đốc",
+    issuerDept: "Ban Giám Đốc",
+    targetScope: "ALL",
+    targetDepts: [],
+    targetStaff: [],
+    issueDate: todayVN(),
+    effectiveDate: todayVN(),
+    requireAck: true,
+    sendChatNotify: true,
+    sendBellNotify: true,
+    attachments: []
+  });
 
   // Automatically initialize department according to user role
   useEffect(() => {
@@ -2127,6 +2177,21 @@ export const UnifiedWorkspace: React.FC = () => {
           const localSt = typeof window !== "undefined" ? localStorage.getItem("unified_sales_targets") : null;
           if (localSt) setSalesTargets(JSON.parse(localSt));
         }
+
+        // Load persistent enterprise announcements & decisions
+        try {
+          const annRes = await fetch("/api/storage?key=unified_announcements");
+          const annData = await annRes.json();
+          if (Array.isArray(annData?.data)) {
+            setAnnouncements(annData.data);
+          } else {
+            const localAnn = typeof window !== "undefined" ? localStorage.getItem("unified_announcements") : null;
+            if (localAnn) setAnnouncements(JSON.parse(localAnn));
+          }
+        } catch (err) {
+          const localAnn = typeof window !== "undefined" ? localStorage.getItem("unified_announcements") : null;
+          if (localAnn) setAnnouncements(JSON.parse(localAnn));
+        }
       }
     } catch (e) {
       console.error("Failed to load workspace data:", e);
@@ -2501,6 +2566,22 @@ export const UnifiedWorkspace: React.FC = () => {
       setSearchQuery("");
       setActiveSubTab("tasks");
       openEditTask(matchedTask);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("workspace_open_task_detail");
+      }
+      return true;
+    }
+
+    if (subTab === "announcements") {
+      setSelectedDept("all");
+      setActiveSubTab("announcements");
+      const targetAnnId = String(rawId || rawCode || "").trim();
+      const matchedAnn = announcements.find(
+        (a: any) => String(a.id) === targetAnnId || String(a.docCode || "").toUpperCase() === targetAnnId.toUpperCase()
+      );
+      if (matchedAnn) {
+        setSelectedAnnouncementDetail(matchedAnn);
+      }
       if (typeof window !== "undefined") {
         localStorage.removeItem("workspace_open_task_detail");
       }
@@ -3453,7 +3534,7 @@ export const UnifiedWorkspace: React.FC = () => {
   // Upload attachments via /api/upload
   const handleFileUpload = async (
     files: FileList | null,
-    target: "record" | "create" | "comment" | "task" | "schedule"
+    target: "record" | "create" | "comment" | "task" | "schedule" | "announcement"
   ) => {
     if (!files || files.length === 0) return;
     setIsUploading(true);
@@ -3508,6 +3589,12 @@ export const UnifiedWorkspace: React.FC = () => {
           attachments: [...(prev.attachments || []), ...uploaded]
         }));
         showToast(`Đã đính kèm ${uploaded.length} tệp vào kế hoạch công tác!`, "success");
+      } else if (target === "announcement") {
+        setAnnouncementForm((prev) => ({
+          ...prev,
+          attachments: [...(prev.attachments || []), ...uploaded]
+        }));
+        showToast(`Đã đính kèm ${uploaded.length} văn bản / tài liệu vào thông báo!`, "success");
       }
     } catch (err: any) {
       showToast("Lỗi tải tệp: " + err.message, "error");
@@ -4960,6 +5047,459 @@ export const UnifiedWorkspace: React.FC = () => {
     showToast("Đã xóa mục tiêu doanh số", "info");
   };
 
+  // ==================== HỆ THỐNG BAN HÀNH THÔNG BÁO, QUYẾT ĐỊNH & QUY CHẾ (ENTERPRISE ANNOUNCEMENTS) ====================
+  const saveAnnouncementsToStorage = async (nextList: any[]) => {
+    setAnnouncements(nextList);
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("unified_announcements", JSON.stringify(nextList));
+      }
+      await fetch("/api/storage?key=unified_announcements", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextList)
+      });
+    } catch (err) {
+      console.warn("Could not save announcements:", err);
+    }
+  };
+
+  const getDocTypeMeta = (docType: string) => {
+    switch (docType) {
+      case "DECISION":
+        return {
+          prefix: "QĐ",
+          label: "📜 Quyết định Ban Giám Đốc",
+          shortLabel: "📜 QUYẾT ĐỊNH",
+          badgeClass: "bg-rose-100 dark:bg-rose-950/90 text-rose-800 dark:text-rose-200 border border-rose-300 dark:border-rose-800"
+        };
+      case "POLICY":
+        return {
+          prefix: "QC",
+          label: "📘 Quy chế / Quy trình (SOP)",
+          shortLabel: "📘 QUY CHẾ / SOP",
+          badgeClass: "bg-indigo-100 dark:bg-indigo-950/90 text-indigo-800 dark:text-indigo-200 border border-indigo-300 dark:border-indigo-800"
+        };
+      case "SALES_POLICY":
+        return {
+          prefix: "CS",
+          label: "💼 Chính sách Kinh doanh & Thưởng",
+          shortLabel: "💼 CHÍNH SÁCH KD",
+          badgeClass: "bg-emerald-100 dark:bg-emerald-950/90 text-emerald-800 dark:text-emerald-200 border border-emerald-300 dark:border-emerald-800"
+        };
+      case "RECOGNITION":
+        return {
+          prefix: "KT",
+          label: "🏆 Khen thưởng & Bổ nhiệm Nhân sự",
+          shortLabel: "🏆 VINH DANH / NHÂN SỰ",
+          badgeClass: "bg-amber-100 dark:bg-amber-950/90 text-amber-800 dark:text-amber-200 border border-amber-300 dark:border-amber-800"
+        };
+      default:
+        return {
+          prefix: "TB",
+          label: "📢 Thông báo Hành chính / Nội bộ",
+          shortLabel: "📢 THÔNG BÁO",
+          badgeClass: "bg-blue-100 dark:bg-blue-950/90 text-blue-800 dark:text-blue-200 border border-blue-300 dark:border-blue-800"
+        };
+    }
+  };
+
+  const getTargetStaffForAnnouncement = useCallback(
+    (ann: any): Array<{ name: string; dept: string }> => {
+      const allStaff = (personnelList || [])
+        .map((p: any) => ({
+          name: String(p.full_name || p || "").trim(),
+          dept: String(p.department || "Nhân sự").trim()
+        }))
+        .filter((p) => p.name);
+
+      if (!ann || ann.targetScope === "ALL" || !ann.targetScope) {
+        return allStaff;
+      }
+      if (ann.targetScope === "DEPARTMENTS" && Array.isArray(ann.targetDepts) && ann.targetDepts.length > 0) {
+        return allStaff.filter((p) =>
+          ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, p.dept))
+        );
+      }
+      if (ann.targetScope === "INDIVIDUALS" && Array.isArray(ann.targetStaff) && ann.targetStaff.length > 0) {
+        return allStaff.filter((p) =>
+          ann.targetStaff.some((s: string) => sameStaffName(s, p.name))
+        );
+      }
+      return allStaff;
+    },
+    [personnelList]
+  );
+
+  const isUserTargetedByAnnouncement = useCallback(
+    (ann: any, staffName: string = currentStaffName, staffDept: string = userDept): boolean => {
+      if (!ann || ann.targetScope === "ALL" || !ann.targetScope) return true;
+      if (sameStaffName(ann.issuerName || "", staffName)) return true;
+      if (ann.targetScope === "DEPARTMENTS" && Array.isArray(ann.targetDepts)) {
+        return ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, staffDept));
+      }
+      if (ann.targetScope === "INDIVIDUALS" && Array.isArray(ann.targetStaff)) {
+        return ann.targetStaff.some((s: string) => sameStaffName(s, staffName));
+      }
+      return true;
+    },
+    [currentStaffName, userDept]
+  );
+
+  const hasUserAcknowledgedAnnouncement = useCallback(
+    (ann: any, staffName: string = currentStaffName): boolean => {
+      const ackList = Array.isArray(ann?.acknowledgedBy) ? ann.acknowledgedBy : [];
+      return ackList.some((a: any) => sameStaffName(a?.name || a, staffName));
+    },
+    [currentStaffName]
+  );
+
+  // Số lượng văn bản/quyết định yêu cầu xác nhận mà user hiện tại chưa bấm "Đã đọc"
+  const unacknowledgedAnnouncementsForMe = useMemo(() => {
+    return (announcements || []).filter((ann: any) => {
+      if (ann.requireAck === false) return false;
+      if (!isUserTargetedByAnnouncement(ann)) return false;
+      return !hasUserAcknowledgedAnnouncement(ann);
+    });
+  }, [announcements, isUserTargetedByAnnouncement, hasUserAcknowledgedAnnouncement]);
+
+  const generateNextDocCode = (docType: "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION") => {
+    const meta = getDocTypeMeta(docType);
+    const year = new Date().getFullYear();
+    const sameTypeCount = (announcements || []).filter((a: any) => a.docType === docType).length + 1;
+    return `${meta.prefix}-${year}/${String(sameTypeCount).padStart(3, "0")}`;
+  };
+
+  const openCreateAnnouncementModal = (defaultType: "DECISION" | "ANNOUNCEMENT" | "POLICY" | "SALES_POLICY" | "RECOGNITION" = "DECISION") => {
+    setEditingAnnouncementId(null);
+    const defaultIssuerRole = isDirector ? "Ban Giám Đốc" : isManager ? `Trưởng bộ phận ${managerDept}` : "Cán bộ Ban hành";
+    const defaultIssuerDept = isDirector ? "Ban Giám Đốc" : managerDept;
+    setAnnouncementForm({
+      docCode: generateNextDocCode(defaultType),
+      docType: defaultType,
+      priority: defaultType === "DECISION" ? "URGENT" : "IMPORTANT",
+      pinned: defaultType === "DECISION",
+      title: "",
+      summary: "",
+      content: "",
+      issuerName: currentStaffName,
+      issuerRole: defaultIssuerRole,
+      issuerDept: defaultIssuerDept,
+      targetScope: isDirector ? "ALL" : "DEPARTMENTS",
+      targetDepts: isDirector ? [] : [managerDept],
+      targetStaff: [],
+      issueDate: todayVN(),
+      effectiveDate: todayVN(),
+      requireAck: true,
+      sendChatNotify: true,
+      sendBellNotify: true,
+      attachments: []
+    });
+    setIsAnnouncementModalOpen(true);
+  };
+
+  const openEditAnnouncementModal = (ann: any) => {
+    setEditingAnnouncementId(ann.id);
+    setAnnouncementForm({
+      docCode: ann.docCode || generateNextDocCode(ann.docType || "ANNOUNCEMENT"),
+      docType: ann.docType || "ANNOUNCEMENT",
+      priority: ann.priority || "IMPORTANT",
+      pinned: Boolean(ann.pinned),
+      title: ann.title || "",
+      summary: ann.summary || "",
+      content: ann.content || "",
+      issuerName: ann.issuerName || currentStaffName,
+      issuerRole: ann.issuerRole || "Ban Giám Đốc",
+      issuerDept: ann.issuerDept || "Ban Giám Đốc",
+      targetScope: ann.targetScope || "ALL",
+      targetDepts: Array.isArray(ann.targetDepts) ? ann.targetDepts : [],
+      targetStaff: Array.isArray(ann.targetStaff) ? ann.targetStaff : [],
+      issueDate: ann.issueDate || todayVN(),
+      effectiveDate: ann.effectiveDate || todayVN(),
+      requireAck: ann.requireAck !== false,
+      sendChatNotify: false,
+      sendBellNotify: false,
+      attachments: Array.isArray(ann.attachments) ? ann.attachments : []
+    });
+    setIsAnnouncementModalOpen(true);
+  };
+
+  const handleSaveAnnouncement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!announcementForm.title.trim()) {
+      showToast("Vui lòng nhập tiêu đề Thông báo / Quyết định", "warning");
+      return;
+    }
+    if (!announcementForm.content.trim() && !announcementForm.summary.trim()) {
+      showToast("Vui lòng nhập nội dung chi tiết hoặc tóm tắt văn bản", "warning");
+      return;
+    }
+
+    const nowTimeStr = nowVNDateTime();
+    const existingItem = editingAnnouncementId
+      ? announcements.find((a: any) => a.id === editingAnnouncementId)
+      : null;
+
+    const initialAck = existingItem?.acknowledgedBy || [
+      {
+        name: announcementForm.issuerName || currentStaffName,
+        dept: announcementForm.issuerDept || userDept,
+        time: nowTimeStr,
+        note: "Người ký ban hành"
+      }
+    ];
+
+    const savedItem = {
+      id: existingItem ? existingItem.id : `ANN-${Date.now()}`,
+      docCode: announcementForm.docCode.trim() || generateNextDocCode(announcementForm.docType),
+      docType: announcementForm.docType,
+      priority: announcementForm.priority,
+      pinned: announcementForm.pinned,
+      title: announcementForm.title.trim(),
+      summary: announcementForm.summary.trim() || announcementForm.content.trim().slice(0, 180),
+      content: announcementForm.content.trim(),
+      issuerName: announcementForm.issuerName || currentStaffName,
+      issuerRole: announcementForm.issuerRole || "Ban Giám Đốc",
+      issuerDept: announcementForm.issuerDept || userDept,
+      targetScope: announcementForm.targetScope,
+      targetDepts: announcementForm.targetDepts,
+      targetStaff: announcementForm.targetStaff,
+      issueDate: announcementForm.issueDate || todayVN(),
+      effectiveDate: announcementForm.effectiveDate || todayVN(),
+      requireAck: announcementForm.requireAck,
+      acknowledgedBy: initialAck,
+      comments: existingItem?.comments || [],
+      attachments: announcementForm.attachments || [],
+      createdAt: existingItem?.createdAt || nowTimeStr,
+      updatedAt: nowTimeStr
+    };
+
+    const nextList = existingItem
+      ? announcements.map((a: any) => (a.id === editingAnnouncementId ? savedItem : a))
+      : [savedItem, ...announcements];
+
+    await saveAnnouncementsToStorage(nextList);
+    setIsAnnouncementModalOpen(false);
+    if (selectedAnnouncementDetail && selectedAnnouncementDetail.id === savedItem.id) {
+      setSelectedAnnouncementDetail(savedItem);
+    }
+
+    const recipients = getTargetStaffForAnnouncement(savedItem)
+      .map((r) => r.name)
+      .filter((n) => n && !sameStaffName(n, currentStaffName));
+
+    const meta = getDocTypeMeta(savedItem.docType);
+    const scopeLabel =
+      savedItem.targetScope === "ALL"
+        ? "Toàn công ty"
+        : savedItem.targetScope === "DEPARTMENTS"
+        ? `Phòng: ${(savedItem.targetDepts || []).join(", ")}`
+        : `${(savedItem.targetStaff || []).length} nhân sự chỉ định`;
+
+    // Gửi thông báo Chuông hệ thống
+    if (announcementForm.sendBellNotify) {
+      notifyActivity({
+        title: `${meta.shortLabel} [${savedItem.docCode}]`,
+        message: `${savedItem.issuerName} (${savedItem.issuerRole}) vừa ban hành: "${savedItem.title}". Hiệu lực từ ${formatDayVN(savedItem.effectiveDate)}. Vui lòng mở xem và bấm Xác nhận đã đọc!`,
+        type: savedItem.priority === "URGENT" ? "warning" : "info",
+        category: "system",
+        sender: { name: savedItem.issuerName },
+        targetEmployeeNames: recipients,
+        targetDept: savedItem.targetScope === "DEPARTMENTS" && savedItem.targetDepts.length === 1 ? savedItem.targetDepts[0] : "all",
+        link: { tab: "workspace", subTab: "announcements", itemId: String(savedItem.docCode || savedItem.id) }
+      });
+    }
+
+    // Gửi tin nhắn Chat nội bộ 1-1 tới tất cả nhân sự thuộc phạm vi nhận
+    if (announcementForm.sendChatNotify && recipients.length > 0) {
+      try {
+        const effStr = formatDayVN(savedItem.effectiveDate);
+        const msgLines = [
+          `📢 **[BAN HÀNH ${meta.shortLabel} MỚI]**`,
+          `• **Số hiệu:** ${savedItem.docCode} ${savedItem.priority === "URGENT" ? "🚨 *(KHẨN CẤP)*" : ""}`,
+          `• **Tiêu đề:** **${savedItem.title}**`,
+          `• **Người ký ban hành:** ${savedItem.issuerName} (${savedItem.issuerRole})`,
+          `• **Phạm vi áp dụng:** ${scopeLabel} | **Hiệu lực từ:** ${effStr}`,
+          savedItem.summary ? `• **Trích yếu:** ${savedItem.summary}` : "",
+          savedItem.requireAck
+            ? `👉 *Đề nghị Anh/Chị vào mục **Điều hành → Thông Báo & Quyết Định** để xem toàn văn và bấm **"✍️ Xác nhận đã đọc"**.*`
+            : ""
+        ]
+          .filter(Boolean)
+          .join("\n");
+
+        await fetch("/api/chat?action=broadcast_meeting", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: `${savedItem.docCode}: ${savedItem.title}`,
+            date_label: effStr,
+            time_slot: "Văn bản điều hành",
+            location: scopeLabel,
+            host_name: savedItem.issuerName,
+            attendees: recipients,
+            agenda: savedItem.summary || savedItem.content.slice(0, 250),
+            custom_message: msgLines,
+            mode: "invite",
+            create_group: false,
+            send_direct: true
+          })
+        });
+      } catch (err) {
+        console.warn("Could not broadcast announcement to chat:", err);
+      }
+    }
+
+    showToast(
+      existingItem
+        ? `Đã cập nhật văn bản ${savedItem.docCode}!`
+        : `Đã ban hành ${meta.shortLabel} [${savedItem.docCode}] & gửi thông báo tới ${recipients.length} nhân sự!`,
+      "success"
+    );
+  };
+
+  const handleAcknowledgeAnnouncement = async (ann: any) => {
+    if (!ann) return;
+    if (hasUserAcknowledgedAnnouncement(ann)) {
+      showToast("Bạn đã xác nhận đọc văn bản này trước đó.", "info");
+      return;
+    }
+    const nowStr = nowVNDateTime();
+    const nextAck = [
+      ...(Array.isArray(ann.acknowledgedBy) ? ann.acknowledgedBy : []),
+      {
+        name: currentStaffName,
+        dept: userDept,
+        time: nowStr
+      }
+    ];
+    const updatedItem = { ...ann, acknowledgedBy: nextAck };
+    const nextList = announcements.map((a: any) => (a.id === ann.id ? updatedItem : a));
+    await saveAnnouncementsToStorage(nextList);
+    if (selectedAnnouncementDetail && selectedAnnouncementDetail.id === ann.id) {
+      setSelectedAnnouncementDetail(updatedItem);
+    }
+    showToast(`✅ Đã xác nhận đọc và nắm rõ văn bản [${ann.docCode}]!`, "success");
+  };
+
+  const handleRemindUnreadAnnouncement = async (ann: any) => {
+    if (!ann) return;
+    const targetStaff = getTargetStaffForAnnouncement(ann);
+    const unreadStaff = targetStaff
+      .filter((s) => !hasUserAcknowledgedAnnouncement(ann, s.name) && !sameStaffName(s.name, currentStaffName))
+      .map((s) => s.name);
+
+    if (unreadStaff.length === 0) {
+      showToast("Tất cả nhân sự trong phạm vi áp dụng đều đã xác nhận đọc văn bản này!", "success");
+      return;
+    }
+
+    setSendingAnnouncementRemindId(ann.id);
+    try {
+      const meta = getDocTypeMeta(ann.docType);
+      const effStr = formatDayVN(ann.effectiveDate);
+      await fetch("/api/chat?action=broadcast_meeting", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Nhắc xác nhận văn bản ${ann.docCode}`,
+          date_label: effStr,
+          time_slot: "Yêu cầu xác nhận đọc",
+          location: "Điều hành → Thông Báo & Quyết Định",
+          host_name: ann.issuerName || currentStaffName,
+          attendees: unreadStaff,
+          agenda: `${meta.shortLabel} [${ann.docCode}]: ${ann.title} — Đề nghị Anh/Chị mở văn bản và bấm nút "✍️ Xác nhận Đã đọc & Nắm thông tin".`,
+          mode: "remind",
+          create_group: false,
+          send_direct: true
+        })
+      });
+
+      notifyActivity({
+        title: `⏰ Nhắc đọc & xác nhận [${ann.docCode}]`,
+        message: `Bạn chưa xác nhận đọc văn bản "${ann.title}" (${ann.docCode}). Vui lòng mở xem và bấm Xác nhận đã đọc!`,
+        type: "warning",
+        category: "system",
+        sender: { name: currentStaffName },
+        targetEmployeeNames: unreadStaff,
+        targetDept: "all",
+        link: { tab: "workspace", subTab: "announcements", itemId: String(ann.docCode || ann.id) }
+      });
+
+      showToast(`🔔 Đã gửi tin nhắn nhắc đọc qua Chat & Chuông tới ${unreadStaff.length} nhân sự chưa xác nhận!`, "success");
+    } catch (err) {
+      showToast("Lỗi khi gửi tin nhắn nhắc đọc", "error");
+    } finally {
+      setSendingAnnouncementRemindId(null);
+    }
+  };
+
+  const handleTogglePinAnnouncement = async (ann: any) => {
+    const updatedItem = { ...ann, pinned: !ann.pinned };
+    const nextList = announcements.map((a: any) => (a.id === ann.id ? updatedItem : a));
+    await saveAnnouncementsToStorage(nextList);
+    if (selectedAnnouncementDetail && selectedAnnouncementDetail.id === ann.id) {
+      setSelectedAnnouncementDetail(updatedItem);
+    }
+    showToast(updatedItem.pinned ? `📌 Đã ghim [${ann.docCode}] lên đầu bảng tin!` : `Đã bỏ ghim [${ann.docCode}]`, "info");
+  };
+
+  const handleDeleteAnnouncement = async (ann: any) => {
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa văn bản [${ann.docCode}] "${ann.title}"?`)) return;
+    const nextList = announcements.filter((a: any) => a.id !== ann.id);
+    await saveAnnouncementsToStorage(nextList);
+    if (selectedAnnouncementDetail && selectedAnnouncementDetail.id === ann.id) {
+      setSelectedAnnouncementDetail(null);
+    }
+    showToast(`Đã xóa văn bản [${ann.docCode}]`, "info");
+  };
+
+  const handleAddAnnouncementComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedAnnouncementDetail || !announcementCommentText.trim()) return;
+    const newComment = {
+      author: currentStaffName,
+      dept: userDept,
+      text: announcementCommentText.trim(),
+      time: nowVNDateTime()
+    };
+    const updatedItem = {
+      ...selectedAnnouncementDetail,
+      comments: [...(selectedAnnouncementDetail.comments || []), newComment]
+    };
+    const nextList = announcements.map((a: any) => (a.id === selectedAnnouncementDetail.id ? updatedItem : a));
+    await saveAnnouncementsToStorage(nextList);
+    setSelectedAnnouncementDetail(updatedItem);
+    setAnnouncementCommentText("");
+    showToast("Đã gửi ý kiến phản hồi trên văn bản!", "success");
+  };
+
+  const handleCreateTaskFromAnnouncement = (ann: any) => {
+    if (!ann) return;
+    const defaultDept =
+      ann.targetScope === "DEPARTMENTS" && ann.targetDepts?.length > 0
+        ? ann.targetDepts[0]
+        : rolePerspective === "manager"
+        ? managerDept
+        : "Kinh Doanh";
+    setTaskForm({
+      id: null,
+      title: `[Triển khai ${ann.docCode}] ${ann.title}`,
+      department: defaultDept,
+      task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
+      assignee_name: currentStaffName,
+      customer_name: "",
+      priority: ann.priority === "URGENT" ? "URGENT" : "HIGH",
+      status: "TODO",
+      deadline: todayVN(),
+      description: `Triển khai thực hiện theo văn bản [${ann.docCode}] "${ann.title}" do ${ann.issuerName} (${ann.issuerRole}) ban hành (Hiệu lực từ ${formatDayVN(ann.effectiveDate)}).\n\nNội dung trọng tâm:\n${ann.summary || ann.content}`,
+      result: "",
+      attachments: Array.isArray(ann.attachments) ? [...ann.attachments] : []
+    });
+    setSelectedAnnouncementDetail(null);
+    setIsTaskModalOpen(true);
+  };
+
   return (
     <div className="space-y-4 w-full pb-12">
       {/* ==================== LEVEL 1: MASTER HEADER & FEATURE TABS ==================== */}
@@ -5051,6 +5591,40 @@ export const UnifiedWorkspace: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveSubTab("announcements")}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+              activeSubTab === "announcements"
+                ? "bg-rose-600 text-white shadow-sm shadow-rose-600/25"
+                : "text-slate-600 dark:text-slate-400 hover:bg-rose-50 dark:hover:bg-slate-800 hover:text-rose-700 dark:hover:text-white"
+            }`}
+          >
+            <Bell className="w-4 h-4" />
+            <span>Thông Báo &amp; Quyết Định</span>
+            {unacknowledgedAnnouncementsForMe.length > 0 ? (
+              <span
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold animate-pulse ${
+                  activeSubTab === "announcements"
+                    ? "bg-white text-rose-700"
+                    : "bg-rose-600 text-white"
+                }`}
+                title={`${unacknowledgedAnnouncementsForMe.length} văn bản cần bạn xác nhận đã đọc`}
+              >
+                {unacknowledgedAnnouncementsForMe.length} mới
+              </span>
+            ) : announcements.length > 0 ? (
+              <span
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] ${
+                  activeSubTab === "announcements"
+                    ? "bg-white/20 text-white"
+                    : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                }`}
+              >
+                {announcements.length}
+              </span>
+            ) : null}
+          </button>
+
+          <button
             onClick={() => setActiveSubTab("analytics")}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeSubTab === "analytics"
@@ -5062,6 +5636,42 @@ export const UnifiedWorkspace: React.FC = () => {
             <span>Hiệu Suất &amp; KPI</span>
           </button>
         </div>
+
+        {/* Dải cảnh báo Văn bản / Quyết định mới chưa xác nhận đọc */}
+        {unacknowledgedAnnouncementsForMe.length > 0 && activeSubTab !== "announcements" && (
+          <div className="mt-3 pt-3 border-t border-rose-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs bg-rose-50/70 dark:bg-rose-950/30 px-3 py-2 rounded-xl border border-rose-200/80 dark:border-rose-900/60">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white font-extrabold text-[10px] shrink-0">
+                📜 VĂN BẢN CẦN XÁC NHẬN ({unacknowledgedAnnouncementsForMe.length})
+              </span>
+              <span className="font-bold text-rose-950 dark:text-rose-200 truncate">
+                [{unacknowledgedAnnouncementsForMe[0].docCode}] {unacknowledgedAnnouncementsForMe[0].title}
+              </span>
+              <span className="text-[11px] text-slate-500 hidden md:inline shrink-0">
+                • Ban hành bởi: {unacknowledgedAnnouncementsForMe[0].issuerName}
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleAcknowledgeAnnouncement(unacknowledgedAnnouncementsForMe[0])}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[10px] cursor-pointer"
+              >
+                ✍️ Xác nhận đã đọc ngay
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveSubTab("announcements");
+                  setSelectedAnnouncementDetail(unacknowledgedAnnouncementsForMe[0]);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 text-rose-700 dark:text-rose-300 border border-rose-300 dark:border-rose-800 font-bold text-[10px] hover:bg-rose-100 cursor-pointer"
+              >
+                Xem toàn văn ↗
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Quick Activity Notifications Strip (THÔNG BÁO HOẠT ĐỘNG) */}
         {filteredNotifications && filteredNotifications.length > 0 && (
@@ -5347,6 +5957,28 @@ export const UnifiedWorkspace: React.FC = () => {
                 </button>
               )}
             </>
+          )}
+
+          {/* TAB 5: THÔNG BÁO & QUYẾT ĐỊNH -> Nút Ban Hành Quyết Định & Tạo Thông Báo Nội Bộ */}
+          {activeSubTab === "announcements" && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => openCreateAnnouncementModal("DECISION")}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-rose-600 hover:bg-rose-700 text-white transition-all shadow-xs cursor-pointer"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>📜 + Ban Hành Quyết Định</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => openCreateAnnouncementModal("ANNOUNCEMENT")}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition-all shadow-xs cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>📢 + Tạo Thông Báo / Quy Chế</span>
+              </button>
+            </div>
           )}
         </div>
       </div>
@@ -8361,6 +8993,405 @@ ${wf.description || ""}`}
           </div>
         </div>
       )}
+
+      {/* ==================== TAB 6: THÔNG BÁO, QUYẾT ĐỊNH & VĂN BẢN ĐIỀU HÀNH (ENTERPRISE ANNOUNCEMENTS) ==================== */}
+      {activeSubTab === "announcements" && (() => {
+        const filteredAnnouncements = (announcements || [])
+          .filter((ann: any) => {
+            // Lọc theo phòng ban đang chọn trên thanh Level 2
+            if (selectedDept !== "all") {
+              const appliesToSelectedDept =
+                ann.targetScope === "ALL" ||
+                !ann.targetScope ||
+                (Array.isArray(ann.targetDepts) && ann.targetDepts.some((d: string) => isSameWorkspaceDept(d, selectedDept))) ||
+                isSameWorkspaceDept(ann.issuerDept, selectedDept);
+              if (!appliesToSelectedDept) return false;
+            }
+            // Lọc theo phân loại văn bản
+            if (announcementCategoryFilter === "UNACKNOWLEDGED") {
+              return ann.requireAck !== false && isUserTargetedByAnnouncement(ann) && !hasUserAcknowledgedAnnouncement(ann);
+            }
+            if (announcementCategoryFilter !== "all" && ann.docType !== announcementCategoryFilter) {
+              return false;
+            }
+            // Lọc theo ô tìm kiếm
+            if (searchQuery.trim()) {
+              const q = canonStaffName(searchQuery);
+              const hay = canonStaffName(
+                `${ann.docCode || ""} ${ann.title || ""} ${ann.summary || ""} ${ann.content || ""} ${ann.issuerName || ""}`
+              );
+              if (!hay.includes(q)) return false;
+            }
+            return true;
+          })
+          .sort((a: any, b: any) => {
+            if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+            return String(b.issueDate || "").localeCompare(String(a.issueDate || ""));
+          });
+
+        const decisionCount = (announcements || []).filter((a: any) => a.docType === "DECISION").length;
+        const policyCount = (announcements || []).filter((a: any) => a.docType === "POLICY" || a.docType === "SALES_POLICY").length;
+
+        // Tính tỷ lệ xác nhận đọc trung bình toàn công ty
+        let totalAckPossible = 0;
+        let totalAckDone = 0;
+        (announcements || []).forEach((ann: any) => {
+          if (ann.requireAck === false) return;
+          const targets = getTargetStaffForAnnouncement(ann);
+          const acked = targets.filter((t) => hasUserAcknowledgedAnnouncement(ann, t.name));
+          totalAckPossible += Math.max(1, targets.length);
+          totalAckDone += acked.length;
+        });
+        const overallAckRate = totalAckPossible > 0 ? Math.min(100, Math.round((totalAckDone / totalAckPossible) * 100)) : 100;
+
+        return (
+          <div className="space-y-4">
+            {/* 4 Thẻ KPI Điều Hành Văn Bản & Quyết Định */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-400 uppercase">Tổng Văn Bản Đã Ban Hành</span>
+                  <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">{announcements.length}</div>
+                  <span className="text-[11px] text-slate-500">
+                    {announcements.filter((a: any) => a.pinned).length} văn bản đang ghim tiêu điểm
+                  </span>
+                </div>
+                <div className="w-11 h-11 rounded-2xl bg-indigo-50 dark:bg-indigo-950/70 text-indigo-600 dark:text-indigo-400 flex items-center justify-center">
+                  <FileText className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 border border-rose-200 dark:border-rose-900/60 rounded-2xl p-4 shadow-xs flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-rose-600 dark:text-rose-400 uppercase">Cần Tôi Xác Nhận Đã Đọc</span>
+                  <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
+                    {unacknowledgedAnnouncementsForMe.length}
+                  </div>
+                  <span className="text-[11px] text-slate-500">
+                    {unacknowledgedAnnouncementsForMe.length === 0
+                      ? "✅ Bạn đã xác nhận đủ 100%"
+                      : "⏳ Bấm xác nhận để hoàn tất"}
+                  </span>
+                </div>
+                <div className="w-11 h-11 rounded-2xl bg-rose-50 dark:bg-rose-950/70 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <Bell className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-slate-400 uppercase">Quyết Định BGĐ &amp; Quy Chế SOP</span>
+                  <div className="text-2xl font-black text-purple-600 dark:text-purple-400 mt-1">
+                    {decisionCount} QĐ • {policyCount} SOP
+                  </div>
+                  <span className="text-[11px] text-slate-500">Lưu trữ chuẩn hóa theo số hiệu</span>
+                </div>
+                <div className="w-11 h-11 rounded-2xl bg-purple-50 dark:bg-purple-950/70 text-purple-600 dark:text-purple-400 flex items-center justify-center">
+                  <ShieldCheck className="w-5 h-5" />
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-900 border border-emerald-200 dark:border-emerald-900/60 rounded-2xl p-4 shadow-xs flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 uppercase">Tỷ Lệ Nhân Sự Đã Đọc</span>
+                  <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{overallAckRate}%</div>
+                  <span className="text-[11px] text-slate-500">Giám sát ký nhận đọc (Read Receipt)</span>
+                </div>
+                <div className="w-11 h-11 rounded-2xl bg-emerald-50 dark:bg-emerald-950/70 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+              </div>
+            </div>
+
+            {/* Thanh Lọc Nhanh Theo Loại Văn Bản + Nút Ban Hành */}
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 shadow-xs flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {[
+                  { id: "all", label: `📋 Tất cả (${announcements.length})` },
+                  { id: "DECISION", label: `📜 Quyết định BGĐ (${decisionCount})` },
+                  { id: "ANNOUNCEMENT", label: "📢 Thông báo nội bộ" },
+                  { id: "POLICY", label: "📘 Quy chế / SOP" },
+                  { id: "SALES_POLICY", label: "💼 Chính sách KD & Thưởng" },
+                  { id: "RECOGNITION", label: "🏆 Vinh danh & Nhân sự" },
+                  {
+                    id: "UNACKNOWLEDGED",
+                    label: `⏳ Chưa xác nhận đọc (${unacknowledgedAnnouncementsForMe.length})`
+                  }
+                ].map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => setAnnouncementCategoryFilter(cat.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      announcementCategoryFilter === cat.id
+                        ? cat.id === "UNACKNOWLEDGED"
+                          ? "bg-rose-600 text-white shadow-xs"
+                          : "bg-indigo-600 text-white shadow-xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openCreateAnnouncementModal("DECISION")}
+                  className="px-3.5 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <span>📜 + Ban Hành Quyết Định</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCreateAnnouncementModal("ANNOUNCEMENT")}
+                  className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                >
+                  <span>📢 + Tạo Thông Báo Mới</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Danh sách Thông báo, Quyết định & Quy chế */}
+            {filteredAnnouncements.length === 0 ? (
+              <div className="bg-white dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl p-10 text-center space-y-3">
+                <div className="w-14 h-14 rounded-2xl bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 flex items-center justify-center mx-auto">
+                  <FileText className="w-7 h-7" />
+                </div>
+                <div className="space-y-1 max-w-lg mx-auto">
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Chưa có Thông báo hoặc Quyết định nào trong mục này
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Ban Giám Đốc và Trưởng bộ phận có thể ban hành Quyết định (`QĐ`), Thông báo hành chính (`TB`), Quy trình chuẩn (`SOP`), hoặc Chính sách kinh doanh (`CS`) kèm file đóng dấu, tự động nhắn tin Chat thông báo và theo dõi danh sách nhân sự xác nhận đã đọc.
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => openCreateAnnouncementModal("DECISION")}
+                    className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs cursor-pointer shadow-sm"
+                  >
+                    📜 + Ban Hành Quyết Định Đầu Tiên
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => openCreateAnnouncementModal("ANNOUNCEMENT")}
+                    className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer shadow-sm"
+                  >
+                    📢 + Đăng Thông Báo Nội Bộ
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {filteredAnnouncements.map((ann: any) => {
+                  const meta = getDocTypeMeta(ann.docType);
+                  const targets = getTargetStaffForAnnouncement(ann);
+                  const ackedList = targets.filter((t) => hasUserAcknowledgedAnnouncement(ann, t.name));
+                  const unreadList = targets.filter((t) => !hasUserAcknowledgedAnnouncement(ann, t.name));
+                  const ackPercent = targets.length > 0 ? Math.min(100, Math.round((ackedList.length / targets.length) * 100)) : 100;
+                  const iAmTargeted = isUserTargetedByAnnouncement(ann);
+                  const iHaveAcked = hasUserAcknowledgedAnnouncement(ann);
+                  const scopeLabel =
+                    ann.targetScope === "ALL" || !ann.targetScope
+                      ? "🏢 Toàn công ty"
+                      : ann.targetScope === "DEPARTMENTS"
+                      ? `🏬 Phòng: ${(ann.targetDepts || []).join(", ")}`
+                      : `👥 ${(ann.targetStaff || []).length} nhân sự chỉ định`;
+
+                  return (
+                    <div
+                      key={ann.id}
+                      className={`bg-white dark:bg-slate-900 rounded-2xl p-4 sm:p-5 border transition-all shadow-xs hover:shadow-md ${
+                        ann.pinned
+                          ? "border-rose-300 dark:border-rose-800/90 ring-1 ring-rose-500/15"
+                          : "border-slate-200 dark:border-slate-800"
+                      }`}
+                    >
+                      <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                        {/* Left: Document Info & Content Preview */}
+                        <div className="space-y-2.5 flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {ann.pinned && (
+                              <span className="px-2 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/90 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800 text-[10px] font-extrabold">
+                                📌 GHIM TIÊU ĐIỂM
+                              </span>
+                            )}
+                            <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-extrabold ${meta.badgeClass}`}>
+                              {meta.shortLabel}
+                            </span>
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 font-mono font-bold text-[11px] border border-slate-200 dark:border-slate-700">
+                              Số: {ann.docCode}
+                            </span>
+                            {ann.priority === "URGENT" && (
+                              <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white text-[10px] font-extrabold">
+                                🚨 KHẨN CẤP / BẮT BUỘC
+                              </span>
+                            )}
+                            {ann.priority === "IMPORTANT" && (
+                              <span className="px-2 py-0.5 rounded-md bg-orange-100 dark:bg-orange-950 text-orange-800 dark:text-orange-300 text-[10px] font-bold border border-orange-200 dark:border-orange-800">
+                                ⭐ QUAN TRỌNG
+                              </span>
+                            )}
+                            <span className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md">
+                              {scopeLabel}
+                            </span>
+                          </div>
+
+                          <div
+                            onClick={() => setSelectedAnnouncementDetail(ann)}
+                            className="cursor-pointer group"
+                          >
+                            <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                              {ann.title}
+                            </h3>
+                            {ann.summary && (
+                              <p className="text-xs font-semibold text-slate-600 dark:text-slate-300 mt-1">
+                                {ann.summary}
+                              </p>
+                            )}
+                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1.5 line-clamp-3 whitespace-pre-line leading-relaxed">
+                              {ann.content}
+                            </p>
+                          </div>
+
+                          {/* Metadata Row */}
+                          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 text-[11px] text-slate-500">
+                            <span>
+                              ✍️ Người ký ban hành: <strong className="text-slate-800 dark:text-slate-200">{ann.issuerName}</strong> ({ann.issuerRole})
+                            </span>
+                            <span>
+                              📅 Ngày ban hành: <strong className="text-slate-700 dark:text-slate-300">{formatDayVN(ann.issueDate)}</strong>
+                            </span>
+                            <span>
+                              ⚡ Hiệu lực từ: <strong className="text-emerald-700 dark:text-emerald-400">{formatDayVN(ann.effectiveDate)}</strong>
+                            </span>
+                            {Array.isArray(ann.attachments) && ann.attachments.length > 0 && (
+                              <span className="text-indigo-600 dark:text-indigo-400 font-bold flex items-center gap-1">
+                                <Paperclip className="w-3 h-3" /> {ann.attachments.length} tệp văn bản gốc đính kèm
+                              </span>
+                            )}
+                            {Array.isArray(ann.comments) && ann.comments.length > 0 && (
+                              <span className="text-slate-600 dark:text-slate-300 font-semibold">
+                                💬 {ann.comments.length} thảo luận
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Right: Read Receipt Progress & Action Buttons */}
+                        <div className="lg:w-72 shrink-0 flex flex-col justify-between gap-2.5 p-3 rounded-xl bg-slate-50 dark:bg-slate-950/70 border border-slate-200/80 dark:border-slate-800">
+                          {ann.requireAck !== false && (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between text-[11px]">
+                                <span className="font-bold text-slate-700 dark:text-slate-300">
+                                  📊 Xác nhận đã đọc:
+                                </span>
+                                <span className="font-mono font-extrabold text-emerald-600 dark:text-emerald-400">
+                                  {ackedList.length}/{targets.length} NS ({ackPercent}%)
+                                </span>
+                              </div>
+                              <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                                <div
+                                  className="h-full bg-gradient-to-r from-emerald-500 to-teal-500 rounded-full transition-all"
+                                  style={{ width: `${ackPercent}%` }}
+                                />
+                              </div>
+                              {unreadList.length > 0 ? (
+                                <p className="text-[10px] text-amber-700 dark:text-amber-400 truncate">
+                                  ⏳ Còn {unreadList.length} người chưa xác nhận: {unreadList.slice(0, 3).map((u) => u.name).join(", ")}
+                                  {unreadList.length > 3 ? "..." : ""}
+                                </p>
+                              ) : (
+                                <p className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold">
+                                  ✅ 100% nhân sự thuộc phạm vi đã đọc
+                                </p>
+                              )}
+                            </div>
+                          )}
+
+                          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                            {ann.requireAck !== false && iAmTargeted && (
+                              iHaveAcked ? (
+                                <span className="w-full py-1.5 px-2.5 rounded-lg bg-emerald-100 dark:bg-emerald-950/80 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 font-bold text-[11px] text-center">
+                                  ✅ Bạn đã xác nhận đọc văn bản này
+                                </span>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => handleAcknowledgeAnnouncement(ann)}
+                                  className="w-full py-1.5 px-3 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-[11px] shadow-xs cursor-pointer transition-colors"
+                                >
+                                  ✍️ Xác nhận: Tôi đã đọc &amp; Nắm rõ
+                                </button>
+                              )
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => setSelectedAnnouncementDetail(ann)}
+                              className="flex-1 py-1.5 px-2.5 rounded-lg bg-white dark:bg-slate-900 hover:bg-indigo-50 dark:hover:bg-slate-800 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-[11px] cursor-pointer"
+                            >
+                              👁️ Xem chi tiết &amp; DS đọc
+                            </button>
+
+                            {unreadList.length > 0 && (
+                              <button
+                                type="button"
+                                disabled={sendingAnnouncementRemindId === ann.id}
+                                onClick={() => handleRemindUnreadAnnouncement(ann)}
+                                className="py-1.5 px-2.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-bold text-[11px] cursor-pointer"
+                                title="Nhắn tin Chat & Chuông nhắc các nhân sự chưa xác nhận đọc"
+                              >
+                                {sendingAnnouncementRemindId === ann.id ? "Đang nhắc..." : `🔔 Nhắc (${unreadList.length})`}
+                              </button>
+                            )}
+                          </div>
+
+                          <div className="flex items-center justify-between gap-1 pt-1 border-t border-slate-200/70 dark:border-slate-800 text-[10px]">
+                            <button
+                              type="button"
+                              onClick={() => handleCreateTaskFromAnnouncement(ann)}
+                              className="font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                            >
+                              ⚡ Giao việc từ văn bản
+                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => handleTogglePinAnnouncement(ann)}
+                                className="text-slate-500 hover:text-amber-600 font-semibold cursor-pointer"
+                              >
+                                {ann.pinned ? "Bỏ ghim" : "📌 Ghim"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openEditAnnouncementModal(ann)}
+                                className="text-slate-500 hover:text-indigo-600 font-semibold cursor-pointer"
+                              >
+                                Sửa
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteAnnouncement(ann)}
+                                className="text-rose-500 hover:text-rose-700 font-semibold cursor-pointer"
+                              >
+                                Xóa
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ==================== MODAL 1: CREATE / EDIT TASK ==================== */}
       <Modal
@@ -12101,6 +13132,685 @@ ${wf.description || ""}`}
             </button>
           </div>
         </form>
+      </Modal>
+
+      {/* ==================== MODAL 7: BAN HÀNH / SỬA THÔNG BÁO, QUYẾT ĐỊNH & QUY CHẾ ==================== */}
+      <Modal
+        isOpen={isAnnouncementModalOpen}
+        onClose={() => setIsAnnouncementModalOpen(false)}
+        title={
+          editingAnnouncementId
+            ? "✏️ CẬP NHẬT VĂN BẢN THÔNG BÁO / QUYẾT ĐỊNH"
+            : "📜 BAN HÀNH THÔNG BÁO, QUYẾT ĐỊNH & QUY CHẾ ĐIỀU HÀNH"
+        }
+        size="lg"
+      >
+        <form onSubmit={handleSaveAnnouncement} className="space-y-3.5 p-1 text-xs">
+          {/* Chọn nhanh Mẫu Văn bản chuẩn */}
+          <div className="p-2.5 rounded-xl bg-rose-50/60 dark:bg-rose-950/25 border border-rose-200/80 dark:border-rose-900/60 space-y-1.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-rose-800 dark:text-rose-300">
+                ⚡ Chọn nhanh mẫu văn bản chuẩn doanh nghiệp:
+              </span>
+              <span className="text-[10px] text-rose-600 dark:text-rose-400">
+                Tự động sinh Số hiệu &amp; khung điều khoản chuẩn
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {[
+                {
+                  label: "📜 Quyết định Ban Giám Đốc",
+                  docType: "DECISION" as const,
+                  priority: "URGENT" as const,
+                  title: "Quyết định V/v Ban hành định mức & phân công chỉ tiêu trọng điểm",
+                  summary: "Quyết định có hiệu lực thi hành đối với các bộ phận liên quan kể từ ngày ký.",
+                  content:
+                    "Căn cứ chức năng, nhiệm vụ và quyền hạn của Ban Giám Đốc Công ty;\nCăn cứ nhu cầu vận hành thực tế và đề xuất của các Trưởng bộ phận;\n\nQUYẾT ĐỊNH:\nĐiều 1. Ban hành kèm theo Quyết định này kế hoạch và định mức triển khai công tác trọng tâm.\nĐiều 2. Các Trưởng bộ phận Kinh Doanh, Application, Kho & Vận Hành, Cung Ứng chịu trách nhiệm phổ biến và giám sát thực hiện.\nĐiều 3. Quyết định này có hiệu lực kể từ ngày ký. Các bộ phận và cá nhân liên quan chịu trách nhiệm thi hành Quyết định này."
+                },
+                {
+                  label: "📢 Thông báo Hành chính / Nghỉ lễ",
+                  docType: "ANNOUNCEMENT" as const,
+                  priority: "IMPORTANT" as const,
+                  title: "Thông báo V/v Kế hoạch làm việc & Lịch trực vận hành toàn công ty",
+                  summary: "Thông báo áp dụng cho toàn thể cán bộ nhân viên các phòng ban.",
+                  content:
+                    "Ban Giám Đốc trân trọng thông báo đến toàn thể Cán bộ Nhân viên lịch làm việc và phân công trực vận hành:\n1. Thời gian áp dụng: ...\n2. Yêu cầu đối với bộ phận Kho & Vận Hành và Application: Đảm bảo duy trì đầu mối trực hỗ trợ khách hàng bệnh viện.\n3. Đề nghị toàn thể nhân sự xác nhận đã đọc và nghiêm túc thực hiện."
+                },
+                {
+                  label: "📘 Quy chế / Quy trình SOP",
+                  docType: "POLICY" as const,
+                  priority: "IMPORTANT" as const,
+                  title: "Quy trình chuẩn (SOP) V/v Phối hợp xử lý đơn hàng & Bàn giao thiết bị/hóa chất",
+                  summary: "Chuẩn hóa SLA phối hợp giữa Kinh Doanh - Application - Kho Vận - Cung Ứng.",
+                  content:
+                    "1. Mục đích: Chuẩn hóa quy trình luân chuyển phiếu phối hợp và kiểm soát SLA giữa các phòng ban.\n2. Quy định thực hiện:\n- Bước 1: Bộ phận Kinh Doanh khởi tạo yêu cầu kèm đầy đủ thông tin khách hàng/bệnh viện.\n- Bước 2: Bộ phận Application / Kho xác nhận trong vòng 4 giờ làm việc.\n- Bước 3: Cập nhật đầy đủ biên bản nghiệm thu và chứng từ lên hệ thống."
+                },
+                {
+                  label: "💼 Chính sách Kinh doanh & Thưởng",
+                  docType: "SALES_POLICY" as const,
+                  priority: "IMPORTANT" as const,
+                  title: "Chính sách Thưởng KPI & Hoa hồng phát triển dự án/thầu mới",
+                  summary: "Áp dụng cho khối Kinh Doanh và Kỹ thuật Application phối hợp.",
+                  content:
+                    "1. Đối tượng áp dụng: Nhân sự phòng Kinh Doanh và Application tham gia trực tiếp dự án.\n2. Cơ chế tính thưởng & KPI: Căn cứ theo tỷ lệ hoàn thành doanh số thực thu và nghiệm thu kỹ thuật đạt chuẩn.\n3. Thời hạn thanh toán thưởng: Tổng kết vào cuối mỗi Quý."
+                },
+                {
+                  label: "🏆 Vinh danh & Bổ nhiệm Nhân sự",
+                  docType: "RECOGNITION" as const,
+                  priority: "NORMAL" as const,
+                  title: "Quyết định Khen thưởng cá nhân/tập thể đạt thành tích xuất sắc",
+                  summary: "Vinh danh đóng góp nổi bật trong công tác chuyên môn và phục vụ khách hàng.",
+                  content:
+                    "Ban Giám Đốc quyết định biểu dương và khen thưởng cá nhân/tập thể có thành tích xuất sắc trong kỳ.\nChúc mừng các Anh/Chị tiếp tục phát huy tinh thần chủ động, chuyên nghiệp và đồng hành cùng sự phát triển của Công ty!"
+                }
+              ].map((tpl) => (
+                <button
+                  key={tpl.label}
+                  type="button"
+                  onClick={() =>
+                    setAnnouncementForm({
+                      ...announcementForm,
+                      docType: tpl.docType,
+                      docCode: generateNextDocCode(tpl.docType),
+                      priority: tpl.priority,
+                      pinned: tpl.docType === "DECISION",
+                      title: tpl.title,
+                      summary: tpl.summary,
+                      content: tpl.content
+                    })
+                  }
+                  className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 hover:bg-rose-600 hover:text-white text-slate-700 dark:text-slate-200 border border-rose-200 dark:border-rose-800 text-[10px] font-bold transition-colors cursor-pointer"
+                >
+                  {tpl.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Hàng 1: Loại văn bản + Số hiệu văn bản + Độ khẩn + Ghim */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
+            <div className="md:col-span-5">
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                1. Phân loại văn bản ban hành *
+              </label>
+              <select
+                value={announcementForm.docType}
+                onChange={(e) => {
+                  const nextType = e.target.value as any;
+                  setAnnouncementForm({
+                    ...announcementForm,
+                    docType: nextType,
+                    docCode: editingAnnouncementId ? announcementForm.docCode : generateNextDocCode(nextType)
+                  });
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+              >
+                <option value="DECISION">📜 Quyết định Ban Giám Đốc (QĐ)</option>
+                <option value="ANNOUNCEMENT">📢 Thông báo Hành chính / Nội bộ (TB)</option>
+                <option value="POLICY">📘 Quy chế / Quy trình chuẩn SOP (QC)</option>
+                <option value="SALES_POLICY">💼 Chính sách Kinh doanh &amp; Thưởng (CS)</option>
+                <option value="RECOGNITION">🏆 Khen thưởng &amp; Bổ nhiệm Nhân sự (KT)</option>
+              </select>
+            </div>
+
+            <div className="md:col-span-3">
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Số hiệu văn bản *
+              </label>
+              <input
+                type="text"
+                required
+                value={announcementForm.docCode}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, docCode: e.target.value })}
+                placeholder="VD: QĐ-2026/001"
+                className="w-full px-3 py-2 rounded-xl border border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-mono font-extrabold"
+              />
+            </div>
+
+            <div className="md:col-span-4">
+              <label className="block font-bold text-slate-700 dark:text-slate-200 mb-1">
+                Cấp độ ưu tiên &amp; Ghim
+              </label>
+              <div className="flex items-center gap-2">
+                <select
+                  value={announcementForm.priority}
+                  onChange={(e) => setAnnouncementForm({ ...announcementForm, priority: e.target.value as any })}
+                  className="flex-1 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+                >
+                  <option value="URGENT">🚨 Khẩn cấp / Bắt buộc</option>
+                  <option value="IMPORTANT">⭐ Quan trọng</option>
+                  <option value="NORMAL">📌 Thông thường</option>
+                </select>
+                <label className="flex items-center gap-1.5 px-2.5 py-2 rounded-xl bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={announcementForm.pinned}
+                    onChange={(e) => setAnnouncementForm({ ...announcementForm, pinned: e.target.checked })}
+                    className="w-3.5 h-3.5 rounded accent-amber-600"
+                  />
+                  <span className="font-bold text-amber-800 dark:text-amber-300 text-[10px]">📌 Ghim đầu</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Hàng 2: Người ký ban hành + Chức danh + Ngày ban hành + Ngày hiệu lực */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Người ký / Ban hành *
+              </label>
+              <input
+                type="text"
+                required
+                value={announcementForm.issuerName}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, issuerName: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Chức vụ / Thẩm quyền
+              </label>
+              <input
+                type="text"
+                value={announcementForm.issuerRole}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, issuerRole: e.target.value })}
+                placeholder="VD: Giám Đốc Điều Hành, Trưởng phòng..."
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Ngày ban hành
+              </label>
+              <DateInputVN
+                value={announcementForm.issueDate}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, issueDate: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+              />
+            </div>
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Ngày bắt đầu hiệu lực *
+              </label>
+              <DateInputVN
+                value={announcementForm.effectiveDate}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, effectiveDate: e.target.value })}
+                className="w-full px-3 py-2 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/40 dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+              />
+            </div>
+          </div>
+
+          {/* Hàng 3: Phạm vi áp dụng (Toàn công ty / Chọn phòng ban / Chọn nhân sự) */}
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-2">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <label className="font-bold text-slate-700 dark:text-slate-200">
+                2. Phạm vi đối tượng áp dụng &amp; nhận văn bản *
+              </label>
+              <div className="inline-flex rounded-lg bg-slate-200/80 dark:bg-slate-800 p-0.5 text-[10px] font-bold">
+                <button
+                  type="button"
+                  onClick={() => setAnnouncementForm({ ...announcementForm, targetScope: "ALL" })}
+                  className={`px-2.5 py-1 rounded-md cursor-pointer ${
+                    announcementForm.targetScope === "ALL"
+                      ? "bg-indigo-600 text-white"
+                      : "text-slate-600 dark:text-slate-300"
+                  }`}
+                >
+                  🏢 Toàn công ty
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setAnnouncementForm({
+                      ...announcementForm,
+                      targetScope: "DEPARTMENTS",
+                      targetDepts: announcementForm.targetDepts.length ? announcementForm.targetDepts : ["Kinh Doanh"]
+                    })
+                  }
+                  className={`px-2.5 py-1 rounded-md cursor-pointer ${
+                    announcementForm.targetScope === "DEPARTMENTS"
+                      ? "bg-indigo-600 text-white"
+                      : "text-slate-600 dark:text-slate-300"
+                  }`}
+                >
+                  🏬 Chọn theo Phòng ban
+                </button>
+              </div>
+            </div>
+
+            {announcementForm.targetScope === "DEPARTMENTS" && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => {
+                  const picked = announcementForm.targetDepts.includes(d.id);
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => {
+                        const next = picked
+                          ? announcementForm.targetDepts.filter((x) => x !== d.id)
+                          : [...announcementForm.targetDepts, d.id];
+                        setAnnouncementForm({ ...announcementForm, targetDepts: next });
+                      }}
+                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                        picked
+                          ? "bg-indigo-600 text-white border-indigo-500"
+                          : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                      }`}
+                    >
+                      {picked ? "✓ " : "+ "}
+                      {d.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Hàng 4: Tiêu đề, Trích yếu & Nội dung điều khoản */}
+          <div className="space-y-2.5">
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                3. Tiêu đề Thông báo / Quyết định *
+              </label>
+              <input
+                type="text"
+                required
+                value={announcementForm.title}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })}
+                placeholder="VD: Quyết định V/v Ban hành quy chế phối hợp giao nhận & thử mẫu Bệnh viện Quý 4/2026..."
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                Trích yếu / Tóm tắt ngắn gọn (Hiển thị nổi bật ngoài bảng tin &amp; tin nhắn Chat)
+              </label>
+              <input
+                type="text"
+                value={announcementForm.summary}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, summary: e.target.value })}
+                placeholder="Tóm tắt 1 câu mục đích trọng tâm của văn bản..."
+                className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
+              />
+            </div>
+
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                4. Nội dung toàn văn (Các Điều 1, Điều 2, Điều 3... hoặc nội dung thông báo chi tiết) *
+              </label>
+              <textarea
+                rows={6}
+                required
+                value={announcementForm.content}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, content: e.target.value })}
+                placeholder="Nhập toàn văn nội dung Quyết định / Thông báo / Quy định..."
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium leading-relaxed"
+              />
+            </div>
+          </div>
+
+          {/* Hàng 5: Tùy chọn Xác nhận đã đọc (Read Receipt) & Phát sóng đa kênh qua Chat/Chuông */}
+          <div className="p-3 rounded-xl bg-gradient-to-r from-rose-50/70 via-indigo-50/50 to-emerald-50/60 dark:from-rose-950/30 dark:via-indigo-950/25 dark:to-emerald-950/25 border border-indigo-200 dark:border-indigo-800/80 grid grid-cols-1 md:grid-cols-3 gap-2.5">
+            <label className="flex items-start gap-2 p-2 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={announcementForm.requireAck}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, requireAck: e.target.checked })}
+                className="w-4 h-4 mt-0.5 rounded accent-emerald-600"
+              />
+              <div>
+                <div className="font-bold text-slate-800 dark:text-slate-100 text-[11px]">
+                  ✍️ Bắt buộc ký xác nhận Đã đọc
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  Theo dõi chính xác nhân sự nào đã đọc, nhân sự nào chưa xem để nhắc nhở.
+                </div>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-2 p-2 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={announcementForm.sendChatNotify}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, sendChatNotify: e.target.checked })}
+                className="w-4 h-4 mt-0.5 rounded accent-rose-600"
+              />
+              <div>
+                <div className="font-bold text-slate-800 dark:text-slate-100 text-[11px]">
+                  💬 Nhắn tin thông báo qua Chat
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  Gửi trực tiếp thẻ văn bản vào hộp thư Chat 1-1 của từng nhân sự nhận.
+                </div>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-2 p-2 rounded-xl bg-white/90 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={announcementForm.sendBellNotify}
+                onChange={(e) => setAnnouncementForm({ ...announcementForm, sendBellNotify: e.target.checked })}
+                className="w-4 h-4 mt-0.5 rounded accent-indigo-600"
+              />
+              <div>
+                <div className="font-bold text-slate-800 dark:text-slate-100 text-[11px]">
+                  🔔 Đẩy Chuông thông báo hệ thống
+                </div>
+                <div className="text-[10px] text-slate-500">
+                  Hiển thị thông báo tức thì trên Chuông &amp; thanh cảnh báo đầu trang.
+                </div>
+              </div>
+            </label>
+          </div>
+
+          {/* Hàng 6: Đính kèm File PDF Quyết định đóng dấu đỏ / Văn bản gốc */}
+          <div className="space-y-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <div className="flex items-center justify-between">
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <Paperclip className="w-3.5 h-3.5 text-rose-600" />
+                <span>Đính kèm bản Scan PDF Quyết định có dấu đỏ / Biểu mẫu đính kèm</span>
+              </label>
+              <label className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer">
+                <span>+ Tải tệp văn bản lên</span>
+                <input
+                  type="file"
+                  multiple
+                  accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                  onChange={(e) => handleFileUpload(e.target.files, "announcement")}
+                  className="hidden"
+                />
+              </label>
+            </div>
+
+            {announcementForm.attachments && announcementForm.attachments.length > 0 && (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {announcementForm.attachments.map((att: any, idx: number) => (
+                  <div
+                    key={idx}
+                    className="p-2 rounded-xl bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
+                  >
+                    <div className="flex items-center gap-2 min-w-0">
+                      <FileText className="w-4 h-4 text-rose-600 shrink-0" />
+                      <span className="font-semibold truncate text-[11px]">{att.name}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setAnnouncementForm((prev) => ({
+                          ...prev,
+                          attachments: prev.attachments.filter((_, i) => i !== idx)
+                        }))
+                      }
+                      className="text-rose-500 hover:text-rose-700 p-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+            <button
+              type="button"
+              onClick={() => setIsAnnouncementModalOpen(false)}
+              className="px-4 py-2 rounded-xl font-bold border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+            >
+              Hủy
+            </button>
+            <button
+              type="submit"
+              className="px-5 py-2 rounded-xl font-bold bg-rose-600 hover:bg-rose-700 text-white shadow-md shadow-rose-600/30 cursor-pointer"
+            >
+              {editingAnnouncementId ? "💾 Lưu Cập Nhật Văn Bản" : "📜 Chính Thức Ban Hành Văn Bản"}
+            </button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* ==================== MODAL 8: XEM TOÀN VĂN QUYẾT ĐỊNH / THÔNG BÁO & DANH SÁCH ĐÃ ĐỌC / CHƯA ĐỌC ==================== */}
+      <Modal
+        isOpen={Boolean(selectedAnnouncementDetail)}
+        onClose={() => setSelectedAnnouncementDetail(null)}
+        title={
+          selectedAnnouncementDetail
+            ? `${getDocTypeMeta(selectedAnnouncementDetail.docType).shortLabel} • SỐ: ${selectedAnnouncementDetail.docCode}`
+            : "CHI TIẾT VĂN BẢN"
+        }
+        size="lg"
+      >
+        {selectedAnnouncementDetail && (() => {
+          const ann = selectedAnnouncementDetail;
+          const meta = getDocTypeMeta(ann.docType);
+          const targets = getTargetStaffForAnnouncement(ann);
+          const ackedList = targets.filter((t) => hasUserAcknowledgedAnnouncement(ann, t.name));
+          const unreadList = targets.filter((t) => !hasUserAcknowledgedAnnouncement(ann, t.name));
+          const iHaveAcked = hasUserAcknowledgedAnnouncement(ann);
+
+          return (
+            <div className="space-y-4 p-1 text-xs">
+              {/* Khung Văn Bản Hành Chính Chuẩn */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-50/90 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-200 dark:border-slate-800">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-extrabold ${meta.badgeClass}`}>
+                      {meta.label}
+                    </span>
+                    <span className="px-2.5 py-0.5 rounded-md bg-white dark:bg-slate-900 font-mono font-extrabold text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700">
+                      Số: {ann.docCode}
+                    </span>
+                    {ann.priority === "URGENT" && (
+                      <span className="px-2 py-0.5 rounded-md bg-rose-600 text-white font-extrabold text-[10px]">
+                        🚨 KHẨN CẤP
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Ngày ban hành: <strong>{formatDayVN(ann.issueDate)}</strong> • Hiệu lực:{" "}
+                    <strong className="text-emerald-600 dark:text-emerald-400">{formatDayVN(ann.effectiveDate)}</strong>
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <h2 className="text-base sm:text-lg font-black text-slate-900 dark:text-white">
+                    {ann.title}
+                  </h2>
+                  {ann.summary && (
+                    <p className="text-xs font-bold text-indigo-700 dark:text-indigo-300">
+                      Trích yếu: {ann.summary}
+                    </p>
+                  )}
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800 text-xs text-slate-800 dark:text-slate-200 whitespace-pre-line leading-relaxed">
+                  {ann.content}
+                </div>
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 text-[11px] text-slate-600 dark:text-slate-400">
+                  <div>
+                    Phạm vi áp dụng:{" "}
+                    <strong className="text-slate-900 dark:text-white">
+                      {ann.targetScope === "ALL" || !ann.targetScope
+                        ? "Toàn thể Cán bộ Nhân viên Công ty"
+                        : `Phòng: ${(ann.targetDepts || []).join(", ")}`}
+                    </strong>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-[10px] uppercase font-bold text-slate-400">{ann.issuerRole}</div>
+                    <div className="font-extrabold text-slate-900 dark:text-white text-xs mt-0.5">
+                      ✍️ {ann.issuerName}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Danh sách Tệp văn bản PDF / Ảnh đính kèm */}
+                {Array.isArray(ann.attachments) && ann.attachments.length > 0 && (
+                  <div className="pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+                    <div className="font-bold text-slate-700 dark:text-slate-300 text-[11px]">
+                      📎 Tệp Quyết định / Văn bản gốc đính kèm ({ann.attachments.length}):
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {ann.attachments.map((att: any, idx: number) => (
+                        <div
+                          key={idx}
+                          className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2"
+                        >
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileText className="w-4 h-4 text-rose-600 shrink-0" />
+                            <span className="font-bold truncate text-[11px]">{att.name}</span>
+                          </div>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setPreviewDoc({ url: att.url, name: att.name, type: att.type })}
+                              className="px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[10px] cursor-pointer"
+                            >
+                              👁️ Xem trực tiếp
+                            </button>
+                            <a
+                              href={att.url}
+                              download={att.name}
+                              className="p-1 text-slate-500 hover:text-indigo-600"
+                            >
+                              <Download className="w-3.5 h-3.5" />
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Thanh Hành Động Nhanh: Xác nhận đã đọc + Giao việc triển khai + Nhắc đọc */}
+              <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200 dark:border-indigo-900/60">
+                <div className="flex items-center gap-2 flex-wrap">
+                  {!iHaveAcked ? (
+                    <button
+                      type="button"
+                      onClick={() => handleAcknowledgeAnnouncement(ann)}
+                      className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white font-extrabold text-xs shadow-sm cursor-pointer"
+                    >
+                      ✍️ Xác nhận: Tôi đã đọc &amp; Nắm rõ văn bản này
+                    </button>
+                  ) : (
+                    <span className="px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold text-xs border border-emerald-300 dark:border-emerald-800">
+                      ✅ Bạn đã ký xác nhận đọc văn bản này
+                    </span>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleCreateTaskFromAnnouncement(ann)}
+                    className="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer"
+                  >
+                    ⚡ Giao việc triển khai từ Quyết định này
+                  </button>
+                </div>
+
+                {unreadList.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => handleRemindUnreadAnnouncement(ann)}
+                    className="px-3 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs cursor-pointer"
+                  >
+                    🔔 Nhắc {unreadList.length} nhân sự chưa xác nhận đọc qua Chat
+                  </button>
+                )}
+              </div>
+
+              {/* Bảng Giám Sát Đã Đọc vs Chưa Đọc (Read Receipt Audit Trail) */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className="p-3 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/60 space-y-2">
+                  <div className="font-bold text-emerald-800 dark:text-emerald-300 text-xs flex items-center justify-between">
+                    <span>✅ Đã xác nhận đọc ({ackedList.length} người)</span>
+                  </div>
+                  <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+                    {(ann.acknowledgedBy || []).map((ack: any, i: number) => (
+                      <div
+                        key={i}
+                        className="flex items-center justify-between px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-slate-800 text-[11px]"
+                      >
+                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                          ✓ {ack.name} <span className="text-slate-400 font-normal">({ack.dept || "TBR"})</span>
+                        </span>
+                        <span className="font-mono text-[10px] text-slate-400">{ack.time}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/60 space-y-2">
+                  <div className="font-bold text-amber-800 dark:text-amber-300 text-xs flex items-center justify-between">
+                    <span>⏳ Chưa xác nhận đọc ({unreadList.length} người)</span>
+                  </div>
+                  {unreadList.length === 0 ? (
+                    <p className="text-[11px] text-emerald-600 font-semibold">
+                      Tất cả nhân sự thuộc phạm vi đều đã xác nhận đọc đầy đủ!
+                    </p>
+                  ) : (
+                    <div className="max-h-36 overflow-y-auto space-y-1 pr-1">
+                      {unreadList.map((u, i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-100 dark:border-slate-800 text-[11px]"
+                        >
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">{u.name}</span>
+                          <span className="text-[10px] text-slate-400">{u.dept}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Thảo luận / Hỏi đáp làm rõ Văn bản */}
+              <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-2.5">
+                <div className="font-bold text-slate-800 dark:text-slate-200 text-xs">
+                  💬 Ý kiến phản hồi / Hỏi đáp thực thi ({(ann.comments || []).length})
+                </div>
+                {Array.isArray(ann.comments) && ann.comments.length > 0 && (
+                  <div className="max-h-36 overflow-y-auto space-y-1.5">
+                    {ann.comments.map((c: any, idx: number) => (
+                      <div
+                        key={idx}
+                        className="p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800"
+                      >
+                        <div className="flex items-center justify-between text-[10px]">
+                          <strong className="text-indigo-600 dark:text-indigo-400">
+                            {c.author} ({c.dept})
+                          </strong>
+                          <span className="text-slate-400 font-mono">{c.time}</span>
+                        </div>
+                        <p className="text-xs text-slate-800 dark:text-slate-200 mt-0.5">{c.text}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <form onSubmit={handleAddAnnouncementComment} className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={announcementCommentText}
+                    onChange={(e) => setAnnouncementCommentText(e.target.value)}
+                    placeholder="Gửi câu hỏi làm rõ hoặc báo cáo triển khai văn bản này..."
+                    className="flex-1 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white"
+                  />
+                  <button
+                    type="submit"
+                    className="px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold cursor-pointer"
+                  >
+                    Gửi phản hồi
+                  </button>
+                </form>
+              </div>
+            </div>
+          );
+        })()}
       </Modal>
     </div>
   );
