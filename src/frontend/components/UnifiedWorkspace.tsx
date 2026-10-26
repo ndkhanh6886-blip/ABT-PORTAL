@@ -2678,9 +2678,164 @@ export const UnifiedWorkspace: React.FC = () => {
     try { return typeof window !== "undefined" && localStorage.getItem("ws_templates_expanded") === "1"; } catch { return false; }
   });
   const [wfStatusFilter, setWfStatusFilter] = useState<"open" | "PENDING" | "WORKING" | "REVIEW" | "COMPLETED" | "OVERDUE" | "all">("open");
+  const [wfCategoryFilter, setWfCategoryFilter] = useState<"all" | "TENDER" | "PROCUREMENT" | "WAREHOUSE" | "LAB" | "FINANCE" | "GENERAL">("all");
   const [wfMineFilter, setWfMineFilter] = useState<"all" | "requested" | "assigned">("all");
   const [wfPriorityFilter, setWfPriorityFilter] = useState<string>("all");
   const [wfSort, setWfSort] = useState<"newest" | "deadline" | "priority">("newest");
+  const [wfCompactMode, setWfCompactMode] = useState<boolean>(false);
+  const [collapsedWfIds, setCollapsedWfIds] = useState<Record<number, boolean>>({});
+
+  // Phân loại tự động quy trình / phiếu phối hợp theo ngữ cảnh nghiệp vụ để tách biệt màu sắc & nhãn nhận diện
+  const getWorkflowCategoryMeta = (w: any): {
+    key: "TENDER" | "PROCUREMENT" | "WAREHOUSE" | "LAB" | "FINANCE" | "GENERAL";
+    label: string;
+    shortLabel: string;
+    icon: string;
+    cardBorder: string;
+    headerBg: string;
+    badgeCls: string;
+    codeCls: string;
+    progressCls: string;
+    stepActiveCls: string;
+  } => {
+    const code = String(w?.workflow_code || "").toUpperCase();
+    const title = String(w?.title || "").toLowerCase();
+    const reqDept = String(w?.requester_dept || "").toLowerCase();
+    const targetDept = String(w?.target_dept || "").toLowerCase();
+    const summary = String(w?.results_summary || "").toLowerCase();
+
+    // 1. Đề xuất mua hàng / Cung ứng (PR / PO)
+    if (
+      code.startsWith("PR") ||
+      code.startsWith("PO") ||
+      title.includes("mua ") ||
+      title.includes("đặt hàng") ||
+      title.includes("nhập hàng") ||
+      summary.includes("mã po:") ||
+      targetDept.includes("cung ứng") ||
+      reqDept.includes("cung ứng")
+    ) {
+      return {
+        key: "PROCUREMENT",
+        label: "Đề Xuất Mua Hàng & Cung Ứng",
+        shortLabel: "Mua hàng (PR/PO)",
+        icon: "🛒",
+        cardBorder: "border-emerald-300 dark:border-emerald-800/80 border-l-[6px] border-l-emerald-500",
+        headerBg: "bg-gradient-to-r from-emerald-500/15 via-teal-500/5 to-transparent dark:from-emerald-950/60 dark:via-slate-900/80 dark:to-slate-900",
+        badgeCls: "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700",
+        codeCls: "text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/70 border-emerald-200 dark:border-emerald-800",
+        progressCls: "bg-emerald-500",
+        stepActiveCls: "bg-emerald-50 border-emerald-300 dark:bg-emerald-950/40 dark:border-emerald-700 text-emerald-950 dark:text-emerald-100 ring-1 ring-emerald-400/40"
+      };
+    }
+
+    // 2. Quy trình Đấu thầu / Dự án bệnh viện
+    if (
+      title.includes("thầu") ||
+      title.includes("ib2") ||
+      title.includes("dự án") ||
+      title.includes("hồ sơ thầu") ||
+      title.includes("bảo lãnh dự thầu")
+    ) {
+      return {
+        key: "TENDER",
+        label: "Quy Trình Đấu Thầu & Dự Án",
+        shortLabel: "Đấu thầu & Dự án",
+        icon: "🏆",
+        cardBorder: "border-amber-300 dark:border-amber-800/80 border-l-[6px] border-l-amber-500",
+        headerBg: "bg-gradient-to-r from-amber-500/15 via-orange-500/5 to-transparent dark:from-amber-950/60 dark:via-slate-900/80 dark:to-slate-900",
+        badgeCls: "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700",
+        codeCls: "text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/70 border-amber-200 dark:border-amber-800",
+        progressCls: "bg-amber-500",
+        stepActiveCls: "bg-amber-50 border-amber-300 dark:bg-amber-950/40 dark:border-amber-700 text-amber-950 dark:text-amber-100 ring-1 ring-amber-400/40"
+      };
+    }
+
+    // 3. Kho vận & Kiểm kê / Giao nhận
+    if (
+      title.includes("kho") ||
+      title.includes("kiểm kê") ||
+      title.includes("giao hàng") ||
+      title.includes("vận chuyển") ||
+      title.includes("điều拨") ||
+      (reqDept.includes("kho") && targetDept.includes("kho"))
+    ) {
+      return {
+        key: "WAREHOUSE",
+        label: "Kho Vận & Kiểm Kê Hàng Hóa",
+        shortLabel: "Kho vận & Kiểm kê",
+        icon: "📦",
+        cardBorder: "border-cyan-300 dark:border-cyan-800/80 border-l-[6px] border-l-cyan-500",
+        headerBg: "bg-gradient-to-r from-cyan-500/15 via-sky-500/5 to-transparent dark:from-cyan-950/60 dark:via-slate-900/80 dark:to-slate-900",
+        badgeCls: "bg-cyan-100 text-cyan-800 border-cyan-300 dark:bg-cyan-950/80 dark:text-cyan-300 dark:border-cyan-700",
+        codeCls: "text-cyan-700 dark:text-cyan-400 bg-cyan-50 dark:bg-cyan-950/70 border-cyan-200 dark:border-cyan-800",
+        progressCls: "bg-cyan-500",
+        stepActiveCls: "bg-cyan-50 border-cyan-300 dark:bg-cyan-950/40 dark:border-cyan-700 text-cyan-950 dark:text-cyan-100 ring-1 ring-cyan-400/40"
+      };
+    }
+
+    // 4. Kỹ thuật & Ứng dụng Lab (Application)
+    if (
+      title.includes("lab") ||
+      title.includes("demo") ||
+      title.includes("chạy mẫu") ||
+      title.includes("thử nghiệm") ||
+      title.includes("kỹ thuật") ||
+      targetDept.includes("application") ||
+      reqDept.includes("application")
+    ) {
+      return {
+        key: "LAB",
+        label: "Kỹ Thuật & Ứng Dụng Lab",
+        shortLabel: "Kỹ thuật & Lab",
+        icon: "🔬",
+        cardBorder: "border-purple-300 dark:border-purple-800/80 border-l-[6px] border-l-purple-500",
+        headerBg: "bg-gradient-to-r from-purple-500/15 via-fuchsia-500/5 to-transparent dark:from-purple-950/60 dark:via-slate-900/80 dark:to-slate-900",
+        badgeCls: "bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/80 dark:text-purple-300 dark:border-purple-700",
+        codeCls: "text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-950/70 border-purple-200 dark:border-purple-800",
+        progressCls: "bg-purple-500",
+        stepActiveCls: "bg-purple-50 border-purple-300 dark:bg-purple-950/40 dark:border-purple-700 text-purple-950 dark:text-purple-100 ring-1 ring-purple-400/40"
+      };
+    }
+
+    // 5. Kế toán & Tài chính / Công nợ
+    if (
+      title.includes("thanh toán") ||
+      title.includes("công nợ") ||
+      title.includes("hóa đơn") ||
+      title.includes("tạm ứng") ||
+      targetDept.includes("kế toán") ||
+      reqDept.includes("kế toán")
+    ) {
+      return {
+        key: "FINANCE",
+        label: "Tài Chính & Kế Toán Công Nợ",
+        shortLabel: "Tài chính & Kế toán",
+        icon: "💰",
+        cardBorder: "border-rose-300 dark:border-rose-800/80 border-l-[6px] border-l-rose-500",
+        headerBg: "bg-gradient-to-r from-rose-500/15 via-pink-500/5 to-transparent dark:from-rose-950/60 dark:via-slate-900/80 dark:to-slate-900",
+        badgeCls: "bg-rose-100 text-rose-800 border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700",
+        codeCls: "text-rose-700 dark:text-rose-400 bg-rose-50 dark:bg-rose-950/70 border-rose-200 dark:border-rose-800",
+        progressCls: "bg-rose-500",
+        stepActiveCls: "bg-rose-50 border-rose-300 dark:bg-rose-950/40 dark:border-rose-700 text-rose-950 dark:text-rose-100 ring-1 ring-rose-400/40"
+      };
+    }
+
+    // 6. Quy trình phối hợp liên phòng ban chung
+    return {
+      key: "GENERAL",
+      label: "Quy Trình Phối Hợp Liên Bộ Phận",
+      shortLabel: "Phối hợp đa bước",
+      icon: "🔄",
+      cardBorder: "border-indigo-300 dark:border-indigo-800/80 border-l-[6px] border-l-indigo-500",
+      headerBg: "bg-gradient-to-r from-indigo-500/15 via-blue-500/5 to-transparent dark:from-indigo-950/60 dark:via-slate-900/80 dark:to-slate-900",
+      badgeCls: "bg-indigo-100 text-indigo-800 border-indigo-300 dark:bg-indigo-950/80 dark:text-indigo-300 dark:border-indigo-700",
+      codeCls: "text-indigo-700 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/70 border-indigo-200 dark:border-indigo-800",
+      progressCls: "bg-indigo-500",
+      stepActiveCls: "bg-indigo-50 border-indigo-300 dark:bg-indigo-950/40 dark:border-indigo-700 text-indigo-950 dark:text-indigo-100 ring-1 ring-indigo-400/40"
+    };
+  };
+
   const wfIsOverdue = (w: any) => {
     const s = String(w.status || "").toUpperCase();
     if (!w.due_date || s === "COMPLETED" || s === "CANCELLED" || s === "REJECTED") return false;
@@ -2690,7 +2845,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const s = String(w.status || "PENDING").toUpperCase();
     if (s === "PENDING") return "PENDING";
     if (s === "ACCEPTED" || s === "IN_PROGRESS") return "WORKING";
-    if (s === "REVIEW") return "REVIEW";
+    if (s === "REVIEW" || s === "CONVERTED") return "REVIEW";
     if (s === "COMPLETED") return "COMPLETED";
     return "OTHER";
   };
@@ -2712,19 +2867,43 @@ export const UnifiedWorkspace: React.FC = () => {
     (wfMineFilter === "all" || wfInvolvesMe(w, wfMineFilter)) &&
     (wfPriorityFilter === "all" || String(w.priority || "MEDIUM").toUpperCase() === wfPriorityFilter)
   ), [filteredWorkflows, wfMineFilter, wfPriorityFilter, currentStaffName]); // eslint-disable-line react-hooks/exhaustive-deps
-  const wfCounts = useMemo(() => {
-    const c: Record<string, number> = { all: wfBase.length, open: 0, PENDING: 0, WORKING: 0, REVIEW: 0, COMPLETED: 0, OVERDUE: 0 };
+
+  const wfCategoryCounts = useMemo(() => {
+    const c: Record<string, number> = { all: 0, TENDER: 0, PROCUREMENT: 0, WAREHOUSE: 0, LAB: 0, FINANCE: 0, GENERAL: 0 };
     wfBase.forEach((w) => {
+      const b = wfStatusBucket(w);
+      const matchesStatus =
+        wfStatusFilter === "all"
+          ? true
+          : wfStatusFilter === "open"
+          ? b !== "COMPLETED" && b !== "OTHER"
+          : wfStatusFilter === "OVERDUE"
+          ? wfIsOverdue(w)
+          : b === wfStatusFilter;
+      if (!matchesStatus) return;
+      c.all++;
+      const catKey = getWorkflowCategoryMeta(w).key;
+      c[catKey] = (c[catKey] || 0) + 1;
+    });
+    return c;
+  }, [wfBase, wfStatusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const wfCounts = useMemo(() => {
+    const c: Record<string, number> = { all: 0, open: 0, PENDING: 0, WORKING: 0, REVIEW: 0, COMPLETED: 0, OVERDUE: 0 };
+    wfBase.forEach((w) => {
+      if (wfCategoryFilter !== "all" && getWorkflowCategoryMeta(w).key !== wfCategoryFilter) return;
+      c.all++;
       const b = wfStatusBucket(w);
       if (c[b] !== undefined) c[b]++;
       if (b !== "COMPLETED" && b !== "OTHER") c.open++;
       if (wfIsOverdue(w)) c.OVERDUE++;
     });
     return c;
-  }, [wfBase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wfBase, wfCategoryFilter]); // eslint-disable-line react-hooks/exhaustive-deps
   const listWorkflows = useMemo(() => {
     const prio: Record<string, number> = { URGENT: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
     const rows = wfBase.filter((w) => {
+      if (wfCategoryFilter !== "all" && getWorkflowCategoryMeta(w).key !== wfCategoryFilter) return false;
       const b = wfStatusBucket(w);
       if (wfStatusFilter === "all") return true;
       if (wfStatusFilter === "open") return b !== "COMPLETED" && b !== "OTHER";
@@ -2736,7 +2915,7 @@ export const UnifiedWorkspace: React.FC = () => {
       if (wfSort === "priority") return (prio[String(a.priority || "MEDIUM").toUpperCase()] ?? 2) - (prio[String(b.priority || "MEDIUM").toUpperCase()] ?? 2);
       return (Number(b.id) || 0) - (Number(a.id) || 0);
     });
-  }, [wfBase, wfStatusFilter, wfSort]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wfBase, wfStatusFilter, wfCategoryFilter, wfSort]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Statistics
   const stats = useMemo(() => {
@@ -6360,152 +6539,282 @@ ${wf.description || ""}`}
               </span>
             </div>
 
-            {/* Bộ lọc danh sách phiếu */}
-            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 flex flex-wrap items-center gap-2 text-xs bg-slate-50/60 dark:bg-slate-950/30">
-              <div className="flex flex-wrap items-center gap-1">
-                {([
-                  ["open", "Đang mở"],
-                  ["PENDING", "Chờ tiếp nhận"],
-                  ["WORKING", "Đang xử lý"],
-                  ["REVIEW", "Đã có kết quả"],
-                  ["COMPLETED", "Hoàn tất"],
-                  ["OVERDUE", "⚠ Quá hạn"],
-                  ["all", "Tất cả"],
-                ] as const).map(([k, label]) => (
-                  <button
-                    key={k}
-                    type="button"
-                    onClick={() => setWfStatusFilter(k)}
-                    className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer transition-colors ${
-                      wfStatusFilter === k
-                        ? (k === "OVERDUE" ? "bg-rose-600 text-white" : "bg-indigo-600 text-white")
-                        : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700"
-                    }`}
-                  >
-                    {label} <span className="opacity-80">({wfCounts[k] ?? 0})</span>
-                  </button>
-                ))}
+            {/* Bộ lọc danh sách phiếu: Trạng thái + Phân loại nghiệp vụ + Chế độ hiển thị */}
+            <div className="px-4 py-3 border-b border-slate-200 dark:border-slate-800 space-y-2.5 text-xs bg-slate-50/60 dark:bg-slate-950/30">
+              {/* Hàng 1: Lọc theo Loại Quy Trình / Nghiệp Vụ (Giúp phân biệt tức thì các nhóm công việc) */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200/70 dark:border-slate-800/70">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400 mr-1">
+                    Nhóm quy trình:
+                  </span>
+                  {([
+                    ["all", "🗂️ Tất cả loại", "bg-slate-800 text-white dark:bg-white dark:text-slate-900"],
+                    ["TENDER", "🏆 Đấu thầu & Dự án", "bg-amber-600 text-white"],
+                    ["PROCUREMENT", "🛒 Mua hàng (PR/PO)", "bg-emerald-600 text-white"],
+                    ["WAREHOUSE", "📦 Kho vận & Kiểm kê", "bg-cyan-600 text-white"],
+                    ["LAB", "🔬 Kỹ thuật & Lab", "bg-purple-600 text-white"],
+                    ["FINANCE", "💰 Tài chính & Kế toán", "bg-rose-600 text-white"],
+                    ["GENERAL", "🔄 Phối hợp đa bước", "bg-indigo-600 text-white"],
+                  ] as const).map(([catKey, catLabel, activeCls]) => {
+                    const count = wfCategoryCounts[catKey] ?? 0;
+                    if (catKey !== "all" && count === 0 && wfCategoryFilter !== catKey) return null;
+                    const isSelected = wfCategoryFilter === catKey;
+                    return (
+                      <button
+                        key={catKey}
+                        type="button"
+                        onClick={() => setWfCategoryFilter(catKey)}
+                        className={`px-2.5 py-1 rounded-lg font-bold cursor-pointer transition-all flex items-center gap-1 ${
+                          isSelected
+                            ? `${activeCls} shadow-xs`
+                            : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700"
+                        }`}
+                      >
+                        <span>{catLabel}</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${isSelected ? "bg-black/20 text-white dark:bg-slate-700 dark:text-white" : "bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300"}`}>
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Nút chuyển nhanh chế độ Xem Chi Tiết vs Thu Gọn */}
+                <button
+                  type="button"
+                  onClick={() => setWfCompactMode((prev) => !prev)}
+                  className={`px-2.5 py-1 rounded-lg font-bold border transition-colors cursor-pointer flex items-center gap-1.5 shrink-0 ${
+                    wfCompactMode
+                      ? "bg-indigo-50 border-indigo-300 text-indigo-700 dark:bg-indigo-950/60 dark:border-indigo-700 dark:text-indigo-300"
+                      : "bg-white border-slate-200 text-slate-600 hover:bg-slate-100 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"
+                  }`}
+                  title="Thu gọn sơ đồ các bước để dễ nhìn tổng quan nhiều quy trình cùng lúc"
+                >
+                  <Layers className="w-3.5 h-3.5" />
+                  <span>{wfCompactMode ? "📋 Đang thu gọn các bước (Bấm để mở rộng)" : "📑 Thu gọn sơ đồ bước"}</span>
+                </button>
               </div>
-              <div className="flex flex-wrap items-center gap-2 ml-auto">
-                <select
-                  value={wfMineFilter}
-                  onChange={(e) => setWfMineFilter(e.target.value as any)}
-                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold"
-                >
-                  <option value="all">Mọi phiếu</option>
-                  <option value="requested">Tôi yêu cầu</option>
-                  <option value="assigned">Tôi phụ trách</option>
-                </select>
-                <select
-                  value={wfPriorityFilter}
-                  onChange={(e) => setWfPriorityFilter(e.target.value)}
-                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold"
-                >
-                  <option value="all">Mọi mức ưu tiên</option>
-                  <option value="URGENT">Khẩn cấp</option>
-                  <option value="HIGH">Cao</option>
-                  <option value="MEDIUM">Trung bình</option>
-                  <option value="LOW">Thấp</option>
-                </select>
-                <select
-                  value={wfSort}
-                  onChange={(e) => setWfSort(e.target.value as any)}
-                  className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold"
-                >
-                  <option value="newest">Mới nhất trước</option>
-                  <option value="deadline">Hạn chót gần nhất</option>
-                  <option value="priority">Ưu tiên cao trước</option>
-                </select>
+
+              {/* Hàng 2: Lọc theo Trạng thái + Người phụ trách + Mức ưu tiên + Sắp xếp */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1">
+                  {([
+                    ["open", "Đang mở"],
+                    ["PENDING", "Chờ tiếp nhận"],
+                    ["WORKING", "Đang xử lý"],
+                    ["REVIEW", "Đã có kết quả"],
+                    ["COMPLETED", "Hoàn tất"],
+                    ["OVERDUE", "⚠ Quá hạn"],
+                    ["all", "Tất cả"],
+                  ] as const).map(([k, label]) => (
+                    <button
+                      key={k}
+                      type="button"
+                      onClick={() => setWfStatusFilter(k)}
+                      className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer transition-colors ${
+                        wfStatusFilter === k
+                          ? (k === "OVERDUE" ? "bg-rose-600 text-white" : "bg-indigo-600 text-white")
+                          : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700"
+                      }`}
+                    >
+                      {label} <span className="opacity-80">({wfCounts[k] ?? 0})</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-2 ml-auto">
+                  <select
+                    value={wfMineFilter}
+                    onChange={(e) => setWfMineFilter(e.target.value as any)}
+                    className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold"
+                  >
+                    <option value="all">Mọi phiếu</option>
+                    <option value="requested">Tôi yêu cầu</option>
+                    <option value="assigned">Tôi phụ trách</option>
+                  </select>
+                  <select
+                    value={wfPriorityFilter}
+                    onChange={(e) => setWfPriorityFilter(e.target.value)}
+                    className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold"
+                  >
+                    <option value="all">Mọi mức ưu tiên</option>
+                    <option value="URGENT">Khẩn cấp</option>
+                    <option value="HIGH">Cao</option>
+                    <option value="MEDIUM">Trung bình</option>
+                    <option value="LOW">Thấp</option>
+                  </select>
+                  <select
+                    value={wfSort}
+                    onChange={(e) => setWfSort(e.target.value as any)}
+                    className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-semibold"
+                  >
+                    <option value="newest">Mới nhất trước</option>
+                    <option value="deadline">Hạn chót gần nhất</option>
+                    <option value="priority">Ưu tiên cao trước</option>
+                  </select>
+                </div>
               </div>
             </div>
 
-            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {listWorkflows.map((wf) => {
+            {/* Danh sách các Card Quy Trình / Công Việc tách biệt rõ ràng */}
+            <div className="p-4 space-y-4 bg-slate-100/70 dark:bg-slate-950/60">
+              {listWorkflows.map((wf, wfIdx) => {
                 const wfSteps = Array.isArray(wf.steps) ? wf.steps : [];
                 const currentIdx = typeof wf.current_step_index === "number" ? wf.current_step_index : 0;
                 const hasSteps = wfSteps.length > 0;
+                const completedStepsCount = wfSteps.filter((s: any) => s.status === "COMPLETED").length;
+                const progressPct = hasSteps ? Math.round((completedStepsCount / wfSteps.length) * 100) : wf.status === "COMPLETED" ? 100 : 50;
                 const currentStepDept = (hasSteps && wfSteps[currentIdx]?.dept) ? wfSteps[currentIdx].dept : wf.target_dept;
                 const currentAssignee = cleanWorkspaceAssignee(hasSteps && wfSteps[currentIdx]?.assignee_name ? wfSteps[currentIdx].assignee_name : wf.assignee_name);
                 const canAssignThisWf = isDirector || isSameWorkspaceDept(userDept, currentStepDept) || isSameWorkspaceDept(userDept, wf.target_dept);
                 const targetDeptStaff = personnelList.filter((p: any) => isSameWorkspaceDept(p.department, currentStepDept));
+                const catMeta = getWorkflowCategoryMeta(wf);
+                const isStepsCollapsed = collapsedWfIds[wf.id] !== undefined ? collapsedWfIds[wf.id] : wfCompactMode;
+                const isOverdueWf = wfIsOverdue(wf);
 
                 return (
-                  <div key={wf.id} className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                    <div className="space-y-3">
-                      {/* Ticket Header & Metadata */}
+                  <div
+                    key={wf.id}
+                    className={`rounded-2xl bg-white dark:bg-slate-900 border-2 ${catMeta.cardBorder} shadow-sm hover:shadow-md transition-all overflow-hidden`}
+                  >
+                    {/* Thanh Header phân biệt loại Quy trình / Phiếu phối hợp */}
+                    <div className={`px-4 py-2.5 border-b border-slate-200/80 dark:border-slate-800 flex flex-wrap items-center justify-between gap-2 ${catMeta.headerBg}`}>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {/* Số thứ tự Phiếu */}
+                        <span className="px-2 py-0.5 rounded-md text-[11px] font-black bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-2xs">
+                          #{String(wfIdx + 1).padStart(2, "0")}
+                        </span>
+
+                        {/* Nhãn Phân Loại Nghiệp Vụ (Màu riêng cho từng loại quy trình) */}
+                        <span className={`px-2.5 py-0.5 rounded-lg text-[11px] font-extrabold border flex items-center gap-1 ${catMeta.badgeCls}`}>
+                          <span>{catMeta.icon}</span>
+                          <span>{catMeta.label}</span>
+                        </span>
+
+                        {/* Mã Phiếu */}
+                        <span className={`px-2 py-0.5 rounded-md font-mono text-xs font-extrabold border ${catMeta.codeCls}`}>
+                          {wf.workflow_code}
+                        </span>
+
+                        {/* Luồng Phòng Ban */}
+                        <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-bold bg-white/90 dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 shadow-2xs">
+                          {wf.requester_dept} ➔ {wf.target_dept}
+                        </span>
+
+                        <WorkflowStatusBadge status={wf.status} />
+                        <PriorityBadge priority={wf.priority} />
+
+                        {isOverdueWf && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white animate-pulse">
+                            ⚠ Quá hạn
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Tiến độ tổng quan & Nút Thu gọn / Mở rộng các bước */}
+                      <div className="flex items-center gap-3 ml-auto">
+                        {hasSteps ? (
+                          <div className="flex items-center gap-2">
+                            <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                              Tiến độ: <span className="font-extrabold">{completedStepsCount}/{wfSteps.length} bước</span> ({progressPct}%)
+                            </div>
+                            <div className="w-20 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                              <div
+                                className={`h-full rounded-full transition-all ${catMeta.progressCls}`}
+                                style={{ width: `${Math.max(8, progressPct)}%` }}
+                              />
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCollapsedWfIds((prev) => ({
+                                  ...prev,
+                                  [wf.id]: !isStepsCollapsed,
+                                }))
+                              }
+                              className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-white/90 hover:bg-white dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 cursor-pointer transition-colors"
+                              title={isStepsCollapsed ? "Mở rộng chi tiết các bước" : "Thu gọn sơ đồ bước của phiếu này"}
+                            >
+                              {isStepsCollapsed ? `▼ Mở ${wfSteps.length} bước` : "▲ Thu gọn bước"}
+                            </button>
+                          </div>
+                        ) : (
+                          <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                            Phiếu điều phối trực tiếp (1 bước)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-4 space-y-3">
+                      {/* Ticket Title, Metadata & Action Buttons */}
                       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                         <div className="space-y-1.5 flex-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-mono text-xs font-extrabold text-indigo-600 dark:text-indigo-400">
-                              {wf.workflow_code}
-                            </span>
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                              {wf.requester_dept} ──► {wf.target_dept}
-                            </span>
-                            <WorkflowStatusBadge status={wf.status} />
-                            <PriorityBadge priority={wf.priority} />
-                          </div>
+                          <h4 className="text-base font-extrabold text-slate-900 dark:text-white leading-snug">
+                            {wf.title}
+                          </h4>
 
-                          <h4 className="text-sm font-bold text-slate-900 dark:text-white">{wf.title}</h4>
-
-                          <div className="flex items-center gap-4 text-xs text-slate-500 flex-wrap">
-                            <span>
-                              <strong>Khách hàng:</strong> {wf.customer_name || "Nội bộ TBR"}
+                          <div className="flex items-center gap-x-4 gap-y-1.5 text-xs text-slate-600 dark:text-slate-400 flex-wrap">
+                            <span className="inline-flex items-center gap-1">
+                              <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ TBR"}
                             </span>
                             {wf.product_info && (
-                              <span>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 font-medium">
                                 <strong>Sản phẩm / TB:</strong> {wf.product_info}
                               </span>
                             )}
                             <span>
-                              <strong>Người yêu cầu:</strong> {wf.requester_name}
+                              <strong className="text-slate-700 dark:text-slate-300">Người yêu cầu:</strong> {wf.requester_name}
                             </span>
-                            <span className="inline-flex items-center gap-1.5 flex-wrap">
-                              <strong>Người tiếp nhận hiện tại ({currentStepDept}):</strong>{" "}
-                              {currentAssignee ? (
-                                <span className="px-2 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold border border-indigo-200 dark:border-indigo-800">
-                                  👤 {currentAssignee}
-                                </span>
-                              ) : (
-                                <span className="px-2 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-800">
-                                  ⏳ Chờ {currentStepDept} phân công
-                                </span>
-                              )}
-                              {wf.status !== "COMPLETED" && canAssignThisWf && (
-                                <span className="inline-flex items-center gap-1 ml-1">
-                                  <select
-                                    value={currentAssignee || ""}
-                                    onChange={(e) => {
-                                      if (e.target.value) {
-                                        handleAssignWorkflowStep(wf, e.target.value, currentIdx);
-                                      }
-                                    }}
-                                    className="px-2 py-1 rounded-lg text-[11px] font-bold border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
-                                    title={`Phân công nhân sự bộ phận ${currentStepDept} phụ trách`}
+                            <span className={`inline-flex items-center gap-1 font-semibold ${isOverdueWf ? "text-rose-600 dark:text-rose-400 font-bold" : ""}`}>
+                              <strong className="text-slate-700 dark:text-slate-300">Hạn chót:</strong> {wf.due_date ? formatDayVN(wf.due_date) : "—"}
+                            </span>
+                          </div>
+
+                          {/* Dòng thông tin Người tiếp nhận hiện tại tách riêng rõ ràng */}
+                          <div className="pt-1 flex items-center gap-2 text-xs flex-wrap">
+                            <span className="font-bold text-slate-700 dark:text-slate-300">
+                              👉 Đầu mối xử lý hiện tại ({currentStepDept}):
+                            </span>
+                            {currentAssignee ? (
+                              <span className="px-2.5 py-0.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-bold border border-indigo-200 dark:border-indigo-800">
+                                👤 {currentAssignee}
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-0.5 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-800">
+                                ⏳ Chờ {currentStepDept} phân công
+                              </span>
+                            )}
+                            {wf.status !== "COMPLETED" && canAssignThisWf && (
+                              <span className="inline-flex items-center gap-1.5">
+                                <select
+                                  value={currentAssignee || ""}
+                                  onChange={(e) => {
+                                    if (e.target.value) {
+                                      handleAssignWorkflowStep(wf, e.target.value, currentIdx);
+                                    }
+                                  }}
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold border border-indigo-300 dark:border-indigo-700 bg-white dark:bg-slate-900 text-indigo-700 dark:text-indigo-300 cursor-pointer focus:outline-none focus:ring-2 focus:ring-indigo-500/30"
+                                  title={`Phân công nhân sự bộ phận ${currentStepDept} phụ trách`}
+                                >
+                                  <option value="">-- {currentAssignee ? "Đổi người phụ trách" : `Phân công nhân sự ${currentStepDept}`} --</option>
+                                  {(targetDeptStaff.length > 0 ? targetDeptStaff : personnelList).map((p: any) => (
+                                    <option key={p.id || p.employee_code || p.full_name} value={p.full_name}>
+                                      {p.full_name} {p.position ? `(${p.position})` : ""}
+                                    </option>
+                                  ))}
+                                </select>
+                                {currentAssignee !== currentStaffName && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAssignWorkflowStep(wf, currentStaffName, currentIdx)}
+                                    className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs cursor-pointer transition-colors"
+                                    title="Nhận phụ trách bước này"
                                   >
-                                    <option value="">-- {currentAssignee ? "Đổi người phụ trách" : `Phân công nhân sự ${currentStepDept}`} --</option>
-                                    {(targetDeptStaff.length > 0 ? targetDeptStaff : personnelList).map((p: any) => (
-                                      <option key={p.id || p.employee_code || p.full_name} value={p.full_name}>
-                                        {p.full_name} {p.position ? `(${p.position})` : ""}
-                                      </option>
-                                    ))}
-                                  </select>
-                                  {currentAssignee !== currentStaffName && (
-                                    <button
-                                      type="button"
-                                      onClick={() => handleAssignWorkflowStep(wf, currentStaffName, currentIdx)}
-                                      className="px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs cursor-pointer transition-colors"
-                                      title="Nhận phụ trách bước này"
-                                    >
-                                      Nhận việc
-                                    </button>
-                                  )}
-                                </span>
-                              )}
-                            </span>
-                            <span>
-                              <strong>Hạn chót:</strong> {wf.due_date ? formatDayVN(wf.due_date) : "—"}
-                            </span>
+                                    Nhận việc
+                                  </button>
+                                )}
+                              </span>
+                            )}
                           </div>
                         </div>
 
@@ -6515,7 +6824,7 @@ ${wf.description || ""}`}
                             <button
                               type="button"
                               onClick={() => handleOpenAdvanceStep(wf)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs flex items-center gap-1.5 transition-all"
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
                               <span>Nghiệm Thu Bước {currentIdx + 1} &amp; Bàn Giao</span>
@@ -6525,7 +6834,7 @@ ${wf.description || ""}`}
                           {!hasSteps && wf.status === "PENDING" && (
                             <button
                               onClick={() => handleWorkflowStatusTransition(wf.id, "ACCEPTED", "Tiếp nhận phiếu")}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs"
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white shadow-xs cursor-pointer"
                             >
                               Tiếp Nhận
                             </button>
@@ -6533,7 +6842,7 @@ ${wf.description || ""}`}
                           {!hasSteps && wf.status === "ACCEPTED" && (
                             <button
                               onClick={() => handleWorkflowStatusTransition(wf.id, "IN_PROGRESS", "Bắt đầu triển khai")}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs"
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs cursor-pointer"
                             >
                               Triển Khai
                             </button>
@@ -6542,7 +6851,7 @@ ${wf.description || ""}`}
                           {wf.status !== "COMPLETED" && (
                             <button
                               onClick={() => handleOpenRecordResult(wf)}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow-xs flex items-center gap-1"
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white shadow-xs flex items-center gap-1 cursor-pointer"
                             >
                               <FileText className="w-3.5 h-3.5" />
                               <span>Báo Cáo / Đính Kèm</span>
@@ -6552,7 +6861,7 @@ ${wf.description || ""}`}
                           {wf.status === "REVIEW" && (
                             <button
                               onClick={() => handleWorkflowStatusTransition(wf.id, "COMPLETED", "Nghiệm thu hoàn tất")}
-                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1"
+                              className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs flex items-center gap-1 cursor-pointer"
                             >
                               <CheckCircle2 className="w-3.5 h-3.5" />
                               <span>Nghiệm Thu &amp; Đóng</span>
@@ -6562,7 +6871,7 @@ ${wf.description || ""}`}
                           {wf.status === "COMPLETED" && (
                             <button
                               onClick={() => handleOpenRecordResult(wf)}
-                              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                              className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 cursor-pointer"
                             >
                               Xem / Sửa Hồ Sơ
                             </button>
@@ -6573,7 +6882,7 @@ ${wf.description || ""}`}
                               setSelectedWorkflowDetail(wf);
                               setIsWorkflowDetailModalOpen(true);
                             }}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 cursor-pointer"
                           >
                             <Eye className="w-3.5 h-3.5" />
                             <span>Xem &amp; Trao Đổi</span>
@@ -6583,91 +6892,99 @@ ${wf.description || ""}`}
 
                       {/* Interactive Stepper Pipeline (Chuẩn Stage-Gate RACI) */}
                       {hasSteps && (
-                        <div className="bg-slate-50/80 dark:bg-slate-950/40 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-2">
+                        <div className="bg-slate-50/90 dark:bg-slate-950/60 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-2">
                           <div className="flex items-center justify-between flex-wrap gap-1 text-[11px]">
                             <div className="font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                               <Layers className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
-                              <span>Tiến Trình Phối Hợp Đa Bước ({wfSteps.filter((s: any) => s.status === 'COMPLETED').length}/{wfSteps.length} bước xong)</span>
+                              <span>Tiến Trình Phối Hợp Đa Bước ({completedStepsCount}/{wfSteps.length} bước xong)</span>
                             </div>
-                            <span className="text-[10px] text-slate-400">
-                              Bước hiện tại: <strong className="text-indigo-600 dark:text-indigo-400">{wfSteps[currentIdx]?.title || `Bước ${currentIdx + 1}`}</strong> ({wfSteps[currentIdx]?.dept} - {wfSteps[currentIdx]?.assignee_name || "Chưa gán"})
-                            </span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[11px] text-slate-500 dark:text-slate-300 bg-white dark:bg-slate-900 px-2.5 py-0.5 rounded-lg border border-slate-200 dark:border-slate-800">
+                                Bước đang chạy:{" "}
+                                <strong className="text-indigo-600 dark:text-indigo-400">
+                                  Bước {currentIdx + 1} — {wfSteps[currentIdx]?.title || `Bước ${currentIdx + 1}`}
+                                </strong>{" "}
+                                ({wfSteps[currentIdx]?.dept} • {wfSteps[currentIdx]?.assignee_name || "Chưa gán"})
+                              </span>
+                            </div>
                           </div>
 
-                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-                            {wfSteps.map((st: any, sIdx: number) => {
-                              const isDone = st.status === "COMPLETED";
-                              const isCurrent = currentIdx === sIdx && wf.status !== "COMPLETED";
+                          {!isStepsCollapsed && (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
+                              {wfSteps.map((st: any, sIdx: number) => {
+                                const isDone = st.status === "COMPLETED";
+                                const isCurrent = currentIdx === sIdx && wf.status !== "COMPLETED";
 
-                              return (
-                                <div
-                                  key={sIdx}
-                                  className={`p-2.5 rounded-xl border text-xs transition-all ${
-                                    isDone
-                                      ? "bg-emerald-50/80 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200"
-                                      : isCurrent
-                                      ? "bg-indigo-50 border-indigo-300 dark:bg-indigo-950/40 dark:border-indigo-700 text-indigo-950 dark:text-indigo-100 shadow-xs ring-1 ring-indigo-400/40"
-                                      : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 opacity-70"
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between gap-1 mb-1">
-                                    <span className={`text-[10px] font-extrabold uppercase px-1.5 py-0.2 rounded ${
-                                      isDone ? "bg-emerald-200/60 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200"
-                                      : isCurrent ? "bg-indigo-200/80 dark:bg-indigo-900/80 text-indigo-800 dark:text-indigo-200 animate-pulse"
-                                      : "bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
-                                    }`}>
-                                      Bước {sIdx + 1}
-                                    </span>
-                                    {isDone ? (
-                                      <span className="flex items-center gap-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
-                                        <CheckCircle2 className="w-3.5 h-3.5" />
-                                        Hoàn tất
+                                return (
+                                  <div
+                                    key={sIdx}
+                                    className={`p-2.5 rounded-xl border text-xs transition-all ${
+                                      isDone
+                                        ? "bg-emerald-50/80 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200"
+                                        : isCurrent
+                                        ? `${catMeta.stepActiveCls} shadow-xs`
+                                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 opacity-75"
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-1 mb-1">
+                                      <span className={`text-[10px] font-extrabold uppercase px-1.5 py-0.2 rounded ${
+                                        isDone ? "bg-emerald-200/60 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200"
+                                        : isCurrent ? "bg-indigo-200/80 dark:bg-indigo-900/80 text-indigo-800 dark:text-indigo-200 animate-pulse"
+                                        : "bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400"
+                                      }`}>
+                                        Bước {sIdx + 1}
                                       </span>
-                                    ) : isCurrent ? (
-                                      <span className="flex items-center gap-0.5 text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
-                                        <Clock className="w-3.5 h-3.5 animate-spin" />
-                                        Đang xử lý
+                                      {isDone ? (
+                                        <span className="flex items-center gap-0.5 text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                          <CheckCircle2 className="w-3.5 h-3.5" />
+                                          Hoàn tất
+                                        </span>
+                                      ) : isCurrent ? (
+                                        <span className="flex items-center gap-0.5 text-[10px] font-bold text-indigo-600 dark:text-indigo-400">
+                                          <Clock className="w-3.5 h-3.5 animate-spin" />
+                                          Đang xử lý
+                                        </span>
+                                      ) : (
+                                        <span className="text-[10px] font-semibold text-slate-400">Chờ</span>
+                                      )}
+                                    </div>
+
+                                    <div className="font-bold text-xs truncate" title={st.title}>
+                                      {st.title}
+                                    </div>
+
+                                    <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+                                      <span className="font-semibold truncate max-w-[130px]">
+                                        {st.dept}: <strong>{st.assignee_name || "Chưa gán"}</strong>
                                       </span>
-                                    ) : (
-                                      <span className="text-[10px] font-semibold text-slate-400">Chờ</span>
+                                      {st.sla_hours && <span>SLA: {st.sla_hours}h</span>}
+                                    </div>
+
+                                    {st.deliverables && (
+                                      <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 truncate" title={`Yêu cầu: ${st.deliverables}`}>
+                                        📋 {st.deliverables}
+                                      </div>
+                                    )}
+
+                                    {st.deliverables_note && (
+                                      <div className="mt-1.5 pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60 text-[10px] text-emerald-800 dark:text-emerald-300">
+                                        <strong>KQ:</strong> {st.deliverables_note}
+                                      </div>
+                                    )}
+                                    {Array.isArray(st.attachments) && st.attachments.length > 0 && (
+                                      <div className="mt-1 flex flex-col gap-0.5">
+                                        {st.attachments.map((att: any, aIdx: number) => (
+                                          <a key={aIdx} href={att.url} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline truncate" title={att.name}>
+                                            📎 {att.name}
+                                          </a>
+                                        ))}
+                                      </div>
                                     )}
                                   </div>
-
-                                  <div className="font-bold text-xs truncate" title={st.title}>
-                                    {st.title}
-                                  </div>
-
-                                  <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
-                                    <span className="font-semibold truncate max-w-[120px]">
-                                      {st.dept}: <strong>{st.assignee_name || "Chưa gán"}</strong>
-                                    </span>
-                                    {st.sla_hours && <span>SLA: {st.sla_hours}h</span>}
-                                  </div>
-
-                                  {st.deliverables && (
-                                    <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 truncate" title={`Yêu cầu: ${st.deliverables}`}>
-                                      📋 {st.deliverables}
-                                    </div>
-                                  )}
-
-                                  {st.deliverables_note && (
-                                    <div className="mt-1.5 pt-1 border-t border-emerald-200/60 dark:border-emerald-800/60 text-[10px] text-emerald-800 dark:text-emerald-300">
-                                      <strong>KQ:</strong> {st.deliverables_note}
-                                    </div>
-                                  )}
-                                  {Array.isArray(st.attachments) && st.attachments.length > 0 && (
-                                    <div className="mt-1 flex flex-col gap-0.5">
-                                      {st.attachments.map((att: any, aIdx: number) => (
-                                        <a key={aIdx} href={att.url} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-600 dark:text-indigo-400 hover:underline truncate" title={att.name}>
-                                          📎 {att.name}
-                                        </a>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
+                                );
+                              })}
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -13879,10 +14196,24 @@ const WorkflowStatusBadge: React.FC<{ status: string }> = ({ status }) => {
       </span>
     );
   }
+  if (s === "CONVERTED") {
+    return (
+      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-100 text-teal-800 dark:bg-teal-950/60 dark:text-teal-300 border border-teal-300 dark:border-teal-800">
+        ✓ Đã chuyển PO / Mua hàng
+      </span>
+    );
+  }
   if (s === "COMPLETED") {
     return (
       <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
         Nghiệm thu hoàn tất
+      </span>
+    );
+  }
+  if (s === "REJECTED" || s === "CANCELLED") {
+    return (
+      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800">
+        {s === "REJECTED" ? "Đã từ chối" : "Đã hủy"}
       </span>
     );
   }
