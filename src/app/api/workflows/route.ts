@@ -666,6 +666,19 @@ export async function POST(req: NextRequest) {
         );
         await logAudit("UPDATE", "WORKFLOW", `Cập nhật phiếu quy trình: ${title} (${target_dept}) [Bước: ${safeStepIndex + 1}]`);
       } else {
+        const isProcReq =
+          workflow_type === "TO_PROCUREMENT" ||
+          workflow_type === "PURCHASE_REQUEST" ||
+          String(workflow_code || "").toUpperCase().startsWith("PR");
+        if (isProcReq && !String(product_info || "").trim() && !String(results_summary || "").trim()) {
+          return NextResponse.json(
+            {
+              error:
+                "Không thể tạo đề xuất mua hàng (PR): Vui lòng chọn sản phẩm cụ thể (có Mã sản xuất & Tên hàng) từ Bảng mã sản xuất tại ô 'Sản phẩm / Thiết bị'!"
+            },
+            { status: 400 }
+          );
+        }
         const subTag = workflow_type === "SALES_TO_APP" ? "APP" : (workflow_type === "TO_PROCUREMENT" ? "PROC" : (workflow_type === "SALES_TO_WAREHOUSE" ? "WH" : "REQ"));
         const code = workflow_code || await generateDocumentCode({
           docType: "WF",

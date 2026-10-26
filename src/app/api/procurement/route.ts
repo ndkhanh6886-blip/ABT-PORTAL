@@ -1814,6 +1814,26 @@ export async function POST(req: NextRequest) {
           });
 
       let structuredItems = Array.isArray(items) && items.length > 0 ? items : [];
+      if (structuredItems.length === 0 && !String(product_info || "").trim()) {
+        return NextResponse.json(
+          { error: "Không thể tạo Đề xuất mua hàng (PR): Vui lòng chọn ít nhất 1 sản phẩm có Mã sản xuất (SKU) và Tên hàng cụ thể từ Bảng mã sản xuất!" },
+          { status: 400 }
+        );
+      }
+      for (let i = 0; i < structuredItems.length; i++) {
+        const it = structuredItems[i];
+        const codeStr = String(it?.product_code || "").trim();
+        const nameStr = String(it?.product_name || "").trim();
+        if (!codeStr || codeStr.toUpperCase() === "TBR-ITEM" || codeStr.toUpperCase() === "MÃ MỚI" || !nameStr) {
+          return NextResponse.json(
+            {
+              error: `Không thể tạo Đề xuất mua hàng (PR): Mặt hàng ở dòng #${i + 1} chưa có Mã sản phẩm (SKU) hoặc Tên hàng cụ thể! Vui lòng chọn sản phẩm từ Bảng mã sản xuất.`
+            },
+            { status: 400 }
+          );
+        }
+      }
+
       let summaryText = product_info || "";
       if (structuredItems.length > 0) {
         summaryText = structuredItems.map((it: any) => {

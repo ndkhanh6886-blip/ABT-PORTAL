@@ -628,16 +628,18 @@ export const ProcurementModule: React.FC = () => {
 
   // Requirement 6 (4e): Edit an existing PR that has not yet been fully converted to a PO
   const handleEditPR = (pr: any) => {
-    const existingItems = getPRItems(pr).map((it: any) => ({
-      ...it,
-      is_custom: Boolean(it.is_custom),
-      product_code: it.product_code || "",
-      product_name: cleanItemName(it.product_name || ""),
-      specification: it.specification || "",
-      unit: it.unit || "Hộp",
-      quantity: Number(it.quantity) || 1,
-      estimated_price: parseFloat(it.estimated_price || it.unit_price || 0) || 0
-    }));
+    const existingItems = getPRItems(pr)
+      .filter((it: any) => !it.is_missing_catalog_product && it.product_code && it.product_code !== "TBR-ITEM")
+      .map((it: any) => ({
+        ...it,
+        is_custom: Boolean(it.is_custom),
+        product_code: it.product_code || "",
+        product_name: cleanItemName(it.product_name || ""),
+        specification: it.specification || "",
+        unit: it.unit || "Hộp",
+        quantity: Number(it.quantity) || 1,
+        estimated_price: parseFloat(it.estimated_price || it.unit_price || 0) || 0
+      }));
     setPrItemSearchQueries({});
     setPRForm({
       id: pr.id,
@@ -2044,34 +2046,66 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   // Save PR with Structured Multi-Item Support
   const handleSavePR = async () => {
     if (!prForm.title?.trim()) {
-      alert("Vui lòng nhập Tiêu đề đề xuất mua hàng");
+      alert("⚠️ Lỗi tạo PR: Vui lòng nhập Tiêu đề đề xuất mua hàng!");
       return;
     }
     if (!prForm.items || prForm.items.length === 0) {
-      alert("Vui lòng bổ sung ít nhất 1 mặt hàng cần mua");
+      alert("⚠️ Lỗi tạo PR: Vui lòng bổ sung ít nhất 1 mặt hàng cụ thể cần mua!");
       return;
     }
+
+    const validatedItems = [];
     for (let i = 0; i < prForm.items.length; i++) {
       const it = prForm.items[i];
-      if (!it.product_name?.trim()) {
-        alert(`Vui lòng nhập tên mặt hàng ở dòng #${i + 1}`);
+      const rawCode = String(it.product_code || "").trim();
+      const rawName = String(it.product_name || "").trim();
+
+      if (!rawCode || rawCode.toUpperCase() === "TBR-ITEM" || rawCode.toUpperCase() === "MÃ MỚI") {
+        alert(
+          `⚠️ Không thể tạo PR (Lỗi ở dòng mặt hàng #${i + 1}): Chưa có Mã sản phẩm / Mã sản xuất cụ thể!\n\nVui lòng chọn đúng sản phẩm từ Bảng mã sản xuất (hoặc nhập Mã hàng cụ thể) trước khi lưu đề xuất mua hàng.`
+        );
+        return;
+      }
+      if (!rawName) {
+        alert(
+          `⚠️ Không thể tạo PR (Lỗi ở dòng mặt hàng #${i + 1}): Chưa có Tên sản phẩm cụ thể!\n\nVui lòng chọn sản phẩm từ Bảng mã sản xuất trước khi lưu đề xuất mua hàng.`
+        );
         return;
       }
       if (!it.unit?.trim()) {
-        alert(`Vui lòng nhập đơn vị tính ở dòng #${i + 1}`);
+        alert(`⚠️ Lỗi ở dòng mặt hàng #${i + 1}: Vui lòng nhập Đơn vị tính (ĐVT)!`);
         return;
       }
-      if (!it.quantity || it.quantity <= 0) {
-        alert(`Số lượng ở dòng #${i + 1} phải lớn hơn 0`);
+      if (!it.quantity || Number(it.quantity) <= 0) {
+        alert(`⚠️ Lỗi ở dòng mặt hàng #${i + 1}: Số lượng cần mua phải lớn hơn 0!`);
         return;
       }
+
+      const catalogMatch = mergedCatalogProducts.find(
+        (p: any) => String(p.code || "").trim().toUpperCase() === rawCode.toUpperCase()
+      );
+      if (!it.is_custom && !catalogMatch) {
+        alert(
+          `⚠️ Không thể tạo PR (Lỗi ở dòng mặt hàng #${i + 1}): Mã sản phẩm "${rawCode}" không tồn tại trong Bảng mã sản xuất!\n\nVui lòng chọn đúng sản phẩm có trong Bảng mã sản xuất.`
+        );
+        return;
+      }
+
+      validatedItems.push({
+        ...it,
+        product_code: catalogMatch ? catalogMatch.code : rawCode,
+        product_name: catalogMatch ? catalogMatch.name : rawName,
+        specification: it.specification || catalogMatch?.specification || "",
+        unit: it.unit || catalogMatch?.unit || "Hộp",
+        quantity: Number(it.quantity) || 1
+      });
     }
 
     try {
       const res = await fetch("/api/procurement?action=create_pr", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(prForm)
+        body: JSON.stringify({ ...prForm, items: validatedItems })
       });
       const data = await res.json();
       if (data.success) {
@@ -2094,7 +2128,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     }
   };
 
-  // Helper to extract items from a PR
+  // Helper to extract items from a PR & match strictly against Manufacturer Catalog (mergedCatalogProducts)
   const getPRItems = (pr: any) => {
     let prItems: any[] = [];
     try {
@@ -2107,9 +2141,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
     // Fallback: Parse from product_info text if results_summary is empty
     if (prItems.length === 0 && pr.product_info) {
-      const parts = pr.product_info.split(" | ");
+      const parts = String(pr.product_info).split(" | ");
       for (const part of parts) {
-        const m = part.match(/^([^:]+):\s*(.*?)(?:\s*\((.*?)\))?(?:\s*-\s*SL:\s*(\d+)\s*(.*?))?$/);
+        const trimmed = part.trim();
+        if (!trimmed) continue;
+        // Format 1: "CODE: Name (Spec) - SL: 1 Hộp"
+        const m = trimmed.match(/^([^:]+):\s*(.*?)(?:\s*\((.*?)\))?(?:\s*-\s*SL:\s*(\d+)\s*(.*?))?$/);
         if (m) {
           prItems.push({
             product_code: m[1].trim(),
@@ -2119,26 +2156,102 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             unit: m[5] ? m[5].trim() : "Hộp",
             estimated_price: pr.estimated_price || 0
           });
+          continue;
+        }
+        // Format 2: "Name (CODE)" from SearchableProductSelect
+        const parenMatch = trimmed.match(/^(.*?)\s*\(([A-Za-z0-9._-]+)\)$/);
+        if (parenMatch) {
+          prItems.push({
+            product_code: parenMatch[2].trim(),
+            product_name: parenMatch[1].trim(),
+            specification: "",
+            quantity: 1,
+            unit: "Hộp",
+            estimated_price: pr.estimated_price || 0
+          });
         }
       }
     }
 
-    if (prItems.length === 0) {
-      const matchedProd = products.find(
-        (p) => pr.product_info?.includes(p.code) || pr.product_info?.toLowerCase().includes(p.name?.toLowerCase())
+    // Match & normalize every item against Bảng mã sản xuất (mergedCatalogProducts)
+    const normalizedItems: any[] = [];
+    for (const rawIt of prItems) {
+      const rawCode = String(rawIt?.product_code || "").trim();
+      const rawName = cleanItemName(String(rawIt?.product_name || "").trim());
+      const isFakeCode = !rawCode || rawCode.toUpperCase() === "TBR-ITEM" || rawCode.toUpperCase() === "MÃ MỚI";
+
+      const catalogMatch = mergedCatalogProducts.find((p: any) => {
+        const pCode = String(p.code || "").trim();
+        const pName = String(p.name || "").trim();
+        if (!isFakeCode && pCode && pCode.toUpperCase() === rawCode.toUpperCase()) return true;
+        if (rawName && pName && pName.toLowerCase() === rawName.toLowerCase()) return true;
+        return false;
+      });
+
+      if (catalogMatch) {
+        normalizedItems.push({
+          ...rawIt,
+          product_code: catalogMatch.code,
+          product_name: catalogMatch.name,
+          specification: rawIt.specification || catalogMatch.specification || "",
+          unit: rawIt.unit || catalogMatch.unit || "Hộp",
+          quantity: Number(rawIt.quantity) || 1,
+          estimated_price: Number(rawIt.estimated_price) || parseFloat(catalogMatch.cost_price) || 0,
+          is_missing_catalog_product: false
+        });
+      } else if (!isFakeCode && rawName && rawName.toLowerCase() !== String(pr.title || "").trim().toLowerCase()) {
+        normalizedItems.push({
+          ...rawIt,
+          product_code: rawCode,
+          product_name: rawName,
+          specification: rawIt.specification || "",
+          unit: rawIt.unit || "Hộp",
+          quantity: Number(rawIt.quantity) || 1,
+          estimated_price: Number(rawIt.estimated_price) || 0,
+          is_missing_catalog_product: false
+        });
+      }
+    }
+
+    // Fallback check if product_info matches a catalog product directly
+    if (normalizedItems.length === 0 && pr.product_info) {
+      const infoStr = String(pr.product_info).trim();
+      const matchedProd = mergedCatalogProducts.find(
+        (p: any) =>
+          (p.code && infoStr.toUpperCase().includes(String(p.code).trim().toUpperCase())) ||
+          (p.name && infoStr.toLowerCase().includes(String(p.name).trim().toLowerCase()))
       );
-      prItems = [
-        {
-          product_code: matchedProd?.code || "TBR-ITEM",
-          product_name: matchedProd?.name || pr.product_info || pr.title,
-          specification: matchedProd?.specification || "",
-          unit: matchedProd?.unit || "Hộp",
+      if (matchedProd) {
+        normalizedItems.push({
+          product_code: matchedProd.code,
+          product_name: matchedProd.name,
+          specification: matchedProd.specification || "",
+          unit: matchedProd.unit || "Hộp",
           quantity: 1,
-          estimated_price: matchedProd ? parseFloat(matchedProd.cost_price) || 0 : 0
+          estimated_price: parseFloat(matchedProd.cost_price) || 0,
+          is_missing_catalog_product: false
+        });
+      }
+    }
+
+    // If PR still has no valid product code & name (e.g. legacy workflow where user only typed request title),
+    // flag it explicitly instead of fabricating "TBR-ITEM" + pr.title
+    if (normalizedItems.length === 0) {
+      return [
+        {
+          is_missing_catalog_product: true,
+          product_code: "",
+          product_name: "",
+          raw_request_text: pr.product_info || pr.title || "Chưa chọn sản phẩm",
+          specification: "",
+          unit: "Hộp",
+          quantity: 1,
+          estimated_price: 0
         }
       ];
     }
-    return prItems;
+
+    return normalizedItems;
   };
 
   // Helper to determine PO status of an individual PR item
@@ -2388,6 +2501,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   // Convert PR to PO (1-Click - Only selects unconverted items if partial)
   const handleConvertPRToPO = (pr: any) => {
     const prItems = getPRItems(pr);
+    const hasMissingCatalogItem = prItems.some(
+      (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM" || !it.product_name
+    );
+    if (hasMissingCatalogItem) {
+      alert(
+        `⚠️ Không thể lập PO: Đề xuất ${pr.workflow_code} ("${pr.title}") hiện chưa có Mã sản phẩm và Tên sản phẩm cụ thể từ Bảng mã sản xuất!\n\nHệ thống sẽ mở cửa sổ Cập nhật PR để bạn chọn đúng sản phẩm cần mua trước khi lập đơn PO.`
+      );
+      handleEditPR(pr);
+      return;
+    }
+
     const unconvertedWithIdx = prItems
       .map((it: any, idx: number) => ({ it, idx }))
       .filter(({ it, idx }) => !getItemPOInfo(pr, it, idx).hasPO);
@@ -2406,9 +2530,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const qty = Number(it.quantity) || 1;
       const nameWithSpec = it.specification && !it.product_name?.includes(it.specification) 
         ? `${it.product_name} (${it.specification})` 
-        : (it.product_name || it.product_code || "Mặt hàng mua ngoài");
+        : (it.product_name || it.product_code);
       poItems.push({
-        product_code: it.product_code || "TBR-PR-ITEM",
+        product_code: it.product_code,
         product_name: nameWithSpec,
         specification: it.specification || "",
         notes: it.notes || "",
@@ -2487,7 +2611,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       let hasMatchInPR = false;
 
       items.forEach((it, idx) => {
-        if (it?.po_code) return;
+        if (it?.po_code || it?.is_missing_catalog_product || !it?.product_code) return;
         const itemSup = getItemSuggestedSupplier(it);
         if (itemSup && String(itemSup.id) === String(targetSup.id)) {
           matchingKeys.push(`${prKey}___${idx}`);
@@ -2510,8 +2634,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     const items = getPRItems(pr);
     const itemKeys = items
       .map((it, idx) => ({ it, key: `${prKey}___${idx}` }))
-      .filter(x => !x.it?.po_code)
+      .filter(x => !x.it?.po_code && !x.it?.is_missing_catalog_product && Boolean(x.it?.product_code))
       .map(x => x.key);
+    if (itemKeys.length === 0) return;
     const allSelected = itemKeys.length > 0 && itemKeys.every((k) => selectedItemKeysForConsolidate.includes(k));
 
     if (allSelected) {
@@ -2560,6 +2685,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         items.forEach((it, idx) => {
           const itemKey = `${prKey}___${idx}`;
           if (selectedItemKeysForConsolidate.includes(itemKey)) {
+            if (it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM") {
+              return;
+            }
             involvedPRKeys.add(prKey);
             const resolved = resolveItemSupplierAndPrice(it);
             const price = resolved.unitPrice > 0 ? resolved.unitPrice : (Number(it.estimated_price) || 0);
@@ -2568,7 +2696,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             const qty = it.quantity || 1;
             const nameWithSpec = it.specification ? `${it.product_name} (${it.specification})` : it.product_name;
             combinedItems.push({
-              product_code: it.product_code || "TBR-ITEM",
+              product_code: it.product_code,
               product_name: nameWithSpec,
               specification: it.specification || "",
               notes: it.notes || "",
@@ -4097,19 +4225,26 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             </button>
                           </div>
                           {(() => {
-                            let itemsList: any[] = [];
-                            try {
-                              if (pr.results_summary && pr.results_summary.startsWith("[")) {
-                                itemsList = JSON.parse(pr.results_summary);
-                              }
-                            } catch (e) {}
-
-                            if (itemsList.length === 0) {
-                              return pr.product_info ? (
-                                <div className="text-[11px] text-slate-600 dark:text-slate-400 font-mono font-medium mt-0.5">
-                                  {pr.product_info}
+                            const itemsList = getPRItems(pr);
+                            if (itemsList.length === 1 && itemsList[0]?.is_missing_catalog_product) {
+                              return (
+                                <div className="mt-1.5 flex items-center flex-wrap gap-2">
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold bg-rose-50 dark:bg-rose-950/70 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800">
+                                    <AlertTriangle className="w-3 h-3 text-rose-500 shrink-0" />
+                                    Chưa có Mã & Tên sản phẩm trong Bảng mã sản xuất
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleEditPR(pr);
+                                    }}
+                                    className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                                  >
+                                    + Chọn Mã SP ngay ↗
+                                  </button>
                                 </div>
-                              ) : null;
+                              );
                             }
 
                             const isExpanded = !!expandedPRIds[pr.id];
@@ -7036,7 +7171,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* MODAL 5: CREATE / EDIT PURCHASE REQUEST (PR)              */}
       {/* ========================================================= */}
       {isPRModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-5xl w-full p-6 sm:p-7 space-y-4 my-8">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
@@ -7384,7 +7519,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* MODAL 6: VIEW PURCHASE REQUEST DETAILS                    */}
       {/* ========================================================= */}
       {selectedPRDetail && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
           <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-5xl w-full p-6 sm:p-7 space-y-4 my-8">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400">
@@ -7503,12 +7638,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </span>
                 </div>
                 {(() => {
-                  let items: any[] = [];
-                  try {
-                    if (selectedPRDetail.results_summary && selectedPRDetail.results_summary.startsWith("[")) {
-                      items = JSON.parse(selectedPRDetail.results_summary);
-                    }
-                  } catch (e) {}
+                  const items = getPRItems(selectedPRDetail).filter(
+                    (it: any) => !it.is_missing_catalog_product && it.product_code
+                  );
 
                   if (items.length > 0) {
                     return (
@@ -7532,7 +7664,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">{i + 1}</td>
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                                  {it.product_code || "MÃ MỚI"}
+                                  {it.product_code}
                                 </td>
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 font-medium">
                                   <div>{it.product_name}</div>
@@ -7591,8 +7723,24 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   }
 
                   return (
-                    <div className="p-3 bg-slate-50 dark:bg-slate-800 rounded-lg text-slate-700 dark:text-slate-300 font-mono">
-                      {selectedPRDetail.product_info}
+                    <div className="p-3.5 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        <span className="text-xs">
+                          Phiếu đề xuất này <strong>chưa có Mã sản phẩm và Tên sản phẩm cụ thể</strong> trong Bảng mã sản xuất. Vui lòng chọn sản phẩm cụ thể trước khi lập PO!
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const pr = selectedPRDetail;
+                          setSelectedPRDetail(null);
+                          handleEditPR(pr);
+                        }}
+                        className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs shrink-0 cursor-pointer"
+                      >
+                        + Chọn Mã & Tên SP
+                      </button>
                     </div>
                   );
                 })()}
@@ -7691,26 +7839,26 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* MODAL: GOM NHIỀU PR LÊN ĐƠN PO TỔNG HỢP (Yêu cầu 4)       */}
       {/* ========================================================= */}
       {isConsolidateModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-150">
+        <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl w-[96vw] max-w-7xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-150">
             {/* Header */}
-            <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
-              <div className="flex items-center gap-2.5">
-                <div className="p-2 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400">
+            <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 text-emerald-600 dark:text-emerald-400">
                   <PackageCheck className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white text-base">
-                    Gom Nhiều Đề Xuất (PR) Lên Đơn Mua Hàng Tổng (PO)
+                  <h3 className="font-bold text-slate-900 dark:text-white text-base sm:text-lg">
+                    Chọn Sản Phẩm Từ Đề Xuất (PR) Lên Đơn Mua Hàng Tổng (PO)
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    ERP Standard • Tổng hợp nhu cầu từ nhiều bộ phận gửi cùng một Nhà Cung Cấp để tối ưu chiết khấu & logistics
+                    Chỉ hiển thị các thông tin sản phẩm chuẩn từ Bảng mã sản xuất phục vụ lập PO • Cần xem thông tin người đề xuất / lý do hãy bấm <strong>"Xem PR"</strong>
                   </p>
                 </div>
               </div>
               <button
                 onClick={() => setIsConsolidateModalOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="p-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -7720,10 +7868,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <div className="p-6 space-y-4 overflow-y-auto flex-1 text-xs">
               {/* Supplier Selection & Delivery Date */}
               <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 space-y-3">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                  <div className="md:col-span-5">
                     <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1.5 uppercase font-mono text-[10px]">
-                      Nhà Cung Cấp tiếp nhận đơn tổng *
+                      Nhà Cung Cấp tiếp nhận đơn tổng (PO) *
                     </label>
                     <select
                       value={consolidateSupplierId}
@@ -7741,9 +7889,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     </select>
                   </div>
 
-                  <div>
+                  <div className="md:col-span-3">
                     <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1.5 uppercase font-mono text-[10px]">
-                      Hạn giao hàng mong muốn cho PO tổng *
+                      Hạn giao hàng mong muốn *
                     </label>
                     <DateInputVN
                       value={consolidateExpectedDelivery}
@@ -7751,390 +7899,342 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-amber-600 dark:text-amber-400 font-mono font-bold outline-none"
                     />
                   </div>
+
+                  {/* 1-Click Smart Matching Actions */}
+                  <div className="md:col-span-4 flex flex-wrap items-center justify-end gap-2">
+                    {(() => {
+                      const targetSup = suppliers.find((s) => String(s.id) === String(consolidateSupplierId)) || suppliers[0];
+                      return (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() => handleAutoSelectBySupplier(targetSup?.id)}
+                            className="px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>⚡ Chọn Tất Cả SP Thuộc {targetSup?.short_name || targetSup?.name?.split(" ")[0] || "NCC này"}</span>
+                          </button>
+                          {selectedItemKeysForConsolidate.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setSelectedItemKeysForConsolidate([])}
+                              className="px-2.5 py-2 rounded-xl text-xs text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 font-semibold cursor-pointer"
+                            >
+                              ✕ Bỏ chọn ({selectedItemKeysForConsolidate.length})
+                            </button>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
                 </div>
-
-                {/* 1-Click Smart Matching Actions Bar */}
-                {(() => {
-                  const targetSup = suppliers.find((s) => String(s.id) === String(consolidateSupplierId)) || suppliers[0];
-                  return (
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200/60 dark:border-slate-700/60">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[11px] text-slate-500">Gợi ý phân rã theo NCC:</span>
-                        <button
-                          type="button"
-                          onClick={() => handleAutoSelectBySupplier(targetSup?.id)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs transition-all flex items-center gap-1.5 cursor-pointer"
-                        >
-                          <Sparkles className="w-3.5 h-3.5" />
-                          <span>⚡ 1-Click: Chọn Tất Cả Hàng Phù Hợp ({targetSup?.name?.split(" ")[0] || "NCC này"})</span>
-                        </button>
-                      </div>
-
-                      {selectedItemKeysForConsolidate.length > 0 && (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedItemKeysForConsolidate([])}
-                          className="text-xs text-rose-500 hover:underline font-semibold cursor-pointer"
-                        >
-                          ✕ Bỏ chọn tất cả ({selectedItemKeysForConsolidate.length} mục)
-                        </button>
-                      )}
-                    </div>
-                  );
-                })()}
               </div>
 
-              {/* Selection Summary Strip */}
+              {/* Direct Product Selection Table for PO Creation */}
               {(() => {
                 const pendingPRs = purchaseRequests.filter(isPRConsolidatable);
-                const involvedPRs = new Set<string>();
-                let totalEstAmount = 0;
+                const targetSup = suppliers.find((s) => String(s.id) === String(consolidateSupplierId)) || suppliers[0];
+
+                // Separate valid catalog product rows from invalid PRs missing product code/name
+                const validProductRows: Array<{
+                  pr: any;
+                  prKey: string;
+                  it: any;
+                  idx: number;
+                  itemKey: string;
+                  resolved: any;
+                  itemSup: any;
+                  isMatchSupplier: boolean;
+                  isAlreadyPo: boolean;
+                  itemPOInfo: any;
+                }> = [];
+
+                const invalidPRsWithoutProduct: any[] = [];
 
                 pendingPRs.forEach((pr) => {
                   const prKey = pr.workflow_code || String(pr.id);
                   const items = getPRItems(pr);
-                  items.forEach((it, idx) => {
-                    if (selectedItemKeysForConsolidate.includes(`${prKey}___${idx}`)) {
-                      involvedPRs.add(prKey);
-                      const resolved = resolveItemSupplierAndPrice(it);
-                      const price = resolved.unitPrice || it.estimated_price || 0;
-                      const qty = it.quantity || 1;
-                      totalEstAmount += qty * price;
+                  const hasOnlyMissing = items.every(
+                    (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM"
+                  );
+                  if (hasOnlyMissing) {
+                    invalidPRsWithoutProduct.push(pr);
+                    return;
+                  }
+
+                  items.forEach((it: any, idx: number) => {
+                    if (it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM") {
+                      return;
                     }
+                    const itemKey = `${prKey}___${idx}`;
+                    const resolved = resolveItemSupplierAndPrice(it);
+                    const itemSup = resolved.supplier;
+                    const isMatchSupplier = Boolean(itemSup && String(itemSup.id) === String(targetSup?.id));
+                    const itemPOInfo = getItemPOInfo(pr, it, idx);
+                    const isAlreadyPo = Boolean(it.po_code || itemPOInfo.hasPO);
+
+                    validProductRows.push({
+                      pr,
+                      prKey,
+                      it,
+                      idx,
+                      itemKey,
+                      resolved,
+                      itemSup,
+                      isMatchSupplier,
+                      isAlreadyPo,
+                      itemPOInfo
+                    });
                   });
                 });
 
+                const selectableKeys = validProductRows.filter((r) => !r.isAlreadyPo).map((r) => r.itemKey);
+                const isAllSelectableChecked =
+                  selectableKeys.length > 0 && selectableKeys.every((k) => selectedItemKeysForConsolidate.includes(k));
+                const isSomeSelectableChecked =
+                  selectableKeys.some((k) => selectedItemKeysForConsolidate.includes(k)) && !isAllSelectableChecked;
+
+                const involvedPRs = new Set<string>();
+                let totalEstAmount = 0;
+                validProductRows.forEach((r) => {
+                  if (selectedItemKeysForConsolidate.includes(r.itemKey)) {
+                    involvedPRs.add(r.prKey);
+                    const price = r.resolved.unitPrice || Number(r.it.estimated_price) || 0;
+                    const qty = Number(r.it.quantity) || 1;
+                    totalEstAmount += qty * price;
+                  }
+                });
+
                 return (
-                  <div className="p-3 rounded-xl bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold text-slate-800 dark:text-white uppercase tracking-wider text-[11px]">
-                        Danh Sách PR Chưa Lập Đủ PO ({pendingPRs.length} phiếu):
-                      </span>
-                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono font-bold text-[11px]">
-                        Đã chọn: {selectedItemKeysForConsolidate.length} mặt hàng ({involvedPRs.size} PR)
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const allPRKeys = pendingPRs.map((pr) => pr.workflow_code || String(pr.id));
-                          if (expandedPRKeys.length >= allPRKeys.length && allPRKeys.length > 0) {
-                            setExpandedPRKeys([]);
-                          } else {
-                            setExpandedPRKeys(allPRKeys);
-                          }
-                        }}
-                        className="px-2.5 py-1 rounded-lg text-[11px] font-bold bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 cursor-pointer shadow-2xs transition-colors flex items-center gap-1"
-                      >
-                        {expandedPRKeys.length > 0 ? "⊟ Thu gọn tất cả dòng hàng" : "⊞ Mở rộng bóc tách tất cả mã hàng"}
-                      </button>
-                    </div>
-                    {totalEstAmount > 0 && (
+                  <div className="space-y-4">
+                    {/* Summary Bar */}
+                    <div className="p-3 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="font-bold text-slate-800 dark:text-white uppercase tracking-wider text-xs">
+                          Danh Sách Sản Phẩm Cần Đặt Mua ({validProductRows.filter((r) => !r.isAlreadyPo).length} mã hàng):
+                        </span>
+                        <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-mono font-bold text-xs">
+                          Đã chọn lập PO: {selectedItemKeysForConsolidate.length} sản phẩm ({involvedPRs.size} PR)
+                        </span>
+                      </div>
                       <div className="text-right">
-                        <span className="text-[10px] text-slate-500 mr-1.5">Ước tính giá trị PO:</span>
+                        <span className="text-xs text-slate-500 mr-2">Tổng giá trị PO dự kiến:</span>
                         <strong className="font-mono font-black text-indigo-700 dark:text-indigo-300 text-sm">
                           {formatCurrency(totalEstAmount)}
                         </strong>
                       </div>
-                    )}
-                  </div>
-                );
-              })()}
+                    </div>
 
-              {/* PR Selection Table with Nested Line-Item Rows */}
-              <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 font-bold">
-                    <tr>
-                      <th className="py-2.5 px-3 w-28 text-center">Bóc Tách / Chọn</th>
-                      <th className="py-2.5 px-3">Mã Đề Xuất (PR)</th>
-                      <th className="py-2.5 px-3">Bộ Phận / Người Gửi</th>
-                      <th className="py-2.5 px-3">Nội Dung Đề Xuất</th>
-                      <th className="py-2.5 px-3 text-center">Số Mặt Hàng</th>
-                      <th className="py-2.5 px-3">Hạn Cần</th>
-                      <th className="py-2.5 px-3 text-center">Trạng Thái</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {(() => {
-                      const pendingPRs = purchaseRequests.filter(isPRConsolidatable);
-
-                      if (pendingPRs.length === 0) {
-                        return (
-                          <tr>
-                            <td colSpan={7} className="py-6 text-center text-slate-500 dark:text-slate-400">
-                              <div className="space-y-2">
-                                <div className="font-semibold text-emerald-600 dark:text-emerald-400">
-                                  ✓ Toàn bộ các đề xuất (PR) hiện có đều đã được chuyển thành Đơn Đặt Mua (PO) đầy đủ!
-                                </div>
-                                <div className="text-[11px] text-slate-400">
-                                  Bạn có thể bấm <strong>"+ Tạo PR Mới"</strong> để thêm đề xuất mua hàng mới, hoặc xem các PR đã lập PO ở danh sách bên dưới.
-                                </div>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      }
-
-                      const targetSup = suppliers.find((s) => String(s.id) === String(consolidateSupplierId)) || suppliers[0];
-
-                      return pendingPRs.map((pr) => {
-                        const prKey = pr.workflow_code || String(pr.id);
-                        const items = getPRItems(pr);
-                        const isExpanded = expandedPRKeys.includes(prKey);
-                        const itemKeys = items.map((_, idx) => `${prKey}___${idx}`);
-                        const selectedInThisPR = itemKeys.filter((k) => selectedItemKeysForConsolidate.includes(k));
-                        const isAllSelected = items.length > 0 && selectedInThisPR.length === items.length;
-                        const isPartialSelected = selectedInThisPR.length > 0 && !isAllSelected;
-
-                        return (
-                          <React.Fragment key={pr.id}>
-                            {/* PR Header Row */}
-                            <tr
-                              className={`transition-colors ${
-                                isAllSelected
-                                  ? "bg-emerald-50/70 dark:bg-emerald-950/40"
-                                  : isPartialSelected
-                                  ? "bg-indigo-50/40 dark:bg-indigo-950/20"
-                                  : "hover:bg-slate-50 dark:hover:bg-slate-800/40"
-                              }`}
-                            >
-                              {/* Accordion Toggle + PR-Level Checkbox */}
-                              <td className="py-3 px-3">
-                                <div className="flex items-center justify-center gap-1.5">
-                                  <button
-                                    type="button"
-                                    onClick={() => togglePRExpansion(prKey)}
-                                    className={`px-2 py-1 rounded-lg font-bold text-[10px] flex items-center gap-1 cursor-pointer border transition-colors ${
-                                      isExpanded
-                                        ? "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/60 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700"
-                                        : "bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700 dark:text-slate-200 border-slate-200 dark:border-slate-700"
-                                    }`}
-                                    title={isExpanded ? "Thu gọn danh sách mã hàng" : "Bấm để mở danh sách chọn từng mã hàng"}
-                                  >
-                                    {isExpanded ? (
-                                      <>
-                                        <ChevronDown className="w-3.5 h-3.5 text-indigo-600" />
-                                        <span>Thu gọn</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <ChevronRight className="w-3.5 h-3.5" />
-                                        <span>Tách hàng</span>
-                                      </>
-                                    )}
-                                  </button>
-                                  <input
-                                    type="checkbox"
-                                    checked={isAllSelected}
-                                    ref={(el) => {
-                                      if (el) el.indeterminate = isPartialSelected;
-                                    }}
-                                    onChange={() => togglePRSelection(pr)}
-                                    className="w-4 h-4 rounded text-emerald-600 cursor-pointer"
-                                    title="Chọn tất cả các mặt hàng trong PR này"
-                                  />
-                                </div>
-                              </td>
-
-                              {/* PR Code */}
-                              <td className="py-3 px-3 font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                                <div>{pr.workflow_code}</div>
-                                <span className="text-[10px] text-slate-400 font-normal">
-                                  {formatDate(pr.created_at || pr.due_date)}
-                                </span>
-                              </td>
-
-                              {/* Requester */}
-                              <td className="py-3 px-3">
-                                <span className="font-bold text-slate-800 dark:text-slate-200">{pr.requester_name}</span>
-                                <span className="text-slate-400 block text-[10px]">{pr.requester_dept}</span>
-                              </td>
-
-                              {/* Title / Info */}
-                              <td className="py-3 px-3">
-                                <span className="font-medium text-slate-800 dark:text-slate-200">{pr.title}</span>
-                                <span className="text-slate-400 block text-[10px] truncate max-w-xs">{pr.product_info}</span>
-                              </td>
-
-                              {/* Items Count Badge */}
-                              <td className="py-3 px-3 text-center">
-                                <button
-                                  type="button"
-                                  onClick={() => togglePRExpansion(prKey)}
-                                  className={`px-2 py-0.5 rounded-full font-mono text-[10px] font-bold cursor-pointer transition-colors ${
-                                    selectedInThisPR.length > 0
-                                      ? "bg-indigo-100 text-indigo-800 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-300 dark:border-indigo-700"
-                                      : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                                  }`}
-                                >
-                                  {items.length} mặt hàng {selectedInThisPR.length > 0 && `(chọn ${selectedInThisPR.length})`}
-                                </button>
-                              </td>
-
-                              {/* Due Date */}
-                              <td className="py-3 px-3 font-mono text-slate-500">
-                                {formatDate(pr.due_date)}
-                              </td>
-
-                              {/* Status */}
-                              <td className="py-3 px-3 text-center">
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 dark:bg-amber-950 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
-                                  {pr.status}
-                                </span>
-                              </td>
+                    {/* Clean Product Table for PO Selection */}
+                    <div className="border border-slate-200 dark:border-slate-700 rounded-2xl overflow-hidden shadow-xs">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-700">
+                            <tr>
+                              <th className="py-3 px-3 w-12 text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={isAllSelectableChecked}
+                                  ref={(el) => {
+                                    if (el) el.indeterminate = isSomeSelectableChecked;
+                                  }}
+                                  onChange={() => {
+                                    if (isAllSelectableChecked) {
+                                      setSelectedItemKeysForConsolidate([]);
+                                    } else {
+                                      setSelectedItemKeysForConsolidate(selectableKeys);
+                                    }
+                                  }}
+                                  className="w-4 h-4 rounded text-emerald-600 cursor-pointer"
+                                  title="Chọn / Bỏ chọn tất cả sản phẩm"
+                                />
+                              </th>
+                              <th className="py-3 px-3 w-44">Mã Sản Xuất (SKU)</th>
+                              <th className="py-3 px-4 min-w-[260px]">Tên Sản Phẩm Đặt Mua & Quy Cách</th>
+                              <th className="py-3 px-3 w-24 text-right">SL Cần</th>
+                              <th className="py-3 px-3 w-20 text-center">ĐVT</th>
+                              <th className="py-3 px-3 w-36 text-right">Đơn Giá Dự Kiến</th>
+                              <th className="py-3 px-3 w-36 text-right">Thành Tiền</th>
+                              <th className="py-3 px-3 w-48">Nhà Cung Cấp Phù Hợp</th>
+                              <th className="py-3 px-3 w-44 text-center">Mã PR Nguồn</th>
                             </tr>
-
-                            {/* Expanded Child Items Table (Line-Item Level) */}
-                            {isExpanded && (
-                              <tr className="bg-slate-50/70 dark:bg-slate-900/60">
-                                <td colSpan={7} className="p-3 pl-10">
-                                  <div className="border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-xs bg-white dark:bg-slate-900">
-                                    <div className="px-3 py-2 bg-slate-100/70 dark:bg-slate-800/70 text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300 flex items-center justify-between">
-                                      <span>Bóc Tách Dòng Hàng Chi Tiết Của Đề Xuất {pr.workflow_code}:</span>
-                                      <span className="text-slate-400 lowercase font-normal">
-                                        Tick chọn từng mặt hàng để đưa vào PO tổng của NCC đang chọn
-                                      </span>
-                                    </div>
-                                    <table className="w-full text-left text-[11px]">
-                                      <thead className="bg-slate-50 dark:bg-slate-800/40 text-slate-500 font-semibold border-b border-slate-200 dark:border-slate-800">
-                                        <tr>
-                                          <th className="py-2 px-3 w-8 text-center">#</th>
-                                          <th className="py-2 px-3">Mã SKU</th>
-                                          <th className="py-2 px-3">Tên Mặt Hàng / Sinh Phẩm</th>
-                                          <th className="py-2 px-3 text-right">SL Cần</th>
-                                          <th className="py-2 px-3">ĐVT</th>
-                                          <th className="py-2 px-3 text-right">Đơn Giá Dự Kiến</th>
-                                          <th className="py-2 px-3">Nhà Cung Cấp Phù Hợp</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                                        {items.map((it: any, idx: number) => {
-                                          const itemKey = `${prKey}___${idx}`;
-                                          const isItemSelected = selectedItemKeysForConsolidate.includes(itemKey);
-                                          const itemSup = getItemSuggestedSupplier(it);
-                                          const isMatchSupplier = itemSup && String(itemSup.id) === String(targetSup?.id);
-
-                                          const isAlreadyPo = Boolean(it.po_code);
-                                          return (
-                                            <tr
-                                              key={idx}
-                                              onClick={() => !isAlreadyPo && toggleItemSelection(itemKey)}
-                                              className={`transition-colors ${
-                                                isAlreadyPo
-                                                  ? "opacity-50 bg-slate-100/50 dark:bg-slate-800/30 cursor-not-allowed"
-                                                  : isItemSelected
-                                                  ? "cursor-pointer bg-emerald-50/80 dark:bg-emerald-950/40"
-                                                  : isMatchSupplier
-                                                  ? "cursor-pointer bg-emerald-50/20 hover:bg-emerald-50/40 dark:bg-emerald-950/10"
-                                                  : "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                                              }`}
-                                            >
-                                              <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
-                                                {isAlreadyPo ? (
-                                                  <span className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300" title={`Mặt hàng này đã được tạo đơn ${it.po_code}`}>
-                                                    ĐÃ LÊN PO
-                                                  </span>
-                                                ) : (
-                                                  <input
-                                                    type="checkbox"
-                                                    checked={isItemSelected}
-                                                    onChange={() => toggleItemSelection(itemKey)}
-                                                    className="w-3.5 h-3.5 rounded text-emerald-600 cursor-pointer"
-                                                  />
-                                                )}
-                                              </td>
-                                              <td className="py-2 px-3 font-mono font-bold text-slate-800 dark:text-slate-200">
-                                                {it.product_code || "TBR-ITEM"}
-                                              </td>
-                                              <td className="py-2 px-3">
-                                                <span className="font-semibold text-slate-800 dark:text-slate-200">
-                                                  {cleanItemName(it.product_name)}
-                                                </span>
-                                                {it.specification && (
-                                                  <span className="text-[10px] text-slate-400 block font-mono">
-                                                    Quy cách: {it.specification}
-                                                  </span>
-                                                )}
-                                              </td>
-                                              <td className="py-2 px-3 text-right font-mono font-bold text-slate-900 dark:text-white">
-                                                {it.quantity || 1}
-                                              </td>
-                                              <td className="py-2 px-3 text-slate-500">{it.unit || "Cái"}</td>
-                                              <td className="py-2 px-3 text-right font-mono text-slate-600 dark:text-slate-300">
-                                                {it.estimated_price ? formatCurrency(it.estimated_price) : "Theo báo giá"}
-                                              </td>
-                                              <td className="py-2 px-3">
-                                                {isMatchSupplier ? (
-                                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
-                                                    <Check className="w-3 h-3" />
-                                                    Khớp NCC này ({itemSup.name?.split(" ")[0]})
-                                                  </span>
-                                                ) : (
-                                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
-                                                    NCC khác: {itemSup?.name?.split(" ")[0] || "Khác"}
-                                                  </span>
-                                                )}
-                                              </td>
-                                            </tr>
-                                          );
-                                        })}
-                                      </tbody>
-                                    </table>
-                                  </div>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {validProductRows.length === 0 ? (
+                              <tr>
+                                <td colSpan={9} className="py-8 text-center text-slate-500 dark:text-slate-400">
+                                  Chưa có mặt hàng nào có Mã & Tên sản phẩm hợp lệ trong Bảng mã sản xuất đang chờ lập PO.
                                 </td>
                               </tr>
-                            )}
-                          </React.Fragment>
-                        );
-                      });
-                    })()}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Already Converted PRs Reference Section (Issue 6) */}
-              {(() => {
-                const convertedPRs = purchaseRequests.filter((pr) => getPRPOSummary(pr).isFullyConverted);
-                if (convertedPRs.length === 0) return null;
-                return (
-                  <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-700 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                        Các Đề Xuất (PR) Đã Lập Đủ Đơn PO ({convertedPRs.length} phiếu):
-                      </span>
-                      <span className="text-[10px] text-slate-400">Đã hoàn tất chuyển đổi sang PO</span>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      {convertedPRs.map((pr) => {
-                        const sum = getPRPOSummary(pr);
-                        return (
-                          <div
-                            key={pr.id}
-                            className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 flex items-center gap-2 text-[11px]"
-                          >
-                            <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">{pr.workflow_code}</span>
-                            <span className="text-slate-600 dark:text-slate-300 truncate max-w-[180px]">{pr.title}</span>
-                            {sum.linkedPOs.length > 0 ? (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setIsConsolidateModalOpen(false);
-                                  setSelectedPODetail(sum.linkedPOs[0]);
-                                }}
-                                className="px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 font-mono font-bold text-[10px] hover:underline cursor-pointer"
-                              >
-                                PO: {sum.poCodes.join(", ")} ↗
-                              </button>
                             ) : (
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-mono text-[10px]">
-                                Đã lập PO
-                              </span>
+                              validProductRows.map((row) => {
+                                const { pr, it, itemKey, resolved, itemSup, isMatchSupplier, isAlreadyPo, itemPOInfo } = row;
+                                const isItemSelected = selectedItemKeysForConsolidate.includes(itemKey);
+                                const unitPrice = resolved.unitPrice || Number(it.estimated_price) || 0;
+                                const qty = Number(it.quantity) || 1;
+                                const lineTotal = qty * unitPrice;
+
+                                return (
+                                  <tr
+                                    key={itemKey}
+                                    onClick={() => !isAlreadyPo && toggleItemSelection(itemKey)}
+                                    className={`transition-colors ${
+                                      isAlreadyPo
+                                        ? "opacity-55 bg-slate-100/60 dark:bg-slate-800/30 cursor-not-allowed"
+                                        : isItemSelected
+                                        ? "cursor-pointer bg-emerald-50/80 dark:bg-emerald-950/40"
+                                        : isMatchSupplier
+                                        ? "cursor-pointer bg-emerald-50/20 hover:bg-emerald-50/40 dark:bg-emerald-950/10"
+                                        : "cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                                    }`}
+                                  >
+                                    {/* Checkbox */}
+                                    <td className="py-3 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                                      {isAlreadyPo ? (
+                                        <span
+                                          className="px-1.5 py-0.5 rounded text-[9px] font-mono font-bold bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300"
+                                          title={`Đã lập PO: ${it.po_code || itemPOInfo.poCode}`}
+                                        >
+                                          ĐÃ LÊN PO
+                                        </span>
+                                      ) : (
+                                        <input
+                                          type="checkbox"
+                                          checked={isItemSelected}
+                                          onChange={() => toggleItemSelection(itemKey)}
+                                          className="w-4 h-4 rounded text-emerald-600 cursor-pointer"
+                                        />
+                                      )}
+                                    </td>
+
+                                    {/* SKU / Catalog Code */}
+                                    <td className="py-3 px-3 font-mono font-bold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                                      {it.product_code}
+                                    </td>
+
+                                    {/* Product Name & Specification */}
+                                    <td className="py-3 px-4">
+                                      <div className="font-bold text-slate-900 dark:text-white text-xs">
+                                        {cleanItemName(it.product_name)}
+                                      </div>
+                                      {(it.specification || resolved.specification) && (
+                                        <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
+                                          Quy cách: {it.specification || resolved.specification}
+                                        </div>
+                                      )}
+                                    </td>
+
+                                    {/* Quantity */}
+                                    <td className="py-3 px-3 text-right font-mono font-extrabold text-orange-600 dark:text-orange-400 text-sm">
+                                      {qty}
+                                    </td>
+
+                                    {/* Unit */}
+                                    <td className="py-3 px-3 text-center font-semibold text-slate-600 dark:text-slate-300">
+                                      {it.unit || resolved.unit || "Hộp"}
+                                    </td>
+
+                                    {/* Unit Price */}
+                                    <td className="py-3 px-3 text-right font-mono font-semibold text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                                      {unitPrice > 0 ? formatCurrency(unitPrice) : "Theo báo giá"}
+                                    </td>
+
+                                    {/* Line Total */}
+                                    <td className="py-3 px-3 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
+                                      {lineTotal > 0 ? formatCurrency(lineTotal) : "-"}
+                                    </td>
+
+                                    {/* Suggested Supplier */}
+                                    <td className="py-3 px-3 whitespace-nowrap">
+                                      {isMatchSupplier ? (
+                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
+                                          <Check className="w-3 h-3" />
+                                          Khớp NCC ({itemSup.short_name || itemSup.name?.split(" ")[0]})
+                                        </span>
+                                      ) : (
+                                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                          NCC: {itemSup?.short_name || itemSup?.name?.split(" ")[0] || "Khác"}
+                                        </span>
+                                      )}
+                                    </td>
+
+                                    {/* Source PR Code + Open PR Button */}
+                                    <td className="py-3 px-3 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                                      <div className="inline-flex items-center gap-1.5">
+                                        <span className="font-mono font-bold text-slate-700 dark:text-slate-200 text-[11px]">
+                                          {pr.workflow_code}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => setSelectedPRDetail(pr)}
+                                          className="px-2 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/70 dark:hover:bg-indigo-900 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-[10px] inline-flex items-center gap-1 cursor-pointer transition-colors"
+                                          title="Mở xem chi tiết PR (Người yêu cầu, bộ phận, lý do, hạn cần...)"
+                                        >
+                                          <Eye className="w-3 h-3" />
+                                          <span>Xem PR</span>
+                                        </button>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })
                             )}
-                          </div>
-                        );
-                      })}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
+
+                    {/* Warning Section for Legacy/Incomplete PRs missing Product Code & Name */}
+                    {invalidPRsWithoutProduct.length > 0 && (
+                      <div className="p-3.5 rounded-2xl bg-rose-50/70 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-800/70 space-y-2.5">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
+                          <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300 font-bold text-xs">
+                            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                            <span>
+                              Phát hiện {invalidPRsWithoutProduct.length} phiếu yêu cầu chưa có Mã & Tên sản phẩm cụ thể trong Bảng mã sản xuất (Không thể đưa vào PO khi chưa chọn mã sản phẩm):
+                            </span>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                          {invalidPRsWithoutProduct.map((pr) => (
+                            <div
+                              key={pr.id}
+                              className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-rose-200/80 dark:border-rose-800/60 flex items-center justify-between gap-3"
+                            >
+                              <div className="min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="font-mono font-bold text-rose-600 dark:text-rose-400 text-xs">
+                                    {pr.workflow_code}
+                                  </span>
+                                  <span className="text-[11px] text-slate-600 dark:text-slate-300 truncate font-medium">
+                                    "{pr.title}"
+                                  </span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 mt-0.5">
+                                  Thiếu Mã SKU & Tên hàng chuẩn • Bấm <strong>"Chọn Mã SP"</strong> để bổ sung sản phẩm từ Bảng mã sản xuất
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditPR(pr)}
+                                  className="px-2.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[10px] cursor-pointer shadow-2xs"
+                                >
+                                  + Chọn Mã SP
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setSelectedPRDetail(pr)}
+                                  className="px-2 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[10px] cursor-pointer"
+                                >
+                                  Xem PR
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 );
               })()}
@@ -8142,7 +8242,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               {/* Notes */}
               <div>
                 <label className="block text-slate-700 dark:text-slate-300 font-bold mb-1 text-[10px] uppercase font-mono">
-                  Ghi chú đơn đặt mua tổng hợp:
+                  Ghi chú đơn đặt mua tổng hợp (PO):
                 </label>
                 <textarea
                   rows={2}
@@ -8155,15 +8255,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             </div>
 
             {/* Footer */}
-            <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40">
+            <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 bg-slate-50/50 dark:bg-slate-800/40 shrink-0">
               <span className="text-xs text-slate-500">
-                Sau khi tạo PO tổng, các dòng hàng được chọn sẽ tự động gắn mã PO này. PR chuyển thành <strong className="text-indigo-600 font-mono">CONVERTED</strong>.
+                Sau khi tạo PO tổng, các dòng sản phẩm được chọn sẽ tự động gắn mã PO này. PR chuyển thành <strong className="text-indigo-600 font-mono">CONVERTED</strong>.
               </span>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2.5 ml-auto">
                 <button
                   type="button"
                   onClick={() => setIsConsolidateModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+                  className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
                 >
                   Hủy
                 </button>
@@ -8171,13 +8271,13 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   type="button"
                   disabled={selectedItemKeysForConsolidate.length === 0 || isSubmittingConsolidate}
                   onClick={handleConsolidatePRsSubmit}
-                  className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white shadow-sm flex items-center gap-1.5 cursor-pointer"
+                  className="px-5 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white shadow-sm flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
                 >
-                  <PackageCheck className="w-4 h-4" />
+                  <PackageCheck className="w-4 h-4 shrink-0" />
                   <span>
                     {isSubmittingConsolidate
                       ? "Đang tạo PO..."
-                      : `📦 Xác Nhận Tạo PO Tổng (${selectedItemKeysForConsolidate.length} Mặt Hàng)`}
+                      : `Xác Nhận Tạo PO Tổng (${selectedItemKeysForConsolidate.length} Sản Phẩm)`}
                   </span>
                 </button>
               </div>

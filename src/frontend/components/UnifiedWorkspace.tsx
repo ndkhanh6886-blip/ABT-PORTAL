@@ -1194,7 +1194,7 @@ const SearchableProductSelect: React.FC<SearchableProductSelectProps> = ({
               e.preventDefault();
               if (isOpen && search.trim() && filtered.length > 0) {
                 const p: any = filtered[0];
-                onChange(p.name ? `${p.name} (${p.code})` : p.code);
+                onChange(p.code && p.name ? `${p.code}: ${p.name}` : (p.name || p.code));
               }
               setIsOpen(false);
               setSearch("");
@@ -1261,7 +1261,7 @@ const SearchableProductSelect: React.FC<SearchableProductSelectProps> = ({
                 <div
                   key={p.code || p.id || p.name}
                   onClick={() => {
-                    onChange(p.name ? `${p.name} (${p.code})` : p.code);
+                    onChange(p.code && p.name ? `${p.code}: ${p.name}` : (p.name || p.code));
                     setIsOpen(false);
                     setSearch("");
                   }}
@@ -2055,6 +2055,35 @@ export const UnifiedWorkspace: React.FC = () => {
         try {
           const procRes = await fetch("/api/procurement");
           const procData = await procRes.json();
+          if (procData) {
+            const procProducts = Array.isArray(procData.products) ? procData.products : [];
+            const supProducts = Array.isArray(procData.allSupplierProducts) ? procData.allSupplierProducts : [];
+            const mergedProdMap = new Map<string, any>();
+            for (const p of (Array.isArray(data.products) ? data.products : [])) {
+              const k = String(p.code || p.name || "").trim().toUpperCase();
+              if (k) mergedProdMap.set(k, p);
+            }
+            for (const p of procProducts) {
+              const k = String(p.code || "").trim().toUpperCase();
+              if (k) mergedProdMap.set(k, p);
+            }
+            for (const sp of supProducts) {
+              const k = String(sp.product_code || "").trim().toUpperCase();
+              if (k && !mergedProdMap.has(k)) {
+                mergedProdMap.set(k, {
+                  code: sp.product_code,
+                  name: sp.product_name || sp.product_code,
+                  specification: sp.specification || "",
+                  unit: sp.unit || "Hộp",
+                  category: sp.supplier_short_name || sp.supplier_name || "Danh mục NCC",
+                  cost_price: parseFloat(sp.purchase_price) || 0
+                });
+              }
+            }
+            if (mergedProdMap.size > 0) {
+              setProductList(Array.from(mergedProdMap.values()));
+            }
+          }
           const apiSups = Array.isArray(procData?.suppliers)
             ? procData.suppliers
             : Array.isArray(procData?.data?.suppliers)
@@ -3378,9 +3407,51 @@ export const UnifiedWorkspace: React.FC = () => {
       });
       const step0Assignee = sanitizedSteps.length > 0 ? sanitizedSteps[0].assignee_name : cleanWorkspaceAssignee(wfForm.assignee_name);
       const step0Dept = sanitizedSteps.length > 0 && sanitizedSteps[0].dept ? sanitizedSteps[0].dept : wfForm.target_dept;
+      const effectiveTargetDept = step0Dept || wfForm.target_dept || "";
+      const isProcurementWorkflow =
+        wfForm.workflow_type === "TO_PROCUREMENT" ||
+        wfForm.workflow_type === "PURCHASE_REQUEST" ||
+        String(wfForm.workflow_type || "").toUpperCase().includes("PROCUREMENT") ||
+        isSameWorkspaceDept(effectiveTargetDept, "Cung Ứng") ||
+        String(effectiveTargetDept).toLowerCase().includes("mua hàng");
+
+      let structuredSummary = (wfForm as any).results_summary || "";
+      if (isProcurementWorkflow) {
+        const rawProd = String(wfForm.product_info || "").trim();
+        const matchedCatalogProd = productList.find((p: any) => {
+          const pCode = String(p.code || "").trim();
+          const pName = String(p.name || "").trim();
+          if (pCode && rawProd.toUpperCase().includes(pCode.toUpperCase())) return true;
+          if (pName && rawProd.toLowerCase().includes(pName.toLowerCase())) return true;
+          return false;
+        });
+
+        if (!rawProd || (!matchedCatalogProd && !rawProd.includes(":"))) {
+          showToast(
+            "⚠️ Lỗi tạo Đề xuất mua hàng (PR): Chưa có Mã sản phẩm (SKU) và Tên hàng cụ thể! Vui lòng chọn đúng sản phẩm từ Bảng mã sản xuất tại ô 'Sản phẩm / Thiết bị'.",
+            "error"
+          );
+          return;
+        }
+
+        if (matchedCatalogProd && !structuredSummary) {
+          structuredSummary = JSON.stringify([
+            {
+              product_code: matchedCatalogProd.code,
+              product_name: matchedCatalogProd.name,
+              specification: matchedCatalogProd.specification || "",
+              unit: matchedCatalogProd.unit || "Hộp",
+              quantity: 1,
+              estimated_price: Number(matchedCatalogProd.cost_price || matchedCatalogProd.standard_price || 0)
+            }
+          ]);
+        }
+      }
+
       const payload = {
         ...wfForm,
-        target_dept: step0Dept || wfForm.target_dept,
+        results_summary: structuredSummary,
+        target_dept: effectiveTargetDept,
         requester_name: wfForm.requester_name || currentStaffName,
         assignee_name: step0Assignee,
         steps: sanitizedSteps
@@ -10172,14 +10243,22 @@ ${wf.description || ""}`}
 
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <label className="font-bold text-slate-700 dark:text-slate-300">Sản phẩm / Thiết bị</label>
-                <span className="text-[10px] text-purple-400">Chọn hoặc gõ tìm</span>
+                <label className="font-bold text-slate-700 dark:text-slate-300">
+                  Sản phẩm / Thiết bị
+                  {(wfForm.workflow_type === "TO_PROCUREMENT" ||
+                    isSameWorkspaceDept(wfForm.target_dept, "Cung Ứng")) && (
+                    <span className="text-rose-500 ml-1" title="Bắt buộc chọn Mã & Tên sản phẩm từ Bảng mã sản xuất khi tạo PR">
+                      * (Bắt buộc chọn Mã SP)
+                    </span>
+                  )}
+                </label>
+                <span className="text-[10px] text-purple-400">Chọn từ Bảng mã SX</span>
               </div>
               <SearchableProductSelect
                 value={wfForm.product_info}
                 onChange={(val) => setWfForm({ ...wfForm, product_info: val })}
                 productList={productList}
-                placeholder="Chọn hoặc gõ tìm Sản phẩm / Kit / Máy..."
+                placeholder="Chọn Mã & Tên sản phẩm từ Bảng mã sản xuất..."
               />
             </div>
 
