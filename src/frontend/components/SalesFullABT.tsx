@@ -62,6 +62,7 @@ import {
 import { motion, AnimatePresence } from "framer-motion";
 import { cn } from "@/backend/services/utils";
 import { Modal } from "@/frontend/components/Modal";
+import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { dispatchCompanyConfigUpdated, getDefaultCompanyConfig } from "@/frontend/utils/companyConfig";
@@ -4918,20 +4919,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const file = e.target.files?.[0];
         if (!file) return;
 
-        const formData = new FormData();
-        formData.append("file", file);
-
         try {
             showToast(`Đang tải lên tệp "${file.name}"...`, "info");
-            const res = await fetch("/api/upload", {
-                method: "POST",
-                body: formData
-            });
-            const data = await res.json();
-            if (data.success) {
+            const data = await uploadSingleFileSmart(file);
+            if (data.success && data.url) {
                 const newAttachment = {
-                    name: data.name,
-                    size: data.size,
+                    name: data.name || file.name,
+                    size: data.size || file.size,
                     url: data.url
                 };
                 setTaskAttachments(prev => [...prev, newAttachment]);
@@ -5028,20 +5022,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (!file) return;
 
         setIsUploadingLogFile(true);
-        const formData = new FormData();
-        formData.append("file", file);
-
         try {
             showToast(`Đang tải lên tệp "${file.name}"...`, "info");
-            const res = await fetch("/api/upload", {
-                method: "POST",
-                body: formData
-            });
-            const data = await res.json();
-            if (data.success) {
-                setNewTaskLogAttachment(data.name);
+            const data = await uploadSingleFileSmart(file);
+            if (data.success && data.url) {
+                setNewTaskLogAttachment(data.name || file.name);
                 setNewTaskLogFileUrl(data.url);
-                setNewTaskLogFileSize(data.size);
+                setNewTaskLogFileSize(String(data.size || file.size));
                 showToast(`Đã tải lên tệp "${file.name}"!`, "success");
             } else {
                 showToast(data.error || "Tải tệp lên thất bại", "error");
@@ -11124,22 +11111,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const handleUploadContractFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
-        const formData = new FormData();
-        formData.append("file", file);
         try {
-            const res = await fetch("/api/upload", { method: "POST", body: formData });
-            if (res.ok) {
-                const data = await res.json();
+            const data = await uploadSingleFileSmart(file);
+            if (data.success && data.url) {
                 const newFile = {
                     name: file.name,
                     size: file.size,
-                    url: data.url || `/uploads/${file.name}`,
+                    url: data.url,
                     uploaded_at: new Date().toISOString()
                 };
                 setContractAttachedFiles(prev => [...prev, newFile]);
                 showToast(`Đã tải lên tệp ${file.name} thành công!`, "success");
             } else {
-                showToast("Lỗi khi tải tệp lên máy chủ", "error");
+                showToast(data.error || "Lỗi khi tải tệp lên máy chủ", "error");
             }
         } catch (err) {
             console.error(err);
@@ -11154,13 +11138,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const file = e.target.files?.[0];
         if (!file) return;
         setUploadingScanContractId(contractId);
-        const formData = new FormData();
-        formData.append("file", file);
         try {
-            const res = await fetch("/api/upload", { method: "POST", body: formData });
-            if (res.ok) {
-                const data = await res.json();
-                const fileUrl = data.url || `/uploads/${data.fileName || file.name}`;
+            const data = await uploadSingleFileSmart(file);
+            if (data.success && data.url) {
+                const fileUrl = data.url;
                 const fileItem = {
                     name: file.name,
                     size: file.size,

@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
+import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import {
     ClipboardCheck,
     Calendar,
@@ -2150,20 +2151,14 @@ export function ApplicationFullABT() {
         if (!file) return;
 
         setIsUploadingLogFile(true);
-        const formData = new FormData();
-        formData.append("file", file);
 
         try {
             showToast(`Đang tải lên tệp "${file.name}"...`, "info");
-            const res = await fetch("/api/upload", {
-                method: "POST",
-                body: formData
-            });
-            const data = await res.json();
-            if (data.success) {
-                setNewTaskLogAttachment(data.name);
+            const data = await uploadSingleFileSmart(file);
+            if (data.success && data.url) {
+                setNewTaskLogAttachment(data.name || file.name);
                 setNewTaskLogFileUrl(data.url);
-                setNewTaskLogFileSize(data.size);
+                setNewTaskLogFileSize(String(data.size || file.size));
                 showToast(`Đã tải lên tệp "${file.name}"!`, "success");
             } else {
                 showToast(data.error || "Tải tệp lên thất bại", "error");

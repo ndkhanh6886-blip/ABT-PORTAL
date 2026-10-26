@@ -38,6 +38,7 @@ import {
 import { Modal } from "@/frontend/components/Modal";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
+import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 
 export interface AttachedFile {
   id: string;
@@ -503,31 +504,23 @@ export const LegalModule: React.FC = () => {
           : `${Math.round(file.size / 1024)} KB`;
 
       try {
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await fetch("/api/upload", {
-          method: "POST",
-          body: formData
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data?.url) {
-            const attached: AttachedFile = {
-              id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
-              name: file.name,
-              size: sizeStr,
-              type: file.type || "application/pdf",
-              dataUrl: data.url,
-              uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-              note: "File đính kèm tải lên máy chủ"
-            };
-            setNewContractForm(prev => ({
-              ...prev,
-              attachments: [...prev.attachments, attached]
-            }));
-            uploadedCount++;
-            continue;
-          }
+        const data = await uploadSingleFileSmart(file);
+        if (data.success && data.url) {
+          const attached: AttachedFile = {
+            id: `att-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
+            name: file.name,
+            size: sizeStr,
+            type: file.type || "application/pdf",
+            dataUrl: data.url,
+            uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+            note: "File đính kèm tải lên máy chủ"
+          };
+          setNewContractForm(prev => ({
+            ...prev,
+            attachments: [...prev.attachments, attached]
+          }));
+          uploadedCount++;
+          continue;
         }
       } catch (err) {
         console.warn("Server upload failed, checking small file fallback:", err);

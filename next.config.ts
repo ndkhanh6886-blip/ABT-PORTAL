@@ -7,6 +7,10 @@ const nextConfig: NextConfig = {
   experimental: {
     cpus: 1,
     workerThreads: false,
+    proxyClientMaxBodySize: "250mb",
+    serverActions: {
+      bodySizeLimit: "250mb",
+    },
   },
 };
 

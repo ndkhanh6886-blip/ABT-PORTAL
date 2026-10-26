@@ -50,6 +50,7 @@ import {
 import { useAuth, DEFAULT_MEMBERS } from "@/frontend/contexts/AuthContext";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { Modal } from "@/frontend/components/Modal";
+import { uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import {
   formatVietnamTime,
   formatVietnamDate,
@@ -998,7 +999,6 @@ export const EnterpriseChatModule: React.FC = () => {
     if (fileList.length === 0) return;
 
     setIsUploading(true);
-    const safetyReset = setTimeout(() => setIsUploading(false), 15000);
     try {
       const uploaded: any[] = [];
       for (let i = 0; i < fileList.length; i++) {
@@ -1006,34 +1006,19 @@ export const EnterpriseChatModule: React.FC = () => {
         let fileUrl = "";
         let fileName = file.name;
         let fileSize = file.size;
-        let fileType = file.type || "image/png";
+        let fileType = file.type || "application/octet-stream";
 
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 12000);
-          const formData = new FormData();
-          formData.append("file", file);
-          const res = await fetch("/api/upload", {
-            method: "POST",
-            body: formData,
-            signal: controller.signal
-          });
-          clearTimeout(timeoutId);
-          if (res.ok) {
-            const data = await res.json();
-            if (data && (data.url || data.fileUrl)) {
-              fileUrl = data.url || data.fileUrl;
-              fileName = data.name || file.name;
-              fileSize = data.size || file.size;
-              fileType = data.type || file.type || "image/png";
-            }
-          }
-        } catch {
-          // Automatic fallback to inline base64 Data URL below
-        }
-
-        if (!fileUrl) {
+        const res = await uploadSingleFileSmart(file);
+        if (res.success && res.url) {
+          fileUrl = res.url;
+          fileName = res.name || file.name;
+          fileSize = res.size || file.size;
+          fileType = res.type || file.type || fileType;
+        } else if (file.size <= 5 * 1024 * 1024) {
+          // Chỉ fallback sang Base64 cho tệp/hình ảnh nhỏ <= 5MB nếu ngoại tuyến
           fileUrl = await readFileAsDataUrl(file);
+        } else {
+          showToast(res.error || `Không tải lên được tệp "${file.name}"`, "error");
         }
 
         if (fileUrl) {
@@ -1057,7 +1042,6 @@ export const EnterpriseChatModule: React.FC = () => {
     } catch (err: any) {
       showToast("Lỗi tải tệp: " + (err?.message || "Không xác định"), "error");
     } finally {
-      clearTimeout(safetyReset);
       setIsUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
       if (imageInputRef.current) imageInputRef.current.value = "";

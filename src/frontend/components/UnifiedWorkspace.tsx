@@ -63,7 +63,7 @@ import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { cn } from "@/backend/services/utils";
 import { todayVN, toVNDateString, nowVNDateTime } from "@/backend/services/dates";
-import { AttachmentPicker, AttachmentList } from "@/frontend/components/AttachmentPicker";
+import { AttachmentPicker, AttachmentList, uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 
 // Configuration for Departments
@@ -3710,7 +3710,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   };
 
-  // Upload attachments via /api/upload
+  // Upload attachments via /api/upload (supports automatic 2MB chunked upload for large .rar/.zip/.pdf/video files)
   const handleFileUpload = async (
     files: FileList | null,
     target: "record" | "create" | "comment" | "task" | "schedule" | "announcement"
@@ -3721,24 +3721,22 @@ export const UnifiedWorkspace: React.FC = () => {
       const uploaded: Array<{ name: string; url: string; size?: number; type?: string; uploaded_at?: string }> = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await fetch("/api/upload", {
-          method: "POST",
-          body: formData
-        });
-        const data = await res.json();
-        if (data.success) {
+        const res = await uploadSingleFileSmart(file);
+        if (res.success && res.url) {
           uploaded.push({
-            name: data.name || file.name,
-            url: data.url,
-            size: data.size || file.size,
-            type: data.type || file.type,
+            name: res.name || file.name,
+            url: res.url,
+            size: res.size || file.size,
+            type: res.type || file.type,
             uploaded_at: nowVNDateTime()
           });
         } else {
-          showToast(data.error || `Lỗi tải lên tệp ${file.name}`, "error");
+          showToast(res.error || `Lỗi tải lên tệp ${file.name}`, "error");
         }
+      }
+
+      if (uploaded.length === 0) {
+        return;
       }
 
       if (target === "record") {
@@ -11034,29 +11032,31 @@ ${wf.description || ""}`}
                       const uploaded: any[] = [];
                       for (let i = 0; i < files.length; i++) {
                         const file = files[i];
-                        const formData = new FormData();
-                        formData.append("file", file);
-                        const res = await fetch("/api/upload", { method: "POST", body: formData });
-                        const data = await res.json();
-                        if (data.success) {
+                        const res = await uploadSingleFileSmart(file);
+                        if (res.success && res.url) {
                           uploaded.push({
-                            name: data.name || file.name,
-                            url: data.url,
-                            size: data.size || file.size,
-                            type: data.type || file.type,
+                            name: res.name || file.name,
+                            url: res.url,
+                            size: res.size || file.size,
+                            type: res.type || file.type,
                             uploaded_at: nowVNDateTime()
                           });
+                        } else {
+                          showToast(res.error || `Không tải lên được tệp ${file.name}`, "error");
                         }
                       }
-                      setAdvanceStepData(prev => ({
-                        ...prev,
-                        attachments: [...prev.attachments, ...uploaded]
-                      }));
-                      showToast(`Đã tải lên ${uploaded.length} tệp`, "success");
+                      if (uploaded.length > 0) {
+                        setAdvanceStepData(prev => ({
+                          ...prev,
+                          attachments: [...prev.attachments, ...uploaded]
+                        }));
+                        showToast(`Đã tải lên ${uploaded.length} tệp thành công!`, "success");
+                      }
                     } catch (err: any) {
                       showToast("Lỗi tải tệp: " + err.message, "error");
                     } finally {
                       setIsUploading(false);
+                      e.target.value = "";
                     }
                   }}
                 />
