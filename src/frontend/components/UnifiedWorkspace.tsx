@@ -9871,7 +9871,6 @@ ${wf.description || ""}`}
                 onChange={(val) => setTaskForm({ ...taskForm, assignee_name: val })}
                 personnelList={personnelList}
                 filterDepartment={rolePerspective === "manager" ? taskForm.department : undefined}
-                disabled={rolePerspective === "staff"}
                 placeholder="Tìm & chọn nhân sự phụ trách..."
               />
             </div>
@@ -10291,34 +10290,114 @@ ${wf.description || ""}`}
             </details>
           )}
 
-          <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={() => setIsTaskModalOpen(false)}
-              className="px-4 py-2 rounded-xl font-bold border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
-            >
-              Hủy
-            </button>
-            {taskForm.id && (
+          <div className="flex items-center justify-between flex-wrap gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
+            <div>
+              {taskForm.id && (
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const wfCode = (taskForm as any).related_workflow_code;
+                      if (!window.confirm(`Bạn có chắc chắn muốn XÓA / HỦY công việc "${taskForm.title}" để tạo lại không?`)) return;
+                      try {
+                        const res = await fetch("/api/workflows?action=delete_task", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ id: taskForm.id })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                          showToast("Đã xóa / hủy công việc thành công!", "info");
+                          setIsTaskModalOpen(false);
+                          fetchData();
+                        } else {
+                          showToast(data.error || "Không thể xóa công việc", "error");
+                        }
+                      } catch {
+                        showToast("Lỗi kết nối máy chủ", "error");
+                      }
+                    }}
+                    className="px-3.5 py-2 rounded-xl font-bold border border-rose-200 dark:border-rose-900/80 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/40 dark:hover:bg-rose-900/60 text-rose-700 dark:text-rose-300 flex items-center gap-1.5 cursor-pointer transition-colors"
+                    title="Hủy / Xóa bỏ công việc này nếu tạo nhầm thông tin"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Hủy / Xóa việc</span>
+                  </button>
+
+                  {(taskForm as any).related_workflow_code && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const wfCode = (taskForm as any).related_workflow_code;
+                        if (
+                          !window.confirm(
+                            `Bạn muốn HỦY & XÓA LUÔN PHIẾU PHỐI HỢP [${wfCode}] cùng toàn bộ các bước công việc liên quan để tạo lại mới từ đầu?`
+                          )
+                        ) {
+                          return;
+                        }
+                        try {
+                          const res = await fetch("/api/workflows?action=delete_task", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              id: taskForm.id,
+                              cancel_workflow_code: wfCode,
+                              delete_workflow: true
+                            })
+                          });
+                          const data = await res.json();
+                          if (data.success) {
+                            showToast(`Đã hủy & xóa phiếu ${wfCode} cùng công việc liên quan!`, "info");
+                            setIsTaskModalOpen(false);
+                            fetchData();
+                          } else {
+                            showToast(data.error || "Không thể hủy phiếu phối hợp", "error");
+                          }
+                        } catch {
+                          showToast("Lỗi kết nối máy chủ", "error");
+                        }
+                      }}
+                      className="px-3 py-2 rounded-xl font-bold border border-amber-300 dark:border-amber-800 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-800 dark:text-amber-300 flex items-center gap-1 cursor-pointer transition-colors"
+                      title="Xóa cả phiếu phối hợp gốc và công việc này để khởi tạo lại nếu bị nhầm"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Hủy cả Phiếu ({(taskForm as any).related_workflow_code})</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 ml-auto">
               <button
                 type="button"
-                onClick={() => {
-                  // Dùng việc này làm mẫu cho một việc mới (việc gốc giữ nguyên)
-                  setTaskForm((prev: any) => ({ ...prev, id: null, task_code: undefined, logs: [], result: "", attachments: [], status: "TODO", title: `${prev.title} (bản sao)` }));
-                  showToast("Đã chuyển thành việc mới - sửa nội dung rồi bấm Tạo Công Việc", "info");
-                }}
-                className="px-4 py-2 rounded-xl font-bold border border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
-                title="Tạo việc mới từ nội dung việc này, việc gốc giữ nguyên"
+                onClick={() => setIsTaskModalOpen(false)}
+                className="px-4 py-2 rounded-xl font-bold border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
               >
-                Nhân bản thành việc mới
+                Đóng
               </button>
-            )}
-            <button
-              type="submit"
-              className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
-            >
-              {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
-            </button>
+              {taskForm.id && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Dùng việc này làm mẫu cho một việc mới (việc gốc giữ nguyên)
+                    setTaskForm((prev: any) => ({ ...prev, id: null, task_code: undefined, logs: [], result: "", attachments: [], status: "TODO", title: `${prev.title} (bản sao)` }));
+                    showToast("Đã chuyển thành việc mới - sửa nội dung rồi bấm Tạo Công Việc", "info");
+                  }}
+                  className="px-4 py-2 rounded-xl font-bold border border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40"
+                  title="Tạo việc mới từ nội dung việc này, việc gốc giữ nguyên"
+                >
+                  Nhân bản thành việc mới
+                </button>
+              )}
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
+              >
+                {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
+              </button>
+            </div>
           </div>
         </form>
       </Modal>

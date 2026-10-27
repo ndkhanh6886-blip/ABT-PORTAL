@@ -1289,7 +1289,7 @@ export const ProcurementModule: React.FC = () => {
             <div class="sig-title">Người Lập Đơn</div>
             <div class="sig-sub">(Ký & ghi rõ họ tên)</div>
             <div class="sig-space"></div>
-            <div class="sig-name">${po.creator_name || "Trần Thị Trà My"}</div>
+            <div class="sig-name">${po.created_by || po.creator_name || user?.full_name || user?.name || "Chuyên viên Cung ứng"}</div>
           </div>
           <div class="sig-box">
             <div class="sig-title">Ban Giám Đốc Phê Duyệt</div>
@@ -1319,6 +1319,41 @@ export const ProcurementModule: React.FC = () => {
     writeSafePrintDocument(printWindow, htmlContent);
   };
 
+  const getPOCreator = (po: any) => {
+    if (po?.created_by && po.created_by !== "Phòng Cung Ứng") return po.created_by;
+    if (po?.creator_name) return po.creator_name;
+    const items: any[] = Array.isArray(po?.items) ? po.items : [];
+    const prCode = items.map((it) => itemSourcePR(it)).find(Boolean);
+    if (prCode) {
+      const matchedPr = purchaseRequests.find(
+        (pr: any) => String(pr.workflow_code || "").trim().toUpperCase() === String(prCode).trim().toUpperCase()
+      );
+      if (
+        matchedPr?.assignee_name &&
+        matchedPr.assignee_name !== "Bộ Phận Thu Mua" &&
+        matchedPr.assignee_name !== "Phòng Cung Ứng"
+      ) {
+        return matchedPr.assignee_name;
+      }
+      if (matchedPr?.requester_name) return matchedPr.requester_name;
+    }
+    return po?.created_by || user?.full_name || user?.name || "Chuyên viên Cung ứng";
+  };
+
+  const openPRByCode = (prCode: string) => {
+    const clean = String(prCode || "").trim();
+    if (!clean) return;
+    const matched = purchaseRequests.find(
+      (pr: any) => String(pr.workflow_code || "").trim().toUpperCase() === clean.toUpperCase()
+    );
+    if (matched) {
+      setSelectedPODetail(null);
+      setSelectedPRDetail(matched);
+    } else {
+      alert(`Không tìm thấy phiếu đề xuất ${clean} trong danh sách PR hiện tại.`);
+    }
+  };
+
   // Save PO (H7: single atomic server transaction)
   const handleSavePO = async () => {
     if (!poForm.supplier_name || !poForm.items || poForm.items.length === 0) {
@@ -1329,7 +1364,10 @@ export const ProcurementModule: React.FC = () => {
       const res = await fetch("/api/procurement?action=order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(poForm)
+        body: JSON.stringify({
+          ...poForm,
+          created_by: poForm.created_by || user?.full_name || user?.name || user?.username || "Chuyên viên Cung ứng"
+        })
       });
       const data = await res.json();
       if (data.success) {
@@ -1515,7 +1553,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const openReceiveModal = (po: any) => {
     const items: any[] = Array.isArray(po.items) ? po.items : [];
     const rq = po.received_qty || {};
-    const lines = items
+    const lines: any[] = items
       .map((it, idx) => {
         const ordered = Number(it.quantity) || 0;
         const received = Number(rq[idx]) || 0;
@@ -1542,8 +1580,30 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       })
       .filter(l => l.ordered - l.received > 0);
     if (lines.length === 0) {
-      alert(`PO ${po.po_code} đã nhập kho đủ.`);
-      return;
+      const wantExtra = window.confirm(
+        `PO ${po.po_code} đã nhập đủ số lượng theo đơn đặt.\n\nBạn có muốn mở phiếu Nhập kho để nhập bổ sung / phát sinh thêm hàng cho PO này không?`
+      );
+      if (!wantExtra) return;
+      lines.push({
+        line_index: -1,
+        is_extra_line: true,
+        product_code: items[0]?.product_code || "",
+        product_name: cleanItemName(items[0]?.product_name || ""),
+        specification: items[0]?.specification || "",
+        unit: items[0]?.unit || "Cái",
+        unit_price: Number(items[0]?.unit_price) || 0,
+        ordered: Number(items[0]?.quantity) || 0,
+        received: Number(rq[0]) || 0,
+        quantity: 1,
+        lot_number: "",
+        manufacture_date: "",
+        expiry_date: "",
+        no_expiry: false,
+        storage_condition: items[0]?.storage_condition || "",
+        shelf_position: items[0]?.shelf_position || "",
+        qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+        notes: "Nhập phát sinh / bổ sung"
+      });
     }
     receiveRequestId.current = `${po.po_code}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setReceiveHeader({
@@ -1565,14 +1625,30 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     const lines = receiveLines.filter(l => (Number(l.quantity) || 0) > 0);
     if (lines.length === 0) { alert("Nhập số lượng thực nhận cho ít nhất 1 dòng."); return; }
     for (const l of lines) {
-      if (!String(l.lot_number).trim()) { alert(`${l.product_code}: chưa nhập số lô.`); return; }
+      if (!String(l.product_code || "").trim()) { alert("Vui lòng chọn hoặc nhập Mã hàng cho dòng phát sinh."); return; }
+      if (!String(l.lot_number).trim()) { alert(`${l.product_code}: chưa nhập số lô / số Serial.`); return; }
       if (!l.no_expiry && !l.expiry_date) { alert(`${l.product_code} (lô ${l.lot_number}): chưa nhập hạn dùng, hoặc đánh dấu "Không có HSD".`); return; }
     }
     const perLine: Record<number, number> = {};
-    for (const l of lines) perLine[l.line_index] = (perLine[l.line_index] || 0) + (Number(l.quantity) || 0);
+    for (const l of lines) {
+      if (Number(l.line_index) >= 0) {
+        perLine[l.line_index] = (perLine[l.line_index] || 0) + (Number(l.quantity) || 0);
+      }
+    }
+    let hasOverDelivery = lines.some(l => Number(l.line_index) < 0);
+    const overMessages: string[] = [];
     for (const [idx, q] of Object.entries(perLine)) {
       const l = receiveLines.find(x => x.line_index === Number(idx));
-      if (l && q > l.ordered - l.received) { alert(`${l.product_code}: còn phải nhập ${l.ordered - l.received}, đang nhập ${q} — vượt số lượng đặt.`); return; }
+      if (l && q > l.ordered - l.received) {
+        hasOverDelivery = true;
+        overMessages.push(`- ${l.product_code}: Đặt ${l.ordered}, đã nhập ${l.received}, lần này nhập ${q} (vượt ${q - Math.max(0, l.ordered - l.received)} ${l.unit || "đơn vị"})`);
+      }
+    }
+    if (overMessages.length > 0) {
+      const ok = window.confirm(
+        `⚠️ Số lượng thực nhận vượt số lượng đặt trên PO:\n\n${overMessages.join("\n")}\n\nBạn có xác nhận vẫn nhập kho toàn bộ số lượng thực tế này không?`
+      );
+      if (!ok) return;
     }
     setIsSubmittingReceive(true);
     try {
@@ -1583,6 +1659,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           po_id: receiveTarget.id,
           po_code: receiveTarget.po_code,
           request_id: receiveRequestId.current,
+          allow_over_delivery: hasOverDelivery,
           receipt_date: receiveHeader.receipt_date,
           warehouse_name: receiveHeader.warehouse_name,
           received_by: receiveHeader.received_by,
@@ -1593,6 +1670,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           receipt_notes: receiveNotes,
           lines: lines.map(l => ({
             line_index: l.line_index,
+            product_code: l.product_code,
+            product_name: l.product_name,
             quantity: Number(l.quantity) || 0,
             specification: l.specification || "",
             unit: l.unit || "Hộp",
@@ -2726,7 +2805,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           notes:
             consolidateNotes ||
             `Đơn PO tổng hợp gom ${combinedItems.length} mặt hàng từ các PR: ${Array.from(involvedPRKeys).join(", ")}`,
-          created_by: "Phòng Cung Ứng"
+          created_by: user?.full_name || user?.name || user?.username || "Chuyên viên Cung ứng"
         })
       });
 
@@ -3608,6 +3687,38 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               <FileText className="w-3.5 h-3.5" />
                               {po.po_code}
                             </button>
+                            <div className="mt-1 font-sans font-normal text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
+                              <span>👤 Lập bởi:</span>
+                              <span className="font-semibold text-slate-700 dark:text-slate-200">{getPOCreator(po)}</span>
+                            </div>
+                            {(() => {
+                              const prCodes = Array.from(
+                                new Set<string>(
+                                  (Array.isArray(po.items) ? po.items : [])
+                                    .map((it: any) => String(itemSourcePR(it) || ""))
+                                    .filter(Boolean)
+                                )
+                              );
+                              if (prCodes.length === 0) return null;
+                              return (
+                                <div className="mt-1 flex flex-wrap gap-1 font-sans">
+                                  {prCodes.map((prc: string) => (
+                                    <button
+                                      key={prc}
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openPRByCode(prc);
+                                      }}
+                                      title={`Bấm để mở xem chi tiết Phiếu PR ${prc}`}
+                                      className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] font-mono font-bold hover:bg-indigo-100 hover:underline cursor-pointer"
+                                    >
+                                      🔗 {prc}
+                                    </button>
+                                  ))}
+                                </div>
+                              );
+                            })()}
                           </td>
 
                           {/* Col 2: Dates */}
@@ -5713,6 +5824,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     <div className="text-lg font-black text-slate-900">ĐƠN ĐẶT MUA HÀNG</div>
                     <div className="text-xs font-mono font-bold text-orange-600 mt-1">SỐ: {d.po_code}</div>
                     <div className="text-[11px] text-slate-500 mt-0.5">Ngày lập: {formatDate(d.order_date)}</div>
+                    <div className="text-[11px] text-slate-600 mt-0.5">
+                      Người lập PO: <strong className="text-indigo-700">{getPOCreator(d)}</strong>
+                    </div>
                   </div>
                 </div>
 
@@ -5723,9 +5837,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     <div className="text-slate-600 mt-1">Hạn giao hàng dự kiến: <strong>{formatDate(d.expected_delivery_date)}</strong></div>
                   </div>
                   <div>
-                    <div className="font-bold text-slate-900 mb-1">GIAO NHẬN</div>
+                    <div className="font-bold text-slate-900 mb-1">GIAO NHẬN & PHỤ TRÁCH</div>
                     <div className="text-slate-800 font-semibold">Kho Trung Tâm</div>
                     <div className="text-slate-600 mt-1">
+                      Người tạo / Phụ trách PO: <strong className="text-slate-900">{getPOCreator(d)}</strong>
+                    </div>
+                    <div className="text-slate-600 mt-0.5">
                       Tình trạng nhập kho: <strong>{d.status === "COMPLETED" ? "Đã nhập đủ" : d.status === "PARTIALLY_RECEIVED" ? "Đã nhập 1 phần" : "Chưa nhập"}</strong>
                       {poReceipts.length > 0 && <> • {poReceipts.length} phiếu nhập</>}
                     </div>
@@ -5752,6 +5869,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       {dItems.map((it: any, i: number) => {
                         const got = receivedOf(d, i);
                         const qty = Number(it.quantity) || 0;
+                        const prSrc = itemSourcePR(it);
                         return (
                           <tr key={i}>
                             <td className="p-2 border-r border-slate-200 text-center">{i + 1}</td>
@@ -5762,7 +5880,21 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <td className={`p-2 border-r border-slate-200 text-center font-bold ${got >= qty && qty > 0 ? "text-emerald-600" : got > 0 ? "text-teal-600" : "text-slate-400"}`}>{got}</td>
                             <td className="p-2 border-r border-slate-200 text-right font-mono">{formatCurrency(it.unit_price)}</td>
                             <td className="p-2 border-r border-slate-200 text-right font-mono font-bold">{formatCurrency(qty * (Number(it.unit_price) || 0))}</td>
-                            <td className="p-2 border-r border-slate-200 font-mono text-[10px] text-indigo-600">{itemSourcePR(it)}</td>
+                            <td className="p-2 border-r border-slate-200 font-mono text-[10px]">
+                              {prSrc ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openPRByCode(prSrc)}
+                                  title={`Bấm để xem chi tiết Phiếu PR ${prSrc}`}
+                                  className="px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-bold hover:bg-indigo-100 hover:underline cursor-pointer inline-flex items-center gap-1"
+                                >
+                                  <Eye className="w-3 h-3 text-indigo-500" />
+                                  <span>{prSrc}</span>
+                                </button>
+                              ) : (
+                                <span className="text-slate-400">—</span>
+                              )}
+                            </td>
                             <td className="p-2 text-[11px] text-slate-600">{it.notes || ""}</td>
                           </tr>
                         );
@@ -5948,12 +6080,46 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {receiveLines.map((l: any, i: number) => {
-                      const isFirstOfLine = i === 0 || receiveLines[i - 1].line_index !== l.line_index;
+                      const isFirstOfLine = !l.is_extra_line && (i === 0 || receiveLines[i - 1].line_index !== l.line_index);
                       const setL = (patch: any) => setReceiveLines(prev => prev.map((x, j) => j === i ? { ...x, ...patch } : x));
                       return (
                         <tr key={i} className="align-top hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                           <td className="p-2">
-                            {isFirstOfLine ? (
+                            {l.is_extra_line ? (
+                              <div className="space-y-1">
+                                <select
+                                  value={l.product_code || ""}
+                                  onChange={(e) => {
+                                    const code = e.target.value;
+                                    const prod = mergedCatalogProducts.find((p: any) => p.code === code) || products.find((p: any) => p.code === code);
+                                    if (prod) {
+                                      setL({
+                                        product_code: prod.code,
+                                        product_name: prod.name,
+                                        specification: prod.specification || "",
+                                        unit: prod.unit || "Cái",
+                                        unit_price: Number(prod.cost_price) || 0,
+                                        storage_condition: prod.storage_condition || l.storage_condition || "",
+                                        shelf_position: prod.shelf_position || l.shelf_position || ""
+                                      });
+                                    } else {
+                                      setL({ product_code: code });
+                                    }
+                                  }}
+                                  className="w-full p-1 rounded border border-orange-300 dark:border-orange-700 bg-orange-50/50 dark:bg-slate-800 text-[11px] font-mono font-bold text-orange-700 dark:text-orange-300"
+                                >
+                                  <option value="">-- Chọn mã hàng / máy --</option>
+                                  {mergedCatalogProducts.map((p: any) => (
+                                    <option key={p.code} value={p.code}>
+                                      {p.code} — {p.name}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="text-[10px] text-slate-500 truncate max-w-[210px]" title={l.product_name}>
+                                  {l.product_name || "Dòng máy / hàng bổ sung"}
+                                </div>
+                              </div>
+                            ) : isFirstOfLine ? (
                               <>
                                 <div className="flex items-center gap-1.5">
                                   <span className="font-mono font-bold text-orange-600">{l.product_code}</span>
@@ -5961,10 +6127,53 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 </div>
                                 <div className="text-[10px] text-slate-500 truncate max-w-[210px]" title={l.product_name}>{l.product_name}</div>
                                 {l.specification && <div className="text-[10px] text-slate-400 truncate max-w-[210px]">{l.specification}</div>}
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setReceiveLines((prev) => {
+                                      const n = [...prev];
+                                      n.splice(i + 1, 0, {
+                                        ...l,
+                                        quantity: 1,
+                                        lot_number: "",
+                                        manufacture_date: "",
+                                        expiry_date: "",
+                                        no_expiry: l.no_expiry,
+                                        notes: ""
+                                      });
+                                      return n;
+                                    })
+                                  }
+                                  className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 text-[10px] font-bold hover:bg-emerald-100 cursor-pointer"
+                                  title="Tách lô hoặc thêm dòng Serial/Máy cho mặt hàng này"
+                                >
+                                  <Plus className="w-3 h-3" /> Tách lô / Thêm dòng máy
+                                </button>
                               </>
-                            ) : <div className="text-[10px] text-slate-400 pl-3 pt-2">↳ lô khác của {l.product_code}</div>}
+                            ) : (
+                              <div className="text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold pl-2 pt-2 flex items-center justify-between gap-1">
+                                <span>↳ Lô / Máy khác ({l.product_code})</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setReceiveLines((prev) => prev.filter((_, j) => j !== i))}
+                                  className="text-rose-500 hover:underline text-[10px] cursor-pointer"
+                                >
+                                  ✕ Xóa
+                                </button>
+                              </div>
+                            )}
                           </td>
-                          <td className="p-2 text-center font-mono pt-3">{isFirstOfLine ? <>{l.ordered} / <span className="text-teal-600">{l.received}</span></> : ""}</td>
+                          <td className="p-2 text-center font-mono pt-3">
+                            {l.is_extra_line ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 font-sans font-bold">
+                                Phát sinh
+                              </span>
+                            ) : isFirstOfLine ? (
+                              <>{l.ordered} / <span className="text-teal-600">{l.received}</span></>
+                            ) : (
+                              ""
+                            )}
+                          </td>
                           <td className="p-2">
                             <input type="number" min={0} value={l.quantity} onChange={(e) => setL({ quantity: Math.max(0, parseInt(e.target.value) || 0) })}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-center" />
@@ -6024,11 +6233,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]" />
                           </td>
                           <td className="p-2 text-center whitespace-nowrap">
-                            <button type="button" title="Tách thêm 1 lô cho mặt hàng này"
-                              onClick={() => setReceiveLines(prev => { const n = [...prev]; n.splice(i + 1, 0, { ...l, quantity: 0, lot_number: "", manufacture_date: "", expiry_date: "", no_expiry: l.no_expiry, notes: "" }); return n; })}
+                            <button type="button" title="Tách thêm 1 lô / dòng máy cho mặt hàng này"
+                              onClick={() => setReceiveLines(prev => { const n = [...prev]; n.splice(i + 1, 0, { ...l, quantity: 1, lot_number: "", manufacture_date: "", expiry_date: "", no_expiry: l.no_expiry, notes: "" }); return n; })}
                               className="p-1 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"><Plus className="w-4 h-4" /></button>
-                            {!isFirstOfLine && (
-                              <button type="button" title="Bỏ lô này" onClick={() => setReceiveLines(prev => prev.filter((_, j) => j !== i))}
+                            {(!isFirstOfLine || l.is_extra_line) && (
+                              <button type="button" title="Bỏ dòng này" onClick={() => setReceiveLines(prev => prev.filter((_, j) => j !== i))}
                                 className="p-1 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"><Trash2 className="w-4 h-4" /></button>
                             )}
                           </td>
@@ -6037,6 +6246,75 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     })}
                   </tbody>
                 </table>
+                <div className="p-2.5 bg-slate-50 dark:bg-slate-800/60 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const base = receiveLines[0] || {};
+                        setReceiveLines((prev) => [
+                          ...prev,
+                          {
+                            line_index: typeof base.line_index === "number" ? base.line_index : 0,
+                            product_code: base.product_code || "",
+                            product_name: base.product_name || "",
+                            specification: base.specification || "",
+                            unit: base.unit || "Cái",
+                            unit_price: Number(base.unit_price) || 0,
+                            ordered: Number(base.ordered) || 1,
+                            received: Number(base.received) || 0,
+                            quantity: 1,
+                            lot_number: "",
+                            manufacture_date: "",
+                            expiry_date: "",
+                            no_expiry: !!base.no_expiry,
+                            storage_condition: base.storage_condition || "",
+                            shelf_position: base.shelf_position || "",
+                            qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+                            notes: "Thêm máy / lô bổ sung"
+                          }
+                        ]);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> + Thêm dòng Lô / Máy cùng mã (VD: PO 1 máy về 2 máy)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setReceiveLines((prev) => [
+                          ...prev,
+                          {
+                            line_index: -1,
+                            is_extra_line: true,
+                            product_code: "",
+                            product_name: "",
+                            specification: "",
+                            unit: "Cái",
+                            unit_price: 0,
+                            ordered: 0,
+                            received: 0,
+                            quantity: 1,
+                            lot_number: "",
+                            manufacture_date: "",
+                            expiry_date: "",
+                            no_expiry: false,
+                            storage_condition: "15-25°C (Nhiệt độ phòng - Vật tư, Thiết bị)",
+                            shelf_position: "",
+                            qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+                            notes: "Hàng giao thêm / phát sinh ngoài PO"
+                          }
+                        ]);
+                      }}
+                      className="px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> + Thêm mã hàng / máy phát sinh khác
+                    </button>
+                  </div>
+                  <span className="text-[11px] text-slate-500 italic">
+                    💡 Mẹo: Nếu PO đặt 1 máy nhưng NCC giao 2 máy (2 số Serial/Lot), bấm <strong>"+ Thêm dòng Lô / Máy cùng mã"</strong> để nhập cả 2 máy vào kho.
+                  </span>
+                </div>
               </div>
 
               {/* PHẦN 3: GHI CHÚ PHIẾU NHẬP & TỔNG HỢP */}

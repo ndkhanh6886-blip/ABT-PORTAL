@@ -2884,6 +2884,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [quoteEmployee, setQuoteEmployee] = useState("");
     const [quoteRepPhone, setQuoteRepPhone] = useState("");
     const [quoteRepEmail, setQuoteRepEmail] = useState("");
+    const [allCompanyPersonnel, setAllCompanyPersonnel] = useState<any[]>([]);
+    const [isCustomQuoteCreator, setIsCustomQuoteCreator] = useState(false);
+    const [customQuoteCreatorName, setCustomQuoteCreatorName] = useState("");
 
     // Personnel Contact Configurations (Phone, Email, etc.)
     const [salesPersonnelContacts, setSalesPersonnelContacts] = useState<Record<string, { phone?: string; email?: string }>>(() => {
@@ -3840,6 +3843,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [singleProcureEstDelivery, setSingleProcureEstDelivery] = useState(() => todayVN());
     const [singleProcureItemNotes, setSingleProcureItemNotes] = useState<Record<string, string>>({});
     const [singleProcureItemQuantities, setSingleProcureItemQuantities] = useState<Record<string, number>>({});
+    const [singleProcureExcludedKeys, setSingleProcureExcludedKeys] = useState<Record<string, boolean>>({});
+    const [singleMfgExcludedKeys, setSingleMfgExcludedKeys] = useState<Record<string, boolean>>({});
 
     const [combineMfgItemNotes, setCombineMfgItemNotes] = useState<Record<string, string>>({});
     const [combineProcureItemNotes, setCombineProcureItemNotes] = useState<Record<string, string>>({});
@@ -3922,6 +3927,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [isViewDeliverySlipModalOpen, setIsViewDeliverySlipModalOpen] = useState(false);
     // Luồng giao hàng mới: Lập phiếu giao (toàn bộ / từng đợt) -> NVKD xác nhận đã giao theo từng phiếu
     const [deliverySlipMode, setDeliverySlipMode] = useState<"FULL" | "PARTIAL">("FULL");
+    const [deliveryStepStatus, setDeliveryStepStatus] = useState<"PENDING_DELIVERY" | "WAREHOUSE_DELIVERED" | "DELIVERED">("PENDING_DELIVERY");
     const [deliveryBatchNumber, setDeliveryBatchNumber] = useState<number>(1);
     const [editingDeliverySlip, setEditingDeliverySlip] = useState<any>(null);
     const [confirmDeliveryTargetSlip, setConfirmDeliveryTargetSlip] = useState<any>(null);
@@ -4223,7 +4229,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const [isCreateRmaModalOpen, setIsCreateRmaModalOpen] = useState(false);
     const [rmaTargetOrder, setRmaTargetOrder] = useState<any | null>(null);
-    const [rmaSelectedItems, setRmaSelectedItems] = useState<Record<string, { selected: boolean; quantity: number; reason: string }>>({});
+    const [rmaSelectedItems, setRmaSelectedItems] = useState<Record<string, { selected: boolean; quantity: number; reason: string; lotNumber?: string }>>({});
     const [rmaReasonCategory, setRmaReasonCategory] = useState<string>("DEFECTIVE");
     const [rmaRestockAction, setRmaRestockAction] = useState<string>("RESTOCK");
     const [rmaRefundType, setRmaRefundType] = useState<string>("CREDIT_OFFSET");
@@ -4766,8 +4772,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (!res.ok) return;
             const data = await res.json();
             const rawPersonnel: any[] = Array.isArray(data.personnel) ? data.personnel : [];
+            const rawUsers: any[] = Array.isArray(data.users) ? data.users : [];
 
-            if (rawPersonnel.length === 0) return;
+            if (rawPersonnel.length === 0 && rawUsers.length === 0) return;
 
             // Map each real personnel from PostgreSQL table 'personnel'
             const mappedStaff = rawPersonnel
@@ -4783,6 +4790,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     phone: p.phone || "",
                     is_active: p.status === "ACTIVE" || !p.status
                 }));
+
+            // Also include any active system users not already in personnel list
+            const existingNames = new Set(mappedStaff.map((p: any) => String(p.full_name || "").trim().toLowerCase()));
+            const mappedUsers = rawUsers
+                .filter((u: any) => (u.status === "ACTIVE" || !u.status) && u.full_name && !existingNames.has(String(u.full_name).trim().toLowerCase()))
+                .map((u: any) => ({
+                    id: `U-${u.id}`,
+                    employee_id: u.employee_code || `USER-${u.id}`,
+                    employee_code: u.employee_code || `USER-${u.id}`,
+                    full_name: u.full_name,
+                    department: u.department || u.role || "Hệ Thống",
+                    position: u.position || u.role || "Nhân Sự",
+                    email: u.email || "",
+                    phone: u.phone || "",
+                    is_active: true
+                }));
+
+            const combinedCompanyStaff = [...mappedStaff, ...mappedUsers];
+            setAllCompanyPersonnel(combinedCompanyStaff);
 
             // Filter for Sales & Leadership (or all relevant staff)
             const salesStaff = mappedStaff.filter((p: any) => {
@@ -4803,7 +4829,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
 
             const contactsMap: Record<string, { phone?: string; email?: string }> = {};
-            finalList.forEach((p: any) => {
+            combinedCompanyStaff.forEach((p: any) => {
                 contactsMap[p.employee_id] = { phone: p.phone, email: p.email };
             });
             setSalesPersonnelContacts(contactsMap);
@@ -8736,26 +8762,62 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return list;
     };
 
-    // NVKD mặc định khi lập báo giá: không lấy người thuộc Ban Giám Đốc
+    // Danh sách toàn bộ nhân sự có thể chọn làm Người lập / NVKD báo giá (bao gồm user đang đăng nhập, Sales, BGĐ, và toàn bộ nhân sự hệ thống)
+    const quoteCreatorOptions = useMemo(() => {
+        const map = new Map<string, any>();
+        if (loggedInStaff?.employee_id) {
+            map.set(String(loggedInStaff.employee_id), {
+                ...loggedInStaff,
+                isCurrentUser: true
+            });
+        } else if (user?.name) {
+            const currentId = String((user as any)?.employee_id || (user as any)?.employee_code || user.name);
+            map.set(currentId, {
+                employee_id: currentId,
+                full_name: user.name,
+                department: (user as any)?.department || (user as any)?.role || "Hệ Thống",
+                position: (user as any)?.position || (user as any)?.role || "Người lập",
+                email: (user as any)?.email || "",
+                phone: (user as any)?.phone || "",
+                isCurrentUser: true
+            });
+        }
+        (salesPersonnel || []).forEach((p: any) => {
+            if (p?.employee_id && !map.has(String(p.employee_id))) {
+                map.set(String(p.employee_id), p);
+            }
+        });
+        (allCompanyPersonnel || []).forEach((p: any) => {
+            if (p?.employee_id && !map.has(String(p.employee_id))) {
+                map.set(String(p.employee_id), p);
+            }
+        });
+        return Array.from(map.values());
+    }, [loggedInStaff, user, salesPersonnel, allCompanyPersonnel]);
+
+    // Người lập / NVKD mặc định khi lập báo giá: ưu tiên tài khoản đang đăng nhập
     const pickDefaultQuoteRepId = (): string => {
-        const isBgd = (p: any) => {
-            const dept = String(p?.department || "").toLowerCase();
-            const pos = String(p?.position || "").toLowerCase();
-            return dept.includes("giám đốc") || pos.includes("giám đốc") || pos.includes("ceo") || pos.includes("director");
-        };
-        const isAdminPos = (p: any) => String(p?.position || "").toLowerCase().includes("admin");
-        if (loggedInStaff && !isBgd(loggedInStaff)) return loggedInStaff.employee_id;
-        const candidate = salesPersonnel.find(p => !isBgd(p) && !isAdminPos(p)) || salesPersonnel.find(p => !isBgd(p)) || salesPersonnel[0];
-        return candidate?.employee_id || loggedInStaff?.employee_id || "NV-001";
+        if (loggedInStaff?.employee_id) return loggedInStaff.employee_id;
+        if (user?.name) {
+            const matched = quoteCreatorOptions.find((p: any) =>
+                String(p.full_name || "").trim().toLowerCase() === String(user.name).trim().toLowerCase()
+            );
+            if (matched?.employee_id) return matched.employee_id;
+            return String((user as any)?.employee_id || (user as any)?.employee_code || user.name);
+        }
+        return salesPersonnel[0]?.employee_id || quoteCreatorOptions[0]?.employee_id || "NV-001";
     };
 
     const resetQuoteForm = () => {
         setQuoteCustomerId("");
         setQuoteContactName("");
+        setIsCustomQuoteCreator(false);
+        setCustomQuoteCreatorName("");
         const initialRepId = pickDefaultQuoteRepId();
         setQuoteEmployee(initialRepId);
-        setQuoteRepPhone(salesPersonnelContacts[initialRepId]?.phone || "");
-        setQuoteRepEmail(salesPersonnelContacts[initialRepId]?.email || salesPersonnel.find(p => p.employee_id === initialRepId)?.email || "");
+        const repObj = quoteCreatorOptions.find((p: any) => p.employee_id === initialRepId) || salesPersonnel.find((p: any) => p.employee_id === initialRepId);
+        setQuoteRepPhone(salesPersonnelContacts[initialRepId]?.phone || repObj?.phone || "");
+        setQuoteRepEmail(salesPersonnelContacts[initialRepId]?.email || repObj?.email || "");
         setQuoteItems([{ 
             productCode: "", 
             specification: "",
@@ -8782,7 +8844,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setEditingQuoteId(quote.id);
         setQuoteCustomerId(quote.customerId || "");
         setQuoteContactName(quote.contactPerson || "");
-        setQuoteEmployee(quote.salesRepId || loggedInStaff?.employee_id || "");
+        const existingRepId = quote.salesRepId || loggedInStaff?.employee_id || pickDefaultQuoteRepId();
+        const foundInOptions = quoteCreatorOptions.some((p: any) => p.employee_id === existingRepId || p.full_name === quote.salesRepName);
+        if (!foundInOptions && quote.salesRepName) {
+            setIsCustomQuoteCreator(true);
+            setCustomQuoteCreatorName(quote.salesRepName);
+            setQuoteEmployee("__CUSTOM__");
+        } else {
+            setIsCustomQuoteCreator(false);
+            setCustomQuoteCreatorName("");
+            const matchedOpt = quoteCreatorOptions.find((p: any) => p.employee_id === existingRepId || p.full_name === quote.salesRepName);
+            setQuoteEmployee(matchedOpt?.employee_id || existingRepId);
+        }
         setQuoteRepPhone(quote.salesRepPhone || "");
         setQuoteRepEmail(quote.salesRepEmail || "");
         
@@ -8858,7 +8931,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast("Có dòng sản phẩm trong báo giá chưa được chọn mã hàng. Vui lòng chọn sản phẩm hoặc xóa dòng trống!", "warning");
             return;
         }
-        const repId = quoteEmployee || loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "NV-001";
+        const repId = isCustomQuoteCreator
+            ? (customQuoteCreatorName.trim() || loggedInStaff?.employee_id || user?.name || "NV-CUSTOM")
+            : (quoteEmployee || loggedInStaff?.employee_id || user?.name || salesPersonnel[0]?.employee_id || "NV-001");
         
         const custSi = customers.find(c => String(c.id) === String(quoteCustomerId));
         const custLe = salesNvkdCustomers.find(c => String(c.id) === String(quoteCustomerId));
@@ -8903,8 +8978,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const totalDiscount = items.reduce((sum, item) => sum + item.discountAmount, 0); // Tiền chiết khấu tính trên giá trước thuế
         const totalVat = items.reduce((sum, item) => sum + item.vatAmount, 0); // Thuế VAT
 
-        const repObj = salesPersonnel.find(p => p.employee_id === repId);
-        const finalPhone = quoteRepPhone || salesPersonnelContacts[repId]?.phone || "";
+        const repObj = quoteCreatorOptions.find((p: any) => p.employee_id === repId) || salesPersonnel.find((p: any) => p.employee_id === repId);
+        const resolvedRepName = isCustomQuoteCreator
+            ? (customQuoteCreatorName.trim() || repId)
+            : (repObj?.full_name || (loggedInStaff?.employee_id === repId ? loggedInStaff?.full_name : "") || user?.name || repId);
+        const finalPhone = quoteRepPhone || salesPersonnelContacts[repId]?.phone || repObj?.phone || "";
         const finalEmail = quoteRepEmail || salesPersonnelContacts[repId]?.email || repObj?.email || "";
 
         // Auto update contact cache for this NVKD
@@ -8940,7 +9018,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 totalDiscount: totalDiscount, // Chiết khấu tính trên giá trước thuế
                 totalVat: totalVat, // Thuế VAT
                 salesRepId: repId,
-                salesRepName: repObj?.full_name || repId,
+                salesRepName: resolvedRepName,
                 salesRepPhone: finalPhone,
                 salesRepEmail: finalEmail,
                 // Giữ SĐT/Email cũ nếu người liên hệ không đổi nhưng không còn trong hồ sơ KH
@@ -11266,19 +11344,109 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
     };
 
-    // Phase 3: Create RMA Helper (Yêu cầu 15)
+    // Helper: aggregate delivered/issued qty & lots per SKU for an order (across all lots & delivery slips)
+    const getOrderSkuDeliveredLotsInfo = (order: any) => {
+        const orderCode = String(order?.order_code || order?.id || "").trim();
+        const result: Record<string, { orderedQty: number; deliveredQty: number; lots: { lotNo: string; quantity: number; expDate?: string; slipCode?: string }[] }> = {};
+
+        (order?.items || []).forEach((it: any) => {
+            if (it.status === "CANCELLED") return;
+            const code = String(it.productCode || it.product_code || "").trim();
+            if (!code) return;
+            if (!result[code]) {
+                result[code] = { orderedQty: 0, deliveredQty: 0, lots: [] };
+            }
+            result[code].orderedQty += Number(it.quantity) || 0;
+        });
+
+        const orderSlips = (deliverySlips || []).filter((s: any) => {
+            const sOrdId = String(s.orderId || s.order_id || s.orderCode || s.order_code || "").trim();
+            const st = String(s.deliveryStatus || s.status || "").toUpperCase();
+            return sOrdId === orderCode && st !== "CANCELLED";
+        });
+
+        if (orderSlips.length > 0) {
+            orderSlips.forEach((s: any) => {
+                (s.items || []).forEach((si: any) => {
+                    const code = String(si.code || si.productCode || si.product_code || "").trim();
+                    if (!code) return;
+                    const q = Number(si.quantity) || 0;
+                    if (q <= 0) return;
+                    if (!result[code]) result[code] = { orderedQty: 0, deliveredQty: 0, lots: [] };
+                    result[code].deliveredQty += q;
+                    const lotNo = String(si.lotNo || si.lotNumber || si.lot_number || "").trim();
+                    result[code].lots.push({
+                        lotNo: lotNo || "Mặc định",
+                        quantity: q,
+                        expDate: si.expDate || si.exp_date || "",
+                        slipCode: s.code || s.slip_code || s.id || ""
+                    });
+                });
+            });
+        } else if (Array.isArray(order?.deliveries) && order.deliveries.length > 0) {
+            order.deliveries.forEach((del: any) => {
+                (del.itemsDelivered || []).forEach((di: any) => {
+                    const code = String(di.productCode || di.product_code || di.code || "").trim();
+                    if (!code) return;
+                    const q = Number(di.quantity) || 0;
+                    if (q <= 0) return;
+                    if (!result[code]) result[code] = { orderedQty: 0, deliveredQty: 0, lots: [] };
+                    result[code].deliveredQty += q;
+                    const lotNo = String(di.lotNumber || di.lotNo || di.lot_number || "").trim();
+                    result[code].lots.push({
+                        lotNo: lotNo || "Mặc định",
+                        quantity: q,
+                        expDate: di.expDate || di.exp_date || ""
+                    });
+                });
+            });
+        }
+
+        // Also fallback to computeOrderStockAnalysis if deliveredQty is still 0
+        const analysis = computeOrderStockAnalysis(order);
+        const breakdown: any[] = analysis.itemsBreakdown || [];
+        Object.keys(result).forEach((code) => {
+            const b = breakdown.find((x: any) => String(x.code || "").trim().toLowerCase() === code.toLowerCase());
+            const bDeliv = Number(b?.deliveredQty) || 0;
+            if (bDeliv > result[code].deliveredQty) {
+                result[code].deliveredQty = bDeliv;
+            }
+            if (result[code].deliveredQty === 0 && (analysis.isFullyDelivered || order?.status === "Completed")) {
+                result[code].deliveredQty = result[code].orderedQty;
+            }
+        });
+
+        return result;
+    };
+
+    // Phase 3: Create RMA Helper (Yêu cầu 15 & Slide 10: gộp đầy đủ số lượng các lô đã xuất của cùng mã hàng)
     const handleOpenCreateRmaModal = (order: any) => {
         setRmaTargetOrder(order);
-        const initialSelected: Record<string, { selected: boolean; quantity: number; reason: string }> = {};
-        (order.items || []).forEach((it: any) => {
-            const pCode = it.productCode || it.product_code || "";
-            if (pCode && it.status !== "CANCELLED") {
-                initialSelected[pCode] = {
-                    selected: false,
-                    quantity: Number(it.quantity) || 1,
-                    reason: ""
-                };
-            }
+        const orderCode = order.order_code || order.id;
+        const skuLotsInfo = getOrderSkuDeliveredLotsInfo(order);
+        const returnedBefore: Record<string, number> = {};
+        rmaList.filter((r: any) => r.order_code === orderCode && r.status !== "REJECTED").forEach((r: any) => {
+            let its: any = r.items;
+            if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
+            (Array.isArray(its) ? its : []).forEach((it: any) => {
+                const k = it.product_code || it.productCode;
+                if (k) returnedBefore[k] = (returnedBefore[k] || 0) + (Number(it.quantity) || 0);
+            });
+        });
+
+        const initialSelected: Record<string, { selected: boolean; quantity: number; reason: string; lotNumber?: string }> = {};
+        Object.entries(skuLotsInfo).forEach(([pCode, info]) => {
+            const ret = returnedBefore[pCode] || 0;
+            const maxReturnable = Math.max(0, (info.deliveredQty > 0 ? info.deliveredQty : info.orderedQty) - ret);
+            const lotSummary = info.lots.length > 0
+                ? info.lots.map(l => `${l.lotNo} (${l.quantity})`).join(", ")
+                : "";
+            initialSelected[pCode] = {
+                selected: false,
+                quantity: maxReturnable > 0 ? maxReturnable : info.orderedQty,
+                reason: "",
+                lotNumber: lotSummary
+            };
         });
         setRmaSelectedItems(initialSelected);
         setRmaReasonCategory("DEFECTIVE");
@@ -11308,7 +11476,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     quantity: v.quantity,
                     unit_price: uPrice,
                     total: v.quantity * uPrice,
-                    reason: v.reason
+                    reason: v.reason,
+                    lot_number: v.lotNumber || ""
                 };
             });
 
@@ -11347,20 +11516,70 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const handleApproveRma = async (rmaId: number, restockAction: string) => {
         if (!confirm("Bạn có chắc chắn muốn duyệt phiếu trả hàng này và thực hiện nhập lại kho?")) return;
+        const approverName = loggedInStaff?.full_name || user?.name || "Ban Giám Đốc / Quản Lý Kho";
         try {
             const res = await fetch("/api/sales?action=approve_rma", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     rma_id: rmaId,
-                    approved_by: loggedInStaff?.full_name || "Ban Giám Đốc",
+                    approved_by: approverName,
                     restock_action: restockAction,
                     notes: "Đã kiểm tra và phê duyệt nhận hàng trả lại"
                 })
             });
             const data = await res.json().catch(() => ({}));
             if (res.ok && data.success) {
-                showToast("Đã duyệt phiếu trả hàng! Tồn kho và công nợ đã được cập nhật.", "success");
+                const targetRma = rmaList.find((r: any) => Number(r.id) === Number(rmaId));
+                // Update rmaList locally immediately
+                setRmaList(prev => prev.map((r: any) => Number(r.id) === Number(rmaId) ? {
+                    ...r,
+                    status: "APPROVED",
+                    approved_by: approverName,
+                    approved_at: new Date().toISOString()
+                } : r));
+
+                // Sync local stock13b & tbr_warehouse_inventory_v2 when restockAction === "RESTOCK"
+                if (restockAction === "RESTOCK" && targetRma) {
+                    let rmaItems: any = targetRma.items;
+                    if (typeof rmaItems === "string") {
+                        try { rmaItems = JSON.parse(rmaItems); } catch { rmaItems = []; }
+                    }
+                    if (Array.isArray(rmaItems) && rmaItems.length > 0) {
+                        setStock13b(prev => {
+                            const next: Record<string, number> = { ...prev };
+                            rmaItems.forEach((it: any) => {
+                                const code = String(it.product_code || it.productCode || "").trim();
+                                const qty = Number(it.quantity) || 0;
+                                if (!code || qty <= 0) return;
+                                next[code] = (Number(next[code]) || 0) + qty;
+                            });
+                            return next;
+                        });
+                        try {
+                            const rawInv = localStorage.getItem("tbr_warehouse_inventory_v2");
+                            if (rawInv) {
+                                const invArr = JSON.parse(rawInv);
+                                if (Array.isArray(invArr)) {
+                                    rmaItems.forEach((it: any) => {
+                                        const code = String(it.product_code || it.productCode || "").trim();
+                                        const qty = Number(it.quantity) || 0;
+                                        if (!code || qty <= 0) return;
+                                        const found = invArr.find((x: any) => String(x.code || x.product_code || "").trim() === code);
+                                        if (found) {
+                                            found.stock = (Number(found.stock) || 0) + qty;
+                                            if (found.quantity !== undefined) found.quantity = (Number(found.quantity) || 0) + qty;
+                                        }
+                                    });
+                                    localStorage.setItem("tbr_warehouse_inventory_v2", JSON.stringify(invArr));
+                                }
+                            }
+                            window.dispatchEvent(new Event("inventory_updated"));
+                        } catch (e) {}
+                    }
+                }
+
+                showToast("Đã duyệt phiếu trả hàng & nhập kho lại thành công!", "success");
                 fetchReservations();
             } else {
                 showToast(data.error || "Lỗi khi duyệt phiếu trả hàng", "error");
@@ -11372,7 +11591,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     const handleRejectRma = async (rmaId: number) => {
-        const reason = window.prompt("Lý do từ chối phiếu trả hàng:", "Không đủ điều kiện trả hàng");
+        const reason = window.prompt("Lý do hủy / từ chối phiếu trả hàng:", "Hủy phiếu trả hàng theo yêu cầu");
         if (reason === null) return;
         try {
             const res = await fetch("/api/sales?action=reject_rma", {
@@ -11382,10 +11601,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             });
             const data = await res.json().catch(() => ({}));
             if (res.ok && data.success) {
-                showToast("Đã từ chối phiếu trả hàng.", "success");
+                setRmaList(prev => prev.map((r: any) => Number(r.id) === Number(rmaId) ? {
+                    ...r,
+                    status: "REJECTED",
+                    notes: reason ? `${r.notes ? r.notes + " | " : ""}Lý do hủy: ${reason}` : r.notes
+                } : r));
+                showToast("Đã hủy / từ chối phiếu trả hàng.", "success");
                 fetchReservations();
             } else {
-                showToast(data.error || "Lỗi khi từ chối phiếu trả hàng", "error");
+                showToast(data.error || "Lỗi khi hủy phiếu trả hàng", "error");
             }
         } catch (err) {
             console.error(err);
@@ -12262,6 +12486,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
         setSingleMfgTargetOrder(req);
+        setSingleMfgExcludedKeys({});
         setSingleMfgNotes(req.mfgNotes || req.notes || "");
         setSingleMfgEstDelivery(req.mfgEstDate || req.estimatedDeliveryDate || req.requestedDeliveryDate || "");
         const notesMap: Record<string, string> = {};
@@ -12319,6 +12544,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const candidatePoCode = (targetReq.id && targetReq.id.startsWith("SO")) ? targetReq.id.replace(/^SO/, "PO") : "PO26-TB-1001";
         const rawMfgCode = targetReq.mfgOrderCode || candidatePoCode;
         const mfgCode = String(rawMfgCode).replace(/^ĐHX-/, "PO-");
+        const mfgItemsRaw = (targetReq.items || []).filter((it: any) => it?.sourceType !== "COMMERCIAL");
+        const baseMfgList = mfgItemsRaw.length > 0 ? mfgItemsRaw : (targetReq.items || []);
+        const includedMfgList = baseMfgList.filter((it: any, idx: number) => {
+            const lineKey = `${it?.productCode}__${idx}`;
+            return !singleMfgExcludedKeys[lineKey] && !singleMfgExcludedKeys[it?.productCode];
+        });
+        if (includedMfgList.length === 0) {
+            showToast("Vui lòng giữ lại ít nhất 1 mã hàng trong đề xuất đặt Hãng!", "warning");
+            return;
+        }
+
         const updatedItems = (targetReq.items || []).map((it: any) => ({
             ...it,
             notes: singleMfgItemNotes[it.productCode] !== undefined ? singleMfgItemNotes[it.productCode] : it.notes
@@ -12359,7 +12595,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
 
         // 2. Automatically create Purchase Request (PR) in workflow_requests (Cung Ứng)
-        const prItems = updatedItems.map((it: any) => ({
+        const prItems = includedMfgList.map((it: any) => ({
             is_custom: false,
             product_code: it.productCode || it.code || "",
             product_name: it.productName || it.name || it.productCode || "Hàng đặt Hãng / NCC",
@@ -12368,15 +12604,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             quantity: Number(it.quantity) || 1,
             estimated_price: Number(it.unitPrice) || 0,
             unit_price: Number(it.unitPrice) || 0,
-            notes: it.notes || newNotes
+            notes: (singleMfgItemNotes[it.productCode] !== undefined ? singleMfgItemNotes[it.productCode] : it.notes) || newNotes
         }));
 
         const isStockTargetReq = (targetReq.isStockOrder === true || targetReq.orderCategory === "STOCK" || String(targetReq.id || "").includes("STOCK") || String(targetReq.customerName || "").includes("KHO LƯU TRỮ") || targetReq.customerName === defaultStockCustomer);
-        let reqNameSync = isStockTargetReq ? "Bộ Phận Kho Vận" : (targetReq.salesRepName || loggedInStaff?.full_name || "Phòng Kinh Doanh");
-        if (reqNameSync.toLowerCase().includes("nguyễn đăng khánh") || reqNameSync.toLowerCase().includes("ndkhanh")) {
-            reqNameSync = isStockTargetReq ? "Bộ Phận Kho Vận" : "Phòng Kinh Doanh";
-        }
-        const reqDeptSync = isStockTargetReq ? "Kho Vận" : "Kinh Doanh";
+        const loggedInCreatorName = loggedInStaff?.full_name || user?.name || "";
+        let reqNameSync = loggedInCreatorName || (isStockTargetReq ? "Bộ Phận Kho Vận" : (targetReq.salesRepName || "Phòng Kinh Doanh"));
+        const reqDeptSync = loggedInStaff?.department || (isStockTargetReq ? "Kho Vận" : "Kinh Doanh");
+        const soOwnerNote = (targetReq.salesRepName && targetReq.salesRepName !== reqNameSync)
+            ? ` (Đơn SO của NVKD: ${targetReq.salesRepName})`
+            : "";
 
         fetch("/api/procurement?action=create_pr", {
             method: "POST",
@@ -12389,7 +12626,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 requester_dept: reqDeptSync,
                 customer_name: targetReq.customerName || "Khách hàng",
                 due_date: formattedEstDate,
-                description: `[Đơn bán ${targetReq.id}] ${newNotes}`,
+                description: `[Đơn bán ${targetReq.id}]${soOwnerNote} ${newNotes}`.trim(),
                 items: prItems
             })
         }).then(res => res.json()).then(data => {
@@ -12466,14 +12703,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             || (ord.order_id === undefined && ord.id ? ord : null);
     };
 
-    // Trạng thái phiếu: PENDING (chờ giao) / DELIVERED (NVKD đã xác nhận) / CANCELLED
-    const getSlipStatus = (s: any, fo?: any): "PENDING" | "DELIVERED" | "CANCELLED" => {
+    // Trạng thái phiếu 3 bước (Slide 2):
+    // 1. PENDING_DELIVERY: Chờ giao (Chưa ra khỏi kho)
+    // 2. WAREHOUSE_DELIVERED: Đã giao hàng (Kho xác nhận đã giao ra khỏi kho)
+    // 3. DELIVERED: Đã nhận (NVKD xác nhận khách hàng đã nhận đủ hàng)
+    const getSlipStep = (s: any, fo?: any): "PENDING_DELIVERY" | "WAREHOUSE_DELIVERED" | "DELIVERED" | "CANCELLED" => {
         const st = String(s?.deliveryStatus || "").toUpperCase();
         if (st === "CANCELLED") return "CANCELLED";
-        if (st === "DELIVERED" || s?.isDelivered) return "DELIVERED";
-        if (st === "PENDING") return "PENDING";
-        // Phiếu cũ (chưa có trạng thái): coi là đã giao nếu đơn đã hoàn tất
+        if (st === "DELIVERED" || st === "COMPLETED" || s?.isDelivered) return "DELIVERED";
+        if (st === "WAREHOUSE_DELIVERED" || st === "SHIPPED") return "WAREHOUSE_DELIVERED";
+        if (st === "PENDING_DELIVERY" || st === "PENDING") return "PENDING_DELIVERY";
         if (fo && (fo.status === "Delivered" || fo.status === "Completed" || fo.status === "COMPLETED")) return "DELIVERED";
+        return "PENDING_DELIVERY";
+    };
+
+    // Trạng thái tương thích DeliverySlipListView: PENDING (chờ giao / kho đang giao) / DELIVERED (NVKD đã xác nhận) / CANCELLED
+    const getSlipStatus = (s: any, fo?: any): "PENDING" | "DELIVERED" | "CANCELLED" => {
+        const step = getSlipStep(s, fo);
+        if (step === "CANCELLED") return "CANCELLED";
+        if (step === "DELIVERED") return "DELIVERED";
         return "PENDING";
     };
 
@@ -12507,6 +12755,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const slips = getOrderSlips(ord, false).filter((s: any) => s.id !== excludeSlipId);
         const newSlips = slips.filter((s: any) => s.deliveryStatus);
         const legacySlips = slips.filter((s: any) => !s.deliveryStatus);
+        const deliveredSlips = slips.filter((s: any) => getSlipStep(s, fo) === "DELIVERED");
         const deliveries: any[] = fo?.deliveries || ord?.deliveries || [];
         const legacyDeliveries = deliveries.filter((d: any) => !d.slipId);
         const isOrderDone = fo && (fo.status === "Delivered" || fo.status === "Completed" || fo.status === "COMPLETED");
@@ -12522,7 +12771,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 result[code].remaining = isOrderDone ? 0 : Math.max(0, result[code].ordered - result[code].allocated);
                 return;
             }
-            const delivered = sumQty(deliveries, "itemsDelivered", code);
+            const delivered = Math.max(sumQty(deliveries, "itemsDelivered", code), sumQty(deliveredSlips, "items", code));
             // Dữ liệu cũ: phiếu chưa có trạng thái và bản ghi giao chưa gắn phiếu có thể trùng nhau -> lấy giá trị lớn hơn
             const allocated = sumQty(newSlips, "items", code) + Math.max(sumQty(legacySlips, "items", code), sumQty(legacyDeliveries, "itemsDelivered", code));
             result[code] = { ordered, allocated, delivered, remaining: isOrderDone ? 0 : Math.max(0, ordered - allocated) };
@@ -12718,10 +12967,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const itemsBreakdown = items.map((it: any) => {
             const code = (it.productCode || it.product_code || it.code || "").trim();
             const orderQty = Number(it.quantity) || 1;
-            const deliveredQty = Number(it.deliveredQuantity || (order.deliveries ? order.deliveries.reduce((sum: number, del: any) => {
-                const matchIt = (del.itemsDelivered || []).find((dIt: any) => (dIt.productCode || dIt.code) === code);
-                return sum + (Number(matchIt?.quantity) || 0);
-            }, 0) : 0));
+            const deliveredFromDeliveries = order.deliveries ? order.deliveries.reduce((sum: number, del: any) => {
+                const matchedQty = (del.itemsDelivered || [])
+                    .filter((dIt: any) => (dIt.productCode || dIt.code) === code)
+                    .reduce((s2: number, dIt: any) => s2 + (Number(dIt.quantity) || 0), 0);
+                return sum + matchedQty;
+            }, 0) : 0;
+            const deliveredQty = Math.max(
+                Number(it.deliveredQuantity || 0),
+                deliveredFromDeliveries,
+                Number(orderProgress[code]?.delivered || 0)
+            );
             const allocatedQty = Number(orderProgress[code]?.allocated || 0);
             // Còn lại = SL đặt − SL đã lập phiếu giao (gồm cả phiếu chờ giao)
             const remainingQty = Math.max(0, orderQty - Math.max(deliveredQty, allocatedQty));
@@ -13038,6 +13294,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
         setSingleProcureTargetOrder(req);
+        setSingleProcureExcludedKeys({});
         setSingleProcureSupplier(req.procureSupplierSuggestion || req.procureSupplier || "");
         setSingleProcureNotes(req.procureNotes || req.notes || "");
         setSingleProcureEstDelivery(req.procureDueDate || req.procureEstDate || req.requestedDeliveryDate || toVNDateString(new Date(Date.now() + 7 * 86400000)));
@@ -13076,6 +13333,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const prItems = displayItems.map((it: any, idx: number) => {
             const lineKey = `${it.productCode}__${idx}`;
+            if (singleProcureExcludedKeys[lineKey] || singleProcureExcludedKeys[it.productCode]) return null;
             const qty = singleProcureItemQuantities[lineKey] !== undefined
                 ? Number(singleProcureItemQuantities[lineKey])
                 : singleProcureItemQuantities[it.productCode] !== undefined
@@ -13100,7 +13358,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             };
         }).filter(Boolean) as any[];
         if (prItems.length === 0) {
-            showToast("Tất cả mặt hàng đã đủ tồn kho — không cần lập đề xuất mua hàng.", "info");
+            showToast("Vui lòng chọn ít nhất 1 mã hàng có số lượng > 0 để lập đề xuất mua hàng (PR).", "warning");
             return;
         }
 
@@ -13117,13 +13375,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             String(singleProcureTargetOrder?.customerName || "").includes("DỰ PHÒNG") ||
             singleProcureTargetOrder?.customerName === defaultStockCustomer;
 
-        let targetRepNameProcure = isStockTargetOrd 
+        // Slide 8: Ghi nhận đúng tên tài khoản đang đăng nhập lập PR thay vì mặc định lấy NVKD của đơn hàng
+        const loggedInCreator = loggedInStaff?.full_name || user?.name || "";
+        const targetRepNameProcure = loggedInCreator || (isStockTargetOrd 
             ? "Bộ Phận Kho Vận" 
-            : (singleProcureTargetOrder.salesRepName || "Phòng Kinh Doanh");
-        if (targetRepNameProcure.toLowerCase().includes("nguyễn đăng khánh") || targetRepNameProcure.toLowerCase().includes("ndkhanh")) {
-            targetRepNameProcure = isStockTargetOrd ? "Bộ Phận Kho Vận" : "Phòng Kinh Doanh";
-        }
-        const targetRepDeptProcure = isStockTargetOrd ? "Kho Vận" : "Kinh Doanh";
+            : (singleProcureTargetOrder.salesRepName || "Phòng Kinh Doanh"));
+        const targetRepDeptProcure = loggedInStaff?.department || (isStockTargetOrd ? "Kho Vận" : "Kinh Doanh");
+        const soOwnerSuffix = (singleProcureTargetOrder.salesRepName && singleProcureTargetOrder.salesRepName !== targetRepNameProcure)
+            ? ` [Đơn SO của NVKD: ${singleProcureTargetOrder.salesRepName}]`
+            : "";
 
         try {
             const res = await fetch("/api/procurement?action=create_pr", {
@@ -13137,7 +13397,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     requester_dept: targetRepDeptProcure,
                     customer_name: singleProcureTargetOrder.customerName || "Khách hàng",
                     due_date: singleProcureEstDelivery || toVNDateString(new Date(Date.now() + 7 * 86400000)),
-                    description: (singleProcureNotes.trim() ? singleProcureNotes.trim() + " • " : "") + (singleProcureSupplier.trim() ? `[Gợi ý NCC: ${singleProcureSupplier.trim()}]` : ""),
+                    description: ((singleProcureNotes.trim() ? singleProcureNotes.trim() + " • " : "") + (singleProcureSupplier.trim() ? `[Gợi ý NCC: ${singleProcureSupplier.trim()}]` : "") + soOwnerSuffix).trim(),
                     items: prItems
                 })
             });
@@ -13734,26 +13994,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const pg = hasDistinctLines
                 ? { ordered, allocated: 0, delivered: Number(it.deliveredQuantity) || 0, remaining: Math.max(0, ordered - (Number(it.deliveredQuantity) || 0)) }
                 : (progress[code] || { ordered, allocated: 0, delivered: 0, remaining: ordered });
-            const slipItem = editSlip
-                ? (editSlip.items || []).find((x: any) =>
+            const matchingSlipItems = editSlip
+                ? (editSlip.items || []).filter((x: any) =>
                     getItemCode(x) === code &&
                     (!hasDistinctLines || String(x.specification || "").trim().toLowerCase() === String(it.specification || "").trim().toLowerCase())
                 )
-                : null;
-            if (!slipItem && pg.remaining <= 0) return;
-            const qty = slipItem
-                ? Number(slipItem.quantity) || 0
-                : mode === "FULL"
-                    ? pg.remaining
-                    : Math.max(0, Math.min(pg.remaining, Number(opts?.presetQtys?.[code] ?? pg.remaining)));
-            
+                : [];
+            const slipItem = matchingSlipItems[0] || null;
+            if (matchingSlipItems.length === 0 && pg.remaining <= 0) return;
+
             const itemName = it.productName || it.name || prod?.name || "Sản phẩm";
             const lots = getAvailableLotsForProduct(code, itemName, target.order_code);
             const availStock = getAvailableStockForProduct(code, itemName, target.order_code);
             const firstLot = lots.length > 0 ? lots[0] : null;
-            const chosenLotNo = slipItem?.lotNo || (firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || defLot));
-            const chosenExp = slipItem?.expDate || (firstLot && firstLot.expiry_date ? String(firstLot.expiry_date).slice(0, 10) : (it.expDate || defExp));
-            const matchedChosenLot = lots.find((l: any) => l.lot_number === chosenLotNo) || firstLot;
 
             const linkedQuote = (fo?.quoteId || fo?.quote_code || target?.quoteId || target?.quote_code)
                 ? quotations.find(q => String(q.id).trim().toLowerCase() === String(fo?.quoteId || fo?.quote_code || target?.quoteId || target?.quote_code).trim().toLowerCase())
@@ -13766,29 +14019,66 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 slipItem?.vat ?? it.vat ?? 8;
             const resolvedVat = !isNaN(Number(rawVat)) && Number(rawVat) >= 0 ? Number(rawVat) : 8;
 
-            items.push({
-                productCode: code,
-                productName: itemName,
-                quantity: qty,
-                unit: it.unit || prod?.unit || "Bộ",
-                specification: it.specification || prod?.specification || "",
-                storageCondition: slipItem?.storageCondition || it.storageCondition || getStorageConditionForProduct(code),
-                lotNo: chosenLotNo,
-                expDate: chosenExp,
-                notes: slipItem?.notes || "", // Ghi chú sản xuất không đưa vào phiếu giao hàng
-                orderedQty: pg.ordered,
-                prevAllocatedQty: pg.allocated,
-                remainingQty: pg.remaining,
-                availStock: availStock,
-                selectedLotAvail: matchedChosenLot ? (Number(matchedChosenLot.available_qty ?? matchedChosenLot.quantity_on_hand) || 0) : undefined,
-                selectedLotProductCode: matchedChosenLot?.product_code || undefined,
-                needsInvoice: slipItem?.needsInvoice !== undefined ? slipItem.needsInvoice : (it.needsInvoice !== false),
-                unitPrice: slipItem?.unitPrice ?? it.unitPrice ?? it.price ?? prod?.price ?? 0,
-                vat: resolvedVat,
-                vatRate: resolvedVat,
-                isManualLot: false,
-                isExtraLot: false
-            });
+            if (matchingSlipItems.length > 0) {
+                matchingSlipItems.forEach((sIt: any, sIdx: number) => {
+                    const chosenLotNo = sIt?.lotNo || (firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || defLot));
+                    const chosenExp = sIt?.expDate || (firstLot && firstLot.expiry_date ? String(firstLot.expiry_date).slice(0, 10) : (it.expDate || defExp));
+                    const matchedChosenLot = lots.find((l: any) => l.lot_number === chosenLotNo) || firstLot;
+                    items.push({
+                        productCode: code,
+                        productName: itemName,
+                        quantity: Number(sIt.quantity) || 0,
+                        unit: it.unit || prod?.unit || "Bộ",
+                        specification: it.specification || prod?.specification || "",
+                        storageCondition: sIt?.storageCondition || it.storageCondition || getStorageConditionForProduct(code),
+                        lotNo: chosenLotNo,
+                        expDate: chosenExp,
+                        notes: sIt?.notes || "",
+                        orderedQty: pg.ordered,
+                        prevAllocatedQty: pg.allocated,
+                        remainingQty: pg.remaining,
+                        availStock: availStock,
+                        selectedLotAvail: matchedChosenLot ? (Number(matchedChosenLot.available_qty ?? matchedChosenLot.quantity_on_hand) || 0) : undefined,
+                        selectedLotProductCode: matchedChosenLot?.product_code || undefined,
+                        needsInvoice: sIt?.needsInvoice !== undefined ? sIt.needsInvoice : (it.needsInvoice !== false),
+                        unitPrice: sIt?.unitPrice ?? it.unitPrice ?? it.price ?? prod?.price ?? 0,
+                        vat: resolvedVat,
+                        vatRate: resolvedVat,
+                        isManualLot: false,
+                        isExtraLot: sIdx > 0
+                    });
+                });
+            } else {
+                const qty = mode === "FULL"
+                    ? pg.remaining
+                    : Math.max(0, Math.min(pg.remaining, Number(opts?.presetQtys?.[code] ?? pg.remaining)));
+                const chosenLotNo = firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || defLot);
+                const chosenExp = (firstLot && firstLot.expiry_date ? String(firstLot.expiry_date).slice(0, 10) : (it.expDate || defExp));
+                const matchedChosenLot = lots.find((l: any) => l.lot_number === chosenLotNo) || firstLot;
+                items.push({
+                    productCode: code,
+                    productName: itemName,
+                    quantity: qty,
+                    unit: it.unit || prod?.unit || "Bộ",
+                    specification: it.specification || prod?.specification || "",
+                    storageCondition: it.storageCondition || getStorageConditionForProduct(code),
+                    lotNo: chosenLotNo,
+                    expDate: chosenExp,
+                    notes: "",
+                    orderedQty: pg.ordered,
+                    prevAllocatedQty: pg.allocated,
+                    remainingQty: pg.remaining,
+                    availStock: availStock,
+                    selectedLotAvail: matchedChosenLot ? (Number(matchedChosenLot.available_qty ?? matchedChosenLot.quantity_on_hand) || 0) : undefined,
+                    selectedLotProductCode: matchedChosenLot?.product_code || undefined,
+                    needsInvoice: it.needsInvoice !== false,
+                    unitPrice: it.unitPrice ?? it.price ?? prod?.price ?? 0,
+                    vat: resolvedVat,
+                    vatRate: resolvedVat,
+                    isManualLot: false,
+                    isExtraLot: false
+                });
+            }
         });
 
         if (items.length === 0) {
@@ -13837,6 +14127,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             setDeliveryReceiverPhone(primary?.phone || target.customerPhone || "");
         }
 
+        const initStep = editSlip ? getSlipStep(editSlip, fo) : "PENDING_DELIVERY";
+        setDeliveryStepStatus(initStep === "CANCELLED" ? "PENDING_DELIVERY" : initStep);
         setOpenDeliveryLotDropdownIndex(null);
         setDeliveryLotSearchQueries({});
         setDeliveryTargetOrder(target);
@@ -14057,7 +14349,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }
             }
 
-            const staffName = loggedInStaff?.full_name || "Nhân viên";
+            const staffName = loggedInStaff?.full_name || user?.name || "Nhân viên";
+            const chosenStep = deliveryStepStatus || "PENDING_DELIVERY";
             const newSlip: any = {
                 ...(editSlip || {}),
                 id: slipId,
@@ -14079,8 +14372,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 dispatcherPhone: companyPhone || "",
                 batchNumber: deliveryBatchNumber,
                 deliveryMode: deliverySlipMode,
-                deliveryStatus: "PENDING",
-                isDelivered: false,
+                deliveryStatus: chosenStep,
+                isDelivered: chosenStep === "DELIVERED",
+                ...(chosenStep === "WAREHOUSE_DELIVERED" || chosenStep === "DELIVERED" ? {
+                    deliveryStaff: deliveryDispatcherName.trim() || editSlip?.deliveryStaff || staffName,
+                    deliveredAt: editSlip?.deliveredAt || todayVN()
+                } : {}),
+                ...(chosenStep === "DELIVERED" ? {
+                    confirmedBy: editSlip?.confirmedBy || staffName,
+                    confirmedAt: editSlip?.confirmedAt || now.toISOString()
+                } : {}),
                 createdBy: editSlip?.createdBy || staffName,
                 createdAt: editSlip?.createdAt || now.toISOString(),
                 ...(editSlip ? { editedAt: now.toISOString(), editedBy: staffName } : {}),
@@ -14109,18 +14410,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
             setDeliverySlips(prev => editSlip ? prev.map(s => s.id === editSlip.id ? newSlip : s) : [newSlip, ...prev]);
 
-            // 2. Trừ tồn kho ngay khi lập phiếu (khi sửa phiếu: nhập lại phần giảm trước, sau đó xuất phần tăng để tránh race)
+            // 2. Trừ tồn kho ngay khi lập phiếu (khi sửa phiếu: nhập lại phần giảm trước, sau đó xuất phần tăng theo từng LÔ để tránh sai lệch khi tách nhiều lô)
             if (editSlip) {
+                const getLotKey = (it: any) => `${getItemCode(it)}__${String(it.lotNo || it.lotNumber || "").trim()}`;
                 const oldMap: Record<string, any> = {};
-                (editSlip.items || []).forEach((it: any) => { oldMap[getItemCode(it)] = it; });
+                (editSlip.items || []).forEach((it: any) => {
+                    const k = getLotKey(it);
+                    oldMap[k] = oldMap[k] ? { ...oldMap[k], quantity: (Number(oldMap[k].quantity) || 0) + (Number(it.quantity) || 0) } : { ...it };
+                });
                 const newMap: Record<string, any> = {};
-                slipItems.forEach((it: any) => { newMap[getItemCode(it)] = it; });
-                const codes = Array.from(new Set([...Object.keys(oldMap), ...Object.keys(newMap)]));
+                slipItems.forEach((it: any) => {
+                    const k = getLotKey(it);
+                    newMap[k] = newMap[k] ? { ...newMap[k], quantity: (Number(newMap[k].quantity) || 0) + (Number(it.quantity) || 0) } : { ...it };
+                });
+                const lotKeys = Array.from(new Set([...Object.keys(oldMap), ...Object.keys(newMap)]));
                 const moreOut: any[] = [];
                 const backIn: any[] = [];
-                codes.forEach(code => {
-                    const diff = (Number(newMap[code]?.quantity) || 0) - (Number(oldMap[code]?.quantity) || 0);
-                    const base = newMap[code] || oldMap[code];
+                lotKeys.forEach(k => {
+                    const diff = (Number(newMap[k]?.quantity) || 0) - (Number(oldMap[k]?.quantity) || 0);
+                    const base = newMap[k] || oldMap[k];
                     if (diff > 0) moreOut.push({ ...base, quantity: diff });
                     if (diff < 0) backIn.push({ ...base, quantity: -diff });
                 });
@@ -14146,13 +14454,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     body: JSON.stringify({
                         order_id: deliveryTargetOrder.order_id,
                         order_code: deliveryTargetOrder.raw_code || deliveryTargetOrder.order_code,
-                        delivery_status: "SHIPPED"
+                        delivery_status: chosenStep === "DELIVERED" ? "DELIVERED" : "SHIPPED"
                     })
                 }).catch(err => console.error("Error updating shipping status to DB:", err));
 
                 notifyActivity({
                     title: "Lập phiếu xuất kho & giao hàng",
-                    message: `${newSlip.creatorName || "Nhân viên"} đã lập phiếu giao hàng ${newSlip.id} (Đợt ${newSlip.batchNumber} - ${newSlip.deliveryMode === "FULL" ? "Giao toàn bộ" : "Giao từng đợt"}) cho đơn hàng #${newSlip.orderCode} - Khách hàng: ${newSlip.customerName}. Chờ NVKD xác nhận đã giao.`,
+                    message: `${newSlip.creatorName || "Nhân viên"} đã lập phiếu giao hàng ${newSlip.id} (Đợt ${newSlip.batchNumber} - ${newSlip.deliveryMode === "FULL" ? "Giao toàn bộ" : "Giao từng đợt"}) cho đơn hàng #${newSlip.orderCode} - Khách hàng: ${newSlip.customerName}.`,
                     type: "info",
                     category: "delivery",
                     sender: { name: newSlip.creatorName || "Nhân viên" },
@@ -14164,7 +14472,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             showToast(editSlip
                 ? `Đã cập nhật Phiếu giao hàng ${newSlip.id} và điều chỉnh tồn kho theo số lượng mới.`
-                : `Đã lập Phiếu giao hàng ${newSlip.id} (Đợt ${newSlip.batchNumber}) và trừ tồn kho. Phiếu đang "Chờ giao" - NVKD xác nhận khi khách đã nhận hàng.`, "success");
+                : `Đã lập Phiếu giao hàng ${newSlip.id} (Đợt ${newSlip.batchNumber}) và trừ tồn kho.`, "success");
 
             setIsDeliveryModalOpen(false);
             setDeliveryTargetOrder(null);
@@ -14176,11 +14484,54 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
     };
 
-    // Sửa phiếu giao đang chờ giao
+    // Bước 2 (Slide 2): Kho xác nhận Đã giao hàng (hàng đã xuất ra khỏi kho & bàn giao đi giao)
+    const handleConfirmWarehouseShipped = (slip: any) => {
+        const staffName = loggedInStaff?.full_name || user?.name || slip.dispatcherName || "Thủ kho TBR";
+        const updated = {
+            ...slip,
+            deliveryStatus: "WAREHOUSE_DELIVERED",
+            isDelivered: false,
+            deliveryStaff: staffName,
+            deliveredAt: slip.deliveredAt || todayVN()
+        };
+        setDeliverySlips(prev => prev.map(s => s.id === slip.id ? updated : s));
+        if (selectedViewDeliverySlip?.id === slip.id) setSelectedViewDeliverySlip(updated);
+        persistDeliverySlip(updated);
+        showToast(`🚚 Kho (${staffName}) đã xác nhận xuất giao hàng cho phiếu ${slip.id}! Chờ NVKD xác nhận khách đã nhận.`, "success");
+    };
+
+    // Điều chỉnh trạng thái 3 bước của phiếu giao (Chờ giao <-> Kho đã giao <-> Khách đã nhận)
+    const handleAdjustSlipStep = (slip: any, nextStep: "PENDING_DELIVERY" | "WAREHOUSE_DELIVERED" | "DELIVERED") => {
+        if (nextStep === "DELIVERED") {
+            handleConfirmSlipDelivered(slip);
+            return;
+        }
+        const staffName = loggedInStaff?.full_name || user?.name || "Nhân viên";
+        const updated = {
+            ...slip,
+            deliveryStatus: nextStep,
+            isDelivered: false,
+            ...(nextStep === "WAREHOUSE_DELIVERED" ? {
+                deliveryStaff: slip.deliveryStaff || staffName,
+                deliveredAt: slip.deliveredAt || todayVN()
+            } : {})
+        };
+        setDeliverySlips(prev => prev.map(s => s.id === slip.id ? updated : s));
+        if (selectedViewDeliverySlip?.id === slip.id) setSelectedViewDeliverySlip(updated);
+        persistDeliverySlip(updated);
+        showToast(
+            nextStep === "PENDING_DELIVERY"
+                ? `Đã chuyển phiếu ${slip.id} về Bước 1: ⏳ Chờ giao (Chưa ra khỏi kho).`
+                : `Đã chuyển phiếu ${slip.id} sang Bước 2: 🚚 Đã giao hàng (Kho đã giao).`,
+            "info"
+        );
+    };
+
+    // Sửa phiếu giao đang chờ giao / kho đang giao
     const handleEditDeliverySlip = (slip: any) => {
         const fo = resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode });
-        if (getSlipStatus(slip, fo) !== "PENDING") {
-            showToast("Chỉ sửa được phiếu giao đang ở trạng thái Chờ giao!", "warning");
+        if (getSlipStep(slip, fo) === "CANCELLED") {
+            showToast("Không thể sửa phiếu giao đã hủy!", "warning");
             return;
         }
         const orderRef = fo || { order_id: slip.orderId, order_code: slip.orderCode, raw_code: slip.orderCode, customerName: slip.customerName, items: slip.items };
@@ -14192,12 +14543,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const handleCancelDeliverySlip = (slip: any) => {
         const fo = resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode });
         if (getSlipStatus(slip, fo) !== "PENDING") {
-            showToast("Chỉ hủy được phiếu giao đang ở trạng thái Chờ giao!", "warning");
+            showToast("Chỉ hủy được phiếu giao chưa hoàn tất!", "warning");
             return;
         }
         const reason = window.prompt(`Hủy Phiếu giao hàng ${slip.id}?\nHàng trên phiếu sẽ được nhập lại kho.\n\nLý do hủy:`, "");
         if (reason === null) return;
-        const staffName = loggedInStaff?.full_name || "Nhân viên";
+        const staffName = loggedInStaff?.full_name || user?.name || "Nhân viên";
         const updated = {
             ...slip,
             deliveryStatus: "CANCELLED",
@@ -14227,7 +14578,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         handleOpenConfirmDeliveryModal(targetOrd, slip);
     };
 
-    // Danh sách tất cả phiếu giao (các đợt) của 1 đơn + trạng thái + thao tác. Dùng chung Tab Đơn hàng & Tab Khách hàng
+    // Danh sách tất cả phiếu giao (các đợt) của 1 đơn + trạng thái 3 bước (Slide 2) + thao tác. Dùng chung Tab Đơn hàng & Tab Khách hàng
     const renderOrderSlipList = (ord: any, opts?: { compact?: boolean }) => {
         const fo = resolveFactoryOrder(ord);
         const isStockOrder = checkIsPureStock(ord) || checkIsPureStock(fo);
@@ -14237,9 +14588,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const progress = getOrderQtyProgress(ord);
         const hasRemaining = Object.values(progress).some(p => p.remaining > 0);
         const canConfirm = canConfirmDeliveryForOrder(ord);
-        const statusMeta: Record<string, { label: string; cls: string }> = {
-            PENDING: { label: "⏳ Chờ giao", cls: "bg-amber-950/60 text-amber-300 border-amber-600/50" },
-            DELIVERED: { label: "✅ Đã giao", cls: "bg-emerald-950/60 text-emerald-300 border-emerald-600/50" },
+        const stepMeta: Record<string, { label: string; cls: string }> = {
+            PENDING_DELIVERY: { label: "⏳ 1. Chờ giao (Chưa ra khỏi kho)", cls: "bg-amber-950/60 text-amber-300 border-amber-600/50" },
+            WAREHOUSE_DELIVERED: { label: "🚚 2. Đã giao hàng (Kho đã giao)", cls: "bg-sky-950/60 text-sky-300 border-sky-500/50" },
+            DELIVERED: { label: "✅ 3. Đã nhận (Hoàn tất)", cls: "bg-emerald-950/60 text-emerald-300 border-emerald-600/50" },
             CANCELLED: { label: "✖ Đã hủy", cls: "bg-slate-800 text-slate-400 border-slate-600 line-through" }
         };
         if (slips.length === 0 && !hasRemaining) return null;
@@ -14263,8 +14615,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 ) : (
                     <div className="space-y-1">
                         {slips.map((s: any, i: number) => {
-                            const st = getSlipStatus(s, fo);
-                            const meta = statusMeta[st];
+                            const step = getSlipStep(s, fo);
+                            const meta = stepMeta[step] || stepMeta.PENDING_DELIVERY;
+                            const uniqueSkuCount = new Set((s.items || []).map((it: any) => getItemCode(it))).size;
                             const totalQty = (s.items || []).reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0);
                             return (
                                 <div key={s.id} className="flex items-center justify-between gap-2 flex-wrap bg-slate-900/60 border border-slate-800 rounded px-2 py-1">
@@ -14272,22 +14625,44 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <span className="text-[10px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-700/50 px-1.5 rounded">Đợt {s.batchNumber || i + 1}</span>
                                         <span className="font-mono font-bold text-white">{s.id}</span>
                                         <span className={cn("text-[10px] font-bold border px-1.5 rounded", meta.cls)}>{meta.label}</span>
-                                        <span className="text-slate-400">{s.deliveryDate} • {(s.items || []).length} SP / {totalQty} SL</span>
-                                        {st === "DELIVERED" && (s.confirmedBy || s.receiverName) && (
-                                            <span className="text-emerald-400/80">• {s.confirmedBy ? `XN: ${s.confirmedBy}` : ""}{s.receiverName ? ` • Nhận: ${s.receiverName}` : ""}</span>
+                                        <span className="text-slate-400">{s.deliveryDate} • {uniqueSkuCount} SP / {totalQty} SL</span>
+                                        {step === "WAREHOUSE_DELIVERED" && s.deliveryStaff && (
+                                            <span className="text-sky-400/90">• Kho giao: {s.deliveryStaff}</span>
                                         )}
-                                        {st === "CANCELLED" && s.cancelReason && <span className="text-rose-400/80">• Lý do: {s.cancelReason}</span>}
+                                        {step === "DELIVERED" && (s.deliveryStaff || s.confirmedBy || s.receiverName) && (
+                                            <span className="text-emerald-400/80">
+                                                • {s.deliveryStaff ? `Kho: ${s.deliveryStaff} • ` : ""}{s.confirmedBy ? `NVKD XN: ${s.confirmedBy}` : ""}{s.receiverName ? ` • KH Nhận: ${s.receiverName}` : ""}
+                                            </span>
+                                        )}
+                                        {step === "CANCELLED" && s.cancelReason && <span className="text-rose-400/80">• Lý do: {s.cancelReason}</span>}
                                     </div>
-                                    <div className="flex items-center gap-1">
+                                    <div className="flex items-center gap-1 flex-wrap">
                                         <button type="button" onClick={() => { setSelectedViewDeliverySlip(s); setIsViewDeliverySlipModalOpen(true); }} className="text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 px-1.5 py-0.5 rounded cursor-pointer">👁 Xem</button>
-                                        {st === "PENDING" && canConfirm && (
-                                            <button type="button" onClick={() => handleConfirmSlipDelivered(s)} className="text-[10px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white px-1.5 py-0.5 rounded cursor-pointer">✅ Xác nhận đã giao</button>
+                                        {step === "PENDING_DELIVERY" && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleConfirmWarehouseShipped(s)}
+                                                className="text-[10px] font-bold bg-sky-700 hover:bg-sky-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                                                title="Bước 2: Kho xác nhận hàng đã xuất ra khỏi kho & đi giao"
+                                            >
+                                                🚚 B2: Kho xác nhận Đã giao
+                                            </button>
                                         )}
-                                        {st === "PENDING" && (
-                                            <>
-                                                <button type="button" onClick={() => handleEditDeliverySlip(s)} className="text-[10px] font-bold bg-sky-800 hover:bg-sky-700 text-white px-1.5 py-0.5 rounded cursor-pointer">✏️ Sửa</button>
-                                                <button type="button" onClick={() => handleCancelDeliverySlip(s)} className="text-[10px] font-bold bg-rose-800 hover:bg-rose-700 text-white px-1.5 py-0.5 rounded cursor-pointer">🗑 Hủy</button>
-                                            </>
+                                        {(step === "PENDING_DELIVERY" || step === "WAREHOUSE_DELIVERED") && canConfirm && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleConfirmSlipDelivered(s)}
+                                                className="text-[10px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                                                title="Bước 3: NVKD xác nhận khách hàng đã nhận đủ hàng"
+                                            >
+                                                ✅ B3: NVKD xác nhận Đã nhận
+                                            </button>
+                                        )}
+                                        {step !== "CANCELLED" && (
+                                            <button type="button" onClick={() => handleEditDeliverySlip(s)} className="text-[10px] font-bold bg-sky-800 hover:bg-sky-700 text-white px-1.5 py-0.5 rounded cursor-pointer" title="Sửa thông tin / điều chỉnh trạng thái phiếu">✏️ Sửa</button>
+                                        )}
+                                        {(step === "PENDING_DELIVERY" || step === "WAREHOUSE_DELIVERED") && (
+                                            <button type="button" onClick={() => handleCancelDeliverySlip(s)} className="text-[10px] font-bold bg-rose-800 hover:bg-rose-700 text-white px-1.5 py-0.5 rounded cursor-pointer">🗑 Hủy</button>
                                         )}
                                     </div>
                                 </div>
@@ -14299,7 +14674,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         );
     };
 
-    // Bước 2 của luồng giao hàng: NVKD xác nhận đã giao THEO TỪNG PHIẾU (ảnh POD không bắt buộc).
+    // Bước 3 của luồng giao hàng: NVKD xác nhận khách đã nhận THEO TỪNG PHIẾU (ảnh POD không bắt buộc).
     // Khi không truyền phiếu (VD: cập nhật hóa đơn từ Tab Hóa đơn) thì giữ chế độ cập nhật thông tin như trước.
     const handleOpenConfirmDeliveryModal = (rawOrd: any, slip?: any) => {
         const ord = toDeliveryOrderShape(rawOrd);
@@ -14309,8 +14684,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 showToast("Chỉ NVKD phụ trách đơn hàng mới được xác nhận đã giao!", "warning");
                 return;
             }
-            if (getSlipStatus(slip, fo) !== "PENDING") {
-                showToast(`Phiếu ${slip.id} không ở trạng thái Chờ giao!`, "warning");
+            if (getSlipStep(slip, fo) === "CANCELLED") {
+                showToast(`Phiếu ${slip.id} đã hủy!`, "warning");
                 return;
             }
         }
@@ -14335,18 +14710,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setConfirmDeliveryMode(slip?.deliveryMode === "PARTIAL" ? "PARTIAL" : "FULL");
         setPodValidationWarning(null);
 
-        // Số lượng: lấy theo phiếu (chỉ xem) hoặc phần còn lại của đơn
+        // Số lượng: cộng dồn tất cả các lô của cùng mã hàng trên phiếu (hoặc phần còn lại của đơn)
         const initialQtys: Record<string, number> = {};
         if (slip) {
-            (slip.items || []).forEach((it: any) => { initialQtys[getItemCode(it)] = Number(it.quantity) || 0; });
+            (slip.items || []).forEach((it: any) => {
+                const c = getItemCode(it);
+                initialQtys[c] = (initialQtys[c] || 0) + (Number(it.quantity) || 0);
+            });
         } else {
             const priorDeliveries: any[] = fo?.deliveries || ord.deliveries || [];
             (ord.items || []).forEach((it: any) => {
                 const code = getItemCode(it) || "SP";
                 const ordered = Number(it.quantity || 1);
                 const priorDelivered = priorDeliveries.reduce((sum: number, del: any) => {
-                    const matchIt = (del.itemsDelivered || []).find((dIt: any) => getItemCode(dIt) === code);
-                    return sum + (Number(matchIt?.quantity) || 0);
+                    const matched = (del.itemsDelivered || []).filter((dIt: any) => getItemCode(dIt) === code);
+                    return sum + matched.reduce((s2: number, dIt: any) => s2 + (Number(dIt?.quantity) || 0), 0);
                 }, 0);
                 const rem = Math.max(0, ordered - priorDelivered);
                 initialQtys[code] = rem > 0 ? rem : ordered;
@@ -14919,7 +15297,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const now = new Date();
         const slipId = editingDeliverySlip?.id || "PX (cấp khi lưu)";
         const previewItems = deliveryItems
-            .map(it => ({ ...it, quantity: deliverySlipMode === "FULL" ? (it.remainingQty ?? it.quantity) : (Number(it.quantity) || 0) }))
+            .map(it => {
+                const code = getItemCode(it);
+                const isSingleRow = deliveryItems.filter(x => getItemCode(x) === code).length === 1;
+                const qty = (deliverySlipMode === "FULL" && !editingDeliverySlip && isSingleRow)
+                    ? (it.remainingQty ?? Number(it.quantity) ?? 0)
+                    : (Number(it.quantity) || 0);
+                return { ...it, quantity: qty };
+            })
             .filter(it => it.quantity > 0);
 
         const previewSlip = {
@@ -24483,29 +24868,47 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">NVKD tạo báo giá *</label>
-                            <select
-                                required
-                                value={quoteEmployee}
-                                onChange={(e) => {
-                                    const val = e.target.value;
-                                    setQuoteEmployee(val);
-                                    setQuoteRepPhone(salesPersonnelContacts[val]?.phone || "");
-                                    setQuoteRepEmail(salesPersonnelContacts[val]?.email || salesPersonnel.find((p: any) => p.employee_id === val)?.email || "");
-                                }}
-                                disabled={!isManagerOrAdmin}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs outline-none disabled:opacity-60 text-white font-semibold"
-                            >
-                                {!isManagerOrAdmin && loggedInStaff ? (
-                                    <option value={loggedInStaff.employee_id}>{loggedInStaff.full_name}</option>
-                                ) : (
-                                    salesPersonnel.map((person: any) => (
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">NGƯỜI LẬP / NVKD BÁO GIÁ *</label>
+                            <div className="space-y-1.5">
+                                <select
+                                    required={!isCustomQuoteCreator}
+                                    value={isCustomQuoteCreator ? "__CUSTOM__" : quoteEmployee}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        if (val === "__CUSTOM__") {
+                                            setIsCustomQuoteCreator(true);
+                                            setQuoteEmployee("__CUSTOM__");
+                                            if (!customQuoteCreatorName) {
+                                                setCustomQuoteCreatorName(loggedInStaff?.full_name || user?.name || "");
+                                            }
+                                            return;
+                                        }
+                                        setIsCustomQuoteCreator(false);
+                                        setQuoteEmployee(val);
+                                        const repObj = quoteCreatorOptions.find((p: any) => p.employee_id === val) || salesPersonnel.find((p: any) => p.employee_id === val);
+                                        setQuoteRepPhone(salesPersonnelContacts[val]?.phone || repObj?.phone || "");
+                                        setQuoteRepEmail(salesPersonnelContacts[val]?.email || repObj?.email || "");
+                                    }}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs outline-none focus:border-blue-500 text-white font-semibold"
+                                >
+                                    {quoteCreatorOptions.map((person: any) => (
                                         <option key={person.employee_id} value={person.employee_id}>
-                                            {person.full_name}
+                                            {person.full_name}{person.department ? ` — ${person.department}` : ""}{person.isCurrentUser ? " (Đang đăng nhập)" : ""}
                                         </option>
-                                    ))
+                                    ))}
+                                    <option value="__CUSTOM__">✏️ Nhập tên người lập khác...</option>
+                                </select>
+                                {isCustomQuoteCreator && (
+                                    <input
+                                        type="text"
+                                        required
+                                        value={customQuoteCreatorName}
+                                        onChange={(e) => setCustomQuoteCreatorName(e.target.value)}
+                                        placeholder="Nhập họ tên người lập báo giá..."
+                                        className="w-full bg-slate-900 border border-blue-500/50 rounded-lg px-3 py-1.5 text-xs text-white outline-none focus:border-blue-400"
+                                    />
                                 )}
-                            </select>
+                            </div>
                         </div>
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Bảng giá áp dụng *</label>
@@ -28183,7 +28586,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 {singleMfgTargetOrder && (() => {
                     const mfgItems = (singleMfgTargetOrder.items || []).filter((it: any) => it?.sourceType !== "COMMERCIAL");
                     const displayItems = mfgItems.length > 0 ? mfgItems : (singleMfgTargetOrder.items || []);
-                    const totalQty = displayItems.reduce((s: number, it: any) => s + (it?.quantity || 1), 0);
+                    const activeItems = displayItems.filter((it: any, idx: number) => {
+                        const lineKey = `${it?.productCode}__${idx}`;
+                        return !singleMfgExcludedKeys[lineKey] && !singleMfgExcludedKeys[it?.productCode];
+                    });
+                    const excludedCount = displayItems.length - activeItems.length;
+                    const totalQty = activeItems.reduce((s: number, it: any) => s + (it?.quantity || 1), 0);
+                    const prCreatorName = loggedInStaff?.full_name || user?.name || singleMfgTargetOrder.salesRepName || "—";
 
                     return (
                         <form onSubmit={handleConfirmSingleMfgOrder} className="space-y-4 p-1 text-slate-100 max-h-[80vh] overflow-y-auto pr-1">
@@ -28203,7 +28612,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </span>
                                 </div>
                                 <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-300 gap-2">
-                                    <span>👤 NVKD: <strong className="text-white">{singleMfgTargetOrder.salesRepName || "—"}</strong></span>
+                                    <span>✍️ Người lập PR: <strong className="text-emerald-300">{prCreatorName}</strong></span>
+                                    <span>👤 NVKD đơn hàng: <strong className="text-white">{singleMfgTargetOrder.salesRepName || "—"}</strong></span>
                                     {singleMfgTargetOrder.requestedDeliveryDate && (
                                         <span>📅 Giao mong muốn: <strong className="text-amber-300 font-mono">{singleMfgTargetOrder.requestedDeliveryDate}</strong></span>
                                     )}
@@ -28215,53 +28625,92 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             {/* Items List Table */}
                             <div className="space-y-1.5">
-                                <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
                                     <label className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono">
-                                        Danh sách sản phẩm cần đặt Hãng ({displayItems.length} mục • {totalQty} sp):
+                                        Danh sách sản phẩm cần đặt Hãng ({activeItems.length}/{displayItems.length} mục chọn • {totalQty} sp):
                                     </label>
+                                    <div className="flex items-center gap-2">
+                                        {excludedCount > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setSingleMfgExcludedKeys({})}
+                                                className="px-2 py-0.5 rounded bg-purple-900/70 hover:bg-purple-800 border border-purple-500/50 text-[10px] font-bold text-purple-200 cursor-pointer"
+                                            >
+                                                🔄 Khôi phục {excludedCount} mã đã bỏ
+                                            </button>
+                                        )}
+                                        <span className="text-[10px] text-purple-300/90 italic">
+                                            *Bỏ tick hoặc bấm "✕ Bỏ mã" với mặt hàng không cần đặt đợt này
+                                        </span>
+                                    </div>
                                 </div>
                                 <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-950/60 max-h-[32vh] overflow-y-auto">
                                     <table className="w-full text-left text-xs border-collapse">
                                         <thead>
                                             <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/90 sticky top-0 z-10">
+                                                <th className="p-2.5 w-8 text-center">Chọn</th>
                                                 <th className="p-2.5 w-10 text-center">STT</th>
                                                 <th className="p-2.5 w-24">Mã SP</th>
                                                 <th className="p-2.5 min-w-[160px]">Tên Mặt Hàng Đặt Hãng</th>
                                                 <th className="p-2.5 w-20 text-center">Nguồn</th>
                                                 <th className="p-2.5 w-16 text-right">SL</th>
-                                                <th className="p-2.5 min-w-[220px]">📝 Ghi Chú Riêng Cho Mã Hàng Này</th>
+                                                <th className="p-2.5 min-w-[200px]">📝 Ghi Chú Riêng Cho Mã Hàng Này</th>
+                                                <th className="p-2.5 w-20 text-center">Thao tác</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-850 text-slate-300">
-                                            {displayItems.map((it: any, idx: number) => (
-                                                <tr key={idx} className="hover:bg-purple-950/20 transition-colors">
-                                                    <td className="p-2.5 text-center font-mono text-slate-500">{idx + 1}</td>
-                                                    <td className="p-2.5 font-mono font-bold text-purple-300">{it?.productCode}</td>
-                                                    <td className="p-2.5">
-                                                        <div className="font-bold text-white">{it?.productName || it?.productCode}</div>
-                                                        {it?.specification && (
-                                                            <div className="text-[10px] text-slate-400 italic">{it.specification}</div>
-                                                        )}
-                                                    </td>
-                                                    <td className="p-2.5 text-center">
-                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/70 text-purple-100 border border-purple-400/40">
-                                                            🏷️ Phân Phối Hãng
-                                                        </span>
-                                                    </td>
-                                                    <td className="p-2.5 text-right font-mono font-bold text-amber-300 text-sm">
-                                                        x{it?.quantity || 1}
-                                                    </td>
-                                                    <td className="p-2.5">
-                                                        <input
-                                                            type="text"
-                                                            placeholder="Lưu ý đóng gói, dán tem nhãn, số lô..."
-                                                            value={singleMfgItemNotes[it?.productCode] !== undefined ? singleMfgItemNotes[it?.productCode] : (it?.notes || "")}
-                                                            onChange={(e) => setSingleMfgItemNotes(prev => ({ ...prev, [it?.productCode]: e.target.value }))}
-                                                            className="w-full bg-slate-900 border border-purple-500/40 rounded px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:border-purple-400 focus:outline-none"
-                                                        />
-                                                    </td>
-                                                </tr>
-                                            ))}
+                                            {displayItems.map((it: any, idx: number) => {
+                                                const lineKey = `${it?.productCode}__${idx}`;
+                                                const isExcluded = Boolean(singleMfgExcludedKeys[lineKey] || singleMfgExcludedKeys[it?.productCode]);
+                                                if (isExcluded) return null;
+                                                return (
+                                                    <tr key={idx} className="hover:bg-purple-950/20 transition-colors">
+                                                        <td className="p-2.5 text-center">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={!isExcluded}
+                                                                onChange={(e) => setSingleMfgExcludedKeys(prev => ({ ...prev, [lineKey]: !e.target.checked }))}
+                                                                className="w-4 h-4 accent-purple-500 cursor-pointer"
+                                                            />
+                                                        </td>
+                                                        <td className="p-2.5 text-center font-mono text-slate-500">{idx + 1}</td>
+                                                        <td className="p-2.5 font-mono font-bold text-purple-300">{it?.productCode}</td>
+                                                        <td className="p-2.5">
+                                                            <div className="font-bold text-white">{it?.productName || it?.productCode}</div>
+                                                            {it?.specification && (
+                                                                <div className="text-[10px] text-slate-400 italic">{it.specification}</div>
+                                                            )}
+                                                        </td>
+                                                        <td className="p-2.5 text-center">
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/70 text-purple-100 border border-purple-400/40">
+                                                                🏷️ Phân Phối Hãng
+                                                            </span>
+                                                        </td>
+                                                        <td className="p-2.5 text-right font-mono font-bold text-amber-300 text-sm">
+                                                            x{it?.quantity || 1}
+                                                        </td>
+                                                        <td className="p-2.5">
+                                                            <input
+                                                                type="text"
+                                                                placeholder="Lưu ý đóng gói, dán tem nhãn, số lô..."
+                                                                value={singleMfgItemNotes[it?.productCode] !== undefined ? singleMfgItemNotes[it?.productCode] : (it?.notes || "")}
+                                                                onChange={(e) => setSingleMfgItemNotes(prev => ({ ...prev, [it?.productCode]: e.target.value }))}
+                                                                className="w-full bg-slate-900 border border-purple-500/40 rounded px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:border-purple-400 focus:outline-none"
+                                                            />
+                                                        </td>
+                                                        <td className="p-2.5 text-center">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => setSingleMfgExcludedKeys(prev => ({ ...prev, [lineKey]: true }))}
+                                                                className="px-2 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-700/60 text-rose-300 text-[10px] font-bold cursor-pointer"
+                                                                title="Loại bỏ mã hàng này khỏi đề xuất đặt Hãng"
+                                                            >
+                                                                ✕ Bỏ mã
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
                                         </tbody>
                                     </table>
                                 </div>
@@ -29039,7 +29488,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 )}
             </Modal>
 
-            {/* ===== Yêu cầu trả hàng (RMA): lập phiếu ===== */}
+            {/* ===== Yêu cầu trả hàng (RMA): lập phiếu (Slide 10: gộp đầy đủ số lượng các lô đã xuất của cùng mã hàng) ===== */}
             <Modal
                 isOpen={isCreateRmaModalOpen && rmaTargetOrder !== null}
                 onClose={() => !isSubmittingRma && setIsCreateRmaModalOpen(false)}
@@ -29048,8 +29497,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             >
                 {rmaTargetOrder && (() => {
                     const orderCode = rmaTargetOrder.order_code || rmaTargetOrder.id;
-                    const rmaAnalysis = computeOrderStockAnalysis(rmaTargetOrder);
-                    const breakdown: any[] = rmaAnalysis.itemsBreakdown || [];
+                    const skuLotsInfo = getOrderSkuDeliveredLotsInfo(rmaTargetOrder);
                     const returnedBefore: Record<string, number> = {};
                     rmaList.filter((r: any) => r.order_code === orderCode && r.status !== "REJECTED").forEach((r: any) => {
                         let its: any = r.items;
@@ -29059,7 +29507,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             if (k) returnedBefore[k] = (returnedBefore[k] || 0) + (Number(it.quantity) || 0);
                         });
                     });
-                    const lines = (rmaTargetOrder.items || []).filter((it: any) => it.status !== "CANCELLED" && (it.productCode || it.product_code));
+
+                    // Group order lines by SKU so multi-lot items are consolidated into one full row with all lots shown
+                    const groupedLinesMap = new Map<string, any>();
+                    (rmaTargetOrder.items || []).forEach((it: any) => {
+                        if (it.status === "CANCELLED") return;
+                        const k = String(it.productCode || it.product_code || "").trim();
+                        if (!k) return;
+                        if (!groupedLinesMap.has(k)) {
+                            groupedLinesMap.set(k, { ...it, quantity: Number(it.quantity) || 0 });
+                        } else {
+                            const prev = groupedLinesMap.get(k);
+                            prev.quantity = (Number(prev.quantity) || 0) + (Number(it.quantity) || 0);
+                        }
+                    });
+                    const lines = Array.from(groupedLinesMap.values());
+
                     const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
                     const total = lines.reduce((s: number, it: any) => {
                         const k = it.productCode || it.product_code;
@@ -29070,30 +29533,30 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <form onSubmit={handleConfirmCreateRma} className="space-y-3 text-xs">
                             <div className="p-2.5 rounded-lg bg-slate-900/70 border border-slate-800 flex flex-wrap justify-between gap-2">
                                 <span>Khách hàng: <strong className="text-amber-300">{rmaTargetOrder.customerName || rmaTargetOrder.customer_name}</strong></span>
-                                <span className="text-slate-400">Chỉ trả được số lượng đã giao, trừ phần đã/đang trả</span>
+                                <span className="text-slate-400">Tổng hợp toàn bộ số lượng các lô đã xuất cho từng mã hàng</span>
                             </div>
                             <div className="border border-slate-800 rounded-lg overflow-x-auto">
                                 <table className="w-full text-left">
                                     <thead className="bg-slate-950/80 text-[10px] uppercase text-slate-400">
                                         <tr>
                                             <th className="p-2 w-8"></th>
-                                            <th className="p-2">Mặt hàng</th>
-                                            <th className="p-2 text-center">Đã giao</th>
+                                            <th className="p-2">Mặt hàng & Các lô đã xuất</th>
+                                            <th className="p-2 text-center">Tổng đã giao</th>
                                             <th className="p-2 text-center">Đã/đang trả</th>
                                             <th className="p-2 text-center w-24">SL trả</th>
-                                            <th className="p-2">Lý do</th>
+                                            <th className="p-2">Lô trả / Lý do</th>
                                             <th className="p-2 text-right">Giá trị (gồm VAT)</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-800/70">
                                         {lines.map((it: any) => {
                                             const k = it.productCode || it.product_code;
-                                            const b = breakdown.find((x: any) => (x.code || "").trim().toLowerCase() === String(k).trim().toLowerCase());
-                                            const deliv = Number(b?.deliveredQty) || 0;
+                                            const info = skuLotsInfo[k] || { orderedQty: Number(it.quantity) || 0, deliveredQty: 0, lots: [] };
+                                            const deliv = info.deliveredQty > 0 ? info.deliveredQty : (info.orderedQty || 0);
                                             const ret = returnedBefore[k] || 0;
-                                            // Chỉ trả được hàng đã giao (đơn cũ giao hết không qua phiếu: lấy SL đặt)
-                                            const maxQty = Math.max(0, (deliv > 0 ? deliv : (rmaAnalysis.isFullyDelivered ? Number(it.quantity) || 0 : 0)) - ret);
-                                            const sel = rmaSelectedItems[k] || { selected: false, quantity: maxQty, reason: "" };
+                                            const maxQty = Math.max(0, deliv - ret);
+                                            const defaultLotStr = info.lots.length > 0 ? info.lots.map(l => `${l.lotNo} (${l.quantity})`).join(", ") : "";
+                                            const sel = rmaSelectedItems[k] || { selected: false, quantity: maxQty, reason: "", lotNumber: defaultLotStr };
                                             const price = Number(it.unitPrice ?? it.price) || 0;
                                             return (
                                                 <tr key={k} className={sel.selected ? "bg-amber-950/20" : ""}>
@@ -29102,15 +29565,72 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             type="checkbox"
                                                             checked={sel.selected}
                                                             disabled={maxQty <= 0}
-                                                            onChange={(e) => setRmaSelectedItems(prev => ({ ...prev, [k]: { ...sel, selected: e.target.checked, quantity: Math.min(sel.quantity || maxQty, maxQty) || maxQty } }))}
+                                                            onChange={(e) => setRmaSelectedItems(prev => ({
+                                                                ...prev,
+                                                                [k]: {
+                                                                    ...sel,
+                                                                    selected: e.target.checked,
+                                                                    quantity: Math.min(sel.quantity || maxQty, maxQty) || maxQty,
+                                                                    lotNumber: sel.lotNumber !== undefined ? sel.lotNumber : defaultLotStr
+                                                                }
+                                                            }))}
                                                             className="w-4 h-4 accent-amber-500 cursor-pointer"
                                                         />
                                                     </td>
                                                     <td className="p-2">
                                                         <div className="font-mono font-bold text-sky-300">{k}</div>
                                                         <div className="text-slate-200">{it.productName || it.product_name || ""}</div>
+                                                        {info.lots.length > 0 && (
+                                                            <div className="mt-1 flex flex-wrap gap-1">
+                                                                {info.lots.map((l, idx) => (
+                                                                    <span
+                                                                        key={idx}
+                                                                        onClick={() => {
+                                                                            if (maxQty <= 0) return;
+                                                                            setRmaSelectedItems(prev => ({
+                                                                                ...prev,
+                                                                                [k]: {
+                                                                                    ...sel,
+                                                                                    selected: true,
+                                                                                    quantity: Math.min(l.quantity, maxQty),
+                                                                                    lotNumber: l.lotNo
+                                                                                }
+                                                                            }));
+                                                                        }}
+                                                                        title="Bấm để chọn nhanh lô này hoặc nhập tổng số lượng trả ở cột SL trả"
+                                                                        className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 text-amber-300 font-mono cursor-pointer"
+                                                                    >
+                                                                        Lô {l.lotNo}: <b>{l.quantity}</b>{l.expDate ? ` (HSD: ${l.expDate})` : ""}
+                                                                    </span>
+                                                                ))}
+                                                                {info.lots.length > 1 && (
+                                                                    <span
+                                                                        onClick={() => {
+                                                                            if (maxQty <= 0) return;
+                                                                            setRmaSelectedItems(prev => ({
+                                                                                ...prev,
+                                                                                [k]: {
+                                                                                    ...sel,
+                                                                                    selected: true,
+                                                                                    quantity: maxQty,
+                                                                                    lotNumber: defaultLotStr
+                                                                                }
+                                                                            }));
+                                                                        }}
+                                                                        className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 font-bold cursor-pointer"
+                                                                    >
+                                                                        Tất cả ({maxQty})
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </td>
-                                                    <td className="p-2 text-center font-mono">{deliv}</td>
+                                                    <td className="p-2 text-center font-mono font-bold text-emerald-400">
+                                                        {deliv}
+                                                        {info.orderedQty > 0 && info.orderedQty !== deliv && (
+                                                            <div className="text-[10px] text-slate-500 font-normal">/ {info.orderedQty} đặt</div>
+                                                        )}
+                                                    </td>
                                                     <td className="p-2 text-center font-mono text-slate-400">{ret}</td>
                                                     <td className="p-2 text-center">
                                                         <input
@@ -29123,10 +29643,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             className="w-20 bg-slate-950 border border-slate-700 rounded px-1.5 py-1 text-center font-mono text-white disabled:opacity-40"
                                                         />
                                                     </td>
-                                                    <td className="p-2">
+                                                    <td className="p-2 space-y-1">
                                                         <input
                                                             type="text"
                                                             disabled={!sel.selected}
+                                                            placeholder="Số lô trả (VD: 010326...)"
+                                                            value={sel.lotNumber ?? defaultLotStr}
+                                                            onChange={(e) => setRmaSelectedItems(prev => ({ ...prev, [k]: { ...sel, lotNumber: e.target.value } }))}
+                                                            className="w-full min-w-[140px] bg-slate-950 border border-slate-700 rounded px-1.5 py-1 text-[11px] font-mono text-amber-200 disabled:opacity-40"
+                                                        />
+                                                        <input
+                                                            type="text"
+                                                            disabled={!sel.selected}
+                                                            placeholder="Lý do trả chi tiết..."
                                                             value={sel.reason}
                                                             onChange={(e) => setRmaSelectedItems(prev => ({ ...prev, [k]: { ...sel, reason: e.target.value } }))}
                                                             className="w-full min-w-[140px] bg-slate-950 border border-slate-700 rounded px-1.5 py-1 text-white disabled:opacity-40"
@@ -29183,7 +29712,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 })()}
             </Modal>
 
-            {/* ===== Danh sách phiếu trả hàng ===== */}
+            {/* ===== Danh sách phiếu trả hàng (Slide 11: Thao tác Duyệt & Nhập Lại Kho / Hủy phiếu trả trực tiếp) ===== */}
             <Modal
                 isOpen={isRmaListModalOpen}
                 onClose={() => setIsRmaListModalOpen(false)}
@@ -29191,16 +29720,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 size="3xl"
             >
                 {(() => {
-                    const canApproveRma = Boolean(can && can("sales.approve_discount")) || isSalesLeader;
                     const list = rmaListOrderCode ? rmaList.filter((r: any) => r.order_code === rmaListOrderCode) : rmaList;
                     const ST: Record<string, { label: string; cls: string }> = {
+                        PENDING: { label: "Chờ duyệt", cls: "bg-amber-950 text-amber-300 border-amber-700/60" },
                         PENDING_APPROVAL: { label: "Chờ duyệt", cls: "bg-amber-950 text-amber-300 border-amber-700/60" },
-                        APPROVED: { label: "Đã duyệt", cls: "bg-emerald-950 text-emerald-300 border-emerald-700/60" },
-                        REJECTED: { label: "Từ chối", cls: "bg-rose-950 text-rose-300 border-rose-700/60" }
+                        APPROVED: { label: "✅ Đã duyệt & Đã nhập lại kho", cls: "bg-emerald-950 text-emerald-300 border-emerald-700/60" },
+                        COMPLETED: { label: "✅ Đã duyệt & Đã nhập lại kho", cls: "bg-emerald-950 text-emerald-300 border-emerald-700/60" },
+                        REJECTED: { label: "Đã hủy / Từ chối", cls: "bg-rose-950 text-rose-300 border-rose-700/60" }
                     };
                     const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(Number(n) || 0));
                     return (
-                        <div className="space-y-2 text-xs">
+                        <div className="space-y-2.5 text-xs">
                             {rmaListOrderCode && (
                                 <button type="button" onClick={() => setRmaListOrderCode("")} className="text-[11px] text-sky-300 underline cursor-pointer">
                                     Xem tất cả phiếu trả hàng ({rmaList.length})
@@ -29212,32 +29742,64 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 let its: any = r.items;
                                 if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
                                 const st = ST[r.status] || { label: r.status, cls: "bg-slate-800 text-slate-300 border-slate-700" };
+                                const isPendingRma = r.status === "PENDING_APPROVAL" || r.status === "PENDING";
+                                const isApprovedRma = r.status === "APPROVED" || r.status === "COMPLETED";
                                 return (
-                                    <div key={r.id} className="p-2.5 rounded-lg border border-slate-800 bg-slate-900/60 space-y-1.5">
+                                    <div key={r.id} className="p-3 rounded-lg border border-slate-800 bg-slate-900/60 space-y-2">
                                         <div className="flex flex-wrap items-center gap-2">
-                                            <strong className="font-mono text-white">{r.rma_code}</strong>
+                                            <strong className="font-mono text-white text-sm">{r.rma_code}</strong>
                                             <span className="font-mono text-slate-400">{r.order_code}</span>
-                                            <span className="text-amber-300 truncate">{r.customer_name}</span>
-                                            <span className={`text-[10px] px-2 py-0.5 rounded-full border font-bold ${st.cls}`}>{st.label}</span>
-                                            <span className="ml-auto font-mono text-emerald-300">{fmt(r.total_amount)} đ</span>
+                                            <span className="text-amber-300 font-semibold truncate">{r.customer_name}</span>
+                                            <span className={`text-[10px] px-2.5 py-0.5 rounded-full border font-bold ${st.cls}`}>{st.label}</span>
+                                            <span className="ml-auto font-mono font-bold text-emerald-300 text-sm">{fmt(r.total_amount)} đ</span>
                                         </div>
-                                        <div className="text-slate-300">
+                                        <div className="text-slate-200 bg-slate-950/60 p-2 rounded border border-slate-800/80 space-y-1">
                                             {(Array.isArray(its) ? its : []).map((it: any, i: number) => (
-                                                <span key={i} className="mr-3">
-                                                    <b className="font-mono text-sky-300">{it.product_code}</b> × {it.quantity}{it.reason ? ` (${it.reason})` : ""}
-                                                </span>
+                                                <div key={i} className="flex flex-wrap items-center gap-2">
+                                                    <b className="font-mono text-sky-300">{it.product_code || it.productCode}</b>
+                                                    <span className="text-slate-300">{it.product_name || it.productName || ""}</span>
+                                                    <span className="font-mono font-bold text-amber-300">× {it.quantity}</span>
+                                                    {(it.lot_number || it.lotNumber) && (
+                                                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-amber-200 font-mono">
+                                                            Lô: {it.lot_number || it.lotNumber}
+                                                        </span>
+                                                    )}
+                                                    {it.reason && <span className="text-slate-400 italic">({it.reason})</span>}
+                                                </div>
                                             ))}
                                         </div>
-                                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
-                                            <span>{r.restock_action === "RESTOCK" ? "Nhập lại kho" : "Không nhập kho"}</span>
-                                            <span>•</span>
-                                            <span>{r.refund_type === "REFUND" ? "Hoàn tiền" : r.refund_type === "EXCHANGE" ? "Đổi hàng" : "Giảm trừ công nợ"}</span>
-                                            {r.notes && <span className="truncate max-w-[420px]" title={r.notes}>• {r.notes}</span>}
-                                            {r.status === "PENDING_APPROVAL" && canApproveRma && (
-                                                <span className="ml-auto flex gap-1.5">
-                                                    <button type="button" onClick={() => handleRejectRma(r.id)} className="px-2 py-1 rounded bg-rose-800 hover:bg-rose-700 text-white font-bold cursor-pointer">Từ chối</button>
-                                                    <button type="button" onClick={() => handleApproveRma(r.id, r.restock_action)} className="px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-bold cursor-pointer">Duyệt</button>
+                                        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-400">
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-medium">
+                                                    {r.restock_action === "RESTOCK" ? "📦 Nhập lại kho bán" : "🗑️ Không nhập kho"}
                                                 </span>
+                                                <span>•</span>
+                                                <span>{r.refund_type === "REFUND" ? "Hoàn tiền" : r.refund_type === "EXCHANGE" ? "Đổi hàng" : "Giảm trừ công nợ"}</span>
+                                                {r.notes && <span className="truncate max-w-[360px]" title={r.notes}>• {r.notes}</span>}
+                                                {isApprovedRma && (r.approved_by || r.approved_at) && (
+                                                    <span className="text-emerald-400 font-medium">
+                                                        • Người duyệt: <b>{r.approved_by || "Quản lý"}</b>
+                                                        {r.approved_at ? ` (${new Date(r.approved_at).toLocaleString("vi-VN")})` : ""}
+                                                    </span>
+                                                )}
+                                            </div>
+                                            {isPendingRma && (
+                                                <div className="flex items-center gap-2 ml-auto">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleApproveRma(r.id, r.restock_action || "RESTOCK")}
+                                                        className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold cursor-pointer shadow-sm transition-all flex items-center gap-1"
+                                                    >
+                                                        <span>✅ Duyệt & Nhập Lại Kho</span>
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRejectRma(r.id)}
+                                                        className="px-2.5 py-1.5 rounded-lg bg-rose-900/80 hover:bg-rose-800 border border-rose-700/60 text-rose-200 font-bold cursor-pointer transition-all flex items-center gap-1"
+                                                    >
+                                                        <span>🗑️ Hủy phiếu trả</span>
+                                                    </button>
+                                                </div>
                                             )}
                                         </div>
                                     </div>
@@ -29259,8 +29821,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 {singleProcureTargetOrder && (() => {
                     const commItems = (singleProcureTargetOrder.items || []).filter((it: any) => it?.sourceType === "COMMERCIAL");
                     const displayItems = commItems.length > 0 ? commItems : (singleProcureTargetOrder.items || []);
+                    const activeItems = displayItems.filter((it: any, idx: number) => {
+                        const lineKey = `${it.productCode}__${idx}`;
+                        return !singleProcureExcludedKeys[lineKey] && !singleProcureExcludedKeys[it.productCode];
+                    });
+                    const excludedCount = displayItems.length - activeItems.length;
                     const totalQty = displayItems.reduce((s: number, it: any, idx: number) => {
                         const lineKey = `${it.productCode}__${idx}`;
+                        if (singleProcureExcludedKeys[lineKey] || singleProcureExcludedKeys[it.productCode]) return s;
                         const q = singleProcureItemQuantities[lineKey] !== undefined
                             ? Number(singleProcureItemQuantities[lineKey])
                             : singleProcureItemQuantities[it.productCode] !== undefined 
@@ -29268,6 +29836,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             : (it.procureQuantity !== undefined ? Number(it.procureQuantity) : (it.quantity || 1));
                         return s + q;
                     }, 0);
+                    const prCreatorName = loggedInStaff?.full_name || user?.name || singleProcureTargetOrder.salesRepName || "—";
 
                     return (
                         <form onSubmit={handleConfirmSingleProcureOrder} className="space-y-4 p-1 text-slate-100 max-h-[80vh] overflow-y-auto pr-1">
@@ -29298,7 +29867,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </span>
                                 </div>
                                 <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-300 gap-2">
-                                    <span>👤 NVKD: <strong className="text-white">{singleProcureTargetOrder.salesRepName || "—"}</strong></span>
+                                    <span>✍️ Người lập PR: <strong className="text-emerald-300">{prCreatorName}</strong></span>
+                                    <span>👤 NVKD đơn hàng: <strong className="text-white">{singleProcureTargetOrder.salesRepName || "—"}</strong></span>
                                     {singleProcureTargetOrder.requestedDeliveryDate && (
                                         <span>📅 Giao cho khách (SO): <strong className="text-amber-300 font-mono">{singleProcureTargetOrder.requestedDeliveryDate}</strong></span>
                                     )}
@@ -29307,13 +29877,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             {/* Items List Table */}
                             <div className="space-y-1.5">
-                                <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
                                     <label className="text-xs font-bold text-slate-300 uppercase tracking-wider font-mono">
-                                        Danh sách sản phẩm đề xuất mua ({displayItems.length} mục • tổng {totalQty} sp):
+                                        Danh sách sản phẩm đề xuất mua ({activeItems.length}/{displayItems.length} mục chọn • tổng {totalQty} sp):
                                     </label>
-                                    <span className="text-[10px] text-amber-300/90 italic">
-                                        *Có thể điều chỉnh số lượng mua nếu kho đã có sẵn 1 phần
-                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        {excludedCount > 0 && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setSingleProcureExcludedKeys({})}
+                                                className="px-2 py-0.5 rounded bg-cyan-900/70 hover:bg-cyan-800 border border-cyan-500/50 text-[10px] font-bold text-cyan-200 cursor-pointer"
+                                            >
+                                                🔄 Khôi phục {excludedCount} mã đã bỏ
+                                            </button>
+                                        )}
+                                        <span className="text-[10px] text-amber-300/90 italic">
+                                            *Có thể bỏ chọn mã chưa cần mua hoặc điều chỉnh số lượng mua
+                                        </span>
+                                    </div>
                                 </div>
                                 <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-950/60 max-h-[32vh] overflow-y-auto">
                                     {(() => {
@@ -29322,6 +29903,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <table className="w-full text-left text-xs border-collapse">
                                                 <thead>
                                                     <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/90 sticky top-0 z-10">
+                                                        <th className="p-2.5 w-8 text-center">Chọn</th>
                                                         <th className="p-2.5 w-10 text-center">STT</th>
                                                         <th className="p-2.5 w-24">Mã SP</th>
                                                         <th className="p-2.5 min-w-[140px]">Tên Mặt Hàng / Quy Cách</th>
@@ -29330,13 +29912,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <th className="p-2.5 w-20 text-center">Tồn Khả Dụng</th>
                                                         <th className="p-2.5 w-16 text-center">Sắp Về</th>
                                                         <th className="p-2.5 w-24 text-center">SL Cần Mua (PR)</th>
-                                                        <th className="p-2.5 min-w-[180px]">📝 Ghi Chú Yêu Cầu Kỹ Thuật</th>
+                                                        <th className="p-2.5 min-w-[160px]">📝 Ghi Chú Yêu Cầu Kỹ Thuật</th>
+                                                        <th className="p-2.5 w-20 text-center">Thao tác</th>
                                                     </tr>
                                                 </thead>
                                                 <tbody className="divide-y divide-slate-850 text-slate-300">
                                                     {displayItems.map((it: any, idx: number) => {
                                                         const itCode = (it?.productCode || it?.product_code || "").toLowerCase();
                                                         const lineKey = `${it?.productCode}__${idx}`;
+                                                        const isExcluded = Boolean(singleProcureExcludedKeys[lineKey] || singleProcureExcludedKeys[it?.productCode]);
+                                                        if (isExcluded) return null;
                                                         const itemAnalysis = (prAnalysis.itemsBreakdown || [])[idx] && ((prAnalysis.itemsBreakdown || [])[idx].code || "").toLowerCase() === itCode
                                                             ? (prAnalysis.itemsBreakdown || [])[idx]
                                                             : ((prAnalysis.itemsBreakdown || []).find((b: any) => (b.code || "").toLowerCase() === itCode) || {});
@@ -29348,6 +29933,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                         return (
                                                             <tr key={idx} className="hover:bg-cyan-950/20 transition-colors">
+                                                                <td className="p-2.5 text-center">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={!isExcluded}
+                                                                        onChange={(e) => setSingleProcureExcludedKeys(prev => ({ ...prev, [lineKey]: !e.target.checked }))}
+                                                                        className="w-4 h-4 accent-cyan-500 cursor-pointer"
+                                                                    />
+                                                                </td>
                                                                 <td className="p-2.5 text-center font-mono text-slate-500">{idx + 1}</td>
                                                                 <td className="p-2.5 font-mono font-bold text-cyan-300">{it?.productCode}</td>
                                                                 <td className="p-2.5">
@@ -29393,20 +29986,30 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         title="Số lượng cần đặt mua nhà cung cấp"
                                                                     />
                                                                 </td>
-                                                        <td className="p-2.5">
-                                                            <input
-                                                                type="text"
-                                                                placeholder="Hãng, CO/CQ, hạn dùng yêu cầu..."
-                                                                value={singleProcureItemNotes[lineKey] !== undefined ? singleProcureItemNotes[lineKey] : (singleProcureItemNotes[it?.productCode] !== undefined ? singleProcureItemNotes[it?.productCode] : (it?.notes || ""))}
-                                                                onChange={(e) => setSingleProcureItemNotes(prev => ({ ...prev, [lineKey]: e.target.value }))}
-                                                                className="w-full bg-slate-900 border border-cyan-500/40 rounded px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
-                                                            />
-                                                        </td>
-                                                    </tr>
-                                                );
-                                            })}
-                                        </tbody>
-                                    </table>
+                                                                <td className="p-2.5">
+                                                                    <input
+                                                                        type="text"
+                                                                        placeholder="Hãng, CO/CQ, hạn dùng yêu cầu..."
+                                                                        value={singleProcureItemNotes[lineKey] !== undefined ? singleProcureItemNotes[lineKey] : (singleProcureItemNotes[it?.productCode] !== undefined ? singleProcureItemNotes[it?.productCode] : (it?.notes || ""))}
+                                                                        onChange={(e) => setSingleProcureItemNotes(prev => ({ ...prev, [lineKey]: e.target.value }))}
+                                                                        className="w-full bg-slate-900 border border-cyan-500/40 rounded px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:border-cyan-400 focus:outline-none"
+                                                                    />
+                                                                </td>
+                                                                <td className="p-2.5 text-center">
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => setSingleProcureExcludedKeys(prev => ({ ...prev, [lineKey]: true }))}
+                                                                        className="px-2 py-1 rounded bg-rose-950/80 hover:bg-rose-900 border border-rose-700/60 text-rose-300 text-[10px] font-bold cursor-pointer"
+                                                                        title="Loại bỏ mã hàng này khỏi đề xuất mua hàng PR"
+                                                                    >
+                                                                        ✕ Bỏ mã
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        );
+                                                    })}
+                                                </tbody>
+                                            </table>
                                         );
                                     })()}
                                 </div>
@@ -29689,57 +30292,94 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         const baseAvailStock = item.availStock ?? getAvailableStockForProduct(item.productCode, item.productName, ordCode);
                                         const availStock = (selectedLotAvailQty !== undefined && baseAvailStock <= 0) ? selectedLotAvailQty : baseAvailStock;
                                         const isEnough = availStock >= (item.remainingQty ?? 1);
-                                        const sameCodeCount = deliveryItems.filter(it => it.productCode === item.productCode).length;
+                                        const sameCodeItems = deliveryItems.filter(it => it.productCode === item.productCode);
+                                        const sameCodeCount = sameCodeItems.length;
+                                        const sumSameCodeQty = sameCodeItems.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
+                                        const lotOrderWithinSku = deliveryItems
+                                            .slice(0, idx + 1)
+                                            .filter(it => it.productCode === item.productCode).length;
+                                        const distinctSkuIndex = Array.from(
+                                            new Set(deliveryItems.slice(0, idx + 1).map(it => it.productCode))
+                                        ).length;
 
                                         return (
                                             <React.Fragment key={idx}>
-                                            {/* Dòng tên hàng riêng (chiếm cả bề ngang) để các cột số lượng / lô / hạn dùng có chỗ rộng */}
-                                            <tr className={cn("text-[11px] border-t border-slate-800", item.isExtraLot ? "bg-indigo-950/20" : "bg-slate-900/40")}>
-                                                <td colSpan={11} className="pt-2 pb-1 px-2.5">
+                                            {/* Khung tiêu đề chung cho mỗi Mã sản phẩm (chỉ hiển thị 1 lần ở dòng lô đầu tiên; các lô tách thêm nằm chung ngay bên dưới trong cùng 1 khung) */}
+                                            {!item.isExtraLot && (
+                                            <tr className="text-[11px] border-t-2 border-slate-700 bg-slate-900/70">
+                                                <td colSpan={11} className="pt-2 pb-1.5 px-2.5">
                                                     <div className="flex items-center gap-x-2 gap-y-1 flex-wrap">
-                                                        {item.isExtraLot ? (
-                                                            <span className="text-[10px] text-indigo-300 font-mono">↳ Lô khác của <strong>{item.productCode}</strong></span>
-                                                        ) : (
-                                                            <>
-                                                                <span className="font-bold text-white text-xs">{item.productName}</span>
-                                                                <span className="text-[10px] text-slate-500 font-mono">{item.productCode}{item.specification ? ` • ${item.specification}` : ""}</span>
-                                                                {item.storageCondition && <span className="text-[10px] text-cyan-400">🌡 {item.storageCondition}</span>}
-                                                            </>
-                                                        )}
-                                                        {sameCodeCount > 1 && !item.isExtraLot && (
-                                                            <span className="text-[9px] text-amber-400 font-mono">(Giao từ nhiều lô)</span>
+                                                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-700/60">
+                                                            SP #{distinctSkuIndex}
+                                                        </span>
+                                                        <span className="font-bold text-white text-xs">{item.productName}</span>
+                                                        <span className="text-[10px] text-slate-400 font-mono">{item.productCode}{item.specification ? ` • ${item.specification}` : ""}</span>
+                                                        {item.storageCondition && <span className="text-[10px] text-cyan-400">🌡 {item.storageCondition}</span>}
+                                                        {sameCodeCount > 1 && (
+                                                            <span className={cn(
+                                                                "text-[10px] font-mono font-bold px-2 py-0.5 rounded border",
+                                                                sumSameCodeQty === Number(item.remainingQty ?? item.orderedQty ?? 0)
+                                                                    ? "bg-emerald-950/80 text-emerald-300 border-emerald-700/60"
+                                                                    : "bg-amber-950/80 text-amber-300 border-amber-700/60"
+                                                            )}>
+                                                                📦 Đang tách {sameCodeCount} lô trong cùng khung • Tổng SL xuất: {sumSameCodeQty}/{item.remainingQty ?? item.orderedQty ?? "-"} {item.unit || "Bộ"}
+                                                            </span>
                                                         )}
                                                         <span className="ml-auto flex items-center gap-1.5">
                                                             <button
                                                                 type="button"
                                                                 onClick={() => handleAddLotForProduct(idx)}
-                                                                className="text-[9px] text-indigo-300 hover:text-indigo-100 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors cursor-pointer shadow-xs"
-                                                                title="Tách thêm một lô hàng khác cho cùng mã sản phẩm này"
+                                                                className="text-[10px] text-indigo-200 hover:text-white bg-indigo-950/90 hover:bg-indigo-800 border border-indigo-600/70 px-2 py-0.5 rounded flex items-center gap-1 transition-colors cursor-pointer shadow-xs font-bold"
+                                                                title="Tách thêm một lô hàng khác ngay trong cùng khung mã sản phẩm này"
                                                             >
-                                                                <span>+ Thêm lô giao</span>
+                                                                <span>+ Thêm lô giao (cùng khung)</span>
                                                             </button>
-                                                            {(item.isExtraLot || deliveryItems.length > 1) && (
+                                                            {deliveryItems.length > 1 && (
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleRemoveLotRow(idx)}
                                                                     className="text-[9px] text-rose-400 hover:text-rose-200 bg-rose-950/70 hover:bg-rose-900 border border-rose-800/60 px-1.5 py-0.5 rounded flex items-center gap-0.5 transition-colors cursor-pointer shadow-xs"
-                                                                    title={item.isExtraLot ? "Bỏ dòng lô tách này" : "Không giao mặt hàng này trong phiếu này (phần còn lại vẫn nằm trên đơn để giao đợt sau)"}
+                                                                    title="Không giao mặt hàng này trong phiếu này (phần còn lại vẫn nằm trên đơn để giao đợt sau)"
                                                                 >
-                                                                    <span>{item.isExtraLot ? "✕ Bỏ lô" : "✕ Bỏ dòng"}</span>
+                                                                    <span>✕ Bỏ mã này</span>
                                                                 </button>
                                                             )}
                                                         </span>
                                                     </div>
                                                 </td>
                                             </tr>
-                                            <tr className={cn("hover:bg-slate-900/30 text-[11px]", item.isExtraLot ? "bg-indigo-950/20" : "")}>
-                                                <td className="py-2 px-2 text-center text-slate-500 font-mono">{idx + 1}</td>
+                                            )}
+                                            <tr className={cn(
+                                                "hover:bg-slate-900/30 text-[11px]",
+                                                item.isExtraLot ? "bg-indigo-950/15 border-t border-dashed border-indigo-800/50" : ""
+                                            )}>
+                                                <td className="py-2 px-2 text-center text-slate-400 font-mono">
+                                                    {sameCodeCount > 1 ? (
+                                                        <div className="flex flex-col items-center gap-0.5">
+                                                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-950/90 text-indigo-300 border border-indigo-700/60 font-bold">
+                                                                Lô #{lotOrderWithinSku}
+                                                            </span>
+                                                            {item.isExtraLot && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleRemoveLotRow(idx)}
+                                                                    className="text-[8px] text-rose-400 hover:text-rose-200 underline cursor-pointer"
+                                                                    title="Xóa dòng lô phụ này"
+                                                                >
+                                                                    Bỏ lô
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    ) : (
+                                                        <span>{distinctSkuIndex}</span>
+                                                    )}
+                                                </td>
                                                 <td className="py-2 px-2 text-center text-slate-400 font-medium">
                                                     {item.unit || "Bộ"}
                                                 </td>
-                                                <td className="py-2 px-2 text-center font-mono text-slate-300">{item.orderedQty ?? "-"}</td>
-                                                <td className="py-2 px-2 text-center font-mono text-sky-400">{item.prevAllocatedQty ?? 0}</td>
-                                                <td className="py-2 px-2 text-center font-mono text-amber-300 font-bold">{item.remainingQty ?? "-"}</td>
+                                                <td className="py-2 px-2 text-center font-mono text-slate-300">{item.isExtraLot ? <span className="text-[9px] text-slate-500">↑ Cùng mã</span> : (item.orderedQty ?? "-")}</td>
+                                                <td className="py-2 px-2 text-center font-mono text-sky-400">{item.isExtraLot ? <span className="text-[9px] text-slate-500">—</span> : (item.prevAllocatedQty ?? 0)}</td>
+                                                <td className="py-2 px-2 text-center font-mono text-amber-300 font-bold">{item.isExtraLot ? <span className="text-[9px] text-indigo-300">Gộp chung</span> : (item.remainingQty ?? "-")}</td>
                                                 <td className="py-2 px-2 text-center">
                                                     <div className="flex flex-col items-center">
                                                         <span className={cn(
@@ -30088,6 +30728,53 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     </div>
 
                     <div>
+                        <label className="block text-[10px] font-bold uppercase tracking-wider text-indigo-400 mb-2">
+                            🚚 Trạng thái phiếu giao hàng (Quy trình 3 bước) *
+                        </label>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            {[
+                                {
+                                    key: "PENDING_DELIVERY" as const,
+                                    name: "⏳ 1. Chờ giao",
+                                    desc: "Hàng chưa ra khỏi kho • Lập phiếu chuẩn bị xuất",
+                                    activeClass: "ring-2 ring-amber-500 border-amber-500/60 bg-amber-950/30 text-amber-300"
+                                },
+                                {
+                                    key: "WAREHOUSE_DELIVERED" as const,
+                                    name: "🚚 2. Đã giao hàng",
+                                    desc: "Kho xác nhận đã xuất & bàn giao vận chuyển",
+                                    activeClass: "ring-2 ring-sky-500 border-sky-500/60 bg-sky-950/30 text-sky-300"
+                                },
+                                {
+                                    key: "DELIVERED" as const,
+                                    name: "✅ 3. Đã nhận",
+                                    desc: "NVKD xác nhận khách hàng đã nhận đủ hàng",
+                                    activeClass: "ring-2 ring-emerald-500 border-emerald-500/60 bg-emerald-950/30 text-emerald-300"
+                                }
+                            ].map(opt => (
+                                <label
+                                    key={opt.key}
+                                    className={cn(
+                                        "flex flex-col items-start justify-center p-3 rounded-xl border cursor-pointer hover:border-slate-600 transition-all text-left",
+                                        deliveryStepStatus === opt.key ? opt.activeClass : "border-slate-800 bg-slate-950 text-slate-300"
+                                    )}
+                                >
+                                    <input
+                                        type="radio"
+                                        name="deliveryStepStatus"
+                                        value={opt.key}
+                                        checked={deliveryStepStatus === opt.key}
+                                        onChange={() => setDeliveryStepStatus(opt.key)}
+                                        className="sr-only"
+                                    />
+                                    <span className="text-xs font-bold">{opt.name}</span>
+                                    <span className="text-[10px] text-slate-400 mt-0.5">{opt.desc}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ghi chú giao nhận / Biên bản bàn giao</label>
                         <textarea
                             rows={2}
@@ -30100,7 +30787,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     <div className="pt-3 border-t border-slate-800 flex items-center justify-between gap-2 flex-wrap">
                         <span className="text-[11px] text-slate-400 italic">
-                            * Kiểm tra kỹ số lô và hạn dùng. Tồn kho sẽ được trừ ngay khi lập phiếu; NVKD xác nhận đã giao sau khi khách nhận hàng.
+                            * Quy trình 3 bước: (1) Chờ giao → (2) Kho Đã giao hàng → (3) NVKD Xác nhận Đã nhận. Có thể điều chỉnh linh hoạt.
                         </span>
                         <div className="flex items-center gap-2">
                             <button
@@ -30125,7 +30812,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <FileText className="w-4 h-4" />
                                 {editingDeliverySlip
                                     ? `Lưu thay đổi phiếu ${editingDeliverySlip.id}`
-                                    : `Lập Phiếu Giao - Đợt ${deliveryBatchNumber} (${deliveryItems.filter(it => Number(it.quantity) > 0).length} SP)`}
+                                    : `Lập Phiếu Giao - Đợt ${deliveryBatchNumber} (${Array.from(new Set(deliveryItems.filter(it => Number(it.quantity) > 0).map(it => it.productCode))).length} mã SP)`}
                             </button>
                         </div>
                     </div>
@@ -30225,7 +30912,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                             </div>
 
-                            {/* Items Table with Lot No Column */}
+                            {/* Items Table with Lot No Column (Consolidated 1 Row per SKU when split across multiple lots) */}
                             <div>
                                 <table className="w-full text-left text-[11px] border-collapse border border-slate-300">
                                     <thead>
@@ -30234,7 +30921,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <th className="p-2 border-r border-slate-300 w-24">Mã SKU</th>
                                             <th className="p-2 border-r border-slate-300">Tên Hàng Hóa & Quy Cách</th>
                                             <th className="p-2 border-r border-slate-300 text-center w-14">ĐVT</th>
-                                            <th className="p-2 border-r border-slate-300 text-center w-28 bg-amber-50/60 font-black text-amber-950">Số Lô (Lot No)</th>
+                                            <th className="p-2 border-r border-slate-300 text-center w-36 bg-amber-50/60 font-black text-amber-950">Số Lô (Lot No)</th>
                                             <th className="p-2 border-r border-slate-300 text-center w-24">Hạn dùng</th>
                                             <th className="p-2 border-r border-slate-300 text-center w-16">Số lượng</th>
                                             {slipPrintWithPrice && <th className="p-2 border-r border-slate-300 text-right w-24">Đơn giá</th>}
@@ -30243,26 +30930,82 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-200 text-slate-800">
-                                        {(selectedViewDeliverySlip.items || []).map((it: any, i: number) => (
-                                            <tr key={i} className="hover:bg-slate-50">
-                                                <td className="p-2 text-center border-r border-slate-200 font-mono">{i + 1}</td>
-                                                <td className="p-2 border-r border-slate-200 font-mono font-bold text-indigo-950">{it.productCode}</td>
-                                                <td className="p-2 border-r border-slate-200">
-                                                    <div className="font-bold text-slate-900">{it.productName}</div>
-                                                    {it.specification && <div className="text-[10px] text-slate-500">{it.specification}</div>}
-                                                    {(it.storageCondition || getStorageConditionForProduct(it.productCode)) && (
-                                                        <div className="text-[10px] text-slate-600">Bảo quản: {it.storageCondition || getStorageConditionForProduct(it.productCode)}</div>
-                                                    )}
-                                                </td>
-                                                <td className="p-2 text-center border-r border-slate-200">{it.unit || "Bộ"}</td>
-                                                <td className="p-2 text-center border-r border-slate-200 font-mono font-bold text-amber-900 bg-amber-50/40">{it.lotNo || "-"}</td>
-                                                <td className="p-2 text-center border-r border-slate-200 font-mono">{it.expDate || "-"}</td>
-                                                <td className="p-2 text-center border-r border-slate-200 font-bold text-slate-900 font-mono">{it.quantity}</td>
-                                                {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono">{Number(it.unitPrice ?? it.price ?? 0).toLocaleString("vi-VN")}</td>}
-                                                {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono font-bold">{((Number(it.unitPrice ?? it.price ?? 0)) * (Number(it.quantity) || 0)).toLocaleString("vi-VN")}</td>}
-                                                <td className="p-2 text-center text-slate-700 text-[10px]">{it.notes || "-"}</td>
-                                            </tr>
-                                        ))}
+                                        {(() => {
+                                            const rawItems = selectedViewDeliverySlip.items || [];
+                                            const groupedBySku: any[] = [];
+                                            const skuMap = new Map<string, any>();
+
+                                            rawItems.forEach((it: any) => {
+                                                const codeKey = String(it.productCode || it.productName || "").trim().toUpperCase();
+                                                const qty = Number(it.quantity) || 0;
+                                                const lotStr = String(it.lotNo || "").trim();
+                                                const expStr = String(it.expDate || "").trim();
+                                                const noteStr = String(it.notes || "").trim();
+                                                if (!skuMap.has(codeKey)) {
+                                                    const entry = {
+                                                        ...it,
+                                                        quantity: qty,
+                                                        lotsDetail: [{ lotNo: lotStr || "-", expDate: expStr || "-", qty }],
+                                                        notesList: noteStr ? [noteStr] : []
+                                                    };
+                                                    skuMap.set(codeKey, entry);
+                                                    groupedBySku.push(entry);
+                                                } else {
+                                                    const existing = skuMap.get(codeKey);
+                                                    existing.quantity += qty;
+                                                    existing.lotsDetail.push({ lotNo: lotStr || "-", expDate: expStr || "-", qty });
+                                                    if (noteStr && !existing.notesList.includes(noteStr)) {
+                                                        existing.notesList.push(noteStr);
+                                                    }
+                                                }
+                                            });
+
+                                            return groupedBySku.map((it: any, i: number) => {
+                                                const hasMultiLots = (it.lotsDetail?.length || 0) > 1;
+                                                return (
+                                                    <tr key={i} className="hover:bg-slate-50">
+                                                        <td className="p-2 text-center border-r border-slate-200 font-mono">{i + 1}</td>
+                                                        <td className="p-2 border-r border-slate-200 font-mono font-bold text-indigo-950">{it.productCode}</td>
+                                                        <td className="p-2 border-r border-slate-200">
+                                                            <div className="font-bold text-slate-900">{it.productName}</div>
+                                                            {it.specification && <div className="text-[10px] text-slate-500">{it.specification}</div>}
+                                                            {(it.storageCondition || getStorageConditionForProduct(it.productCode)) && (
+                                                                <div className="text-[10px] text-slate-600">Bảo quản: {it.storageCondition || getStorageConditionForProduct(it.productCode)}</div>
+                                                            )}
+                                                        </td>
+                                                        <td className="p-2 text-center border-r border-slate-200">{it.unit || "Bộ"}</td>
+                                                        <td className="p-2 text-center border-r border-slate-200 font-mono font-bold text-amber-900 bg-amber-50/40">
+                                                            {hasMultiLots ? (
+                                                                <div className="space-y-0.5 text-left inline-block">
+                                                                    {it.lotsDetail.map((ld: any, lIdx: number) => (
+                                                                        <div key={lIdx} className="text-[10px] leading-tight">
+                                                                            • <span className="font-black">{ld.lotNo}</span> <span className="text-slate-600 font-normal">(SL: {ld.qty})</span>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            ) : (
+                                                                <span>{it.lotsDetail?.[0]?.lotNo || it.lotNo || "-"}</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="p-2 text-center border-r border-slate-200 font-mono">
+                                                            {hasMultiLots ? (
+                                                                <div className="space-y-0.5">
+                                                                    {it.lotsDetail.map((ld: any, lIdx: number) => (
+                                                                        <div key={lIdx} className="text-[10px] leading-tight">{ld.expDate || "-"}</div>
+                                                                    ))}
+                                                                </div>
+                                                            ) : (
+                                                                <span>{it.lotsDetail?.[0]?.expDate || it.expDate || "-"}</span>
+                                                            )}
+                                                        </td>
+                                                        <td className="p-2 text-center border-r border-slate-200 font-bold text-slate-900 font-mono text-xs">{it.quantity}</td>
+                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono">{Number(it.unitPrice ?? it.price ?? 0).toLocaleString("vi-VN")}</td>}
+                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono font-bold">{((Number(it.unitPrice ?? it.price ?? 0)) * (Number(it.quantity) || 0)).toLocaleString("vi-VN")}</td>}
+                                                        <td className="p-2 text-center text-slate-700 text-[10px]">{it.notesList?.length > 0 ? it.notesList.join("; ") : (it.notes || "-")}</td>
+                                                    </tr>
+                                                );
+                                            });
+                                        })()}
                                     </tbody>
                                     {slipPrintWithPrice && (
                                         <tfoot>
@@ -30314,23 +31057,39 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         {/* Action Buttons */}
                         <div className="flex items-center justify-between pt-3 border-t border-slate-200 flex-wrap gap-2">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-xs text-slate-500 font-mono">
                                     Mã tra cứu: <strong>{selectedViewDeliverySlip.id}</strong> {selectedViewDeliverySlip.isDraftPreview && <span className="text-amber-600 font-bold ml-1">(Chưa xuất phiếu)</span>}
                                 </span>
                                 {!selectedViewDeliverySlip.isDraftPreview && (() => {
                                     const vs = selectedViewDeliverySlip;
-                                    const st = getSlipStatus(vs, resolveFactoryOrder({ order_id: vs.orderId, raw_code: vs.orderCode }));
+                                    const step = getSlipStep(vs, resolveFactoryOrder({ order_id: vs.orderId, raw_code: vs.orderCode }));
                                     return (
                                         <>
                                             {vs.batchNumber && <span className="text-[10px] bg-indigo-100 text-indigo-800 border border-indigo-300 px-2 py-0.5 rounded-full font-bold">Đợt {vs.batchNumber}</span>}
-                                            {st === "PENDING" && <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold">⏳ Chờ giao - chờ NVKD xác nhận</span>}
-                                            {st === "CANCELLED" && <span className="text-[10px] bg-slate-200 text-slate-700 border border-slate-300 px-2 py-0.5 rounded-full font-bold">✖ Đã hủy{vs.cancelReason ? ` - ${vs.cancelReason}` : ""}{vs.cancelledBy ? ` (${vs.cancelledBy})` : ""}</span>}
-                                            {st === "DELIVERED" && (
+                                            {step === "PENDING_DELIVERY" && <span className="text-[10px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded-full font-bold">⏳ B1: Chờ giao (Chưa ra khỏi kho)</span>}
+                                            {step === "WAREHOUSE_DELIVERED" && <span className="text-[10px] bg-sky-100 text-sky-800 border border-sky-300 px-2 py-0.5 rounded-full font-bold">🚚 B2: Đã giao hàng (Kho đã giao{vs.shippedBy ? `: ${vs.shippedBy}` : ""})</span>}
+                                            {step === "CANCELLED" && <span className="text-[10px] bg-slate-200 text-slate-700 border border-slate-300 px-2 py-0.5 rounded-full font-bold">✖ Đã hủy{vs.cancelReason ? ` - ${vs.cancelReason}` : ""}{vs.cancelledBy ? ` (${vs.cancelledBy})` : ""}</span>}
+                                            {step === "DELIVERED" && (
                                                 <span className="text-[10px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full font-bold flex items-center gap-1">
                                                     <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                                                    Đã giao{vs.confirmedBy ? ` • NVKD XN: ${vs.confirmedBy}` : ""}{vs.receiverName ? ` • Người nhận: ${vs.receiverName}` : ""}{vs.invoiceNo ? ` • HĐ: ${vs.invoiceNo}` : ""}
+                                                    B3: Đã nhận{vs.confirmedBy ? ` • NVKD XN: ${vs.confirmedBy}` : ""}{vs.receiverName ? ` • Người nhận: ${vs.receiverName}` : ""}{vs.invoiceNo ? ` • HĐ: ${vs.invoiceNo}` : ""}
                                                 </span>
+                                            )}
+                                            {step !== "CANCELLED" && (
+                                                <select
+                                                    value={step}
+                                                    onChange={(e) => {
+                                                        const nextStep = e.target.value as "PENDING_DELIVERY" | "WAREHOUSE_DELIVERED" | "DELIVERED";
+                                                        handleAdjustSlipStep(vs, nextStep);
+                                                    }}
+                                                    className="text-[11px] font-bold border border-indigo-300 rounded-lg px-2 py-1 bg-indigo-50 text-indigo-900 cursor-pointer"
+                                                    title="Điều chỉnh nhanh trạng thái 3 bước của phiếu giao hàng"
+                                                >
+                                                    <option value="PENDING_DELIVERY">Đổi TT: ⏳ 1. Chờ giao</option>
+                                                    <option value="WAREHOUSE_DELIVERED">Đổi TT: 🚚 2. Đã giao hàng (Kho)</option>
+                                                    <option value="DELIVERED">Đổi TT: ✅ 3. Đã nhận (NVKD)</option>
+                                                </select>
                                             )}
                                         </>
                                     );
@@ -30359,37 +31118,54 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <Printer className="w-4 h-4" />
                                     In / Lưu PDF
                                 </button>
-                                {!selectedViewDeliverySlip.isDraftPreview && getSlipStatus(selectedViewDeliverySlip, resolveFactoryOrder({ order_id: selectedViewDeliverySlip.orderId, raw_code: selectedViewDeliverySlip.orderCode })) === "PENDING" && (
-                                    <>
-                                        <button
-                                            type="button"
-                                            onClick={() => handleEditDeliverySlip(selectedViewDeliverySlip)}
-                                            className="bg-sky-600 hover:bg-sky-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
-                                            title="Sửa số lượng / số lô / thông tin phiếu (tồn kho điều chỉnh theo chênh lệch)"
-                                        >
-                                            ✏️ Sửa phiếu
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => handleCancelDeliverySlip(selectedViewDeliverySlip)}
-                                            className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
-                                            title="Hủy phiếu và nhập lại kho"
-                                        >
-                                            🗑 Hủy phiếu
-                                        </button>
-                                        {canConfirmDeliveryForOrder({ order_id: selectedViewDeliverySlip.orderId, raw_code: selectedViewDeliverySlip.orderCode }) && (
+                                {!selectedViewDeliverySlip.isDraftPreview && (() => {
+                                    const vs = selectedViewDeliverySlip;
+                                    const step = getSlipStep(vs, resolveFactoryOrder({ order_id: vs.orderId, raw_code: vs.orderCode }));
+                                    if (step === "CANCELLED") return null;
+                                    return (
+                                        <>
                                             <button
                                                 type="button"
-                                                onClick={() => handleConfirmSlipDelivered(selectedViewDeliverySlip)}
-                                                className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-950/30 cursor-pointer transition-colors"
-                                                title="NVKD xác nhận khách đã nhận hàng của phiếu này (ảnh POD không bắt buộc)"
+                                                onClick={() => handleEditDeliverySlip(vs)}
+                                                className="bg-sky-600 hover:bg-sky-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                                title="Sửa số lượng / số lô / trạng thái phiếu (tồn kho điều chỉnh theo chênh lệch)"
                                             >
-                                                <CheckCircle2 className="w-4 h-4" />
-                                                NVKD xác nhận đã giao
+                                                ✏️ Sửa phiếu
                                             </button>
-                                        )}
-                                    </>
-                                )}
+                                            {step !== "DELIVERED" && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleCancelDeliverySlip(vs)}
+                                                    className="bg-rose-600 hover:bg-rose-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                                    title="Hủy phiếu và nhập lại kho"
+                                                >
+                                                    🗑 Hủy phiếu
+                                                </button>
+                                            )}
+                                            {step === "PENDING_DELIVERY" && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleConfirmWarehouseShipped(vs)}
+                                                    className="bg-sky-700 hover:bg-sky-600 text-white px-3.5 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                                    title="Bước 2: Kho xác nhận hàng đã xuất kho & bàn giao đi giao"
+                                                >
+                                                    🚚 Kho xác nhận Đã giao
+                                                </button>
+                                            )}
+                                            {step !== "DELIVERED" && canConfirmDeliveryForOrder({ order_id: vs.orderId, raw_code: vs.orderCode }) && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleConfirmSlipDelivered(vs)}
+                                                    className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow-md shadow-emerald-950/30 cursor-pointer transition-colors"
+                                                    title="Bước 3: NVKD xác nhận khách hàng đã nhận hàng"
+                                                >
+                                                    <CheckCircle2 className="w-4 h-4" />
+                                                    NVKD xác nhận Đã nhận
+                                                </button>
+                                            )}
+                                        </>
+                                    );
+                                })()}
                                 {selectedViewDeliverySlip.isDraftPreview && (
                                     <button
                                         type="button"

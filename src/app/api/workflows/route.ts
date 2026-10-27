@@ -1489,10 +1489,23 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
-    // 7. Delete Task
+    // 7. Delete Task (and optionally cancel/delete linked workflow if created by mistake)
     if (action === "delete_task") {
-      const { id } = body;
-      await query("DELETE FROM company_tasks WHERE id = $1", [id]);
+      const { id, cancel_workflow_code, delete_workflow } = body;
+      if (cancel_workflow_code) {
+        await query("DELETE FROM company_tasks WHERE related_workflow_code = $1", [cancel_workflow_code]);
+        if (delete_workflow) {
+          await query("DELETE FROM workflow_requests WHERE workflow_code = $1", [cancel_workflow_code]);
+          await logAudit("DELETE", "WORKFLOW", `Xóa phiếu phối hợp tạo nhầm: ${cancel_workflow_code}`);
+        } else {
+          await query("UPDATE workflow_requests SET status = 'CANCELLED', updated_at = CURRENT_TIMESTAMP WHERE workflow_code = $1", [cancel_workflow_code]);
+          await logAudit("CANCEL", "WORKFLOW", `Hủy phiếu phối hợp: ${cancel_workflow_code}`);
+        }
+      }
+      if (id) {
+        await query("DELETE FROM company_tasks WHERE id = $1", [id]);
+        await logAudit("DELETE", "TASKS", `Xóa / hủy công việc #${id}`);
+      }
       return NextResponse.json({ success: true });
     }
 

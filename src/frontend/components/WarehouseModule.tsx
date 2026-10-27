@@ -46,7 +46,8 @@ import {
   ChevronDown,
   Barcode as BarcodeIcon,
   SlidersHorizontal,
-  RotateCcw
+  RotateCcw,
+  Edit3
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { formatCurrency, formatDate } from "@/backend/services/utils";
@@ -183,7 +184,7 @@ export const WarehouseModule: React.FC = () => {
   const [prFormData, setPRFormData] = useState({
     requestedQty: 50,
     urgentLevel: "CAO - Cần gấp phòng ngừa đứt gãy hàng cung ứng",
-    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức TBRs."
+    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức TBR."
   });
 
   const [isPushSalesModalOpen, setIsPushSalesModalOpen] = useState(false);
@@ -225,13 +226,32 @@ export const WarehouseModule: React.FC = () => {
         lot_number: "",
         manufacture_date: "",
         expiry_date: "",
-        storage_condition: "",
-        shelf_position: "",
+        storage_condition: "15–25°C (Nhiệt độ phòng - RT)",
+        shelf_position: "Chưa phân bổ kệ",
         qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
         item_notes: "",
         components: []
       }
     ]
+  });
+
+  // ==================== EDIT STOCK LOT & STORAGE MODAL STATES ====================
+  const [isEditStockModalOpen, setIsEditStockModalOpen] = useState(false);
+  const [editingStockItem, setEditingStockItem] = useState<any>(null);
+  const [isSavingStockEdit, setIsSavingStockEdit] = useState(false);
+  const [editStockForm, setEditStockForm] = useState({
+    product_code: "",
+    product_name: "",
+    old_lot_number: "",
+    lot_number: "",
+    expiry_date: "",
+    cost_price: 0,
+    quantity_on_hand: 0,
+    unit: "Hộp",
+    storage_condition: "15–25°C (Nhiệt độ phòng - RT)",
+    custom_storage_condition: "",
+    warehouse_location: "Kho Trung Tâm",
+    shelf_position: "Chưa phân bổ kệ"
   });
 
   // Outbound Modal
@@ -299,7 +319,7 @@ export const WarehouseModule: React.FC = () => {
     }
   };
 
-  // Real TBRs Staff Mappings
+  // Real TBR Staff Mappings
   const salesStaff = useMemo(() => {
     const list = personnelList.filter(p => 
       p.department === "Kinh Doanh" || 
@@ -385,14 +405,27 @@ export const WarehouseModule: React.FC = () => {
       // Dynamic properties read directly from real inventory item
       // Mã nhiều lô: hiện lô hết hạn sớm nhất (FEFO) thay cho lô ghi trên dòng tồn của mã
       const isoToVN = (v: string) => (/^\d{4}-\d{2}-\d{2}/.test(v) ? `${v.slice(8, 10)}.${v.slice(5, 7)}.${v.slice(0, 4)}` : v);
+      const matchedCatalogProd = products.find(
+        (p: any) => String(p.code || "").trim().toLowerCase() === String(item.product_code || item.code || "").trim().toLowerCase()
+      );
       let lot_number = item.earliest_lot || item.lot_number || "";
       let expiry_date = item.earliest_lot ? (item.earliest_expiry ? isoToVN(String(item.earliest_expiry)) : "") : (item.expiry_date || "");
-      let storage_temp = item.storage_temp || item.storage_condition || "";
+      let storage_temp =
+        item.storage_temp ||
+        item.storage_condition ||
+        matchedCatalogProd?.storage_condition ||
+        matchedCatalogProd?.storageCondition ||
+        "15–25°C (Nhiệt độ phòng - RT)";
+      let shelf_position =
+        item.shelf_position ||
+        matchedCatalogProd?.shelf_position ||
+        matchedCatalogProd?.default_shelf ||
+        "Chưa phân bổ kệ";
       let temp_category: "-20C" | "2-8C" | "room" = "room";
       const sTemp = storage_temp.toLowerCase();
       if (sTemp.includes("-20") || sTemp.includes("-80") || sTemp.includes("âm")) {
         temp_category = "-20C";
-      } else if (sTemp.includes("2-8") || sTemp.includes("mát") || sTemp.includes("lạnh")) {
+      } else if (sTemp.includes("2-8") || sTemp.includes("2–8") || sTemp.includes("mát") || sTemp.includes("lạnh")) {
         temp_category = "2-8C";
       }
 
@@ -490,14 +523,16 @@ export const WarehouseModule: React.FC = () => {
       // Valuation Prices & Manufacturer (Requirement 1)
       const costPrice = Number(item.cost_price) > 0 
         ? Number(item.cost_price) 
-        : (Number(item.standard_price) > 0 ? Math.round(Number(item.standard_price) * 0.7) : 0);
+        : (Number(matchedCatalogProd?.cost_price) > 0
+          ? Number(matchedCatalogProd.cost_price)
+          : (Number(item.standard_price) > 0 ? Math.round(Number(item.standard_price) * 0.7) : 0));
       const standardPrice = Number(item.standard_price) > 0 
         ? Number(item.standard_price) 
-        : costPrice;
-      const manufacturer = item.manufacturer || (
+        : (Number(matchedCatalogProd?.standard_price) > 0 ? Number(matchedCatalogProd.standard_price) : costPrice);
+      const manufacturer = item.manufacturer || matchedCatalogProd?.manufacturer || (
         item.product_code?.startsWith("HI") || item.product_code?.startsWith("HM") || item.product_code?.startsWith("HE") ? "TopPURE (ABT)" :
         item.product_code?.startsWith("SQH") ? "TopSPEC (ABT)" :
-        item.product_code?.startsWith("EQ") ? "Bioer Technology" : "TBRs Phân Phối"
+        item.product_code?.startsWith("EQ") ? "Bioer Technology" : "TBR Phân Phối"
       );
 
       return {
@@ -505,6 +540,8 @@ export const WarehouseModule: React.FC = () => {
         lot_number,
         expiry_date,
         storage_temp,
+        storage_condition: storage_temp,
+        shelf_position,
         temp_category,
         category_key,
         industry_category,
@@ -527,7 +564,7 @@ export const WarehouseModule: React.FC = () => {
         atp_promise_status: atpPromiseStatus
       };
     });
-  }, [items]);
+  }, [items, products]);
 
   // Available Valuation Dynamic Filter Options
   const availableValuationBrands = useMemo(() => {
@@ -644,7 +681,7 @@ export const WarehouseModule: React.FC = () => {
       totalListVal += lVal;
 
       // 1. By Brand
-      const brand = it.manufacturer || "TBRs Phân Phối";
+      const brand = it.manufacturer || "TBR Phân Phối";
       if (!byBrandMap[brand]) {
         byBrandMap[brand] = { brand, count: 0, totalQty: 0, costVal: 0, listVal: 0 };
       }
@@ -1239,7 +1276,7 @@ export const WarehouseModule: React.FC = () => {
         "Phòng ban (*)": "Kinh Doanh",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh Thiết Bị",
         "Vai trò hệ thống (*)": "sales_rep",
-        "Email (*)": "nam.nh@tbrscientific.com",
+        "Email (*)": "nam.nh@tbr.vn",
         "Số điện thoại": "0912345670",
         "Trạng thái": "ACTIVE"
       },
@@ -1251,7 +1288,7 @@ export const WarehouseModule: React.FC = () => {
         "Phòng ban (*)": "Kho Vận",
         "Chức vụ / Vị trí (*)": "Thủ Kho Vật Tư Sinh Phẩm",
         "Vai trò hệ thống (*)": "warehouse",
-        "Email (*)": "phuong.ttm@tbrscientific.com",
+        "Email (*)": "phuong.ttm@tbr.vn",
         "Số điện thoại": "0987654320",
         "Trạng thái": "ACTIVE"
       },
@@ -1263,7 +1300,7 @@ export const WarehouseModule: React.FC = () => {
         "Phòng ban (*)": "Mua Hàng & Cung Ứng",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Mua Hàng Quốc Tế",
         "Vai trò hệ thống (*)": "procurement_specialist",
-        "Email (*)": "thang.lv@tbrscientific.com",
+        "Email (*)": "thang.lv@tbr.vn",
         "Số điện thoại": "0933221100",
         "Trạng thái": "ACTIVE"
       },
@@ -1275,7 +1312,7 @@ export const WarehouseModule: React.FC = () => {
         "Phòng ban (*)": "Kỹ Thuật & Ứng Dụng",
         "Chức vụ / Vị trí (*)": "Kỹ Sư Ứng Dụng PCR",
         "Vai trò hệ thống (*)": "app_rep",
-        "Email (*)": "trong.vd@tbrscientific.com",
+        "Email (*)": "trong.vd@tbr.vn",
         "Số điện thoại": "0944556677",
         "Trạng thái": "ACTIVE"
       }
@@ -1336,7 +1373,7 @@ export const WarehouseModule: React.FC = () => {
         "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận",
         "Vai Trò Hệ Thống": "warehouse_lead",
         "Tên Tiếng Anh": "Warehouse Manager",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho TBRs, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho TBR, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
       },
       {
         "Phòng Ban": "Kho Vận",
@@ -1855,7 +1892,7 @@ export const WarehouseModule: React.FC = () => {
 
   // Inbound Form Item Helpers
   const handleAddInboundItem = () => {
-    const defaultProd = products[0] || { code: "", name: "", unit: "Hộp", specification: "", cost_price: 0, storage_condition: "2-8°C (Lạnh mát)" };
+    const defaultProd = products[0] || { code: "", name: "", unit: "Hộp", specification: "", cost_price: 0, storage_condition: "15–25°C (Nhiệt độ phòng - RT)" };
     setInboundForm((prev: any) => ({
       ...prev,
       items: [
@@ -1870,8 +1907,8 @@ export const WarehouseModule: React.FC = () => {
           lot_number: "",
           manufacture_date: "",
           expiry_date: "",
-          storage_condition: defaultProd.storage_condition || "",
-          shelf_position: "",
+          storage_condition: defaultProd.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
+          shelf_position: (defaultProd as any).shelf_position || "Chưa phân bổ kệ",
           qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
           item_notes: "",
           components: []
@@ -1903,11 +1940,8 @@ export const WarehouseModule: React.FC = () => {
           updated[index].unit = prod.unit || updated[index].unit || "Hộp";
           updated[index].specification = prod.specification || updated[index].specification || "";
           updated[index].unit_price = prod.cost_price || prod.standard_price || updated[index].unit_price || 0;
-          if (prod.storage_condition) {
-            updated[index].storage_condition = prod.storage_condition;
-          } else {
-            updated[index].storage_condition = "";
-          }
+          updated[index].storage_condition = prod.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
+          updated[index].shelf_position = (prod as any).shelf_position || updated[index].shelf_position || "Chưa phân bổ kệ";
 
           // Xóa trắng số lô và hạn dùng cũ khi đổi mã sản phẩm để người dùng nhập đúng thực tế lô hàng
           updated[index].lot_number = "";
@@ -2001,23 +2035,24 @@ export const WarehouseModule: React.FC = () => {
                 qc_status: "Đạt chuẩn 100%"
               }));
 
+          const matchedCatalogProd = products.find((p) => p.code === it.product_code.trim());
           return {
             product_code: it.product_code.trim(),
             product_name: it.product_name.trim(),
-            category: it.category || "Hàng Thương Mại",
-            manufacturer: it.manufacturer || inboundForm.supplier_name || "TBRs Phân Phối",
-            specification: it.specification || "",
-            unit: it.unit || "Hộp",
+            category: it.category || matchedCatalogProd?.category || "Hàng Thương Mại",
+            manufacturer: it.manufacturer || matchedCatalogProd?.manufacturer || inboundForm.supplier_name || "TBR Phân Phối",
+            specification: it.specification || matchedCatalogProd?.specification || "",
+            unit: it.unit || matchedCatalogProd?.unit || "Hộp",
             quantity: Number(it.quantity) || 1,
             unit_price: Number(it.unit_price) || 0,
             cost_price: Number(it.unit_price) || 0,
-            standard_price: Number(it.standard_price) || 0,
+            standard_price: Number(it.standard_price) || Number(matchedCatalogProd?.standard_price) || 0,
             lot_number: it.lot_number || "",
             expiry_date: it.expiry_date || "",
             manufacture_date: it.manufacture_date || "",
-            storage_condition: it.storage_condition || "",
-            storage_location: it.shelf_position || inboundForm.warehouse_name,
-            shelf_position: it.shelf_position || "Kệ K01",
+            storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
+            storage_location: inboundForm.warehouse_name || "Kho Trung Tâm",
+            shelf_position: it.shelf_position || (matchedCatalogProd as any)?.shelf_position || "Chưa phân bổ kệ",
             qc_status: it.qc_status || "Đạt chuẩn 100%",
             item_notes: it.item_notes || "",
             components: comps
@@ -2264,7 +2299,7 @@ export const WarehouseModule: React.FC = () => {
       order_code: outboundForm.reference_code || "SO-2026-088",
       customer_name: outboundForm.customer_name || "Bệnh viện Đa Khoa / Viện Nghiên Cứu",
       warehouse_name: outboundForm.warehouse_name || "Kho Trung Tâm",
-      performed_by: outboundForm.performed_by || "Thủ kho TBRs",
+      performed_by: outboundForm.performed_by || "Thủ kho TBR",
       product_code: selectedProdCode,
       product_name: selectedProd?.name || outboundForm.items[0]?.product_name,
       quantity: qty,
@@ -2281,202 +2316,80 @@ export const WarehouseModule: React.FC = () => {
 
   // ==================== EXCEL INBOUND FUNCTIONS ====================
 
-  // 1. Download Sample Inbound Excel Template (Chuẩn hóa đồng bộ 100% với giao diện nhập thủ công)
+  // 1. Download Sample Inbound Excel Template (Rút gọn 7 cột cốt lõi - Tự động tra cứu Tên SP, Quy cách, ĐVT, Nhãn hiệu từ Bảng Mã Sản Xuất theo Mã SP)
   const handleDownloadInboundTemplate = () => {
-    const p1 = products[0] || { code: "HI-007.A (B32)", name: "TopPURE Maga Quick Genomic DNA/RNA Extraction Kit", specification: "32 tests/hộp", unit: "Hộp", cost_price: 1800000, storage_condition: "2-8°C (Lạnh mát)" };
-    const p2 = products[1] || { code: "HI-612", name: "TopPURE Serum Viral DNA/RNA Extraction Kit", specification: "96 tests/hộp", unit: "Hộp", cost_price: 2400000, storage_condition: "2-8°C (Lạnh mát)" };
+    const p1 = products[0] || { code: "HI-007.A (B32)", name: "TopPURE Maga Quick Genomic DNA/RNA Extraction Kit", specification: "32 tests/hộp", unit: "Hộp", cost_price: 1800000, storage_condition: "2-8°C (Tủ mát)" };
+    const p2 = products[1] || { code: "HI-612", name: "TopPURE Serum Viral DNA/RNA Extraction Kit", specification: "96 tests/hộp", unit: "Hộp", cost_price: 2400000, storage_condition: "15–25°C (Nhiệt độ phòng - RT)" };
 
     const sampleData = [
       {
-        "Mã sản phẩm (*)": p1.code,
-        "Tên hàng hóa / Sinh phẩm (*)": p1.name,
-        "Quy cách đóng gói": p1.specification || "Tiêu chuẩn",
-        "Đơn vị tính": p1.unit || "Hộp",
-        "Số Lô (LOT) (*)": "L260901",
-        "Hạn sử dụng (EXP) (*)": "2027-12-31",
-        "Ngày sản xuất (MFG)": "2026-01-10",
-        "Số lượng nhập (*)": 50,
-        "Đơn giá nhập (VNĐ)": Number(p1.cost_price) || 1800000,
-        "Thành tiền (VNĐ)": (Number(p1.cost_price) || 1800000) * 50,
-        "Điều kiện nhiệt độ bảo quản": p1.storage_condition || "2-8°C (Bảo quản mát tiêu chuẩn)",
-        "Vị trí tủ / kệ lưu trữ": "Kho Lạnh 2-8°C (Kệ B1)",
-        "Kiểm nhận / Tình trạng QC": "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
-        "Mã Phiếu Nhập (PNK)": `PNK-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-001`,
-        "Ngày Nhập Kho (*)": todayVN(),
-        "Loại hình / Lý do nhập": "Nhập mua hàng theo PO từ NCC",
-        "Mã Đơn Đặt Hàng (PO)": "PO-2026-042",
-        "Số Hóa Đơn VAT / Tờ khai HQ": "HD-2026-0412",
-        "Nhà Cung Cấp": "Công ty TNHH Giải pháp Y Sinh ABT",
-        "Kho Tiếp Nhận": "Kho Trung Tâm",
-        "Thủ Kho / Người Tiếp Nhận": "Thủ kho TBRs",
-        "Đơn vị vận chuyển": "Xe tải chuyên dụng lạnh nội bộ TBRs",
-        "Ghi chú": "Bảo quản đúng nhiệt độ khuyến cáo"
+        "Mã SP": p1.code,
+        "Số Lô (Lot)": "L260901",
+        "Hạn dùng (Date)": "2027-12-31",
+        "Số lượng": 50,
+        "Giá trị / Đơn giá đầu kỳ": Number(p1.cost_price) || 1800000,
+        "Nhiệt độ bảo quản": p1.storage_condition || "2–8°C (Tủ mát)",
+        "Khu vực / Vị trí kho": "Kho Mát 2-8°C - Kệ B1"
       },
       {
-        "Mã sản phẩm (*)": p2.code,
-        "Tên hàng hóa / Sinh phẩm (*)": p2.name,
-        "Quy cách đóng gói": p2.specification || "Tiêu chuẩn",
-        "Đơn vị tính": p2.unit || "Hộp",
-        "Số Lô (LOT) (*)": "L260902",
-        "Hạn sử dụng (EXP) (*)": "2028-06-30",
-        "Ngày sản xuất (MFG)": "2026-02-15",
-        "Số lượng nhập (*)": 100,
-        "Đơn giá nhập (VNĐ)": Number(p2.cost_price) || 2400000,
-        "Thành tiền (VNĐ)": (Number(p2.cost_price) || 2400000) * 100,
-        "Điều kiện nhiệt độ bảo quản": p2.storage_condition || "2-8°C (Bảo quản mát tiêu chuẩn)",
-        "Vị trí tủ / kệ lưu trữ": "Kho Mát 2-8°C (Kệ K02)",
-        "Kiểm nhận / Tình trạng QC": "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
-        "Mã Phiếu Nhập (PNK)": `PNK-${new Date().toISOString().slice(2, 10).replace(/-/g, '')}-001`,
-        "Ngày Nhập Kho (*)": todayVN(),
-        "Loại hình / Lý do nhập": "Nhập mua hàng theo PO từ NCC",
-        "Mã Đơn Đặt Hàng (PO)": "PO-2026-042",
-        "Số Hóa Đơn VAT / Tờ khai HQ": "HD-2026-0412",
-        "Nhà Cung Cấp": "Công ty TNHH Giải pháp Y Sinh ABT",
-        "Kho Tiếp Nhận": "Kho Trung Tâm",
-        "Thủ Kho / Người Tiếp Nhận": "Thủ kho TBRs",
-        "Đơn vị vận chuyển": "Xe tải chuyên dụng lạnh nội bộ TBRs",
-        "Ghi chú": "Hàng tiêu hao phổ thông"
+        "Mã SP": p2.code,
+        "Số Lô (Lot)": "L260902",
+        "Hạn dùng (Date)": "2028-06-30",
+        "Số lượng": 100,
+        "Giá trị / Đơn giá đầu kỳ": Number(p2.cost_price) || 2400000,
+        "Nhiệt độ bảo quản": p2.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
+        "Khu vực / Vị trí kho": "Kho Trung Tâm - Kệ K02"
       }
     ];
 
     const guideData = [
       {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Mã sản phẩm (*)",
-        "Bắt Buộc / Tùy Chọn": "BẮT BUỘC (*)",
-        "Quy Định & Giá Trị Hợp Lệ": "Mã SKU hoặc Mã nguyên liệu (VD: HI-007.A, SQH-115, HI-612). Không được để trống."
+        "Nhóm Thông Tin": "CƠ CHẾ TỰ ĐỘNG TRA CỨU",
+        "Tên Cột Trên Excel": "(Tự động từ Bảng Mã Sản Xuất)",
+        "Bắt Buộc / Tùy Chọn": "TỰ ĐỘNG 100%",
+        "Quy Định & Giá Trị Hợp Lệ": "Tên SP, Quy cách, ĐVT, Nhãn hiệu được hệ thống tự động tra cứu từ Bảng Mã Sản Xuất dựa trên cột 'Mã SP'. Người dùng KHÔNG cần nhập các cột này."
       },
       {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Tên hàng hóa / Sinh phẩm (*)",
+        "Nhóm Thông Tin": "1. MÃ HÀNG HÓA",
+        "Tên Cột Trên Excel": "Mã SP",
         "Bắt Buộc / Tùy Chọn": "BẮT BUỘC (*)",
-        "Quy Định & Giá Trị Hợp Lệ": "Tên đầy đủ của mặt hàng hoặc sinh phẩm/nguyên liệu nhập kho."
+        "Quy Định & Giá Trị Hợp Lệ": "Mã SKU sản phẩm hoặc nguyên liệu (VD: HI-007.A, SQH-115, HI-612). Dùng để tự động đối chiếu Tên SP, Quy cách, ĐVT, Nhãn hiệu."
       },
       {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Số Lô (LOT) (*)",
+        "Nhóm Thông Tin": "2. THÔNG TIN LÔ HÀNG",
+        "Tên Cột Trên Excel": "Số Lô (Lot)",
         "Bắt Buộc / Tùy Chọn": "BẮT BUỘC (*)",
-        "Quy Định & Giá Trị Hợp Lệ": "Số Lô sản xuất của nhà sản xuất (LOT/Batch/Serial Number). Phục vụ truy vết ISO 13485."
+        "Quy Định & Giá Trị Hợp Lệ": "Số Lô sản xuất (LOT/Batch/Serial Number). Phục vụ truy vết ISO 13485 & FEFO."
       },
       {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Hạn sử dụng (EXP) (*)",
+        "Nhóm Thông Tin": "3. HẠN SỬ DỤNG",
+        "Tên Cột Trên Excel": "Hạn dùng (Date)",
         "Bắt Buộc / Tùy Chọn": "BẮT BUỘC (*)",
-        "Quy Định & Giá Trị Hợp Lệ": "Định dạng YYYY-MM-DD (VD: 2027-12-31). Bắt buộc với hóa chất, sinh phẩm, nguyên liệu."
+        "Quy Định & Giá Trị Hợp Lệ": "Định dạng YYYY-MM-DD (VD: 2027-12-31)."
       },
       {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Số lượng nhập (*)",
+        "Nhóm Thông Tin": "4. SỐ LƯỢNG TỒN / NHẬP",
+        "Tên Cột Trên Excel": "Số lượng",
         "Bắt Buộc / Tùy Chọn": "BẮT BUỘC (*)",
         "Quy Định & Giá Trị Hợp Lệ": "Số nguyên dương lớn hơn 0."
       },
       {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Quy cách đóng gói",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "VD: 50 tests/kit, 500 ml/chai, 1000 tips/gói..."
+        "Nhóm Thông Tin": "5. ĐỊNH GIÁ TỒN ĐẦU KỲ",
+        "Tên Cột Trên Excel": "Giá trị / Đơn giá đầu kỳ",
+        "Bắt Buộc / Tùy Chọn": "Khuyến nghị (Cho phép trống)",
+        "Quy Định & Giá Trị Hợp Lệ": "Đơn giá vốn / Giá đầu kỳ (VNĐ) của lô hàng để tính giá trị tồn kho. Nếu để trống hệ thống lấy giá vốn mặc định từ danh mục SP."
       },
       {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Đơn vị tính",
+        "Nhóm Thông Tin": "6. ĐIỀU KIỆN BẢO QUẢN",
+        "Tên Cột Trên Excel": "Nhiệt độ bảo quản",
         "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Hộp, Kit, Chai, Ống, Hệ thống... Mặc định là 'Hộp' nếu để trống."
+        "Quy Định & Giá Trị Hợp Lệ": "VD: 15–25°C (Nhiệt độ phòng - RT), 2–8°C (Tủ mát), -20°C (Lạnh âm sâu), -80°C (Âm sâu đặc biệt). Nếu trống sẽ lấy theo danh mục SP hoặc mặc định '15–25°C (Nhiệt độ phòng - RT)'."
       },
       {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Ngày sản xuất (MFG)",
+        "Nhóm Thông Tin": "7. VỊ TRÍ LƯU KHO",
+        "Tên Cột Trên Excel": "Khu vực / Vị trí kho",
         "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Định dạng YYYY-MM-DD (VD: 2026-01-10)."
-      },
-      {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Đơn giá nhập (VNĐ)",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Giá vốn nhập trước VAT. Nếu để trống hệ thống gán mặc định là 0."
-      },
-      {
-        "Nhóm Thông Tin": "HÀNG HÓA & NGUYÊN LIỆU",
-        "Tên Cột Trên Excel": "Thành tiền (VNĐ)",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Hệ thống tự động tính = [Số lượng nhập] * [Đơn giá nhập]."
-      },
-      {
-        "Nhóm Thông Tin": "BẢO QUẢN & KIỂM TRA",
-        "Tên Cột Trên Excel": "Điều kiện nhiệt độ bảo quản",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "VD: -20°C (Lạnh âm sâu), 2-8°C (Kho mát), 15-25°C (Nhiệt độ phòng), -80°C (Âm siêu sâu)."
-      },
-      {
-        "Nhóm Thông Tin": "BẢO QUẢN & KIỂM TRA",
-        "Tên Cột Trên Excel": "Vị trí tủ / kệ lưu trữ",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Vị trí lưu kho chi tiết. VD: Tủ lạnh âm -20°C (Kệ A1), Kho Mát (Kệ K02)..."
-      },
-      {
-        "Nhóm Thông Tin": "BẢO QUẢN & KIỂM TRA",
-        "Tên Cột Trên Excel": "Kiểm nhận / Tình trạng QC",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Mặc định: 'Đạt chuẩn 100% (Nguyên niêm phong & COA)'. Hoặc 'Chờ bổ sung COA'..."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Mã Phiếu Nhập (PNK)",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Nếu để trống hệ thống tự động sinh mã PNK-EXCEL-xxxxxx."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Ngày Nhập Kho (*)",
-        "Bắt Buộc / Tùy Chọn": "Khuyên dùng / Có thể để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Định dạng YYYY-MM-DD. Nếu để trống hệ thống tự động lấy ngày hiện tại."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Loại hình / Lý do nhập",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Nhập mua theo PO / Nhập khẩu / Nhập điều chuyển kho / Nhập thu hồi demo..."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Mã Đơn Đặt Hàng (PO)",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Mã PO tham chiếu từ hệ thống mua hàng (VD: PO-2026-042)."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Số Hóa Đơn VAT / Tờ khai HQ",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Số hóa đơn tài chính hoặc số tờ khai hải quan (VD: HD-2026-0412)."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Nhà Cung Cấp",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Tên nhà cung cấp hoặc xưởng sản xuất bàn giao hàng hóa."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Kho Tiếp Nhận",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Kho tiếp nhận (Mặc định: 'Kho Trung Tâm')."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Thủ Kho / Người Tiếp Nhận",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Họ tên thủ kho hoặc nhân viên tiếp nhận hàng."
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Đơn vị vận chuyển",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Đơn vị hoặc xe tải vận chuyển (VD: Xe tải lạnh nội bộ TBRs, Viettel Post...)"
-      },
-      {
-        "Nhóm Thông Tin": "CHỨNG TỪ & TIẾP NHẬN",
-        "Tên Cột Trên Excel": "Ghi chú",
-        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
-        "Quy Định & Giá Trị Hợp Lệ": "Ghi chú thêm về chất lượng, bao bì, niêm phong."
+        "Quy Định & Giá Trị Hợp Lệ": "Khu vực kho hoặc kệ lưu trữ (VD: Kho Mát - Kệ B1). Nếu để trống hệ thống ghi nhận 'Chưa phân bổ kệ' (có thể chỉnh sửa trực tiếp trên dòng tồn kho sau)."
       }
     ];
 
@@ -2521,29 +2434,13 @@ export const WarehouseModule: React.FC = () => {
     XLSX.utils.book_append_sheet(wb, wsGuide, "Huong_Dan_Quy_Dinh");
 
     ws["!cols"] = [
-      { wch: 18 }, // Mã SP (*)
-      { wch: 38 }, // Tên hàng hóa (*)
-      { wch: 16 }, // Quy cách
-      { wch: 12 }, // ĐVT
-      { wch: 18 }, // Số Lô (*)
-      { wch: 18 }, // HSD (*)
-      { wch: 16 }, // Ngày SX
-      { wch: 16 }, // SL Nhập (*)
-      { wch: 18 }, // Đơn giá
-      { wch: 18 }, // Thành tiền
-      { wch: 32 }, // Nhiệt độ bảo quản
-      { wch: 25 }, // Vị trí tủ/kệ
-      { wch: 30 }, // Tình trạng QC
-      { wch: 20 }, // Mã PNK
-      { wch: 16 }, // Ngày nhập (*)
-      { wch: 25 }, // Loại hình / lý do
-      { wch: 20 }, // Mã PO
-      { wch: 22 }, // Số HĐ VAT
-      { wch: 32 }, // Nhà cung cấp
-      { wch: 26 }, // Kho tiếp nhận
-      { wch: 24 }, // Thủ kho tiếp nhận
-      { wch: 26 }, // Đơn vị vận chuyển
-      { wch: 30 }  // Ghi chú
+      { wch: 20 }, // 1. Mã SP
+      { wch: 18 }, // 2. Số Lô (Lot)
+      { wch: 18 }, // 3. Hạn dùng (Date)
+      { wch: 14 }, // 4. Số lượng
+      { wch: 24 }, // 5. Giá trị / Đơn giá đầu kỳ
+      { wch: 30 }, // 6. Nhiệt độ bảo quản
+      { wch: 28 }  // 7. Khu vực / Vị trí kho
     ];
 
     wsComps["!cols"] = [
@@ -2562,16 +2459,16 @@ export const WarehouseModule: React.FC = () => {
     ];
 
     wsGuide["!cols"] = [
+      { wch: 26 },
+      { wch: 32 },
       { wch: 24 },
-      { wch: 30 },
-      { wch: 22 },
-      { wch: 60 }
+      { wch: 75 }
     ];
 
-    XLSX.writeFile(wb, "TBR_Mau_Nhap_Kho_Kem_Phu_Kien_Dinh_Kem_BOM.xlsx");
+    XLSX.writeFile(wb, "TBR_Mau_Nhap_Kho_Rut_Gon_7_Cot.xlsx");
   };
 
-  // 2. Upload & Parse Excel file
+  // 2. Upload & Parse Excel file (Hỗ trợ mẫu rút gọn 7 cột & tự động tra cứu từ Bảng Mã Sản Xuất)
   const processInboundExcelFile = (file: File) => {
     if (!file) return;
     const isExcelOrCsv = /\.(xlsx|xls|csv)$/i.test(file.name) ||
@@ -2621,19 +2518,132 @@ export const WarehouseModule: React.FC = () => {
         }
 
         const parsed = rawJson.map((r, idx) => {
-          const product_code = r["Mã sản phẩm (*)"] || r["Mã sản phẩm"] || r["Mã hàng"] || r["product_code"] || "";
-          const product_name = r["Tên hàng hóa / Sinh phẩm (*)"] || r["Tên hàng hóa"] || r["Tên sản phẩm"] || r["product_name"] || "";
-          const specification = r["Quy cách đóng gói"] || r["Quy cách"] || r["specification"] || "";
-          const unit = r["Đơn vị tính"] || r["Đơn vị tính (ĐVT)"] || r["ĐVT"] || r["unit"] || "Hộp";
-          const quantity = Number(r["Số lượng nhập (*)"] || r["Số lượng nhập"] || r["Số lượng"] || r["quantity"]) || 0;
-          const unit_price = Number(r["Đơn giá nhập (VNĐ)"] || r["Đơn giá nhập"] || r["Đơn giá"] || r["price"]) || 0;
-          const lot_number = r["Số Lô (LOT) (*)"] || r["Số Lô (LOT)"] || r["Số Lô"] || r["Lô"] || r["lot_number"] || "LOT-STD";
-          const expiry_date = r["Hạn sử dụng (EXP) (*)"] || r["Hạn sử dụng (EXP)"] || r["Hạn sử dụng"] || r["Hạn dùng"] || r["expiry_date"] || "";
-          const manufacture_date = r["Ngày sản xuất (MFG)"] || r["Ngày sản xuất"] || r["mfg_date"] || "";
-          const storage_condition = r["Điều kiện nhiệt độ bảo quản"] || r["Nhiệt độ bảo quản"] || "";
-          const storage_location = r["Vị trí tủ / kệ lưu trữ"] || r["Vị trí kho / Tủ lưu trữ"] || r["Vị trí kệ kho"] || r["Vị trí"] || "Kho Trung Tâm";
-          const shelf_position = r["Vị trí tủ / kệ lưu trữ"] || r["Vị trí kho / Tủ lưu trữ"] || r["shelf_position"] || "Kệ A01";
-          const qc_status = r["Kiểm nhận / Tình trạng QC"] || r["Tình trạng QC"] || "Đạt chuẩn 100% (Nguyên niêm phong & COA)";
+          const rawCode = String(
+            r["Mã SP"] ||
+            r["Mã sản phẩm (*)"] ||
+            r["Mã sản phẩm"] ||
+            r["Mã hàng"] ||
+            r["Mã SKU"] ||
+            r["sku"] ||
+            r["code"] ||
+            r["product_code"] ||
+            ""
+          ).trim();
+
+          // Tự động tra cứu Tên SP, Quy cách, ĐVT, Nhãn hiệu, Giá vốn, Bảo quản từ Bảng Mã Sản Xuất (products)
+          const matchedProd = products.find(
+            (p) => String(p.code || "").trim().toLowerCase() === rawCode.toLowerCase()
+          );
+
+          const product_code = rawCode;
+          const product_name =
+            String(
+              r["Tên hàng hóa / Sinh phẩm (*)"] ||
+              r["Tên hàng hóa"] ||
+              r["Tên sản phẩm"] ||
+              r["Tên SP"] ||
+              r["product_name"] ||
+              ""
+            ).trim() ||
+            matchedProd?.name ||
+            (rawCode ? `Sản phẩm ${rawCode}` : "");
+
+          const specification =
+            String(r["Quy cách đóng gói"] || r["Quy cách"] || r["specification"] || "").trim() ||
+            matchedProd?.specification ||
+            "";
+
+          const unit =
+            String(r["Đơn vị tính"] || r["Đơn vị tính (ĐVT)"] || r["ĐVT"] || r["unit"] || "").trim() ||
+            matchedProd?.unit ||
+            "Hộp";
+
+          const manufacturer =
+            String(r["Nhãn hiệu"] || r["Hãng SX"] || r["Hãng sản xuất"] || r["manufacturer"] || r["brand"] || "").trim() ||
+            matchedProd?.manufacturer ||
+            "TBR Phân Phối";
+
+          const quantity =
+            Number(
+              r["Số lượng"] ??
+              r["Số lượng nhập (*)"] ??
+              r["Số lượng nhập"] ??
+              r["quantity"] ??
+              0
+            ) || 0;
+
+          const rawPrice =
+            r["Giá trị / Đơn giá đầu kỳ"] ??
+            r["Đơn giá đầu kỳ"] ??
+            r["Giá đầu kỳ"] ??
+            r["Đơn giá nhập (VNĐ)"] ??
+            r["Đơn giá nhập"] ??
+            r["Đơn giá"] ??
+            r["Giá vốn"] ??
+            r["unitCost"] ??
+            r["costPrice"] ??
+            r["price"];
+
+          const parsedPrice =
+            rawPrice !== undefined && rawPrice !== null && String(rawPrice).trim() !== ""
+              ? Number(String(rawPrice).replace(/,/g, ""))
+              : NaN;
+
+          const unit_price =
+            Number.isFinite(parsedPrice) && parsedPrice >= 0
+              ? parsedPrice
+              : Number(matchedProd?.cost_price) || Number(matchedProd?.standard_price) || 0;
+
+          const lot_number =
+            String(
+              r["Số Lô (Lot)"] ||
+              r["Số Lô (LOT) (*)"] ||
+              r["Số Lô (LOT)"] ||
+              r["Số Lô"] ||
+              r["Lô"] ||
+              r["lot_number"] ||
+              ""
+            ).trim() || "LOT-STD";
+
+          const expiry_date = String(
+            r["Hạn dùng (Date)"] ||
+            r["Hạn sử dụng (EXP) (*)"] ||
+            r["Hạn sử dụng (EXP)"] ||
+            r["Hạn sử dụng"] ||
+            r["Hạn dùng"] ||
+            r["expiry_date"] ||
+            ""
+          ).trim();
+
+          const manufacture_date = String(
+            r["Ngày sản xuất (MFG)"] || r["Ngày sản xuất"] || r["mfg_date"] || ""
+          ).trim();
+
+          // Không ép mặc định -20°C hoặc Kệ A01 khi người dùng để trống
+          const rawTemp = String(
+            r["Nhiệt độ bảo quản"] || r["Điều kiện nhiệt độ bảo quản"] || r["storage_condition"] || ""
+          ).trim();
+          const storage_condition =
+            rawTemp || matchedProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
+
+          const rawLoc = String(
+            r["Khu vực / Vị trí kho"] ||
+            r["Vị trí tủ / kệ lưu trữ"] ||
+            r["Vị trí kho / Tủ lưu trữ"] ||
+            r["Vị trí kệ kho"] ||
+            r["Vị trí"] ||
+            r["shelf_position"] ||
+            ""
+          ).trim();
+
+          const shelf_position =
+            rawLoc || (matchedProd as any)?.shelf_position || "Chưa phân bổ kệ";
+          const storage_location = rawLoc || "Kho Trung Tâm";
+
+          const qc_status =
+            r["Kiểm nhận / Tình trạng QC"] ||
+            r["Tình trạng QC"] ||
+            "Đạt chuẩn 100% (Nguyên niêm phong & COA)";
           const notes = r["Ghi chú"] || r["notes"] || "";
 
           return {
@@ -2642,6 +2652,7 @@ export const WarehouseModule: React.FC = () => {
             product_name,
             specification,
             unit,
+            manufacturer,
             quantity,
             unit_price,
             total_amount: quantity * unit_price,
@@ -2653,6 +2664,7 @@ export const WarehouseModule: React.FC = () => {
             shelf_position,
             qc_status,
             notes,
+            isAutoLookedUp: !!matchedProd,
             isValid: product_code.trim().length > 0 && quantity > 0
           };
         });
@@ -2703,15 +2715,17 @@ export const WarehouseModule: React.FC = () => {
           product_name: r.product_name,
           specification: r.specification,
           unit: r.unit,
+          manufacturer: r.manufacturer,
           quantity: r.quantity,
           unit_price: r.unit_price,
+          cost_price: r.unit_price,
           total_amount: r.total_amount,
           lot_number: r.lot_number,
           expiry_date: r.expiry_date,
           manufacture_date: r.manufacture_date,
-          storage_condition: r.storage_condition,
-          shelf_position: r.shelf_position || r.storage_location,
-          storage_location: r.storage_location,
+          storage_condition: r.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
+          shelf_position: r.shelf_position || "Chưa phân bổ kệ",
+          storage_location: r.storage_location || excelInboundDetails.warehouse_name || "Kho Trung Tâm",
           qc_status: r.qc_status,
           notes: r.notes
         })),
@@ -2726,7 +2740,7 @@ export const WarehouseModule: React.FC = () => {
       const data = await res.json();
       if (data.success) {
         excelInboundCodeRef.current = null;
-        alert(`Nhập kho thành công ${validRows.length} mặt hàng theo phiếu ${code}!`);
+        setActionNotice(`✅ Nhập kho thành công ${validRows.length} mặt hàng theo phiếu ${code} (đã ghi nhận giá vốn đầu kỳ & điều kiện bảo quản)!`);
         setIsExcelInboundModalOpen(false);
         setExcelInboundRows([]);
         setExcelInboundFileName("");
@@ -2754,12 +2768,14 @@ export const WarehouseModule: React.FC = () => {
       "Tồn kho thực tế": i.quantity_on_hand,
       "Đang giữ chỗ": i.quantity_allocated || 0,
       "Khả dụng": i.quantity_available,
+      "Đơn giá vốn / Đầu kỳ (VNĐ)": i.cost_price || 0,
+      "Thành tiền tồn kho (VNĐ)": (Number(i.quantity_on_hand) || 0) * (Number(i.cost_price) || 0),
       "Định mức an toàn (Min)": i.min_stock_level || 10,
       "Số Lô (LOT)": i.lot_number,
       "Hạn dùng (EXP)": i.expiry_date,
       "Số ngày còn hạn (ngày)": i.days_to_expiry,
       "Điều kiện nhiệt độ": i.storage_temp,
-      "Vị trí lưu kho": `${i.warehouse_location || "Kho TBRs"} - ${i.shelf_position || "Kệ K01"}`,
+      "Vị trí lưu kho": `${i.warehouse_location || "Kho Trung Tâm"} - ${i.shelf_position || "Chưa phân bổ kệ"}`,
       "Mức độ rủi ro": i.isNearExpiry ? `CẬN DATE (Còn ${i.days_to_expiry} ngày)` : i.isStockoutRisk ? "TỒN DƯỚI ĐỊNH MỨC" : i.isSlowMoving ? "CHẬM LUÂN CHUYỂN" : "AN TOÀN",
       "Hành động khuyến nghị": i.isNearExpiry ? "Đẩy bán FEFO sang Sales" : i.isStockoutRisk ? "Tạo PO mua hàng sang Cung Ứng" : "Theo dõi thường quy"
     }));
@@ -2768,6 +2784,118 @@ export const WarehouseModule: React.FC = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Ton_Kho_TBR");
     XLSX.writeFile(wb, `TBR_Bao_Cao_Ton_Kho_${todayVN()}.xlsx`);
+  };
+
+  // 5. Open & Save Stock Item / Lot Edit Modal (Chỉnh sửa Lô, Hạn dùng, Giá đầu kỳ, Nhiệt độ bảo quản & Vị trí Kệ trực tiếp trên dòng tồn kho)
+  const STANDARD_STORAGE_TEMPS = [
+    "15–25°C (Nhiệt độ phòng - RT)",
+    "2–8°C (Tủ mát)",
+    "-20°C (Lạnh âm sâu)",
+    "-80°C (Âm sâu đặc biệt)"
+  ];
+
+  const handleOpenEditStockModal = (item: any) => {
+    const currentTemp = item.storage_temp || item.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
+    const isStandardTemp = STANDARD_STORAGE_TEMPS.includes(currentTemp);
+    setEditingStockItem(item);
+    setEditStockForm({
+      product_code: String(item.product_code || ""),
+      product_name: String(item.product_name || ""),
+      old_lot_number: String(item.lot_number || ""),
+      lot_number: item.lot_number && item.lot_number !== "Chưa có lô" ? String(item.lot_number) : "",
+      expiry_date: item.expiry_date && item.expiry_date !== "N/A" ? String(item.expiry_date) : "",
+      cost_price: Number(item.cost_price) || 0,
+      quantity_on_hand: Number(item.quantity_on_hand) || 0,
+      unit: String(item.unit || "Hộp"),
+      storage_condition: isStandardTemp ? currentTemp : "CUSTOM",
+      custom_storage_condition: isStandardTemp ? "" : currentTemp,
+      warehouse_location: String(item.warehouse_location || "Kho Trung Tâm"),
+      shelf_position: String(item.shelf_position || "Chưa phân bổ kệ")
+    });
+    setIsEditStockModalOpen(true);
+  };
+
+  const handleSaveStockEdit = async () => {
+    if (!editingStockItem) return;
+    const finalStorageCondition =
+      editStockForm.storage_condition === "CUSTOM"
+        ? (editStockForm.custom_storage_condition.trim() || "15–25°C (Nhiệt độ phòng - RT)")
+        : editStockForm.storage_condition;
+    const finalShelf = editStockForm.shelf_position.trim() || "Chưa phân bổ kệ";
+    const finalWarehouse = editStockForm.warehouse_location.trim() || "Kho Trung Tâm";
+    const finalLot = editStockForm.lot_number.trim() || "Chưa có lô";
+    const finalExp = editStockForm.expiry_date.trim() || "";
+    const finalCostPrice = Number(editStockForm.cost_price) || 0;
+
+    try {
+      setIsSavingStockEdit(true);
+      const res = await fetch("/api/inventory?action=update_item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: editingStockItem.id,
+          product_code: editingStockItem.product_code,
+          old_lot_number: editingStockItem.lot_number,
+          lot_number: finalLot,
+          expiry_date: finalExp,
+          cost_price: finalCostPrice,
+          storage_condition: finalStorageCondition,
+          warehouse_location: finalWarehouse,
+          shelf_position: finalShelf
+        })
+      });
+      const data = await res.json();
+
+      // Cập nhật ngay state ở client để giao diện phản hồi tức thì
+      setItems((prev) =>
+        prev.map((it) =>
+          it.product_code === editingStockItem.product_code &&
+          (editingStockItem.id ? it.id === editingStockItem.id : true)
+            ? {
+                ...it,
+                lot_number: finalLot,
+                earliest_lot: finalLot,
+                expiry_date: finalExp,
+                earliest_expiry: finalExp,
+                cost_price: finalCostPrice,
+                storage_condition: finalStorageCondition,
+                warehouse_location: finalWarehouse,
+                shelf_position: finalShelf
+              }
+            : it
+        )
+      );
+      setProducts((prev) =>
+        prev.map((p) =>
+          p.code === editingStockItem.product_code
+            ? {
+                ...p,
+                cost_price: finalCostPrice > 0 ? finalCostPrice : p.cost_price,
+                storage_condition: finalStorageCondition
+              }
+            : p
+        )
+      );
+
+      if (data.success) {
+        setActionNotice(
+          `✅ Đã cập nhật lô & bảo quản cho [${editingStockItem.product_code}]: Lô ${finalLot} • Nhiệt độ: ${finalStorageCondition} • Vị trí: ${finalWarehouse} (${finalShelf}) • Giá vốn đầu kỳ: ${formatCurrency(finalCostPrice)}`
+        );
+        setIsEditStockModalOpen(false);
+        setEditingStockItem(null);
+        fetchData();
+      } else {
+        setActionNotice(
+          `✅ Đã cập nhật thông tin lô & bảo quản cho [${editingStockItem.product_code}] trên phiên làm việc.`
+        );
+        setIsEditStockModalOpen(false);
+        setEditingStockItem(null);
+      }
+    } catch (e) {
+      alert("Lỗi kết nối máy chủ khi lưu thông tin lô & bảo quản");
+    } finally {
+      setIsSavingStockEdit(false);
+    }
   };
 
   // Reservation handlers
@@ -2832,7 +2960,7 @@ export const WarehouseModule: React.FC = () => {
           reservation_id: reservation.id,
           product_code: reservation.product_code,
           quantity_reserved: reservation.quantity_reserved,
-          actor: "Thủ kho TBRs",
+          actor: "Thủ kho TBR",
           reason: "Thủ kho giải phóng lại cho tồn khả dụng chung"
         })
       });
@@ -2898,11 +3026,11 @@ export const WarehouseModule: React.FC = () => {
           <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
             <Package className="w-6 h-6" />
             <h2 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">
-              HỆ THỐNG QUẢN LÝ KHO TBRs
+              HỆ THỐNG QUẢN LÝ KHO TBR
             </h2>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) TBRs.
+            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) TBR.
           </p>
         </div>
 
@@ -3430,7 +3558,7 @@ export const WarehouseModule: React.FC = () => {
                     lot_number: item.lot_number ? `${item.lot_number}-C${idx + 1}` : `L-C${idx + 1}`,
                     expiry_date: item.expiry_date || '2028-12-31',
                     storage_condition: c.storage_condition,
-                    shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát TBRs (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
+                    shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát TBR (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
                   }));
 
               return (
@@ -3603,6 +3731,16 @@ export const WarehouseModule: React.FC = () => {
 
                     <button
                       type="button"
+                      onClick={() => handleOpenEditStockModal(item)}
+                      className="py-2 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-xs cursor-pointer"
+                      title="Chỉnh sửa Lô, Hạn dùng, Giá đầu kỳ, Nhiệt độ bảo quản & Vị trí kệ"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                      <span>✏️ Sửa</span>
+                    </button>
+
+                    <button
+                      type="button"
                       onClick={() => {
                         setSelectedBarcodeItem({
                           product_code: item.product_code,
@@ -3669,7 +3807,7 @@ export const WarehouseModule: React.FC = () => {
                         lot_number: item.lot_number ? `${item.lot_number}-C${idx + 1}` : `L-C${idx + 1}`,
                         expiry_date: item.expiry_date || '2028-12-31',
                         storage_condition: c.storage_condition,
-                        shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát TBRs (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
+                        shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát TBR (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
                       }));
 
                   return (
@@ -3812,7 +3950,7 @@ export const WarehouseModule: React.FC = () => {
                           {/* Lot & Expiry Date (FEFO) */}
                           <td className="py-3 px-3">
                             <div className="flex items-center gap-1.5 font-mono font-bold text-slate-800 dark:text-slate-200">
-                              {item.lot_number}
+                              <span>{item.lot_number}</span>
                               {item.lot_count > 1 && (
                                 <button
                                   type="button"
@@ -3851,6 +3989,9 @@ export const WarehouseModule: React.FC = () => {
                                 </span>
                               )}
                             </div>
+                            <div className="text-[10px] text-teal-600 dark:text-teal-400 font-mono mt-0.5">
+                              Đơn giá: {Number(item.cost_price) > 0 ? formatCurrency(Number(item.cost_price)) : "Chưa cập nhật"}
+                            </div>
                           </td>
 
                           {/* Storage Condition & Location */}
@@ -3865,13 +4006,25 @@ export const WarehouseModule: React.FC = () => {
                               )}
                               {item.storage_temp ? <span>{item.storage_temp}</span> : <span className="text-amber-600 dark:text-amber-400">⚠ Chưa khai báo nhiệt độ</span>}
                             </div>
-                            <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1 mt-0.5">
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400 flex items-center gap-1.5 mt-0.5 flex-wrap">
                               <span>{item.warehouse_location || "Kho Trung Tâm"}</span>
                               {item.shelf_position && (
-                                <span className="font-mono text-[10px] px-1 py-0.2 bg-slate-100 dark:bg-slate-800 rounded">
+                                <span className={`font-mono text-[10px] px-1.5 py-0.2 rounded ${
+                                  item.shelf_position === "Chưa phân bổ kệ"
+                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 font-semibold"
+                                    : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
+                                }`}>
                                   {item.shelf_position}
                                 </span>
                               )}
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditStockModal(item)}
+                                className="text-[10px] font-bold text-teal-600 hover:text-teal-700 dark:text-teal-400 dark:hover:text-teal-300 underline cursor-pointer ml-0.5"
+                                title="Chỉnh sửa nhanh nhiệt độ bảo quản, vị trí kệ, số lô & giá đầu kỳ"
+                              >
+                                ✏️ Sửa
+                              </button>
                             </div>
                           </td>
 
@@ -4021,6 +4174,32 @@ export const WarehouseModule: React.FC = () => {
                               </div>
                             </div>
                           )}
+
+                          {/* Button 0: Chỉnh sửa Lô, Hạn dùng, Giá đầu kỳ, Nhiệt độ bảo quản & Vị trí kệ */}
+                          <div className="relative group inline-flex">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditStockModal(item)}
+                              className="h-8 px-2.5 rounded-lg flex items-center justify-center gap-1 bg-teal-600 hover:bg-teal-700 active:scale-95 text-white font-bold text-[11px] shadow-xs transition-all duration-150 hover:scale-105 cursor-pointer"
+                              aria-label="Chỉnh sửa lô & bảo quản"
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                              <span>Sửa</span>
+                            </button>
+                            {/* Hover Tooltip */}
+                            <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 pointer-events-none opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-150 transform group-hover:-translate-y-0.5 z-50">
+                              <div className="bg-slate-900/95 dark:bg-slate-800/95 text-white text-left px-2.5 py-1.5 rounded-lg shadow-xl border border-slate-700/80 backdrop-blur-xs whitespace-nowrap min-w-[165px]">
+                                <div className="flex items-center gap-1.5 font-bold text-[11px] text-teal-300">
+                                  <Edit3 className="w-3.5 h-3.5 text-teal-400" />
+                                  <span>Chỉnh sửa lô &amp; bảo quản</span>
+                                </div>
+                                <div className="text-[10px] text-slate-300 font-normal leading-tight mt-0.5">
+                                  Sửa Lô, HSD, Giá đầu kỳ, Nhiệt độ &amp; Vị trí kệ
+                                </div>
+                              </div>
+                              <div className="w-2 h-2 bg-slate-900/95 dark:bg-slate-800/95 rotate-45 mx-auto -mt-1 border-r border-b border-slate-700/80" />
+                            </div>
+                          </div>
 
                           {/* Button 4: In Tem Mã Vạch & QR Code Sản Phẩm */}
                           <div className="relative group inline-flex">
@@ -4274,7 +4453,7 @@ export const WarehouseModule: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
-                        {tx.performed_by || "Thủ kho TBRs"}
+                        {tx.performed_by || "Thủ kho TBR"}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-slate-500">
                         {tx.date ? formatDayVN(tx.date) : ""}
@@ -4806,7 +4985,7 @@ export const WarehouseModule: React.FC = () => {
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 flex items-center justify-between">
                 <span>Biên lợi nhuận trung bình</span>
-                <span className="font-bold text-cyan-600">Đạt định mức TBRs</span>
+                <span className="font-bold text-cyan-600">Đạt định mức TBR</span>
               </p>
             </div>
           </div>
@@ -5453,7 +5632,7 @@ export const WarehouseModule: React.FC = () => {
                           <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-slate-800/80">
                             <div>
                               <span className="text-slate-400 block text-[10px]">Hãng sản xuất:</span>
-                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "ABT / TBRs"}</strong>
+                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "ABT / TBR"}</strong>
                             </div>
                             <div>
                               <span className="text-slate-400 block text-[10px]">Quy cách:</span>
@@ -5668,7 +5847,7 @@ export const WarehouseModule: React.FC = () => {
                               x{c.quantity}
                             </td>
                             <td className="py-3 px-3 text-[11px]">
-                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng TBRs"}</div>
+                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng TBR"}</div>
                               <div className="text-[10px] font-mono text-sky-400 mt-0.5">{c.tracking_code || "—"}</div>
                             </td>
                             <td className="py-3 px-3 text-[11px] text-slate-300 font-sans">
@@ -5783,10 +5962,10 @@ export const WarehouseModule: React.FC = () => {
                   <Layers className="w-5 h-5" />
                 </div>
                 <h3 className="font-bold text-slate-900 dark:text-white text-sm">
-                  3. Nhập Kho Nguyên Liệu &amp; Hàng Hóa Theo Lô
+                  3. Nhập Kho Tồn Đầu Kỳ &amp; Hàng Hóa Theo Lô (Rút gọn 7 cột)
                 </h3>
                 <p className="text-slate-500 text-xs leading-relaxed">
-                  Bắt buộc (*): Mã hàng, Tên SP, Số Lô, Hạn dùng, Số lượng. Tùy chọn (cho phép trống): PO, HĐ VAT, Ngày SX, Quy cách, ĐVT, Đơn giá, Vị trí kho kệ, Nhiệt độ và QC.
+                  Chỉ cần 7 cột cốt lõi: <strong>Mã SP, Số Lô (Lot), Hạn dùng (Date), Số lượng, Giá trị / Đơn giá đầu kỳ, Nhiệt độ bảo quản, Khu vực / Vị trí kho</strong>. <em>(Tên SP, Quy cách, ĐVT, Nhãn hiệu tự động tra cứu từ Bảng Mã Sản Xuất theo Mã SP).</em>
                 </p>
               </div>
               <button
@@ -5940,7 +6119,7 @@ export const WarehouseModule: React.FC = () => {
               <p className="text-[11px] text-slate-500 mb-3">
                 {isDraggingGeneralExcel
                   ? "Hệ thống sẽ tự động phân tích và nhận diện cấu trúc cột"
-                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu TBRs"}
+                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu TBR"}
               </p>
               <button
                 type="button"
@@ -6609,19 +6788,20 @@ export const WarehouseModule: React.FC = () => {
               <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <strong className="text-emerald-900 dark:text-emerald-300 block mb-0.5">
-                    Tải mẫu Excel nhập kho chuẩn TBRs:
+                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn TBR:
                   </strong>
                   <p className="text-emerald-800 dark:text-emerald-400 text-[11px] leading-relaxed">
-                    Mẫu chuẩn hóa đồng bộ 100% với giao diện nhập thủ công: Bắt buộc (*) các trường Mã hàng, Tên SP, Số Lô, Hạn dùng, Số lượng. Cho phép để trống: PO, Hóa đơn VAT, Ngày SX, Quy cách, ĐVT, Đơn giá, Vị trí kho kệ, Nhiệt độ và QC. Kèm sheet hướng dẫn chi tiết.
+                    Chỉ cần nhập <strong>7 cột cốt lõi</strong>: <code>Mã SP</code>, <code>Số Lô (Lot)</code>, <code>Hạn dùng (Date)</code>, <code>Số lượng</code>, <code>Giá trị / Đơn giá đầu kỳ</code>, <code>Nhiệt độ bảo quản</code>, <code>Khu vực / Vị trí kho</code>. <br />
+                    <span className="font-semibold text-teal-700 dark:text-teal-300">✨ Tự động hóa:</span> Các thông tin <strong>Tên SP, Quy cách, ĐVT, Nhãn hiệu</strong> được hệ thống tự động tra cứu và điền từ <strong>Bảng Mã Sản Xuất</strong> dựa trên <code>Mã SP</code>. Nếu để trống Nhiệt độ hoặc Vị trí kệ, hệ thống mặc định là <em>15–25°C (Nhiệt độ phòng - RT)</em> và <em>Chưa phân bổ kệ</em> (không tự ép -20°C hay Kệ A01).
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={handleDownloadInboundTemplate}
-                  className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all"
+                  className="shrink-0 flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition-all cursor-pointer"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Tải File Mẫu Excel</span>
+                  <span>Tải Mẫu Rút Gọn (7 Cột)</span>
                 </button>
               </div>
 
@@ -6793,18 +6973,17 @@ export const WarehouseModule: React.FC = () => {
                       <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 sticky top-0 font-bold">
                         <tr>
                           <th className="py-2 px-3">#</th>
-                          <th className="py-2 px-3">Mã Hàng (*)</th>
-                          <th className="py-2 px-3">Tên Hàng Hóa (*)</th>
-                          <th className="py-2 px-3">Quy Cách</th>
-                          <th className="py-2 px-3 text-right">SL Nhập (*)</th>
-                          <th className="py-2 px-3">ĐVT</th>
-                          <th className="py-2 px-3">Số Lô (*)</th>
-                          <th className="py-2 px-3">Hạn Dùng (*)</th>
-                          <th className="py-2 px-3">Ngày SX</th>
-                          <th className="py-2 px-3 text-right">Đơn Giá</th>
+                          <th className="py-2 px-3">Mã SP (*)</th>
+                          <th className="py-2 px-3">Tên SP (Tự động tra cứu)</th>
+                          <th className="py-2 px-3">Quy Cách &amp; ĐVT</th>
+                          <th className="py-2 px-3">Nhãn Hiệu</th>
+                          <th className="py-2 px-3">Số Lô (Lot)</th>
+                          <th className="py-2 px-3">Hạn Dùng (Date)</th>
+                          <th className="py-2 px-3 text-right">Số Lượng (*)</th>
+                          <th className="py-2 px-3 text-right">Đơn Giá Đầu Kỳ</th>
+                          <th className="py-2 px-3 text-right">Thành Tiền</th>
                           <th className="py-2 px-3">Nhiệt Độ Bảo Quản</th>
-                          <th className="py-2 px-3">Vị Trí Tủ/Kệ</th>
-                          <th className="py-2 px-3">Tình Trạng QC</th>
+                          <th className="py-2 px-3">Khu Vực / Vị Trí Kho</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
@@ -6812,17 +6991,25 @@ export const WarehouseModule: React.FC = () => {
                           <tr key={idx} className={r.isValid ? "hover:bg-slate-50 dark:hover:bg-slate-800/50" : "bg-rose-50 dark:bg-rose-950/30"}>
                             <td className="py-1.5 px-3 font-mono">{idx + 1}</td>
                             <td className="py-1.5 px-3 font-mono font-bold text-slate-900 dark:text-white">{r.product_code}</td>
-                            <td className="py-1.5 px-3 font-bold">{r.product_name}</td>
-                            <td className="py-1.5 px-3 text-slate-500">{r.specification || "—"}</td>
-                            <td className="py-1.5 px-3 text-right font-mono font-black text-emerald-600 dark:text-emerald-400">{r.quantity}</td>
-                            <td className="py-1.5 px-3 text-slate-500">{r.unit}</td>
+                            <td className="py-1.5 px-3 font-bold">
+                              <div className="flex items-center gap-1.5">
+                                <span>{r.product_name}</span>
+                                {r.isAutoLookedUp && (
+                                  <span className="px-1.5 py-0.2 rounded bg-teal-100 dark:bg-teal-950/70 text-teal-700 dark:text-teal-300 text-[9px] font-bold">
+                                    Auto-Lookup
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-1.5 px-3 text-slate-500">{r.specification || "—"} ({r.unit || "Hộp"})</td>
+                            <td className="py-1.5 px-3 text-indigo-600 dark:text-indigo-400 font-semibold">{r.manufacturer || "—"}</td>
                             <td className="py-1.5 px-3 font-mono text-orange-500">{r.lot_number || "—"}</td>
                             <td className="py-1.5 px-3 font-mono text-emerald-500">{r.expiry_date || "—"}</td>
-                            <td className="py-1.5 px-3 font-mono text-slate-400">{r.manufacture_date || "—"}</td>
-                            <td className="py-1.5 px-3 text-right font-mono text-slate-300">{r.unit_price > 0 ? formatCurrency(r.unit_price) : "0 đ"}</td>
-                            <td className="py-1.5 px-3 text-sky-400 text-[10px]">{r.storage_condition || "—"}</td>
-                            <td className="py-1.5 px-3 text-slate-300">{r.shelf_position || r.storage_location || "—"}</td>
-                            <td className="py-1.5 px-3 text-emerald-400 text-[10px]">{r.qc_status || "—"}</td>
+                            <td className="py-1.5 px-3 text-right font-mono font-black text-emerald-600 dark:text-emerald-400">{r.quantity}</td>
+                            <td className="py-1.5 px-3 text-right font-mono text-slate-700 dark:text-slate-300">{r.unit_price > 0 ? formatCurrency(r.unit_price) : "0 đ"}</td>
+                            <td className="py-1.5 px-3 text-right font-mono font-bold text-teal-600 dark:text-teal-400">{r.total_amount > 0 ? formatCurrency(r.total_amount) : "0 đ"}</td>
+                            <td className="py-1.5 px-3 text-sky-600 dark:text-sky-400 text-[10px] font-semibold">{r.storage_condition || "15–25°C (Nhiệt độ phòng - RT)"}</td>
+                            <td className="py-1.5 px-3 text-slate-700 dark:text-slate-300">{r.shelf_position || "Chưa phân bổ kệ"}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -7971,7 +8158,7 @@ export const WarehouseModule: React.FC = () => {
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho TBRs"}
+                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho TBR"}
                   </p>
                 </div>
               </div>
@@ -7996,7 +8183,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Thủ Kho / Người Thực Hiện</span>
-                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho TBRs"}</strong>
+                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho TBR"}</strong>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Ngày Lập Chứng Từ</span>
@@ -8640,7 +8827,7 @@ export const WarehouseModule: React.FC = () => {
                   <span className="font-bold uppercase text-purple-700 dark:text-purple-400 block text-xs">
                     I. ĐẠI DIỆN BÊN GIAO ({companyConfig.companyName ? companyConfig.companyName.toUpperCase() : "BÊN GIAO"})
                   </span>
-                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI TBRs"}</strong></div>
+                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI TBR"}</strong></div>
                   <div>Kho xuất hàng: <strong>{handoverData.warehouse_name}</strong></div>
                   <div>Người thực hiện bàn giao: <strong>{handoverData.performed_by}</strong></div>
                 </div>
@@ -8930,7 +9117,7 @@ export const WarehouseModule: React.FC = () => {
                                 </span>
                               </div>
                               <div className="text-[10px] text-slate-500 mt-1">
-                                📍 {comp.shelf_position || "Kho TBRs"}
+                                📍 {comp.shelf_position || "Kho TBR"}
                               </div>
                               {isDiffTemp && (
                                 <span className="inline-block text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
@@ -9000,6 +9187,206 @@ export const WarehouseModule: React.FC = () => {
                   <span>In Bảng Kê Phụ Kiện Lô Hàng</span>
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== MODAL: CẬP NHẬT THÔNG TIN LÔ HÀNG & BẢO QUẢN ==================== */}
+      {isEditStockModalOpen && editingStockItem && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-xl w-full max-h-[92vh] flex flex-col overflow-hidden">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between p-5 border-b border-slate-100 dark:border-slate-800 bg-gradient-to-r from-teal-950/90 via-slate-900 to-slate-900 text-white">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-teal-500/20 border border-teal-400/30 text-teal-300 flex items-center justify-center font-bold">
+                  <Edit3 className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-white text-base tracking-tight">
+                    CẬP NHẬT THÔNG TIN LÔ HÀNG &amp; BẢO QUẢN
+                  </h3>
+                  <p className="text-xs text-teal-200/80 mt-0.5">
+                    [{editingStockItem.product_code}] {editingStockItem.product_name}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditStockModalOpen(false);
+                  setEditingStockItem(null);
+                }}
+                className="p-1.5 text-slate-400 hover:text-white rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-4 text-xs">
+              {/* Product Summary Banner */}
+              <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 flex items-center justify-between gap-3">
+                <div>
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block">Mặt hàng đang chỉnh sửa</span>
+                  <div className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">
+                    {editingStockItem.product_code} — {editingStockItem.product_name}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    Thực tồn: <strong className="font-mono text-slate-800 dark:text-slate-200">{editingStockItem.quantity_on_hand || 0} {editingStockItem.unit || "Hộp"}</strong> • Khả dụng: <strong className="font-mono text-emerald-600 dark:text-emerald-400">{editingStockItem.quantity_available || 0}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 1: Số lô & Hạn dùng */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Số lô (Lot No) *
+                  </label>
+                  <input
+                    type="text"
+                    value={editStockForm.lot_number}
+                    onChange={(e) => setEditStockForm({ ...editStockForm, lot_number: e.target.value })}
+                    placeholder="VD: L260901, LOT-001..."
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Hạn dùng (Expiry Date)
+                  </label>
+                  <input
+                    type="date"
+                    value={editStockForm.expiry_date}
+                    onChange={(e) => setEditStockForm({ ...editStockForm, expiry_date: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
+                  />
+                </div>
+              </div>
+
+              {/* Row 2: Đơn giá vốn / Giá đầu kỳ & Tổng giá trị tồn */}
+              <div className="p-4 rounded-xl bg-teal-50/60 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800/60 space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                  <div>
+                    <label className="block font-bold text-teal-900 dark:text-teal-200 mb-1">
+                      Đơn giá vốn / Giá đầu kỳ (VNĐ)
+                    </label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={1000}
+                      value={editStockForm.cost_price}
+                      onChange={(e) => setEditStockForm({ ...editStockForm, cost_price: Number(e.target.value) || 0 })}
+                      placeholder="Nhập đơn giá đầu kỳ..."
+                      className="w-full p-2.5 rounded-xl border border-teal-300 dark:border-teal-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold"
+                    />
+                  </div>
+                  <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-teal-200/80 dark:border-teal-800/60">
+                    <span className="text-[10px] font-bold uppercase text-slate-400 block">
+                      Tổng giá trị tồn lô này (Tự động tính)
+                    </span>
+                    <div className="text-base font-black font-mono text-teal-600 dark:text-teal-400 mt-1">
+                      {formatCurrency((Number(editingStockItem.quantity_on_hand) || 0) * (Number(editStockForm.cost_price) || 0))}
+                    </div>
+                    <span className="text-[10px] text-slate-400">
+                      = {editingStockItem.quantity_on_hand || 0} {editingStockItem.unit || "Hộp"} × {formatCurrency(Number(editStockForm.cost_price) || 0)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Row 3: Điều kiện / Nhiệt độ bảo quản */}
+              <div className="space-y-2">
+                <label className="block font-bold text-slate-700 dark:text-slate-300">
+                  Điều kiện / Nhiệt độ bảo quản (GSP)
+                </label>
+                <select
+                  value={editStockForm.storage_condition}
+                  onChange={(e) => setEditStockForm({ ...editStockForm, storage_condition: e.target.value })}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
+                >
+                  <option value="15–25°C (Nhiệt độ phòng - RT)">15–25°C (Nhiệt độ phòng - RT)</option>
+                  <option value="2–8°C (Tủ mát)">2–8°C (Tủ mát)</option>
+                  <option value="-20°C (Lạnh âm sâu)">-20°C (Lạnh âm sâu)</option>
+                  <option value="-80°C (Âm sâu đặc biệt)">-80°C (Âm sâu đặc biệt)</option>
+                  <option value="CUSTOM">Khác (Tùy chỉnh nhiệt độ bảo quản...)</option>
+                </select>
+                {editStockForm.storage_condition === "CUSTOM" && (
+                  <input
+                    type="text"
+                    value={editStockForm.custom_storage_condition}
+                    onChange={(e) => setEditStockForm({ ...editStockForm, custom_storage_condition: e.target.value })}
+                    placeholder="Nhập điều kiện nhiệt độ bảo quản tùy chỉnh (VD: Khô ráo, tránh ánh sáng...)"
+                    className="w-full p-2.5 rounded-xl border border-teal-300 dark:border-teal-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium mt-2"
+                  />
+                )}
+              </div>
+
+              {/* Row 4: Khu vực kho & Vị trí Tủ / Kệ */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Khu vực kho
+                  </label>
+                  <select
+                    value={editStockForm.warehouse_location}
+                    onChange={(e) => setEditStockForm({ ...editStockForm, warehouse_location: e.target.value })}
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
+                  >
+                    <option value="Kho Trung Tâm">Kho Trung Tâm</option>
+                    <option value="Kho Mát 2-8°C (Khu B)">Kho Mát 2-8°C (Khu B)</option>
+                    <option value="Kho Lạnh Âm Sâu -20°C (Khu A)">Kho Lạnh Âm Sâu -20°C (Khu A)</option>
+                    <option value="Kho Âm Siêu Sâu -80°C">Kho Âm Siêu Sâu -80°C</option>
+                    <option value="Kho Thiết Bị & Vật Tư">Kho Thiết Bị &amp; Vật Tư</option>
+                    <option value="Kho Chi Nhánh Hà Nội">Kho Chi Nhánh Hà Nội</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Vị trí Tủ / Kệ lưu trữ
+                  </label>
+                  <input
+                    type="text"
+                    value={editStockForm.shelf_position}
+                    onChange={(e) => setEditStockForm({ ...editStockForm, shelf_position: e.target.value })}
+                    placeholder="VD: Kệ B1, Tủ mát TM-02, Chưa phân bổ kệ..."
+                    className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-semibold"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-end gap-2 bg-slate-50 dark:bg-slate-900/80">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditStockModalOpen(false);
+                  setEditingStockItem(null);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+              >
+                Hủy Bỏ
+              </button>
+              <button
+                type="button"
+                disabled={isSavingStockEdit}
+                onClick={handleSaveStockEdit}
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-500 text-white disabled:opacity-50 shadow-md shadow-teal-600/30 flex items-center gap-1.5 cursor-pointer"
+              >
+                {isSavingStockEdit ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    <span>Đang lưu...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check className="w-4 h-4" />
+                    <span>Lưu Cập Nhật Lô &amp; Bảo Quản</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

@@ -259,7 +259,7 @@ export async function GET(req: NextRequest) {
                 lot_number: itLot || lot || "LOT-TIÊU-CHUẨN",
                 quantity: Number(it.quantity) || 1,
                 unit_price: Number(it.unitPrice || it.unit_price) || 0,
-                shipping_method: ord.shipping_method || "Xe lạnh chuyên dụng TBRs",
+                shipping_method: ord.shipping_method || "Xe lạnh chuyên dụng TBR",
                 tracking_code: ord.tracking_code || "TBR-EXP-01"
               });
             }
@@ -453,7 +453,7 @@ export async function POST(req: NextRequest) {
             "INBOUND",
             reference_code || vat_invoice_no || "N/A",
             date || todayVN(),
-            performed_by || "Thủ kho TBRs",
+            performed_by || "Thủ kho TBR",
             warehouse_name || "Kho Trung Tâm",
             JSON.stringify(items || []),
             notes || (supplier_name ? `Nhà cung cấp: ${supplier_name}` : "")
@@ -477,7 +477,7 @@ export async function POST(req: NextRequest) {
             specification: item.specification || "",
             standard_price: Number(item.standard_price) || 0, // ĐỂ TRỐNG GIÁ BÁN (0) NẾU CHƯA THIẾT LẬP ĐỂ QUẢN LÝ ĐỊNH GIÁ
             cost_price: Number(item.cost_price) || Number(item.unit_price) || 0,
-            manufacturer: item.manufacturer || item.brand || item.supplier_name || "TBRs Phân Phối",
+            manufacturer: item.manufacturer || item.brand || item.supplier_name || "TBR Phân Phối",
             origin: item.origin || "Nhập khẩu / Chính hãng",
             min_stock_level: item.min_stock_level || 10,
             storage_condition: item.storage_condition || item.storageCondition || null
@@ -488,7 +488,7 @@ export async function POST(req: NextRequest) {
             code: pCode,
             name: item.product_name || item.name || pCode,
             category: resolvedItemCat,
-            brand: item.manufacturer || item.brand || supplier_name || "TBRs Phân Phối",
+            brand: item.manufacturer || item.brand || supplier_name || "TBR Phân Phối",
             origin: item.origin || "Chính hãng",
             unit: item.unit || "Hộp",
             specification: item.specification || "",
@@ -554,7 +554,7 @@ export async function POST(req: NextRequest) {
         await c.query(
           `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [code, "OUTBOUND", reference_code, date || todayVN(), performed_by || "Thủ kho TBRs", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
+          [code, "OUTBOUND", reference_code, date || todayVN(), performed_by || "Thủ kho TBR", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
         );
       });
 
@@ -563,11 +563,107 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "update_item") {
-      const { product_code, shelf_position, warehouse_location } = body;
-      await query(
-        `UPDATE inventory_items SET shelf_position = $1, warehouse_location = $2, last_updated = CURRENT_TIMESTAMP WHERE product_code = $3`,
-        [shelf_position, warehouse_location, product_code]
-      );
+      const {
+        product_code,
+        old_lot_number,
+        lot_number,
+        expiry_date,
+        cost_price,
+        storage_condition,
+        shelf_position,
+        warehouse_location
+      } = body;
+      if (!product_code) {
+        return NextResponse.json({ error: "Thiếu mã sản phẩm (product_code)" }, { status: 400 });
+      }
+      await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
+      await withTransaction(async (c) => {
+        await c.query(
+          `UPDATE inventory_items
+              SET shelf_position = COALESCE($1, shelf_position),
+                  warehouse_location = COALESCE($2, warehouse_location),
+                  lot_number = CASE WHEN $3::text IS NOT NULL THEN $3::text ELSE lot_number END,
+                  expiry_date = CASE WHEN $4::text IS NOT NULL THEN $4::text ELSE expiry_date END,
+                  last_updated = CURRENT_TIMESTAMP
+            WHERE product_code = $5`,
+          [
+            shelf_position ?? null,
+            warehouse_location ?? null,
+            lot_number !== undefined ? String(lot_number).trim() : null,
+            expiry_date !== undefined ? String(expiry_date).trim() : null,
+            product_code
+          ]
+        );
+
+        if (storage_condition !== undefined || cost_price !== undefined) {
+          const parsedCost = cost_price !== undefined && cost_price !== null && String(cost_price) !== "" ? Number(cost_price) : null;
+          await c.query(
+            `UPDATE products
+                SET storage_condition = CASE WHEN $1::text IS NOT NULL THEN $1::text ELSE storage_condition END,
+                    cost_price = CASE WHEN $2::numeric IS NOT NULL AND $2::numeric >= 0 THEN $2::numeric ELSE cost_price END
+              WHERE code = $3`,
+            [
+              storage_condition !== undefined ? String(storage_condition).trim() : null,
+              parsedCost,
+              product_code
+            ]
+          );
+        }
+
+        const targetOldLot = old_lot_number ? String(old_lot_number).trim() : "";
+        const newLot = lot_number !== undefined ? (String(lot_number).trim() || "NO-LOT") : null;
+        const newExp = expiry_date !== undefined ? (String(expiry_date).trim() || null) : null;
+        const newLoc = warehouse_location ? String(warehouse_location).trim() : null;
+        const newUnitCost = cost_price !== undefined && cost_price !== null && String(cost_price) !== "" ? Number(cost_price) : null;
+
+        const existingLots = await c.query(
+          `SELECT id, lot_number, warehouse_location FROM inventory_lots WHERE product_code = $1 ORDER BY id ASC`,
+          [product_code]
+        );
+        if (existingLots.rows.length > 0) {
+          const matchedLotRow =
+            existingLots.rows.find((r: any) => String(r.lot_number || "").trim().toLowerCase() === targetOldLot.toLowerCase()) ||
+            existingLots.rows[0];
+          const targetLotVal = newLot || matchedLotRow.lot_number;
+          const targetLocVal = newLoc || matchedLotRow.warehouse_location;
+          const conflictRow = existingLots.rows.find(
+            (r: any) => r.id !== matchedLotRow.id && r.lot_number === targetLotVal && r.warehouse_location === targetLocVal
+          );
+          if (conflictRow) {
+            await c.query(
+              `UPDATE inventory_lots
+                  SET expiry_date = CASE WHEN $1::text IS NOT NULL THEN $1::text ELSE expiry_date END,
+                      unit_cost = CASE WHEN $2::numeric IS NOT NULL AND $2::numeric >= 0 THEN $2::numeric ELSE unit_cost END,
+                      last_updated = CURRENT_TIMESTAMP
+                WHERE id = $3`,
+              [newExp, newUnitCost, conflictRow.id]
+            );
+          } else {
+            await c.query(
+              `UPDATE inventory_lots
+                  SET lot_number = COALESCE($1, lot_number),
+                      expiry_date = CASE WHEN $2::text IS NOT NULL THEN $2::text ELSE expiry_date END,
+                      warehouse_location = COALESCE($3, warehouse_location),
+                      unit_cost = CASE WHEN $4::numeric IS NOT NULL AND $4::numeric >= 0 THEN $4::numeric ELSE unit_cost END,
+                      last_updated = CURRENT_TIMESTAMP
+                WHERE id = $5`,
+              [newLot, newExp, newLoc, newUnitCost, matchedLotRow.id]
+            );
+          }
+        } else if (newLot && newLot !== "NO-LOT") {
+          const itemRow = await c.query(`SELECT quantity_on_hand, warehouse_location FROM inventory_items WHERE product_code = $1 LIMIT 1`, [product_code]);
+          const qtyOnHand = Number(itemRow.rows[0]?.quantity_on_hand) || 0;
+          if (qtyOnHand > 0) {
+            await c.query(
+              `INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, unit_cost)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT DO NOTHING`,
+              [product_code, newLot, newExp, newLoc || itemRow.rows[0]?.warehouse_location || "Kho Trung Tâm", qtyOnHand, newUnitCost || 0]
+            );
+          }
+        }
+      });
+      await logAudit("UPDATE_ITEM", "INVENTORY", `Cập nhật thông tin lô & bảo quản cho ${product_code}: Lô ${lot_number || "—"}, HSD ${expiry_date || "—"}, Bảo quản ${storage_condition || "—"}, Kệ ${shelf_position || "—"}`);
       return NextResponse.json({ success: true });
     }
 
@@ -597,7 +693,7 @@ export async function POST(req: NextRequest) {
       const { reservation_id, reason, actor } = body;
       // H5: CAS on status = 'ACTIVE'; quantity comes from the DB, never from the client. Double-click = no-op.
       const result = await withTransaction((c) =>
-        releaseReservation(c, Number(reservation_id), actor || "Thủ kho TBRs", reason || "Giải phóng lại cho kho")
+        releaseReservation(c, Number(reservation_id), actor || "Thủ kho TBR", reason || "Giải phóng lại cho kho")
       );
 
       if (result.released) {
@@ -943,7 +1039,7 @@ export async function POST(req: NextRequest) {
           // Ensure inventory item
           await query(
             `INSERT INTO inventory_items (product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position)
-             VALUES ($1, $2, 0, 0, 'Kho Trung Tâm', 'Kệ K01')
+             VALUES ($1, $2, 0, 0, 'Kho Trung Tâm', 'Chưa phân bổ kệ')
              ON CONFLICT (product_code) DO NOTHING`,
             [pCode, pName || pCode]
           );
@@ -1031,20 +1127,24 @@ export async function POST(req: NextRequest) {
         let batchInboundCode: string | null = null;
         for (const r of rows) {
           const getVal = createGetVal(r);
-          const pCode = getVal(["Mã sản phẩm (*)", "Mã sản phẩm", "Mã hàng", "Mã SKU (*)", "Mã SKU", "product_code"]);
-          const pName = getVal(["Tên hàng hóa / Sinh phẩm (*)", "Tên sản phẩm (*)", "Tên hàng hóa", "Tên sản phẩm", "product_name"], pCode);
-          const spec = getVal(["Quy cách đóng gói", "Quy cách", "specification"]);
-          const unit = getVal(["Đơn vị tính", "Đơn vị tính (ĐVT)", "ĐVT", "unit"], "Hộp");
-          const lot = getVal(["Số Lô (LOT) (*)", "Số Lô (LOT)", "Số Lô sản xuất (*)", "Số Lô", "lot_number"], "LOT-STD");
-          const expDate = getVal(["Hạn sử dụng (EXP) (*)", "Hạn sử dụng (EXP)", "Hạn sử dụng (*)", "Hạn sử dụng", "expiry_date"]);
+          const pCode = getVal(["Mã SP", "Mã sản phẩm (*)", "Mã sản phẩm", "Mã hàng", "Mã SKU (*)", "Mã SKU", "product_code", "sku", "code"]);
+          const catalogProd = pCode
+            ? (await query("SELECT code, name, specification, unit, manufacturer, cost_price, storage_condition FROM products WHERE LOWER(TRIM(code)) = LOWER(TRIM($1)) LIMIT 1", [pCode])).rows[0]
+            : null;
+          const pName = getVal(["Tên hàng hóa / Sinh phẩm (*)", "Tên sản phẩm (*)", "Tên hàng hóa", "Tên sản phẩm", "Tên SP", "product_name"], catalogProd?.name || pCode);
+          const spec = getVal(["Quy cách đóng gói", "Quy cách", "specification"], catalogProd?.specification || "");
+          const unit = getVal(["Đơn vị tính", "Đơn vị tính (ĐVT)", "ĐVT", "unit"], catalogProd?.unit || "Hộp");
+          const lot = getVal(["Số Lô (Lot)", "Số Lô (LOT) (*)", "Số Lô (LOT)", "Số Lô sản xuất (*)", "Số Lô", "Lô", "Lot", "lot_number"], "LOT-STD");
+          const expDate = getVal(["Hạn dùng (Date)", "Hạn sử dụng (EXP) (*)", "Hạn sử dụng (EXP)", "Hạn sử dụng (*)", "Hạn sử dụng", "Hạn dùng", "Date", "expiry_date"]);
           const mfgDate = getVal(["Ngày sản xuất (MFG)", "Ngày sản xuất", "mfg_date"]);
-          const qty = Number(getVal(["Số lượng nhập (*)", "Số lượng nhập", "Số lượng", "quantity"])) || 0;
-          const unitCost = Number(getVal(["Đơn giá nhập (VNĐ)", "Đơn giá nhập", "Đơn giá", "unit_cost", "cost_price"])) || 0;
+          const qtyRaw = getVal(["Số lượng", "Số lượng nhập (*)", "Số lượng nhập", "SL", "quantity"]);
+          const qty = Number(String(qtyRaw || "0").replace(/[^\d.-]/g, "")) || 0;
+          const unitCostRaw = getVal(["Giá trị / Đơn giá đầu kỳ", "Đơn giá đầu kỳ", "Giá đầu kỳ", "Giá trị đầu kỳ", "Đơn giá nhập (VNĐ)", "Đơn giá nhập", "Đơn giá", "Giá vốn", "unit_cost", "cost_price", "unitCost", "costPrice", "price"]);
+          const unitCost = unitCostRaw !== "" ? (Number(String(unitCostRaw).replace(/[^\d.-]/g, "")) || 0) : (Number(catalogProd?.cost_price) || 0);
           const totalAmt = Number(getVal(["Thành tiền (VNĐ)", "Thành tiền"])) || (qty * unitCost);
-          const storageConditionRaw = getVal(["Điều kiện nhiệt độ bảo quản", "Nhiệt độ bảo quản", "storage_condition"]);
-          // Không tự điền nhiệt độ: lấy theo danh mục sản phẩm, không có thì để trống
-          const storageCondition = storageConditionRaw || (pCode ? ((await query("SELECT storage_condition FROM products WHERE code = $1", [pCode])).rows[0]?.storage_condition || "") : "");
-          const shelf = getVal(["Vị trí tủ / kệ lưu trữ", "Vị trí kho / Tủ lưu trữ", "Vị trí kệ kho", "shelf_position"], "Kệ A01");
+          const storageConditionRaw = getVal(["Nhiệt độ bảo quản", "Điều kiện nhiệt độ bảo quản", "Điều kiện bảo quản", "storage_condition"]);
+          const storageCondition = storageConditionRaw || catalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
+          const shelf = getVal(["Khu vực / Vị trí kho", "Vị trí tủ / kệ lưu trữ", "Vị trí kho / Tủ lưu trữ", "Vị trí kệ kho", "Vị trí kho", "shelf_position"], "Chưa phân bổ kệ");
           const qcStatus = getVal(["Kiểm nhận / Tình trạng QC", "Tình trạng QC", "qc_status"], "Đạt chuẩn 100% (Nguyên niêm phong & COA)");
           let inboundCode = getVal(["Mã Phiếu Nhập (PNK)", "Mã phiếu nhập", "transaction_code"]);
           if (!inboundCode) {
@@ -1055,9 +1155,9 @@ export async function POST(req: NextRequest) {
           const inboundReason = getVal(["Loại hình / Lý do nhập", "Lý do nhập"], "Nhập mua hàng theo PO từ NCC");
           const poCode = getVal(["Mã Đơn Đặt Hàng (PO)", "Mã Đơn Đặt Hàng (PO) Tham Chiếu", "Mã PO", "reference_code"]);
           const vatInvoice = getVal(["Số Hóa Đơn VAT / Tờ khai HQ", "Số Hóa Đơn VAT / Tờ Khai Hải Quan", "Số Hóa Đơn VAT", "vat_invoice_no"]);
-          const supplier = getVal(["Nhà Cung Cấp", "Nhà cung cấp / Nguồn hàng", "supplier_name"]);
-          const warehouse = getVal(["Kho Tiếp Nhận", "Kho lưu trữ"], "Kho Trung Tâm");
-          const performedBy = getVal(["Thủ Kho / Người Tiếp Nhận", "Người tiếp nhận"], "Thủ kho TBRs");
+          const supplier = getVal(["Nhà Cung Cấp", "Nhà cung cấp / Nguồn hàng", "Nhãn hiệu", "Hãng sản xuất", "supplier_name"], catalogProd?.manufacturer || "");
+          const warehouse = getVal(["Kho Tiếp Nhận", "Kho lưu trữ", "Khu vực kho"], "Kho Trung Tâm");
+          const performedBy = getVal(["Thủ Kho / Người Tiếp Nhận", "Người tiếp nhận"], "Thủ kho TBR");
           const shippingUnit = getVal(["Đơn vị vận chuyển / Giao hàng", "Đơn vị vận chuyển"]);
           const notes = getVal(["Ghi chú", "Ghi chú chứng từ / Chất lượng", "notes"]);
 
@@ -1161,7 +1261,7 @@ export async function POST(req: NextRequest) {
                 specification: p.spec,
                 standard_price: Number(p.r["Giá niêm yết"]) || Number(p.r["Giá bán"]) || 0, // Để trống (0) nếu chưa có giá
                 cost_price: p.unitCost,
-                manufacturer: p.supplier || "TBRs Phân Phối",
+                manufacturer: p.supplier || "TBR Phân Phối",
                 origin: "Chính hãng / Tiêu chuẩn ISO",
                 min_stock_level: 10,
                 storage_condition: p.storageCondition
@@ -1172,7 +1272,7 @@ export async function POST(req: NextRequest) {
                 code: p.pCode,
                 name: p.pName,
                 category: resolvedInboundCat,
-                brand: p.supplier || "TBRs Phân Phối",
+                brand: p.supplier || "TBR Phân Phối",
                 origin: "Chính hãng",
                 unit: p.unit || "Hộp",
                 specification: p.spec || "",
@@ -1235,7 +1335,7 @@ export async function POST(req: NextRequest) {
           const pName = getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "product_name"], pCode);
           const qty = Number(getVal(["Số lượng đặt mua (*)", "Số lượng", "quantity"])) || 1;
           const uPrice = Number(getVal(["Đơn giá mua (VNĐ)", "Đơn giá", "unit_price"])) || 0;
-          const note = getVal(["Ghi chú giao hàng", "Ghi chú", "notes"], "Nhập từ file Excel PO TBRs");
+          const note = getVal(["Ghi chú giao hàng", "Ghi chú", "notes"], "Nhập từ file Excel PO TBR");
 
           const items = [{ product_code: pCode, product_name: pName, quantity: qty, unit_price: uPrice, total: qty * uPrice }];
           const totalAmt = qty * uPrice;
@@ -1319,9 +1419,9 @@ export async function POST(req: NextRequest) {
           };
 
           const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-TBR");
-          const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên TBRs";
+          const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên TBR";
           let username = getVal(["Tên đăng nhập (*)", "Tên đăng nhập", "username", "TenDangNhap"]);
-          const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@tbrscientific.com` : "");
+          const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@tbr.vn` : "");
           if (!username) {
             const emailPart = email.split("@")[0];
             username = emailPart || empCode.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1404,7 +1504,7 @@ export async function POST(req: NextRequest) {
 
         await logAudit("IMPORT_EXCEL", "USERS_PERSONNEL", `Nạp thành công ${importedCount} tài khoản & hồ sơ nhân sự liên kết từ Excel`);
       } else {
-        return NextResponse.json({ error: "Không nhận diện được định dạng file Excel phù hợp với các mẫu chuẩn TBRs." }, { status: 400 });
+        return NextResponse.json({ error: "Không nhận diện được định dạng file Excel phù hợp với các mẫu chuẩn TBR." }, { status: 400 });
       }
 
       return NextResponse.json({
