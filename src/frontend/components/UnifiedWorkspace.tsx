@@ -1530,6 +1530,9 @@ export const UnifiedWorkspace: React.FC = () => {
   // State cho Tab Thông Báo & Quyết Định Nội Bộ (Enterprise Announcements & Decisions)
   const [announcements, setAnnouncements] = useState<any[]>([]);
   const [announcementCategoryFilter, setAnnouncementCategoryFilter] = useState<string>("all");
+  const [announcementFromDate, setAnnouncementFromDate] = useState<string>("");
+  const [announcementToDate, setAnnouncementToDate] = useState<string>("");
+  const [announcementSortBy, setAnnouncementSortBy] = useState<"newest" | "issue_desc" | "issue_asc" | "pinned_first">("newest");
   const [isAnnouncementModalOpen, setIsAnnouncementModalOpen] = useState(false);
   const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | number | null>(null);
   const [selectedAnnouncementDetail, setSelectedAnnouncementDetail] = useState<any>(null);
@@ -6203,6 +6206,53 @@ export const UnifiedWorkspace: React.FC = () => {
               <option value="DONE">Hoàn tất</option>
             </select>
           )}
+
+          {/* Date Range & Sort Filter (when on announcements tab) */}
+          {activeSubTab === "announcements" && (
+            <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs">
+                <Calendar className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">Từ ngày:</span>
+                <DateInputVN
+                  value={announcementFromDate}
+                  onChange={(e) => setAnnouncementFromDate(e.target.value)}
+                  className="text-xs font-bold bg-transparent text-slate-900 dark:text-white focus:outline-none w-[112px]"
+                />
+                <span className="text-slate-400">→</span>
+                <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">Đến ngày:</span>
+                <DateInputVN
+                  value={announcementToDate}
+                  onChange={(e) => setAnnouncementToDate(e.target.value)}
+                  className="text-xs font-bold bg-transparent text-slate-900 dark:text-white focus:outline-none w-[112px]"
+                />
+                {(announcementFromDate || announcementToDate) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAnnouncementFromDate("");
+                      setAnnouncementToDate("");
+                    }}
+                    title="Xóa lọc theo ngày"
+                    className="ml-0.5 px-1.5 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/60 text-rose-600 dark:text-rose-300 text-[10px] font-bold hover:bg-rose-200 cursor-pointer"
+                  >
+                    ✕ Xóa
+                  </button>
+                )}
+              </div>
+
+              <select
+                value={announcementSortBy}
+                onChange={(e) => setAnnouncementSortBy(e.target.value as any)}
+                className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-200 font-bold cursor-pointer"
+                title="Thứ tự sắp xếp thông báo"
+              >
+                <option value="newest">🕒 Mới nhất lên trên</option>
+                <option value="issue_desc">📅 Ngày ban hành: Mới → Cũ</option>
+                <option value="issue_asc">📅 Ngày ban hành: Cũ → Mới</option>
+                <option value="pinned_first">📌 Ghim tiêu điểm lên đầu</option>
+              </select>
+            </div>
+          )}
         </div>
 
         {/* Right: Dynamic Actions strictly per active tab */}
@@ -9466,10 +9516,42 @@ ${wf.description || ""}`}
         </div>
       )}
 
-      {/* ==================== TAB 6: THÔNG BÁO, QUYẾT ĐỊNH & VĂN BẢN ĐIỀU HÀNH (ENTERPRISE ANNOUNCEMENTS) ==================== */}
+      {/* ==================== TAB 6: THÔNG BÁO, QUYẾT ĐỊNH & VĂN BẢN ĐIỀNH HÀNH (ENTERPRISE ANNOUNCEMENTS) ==================== */}
       {activeSubTab === "announcements" && (() => {
+        const normAnnDate = (raw: any): string => {
+          const s = String(raw || "").trim();
+          if (!s) return "";
+          const datePart = s.split(/[ T]/)[0];
+          if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) return datePart;
+          const dmy = datePart.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+          if (dmy) return `${dmy[3]}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+          return datePart;
+        };
+
+        const getAnnCreatedEpoch = (ann: any): number => {
+          const idMatch = String(ann?.id || "").match(/^ANN-(\d{10,})$/);
+          if (idMatch) {
+            return Number(idMatch[1]);
+          }
+          const rawTime = String(ann?.createdAt || ann?.acknowledgedBy?.[0]?.time || "").trim();
+          if (rawTime) {
+            const parts = rawTime.split(/[ T]/);
+            const d = normAnnDate(parts[0]);
+            const t = parts[1] ? (parts[1].length === 5 ? `${parts[1]}:00` : parts[1]) : "00:00:00";
+            const ms = Date.parse(`${d}T${t}+07:00`);
+            if (!isNaN(ms)) return ms;
+          }
+          const dIssue = normAnnDate(ann?.issueDate);
+          if (dIssue) {
+            const ms = Date.parse(`${dIssue}T00:00:00+07:00`);
+            if (!isNaN(ms)) return ms;
+          }
+          return 0;
+        };
+
         const filteredAnnouncements = (announcements || [])
-          .filter((ann: any) => {
+          .map((ann: any, _idx: number) => ({ ann, _idx }))
+          .filter(({ ann }) => {
             // Lọc theo phòng ban đang chọn trên thanh Level 2
             if (selectedDept !== "all") {
               const appliesToSelectedDept =
@@ -9481,10 +9563,23 @@ ${wf.description || ""}`}
             }
             // Lọc theo phân loại văn bản
             if (announcementCategoryFilter === "UNACKNOWLEDGED") {
-              return ann.requireAck !== false && isUserTargetedByAnnouncement(ann) && !hasUserAcknowledgedAnnouncement(ann);
-            }
-            if (announcementCategoryFilter !== "all" && ann.docType !== announcementCategoryFilter) {
+              if (!(ann.requireAck !== false && isUserTargetedByAnnouncement(ann) && !hasUserAcknowledgedAnnouncement(ann))) {
+                return false;
+              }
+            } else if (announcementCategoryFilter !== "all" && ann.docType !== announcementCategoryFilter) {
               return false;
+            }
+            // Lọc theo khoảng ngày (Từ ngày -> Đến ngày) dựa trên Ngày ban hành hoặc Ngày đăng
+            if (announcementFromDate || announcementToDate) {
+              const issueD = normAnnDate(ann.issueDate);
+              const createdD = normAnnDate(ann.createdAt || ann?.acknowledgedBy?.[0]?.time);
+              const checkDate = (d: string) => {
+                if (!d) return false;
+                if (announcementFromDate && d < announcementFromDate) return false;
+                if (announcementToDate && d > announcementToDate) return false;
+                return true;
+              };
+              if (!checkDate(issueD) && !checkDate(createdD)) return false;
             }
             // Lọc theo ô tìm kiếm
             if (searchQuery.trim()) {
@@ -9496,10 +9591,30 @@ ${wf.description || ""}`}
             }
             return true;
           })
-          .sort((a: any, b: any) => {
-            if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
-            return String(b.issueDate || "").localeCompare(String(a.issueDate || ""));
-          });
+          .sort((itemA, itemB) => {
+            const a = itemA.ann;
+            const b = itemB.ann;
+            if (announcementSortBy === "pinned_first") {
+              if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+            }
+            if (announcementSortBy === "issue_asc") {
+              const cmpAsc = normAnnDate(a.issueDate).localeCompare(normAnnDate(b.issueDate));
+              if (cmpAsc !== 0) return cmpAsc;
+              return getAnnCreatedEpoch(a) - getAnnCreatedEpoch(b);
+            }
+            if (announcementSortBy === "issue_desc") {
+              const cmpDesc = normAnnDate(b.issueDate).localeCompare(normAnnDate(a.issueDate));
+              if (cmpDesc !== 0) return cmpDesc;
+              return getAnnCreatedEpoch(b) - getAnnCreatedEpoch(a);
+            }
+            // Mặc định ("newest"): Thông báo mới tạo / mới ban hành nhất luôn nằm trên cùng
+            const timeDiff = getAnnCreatedEpoch(b) - getAnnCreatedEpoch(a);
+            if (timeDiff !== 0) return timeDiff;
+            const issueDiff = normAnnDate(b.issueDate).localeCompare(normAnnDate(a.issueDate));
+            if (issueDiff !== 0) return issueDiff;
+            return itemA._idx - itemB._idx;
+          })
+          .map((x) => x.ann);
 
         const decisionCount = (announcements || []).filter((a: any) => a.docType === "DECISION").length;
         const policyCount = (announcements || []).filter((a: any) => a.docType === "POLICY" || a.docType === "SALES_POLICY").length;
@@ -9605,6 +9720,38 @@ ${wf.description || ""}`}
                     {cat.label}
                   </button>
                 ))}
+              </div>
+
+              {/* Bộ lọc Từ ngày - Đến ngày & Sắp xếp trực tiếp trên thanh phân loại */}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 text-xs">
+                  <Calendar className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
+                  <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">Từ ngày:</span>
+                  <DateInputVN
+                    value={announcementFromDate}
+                    onChange={(e) => setAnnouncementFromDate(e.target.value)}
+                    className="text-xs font-bold bg-transparent text-slate-900 dark:text-white focus:outline-none w-[112px]"
+                  />
+                  <span className="text-slate-400">→</span>
+                  <span className="text-[11px] font-semibold text-slate-500 whitespace-nowrap">Đến ngày:</span>
+                  <DateInputVN
+                    value={announcementToDate}
+                    onChange={(e) => setAnnouncementToDate(e.target.value)}
+                    className="text-xs font-bold bg-transparent text-slate-900 dark:text-white focus:outline-none w-[112px]"
+                  />
+                  {(announcementFromDate || announcementToDate) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAnnouncementFromDate("");
+                        setAnnouncementToDate("");
+                      }}
+                      className="px-1.5 py-0.5 rounded bg-rose-100 dark:bg-rose-950/70 text-rose-600 dark:text-rose-300 text-[10px] font-bold hover:bg-rose-200 cursor-pointer"
+                    >
+                      ✕ Tất cả ngày
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
 
