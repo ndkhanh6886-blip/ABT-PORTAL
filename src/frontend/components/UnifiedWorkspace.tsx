@@ -3303,6 +3303,19 @@ export const UnifiedWorkspace: React.FC = () => {
         return;
       }
     }
+    if (taskReplyText.trim()) {
+      const existingLogs = Array.isArray(payload.logs) ? [...payload.logs] : [];
+      existingLogs.push({
+        type: "comment",
+        role: rolePerspective !== "staff" ? "directive" : "comment",
+        author: user?.name || currentStaffName || "Nhân viên",
+        time: new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+        text: taskReplyText.trim(),
+        attachments: []
+      });
+      payload = { ...payload, logs: existingLogs };
+      setTaskReplyText("");
+    }
     try {
       const res = await fetch("/api/workflows?action=task", {
         method: "POST",
@@ -3968,34 +3981,112 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   };
 
-  // Handle Post Workflow Comment
-  // Trả lời trên phiếu phối hợp ngay từ cửa sổ công việc
+  // Handle Post Task / Workflow Comment & Directive
+  // Trao đổi 2 chiều & Chỉ đạo trực tiếp ngay trong cửa sổ Cập nhật công việc
   const [taskReplyText, setTaskReplyText] = useState("");
-  const handleTaskReply = async (wf: any) => {
+  const handleTaskReply = async (wf?: any, options?: { reopenToInProgress?: boolean }) => {
     const text = taskReplyText.trim();
-    if (!text || !wf) return;
+    if (!text) return;
+    const isDirective = rolePerspective !== "staff" || Boolean(options?.reopenToInProgress);
+
+    // Nếu đang ở chế độ tạo mới công việc chưa có id trong DB -> lưu tạm vào taskForm.logs
+    if (!taskForm.id) {
+      const nextLogs = Array.isArray((taskForm as any).logs) ? [...(taskForm as any).logs] : [];
+      nextLogs.push({
+        type: "comment",
+        role: isDirective ? "directive" : "comment",
+        author: user?.name || currentStaffName || "Nhân viên",
+        time: new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+        text,
+        attachments: []
+      });
+      setTaskForm((prev: any) => ({ ...prev, logs: nextLogs }));
+      setTaskReplyText("");
+      showToast("Đã thêm ghi chú chỉ đạo vào công việc mới", "info");
+      return;
+    }
+
     try {
-      const res = await fetch("/api/workflows?action=workflow_comment", {
+      const res = await fetch("/api/workflows?action=task_comment", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: wf.id, author: currentStaffName || "Nhân viên", text, attachments: [] })
+        body: JSON.stringify({
+          id: taskForm.id,
+          author: user?.name || currentStaffName || "Nhân viên",
+          text,
+          role_type: isDirective ? "directive" : "comment",
+          reopen_status: options?.reopenToInProgress ? "IN_PROGRESS" : undefined,
+          attachments: []
+        })
       });
       const data = await res.json();
-      if (!data.success) { showToast(data.error || "Không gửi được trao đổi", "error"); return; }
-      setWorkflows((prev: any[]) => prev.map((w: any) => (w.id === wf.id ? { ...w, comments: data.comments } : w)));
+      if (!data.success) {
+        showToast(data.error || "Không gửi được trao đổi / chỉ đạo", "error");
+        return;
+      }
+
+      const nextStatus = data.status || taskForm.status;
+      setTaskForm((prev: any) => ({
+        ...prev,
+        logs: data.logs || prev.logs,
+        status: nextStatus
+      }));
+      setTasks((prev: any[]) =>
+        prev.map((t: any) =>
+          t.id === taskForm.id
+            ? { ...t, logs: data.logs || t.logs, status: nextStatus }
+            : t
+        )
+      );
+      if (wf && data.wfComments) {
+        setWorkflows((prev: any[]) =>
+          prev.map((w: any) => (w.id === wf.id ? { ...w, comments: data.wfComments } : w))
+        );
+      }
+
       setTaskReplyText("");
-      showToast("Đã gửi trao đổi tới bên yêu cầu", "success");
+      showToast(
+        options?.reopenToInProgress
+          ? "Đã gửi chỉ đạo tiếp theo & chuyển trạng thái sang Đang làm!"
+          : isDirective
+          ? "Đã gửi chỉ đạo trên công việc!"
+          : "Đã gửi phản hồi / trao đổi công việc!",
+        "success"
+      );
+
+      const assignees = taskForm.assignee_name
+        ? taskForm.assignee_name.split(",").map((s: string) => s.trim()).filter(Boolean)
+        : [];
+      const recipients = Array.from(
+        new Set([
+          ...assignees,
+          ...(wf?.requester_name ? [wf.requester_name] : []),
+          ...(wf?.assignee_name ? [wf.assignee_name] : [])
+        ].filter((n) => n && n !== (user?.name || currentStaffName)))
+      );
+
       notifyActivity({
-        title: "Phản hồi phiếu phối hợp",
-        message: `${currentStaffName} đã trả lời trên phiếu ${wf.workflow_code}: "${text.slice(0, 120)}"`,
-        type: "info",
+        title: options?.reopenToInProgress
+          ? "Chỉ đạo làm tiếp công việc"
+          : isDirective
+          ? "Chỉ đạo mới trên công việc"
+          : "Trao đổi mới trên công việc",
+        message: `${user?.name || currentStaffName} đã ${
+          options?.reopenToInProgress
+            ? "chỉ đạo triển khai tiếp"
+            : isDirective
+            ? "gửi chỉ đạo"
+            : "phản hồi"
+        } tại công việc "${taskForm.title}": "${text.slice(0, 120)}"`,
+        type: options?.reopenToInProgress ? "warning" : "info",
         category: "task",
-        sender: { name: currentStaffName },
-        targetEmployeeNames: [wf.requester_name === currentStaffName ? wf.assignee_name : wf.requester_name].filter(Boolean),
-        targetDept: wf.requester_name === currentStaffName ? wf.target_dept : wf.requester_dept,
-        workflowId: wf.id,
-        workflowCode: wf.workflow_code,
-        link: { tab: "workspace", subTab: "workflows", itemId: String(wf.workflow_code || wf.id) }
+        sender: { name: user?.name || currentStaffName },
+        targetEmployeeNames: recipients,
+        targetDept: taskForm.department,
+        taskId: taskForm.id,
+        workflowId: wf?.id,
+        workflowCode: wf?.workflow_code,
+        link: { tab: "workspace", subTab: "tasks", itemId: String(taskForm.id || taskForm.title) }
       });
     } catch {
       showToast("Lỗi kết nối máy chủ", "error");
@@ -6424,6 +6515,24 @@ export const UnifiedWorkspace: React.FC = () => {
                             (🔗 {t.related_workflow_code})
                           </span>
                         )}
+                        {(() => {
+                          const taskComments = Array.isArray(t.logs) ? t.logs.filter((l: any) => l?.type === "comment") : [];
+                          if (taskComments.length === 0) return null;
+                          const hasDirective = taskComments.some((c: any) => c.role === "directive");
+                          return (
+                            <span
+                              onClick={() => openEditTask(t)}
+                              className={`ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                                hasDirective
+                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                                  : "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"
+                              }`}
+                              title={taskComments[taskComments.length - 1]?.text || ""}
+                            >
+                              {hasDirective ? "👑" : "💬"} {taskComments.length}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="py-3 px-4">{t.department}</td>
                       <td className="py-3 px-4 text-slate-500">{t.task_category}</td>
@@ -9843,52 +9952,6 @@ ${wf.description || ""}`}
             />
           </div>
 
-          {/* TRAO ĐỔI VỚI BÊN YÊU CẦU: cùng luồng "Trao đổi nội bộ" của phiếu phối hợp */}
-          {(() => {
-            const wfCode = (taskForm as any).related_workflow_code;
-            const wf = wfCode ? workflows.find((w: any) => w.workflow_code === wfCode) : null;
-            if (!wf) return null;
-            const comments: any[] = Array.isArray(wf.comments) ? wf.comments : [];
-            return (
-              <div className="rounded-xl border border-indigo-200 dark:border-indigo-800/70 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 space-y-2">
-                <div className="text-xs font-bold text-indigo-800 dark:text-indigo-300">
-                  Trao đổi với bên yêu cầu — phiếu {wf.workflow_code} ({comments.length})
-                </div>
-                <div className="max-h-40 overflow-y-auto space-y-1.5">
-                  {comments.length === 0 ? (
-                    <div className="text-[11px] text-slate-400 italic">Chưa có trao đổi. Nội dung "Báo cáo kết quả" bên dưới sẽ tự đăng vào đây khi lưu.</div>
-                  ) : comments.map((c: any, i: number) => (
-                    <div key={i} className="bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 px-2.5 py-1.5">
-                      <div className="flex items-center justify-between text-[10px]">
-                        <strong className="text-indigo-600 dark:text-indigo-400">{c.author}{c.source === "task" ? " · báo cáo công việc" : ""}</strong>
-                        <span className="text-slate-400 font-mono">{c.time}</span>
-                      </div>
-                      <p className="text-xs text-slate-800 dark:text-slate-200 whitespace-pre-wrap">{c.text}</p>
-                    </div>
-                  ))}
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={taskReplyText}
-                    onChange={(e) => setTaskReplyText(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleTaskReply(wf); } }}
-                    placeholder="Trả lời bên yêu cầu..."
-                    className="flex-1 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => handleTaskReply(wf)}
-                    disabled={!taskReplyText.trim()}
-                    className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold disabled:opacity-40 cursor-pointer"
-                  >
-                    Gửi
-                  </button>
-                </div>
-              </div>
-            );
-          })()}
-
           {/* KẾT QUẢ THỰC HIỆN & BÁO CÁO NGHIỆM THU */}
           <div className="bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/80 rounded-xl p-3.5 space-y-2.5">
             <div className="flex items-center justify-between flex-wrap gap-1">
@@ -10052,6 +10115,166 @@ ${wf.description || ""}`}
               )}
             </div>
           </div>
+
+          {/* TRAO ĐỔI 2 CHIỀU & CHỈ ĐẠO TIẾP THEO TRÊN CÔNG VIỆC */}
+          {(() => {
+            const wfCode = (taskForm as any).related_workflow_code;
+            const wf = wfCode ? workflows.find((w: any) => w.workflow_code === wfCode) : null;
+            const taskCommentLogs: any[] = Array.isArray((taskForm as any).logs)
+              ? (taskForm as any).logs.filter((l: any) => l?.type === "comment")
+              : [];
+            const wfComments: any[] = wf && Array.isArray(wf.comments) ? wf.comments : [];
+
+            // Gộp comment của Task và comment của Phiếu phối hợp (nếu có) không trùng lặp
+            const seenKeys = new Set<string>();
+            const mergedComments: any[] = [];
+            for (const c of [...wfComments, ...taskCommentLogs]) {
+              const normText = String(c?.text || "").replace(/^\[Chỉ đạo CV [^\]]+\]:\s*/, "").trim();
+              const dedupKey = `${c?.author || ""}|${normText}`;
+              if (!normText || seenKeys.has(dedupKey)) continue;
+              seenKeys.add(dedupKey);
+              mergedComments.push(c);
+            }
+
+            const isManagerOrDirector = rolePerspective !== "staff";
+            const quickChips = isManagerOrDirector
+              ? [
+                  "Tiếp tục triển khai bước tiếp theo: ",
+                  "Bổ sung thêm tài liệu / báo cáo chi tiết",
+                  "Phối hợp thêm với bộ phận liên quan để hoàn thiện",
+                  "Đã duyệt kết quả báo cáo, hoàn tất tốt!"
+                ]
+              : [
+                  "Đã tiếp thu chỉ đạo, em đang triển khai tiếp",
+                  "Em đã bổ sung đầy đủ tài liệu & kết quả theo chỉ đạo",
+                  "Đang phối hợp với bộ phận liên quan để xử lý"
+                ];
+
+            return (
+              <div className="rounded-xl border border-indigo-200 dark:border-indigo-800/80 bg-indigo-50/50 dark:bg-indigo-950/20 p-3.5 space-y-2.5">
+                <div className="flex items-center justify-between flex-wrap gap-1.5">
+                  <div className="flex items-center gap-1.5 text-xs font-bold text-indigo-900 dark:text-indigo-200">
+                    <MessageSquare className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+                    <span>Trao đổi &amp; Chỉ đạo tiếp theo trên công việc ({mergedComments.length})</span>
+                  </div>
+                  {wf && (
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-100 dark:bg-purple-950/70 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
+                      🔗 Đồng bộ phiếu {wf.workflow_code}
+                    </span>
+                  )}
+                </div>
+
+                {/* Danh sách tin nhắn trao đổi / chỉ đạo */}
+                <div className="max-h-48 overflow-y-auto space-y-2 pr-1">
+                  {mergedComments.length === 0 ? (
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 italic bg-white/70 dark:bg-slate-900/60 rounded-lg px-3 py-2 border border-dashed border-indigo-200 dark:border-indigo-800/60">
+                      Chưa có trao đổi hoặc chỉ đạo thêm. Quản lý / Sếp có thể nhập chỉ đạo bước tiếp theo hoặc nhân sự phản hồi trực tiếp tại đây.
+                    </div>
+                  ) : (
+                    mergedComments.map((c: any, i: number) => {
+                      const isDir = c.role === "directive" || /^\[Chỉ đạo/i.test(String(c.text || ""));
+                      return (
+                        <div
+                          key={i}
+                          className={`rounded-xl border px-3 py-2 space-y-1 shadow-2xs ${
+                            isDir
+                              ? "bg-amber-50/90 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800/80"
+                              : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2 text-[10px]">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {isDir ? (
+                                <span className="px-1.5 py-0.5 rounded bg-amber-200/80 dark:bg-amber-900/80 text-amber-900 dark:text-amber-200 font-extrabold text-[9px]">
+                                  👑 CHỈ ĐẠO TIẾP THEO
+                                </span>
+                              ) : (
+                                <span className="px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 font-bold text-[9px]">
+                                  💬 TRAO ĐỔI
+                                </span>
+                              )}
+                              <strong className={isDir ? "text-amber-900 dark:text-amber-200" : "text-indigo-700 dark:text-indigo-300"}>
+                                {c.author}
+                              </strong>
+                            </div>
+                            <span className="text-slate-400 font-mono">{c.time}</span>
+                          </div>
+                          <p className="text-xs text-slate-800 dark:text-slate-100 whitespace-pre-wrap leading-relaxed">
+                            {c.text}
+                          </p>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Gợi ý mẫu câu chỉ đạo / phản hồi nhanh */}
+                <div className="flex items-center gap-1 flex-wrap">
+                  <span className="text-[10px] text-slate-400 font-semibold mr-0.5">
+                    {isManagerOrDirector ? "Chỉ đạo nhanh:" : "Phản hồi nhanh:"}
+                  </span>
+                  {quickChips.map((chip) => (
+                    <button
+                      key={chip}
+                      type="button"
+                      onClick={() => setTaskReplyText((prev) => (prev ? `${prev} ${chip}` : chip))}
+                      className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-white dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800/70 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 transition-colors cursor-pointer"
+                    >
+                      + {chip}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Ô nhập nội dung trao đổi / chỉ đạo */}
+                <div className="space-y-2">
+                  <textarea
+                    rows={2}
+                    value={taskReplyText}
+                    onChange={(e) => setTaskReplyText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        handleTaskReply(wf);
+                      }
+                    }}
+                    placeholder={
+                      isManagerOrDirector
+                        ? "Nhập nội dung chỉ đạo tiếp theo (VD: Tiếp tục gửi báo giá & lịch demo cho khách hàng...) — Nhấn Enter để gửi"
+                        : "Nhập nội dung trao đổi hoặc phản hồi tiếp thu chỉ đạo... — Nhấn Enter để gửi"
+                    }
+                    className="w-full px-3 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-950 text-xs text-slate-900 dark:text-white font-medium"
+                  />
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <span className="text-[10px] text-slate-400">
+                      💡 Nhấn <b>Enter</b> để gửi ngay (hoặc tự động lưu kèm khi bấm <b>Lưu Cập Nhật</b>)
+                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {taskForm.status === "DONE" && (
+                        <button
+                          type="button"
+                          onClick={() => handleTaskReply(wf, { reopenToInProgress: true })}
+                          disabled={!taskReplyText.trim()}
+                          className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold disabled:opacity-40 cursor-pointer shadow-2xs transition-colors flex items-center gap-1"
+                          title="Gửi chỉ đạo và tự động chuyển trạng thái công việc từ Đã hoàn tất về Đang làm để nhân sự thực hiện tiếp"
+                        >
+                          <span>⚡ Gửi &amp; Giao Làm Tiếp</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleTaskReply(wf)}
+                        disabled={!taskReplyText.trim()}
+                        className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold disabled:opacity-40 cursor-pointer shadow-2xs transition-colors flex items-center gap-1"
+                      >
+                        <Send className="w-3 h-3" />
+                        <span>{isManagerOrDirector ? "Gửi Chỉ Đạo / Bình Luận" : "Gửi Phản Hồi"}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
 
           {taskForm.id && Array.isArray((taskForm as any).logs) && (taskForm as any).logs.some((l: any) => l?.type === "change") && (
             <details className="rounded-xl border border-slate-200 dark:border-slate-800 p-2.5 text-[11px]">
@@ -14157,6 +14380,33 @@ const TaskCard: React.FC<{
           <strong className="text-emerald-700 dark:text-emerald-400">Kết quả:</strong> {task.result}
         </div>
       )}
+
+      {(() => {
+        const taskComments = Array.isArray(task.logs) ? task.logs.filter((l: any) => l?.type === "comment") : [];
+        if (taskComments.length === 0) return null;
+        const lastComment = taskComments[taskComments.length - 1];
+        const isDir = lastComment?.role === "directive" || /^\[Chỉ đạo/i.test(String(lastComment?.text || ""));
+        return (
+          <div
+            onClick={() => onEdit(task)}
+            className={`rounded-lg p-2 text-[11px] line-clamp-2 cursor-pointer border transition-colors ${
+              isDir
+                ? "bg-amber-50 dark:bg-amber-950/40 border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200 hover:bg-amber-100/70"
+                : "bg-indigo-50/70 dark:bg-indigo-950/30 border-indigo-200/60 dark:border-indigo-800/50 text-indigo-900 dark:text-indigo-200 hover:bg-indigo-100/60"
+            }`}
+          >
+            <strong className={isDir ? "text-amber-800 dark:text-amber-300" : "text-indigo-700 dark:text-indigo-300"}>
+              {isDir ? `👑 Chỉ đạo (${lastComment.author}):` : `💬 ${lastComment.author}:`}
+            </strong>{" "}
+            {lastComment.text}
+            {taskComments.length > 1 && (
+              <span className="ml-1 text-[9px] font-bold opacity-75">
+                (+{taskComments.length - 1} trao đổi)
+              </span>
+            )}
+          </div>
+        );
+      })()}
 
       {task.attachments && task.attachments.length > 0 && (
         <div className="flex items-center gap-1 text-[10px] text-indigo-600 dark:text-indigo-400 font-semibold">

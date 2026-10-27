@@ -513,6 +513,85 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    // 1b. Comment / Directive on Task (Trao đổi & Chỉ đạo trực tiếp trong Công việc)
+    if (action === "task_comment") {
+      const { id, text, role_type, reopen_status, attachments } = body;
+      const cleanText = String(text || "").trim();
+      if (!id || !cleanText) {
+        return NextResponse.json({ error: "Vui lòng nhập nội dung trao đổi / chỉ đạo" }, { status: 400 });
+      }
+      const taskRes = await query("SELECT * FROM company_tasks WHERE id = $1 LIMIT 1", [id]);
+      if (taskRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy công việc" }, { status: 404 });
+      }
+      const taskRow = taskRes.rows[0];
+      const actorName = me.full_name || me.username || body.author || "Nhân viên";
+      const isManagerOrAdmin = isAdminUser(me) || hasPermission(me, "workspace.approve_dept");
+      const effectiveRole = role_type || (isManagerOrAdmin ? "directive" : "comment");
+
+      const currentLogs: any[] = Array.isArray(taskRow.logs) ? [...taskRow.logs] : [];
+      const commentEntry = {
+        type: "comment",
+        role: effectiveRole,
+        author: actorName,
+        time: nowVNDateTime(),
+        text: cleanText,
+        attachments: Array.isArray(attachments) ? attachments : []
+      };
+      currentLogs.push(commentEntry);
+
+      const nextStatus = reopen_status || taskRow.status;
+      if (reopen_status && reopen_status !== taskRow.status) {
+        currentLogs.push({
+          time: nowVNDateTime(),
+          author: actorName,
+          type: "change",
+          text: `Chỉ đạo triển khai tiếp — Trạng thái: "${taskRow.status}" → "${reopen_status}"`
+        });
+      }
+
+      await query(
+        `UPDATE company_tasks SET logs = $1, status = $2 WHERE id = $3`,
+        [JSON.stringify(currentLogs), nextStatus, id]
+      );
+
+      let wfComments: any = null;
+      if (taskRow.related_workflow_code) {
+        const wfComment = {
+          author: actorName,
+          time: commentEntry.time,
+          text: effectiveRole === "directive" ? `[Chỉ đạo CV ${taskRow.task_code || ""}]: ${cleanText}` : cleanText,
+          attachments: commentEntry.attachments,
+          source: "task",
+          task_code: taskRow.task_code || null
+        };
+        const wfUpdate = await query(
+          `UPDATE workflow_requests
+           SET comments = COALESCE(comments, '[]'::jsonb) || $1::jsonb,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE workflow_code = $2
+           RETURNING comments`,
+          [JSON.stringify([wfComment]), taskRow.related_workflow_code]
+        );
+        if (wfUpdate.rows.length > 0) {
+          wfComments = wfUpdate.rows[0].comments;
+        }
+      }
+
+      await logAudit(
+        "COMMENT",
+        "TASKS",
+        `${effectiveRole === "directive" ? "Chỉ đạo" : "Trao đổi"} trên công việc ${taskRow.task_code || id}: "${cleanText.slice(0, 80)}"`
+      );
+
+      return NextResponse.json({
+        success: true,
+        logs: currentLogs,
+        status: nextStatus,
+        wfComments
+      });
+    }
+
     // 2. Batch Import Tasks From Excel
     if (action === "batch_tasks_excel") {
       const { items } = body;
