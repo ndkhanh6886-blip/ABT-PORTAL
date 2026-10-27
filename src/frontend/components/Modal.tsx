@@ -26,6 +26,17 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
     const onCloseRef = useRef(onClose);
     onCloseRef.current = onClose;
 
+    // Gán thứ tự lớp (z-index) ngay khi mở để khung mở sau luôn nằm trên khung mở trước
+    const prevOpenRef = useRef(false);
+    const seqRef = useRef(0);
+    if (isOpen && !prevOpenRef.current) {
+        if (openStack.length === 0) modalSeq = 0;
+        seqRef.current = ++modalSeq;
+    }
+    prevOpenRef.current = isOpen;
+    const backdropZ = 110 + seqRef.current * 2;
+    const contentZ = backdropZ + 1;
+
     const requestClose = useCallback(() => {
         if (dirtyRef.current && !window.confirm(DISCARD_MESSAGE)) return;
         onCloseRef.current();
@@ -35,7 +46,7 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
         if (!isOpen) return;
         dirtyRef.current = false;
         setMaximized(false);
-        const id = ++modalSeq;
+        const id = seqRef.current || ++modalSeq;
         openStack.push(id);
         const onKey = (e: KeyboardEvent) => {
             if (e.key !== "Escape" || e.defaultPrevented || openStack[openStack.length - 1] !== id) return;
@@ -83,10 +94,14 @@ export const Modal = ({ isOpen, onClose, title, children, size = "md" }: ModalPr
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                         onClick={requestClose}
+                        style={{ zIndex: backdropZ }}
                         className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-[110]"
                     />
                     {/* Modal Content */}
-                    <div className={cn("fixed inset-0 flex items-center justify-center z-[120] pointer-events-none", maximized ? "p-0" : "p-4")}>
+                    <div
+                        style={{ zIndex: contentZ }}
+                        className={cn("fixed inset-0 flex items-center justify-center z-[120] pointer-events-none", maximized ? "p-0" : "p-4")}
+                    >
                         <motion.div
                             initial={{ opacity: 0, scale: 0.95, y: 20 }}
                             animate={{ opacity: 1, scale: 1, y: 0 }}

@@ -60,7 +60,7 @@ import {
 import { nowVNDateTime } from "@/backend/services/dates";
 
 export const normalizeUserName = (name?: string): string => {
-  if (!name) return "Nhân viên TBRs";
+  if (!name) return "Nhân viên TBR";
   const trimmed = name.trim();
   const lower = trimmed.toLowerCase();
   if (
@@ -406,7 +406,7 @@ export const EnterpriseChatModule: React.FC = () => {
     );
     return {
       name: otherName,
-      department: p?.department || c.department || "Nhân viên TBRs",
+      department: p?.department || c.department || "Nhân viên TBR",
       position: p?.position || "Đồng nghiệp",
       phone: p?.phone || "",
       email: p?.email || ""
@@ -1734,7 +1734,7 @@ export const EnterpriseChatModule: React.FC = () => {
             </div>
             <div>
               <h2 className="font-extrabold text-xs text-slate-900 dark:text-white leading-tight">
-                TBRs Communication
+                TBR Communication
               </h2>
               <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 truncate max-w-[170px]" title={`Tài khoản hiện tại của bạn: ${currentUserName}`}>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
@@ -3104,7 +3104,7 @@ export const EnterpriseChatModule: React.FC = () => {
             <p className="font-extrabold text-sm text-slate-900 dark:text-white mt-0.5">
               {activeChannel.channel_type === "DIRECT" ? recipientProfile?.name : `#${activeChannel.name}`}
             </p>
-            <p className="text-slate-500 text-xs mt-1 leading-relaxed">{activeChannel.description || "Nhóm trao đổi phối hợp công việc TBRs"}</p>
+            <p className="text-slate-500 text-xs mt-1 leading-relaxed">{activeChannel.description || "Nhóm trao đổi phối hợp công việc TBR"}</p>
           </div>
 
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
@@ -3848,7 +3848,8 @@ export const EnterpriseChatModule: React.FC = () => {
       {/* ==================== IMAGE PREVIEW MODAL ==================== */}
       {previewImage && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 backdrop-blur-xs"
+          style={{ zIndex: 300 }}
+          className="fixed inset-0 z-[300] bg-black/80 flex items-center justify-center p-4 backdrop-blur-xs"
           onClick={() => setPreviewImage(null)}
         >
           <div className="relative max-w-4xl max-h-[90vh]">

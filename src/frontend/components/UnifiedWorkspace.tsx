@@ -1628,6 +1628,45 @@ export const UnifiedWorkspace: React.FC = () => {
   const [isUploading, setIsUploading] = useState(false);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [previewDoc, setPreviewDoc] = useState<{ url: string; name?: string; type?: string } | null>(null);
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const rawUrl = previewDoc?.url || previewImage || "";
+    if (!rawUrl) {
+      setPreviewBlobUrl(null);
+      return;
+    }
+    let createdUrl: string | null = null;
+    if (rawUrl.startsWith("data:application/pdf;base64,")) {
+      try {
+        const b64 = rawUrl.split(",")[1] || "";
+        const binary = window.atob(b64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], { type: "application/pdf" });
+        createdUrl = URL.createObjectURL(blob);
+        setPreviewBlobUrl(createdUrl);
+      } catch {
+        setPreviewBlobUrl(null);
+      }
+    } else {
+      setPreviewBlobUrl(null);
+    }
+    const onKeyCapture = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        setPreviewDoc(null);
+        setPreviewImage(null);
+      }
+    };
+    window.addEventListener("keydown", onKeyCapture, true);
+    return () => {
+      window.removeEventListener("keydown", onKeyCapture, true);
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [previewDoc, previewImage]);
 
   // Modals for Planner Tab
   const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
@@ -12048,118 +12087,6 @@ ${wf.description || ""}`}
         </Modal>
       )}
 
-      {/* ==================== UNIVERSAL DOCUMENT & IMAGE PREVIEW LIGHTBOX ==================== */}
-      {(previewDoc || previewImage) && (() => {
-        const activeUrl = previewDoc?.url || previewImage!;
-        const activeName = previewDoc?.name || "Tài liệu đính kèm";
-        const isPdf =
-          previewDoc?.type?.includes("pdf") ||
-          activeName.toLowerCase().endsWith(".pdf") ||
-          activeUrl.toLowerCase().includes(".pdf");
-        const isImg =
-          previewDoc?.type?.startsWith("image/") ||
-          /\.(png|jpe?g|webp|gif)$/i.test(activeName) ||
-          (!previewDoc && previewImage);
-
-        const handleClose = () => {
-          setPreviewDoc(null);
-          setPreviewImage(null);
-        };
-
-        return (
-          <div
-            className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in"
-            onClick={handleClose}
-          >
-            <div
-              className="relative w-full max-w-5xl max-h-[92vh] bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex flex-col"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* Header Toolbar */}
-              <div className="flex items-center justify-between p-3.5 text-white border-b border-slate-800 bg-slate-900/90 shrink-0">
-                <div className="flex items-center gap-2.5 min-w-0 pr-3">
-                  <div className="w-7 h-7 rounded-lg bg-indigo-600/30 text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0">
-                    {isPdf ? "PDF" : isImg ? "IMG" : "DOC"}
-                  </div>
-                  <div className="min-w-0">
-                    <span className="text-xs font-bold truncate block">{activeName}</span>
-                    <span className="text-[10px] text-slate-400">
-                      {isPdf
-                        ? "Đang đọc trực tiếp qua Web PDF Engine (Không cần tải về)"
-                        : isImg
-                        ? "Xem ảnh chi tiết"
-                        : "Hồ sơ đính kèm số hóa"}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => window.print()}
-                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs flex items-center gap-1 font-semibold cursor-pointer"
-                    title="In tài liệu"
-                  >
-                    <Printer className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">In</span>
-                  </button>
-
-                  <a
-                    href={activeUrl}
-                    download={activeName}
-                    className="p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs flex items-center gap-1 font-semibold cursor-pointer shadow-xs"
-                    title="Tải tệp về máy"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    <span className="hidden sm:inline">Tải về</span>
-                  </a>
-
-                  <button
-                    type="button"
-                    onClick={handleClose}
-                    className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer ml-1"
-                  >
-                    <X className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Viewer Body */}
-              <div className="flex-1 p-2 sm:p-4 overflow-auto flex items-center justify-center bg-slate-950/60 min-h-[55vh]">
-                {isPdf ? (
-                  <iframe
-                    src={activeUrl}
-                    className="w-full h-[76vh] rounded-xl border border-slate-700 bg-white shadow-xl"
-                    title={activeName}
-                  />
-                ) : isImg ? (
-                  <img
-                    src={activeUrl}
-                    alt={activeName}
-                    className="max-w-full max-h-[78vh] object-contain rounded-xl shadow-xl"
-                  />
-                ) : (
-                  <div className="text-center p-8 space-y-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-700 max-w-md">
-                    <FileText className="w-12 h-12 text-indigo-400 mx-auto" />
-                    <div className="font-bold text-white text-sm">{activeName}</div>
-                    <p className="text-xs text-slate-400">
-                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ TBR Portal.
-                    </p>
-                    <a
-                      href={activeUrl}
-                      download={activeName}
-                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold"
-                    >
-                      <Download className="w-4 h-4" /> Tải Xuống Tệp
-                    </a>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })()}
-
       {/* ==================== MODAL 4: THÊM LỊCH CÔNG TÁC TUẦN & TẠO LỊCH HỌP ==================== */}
       <Modal
         isOpen={isScheduleModalOpen}
@@ -14424,6 +14351,134 @@ ${wf.description || ""}`}
           );
         })()}
       </Modal>
+
+      {/* ==================== UNIVERSAL DOCUMENT & IMAGE PREVIEW LIGHTBOX ==================== */}
+      {(previewDoc || previewImage) && (() => {
+        const activeUrl = previewDoc?.url || previewImage!;
+        const viewerUrl = previewBlobUrl || activeUrl;
+        const activeName = previewDoc?.name || "Tài liệu đính kèm";
+        const isPdf =
+          previewDoc?.type?.includes("pdf") ||
+          activeName.toLowerCase().endsWith(".pdf") ||
+          activeUrl.toLowerCase().includes("application/pdf") ||
+          activeUrl.toLowerCase().includes(".pdf");
+        const isImg =
+          previewDoc?.type?.startsWith("image/") ||
+          /\.(png|jpe?g|webp|gif)$/i.test(activeName) ||
+          activeUrl.startsWith("data:image/") ||
+          (!previewDoc && previewImage);
+
+        const handleClose = () => {
+          setPreviewDoc(null);
+          setPreviewImage(null);
+        };
+
+        return (
+          <div
+            style={{ zIndex: 300 }}
+            className="fixed inset-0 z-[300] bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 animate-in fade-in"
+            onClick={handleClose}
+          >
+            <div
+              className="relative w-full max-w-5xl max-h-[92vh] bg-slate-900 rounded-2xl overflow-hidden border border-slate-700 shadow-2xl flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Header Toolbar */}
+              <div className="flex items-center justify-between p-3.5 text-white border-b border-slate-800 bg-slate-900/90 shrink-0">
+                <div className="flex items-center gap-2.5 min-w-0 pr-3">
+                  <div className="w-7 h-7 rounded-lg bg-indigo-600/30 text-indigo-400 flex items-center justify-center font-bold text-xs shrink-0">
+                    {isPdf ? "PDF" : isImg ? "IMG" : "DOC"}
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-xs font-bold truncate block">{activeName}</span>
+                    <span className="text-[10px] text-slate-400">
+                      {isPdf
+                        ? "Đang đọc trực tiếp qua Web PDF Engine (Không cần tải về)"
+                        : isImg
+                        ? "Xem ảnh chi tiết"
+                        : "Hồ sơ đính kèm số hóa"}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2 shrink-0">
+                  <a
+                    href={viewerUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs flex items-center gap-1 font-semibold cursor-pointer"
+                    title="Mở tài liệu trong tab mới"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Mở tab mới</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => window.print()}
+                    className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-white text-xs flex items-center gap-1 font-semibold cursor-pointer"
+                    title="In tài liệu"
+                  >
+                    <Printer className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">In</span>
+                  </button>
+
+                  <a
+                    href={activeUrl}
+                    download={activeName}
+                    className="p-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs flex items-center gap-1 font-semibold cursor-pointer shadow-xs"
+                    title="Tải tệp về máy"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span className="hidden sm:inline">Tải về</span>
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={handleClose}
+                    className="p-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white cursor-pointer ml-1"
+                    title="Đóng trình xem tài liệu (Esc)"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Viewer Body */}
+              <div className="flex-1 p-2 sm:p-4 overflow-auto flex items-center justify-center bg-slate-950/60 min-h-[55vh]">
+                {isPdf ? (
+                  <iframe
+                    src={viewerUrl}
+                    className="w-full h-[76vh] rounded-xl border border-slate-700 bg-white shadow-xl"
+                    title={activeName}
+                  />
+                ) : isImg ? (
+                  <img
+                    src={activeUrl}
+                    alt={activeName}
+                    className="max-w-full max-h-[78vh] object-contain rounded-xl shadow-xl"
+                  />
+                ) : (
+                  <div className="text-center p-8 space-y-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-700 max-w-md">
+                    <FileText className="w-12 h-12 text-indigo-400 mx-auto" />
+                    <div className="font-bold text-white text-sm">{activeName}</div>
+                    <p className="text-xs text-slate-400">
+                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ TBR Portal.
+                    </p>
+                    <a
+                      href={activeUrl}
+                      download={activeName}
+                      className="inline-flex items-center gap-1.5 px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold"
+                    >
+                      <Download className="w-4 h-4" /> Tải Xuống Tệp
+                    </a>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };
