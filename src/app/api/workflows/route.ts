@@ -3,6 +3,19 @@ import { query, logAudit, withTransaction, httpErrorStatus } from "@/backend/db/
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor, AuthorizedUser } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
 import { todayVN, nowVNDateTime } from "@/backend/services/dates";
+import { getTaskAccess, sameStaffName, TASK_STATUSES, TASK_RELATED_TYPE_IDS } from "@/backend/services/workspaceTasks";
+
+/** Người đang đăng nhập theo dạng getTaskAccess cần (quyền duyệt phòng ban = Trưởng / Phó phòng) */
+function taskActor(me: AuthorizedUser) {
+  return {
+    username: me.username,
+    full_name: me.full_name,
+    role: hasPermission(me, "workspace.approve_dept") ? `${me.role || ""} manager` : me.role,
+    department: me.department,
+    isAdmin: isAdminUser(me),
+  };
+}
+const TASK_STATUS_IDS = new Set(TASK_STATUSES.map(s => s.id));
 
 const lower = (v: any) => String(v || "").trim().toLowerCase();
 
@@ -235,7 +248,7 @@ export async function GET(req: NextRequest) {
     const action = searchParams.get("action") || "overview";
 
     if (action === "overview") {
-      const [workflows, tasks, daily, customers, products, personnel, users, templates] = await Promise.all([
+      const [workflows, tasks, daily, customers, products, personnel, users, templates, recentOrders] = await Promise.all([
         query("SELECT * FROM workflow_requests ORDER BY id DESC"),
         query("SELECT * FROM company_tasks ORDER BY id DESC"),
         query("SELECT * FROM company_daily_logs ORDER BY log_date DESC, id DESC LIMIT 100"),
@@ -243,7 +256,12 @@ export async function GET(req: NextRequest) {
         query("SELECT code, name, category, unit, standard_price FROM products ORDER BY name ASC"),
         query("SELECT id, employee_code, full_name, department, position, email, phone FROM personnel ORDER BY full_name ASC"),
         query("SELECT id, username, full_name, department, role, email FROM users ORDER BY full_name ASC"),
-        query("SELECT * FROM workflow_templates WHERE is_active = TRUE ORDER BY id ASC")
+        query("SELECT * FROM workflow_templates WHERE is_active = TRUE ORDER BY id ASC"),
+        // Đơn bán gần đây cho ô "Liên quan tới: Đơn hàng" (chỉ mã đơn + khách hàng)
+        query("SELECT order_code, customer_name FROM sales_orders ORDER BY id DESC LIMIT 500").catch((err: any) => {
+          console.error("[workflows] Không đọc được danh sách đơn hàng:", err?.message || err);
+          return { rows: [] as any[] };
+        })
       ]);
 
       return NextResponse.json({
@@ -254,7 +272,8 @@ export async function GET(req: NextRequest) {
         products: products.rows,
         personnel: personnel.rows,
         users: users.rows,
-        templates: templates.rows
+        templates: templates.rows,
+        orders: recentOrders.rows
       });
     }
 
@@ -296,6 +315,26 @@ export async function POST(req: NextRequest) {
 
     // 1. Single Task Create / Update
     if (action === "task") {
+      // Phân quyền: chỉ người tạo / Trưởng phòng của phòng đó / BGĐ sửa được toàn bộ; người được giao chỉ cập nhật tiến độ
+      if (body.id) {
+        const existingTask = (await query("SELECT * FROM company_tasks WHERE id = $1", [body.id])).rows[0];
+        if (!existingTask) return NextResponse.json({ error: "Không tìm thấy công việc" }, { status: 404 });
+        const access = getTaskAccess(taskActor(me), existingTask);
+        if (access === "view") {
+          return forbiddenResponse("Bạn chỉ được xem công việc này (không phải người tạo, người được giao hoặc quản lý phòng ban).");
+        }
+        if (access === "progress") {
+          // Người được giao: giữ nguyên nội dung giao việc, chỉ nhận trạng thái / kết quả / đính kèm / trao đổi
+          for (const k of ["title", "department", "task_category", "assignee_name", "customer_name", "priority", "deadline", "description", "related_type", "related_ref"]) {
+            body[k] = existingTask[k];
+          }
+        }
+      }
+      if (body.status && !TASK_STATUS_IDS.has(String(body.status))) {
+        return NextResponse.json({ error: `Trạng thái công việc không hợp lệ: ${body.status}` }, { status: 400 });
+      }
+      const relatedType = body.related_type && TASK_RELATED_TYPE_IDS.has(String(body.related_type)) ? String(body.related_type) : null;
+      const relatedRef = relatedType ? String(body.related_ref || "").trim().slice(0, 255) || null : null;
       const {
         id,
         task_code,
@@ -460,7 +499,7 @@ export async function POST(req: NextRequest) {
           `UPDATE company_tasks
            SET title=$1, department=$2, task_category=$3, assignee_name=$4, customer_name=$5,
                priority=$6, status=$7, deadline=$8, description=$9, related_workflow_code=COALESCE($10, related_workflow_code),
-               logs=$11, result=$12, attachments=$13
+               logs=$11, result=$12, attachments=$13, related_type=$15, related_ref=$16
            WHERE id=$14`,
           [
             title,
@@ -476,7 +515,9 @@ export async function POST(req: NextRequest) {
             JSON.stringify(mergedLogs),
             result || "",
             JSON.stringify(attachments || []),
-            id
+            id,
+            relatedType,
+            relatedRef
           ]
         );
         await postReportToWorkflow(prevTask?.task_code || task_code || null);
@@ -487,8 +528,9 @@ export async function POST(req: NextRequest) {
         await query(
           `INSERT INTO company_tasks (
              task_code, title, department, task_category, assignee_name, customer_name,
-             priority, status, deadline, description, related_workflow_code, logs, result, attachments
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+             priority, status, deadline, description, related_workflow_code, logs, result, attachments,
+             created_by, created_by_name, related_type, related_ref
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             code,
             title,
@@ -503,7 +545,11 @@ export async function POST(req: NextRequest) {
             related_workflow_code || null,
             JSON.stringify(logs || []),
             result || "",
-            JSON.stringify(attachments || [])
+            JSON.stringify(attachments || []),
+            me.username,
+            me.full_name || me.username,
+            relatedType,
+            relatedRef
           ]
         );
         await postReportToWorkflow(code);
@@ -540,6 +586,9 @@ export async function POST(req: NextRequest) {
       };
       currentLogs.push(commentEntry);
 
+      if (reopen_status && (getTaskAccess(taskActor(me), taskRow) === "view" || !TASK_STATUS_IDS.has(String(reopen_status)))) {
+        return forbiddenResponse("Bạn không có quyền đổi trạng thái công việc này.");
+      }
       const nextStatus = reopen_status || taskRow.status;
       if (reopen_status && reopen_status !== taskRow.status) {
         currentLogs.push({
@@ -1492,7 +1541,19 @@ export async function POST(req: NextRequest) {
     // 7. Delete Task (and optionally cancel/delete linked workflow if created by mistake)
     if (action === "delete_task") {
       const { id, cancel_workflow_code, delete_workflow } = body;
+      const actor = taskActor(me);
+      if (id) {
+        const target = (await query("SELECT * FROM company_tasks WHERE id = $1", [id])).rows[0];
+        if (target && getTaskAccess(actor, target) !== "full") {
+          return forbiddenResponse("Chỉ người tạo, Trưởng / Phó phòng hoặc Ban Giám Đốc mới được xóa công việc này.");
+        }
+      }
       if (cancel_workflow_code) {
+        const wf = (await query("SELECT requester_name FROM workflow_requests WHERE workflow_code = $1", [cancel_workflow_code])).rows[0];
+        const canCancelWf = actor.isAdmin || hasPermission(me, "workspace.approve_dept") || (wf && sameStaffName(wf.requester_name, me.full_name));
+        if (!canCancelWf) {
+          return forbiddenResponse("Chỉ người lập phiếu, Trưởng / Phó phòng hoặc Ban Giám Đốc mới được hủy / xóa phiếu phối hợp.");
+        }
         await query("DELETE FROM company_tasks WHERE related_workflow_code = $1", [cancel_workflow_code]);
         if (delete_workflow) {
           await query("DELETE FROM workflow_requests WHERE workflow_code = $1", [cancel_workflow_code]);
