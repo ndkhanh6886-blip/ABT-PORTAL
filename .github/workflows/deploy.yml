@@ -60,7 +60,7 @@ jobs:
           fi
 
           echo "Installing dependencies & building..."
-          npm ci
+          npm ci || npm install --no-audit --no-fund
           npm run build
 
           echo "Restarting tbrs-portal..."
