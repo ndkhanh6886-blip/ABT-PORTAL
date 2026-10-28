@@ -12377,6 +12377,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+                is_new: true,
                 order_code: generatedCode,
                 customer_id: matchedCust?.id,
                 customer_code: realCustomerCode || matchedCust?.customer_code,

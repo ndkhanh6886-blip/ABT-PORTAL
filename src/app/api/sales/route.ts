@@ -158,6 +158,39 @@ function parseJsonArray(v: any): any[] {
   return [];
 }
 
+/** Kế toán / Ban Giám Đốc: người duy nhất được đổi trạng thái thanh toán và hóa đơn */
+function isAccountantUser(me: any): boolean {
+  if (isAdminUser(me)) return true;
+  const dept = String(me?.department || "").toLowerCase();
+  return dept.includes("kế toán") || String(me?.role || "").toLowerCase().includes("account");
+}
+
+/** Số lượng / đơn giá của một dòng hàng (các tên trường client đang dùng) */
+function orderLineQty(it: any): number {
+  return Number(it?.quantity ?? it?.qty ?? 0);
+}
+function orderLinePrice(it: any): number {
+  return Number(it?.unitPrice ?? it?.unit_price ?? it?.price ?? 0);
+}
+
+/** Lỗi dữ liệu dòng hàng (số âm / không phải số), null nếu hợp lệ */
+function validateOrderItems(items: any[]): string | null {
+  for (const it of items) {
+    const q = orderLineQty(it), p = orderLinePrice(it);
+    if (!Number.isFinite(q) || !Number.isFinite(p)) return `Số lượng / đơn giá của mặt hàng ${it?.productCode || it?.product_code || ""} không hợp lệ.`;
+    if (q < 0 || p < 0) return `Số lượng và đơn giá mặt hàng ${it?.productCode || it?.product_code || ""} không được là số âm.`;
+  }
+  return null;
+}
+
+/** Tổng tiền đơn do máy chủ tự tính = Σ số lượng × đơn giá của các dòng chưa hủy (không tin tổng tiền client gửi) */
+function computeOrderTotal(items: any[]): number {
+  const total = items
+    .filter(it => it?.status !== "CANCELLED")
+    .reduce((sum, it) => sum + orderLineQty(it) * orderLinePrice(it), 0);
+  return Math.round(total);
+}
+
 function itemHasZeroPrice(it: any): boolean {
   const p = parseFloat(it?.price) || parseFloat(it?.unitPrice) || parseFloat(it?.unit_price) || 0;
   return it?.status !== "CANCELLED" && (p === 0 || it?.isGift === true || it?.isSample === true);
@@ -1346,20 +1379,43 @@ export async function POST(req: NextRequest) {
       const isStockOrder = Boolean(body.is_stock_order || body.isStockOrder || (order_code && String(order_code).includes("STOCK")));
       const itemsArr = Array.isArray(items) ? items : [];
       const hasZeroPrice = itemsArr.some(itemHasZeroPrice);
+      const itemsError = validateOrderItems(itemsArr);
+      if (itemsError) return NextResponse.json({ error: itemsError }, { status: 400 });
+      const computedTotal = computeOrderTotal(itemsArr);
+      if (has("items") && has("total_amount") && Math.abs((Number(total_amount) || 0) - computedTotal) > 1) {
+        console.warn(`[sales/order] Tổng tiền client (${total_amount}) khác tổng tính lại (${computedTotal}) cho đơn ${order_code || "(mới)"}; dùng tổng tính lại.`);
+      }
+      // Chỉ Kế toán / BGĐ được đổi trạng thái thanh toán & hóa đơn; chỉ Quản trị viên được lùi trạng thái
+      const canSetFinanceStatus = isAccountantUser(authUser);
+      const canRollback = isAdminUser(authUser);
+      // Tạo đơn mới (is_new) không bao giờ được ghi đè lên một đơn đã có trùng mã
+      const isNewOrder = body.is_new === true;
 
       // Một lần "sửa đơn" chỉ mang theo order_code: tìm đơn đang có theo id, rồi theo mã.
       // (Trước đây thiếu id nên mỗi lần sửa lại INSERT thêm một dòng SO trùng mã, reset trạng thái giao/thanh toán.)
       // Tìm đơn theo MÃ ĐƠN trước; id số chỉ dùng khi không gửi mã (id lấy từ màn hình có thể là của đơn khác
       // -> trước đây sửa đơn này lại ghi đè sang đơn kia, kể cả tên khách hàng)
       let existing: any = null;
-      if (order_code && String(order_code).trim()) {
+      let codeTaken = false;
+      if (isNewOrder) {
+        codeTaken = Boolean(order_code && (await query("SELECT 1 FROM sales_orders WHERE order_code = $1 LIMIT 1", [String(order_code).trim()])).rows.length);
+      } else if (order_code && String(order_code).trim()) {
         existing = (await query("SELECT * FROM sales_orders WHERE order_code = $1 ORDER BY id ASC LIMIT 1", [String(order_code).trim()])).rows[0] || null;
       } else if (id && !isNaN(Number(id))) {
         existing = (await query("SELECT * FROM sales_orders WHERE id = $1", [Number(id)])).rows[0] || null;
       }
 
       if (existing) {
-        const isRollback = Boolean(body.force_rollback);
+        const isRollback = Boolean(body.force_rollback) && canRollback;
+        // Đơn đã giao / đã xuất hóa đơn: chỉ Quản trị viên / người duyệt giá được sửa nội dung hàng hóa
+        const isLockedContent = !["PENDING", "PROCESSING", "PACKED", "READY", ""].includes(String(existing.delivery_status || "").toUpperCase())
+          || !["PENDING_INVOICE", "PENDING", ""].includes(String(existing.invoice_status || "").toUpperCase());
+        if (has("items") && isLockedContent && !canRollback && !hasPermission(authUser, "sales.approve_discount")) {
+          const itemsChangedLocked = stableStringify(parseJsonArray(existing.items)) !== stableStringify(itemsArr);
+          if (itemsChangedLocked) {
+            return NextResponse.json({ error: `Đơn ${existing.order_code} đã giao hàng hoặc đã xuất hóa đơn, không thể sửa mặt hàng. Liên hệ Quản lý Kinh doanh / Quản trị viên.` }, { status: 409 });
+          }
+        }
         const sets: string[] = [];
         const params: any[] = [];
         const set = (col: string, val: any, cast = "") => { params.push(val); sets.push(`${col} = $${params.length}${cast}`); };
@@ -1370,7 +1426,7 @@ export async function POST(req: NextRequest) {
         if (has("sales_rep_id") && body.sales_rep_id) set("sales_rep_id", String(body.sales_rep_id));
         if (has("order_date") && order_date) set("order_date", order_date);
         if (has("items")) set("items", JSON.stringify(itemsArr), "::jsonb");
-        if (has("total_amount")) set("total_amount", Number(total_amount) || 0);
+        if (has("items")) set("total_amount", computedTotal);
         if (has("notes")) set("notes", body.notes);
         if (has("order_notes")) set("order_notes", body.order_notes ? String(body.order_notes).slice(0, 2000) : null);
         if (has("invoice_notes") || has("invoiceNotes")) set("invoice_notes", (body.invoice_notes ?? body.invoiceNotes) ? String(body.invoice_notes ?? body.invoiceNotes).slice(0, 2000) : null);
@@ -1386,8 +1442,8 @@ export async function POST(req: NextRequest) {
         if (has("invoiced_delivery_slips")) set("invoiced_delivery_slips", JSON.stringify(body.invoiced_delivery_slips || []), "::jsonb");
         // Monotonic FSM: a stale form can never move an order backwards
         if (has("delivery_status")) set("delivery_status", resolveMonotonicStatus(existing.delivery_status, body.delivery_status, DELIVERY_STATUS_HIERARCHY, isRollback));
-        if (has("payment_status")) set("payment_status", resolveMonotonicStatus(existing.payment_status, body.payment_status, PAYMENT_STATUS_HIERARCHY, isRollback));
-        if (has("invoice_status")) set("invoice_status", resolveMonotonicStatus(existing.invoice_status, body.invoice_status, INVOICE_STATUS_HIERARCHY, isRollback));
+        if (has("payment_status") && canSetFinanceStatus) set("payment_status", resolveMonotonicStatus(existing.payment_status, body.payment_status, PAYMENT_STATUS_HIERARCHY, isRollback));
+        if (has("invoice_status") && canSetFinanceStatus) set("invoice_status", resolveMonotonicStatus(existing.invoice_status, body.invoice_status, INVOICE_STATUS_HIERARCHY, isRollback));
 
         // Re-evaluate approvals when the content changes (an approved order could otherwise be edited
         // to 0đ items or a much larger amount without new approval)
@@ -1402,7 +1458,7 @@ export async function POST(req: NextRequest) {
 
         let isCreditBlocked = Boolean(existing.is_credit_blocked);
         let creditBlockReason = existing.credit_block_reason || "";
-        const newTotal = has("total_amount") ? (Number(total_amount) || 0) : (Number(existing.total_amount) || 0);
+        const newTotal = has("items") ? computedTotal : (Number(existing.total_amount) || 0);
         const customerChanged = resolvedCustomerId !== null && resolvedCustomerId !== existing.customer_id;
         if (!isStockOrder && matchedCustomer && (newTotal > (Number(existing.total_amount) || 0) + 0.5 || customerChanged)) {
           const credit = await evaluateCredit(matchedCustomer, newTotal, existing.id);
@@ -1415,8 +1471,17 @@ export async function POST(req: NextRequest) {
         }
 
         if (sets.length > 0) {
+          // Khóa lạc quan: chỉ ghi khi không ai lưu đơn này kể từ lúc đọc (hai người sửa cùng lúc không đè nhau)
           params.push(existing.id);
-          await query(`UPDATE sales_orders SET ${sets.join(", ")} WHERE id = $${params.length}`, params);
+          const idParam = params.length;
+          params.push(Number(existing.row_version) || 0);
+          const upd = await query(
+            `UPDATE sales_orders SET ${sets.join(", ")}, row_version = COALESCE(row_version, 0) + 1 WHERE id = $${idParam} AND COALESCE(row_version, 0) = $${params.length}`,
+            params
+          );
+          if (upd.rowCount === 0) {
+            return NextResponse.json({ error: `Đơn ${existing.order_code} vừa được người khác cập nhật. Vui lòng tải lại trang rồi sửa lại.`, conflict: true }, { status: 409 });
+          }
         }
         await logAudit("UPDATE", "SALES_ORDER", `Cập nhật đơn hàng ${existing.order_code} cho ${customer_name || existing.customer_name}`);
         return NextResponse.json({
@@ -1435,7 +1500,7 @@ export async function POST(req: NextRequest) {
       let isCreditBlocked = false;
       let creditBlockReason = "";
       if (!isStockOrder && matchedCustomer) {
-        const credit = await evaluateCredit(matchedCustomer, Number(total_amount) || 0, null);
+        const credit = await evaluateCredit(matchedCustomer, computedTotal, null);
         isCreditBlocked = credit.blocked;
         creditBlockReason = credit.reason;
       } else if (!isStockOrder) {
@@ -1445,15 +1510,16 @@ export async function POST(req: NextRequest) {
       }
       const priceApprovalStatus = (!isStockOrder && hasZeroPrice) ? "PENDING_APPROVAL" : "APPROVED";
 
-      const code = (order_code && (/^SO\d{2}-[A-Z0-9]{2,5}-\d{4,5}$/.test(order_code) || String(order_code).includes("STOCK")))
+      const newServerCode = () => generateDocumentCode({
+        docType: "SO",
+        customerName: customer_name,
+        salesRepName: sales_rep_name,
+        tagMode: isStockOrder ? "STOCK" : "CUSTOMER"
+      });
+      let code = (!codeTaken && order_code && (/^SO\d{2}-[A-Z0-9]{2,5}-\d{4,5}$/.test(order_code) || /^SO\d{2}-STOCK-\d{4,5}$/.test(order_code)))
         ? String(order_code).trim()
-        : await generateDocumentCode({
-            docType: "SO",
-            customerName: customer_name,
-            salesRepName: sales_rep_name,
-            tagMode: isStockOrder ? "STOCK" : "CUSTOMER"
-          });
-      const ins = await query(
+        : await newServerCode();
+      const insertOrder = () => query(
         `INSERT INTO sales_orders (
           order_code, customer_id, customer_name, sales_rep_name, order_date, items, total_amount,
           delivery_status, payment_status, invoice_status, notes,
@@ -1464,8 +1530,9 @@ export async function POST(req: NextRequest) {
         RETURNING id`,
         [
           code, resolvedCustomerId, customer_name, sales_rep_name, order_date || todayVN(),
-          JSON.stringify(itemsArr), Number(total_amount) || 0, body.delivery_status || "PENDING", body.payment_status || "UNPAID",
-          body.invoice_status || "PENDING_INVOICE", body.notes,
+          JSON.stringify(itemsArr), computedTotal, canRollback ? (body.delivery_status || "PENDING") : "PENDING",
+          canSetFinanceStatus ? (body.payment_status || "UNPAID") : "UNPAID",
+          canSetFinanceStatus ? (body.invoice_status || "PENDING_INVOICE") : "PENDING_INVOICE", body.notes,
           isCreditBlocked, creditBlockReason, hasZeroPrice, priceApprovalStatus, body.applied_price_policy || "STANDARD",
           Boolean(body.vat_requested), body.vat_company_name || null, body.vat_tax_code || null, body.vat_address || null, body.vat_email || null,
           body.shipping_method || "Xe lạnh chuyên dụng", body.tracking_code || null, JSON.stringify(body.invoiced_delivery_slips || []),
@@ -1475,7 +1542,16 @@ export async function POST(req: NextRequest) {
           (body.invoice_notes ?? body.invoiceNotes) ? String(body.invoice_notes ?? body.invoiceNotes).slice(0, 2000) : null
         ]
       );
-      await logAudit("CREATE", "SALES_ORDER", `Tạo mới đơn hàng thương mại ${code} (${total_amount} đ)${isCreditBlocked ? " [BỊ KHÓA DO VI PHẠM CÔNG NỢ]" : ""}`);
+      let ins;
+      try {
+        ins = await insertOrder();
+      } catch (e: any) {
+        // Hai người tạo cùng lúc trùng mã: cấp mã mới từ máy chủ thay vì ghi đè
+        if (e?.code !== "23505") throw e;
+        code = await newServerCode();
+        ins = await insertOrder();
+      }
+      await logAudit("CREATE", "SALES_ORDER", `Tạo mới đơn hàng thương mại ${code} (${computedTotal} đ)${isCreditBlocked ? " [BỊ KHÓA DO VI PHẠM CÔNG NỢ]" : ""}`);
       return NextResponse.json({
         success: true,
         id: ins.rows[0]?.id,
@@ -1997,6 +2073,9 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "update_invoice") {
+      if (!isAccountantUser(authUser)) {
+        return forbiddenResponse("Chỉ Kế toán / Ban Giám Đốc mới được cập nhật hóa đơn.");
+      }
       if (!orderInvoiceNotesColumnEnsured) {
         try {
           await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS invoice_notes TEXT");
@@ -2009,7 +2088,7 @@ export async function POST(req: NextRequest) {
         [numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
       );
       if (cur.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng" }, { status: 404 });
-      const safeInvoiceStatus = resolveMonotonicStatus(cur.rows[0].invoice_status, invoice_status || "INVOICED", INVOICE_STATUS_HIERARCHY, Boolean(body.force_rollback));
+      const safeInvoiceStatus = resolveMonotonicStatus(cur.rows[0].invoice_status, invoice_status || "INVOICED", INVOICE_STATUS_HIERARCHY, Boolean(body.force_rollback) && isAdminUser(authUser));
       const hasInvNotes = invoice_notes !== undefined || invoiceNotes !== undefined;
       await query(
         `UPDATE sales_orders

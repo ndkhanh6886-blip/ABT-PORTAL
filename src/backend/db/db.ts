@@ -621,6 +621,11 @@ async function runIntegrityMigrations() {
         CREATE INDEX IF NOT EXISTS idx_inventory_transactions_reference ON inventory_transactions (reference_code);
       `)
     );
+    // Khóa lạc quan cho đơn bán: mỗi lần lưu tăng row_version, lưu đè lên bản cũ bị từ chối (409)
+    await step("sales_orders_row_version", () =>
+      client.query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS row_version INTEGER NOT NULL DEFAULT 0`)
+    );
+
     await step("inventory_checks", () =>
       client.query(`
         DO $$
