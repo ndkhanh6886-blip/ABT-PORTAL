@@ -586,12 +586,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
   const [isResetting, setIsResetting] = useState(false);
 
   const handleResetData = async () => {
+    const confirmPassword = window.prompt("Nhập mật khẩu của bạn để xác nhận XÓA TOÀN BỘ nhân sự và tài khoản:");
+    if (!confirmPassword) return;
     setIsResetting(true);
     try {
       const res = await fetch("/api/settings?action=reset_personnel_and_users", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "reset_personnel_and_users" })
+        body: JSON.stringify({ action: "reset_personnel_and_users", confirm_password: confirmPassword })
       });
       const data = await res.json();
       if (res.ok && data.success) {

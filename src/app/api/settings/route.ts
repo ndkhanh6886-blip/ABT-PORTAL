@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { query, logAudit, ensurePersonnelTable } from "@/backend/db/db";
+import { query, logAudit, ensurePersonnelTable, withTransaction } from "@/backend/db/db";
 import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
-import { hashPassword } from "@/backend/services/passwords";
+import { hashPassword, verifyPassword } from "@/backend/services/passwords";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { inferSystemRoleFromPosition } from "@/backend/services/permissions";
 
@@ -130,6 +130,19 @@ export async function GET(req: NextRequest) {
         console.error("Failed to query audit_logs:", e.message);
       }
 
+      // Người không phải quản trị viên chỉ nhận danh bạ công việc (tên, mã, phòng ban, chức vụ, SĐT / email công việc
+      // dùng trên báo giá): không trả phân quyền chi tiết và thông tin tài khoản của mọi người
+      if (!isAdmin) {
+        personnelRows = personnelRows.map((p: any) => ({
+          id: p.id, employee_code: p.employee_code, full_name: p.full_name,
+          department: p.department, position: p.position, email: p.email, phone: p.phone, status: p.status,
+        }));
+        usersRows = usersRows.map((u: any) => ({
+          id: u.id, username: u.username, full_name: u.full_name, role: u.role,
+          department: u.department, avatar: u.avatar, is_active: u.is_active,
+        }));
+      }
+
       return NextResponse.json({
         personnel: personnelRows,
         users: usersRows,
@@ -206,22 +219,30 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "reset_personnel_and_users") {
-      await query("DELETE FROM personnel");
-      await query("DELETE FROM users WHERE username != 'admin'");
-      await query("DELETE FROM zalo_user_bindings WHERE employee_id != 'admin'");
-      await query(`
-        INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
-        VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@tbrscientific.com', true)
-        ON CONFLICT (username) DO UPDATE SET
-          full_name = 'Quản Trị Viên Hệ Thống',
-          role = 'admin',
-          is_active = true
-      `, [hashPassword(DEFAULT_INITIAL_PASSWORD)]);
-      await query(`
-        INSERT INTO app_storage (key, data, updated_at) 
-        VALUES ('personnel_reset_done_v1', '{"reset": true}'::jsonb, NOW())
-        ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
-      `).catch(() => {});
+      // Thao tác xóa toàn bộ: bắt buộc nhập lại mật khẩu của chính quản trị viên đang đăng nhập
+      const pwRow = (await query("SELECT password_hash FROM users WHERE id = $1", [me.id])).rows[0];
+      if (!pwRow || !verifyPassword(String(body.confirm_password || ""), pwRow.password_hash)) {
+        return forbiddenResponse("Mật khẩu xác nhận không đúng. Dữ liệu chưa bị xóa.");
+      }
+      // Một giao dịch: lỗi giữa chừng thì không có gì bị xóa (trước đây có thể dừng ở trạng thái xóa dở)
+      await withTransaction(async (c) => {
+        await c.query("DELETE FROM personnel");
+        await c.query("DELETE FROM users WHERE username != 'admin'");
+        await c.query("DELETE FROM zalo_user_bindings WHERE employee_id != 'admin'");
+        await c.query(`
+          INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
+          VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@tbrscientific.com', true)
+          ON CONFLICT (username) DO UPDATE SET
+            full_name = 'Quản Trị Viên Hệ Thống',
+            role = 'admin',
+            is_active = true
+        `, [hashPassword(DEFAULT_INITIAL_PASSWORD)]);
+        await c.query(`
+          INSERT INTO app_storage (key, data, updated_at) 
+          VALUES ('personnel_reset_done_v1', '{"reset": true}'::jsonb, NOW())
+          ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
+        `);
+      });
       await logAudit("RESET", "SETTINGS", "Quản trị viên đã thực hiện Reset toàn bộ danh bạ nhân sự, tài khoản và danh mục Zalo");
       return NextResponse.json({ success: true, message: "Đã làm sạch toàn bộ dữ liệu Nhân sự, Tài khoản và Danh mục Zalo." });
     }
