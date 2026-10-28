@@ -34,9 +34,6 @@ let supplierShortNameEnsured = false;
 async function ensureSupplierShortName() {
   if (supplierShortNameEnsured) return;
   try {
-    await query("ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS short_name VARCHAR(100)");
-    await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50)");
-    await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS created_by VARCHAR(150)");
     await query(`
       UPDATE procurement_suppliers SET short_name = 'Phù Sa' WHERE supplier_code = 'NCC0021' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Hoàng Kim' WHERE supplier_code = 'NCC0022' AND (short_name IS NULL OR short_name = '');

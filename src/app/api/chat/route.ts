@@ -123,21 +123,16 @@ const DEFAULT_DEPARTMENT_CHANNELS = [
 ];
 
 let chatTablesEnsured = false;
+// Cấu trúc bảng chat (bảng đọc tin, cột ghim, chỉ mục) do migration trong db.ts tạo; ở đây chỉ chuẩn hóa dữ liệu kênh.
+// Lỗi được ghi log và lần gọi sau thử lại (trước đây lỗi bị nuốt và không bao giờ chạy lại).
 async function ensureChatTables() {
   if (chatTablesEnsured) return;
+  let failed = false;
+  const logFail = (step: string) => (err: any) => {
+    failed = true;
+    console.error(`[chat] Chuẩn hóa dữ liệu kênh thất bại (${step}):`, err?.message || err);
+  };
   try {
-    await query(`
-      CREATE TABLE IF NOT EXISTS chat_channel_reads (
-        channel_id INT NOT NULL,
-        user_name VARCHAR(255) NOT NULL,
-        last_read_message_id INT DEFAULT 0,
-        last_read_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (channel_id, user_name)
-      )
-    `).catch(() => {});
-    await query(`CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_id_id ON chat_messages(channel_id, id DESC)`).catch(() => {});
-    await query(`ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE`).catch(() => {});
-    await query(`ALTER TABLE chat_channels ADD COLUMN IF NOT EXISTS pinned_messages JSONB DEFAULT '[]'::jsonb`).catch(() => {});
 
     // Ensure all 5 standard department channels exist in chat_channels and have correct type/privacy
     for (const ch of DEFAULT_DEPARTMENT_CHANNELS) {
@@ -146,7 +141,7 @@ async function ensureChatTables() {
          SELECT $1::varchar, $2::varchar, 'CHANNEL', $3::varchar, $4::text, FALSE, 'Hệ Thống', '[]'::jsonb
          WHERE NOT EXISTS (SELECT 1 FROM chat_channels WHERE channel_code = $1::varchar)`,
         [ch.channel_code, ch.name, ch.department, ch.description]
-      ).catch(() => {});
+      ).catch(logFail(`kênh ${ch.channel_code}`));
     }
 
     // Ensure standard department channels always have channel_type = 'CHANNEL' and is_private = FALSE
@@ -155,7 +150,7 @@ async function ensureChatTables() {
       SET channel_type = 'CHANNEL', is_private = FALSE
       WHERE channel_code IN ('general', 'sales', 'application', 'warehouse', 'procurement')
         AND (channel_type IS DISTINCT FROM 'CHANNEL' OR is_private IS DISTINCT FROM FALSE)
-    `).catch(() => {});
+    `).catch(logFail("kênh phòng ban"));
 
     // Ensure DM channels always have channel_type = 'DIRECT', is_private = TRUE, and department = 'Tin nhắn riêng'
     await query(`
@@ -163,7 +158,7 @@ async function ensureChatTables() {
       SET channel_type = 'DIRECT', is_private = TRUE, department = 'Tin nhắn riêng'
       WHERE channel_code LIKE 'dm-%'
         AND (channel_type IS DISTINCT FROM 'DIRECT' OR is_private IS DISTINCT FROM TRUE OR department IS DISTINCT FROM 'Tin nhắn riêng')
-    `).catch(() => {});
+    `).catch(logFail("tin nhắn riêng"));
 
     // Re-align any messages whose channel_code explicitly matches a channel in chat_channels but whose channel_id drifted
     await query(`
@@ -174,10 +169,12 @@ async function ensureChatTables() {
         AND m.channel_code <> ''
         AND m.channel_code = c.channel_code
         AND m.channel_id IS DISTINCT FROM c.id
-    `).catch(() => {});
+    `).catch(logFail("gắn lại tin nhắn"));
 
-    chatTablesEnsured = true;
-  } catch {}
+    chatTablesEnsured = !failed;
+  } catch (err) {
+    console.error("[chat] Không chuẩn hóa được dữ liệu kênh:", err);
+  }
 }
 
 export async function GET(req: NextRequest) {

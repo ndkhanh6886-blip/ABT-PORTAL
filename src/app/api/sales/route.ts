@@ -274,8 +274,6 @@ function parseSqlDate(d: any): string {
   return todayVN();
 }
 
-let quotationExtraColumnEnsured = false;
-let customerTaxAddressColumnEnsured = false;
 const QUOTATION_EXTRA_KEYS = [
   "contactPerson", "contactPhone", "contactEmail", "contactPosition",
   "salesRepId", "salesRepPhone", "salesRepEmail",
@@ -347,8 +345,6 @@ function normalizeContractRow(r: any) {
 }
 
 // Thông tin mở rộng của phiếu giao (đợt giao, hình thức, trạng thái xác nhận, POD...) lưu ở cột JSONB extra_data
-let deliverySlipExtraColumnEnsured = false;
-let orderInvoiceNotesColumnEnsured = false;
 const DELIVERY_SLIP_EXTRA_KEYS = [
   "batchNumber", "deliveryMode", "deliveryStatus", "isDelivered", "deliveredAt",
   "receiverName", "receiverPhone", "receiverRole", "deliveryStaff", "confirmedBy", "confirmedAt",
@@ -903,7 +899,7 @@ export async function GET(req: NextRequest) {
       // cùng quy tắc với sameCust: trùng customer_id, hoặc trùng tên (không phân biệt hoa thường / khoảng trắng)
       const cid = Number(cust.id) || 0;
       const byCust = (idCol: string | null, nameCol: string) =>
-        `(${idCol ? `(${idCol} = $1 AND $1 > 0) OR ` : "$1::int >= 0 AND "}LOWER(REGEXP_REPLACE(TRIM(COALESCE(${nameCol}, '')), '\\s+', ' ', 'g')) = $2)`;
+        `(${idCol ? `(${idCol} = $1 AND $1 > 0) OR ` : "$1::int >= 0 AND "}LOWER(REGEXP_REPLACE(TRIM(COALESCE(${nameCol}, '')), '\\s+', ' ', 'g')) = $2 AND $2 <> '')`;
       const custParams = [cid, cName];
       // Văn bản tự do: chỉ lấy dòng có nhắc tên (>= 6 ký tự) hoặc mã khách (>= 4 ký tự), mentions() kiểm tra lại
       const mentionSql = (cols: string[]) => {
@@ -1116,10 +1112,6 @@ export async function POST(req: NextRequest) {
       const saveTaxAddress = async (custId: number | null | undefined) => {
         if (!custId || body.tax_address === undefined) return;
         try {
-          if (!customerTaxAddressColumnEnsured) {
-            await query("ALTER TABLE sales_customers ADD COLUMN IF NOT EXISTS tax_address TEXT");
-            customerTaxAddressColumnEnsured = true;
-          }
           await query("UPDATE sales_customers SET tax_address = $1 WHERE id = $2", [body.tax_address || null, custId]);
         } catch (err) {
           console.error("Failed to save sales_customers.tax_address:", err);
@@ -1306,16 +1298,8 @@ export async function POST(req: NextRequest) {
         ]
       );
 
-      // Lưu thông tin mở rộng (đợt giao, trạng thái chờ giao/đã giao/hủy, POD...) vào extra_data
-      if (!deliverySlipExtraColumnEnsured) {
-        try {
-          await query("ALTER TABLE sales_delivery_slips ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb");
-          deliverySlipExtraColumnEnsured = true;
-        } catch (err) {
-          console.error("Failed to ensure sales_delivery_slips.extra_data column:", err);
-        }
-      }
-      if (deliverySlipExtraColumnEnsured) {
+      // Lưu thông tin mở rộng (đợt giao, trạng thái chờ giao/đã giao/hủy, POD...) vào extra_data (cột tạo bởi migration db.ts)
+      {
         const slipExtra: Record<string, any> = {};
         for (const k of DELIVERY_SLIP_EXTRA_KEYS) {
           if (body[k] !== undefined && body[k] !== null) slipExtra[k] = body[k];
@@ -1360,14 +1344,6 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "order") {
-      if (!orderInvoiceNotesColumnEnsured) {
-        try {
-          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS invoice_notes TEXT");
-          orderInvoiceNotesColumnEnsured = true;
-        } catch (err) {
-          console.error("Failed to ensure sales_orders.invoice_notes column:", err);
-        }
-      }
       const { id, order_code, customer_id, customer_name, sales_rep_name, order_date, items, total_amount } = body;
       const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k) && body[k] !== undefined;
 
@@ -2096,12 +2072,6 @@ export async function POST(req: NextRequest) {
       if (!isAccountantUser(authUser)) {
         return forbiddenResponse("Chỉ Kế toán / Ban Giám Đốc mới được cập nhật hóa đơn.");
       }
-      if (!orderInvoiceNotesColumnEnsured) {
-        try {
-          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS invoice_notes TEXT");
-          orderInvoiceNotesColumnEnsured = true;
-        } catch (err) {}
-      }
       const { order_id, invoice_no, invoice_date, invoice_status, invoice_files, invoice_notes, invoiceNotes } = body;
       const cur = await query(
         "SELECT id, invoice_status FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL AND $2::text !~ '^[0-9]+$' THEN order_code = $2::text ELSE id = $1::int END) ORDER BY id LIMIT 1",
@@ -2180,16 +2150,7 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      // Thông tin mở rộng (người liên hệ KH, liên hệ NVKD) lưu vào cột JSONB extra_data
-      if (!quotationExtraColumnEnsured) {
-        try {
-          await query("ALTER TABLE sales_quotations ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb");
-          await query("CREATE UNIQUE INDEX IF NOT EXISTS idx_sales_quotations_quote_code ON sales_quotations (quote_code)");
-          quotationExtraColumnEnsured = true;
-        } catch (err) {
-          console.error("Failed to ensure sales_quotations schema:", err);
-        }
-      }
+      // Thông tin mở rộng (người liên hệ KH, liên hệ NVKD) lưu vào cột JSONB extra_data (cột tạo bởi migration db.ts)
       const extra: Record<string, any> = {};
       for (const k of QUOTATION_EXTRA_KEYS) {
         if (body[k] !== undefined && body[k] !== null) extra[k] = body[k];

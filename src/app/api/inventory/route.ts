@@ -50,7 +50,6 @@ export async function GET(req: NextRequest) {
 
     // Tồn kho theo từng lô (số lô, HSD, vị trí) kèm hãng sản xuất / nhóm hàng / điều kiện bảo quản
     if (action === "lot_stock") {
-      await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
       await query(`
         INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, is_quarantined, quarantine_reason)
         SELECT i.product_code,
@@ -98,7 +97,6 @@ export async function GET(req: NextRequest) {
     // Tồn theo lô, lọc + đếm + chia trang trên máy chủ (hàng chục nghìn lô không phải tải hết về trình duyệt).
     // all=1: trả toàn bộ danh sách đang lọc (xuất Excel).
     if (action === "lot_stock_page") {
-      await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
       const today = todayVN();
       const nearDays = Math.min(730, Math.max(1, parseInt(searchParams.get("near_days") || "90") || 90));
       const kw = String(searchParams.get("q") || "").trim();
@@ -578,7 +576,6 @@ export async function POST(req: NextRequest) {
       if (!product_code) {
         return NextResponse.json({ error: "Thiếu mã sản phẩm (product_code)" }, { status: 400 });
       }
-      await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
       await withTransaction(async (c) => {
         await c.query(
           `UPDATE inventory_items

@@ -643,6 +643,22 @@ async function runIntegrityMigrations() {
       `)
     );
 
+    // H6: các cột / chỉ mục trước đây được ALTER ngay trong request (mỗi lần gọi API, lỗi bị nuốt)
+    await step("request_path_columns", () =>
+      client.query(`
+        ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0;
+        ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS short_name VARCHAR(100);
+        ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50);
+        ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS created_by VARCHAR(150);
+        ALTER TABLE sales_customers ADD COLUMN IF NOT EXISTS tax_address TEXT;
+        ALTER TABLE sales_delivery_slips ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb;
+        ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS invoice_notes TEXT;
+        ALTER TABLE sales_quotations ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb;
+        ALTER TABLE chat_messages ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT FALSE;
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_channel_id_id ON chat_messages(channel_id, id DESC);
+      `)
+    );
+
     await step("inventory_checks", () =>
       client.query(`
         DO $$
