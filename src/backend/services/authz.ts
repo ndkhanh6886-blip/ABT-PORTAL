@@ -58,6 +58,18 @@ export function isAdminUser(user: AuthorizedUser | null): boolean {
 }
 
 /**
+ * Kế toán (or an administrator): may record / void customer and supplier payments, unblock credit,
+ * change payment / invoice status. Decided by the role set by an administrator, never by the free-text
+ * department name ("kế toán" in a department label used to be enough).
+ */
+export function isAccountantUser(user: AuthorizedUser | null): boolean {
+  if (!user) return false;
+  if (isAdminUser(user)) return true;
+  const role = String(user.role || "").toLowerCase();
+  return role.includes("accountant") || role.includes("kế toán");
+}
+
+/**
  * Returns `{ user }` when the request is signed in and holds `permissionKey`, otherwise `{ response }` (401/403).
  * Usage: `const auth = await requirePermission(req, "settings.view"); if ("response" in auth) return auth.response;`
  */

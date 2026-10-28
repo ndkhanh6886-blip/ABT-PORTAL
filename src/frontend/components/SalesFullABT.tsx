@@ -2079,7 +2079,9 @@ export function SalesFullABT() {
                             } else if (raw.approval_status === "APPROVED" && merged.status === "Pending") {
                                 merged.status = "Approved";
                             } else if (raw.approval_status !== "APPROVED" && merged.status === "Approved" &&
-                                (raw.is_credit_blocked || raw.price_approval_status === "PENDING_APPROVAL")) {
+                                (raw.is_credit_blocked || raw.price_approval_status === "PENDING_APPROVAL" ||
+                                    String(raw.approval_note || "").startsWith("Cần duyệt lại"))) {
+                                // Máy chủ đã hủy kết quả duyệt (đơn bị sửa sau khi duyệt): hiển thị chờ duyệt lại
                                 merged.status = "Pending";
                             }
                         }
@@ -12248,13 +12250,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }
                 showToast(`Đã cập nhật yêu cầu đặt hàng ${editingFactoryOrderId} thành công!`, "success");
                 const json = await res.json().catch(() => ({}));
-                if (json && (json.is_credit_blocked !== undefined || json.price_approval_status)) {
+                if (json && (json.is_credit_blocked !== undefined || json.price_approval_status || json.approval_reset)) {
                     setFactoryOrders(prev => prev.map(o => o.id === editingFactoryOrderId ? {
                         ...o,
                         isCreditBlocked: json.is_credit_blocked !== undefined ? Boolean(json.is_credit_blocked) : o.isCreditBlocked,
                         creditBlockReason: json.credit_block_reason || o.creditBlockReason,
-                        priceApprovalStatus: json.price_approval_status || o.priceApprovalStatus
+                        priceApprovalStatus: json.price_approval_status || o.priceApprovalStatus,
+                        ...(json.approval_reset ? { status: "Pending", approvedBy: undefined, approvedAt: undefined } : {})
                     } : o));
+                }
+                if (json?.approval_reset) {
+                    showToast(`Đơn ${editingFactoryOrderId} đã được duyệt trước đó nên sau khi sửa phải duyệt lại.`, "warning");
                 }
             }).catch(err => {
                 console.error("Error updating order in PostgreSQL:", err);

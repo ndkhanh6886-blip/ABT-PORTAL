@@ -929,9 +929,7 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
   if (
     role === "director" || 
     role === "admin" || 
-    role.includes("giám đốc") || 
-    dept.includes("giám đốc") || 
-    dept === "bod"
+    role.includes("giám đốc")
   ) {
     return ROLE_PRESETS.director;
   }
@@ -1075,9 +1073,7 @@ export function hasPermission(user: any, permissionKey: string): boolean {
     role === "director" || 
     role === "admin" || 
     username === "admin" || 
-    role.includes("giám đốc") || 
-    dept.includes("giám đốc") || 
-    dept === "bod"
+    role.includes("giám đốc")
   ) {
     return true;
   }

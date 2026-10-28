@@ -3,7 +3,7 @@ import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/
 import { generateDocumentCode, getShortRepCode, getShortCustCode } from "@/backend/services/codeGenerator";
 import { addStock, sortByProductCode, reserveStock, releaseReservation, releaseReservationsFor, sweepExpiredReservations } from "@/backend/services/inventoryLedger";
 import { stableStringify } from "@/backend/services/storagePatch";
-import { getAuthorizedUser, unauthorizedResponse, forbiddenResponse, isAdminUser, setAuditActor } from "@/backend/services/authz";
+import { getAuthorizedUser, unauthorizedResponse, forbiddenResponse, isAdminUser, isAccountantUser, setAuditActor } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { canApproveSalesOrders } from "@/backend/services/approvalGuard";
@@ -156,13 +156,6 @@ function parseJsonArray(v: any): any[] {
     try { const parsed = JSON.parse(v); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
   }
   return [];
-}
-
-/** Kế toán / Ban Giám Đốc: người duy nhất được đổi trạng thái thanh toán và hóa đơn */
-function isAccountantUser(me: any): boolean {
-  if (isAdminUser(me)) return true;
-  const dept = String(me?.department || "").toLowerCase();
-  return dept.includes("kế toán") || String(me?.role || "").toLowerCase().includes("account");
 }
 
 /** Số lượng / đơn giá của một dòng hàng (các tên trường client đang dùng) */
@@ -758,8 +751,7 @@ export async function GET(req: NextRequest) {
 
     // Công nợ phải thu theo khách hàng (Kế toán / Quản trị): giá trị hàng ĐÃ GIAO - đã thu, hạn = ngày giao + số ngày nợ của khách
     if (action === "customer_debt") {
-      const dept = String((authUser as any).department || "").toLowerCase();
-      if (!isAdminUser(authUser) && !dept.includes("kế toán") && !String((authUser as any).role || "").toLowerCase().includes("account")) {
+      if (!isAccountantUser(authUser)) {
         return forbiddenResponse("Chỉ Kế toán / Quản trị viên xem được công nợ khách hàng.");
       }
       const [ordRes, custRes, slipRes, payRes] = await Promise.all([
@@ -1017,8 +1009,7 @@ export async function GET(req: NextRequest) {
 
     // Hóa đơn theo phiếu giao đã lưu số tiền lớn hơn giá trị phiếu: màn xuất HĐ cũ cộng VAT lên đơn giá đã gồm VAT
     if (action === "invoice_amount_check") {
-      const dept = String((authUser as any).department || "").toLowerCase();
-      if (!isAdminUser(authUser) && !dept.includes("kế toán")) return forbiddenResponse("Chỉ Kế toán / Quản trị viên xem được báo cáo này.");
+      if (!isAccountantUser(authUser)) return forbiddenResponse("Chỉ Kế toán / Quản trị viên xem được báo cáo này.");
       const orders = (await query(
         "SELECT order_code, customer_name, total_amount, items, invoiced_delivery_slips FROM sales_orders WHERE jsonb_array_length(COALESCE(invoiced_delivery_slips, '[]'::jsonb)) > 0"
       )).rows;
@@ -1103,8 +1094,10 @@ export async function POST(req: NextRequest) {
     if (action === "customer") {
       const { id, customer_code, name, customer_name, contact_person, contact_position, phone, email, address, tax_code, sales_rep_id, sales_rep_name, classification, industry, payment_terms, notes, credit_limit, credit_term_days, customer_type, special_price_list, region, province } = body;
       const custName = (name || customer_name || "").trim();
-      const cLimit = parseFloat(credit_limit) >= 0 ? parseFloat(credit_limit) : 100000000;
-      const cTerm = parseInt(credit_term_days) >= 0 ? parseInt(credit_term_days) : 30;
+      // Hạn mức / số ngày công nợ là chốt chặn tín dụng: chỉ Kế toán / Quản trị viên được đặt hoặc đổi
+      const canSetCredit = isAccountantUser(authUser);
+      const cLimit = canSetCredit && parseFloat(credit_limit) >= 0 ? parseFloat(credit_limit) : DEFAULT_CREDIT_LIMIT;
+      const cTerm = canSetCredit && parseInt(credit_term_days) >= 0 ? parseInt(credit_term_days) : DEFAULT_CREDIT_TERM_DAYS;
       const cType = customer_type || "END_USER";
       const sPriceList = Array.isArray(special_price_list) ? JSON.stringify(special_price_list) : "[]";
 
@@ -1125,6 +1118,15 @@ export async function POST(req: NextRequest) {
         const sets: string[] = [];
         const params: any[] = [];
         const set = (col: string, val: any, cast = "") => { params.push(val); sets.push(`${col} = $${params.length}${cast}`); };
+        if (!canSetCredit && (has("credit_limit") || has("credit_term_days"))) {
+          // Form gửi lại nguyên giá trị cũ thì bỏ qua; muốn đổi thật thì báo rõ thay vì lặng lẽ không lưu
+          const cur = (await query("SELECT credit_limit, credit_term_days FROM sales_customers WHERE id = $1", [Number(id)])).rows[0];
+          const limitChanged = has("credit_limit") && cur && Math.abs((parseFloat(credit_limit) || 0) - (parseFloat(cur.credit_limit) || 0)) > 0.5;
+          const termChanged = has("credit_term_days") && cur && (parseInt(credit_term_days) || 0) !== (parseInt(cur.credit_term_days) || 0);
+          if (limitChanged || termChanged) {
+            return forbiddenResponse("Chỉ Kế toán / Quản trị viên được thay đổi hạn mức và số ngày công nợ của khách hàng.");
+          }
+        }
         if (has("name") || has("customer_name")) set("name", custName);
         if (has("contact_person")) set("contact_person", contact_person);
         if (has("contact_position")) set("contact_position", contact_position);
@@ -1137,8 +1139,8 @@ export async function POST(req: NextRequest) {
         if (has("classification")) set("classification", classification);
         if (has("payment_terms")) set("payment_terms", payment_terms);
         if (has("notes")) set("notes", notes);
-        if (has("credit_limit")) set("credit_limit", cLimit);
-        if (has("credit_term_days")) set("credit_term_days", cTerm);
+        if (has("credit_limit") && canSetCredit) set("credit_limit", cLimit);
+        if (has("credit_term_days") && canSetCredit) set("credit_term_days", cTerm);
         if (has("customer_type")) set("customer_type", cType);
         if (has("special_price_list")) set("special_price_list", sPriceList, "::jsonb");
         if (has("region")) set("region", region || null);
@@ -1372,7 +1374,11 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const isStockOrder = Boolean(body.is_stock_order || body.isStockOrder || (order_code && String(order_code).includes("STOCK")));
+      // Đơn STOCK (lưu kho gối đầu) không qua kiểm tra công nợ và duyệt giá 0đ: cờ này không được lấy từ client
+      // cho người không có quyền duyệt đơn (trước đây chỉ cần gửi is_stock_order=true hoặc mã đơn chứa "STOCK").
+      const stockRequested = Boolean(body.is_stock_order || body.isStockOrder || (order_code && String(order_code).includes("STOCK")));
+      const canCreateStockOrder = isAdminUser(authUser) || canApproveSalesOrders(authUser);
+      let isStockOrder = stockRequested && canCreateStockOrder;
       const itemsArr = Array.isArray(items) ? items : [];
       const hasZeroPrice = itemsArr.some(itemHasZeroPrice);
       const itemsError = validateOrderItems(itemsArr);
@@ -1384,6 +1390,11 @@ export async function POST(req: NextRequest) {
       // Chỉ Kế toán / BGĐ được đổi trạng thái thanh toán & hóa đơn; chỉ Quản trị viên được lùi trạng thái
       const canSetFinanceStatus = isAccountantUser(authUser);
       const canRollback = isAdminUser(authUser);
+      // Chính sách giá "STOCK" chỉ dành cho đơn STOCK đã được cho phép (nó cũng đánh dấu đơn là STOCK khi sửa sau này)
+      const safePricePolicy = (v: any) => {
+        const policy = String(v || "STANDARD");
+        return policy.toUpperCase() === "STOCK" && !isStockOrder ? "STANDARD" : policy;
+      };
       // Tạo đơn mới (is_new) không bao giờ được ghi đè lên một đơn đã có trùng mã
       const isNewOrder = body.is_new === true;
 
@@ -1403,6 +1414,8 @@ export async function POST(req: NextRequest) {
 
       if (existing) {
         const isRollback = Boolean(body.force_rollback) && canRollback;
+        // Đơn đang có: loại đơn theo dữ liệu đã lưu, không theo cờ client gửi lên
+        isStockOrder = String(existing.order_code || "").includes("STOCK") || String(existing.applied_price_policy || "").toUpperCase() === "STOCK";
         // Đơn đã giao / đã xuất hóa đơn: chỉ Quản trị viên / người duyệt giá được sửa nội dung hàng hóa
         const isLockedContent = !["PENDING", "PROCESSING", "PACKED", "READY", ""].includes(String(existing.delivery_status || "").toUpperCase())
           || !["PENDING_INVOICE", "PENDING", ""].includes(String(existing.invoice_status || "").toUpperCase());
@@ -1426,7 +1439,7 @@ export async function POST(req: NextRequest) {
         if (has("notes")) set("notes", body.notes);
         if (has("order_notes")) set("order_notes", body.order_notes ? String(body.order_notes).slice(0, 2000) : null);
         if (has("invoice_notes") || has("invoiceNotes")) set("invoice_notes", (body.invoice_notes ?? body.invoiceNotes) ? String(body.invoice_notes ?? body.invoiceNotes).slice(0, 2000) : null);
-        if (has("applied_price_policy")) set("applied_price_policy", body.applied_price_policy || "STANDARD");
+        if (has("applied_price_policy")) set("applied_price_policy", safePricePolicy(body.applied_price_policy));
         if (has("vat_requested")) set("vat_requested", Boolean(body.vat_requested));
         for (const col of ["vat_company_name", "vat_tax_code", "vat_address", "vat_email", "shipping_method", "tracking_code"]) {
           if (has(col)) set(col, body[col] || null);
@@ -1456,6 +1469,19 @@ export async function POST(req: NextRequest) {
         let creditBlockReason = existing.credit_block_reason || "";
         const newTotal = has("items") ? computedTotal : (Number(existing.total_amount) || 0);
         const customerChanged = resolvedCustomerId !== null && resolvedCustomerId !== existing.customer_id;
+
+        // Đơn đã được duyệt mà bị sửa mặt hàng / khách hàng thì phải duyệt lại
+        // (trước đây approval_status giữ nguyên APPROVED nên đơn sau duyệt sửa tùy ý được)
+        const contentChanged = (has("items") && stableStringify(parseJsonArray(existing.items)) !== stableStringify(itemsArr))
+          || customerChanged;
+        let approvalReset = false;
+        if (contentChanged && String(existing.approval_status || "").toUpperCase() === "APPROVED") {
+          approvalReset = true;
+          set("approval_status", null);
+          set("approved_by", null);
+          set("approved_at", null);
+          set("approval_note", `Cần duyệt lại: đơn được sửa sau khi đã duyệt (trước đó duyệt bởi ${existing.approved_by || "?"})`);
+        }
         if (!isStockOrder && matchedCustomer && (newTotal > (Number(existing.total_amount) || 0) + 0.5 || customerChanged)) {
           const credit = await evaluateCredit(matchedCustomer, newTotal, existing.id);
           if (credit.blocked) {
@@ -1479,9 +1505,11 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: `Đơn ${existing.order_code} vừa được người khác cập nhật. Vui lòng tải lại trang rồi sửa lại.`, conflict: true }, { status: 409 });
           }
         }
-        await logAudit("UPDATE", "SALES_ORDER", `Cập nhật đơn hàng ${existing.order_code} cho ${customer_name || existing.customer_name}`);
+        await logAudit("UPDATE", "SALES_ORDER", `Cập nhật đơn hàng ${existing.order_code} cho ${customer_name || existing.customer_name}${approvalReset ? " [ĐÃ DUYỆT -> CHỜ DUYỆT LẠI]" : ""}`);
         return NextResponse.json({
           success: true,
+          approval_reset: approvalReset,
+          approval_status: approvalReset ? null : (existing.approval_status ?? null),
           id: existing.id,
           order_code: existing.order_code,
           code: existing.order_code,
@@ -1493,6 +1521,9 @@ export async function POST(req: NextRequest) {
       }
 
       // ---- New order ----
+      if (stockRequested && !isStockOrder) {
+        return forbiddenResponse("Chỉ Trưởng/Phó phòng Kinh doanh hoặc Quản trị viên được tạo đơn STOCK (lưu kho gối đầu, không kiểm tra công nợ).");
+      }
       let isCreditBlocked = false;
       let creditBlockReason = "";
       if (!isStockOrder && matchedCustomer) {
@@ -1512,7 +1543,7 @@ export async function POST(req: NextRequest) {
         salesRepName: sales_rep_name,
         tagMode: isStockOrder ? "STOCK" : "CUSTOMER"
       });
-      let code = (!codeTaken && order_code && (/^SO\d{2}-[A-Z0-9]{2,5}-\d{4,5}$/.test(order_code) || /^SO\d{2}-STOCK-\d{4,5}$/.test(order_code)))
+      let code = (!codeTaken && order_code && (/^SO\d{2}-[A-Z0-9]{2,5}-\d{4,5}$/.test(order_code) || (isStockOrder && /^SO\d{2}-STOCK-\d{4,5}$/.test(order_code))))
         ? String(order_code).trim()
         : await newServerCode();
       const insertOrder = () => query(
@@ -1529,7 +1560,7 @@ export async function POST(req: NextRequest) {
           JSON.stringify(itemsArr), computedTotal, canRollback ? (body.delivery_status || "PENDING") : "PENDING",
           canSetFinanceStatus ? (body.payment_status || "UNPAID") : "UNPAID",
           canSetFinanceStatus ? (body.invoice_status || "PENDING_INVOICE") : "PENDING_INVOICE", body.notes,
-          isCreditBlocked, creditBlockReason, hasZeroPrice, priceApprovalStatus, body.applied_price_policy || "STANDARD",
+          isCreditBlocked, creditBlockReason, hasZeroPrice, priceApprovalStatus, safePricePolicy(body.applied_price_policy),
           Boolean(body.vat_requested), body.vat_company_name || null, body.vat_tax_code || null, body.vat_address || null, body.vat_email || null,
           body.shipping_method || "Xe lạnh chuyên dụng", body.tracking_code || null, JSON.stringify(body.invoiced_delivery_slips || []),
           body.pr_code || body.prCode || null, body.procure_status || body.procureStatus || null, body.procure_order_code || body.procureOrderCode || null, body.fulfillment_source || body.fulfillmentSource || null,
@@ -1822,8 +1853,7 @@ export async function POST(req: NextRequest) {
         // Sửa hóa đơn đã xuất của phiếu: chỉ Kế toán / Quản trị viên
         const prevRec = existingSlips.find((s: any) => s.delivery_slip_id === delivery_slip_id) || null;
         if (prevRec) {
-          const dept = String((authUser as any).department || "").toLowerCase();
-          if (!isAdminUser(authUser) && !dept.includes("kế toán") && !String((authUser as any).role || "").toLowerCase().includes("account")) {
+          if (!isAccountantUser(authUser)) {
             throw new HttpError(403, "Phiếu này đã xuất hóa đơn. Chỉ Kế toán / Quản trị viên được sửa số hóa đơn.");
           }
         }
@@ -1889,8 +1919,7 @@ export async function POST(req: NextRequest) {
       const me = await getAuthorizedUser(req);
       setAuditActor(me);
       if (!me) return unauthorizedResponse();
-      const dept = String(me.department || "").toLowerCase();
-      if (!isAdminUser(me) && !dept.includes("kế toán") && !String(me.role || "").toLowerCase().includes("account")) {
+      if (!isAccountantUser(me)) {
         return forbiddenResponse("Chỉ Kế toán / Ban Giám Đốc mới được ghi nhận thu tiền khách hàng.");
       }
       const amount = Math.round((Number(body.amount) || 0) * 100) / 100;
@@ -1965,8 +1994,7 @@ export async function POST(req: NextRequest) {
       const me = await getAuthorizedUser(req);
       setAuditActor(me);
       if (!me) return unauthorizedResponse();
-      const dept = String(me.department || "").toLowerCase();
-      if (!isAdminUser(me) && !dept.includes("kế toán") && !String(me.role || "").toLowerCase().includes("account")) {
+      if (!isAccountantUser(me)) {
         return forbiddenResponse("Chỉ Kế toán / Ban Giám Đốc mới được hủy hoặc sửa khoản thu.");
       }
       const pid = Number(body.payment_id);
@@ -1994,8 +2022,7 @@ export async function POST(req: NextRequest) {
       const me = await getAuthorizedUser(req);
       setAuditActor(me);
       if (!me) return unauthorizedResponse();
-      const dept = String(me.department || "").toLowerCase();
-      if (!isAdminUser(me) && !dept.includes("kế toán") && !String(me.role || "").toLowerCase().includes("account")) {
+      if (!isAccountantUser(me)) {
         return forbiddenResponse("Chỉ Kế toán / Ban Giám Đốc mới được mở khóa công nợ.");
       }
       const { order_id, override_reason } = body;

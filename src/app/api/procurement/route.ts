@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/backend/db/db";
-import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, AuthorizedUser, setAuditActor } from "@/backend/services/authz";
+import { getAuthorizedUser, isAdminUser, isAccountantUser, unauthorizedResponse, forbiddenResponse, AuthorizedUser, setAuditActor } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { todayVN, toVNDateString, nowVNDateTime } from "@/backend/services/dates";
@@ -23,8 +23,7 @@ function canWriteProcurement(user: AuthorizedUser) {
 }
 
 function canRecordSupplierPayment(user: AuthorizedUser) {
-  const dept = String(user.department || "").toLowerCase();
-  return isAdminUser(user) || dept.includes("kế toán") || String(user.role || "").toLowerCase().includes("account") || hasPermission(user, "procurement.approve_po");
+  return isAccountantUser(user) || hasPermission(user, "procurement.approve_po");
 }
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
@@ -960,7 +959,8 @@ export async function POST(req: NextRequest) {
 
     // 3. Manage PO (Create / Update - C4 & H7)
     if (action === "order") {
-      const { id, po_code, supplier_id, supplier_name, order_date, expected_delivery_date, items, total_amount, status, notes, force_rollback, rollback_reason } = body;
+      const { id, po_code, supplier_id, supplier_name, order_date, expected_delivery_date, items, total_amount, status, notes, rollback_reason } = body;
+      const force_rollback = Boolean(body.force_rollback) && isAdminUser(me); // lùi trạng thái: chỉ Quản trị viên
       let finalPoCode = po_code;
       let targetId = id;
 
@@ -1022,7 +1022,7 @@ export async function POST(req: NextRequest) {
           {
             const curLvl = PO_STATUS_HIERARCHY[existingUpper] ?? 0;
             const reqLvl = PO_STATUS_HIERARCHY[String(safeStatus).toUpperCase()] ?? 0;
-            if (curLvl < 2 && reqLvl >= 2 && reqLvl !== 99 && !canApprovePO(me) && !canWriteProcurement(me)) safeStatus = existing.status;
+            if (curLvl < 2 && reqLvl >= 2 && reqLvl !== 99 && !canApprovePO(me)) safeStatus = existing.status; // only an approver moves a PO past PENDING
           }
           if (!force_rollback) {
             const currLvl = PO_STATUS_HIERARCHY[existingUpper] ?? 0;
@@ -1061,7 +1061,7 @@ export async function POST(req: NextRequest) {
 
           let createStatus = String(status || "PENDING").toUpperCase();
           if (["COMPLETED", "PARTIALLY_RECEIVED", "PARTIAL_RECEIVED", "RECEIVED"].includes(createStatus)) createStatus = "PENDING";
-          if (["APPROVED", "CONFIRMED", "ORDERED", "PRODUCED", "SHIPPED", "SHIPPING", "IN_TRANSIT", "AT_CUSTOMS", "ARRIVED_CUSTOMS", "CUSTOMS_CLEARING", "CUSTOMS_CLEARANCE"].includes(createStatus) && !canApprovePO(me) && !canWriteProcurement(me)) createStatus = "PENDING";
+          if (["APPROVED", "CONFIRMED", "ORDERED", "PRODUCED", "SHIPPED", "SHIPPING", "IN_TRANSIT", "AT_CUSTOMS", "ARRIVED_CUSTOMS", "CUSTOMS_CLEARING", "CUSTOMS_CLEARANCE"].includes(createStatus) && !canApprovePO(me)) createStatus = "PENDING";
           await ensureSupplierShortName();
           const poCreator = String(body.created_by || me.full_name || me.username || "Chuyên viên Cung ứng").trim();
           const ins = await c.query(
@@ -1256,7 +1256,8 @@ export async function POST(req: NextRequest) {
 
     // 5. Update PO Status with FSM Protection (M3 & L2)
     if (action === "update_order_status") {
-      const { id, po_code, status, expected_delivery_date, force_rollback, rollback_reason } = body;
+      const { id, po_code, status, expected_delivery_date, rollback_reason } = body;
+      const force_rollback = Boolean(body.force_rollback) && isAdminUser(me); // lùi trạng thái: chỉ Quản trị viên
 
       const PO_STATUS_HIERARCHY: Record<string, number> = {
         "DRAFT": 0,
@@ -1299,8 +1300,12 @@ export async function POST(req: NextRequest) {
 
         const currLvl = PO_STATUS_HIERARCHY[existingUpper] ?? 0;
         const nextLvl = PO_STATUS_HIERARCHY[targetUpper] ?? 0;
-        if (currLvl < 2 && nextLvl >= 2 && nextLvl !== 99 && !canApprovePO(me) && !canWriteProcurement(me)) {
-          throw new HttpError(403, "Bạn không có quyền xác nhận hoặc cập nhật tiến trình đơn PO.");
+        if (!(targetUpper in PO_STATUS_HIERARCHY)) {
+          throw new HttpError(400, `Trạng thái PO "${status}" không hợp lệ.`);
+        }
+        // Chỉ người có quyền duyệt PO (Trưởng Cung ứng / BGĐ) mới đưa PO từ Nháp / Chờ duyệt lên Đã duyệt trở đi
+        if (currLvl < 2 && nextLvl >= 2 && nextLvl !== 99 && !canApprovePO(me)) {
+          throw new HttpError(403, "Chỉ Trưởng bộ phận Cung ứng / Ban Giám Đốc mới được duyệt đơn PO.");
         }
 
         if (expected_delivery_date) {
@@ -1328,8 +1333,18 @@ export async function POST(req: NextRequest) {
       const poId = Number(body.id || body.po_id);
       const poCode = String(body.po_code || "").trim();
       const rawPayStatus = String(body.payment_status || "UNPAID").trim().toUpperCase();
-      const validPayStatuses = new Set(["UNPAID", "PAYMENT_REQUESTED", "PARTIAL_PAID", "PAID"]);
-      const nextPayStatus = validPayStatuses.has(rawPayStatus) ? rawPayStatus : "UNPAID";
+      // Số tiền đã trả chỉ thay đổi qua phiếu chi (record_payment / record_payment_multi / void_payment).
+      // Ở đây chỉ bật / tắt cờ "Đề nghị thanh toán"; trước đây chọn "Đã TT" ghi amount_paid = tổng tiền
+      // và "TT một phần" ghi bịa 50% tổng tiền mà không có phiếu chi nào.
+      if (rawPayStatus === "PAID" || rawPayStatus === "PARTIAL_PAID") {
+        return NextResponse.json(
+          { error: "Trạng thái Đã thanh toán / Thanh toán một phần được tính tự động từ phiếu chi. Vui lòng ghi nhận phiếu chi cho PO này." },
+          { status: 400 }
+        );
+      }
+      if (rawPayStatus !== "UNPAID" && rawPayStatus !== "PAYMENT_REQUESTED") {
+        return NextResponse.json({ error: `Trạng thái thanh toán "${body.payment_status}" không hợp lệ.` }, { status: 400 });
+      }
 
       await ensureSupplierShortName();
       const updated = await withTransaction(async (c) => {
@@ -1343,33 +1358,18 @@ export async function POST(req: NextRequest) {
         const po = poRes.rows[0];
         const totalAmt = parseFloat(po.total_amount) || 0;
         const currPaid = parseFloat(po.amount_paid) || 0;
-        let nextAmountPaid = currPaid;
-
-        if (nextPayStatus === "PAID") {
-          nextAmountPaid = Math.max(currPaid, totalAmt);
-        } else if (nextPayStatus === "UNPAID") {
-          const payLedger = await c.query(
-            "SELECT COALESCE(SUM(amount), 0) AS ledger_paid FROM procurement_payments WHERE po_id = $1 AND voided_at IS NULL",
-            [po.id]
-          );
-          const ledgerPaid = parseFloat(payLedger.rows[0]?.ledger_paid) || 0;
-          nextAmountPaid = ledgerPaid > 0 ? ledgerPaid : 0;
-        } else if (nextPayStatus === "PARTIAL_PAID" && currPaid >= totalAmt && totalAmt > 0) {
-          nextAmountPaid = Math.round(totalAmt * 0.5);
-        } else if (nextPayStatus === "PAYMENT_REQUESTED" && currPaid >= totalAmt && totalAmt > 0) {
-          const payLedger = await c.query(
-            "SELECT COALESCE(SUM(amount), 0) AS ledger_paid FROM procurement_payments WHERE po_id = $1 AND voided_at IS NULL",
-            [po.id]
-          );
-          const ledgerPaid = parseFloat(payLedger.rows[0]?.ledger_paid) || 0;
-          nextAmountPaid = ledgerPaid < totalAmt ? ledgerPaid : 0;
+        // Trạng thái suy ra từ số đã trả thật
+        const derived = totalAmt > 0 && currPaid >= totalAmt - 0.5 ? "PAID" : currPaid > 0 ? "PARTIAL_PAID" : "UNPAID";
+        if (rawPayStatus === "PAYMENT_REQUESTED" && derived === "PAID") {
+          throw new HttpError(409, `PO ${po.po_code} đã thanh toán đủ, không cần đề nghị thanh toán.`);
         }
+        const nextPayStatus = rawPayStatus === "PAYMENT_REQUESTED" ? "PAYMENT_REQUESTED" : derived;
 
         await c.query(
-          "UPDATE procurement_orders SET payment_status = $1, amount_paid = $2, version = COALESCE(version, 0) + 1 WHERE id = $3",
-          [nextPayStatus, nextAmountPaid, po.id]
+          "UPDATE procurement_orders SET payment_status = $1, version = COALESCE(version, 0) + 1 WHERE id = $2",
+          [nextPayStatus, po.id]
         );
-        return { id: po.id, po_code: po.po_code, payment_status: nextPayStatus, amount_paid: nextAmountPaid };
+        return { id: po.id, po_code: po.po_code, payment_status: nextPayStatus, amount_paid: currPaid };
       });
 
       await logAudit("UPDATE_PAYMENT_STATUS", "PROCUREMENT", `Cập nhật trạng thái thanh toán PO ${updated.po_code} thành ${updated.payment_status}`);
@@ -1420,7 +1420,7 @@ export async function POST(req: NextRequest) {
           );
           const note = `[Thanh toán ${payment_date || todayVN()}: +${a.amount.toLocaleString("vi-VN")} đ (${payment_method || "CK"}) - Phiếu chi ${voucher}${reference_doc ? ` - UNC: ${reference_doc}` : ""}]`;
           await c.query(
-            `UPDATE procurement_orders SET amount_paid = amount_paid + $1, notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text), version = COALESCE(version, 0) + 1 WHERE id = $3`,
+            `UPDATE procurement_orders SET amount_paid = amount_paid + $1, payment_status = NULL, notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text), version = COALESCE(version, 0) + 1 WHERE id = $3`,
             [a.amount, note, a.po_id]
           );
         }
@@ -1469,7 +1469,7 @@ export async function POST(req: NextRequest) {
         await c.query("UPDATE procurement_payments SET voided_at = now(), voided_by = $1, void_reason = $2 WHERE id = $3", [me.full_name || me.username, reason.slice(0, 500), pid]);
         const amt = Number(pay.amount) || 0;
         await c.query(
-          `UPDATE procurement_orders SET amount_paid = GREATEST(0, amount_paid - $1), notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text), version = COALESCE(version, 0) + 1 WHERE id = $3`,
+          `UPDATE procurement_orders SET amount_paid = GREATEST(0, amount_paid - $1), payment_status = NULL, notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text), version = COALESCE(version, 0) + 1 WHERE id = $3`,
           [amt, `[Hủy khoản chi ${amt.toLocaleString("vi-VN")} đ: ${reason.slice(0, 200)}]`, pay.po_id]
         );
         return { po_code: po?.po_code, amount: amt };
@@ -1517,6 +1517,7 @@ export async function POST(req: NextRequest) {
         const upd = await c.query(
           `UPDATE procurement_orders 
            SET amount_paid = amount_paid + $1,
+               payment_status = NULL, -- tính lại từ số đã trả (cờ cũ như "PAID" không còn đúng)
                notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text),
                version = COALESCE(version, 0) + 1
            WHERE id = $3 RETURNING amount_paid`,
