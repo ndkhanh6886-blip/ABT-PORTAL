@@ -864,22 +864,22 @@ export const ProcurementModule: React.FC = () => {
     const sampleData = [
       {
         "Mã NCC (*)": "NCC-TBR-001",
-        "Tên nhà cung cấp (*)": "Bioer Technology Co., Ltd (Đại Diện VN)",
-        "Người liên hệ": "Trần Văn Nam",
+        "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 1 (dòng minh họa - xóa trước khi nhập)",
+        "Người liên hệ": "Người liên hệ NCC 1",
         "Số điện thoại": "0901234567",
-        "Email": "contact@bioer.vn",
-        "Địa chỉ": "Tầng 5, Tòa nhà Meditech, Cầu Giấy, Hà Nội",
+        "Email": "ncc1@example.com",
+        "Địa chỉ": "Số 10, Đường G, Hà Nội",
         "Ngành hàng cung ứng": "Hệ thống PCR, Máy Real-time PCR",
         "Điều khoản thanh toán": "Công nợ 30 ngày",
         "Đánh giá": 5
       },
       {
         "Mã NCC (*)": "NCC-TBR-002",
-        "Tên nhà cung cấp (*)": "Corning Scientific SEA Pte Ltd",
-        "Người liên hệ": "Nguyễn Hoàng Oanh",
+        "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 2 (dòng minh họa - xóa trước khi nhập)",
+        "Người liên hệ": "Người liên hệ NCC 2",
         "Số điện thoại": "0987654321",
-        "Email": "sea.sales@corning.com",
-        "Địa chỉ": "Marina Bay Financial Centre, Singapore",
+        "Email": "ncc2@example.com",
+        "Địa chỉ": "Singapore",
         "Ngành hàng cung ứng": "Vật tư tiêu hao, Đầu côn, Đĩa PCR",
         "Điều khoản thanh toán": "Thanh toán 100% khi phát hành BL",
         "Đánh giá": 5
@@ -3532,7 +3532,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Tìm theo mã PO, tên NCC (Meridian, Liferiver, SSI...) hoặc sản phẩm..."
+                  placeholder="Tìm theo mã PO, tên nhà cung cấp hoặc sản phẩm..."
                   value={orderSearch}
                   onChange={(e) => setOrderSearch(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -7461,7 +7461,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       : "Khởi Tạo Đề Xuất Mua Hàng (PR Mới)"}
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Chọn mặt hàng có sẵn trong danh mục (gõ tìm nhanh mã hàng như HD-, Meridian, SSI...) hoặc gõ mới
+                    Chọn mặt hàng có sẵn trong danh mục (gõ mã hoặc tên hàng để tìm nhanh) hoặc gõ mới
                   </p>
                 </div>
               </div>

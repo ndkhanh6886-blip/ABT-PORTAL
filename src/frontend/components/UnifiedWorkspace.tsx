@@ -723,8 +723,7 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
   );
 };
 
-// Danh mục mẫu đã bỏ: khách hàng / sản phẩm chỉ lấy từ CSDL
-export const DEFAULT_CUSTOMERS_LIST: any[] = [];
+// Danh mục mẫu đã bỏ: khách hàng / nhà cung cấp / sản phẩm chỉ lấy từ CSDL
 
 export const DEFAULT_PRODUCTS_LIST: any[] = [];
 
@@ -742,22 +741,6 @@ export const ALL_DEPARTMENTS_OPTIONS = [
   { value: "Hành Chính Nhân Sự", label: "Hành Chính Nhân Sự" }
 ];
 
-export const DEFAULT_KNOWN_SUPPLIERS: Array<{ id?: string; name: string; customer_code?: string; address?: string; entityType: "supplier" }> = [
-  { name: "Meridian Bioscience", customer_code: "NCC-MERIDIAN", address: "USA / Quốc tế (IVD Raw Materials & Rapid Tests)", entityType: "supplier" },
-  { name: "Liferiver (Shanghai ZJ Bio-Tech)", customer_code: "NCC-LIFERIVER", address: "Shanghai, China (Real-time PCR Kits)", entityType: "supplier" },
-  { name: "SSI Diagnostica", customer_code: "NCC-SSI", address: "Denmark (Antisera & Culture Media)", entityType: "supplier" },
-  { name: "Rollmed", customer_code: "NCC-ROLLMED", address: "Vật tư tiêu hao phòng Lab", entityType: "supplier" },
-  { name: "HiMedia Laboratories", customer_code: "NCC-HIMEDIA", address: "India (Môi trường nuôi cấy vi sinh)", entityType: "supplier" },
-  { name: "ABT (Công ty TNHH Sinh Học Á Châu)", customer_code: "NCC-ABT", address: "Việt Nam (Sinh phẩm phân tử & Tách chiết)", entityType: "supplier" },
-  { name: "Biolabs (New England Biolabs)", customer_code: "NCC-BIOLABS", address: "USA (Enzymes & Molecular Biology)", entityType: "supplier" },
-  { name: "Thermo Fisher Scientific", customer_code: "NCC-THERMO", address: "USA (Thiết bị & Hóa chất sinh học phân tử)", entityType: "supplier" },
-  { name: "Qiagen", customer_code: "NCC-QIAGEN", address: "Germany (Kit tách chiết & PCR)", entityType: "supplier" },
-  { name: "Seegene", customer_code: "NCC-SEEGENE", address: "Korea (Multiplex Real-time PCR)", entityType: "supplier" },
-  { name: "Cepheid", customer_code: "NCC-CEPHEID", address: "USA (GeneXpert System)", entityType: "supplier" },
-  { name: "Bio-Rad Laboratories", customer_code: "NCC-BIORAD", address: "USA (Thiết bị & Nội kiểm QC)", entityType: "supplier" },
-  { name: "Roche Diagnostics", customer_code: "NCC-ROCHE", address: "Switzerland (IVD Diagnostics)", entityType: "supplier" },
-  { name: "Abbott Diagnostics", customer_code: "NCC-ABBOTT", address: "USA (Rapid & Immunoassay)", entityType: "supplier" }
-];
 
 interface SearchableCustomerSelectProps {
   value: string;
@@ -801,16 +784,11 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
         custs.push({ ...c, entityType: c.entityType || "customer" });
       }
     });
-    DEFAULT_CUSTOMERS_LIST.forEach(dc => {
-      if (!custs.some(c => (c.name || "").toLowerCase() === dc.name.toLowerCase() || (c.customer_code && c.customer_code === dc.customer_code))) {
-        custs.push({ ...dc, entityType: "customer" });
-      }
-    });
 
     if (!includeSuppliers) return custs;
 
     const sups: any[] = [];
-    const rawSups = [...supplierList, ...DEFAULT_KNOWN_SUPPLIERS];
+    const rawSups = [...supplierList];
     rawSups.forEach(s => {
       const sName = (s?.name || s?.supplier_name || "").trim();
       if (sName && !sups.some(x => (x.name || "").toLowerCase() === sName.toLowerCase())) {
@@ -1496,8 +1474,8 @@ export const UnifiedWorkspace: React.FC = () => {
   const [workflows, setWorkflows] = useState<any[]>([]);
   const [dailyLogs, setDailyLogs] = useState<any[]>([]);
   const [personnelList, setPersonnelList] = useState<any[]>([]);
-  const [customerList, setCustomerList] = useState<any[]>(DEFAULT_CUSTOMERS_LIST);
-  const [supplierList, setSupplierList] = useState<any[]>(DEFAULT_KNOWN_SUPPLIERS);
+  const [customerList, setCustomerList] = useState<any[]>([]);
+  const [supplierList, setSupplierList] = useState<any[]>([]);
   const [productList, setProductList] = useState<any[]>(DEFAULT_PRODUCTS_LIST);
 
   // Task Filters & Search
@@ -2117,7 +2095,7 @@ export const UnifiedWorkspace: React.FC = () => {
                 }))
                 .filter((s: any) => s.name && String(s.name).length >= 2)
             : [];
-          const mergedSups: any[] = [...DEFAULT_KNOWN_SUPPLIERS];
+          const mergedSups: any[] = [];
           [...apiSups, ...poSups, ...prodSups].forEach((s: any) => {
             const sName = String(s?.name || s?.supplier_name || s?.company_name || "").trim();
             if (sName && !mergedSups.some((m) => m.name.toLowerCase() === sName.toLowerCase())) {
@@ -10058,7 +10036,7 @@ ${wf.description || ""}`}
                     disabled={taskFormAccess !== "full"}
                     placeholder={
                       isProcTask
-                        ? "Gõ tìm Nhà cung cấp (VD: Meridian, Liferiver, SSI...) hoặc Khách hàng..."
+                        ? "Gõ tìm Nhà cung cấp hoặc Khách hàng..."
                         : "Chọn hoặc gõ tìm khách hàng / đối tác (nếu có)"
                     }
                   />

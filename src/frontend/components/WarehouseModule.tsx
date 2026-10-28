@@ -498,11 +498,8 @@ export const WarehouseModule: React.FC = () => {
       const standardPrice = Number(item.standard_price) > 0 
         ? Number(item.standard_price) 
         : (Number(matchedCatalogProd?.standard_price) > 0 ? Number(matchedCatalogProd.standard_price) : costPrice);
-      const manufacturer = item.manufacturer || matchedCatalogProd?.manufacturer || (
-        item.product_code?.startsWith("HI") || item.product_code?.startsWith("HM") || item.product_code?.startsWith("HE") ? "TopPURE (ABT)" :
-        item.product_code?.startsWith("SQH") ? "TopSPEC (ABT)" :
-        item.product_code?.startsWith("EQ") ? "Bioer Technology" : "TBR Phân Phối"
-      );
+      // Hãng sản xuất lấy từ tồn kho / danh mục; không tự đoán theo tiền tố mã hàng
+      const manufacturer = item.manufacturer || matchedCatalogProd?.manufacturer || "";
 
       return {
         ...item,
@@ -891,42 +888,42 @@ export const WarehouseModule: React.FC = () => {
     const customerData = [
       {
         "Mã khách hàng (*)": "KH-BV-001",
-        "Tên khách hàng / Đơn vị (*)": "Bệnh viện Đa khoa Quốc tế Vinmec",
+        "Tên khách hàng / Đơn vị (*)": "Bệnh viện Mẫu A (dòng minh họa - xóa trước khi nhập)",
         "Nhóm khách hàng": "Bệnh viện Quốc tế & Tư nhân",
         "Khu vực (*)": "Miền Bắc",
         "Tỉnh / Thành phố (*)": "Hà Nội",
-        "Mã số thuế": "0106899988",
-        "Địa chỉ": "458 Minh Khai, Hai Bà Trưng, Hà Nội",
+        "Mã số thuế": "0100000001",
+        "Địa chỉ": "Số 1, Đường A, Quận B, Hà Nội",
         "Hạn mức công nợ (VNĐ)": 500000000,
         "Thời hạn nợ tối đa (Ngày)": 45,
         "NVKD phụ trách": "Nguyễn Văn A",
-        "Ghi chú chung": "Bệnh viện đa khoa quốc tế tiêu chuẩn JCI, đối tác trọng điểm"
+        "Ghi chú chung": "Ví dụ ghi chú khách hàng"
       },
       {
         "Mã khách hàng (*)": "KH-DL-002",
-        "Tên khách hàng / Đơn vị (*)": "Công ty TNHH Thiết Bị Y Tế Đại Nam",
+        "Tên khách hàng / Đơn vị (*)": "Công ty TNHH Mẫu B (dòng minh họa - xóa trước khi nhập)",
         "Nhóm khách hàng": "Đại lý phân phối cấp 1",
         "Khu vực (*)": "Miền Nam",
         "Tỉnh / Thành phố (*)": "TP. Hồ Chí Minh",
-        "Mã số thuế": "0312567890",
-        "Địa chỉ": "120 Nguyễn Đình Chiểu, Q3, TP.HCM",
+        "Mã số thuế": "0300000002",
+        "Địa chỉ": "Số 2, Đường C, Quận D, TP.HCM",
         "Hạn mức công nợ (VNĐ)": 300000000,
         "Thời hạn nợ tối đa (Ngày)": 30,
         "NVKD phụ trách": "Trần Thị B",
-        "Ghi chú chung": "Đại lý phân phối cấp 1 khu vực miền Nam"
+        "Ghi chú chung": "Ví dụ ghi chú đại lý"
       },
       {
         "Mã khách hàng (*)": "KH-BV-003",
-        "Tên khách hàng / Đơn vị (*)": "Bệnh viện Chợ Rẫy (Khoa Vi sinh - Sinh học phân tử)",
+        "Tên khách hàng / Đơn vị (*)": "Bệnh viện Mẫu C (dòng minh họa - xóa trước khi nhập)",
         "Nhóm khách hàng": "Bệnh viện Công lập",
         "Khu vực (*)": "Miền Nam",
         "Tỉnh / Thành phố (*)": "TP. Hồ Chí Minh",
-        "Mã số thuế": "0301140023",
-        "Địa chỉ": "201B Nguyễn Chí Thanh, Phường 12, Quận 5, TP.HCM",
+        "Mã số thuế": "0300000003",
+        "Địa chỉ": "Số 3, Đường E, Quận F, TP.HCM",
         "Hạn mức công nợ (VNĐ)": 800000000,
         "Thời hạn nợ tối đa (Ngày)": 60,
         "NVKD phụ trách": "Lê Văn C",
-        "Ghi chú chung": "Bệnh viện tuyến trung ương hạng đặc biệt"
+        "Ghi chú chung": "Ví dụ ghi chú bệnh viện"
       }
     ];
 
@@ -934,77 +931,77 @@ export const WarehouseModule: React.FC = () => {
     const contactsData = [
       {
         "Mã khách hàng (*)": "KH-BV-001",
-        "Họ và tên người liên hệ (*)": "TS. BS. Nguyễn Văn An",
+        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 1",
         "Chức vụ / Vị trí": "Trưởng Khoa Xét Nghiệm",
         "Khoa / Phòng ban": "Khoa Sinh học phân tử",
         "Số điện thoại (*)": "0912345678",
-        "Email": "an.nv@vinmec.com",
+        "Email": "lienhe1@example.com",
         "Vai trò quyết định": "Kỹ thuật chuyên môn / Quyết định mua",
         "Đầu mối liên hệ chính?": "Có",
         "Ghi chú cá nhân": "Trao đổi kỹ thuật và chạy thử kit PCR buổi chiều"
       },
       {
         "Mã khách hàng (*)": "KH-BV-001",
-        "Họ và tên người liên hệ (*)": "ThS. Trần Thị Mai",
+        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 2",
         "Chức vụ / Vị trí": "Kỹ thuật viên trưởng",
         "Khoa / Phòng ban": "Khoa Vi sinh",
         "Số điện thoại (*)": "0987654321",
-        "Email": "mai.tt@vinmec.com",
+        "Email": "lienhe2@example.com",
         "Vai trò quyết định": "Kỹ thuật vận hành",
         "Đầu mối liên hệ chính?": "Không",
         "Ghi chú cá nhân": "Người trực tiếp nhận hàng và kiểm tra ngoại quan tại Lab"
       },
       {
         "Mã khách hàng (*)": "KH-BV-001",
-        "Họ và tên người liên hệ (*)": "Nguyễn Hoàng Long",
+        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 3",
         "Chức vụ / Vị trí": "Chuyên viên Mua hàng",
         "Khoa / Phòng ban": "Phòng Vật tư - TBYT",
         "Số điện thoại (*)": "0903112233",
-        "Email": "long.nh@vinmec.com",
+        "Email": "lienhe3@example.com",
         "Vai trò quyết định": "Thu mua / Báo giá",
         "Đầu mối liên hệ chính?": "Không",
         "Ghi chú cá nhân": "Đầu mối nhận báo giá và đàm phán hợp đồng"
       },
       {
         "Mã khách hàng (*)": "KH-DL-002",
-        "Họ và tên người liên hệ (*)": "Lê Văn Thắng",
+        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 4",
         "Chức vụ / Vị trí": "Giám đốc Điều hành",
         "Khoa / Phòng ban": "Ban Giám Đốc",
         "Số điện thoại (*)": "0938112233",
-        "Email": "thang.le@dainam-med.vn",
+        "Email": "lienhe4@example.com",
         "Vai trò quyết định": "Ban Giám đốc / Ký hợp đồng",
         "Đầu mối liên hệ chính?": "Có",
         "Ghi chú cá nhân": "Ký duyệt hợp đồng nguyên tắc đại lý"
       },
       {
         "Mã khách hàng (*)": "KH-DL-002",
-        "Họ và tên người liên hệ (*)": "Vũ Bích Hạnh",
+        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 5",
         "Chức vụ / Vị trí": "Kế toán trưởng",
         "Khoa / Phòng ban": "Phòng Tài chính Kế toán",
         "Số điện thoại (*)": "0909887766",
-        "Email": "hanh.vu@dainam-med.vn",
+        "Email": "lienhe5@example.com",
         "Vai trò quyết định": "Kế toán thanh toán",
         "Đầu mối liên hệ chính?": "Không",
         "Ghi chú cá nhân": "Đối soát công nợ & hóa đơn điện tử hàng tháng"
       },
       {
         "Mã khách hàng (*)": "KH-BV-003",
-        "Họ và tên người liên hệ (*)": "TS. BS. Lê Quốc Cường",
+        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 6",
         "Chức vụ / Vị trí": "Trưởng khoa Vi sinh",
         "Khoa / Phòng ban": "Khoa Vi sinh",
-        "Số điện thoại (*)": "028.3855.4137",
-        "Email": "cuong.le@choray.vn",
+        "Số điện thoại (*)": "0900000006",
+        "Email": "lienhe6@example.com",
         "Vai trò quyết định": "Kỹ thuật chuyên môn / Quyết định mua",
         "Đầu mối liên hệ chính?": "Có",
         "Ghi chú cá nhân": "Đầu mối chuyên môn trọng điểm phía Nam"
       },
       {
         "Mã khách hàng (*)": "KH-BV-003",
-        "Họ và tên người liên hệ (*)": "CN. Phạm Minh Tuấn",
+        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 7",
         "Chức vụ / Vị trí": "Kỹ thuật viên xét nghiệm",
         "Khoa / Phòng ban": "Phòng PCR",
         "Số điện thoại (*)": "0918776655",
-        "Email": "tuan.pm@choray.vn",
+        "Email": "lienhe7@example.com",
         "Vai trò quyết định": "Kỹ thuật vận hành",
         "Đầu mối liên hệ chính?": "Không",
         "Ghi chú cá nhân": "Kiểm tra Lot và hạn dùng khi nhận kit"
@@ -1050,7 +1047,7 @@ export const WarehouseModule: React.FC = () => {
     const productsData = products.length > 0 ? products.slice(0, 10).map((p) => ({
       "Mã SKU (*)": p.code,
       "Tên sản phẩm (*)": p.name,
-      "Hãng sản xuất (*)": p.manufacturer || (p.code?.startsWith("HI") || p.code?.startsWith("HM") || p.code?.startsWith("HE") ? "TopPURE (ABT)" : p.code?.startsWith("SQH") ? "TopSPEC (ABT)" : "TBR"),
+      "Hãng sản xuất (*)": p.manufacturer || "",
       "Nhóm ngành hàng (*)": p.category || "Hóa chất / Sinh phẩm",
       "Quy cách đóng gói": p.specification || "Tiêu chuẩn",
       "Đơn vị tính": p.unit || "Hộp",
@@ -1208,22 +1205,22 @@ export const WarehouseModule: React.FC = () => {
     const sampleData = [
       {
         "Mã NCC (*)": "NCC-TBR-001",
-        "Tên nhà cung cấp (*)": "Bioer Technology Co., Ltd (Đại Diện VN)",
-        "Người liên hệ": "Trần Văn Nam",
+        "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 1 (dòng minh họa - xóa trước khi nhập)",
+        "Người liên hệ": "Người liên hệ NCC 1",
         "Số điện thoại": "0901234567",
-        "Email": "contact@bioer.vn",
-        "Địa chỉ": "Tầng 5, Tòa nhà Meditech, Cầu Giấy, Hà Nội",
+        "Email": "ncc1@example.com",
+        "Địa chỉ": "Số 10, Đường G, Hà Nội",
         "Ngành hàng cung ứng": "Hệ thống PCR, Máy Real-time PCR",
         "Điều khoản thanh toán": "Công nợ 30 ngày",
         "Đánh giá": 5
       },
       {
         "Mã NCC (*)": "NCC-TBR-002",
-        "Tên nhà cung cấp (*)": "Corning Scientific SEA Pte Ltd",
-        "Người liên hệ": "Nguyễn Hoàng Oanh",
+        "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 2 (dòng minh họa - xóa trước khi nhập)",
+        "Người liên hệ": "Người liên hệ NCC 2",
         "Số điện thoại": "0987654321",
-        "Email": "sea.sales@corning.com",
-        "Địa chỉ": "Marina Bay Financial Centre, Singapore",
+        "Email": "ncc2@example.com",
+        "Địa chỉ": "Singapore",
         "Ngành hàng cung ứng": "Vật tư tiêu hao, Đầu côn, Đĩa PCR",
         "Điều khoản thanh toán": "Thanh toán 100% khi phát hành BL",
         "Đánh giá": 5

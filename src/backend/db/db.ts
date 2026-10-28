@@ -669,6 +669,19 @@ async function runIntegrityMigrations() {
       `)
     );
 
+    // Xóa 6 nhà cung cấp mẫu mà bản cũ tự chèn (Meridian, Liferiver, SSI, Rollmed, HiMedia, NEB).
+    // Chỉ xóa dòng còn nguyên dữ liệu mẫu (đúng mã + số điện thoại mẫu) và chưa được dùng ở PO hay bảng giá NCC.
+    await step("remove_seeded_demo_suppliers", () =>
+      client.query(`
+        DELETE FROM procurement_suppliers s
+         WHERE (s.supplier_code, s.phone) IN (
+                 ('NCC-MERIDIAN', '+1-513-271-3700'), ('NCC-LIFERIVER', '+86-21-34680596'), ('NCC-SSI', '+45-4829-9100'),
+                 ('NCC-ROLLMED', '+86-512-6586-0000'), ('NCC-HIMEDIA', '+91-22-6147-1919'), ('NCC-NEB', '+1-978-927-5054'))
+           AND NOT EXISTS (SELECT 1 FROM procurement_orders o WHERE o.supplier_id = s.id OR LOWER(TRIM(o.supplier_name)) = LOWER(TRIM(s.name)))
+           AND NOT EXISTS (SELECT 1 FROM supplier_products sp WHERE sp.supplier_id = s.id)
+      `)
+    );
+
     await step("inventory_checks", () =>
       client.query(`
         DO $$
