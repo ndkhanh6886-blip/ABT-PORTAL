@@ -2,44 +2,35 @@ name: CI/CD Pipeline - Build & Auto Deploy
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  # ==========================================
-  # STAGE 1: Continuous Integration (CI)
-  # ==========================================
   ci-build:
     name: Build & Code Quality Check
     runs-on: ubuntu-latest
-
     steps:
-      - name: 📥 Checkout Repository
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: ⚙️ Setup Node.js 20
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: npm
 
-      - name: 📦 Install Dependencies
+      - name: Install Dependencies
         run: npm ci || npm install --prefer-offline --no-audit
 
-      - name: 🔨 Build Production Application
+      - name: Build Production Application
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: 1
           NODE_ENV: production
 
-  # ==========================================
-  # STAGE 2: Auto Deploy on Self-Hosted Server
-  # ==========================================
-    deploy:
+  deploy:
     name: Deploy on Production Server (Self-Hosted)
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: ci-build
@@ -49,9 +40,8 @@ jobs:
       cancel-in-progress: false
     permissions:
       contents: read
-
     steps:
-      - name: 🚀 Pull Latest Code, Build & Restart
+      - name: Pull Latest Code, Build & Restart
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -59,7 +49,7 @@ jobs:
           TARGET_DIR="/var/www/TBRs-portal"
           cd "$TARGET_DIR"
 
-          echo "📥 Lấy commit ${GITHUB_SHA::7}..."
+          echo "Fetching commit ${GITHUB_SHA::7}..."
           AUTH_B64=$(printf "x-access-token:%s" "$GH_TOKEN" | base64 -w0)
           git -c http.extraheader="AUTHORIZATION: basic ${AUTH_B64}" fetch "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
           git reset --hard FETCH_HEAD
@@ -69,11 +59,11 @@ jobs:
             echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
           fi
 
-          echo "📦 Cài thư viện & build..."
+          echo "Installing dependencies & building..."
           npm ci
           npm run build
 
-          echo "🔄 Khởi động lại tbrs-portal..."
+          echo "Restarting tbrs-portal..."
           pm2 restart tbrs-portal
           sleep 8
-          curl -fsS -o /dev/null http://localhost:8080 && echo "✅ Deploy OK: $(git rev-parse --short HEAD)"
+          curl -fsS -o /dev/null http://localhost:8080 && echo "Deploy OK: $(git rev-parse --short HEAD)"
