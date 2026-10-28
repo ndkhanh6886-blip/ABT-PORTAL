@@ -20,15 +20,15 @@ export async function initZaloDatabase(force = false): Promise<{ success: boolea
     await query(`
       CREATE TABLE IF NOT EXISTS zalo_config (
         id SERIAL PRIMARY KEY,
-        oa_id VARCHAR(100) DEFAULT '398247192834719',
+        oa_id VARCHAR(100) DEFAULT '',
         oa_name VARCHAR(150) DEFAULT 'Công ty TNHH Khoa học TBR (Zalo OA Doanh Nghiệp)',
-        app_id VARCHAR(100) DEFAULT '482910481920481',
-        secret_key VARCHAR(150) DEFAULT 'tbr_zalo_sec_89f0293a4bc',
-        access_token TEXT DEFAULT 'zalo_access_token_demo_valid',
-        refresh_token TEXT DEFAULT 'zalo_refresh_token_demo_valid',
-        webhook_verify_token VARCHAR(100) DEFAULT 'tbr_webhook_token_2026',
+        app_id VARCHAR(100) DEFAULT '',
+        secret_key VARCHAR(150) DEFAULT '',
+        access_token TEXT DEFAULT '',
+        refresh_token TEXT DEFAULT '',
+        webhook_verify_token VARCHAR(100) DEFAULT '',
         director_discount_threshold NUMERIC(5,2) DEFAULT 10.00,
-        director_phone VARCHAR(50) DEFAULT '0916033652',
+        director_phone VARCHAR(50) DEFAULT '',
         director_zalo_id VARCHAR(100) DEFAULT '',
         is_active BOOLEAN DEFAULT TRUE,
         updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
@@ -43,15 +43,15 @@ export async function initZaloDatabase(force = false): Promise<{ success: boolea
           oa_id, oa_name, app_id, secret_key, access_token, refresh_token,
           webhook_verify_token, director_discount_threshold, director_phone, director_zalo_id
         ) VALUES (
-          '398247192834719',
+          '',
           'Công ty TNHH Khoa học TBR (Zalo OA Doanh Nghiệp)',
-          '482910481920481',
-          'tbr_zalo_sec_89f0293a4bc',
-          'zalo_access_token_demo_valid',
-          'zalo_refresh_token_demo_valid',
-          'tbr_webhook_token_2026',
+          '',
+          '',
+          '',
+          '',
+          '',
           10.00,
-          '0916033652',
+          '',
           ''
         )
       `);

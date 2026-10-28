@@ -108,9 +108,9 @@ export const ZaloOperationsHub: React.FC = () => {
     secret_key: "",
     access_token: "",
     refresh_token: "",
-    webhook_verify_token: "tbr_webhook_token_2026",
+    webhook_verify_token: "",
     director_discount_threshold: 10,
-    director_phone: "0916033652",
+    director_phone: "",
     director_zalo_id: "",
     is_active: true
   });
@@ -941,7 +941,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   type="text"
                   value={editPhone}
                   onChange={(e) => setEditPhone(e.target.value)}
-                  placeholder="Ví dụ: 0916033652 (để trống nếu chưa có)"
+                  placeholder="Ví dụ: 09xxxxxxxx (để trống nếu chưa có)"
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
                 />
                 <p className="text-[10px] text-slate-400">
@@ -1568,7 +1568,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   type="text"
                   value={config.director_phone}
                   onChange={(e) => setConfig({ ...config, director_phone: e.target.value })}
-                  placeholder="0916033652"
+                  placeholder="09xxxxxxxx"
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-slate-900 dark:text-white"
                 />
               </div>

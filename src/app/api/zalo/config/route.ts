@@ -239,9 +239,9 @@ export async function POST(req: NextRequest) {
             secret_key || "",
             access_token || "",
             refresh_token || "",
-            webhook_verify_token || "tbr_webhook_token_2026",
+            webhook_verify_token || "",
             director_discount_threshold || 10.00,
-            director_phone || "0916033652",
+            director_phone || "",
             director_zalo_id || ""
           ]
         );

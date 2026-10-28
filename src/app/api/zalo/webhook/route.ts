@@ -6,6 +6,8 @@ import { sendZaloCustomerServiceMessage } from "@/backend/services/zaloTokenServ
 import crypto from "crypto";
 
 let warnedUnsignedWebhook = false;
+/** Sự kiện Zalo cũ hơn mức này bị coi là gửi lại (replay) */
+const ZALO_EVENT_MAX_AGE_MS = 10 * 60 * 1000;
 
 /**
  * Zalo OA signs every webhook event: header `X-ZEvent-Signature: mac=<sha256(appId + rawBody + timestamp + OASecretKey)>`.
@@ -47,7 +49,14 @@ async function verifyZaloSignature(req: NextRequest, rawBody: string, body: any)
     appId = String(cfg.rows[0]?.app_id || "").trim();
   }
   const expected = crypto.createHash("sha256").update(`${appId}${rawBody}${body?.timestamp ?? ""}${oaSecret}`).digest("hex");
-  return mac.length === expected.length && crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected));
+  if (!(mac.length === expected.length && crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expected)))) return false;
+  // Chống phát lại (replay): sự kiện có chữ ký hợp lệ nhưng đã cũ (bị bắt lại và gửi lại) thì bỏ qua
+  const ts = Number(body?.timestamp);
+  if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > ZALO_EVENT_MAX_AGE_MS) {
+    console.warn(`[zalo/webhook] Bỏ qua sự kiện quá cũ hoặc thiếu timestamp (${body?.timestamp}).`);
+    return false;
+  }
+  return true;
 }
 
 /**
