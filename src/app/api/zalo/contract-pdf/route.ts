@@ -97,15 +97,15 @@ export async function GET(req: NextRequest) {
     const c = escapeDeep(rawC);
 
     // Company configuration (Party A)
-    let companyName = "Công ty TNHH Khoa học TBR";
-    let companyAddress = "51 Đường số 26, Phường An Lạc, Quận Bình Tân, TP. Hồ Chí Minh";
-    let companyPhone = "028 3872 9999";
-    let companyEmail = "info@tbrscientific.com";
-    let companyTaxCode = "0314892019";
-    let companyRep = "NGUYỄN VĂN HƯNG";
+    let companyName = "";
+    let companyAddress = "";
+    let companyPhone = "";
+    let companyEmail = "";
+    let companyTaxCode = "";
+    let companyRep = "";
     let companyRepRole = "Tổng Giám Đốc";
-    let companyBank = "Ngân hàng TMCP Ngoại Thương Việt Nam (Vietcombank) - Chi nhánh TP.HCM";
-    let companyAccountNo = "0071001289688";
+    let companyBank = "";
+    let companyAccountNo = "";
 
     try {
       const configRes = await query("SELECT data FROM app_storage WHERE key = $1", ["sales_company_config"]);
@@ -126,6 +126,16 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) {
       console.error("Failed to load company config for contract-pdf:", e);
+    }
+
+    // Thông tin pháp lý của công ty phải lấy từ Cấu hình. Trước đây thiếu cấu hình thì in mã số thuế, địa chỉ
+    // (và một số tài khoản ngân hàng không có thật) cố định trong code lên chứng từ gửi khách hàng.
+    const missingCompanyFields = ([["Tên công ty", companyName], ["Mã số thuế", companyTaxCode], ["Địa chỉ", companyAddress], ["Người đại diện", companyRep]] as [string, string][]).filter(([, v]) => !String(v || "").trim()).map(([label]) => label);
+    if (missingCompanyFields.length > 0) {
+      return new NextResponse(
+        `<h1>Chưa cấu hình thông tin công ty</h1><p>Thiếu: ${missingCompanyFields.join(", ")}. Quản trị viên vui lòng cập nhật Cấu hình thông tin công ty trước khi xuất chứng từ.</p>`,
+        { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } }
+      );
     }
 
     // Party B details
@@ -382,7 +392,7 @@ export async function GET(req: NextRequest) {
   <div class="party-row"><span class="party-lbl">Địa chỉ trụ sở:</span><span class="party-val">${companyAddress}</span></div>
   <div class="party-row"><span class="party-lbl">Điện thoại:</span><span class="party-val">${companyPhone} | Email: ${companyEmail}</span></div>
   <div class="party-row"><span class="party-lbl">Mã số thuế:</span><span class="party-val"><strong>${companyTaxCode}</strong></span></div>
-  <div class="party-row"><span class="party-lbl">Tài khoản ngân hàng:</span><span class="party-val">Số TK: <strong>${companyAccountNo}</strong> tại ${companyBank}</span></div>
+  ${companyAccountNo ? `<div class="party-row"><span class="party-lbl">Tài khoản ngân hàng:</span><span class="party-val">Số TK: <strong>${companyAccountNo}</strong>${companyBank ? ` tại ${companyBank}` : ""}</span></div>` : ""}
   <div class="party-row"><span class="party-lbl">Người đại diện:</span><span class="party-val"><strong>${companyRep}</strong> &mdash; Chức vụ: ${companyRepRole}</span></div>
 
   <!-- BÊN B -->

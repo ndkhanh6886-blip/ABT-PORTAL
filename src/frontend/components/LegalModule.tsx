@@ -250,29 +250,29 @@ export const LegalModule: React.FC = () => {
     hospitalName: "",
     packageName: "",
     bidValue: "",
-    submissionDeadline: "30/11/2026",
+    submissionDeadline: "",
     assignedLawyer: legalLeadName,
     notes: "",
     checklist: {
-      circulationLicense: true,
-      loaAuthorization: true,
-      iso13485: true,
-      financialReport: true,
-      gdpGspColdChain: true
+      circulationLicense: false,
+      loaAuthorization: false,
+      iso13485: false,
+      financialReport: false,
+      gdpGspColdChain: false
     },
     attachments: [] as AttachedFile[]
   });
 
   // New License Form
   const [newLicenseForm, setNewLicenseForm] = useState({
-    licenseNumber: `26000${Date.now().toString().slice(-4)}/PCBB-BYT`,
+    licenseNumber: "",
     productName: "",
     deviceClass: "Loại C" as MedicalLicense["deviceClass"],
     manufacturer: "",
     origin: "",
     agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế",
     issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-    expiryDate: "31/12/2030",
+    expiryDate: "",
     notes: "",
     attachments: [] as AttachedFile[]
   });
@@ -288,7 +288,7 @@ export const LegalModule: React.FC = () => {
     department: user?.department || "Pháp Chế",
     riskNotes: "",
     riskLevel: "THAP" as LegalContract["riskLevel"],
-    expiryDate: "31/12/2026",
+    expiryDate: "",
     attachments: [] as AttachedFile[]
   });
 
@@ -493,9 +493,9 @@ export const LegalModule: React.FC = () => {
     if (kind === "doc") setIsNewDocModalOpen(false);
     if (editing?.kind !== kind) return;
     setEditing(null);
-    if (kind === "contract") setNewContractForm({ code: `HD-TBR-${Date.now().toString().slice(-4)}`, title: "", partnerName: "", type: "Bán hàng Bệnh Viện", value: "", requester: myName, department: user?.department || "Pháp Chế", riskNotes: "", riskLevel: "THAP", expiryDate: "31/12/2026", attachments: [] });
-    if (kind === "tender") setNewTenderForm({ code: `THAU-TBR-${Date.now().toString().slice(-4)}`, hospitalName: "", packageName: "", bidValue: "", submissionDeadline: "30/11/2026", assignedLawyer: legalLeadName, notes: "", checklist: { circulationLicense: true, loaAuthorization: true, iso13485: true, financialReport: true, gdpGspColdChain: true }, attachments: [] });
-    if (kind === "license") setNewLicenseForm({ licenseNumber: `26000${Date.now().toString().slice(-4)}/PCBB-BYT`, productName: "", deviceClass: "Loại C", manufacturer: "", origin: "", agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế", issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), expiryDate: "31/12/2030", notes: "", attachments: [] });
+    if (kind === "contract") setNewContractForm({ code: `HD-TBR-${Date.now().toString().slice(-4)}`, title: "", partnerName: "", type: "Bán hàng Bệnh Viện", value: "", requester: myName, department: user?.department || "Pháp Chế", riskNotes: "", riskLevel: "THAP", expiryDate: "", attachments: [] });
+    if (kind === "tender") setNewTenderForm({ code: `THAU-TBR-${Date.now().toString().slice(-4)}`, hospitalName: "", packageName: "", bidValue: "", submissionDeadline: "", assignedLawyer: legalLeadName, notes: "", checklist: { circulationLicense: false, loaAuthorization: false, iso13485: false, financialReport: false, gdpGspColdChain: false }, attachments: [] });
+    if (kind === "license") setNewLicenseForm({ licenseNumber: "", productName: "", deviceClass: "Loại C", manufacturer: "", origin: "", agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế", issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), expiryDate: "", notes: "", attachments: [] });
     if (kind === "doc") setNewDocForm({ code: "", title: "", category: "Nghị Định & Luật", issuingBody: "", effectiveDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), summary: "", attachments: [] });
   };
   const editStamp = () => ({ updatedAt: new Date().toISOString(), updatedBy: myName || "Người dùng" });
@@ -591,40 +591,6 @@ export const LegalModule: React.FC = () => {
     }));
   };
 
-  const handleAttachSampleTemplates = () => {
-    const sampleFiles: AttachedFile[] = [
-      {
-        id: `att-sample-${Date.now()}-1`,
-        name: "Hop_dong_nguyen_tac_cung_ung_IVD_2026.pdf",
-        size: "1.42 MB",
-        type: "application/pdf",
-        uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-        note: "Dự thảo hợp đồng thương mại y tế theo chuẩn Bộ Y Tế"
-      },
-      {
-        id: `att-sample-${Date.now()}-2`,
-        name: "Phu_luc_01_Bang_gia_hoa_chat_realtime_PCR.pdf",
-        size: "680 KB",
-        type: "application/pdf",
-        uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-        note: "Bảng chi tiết quy cách đóng gói và đơn giá vật tư"
-      },
-      {
-        id: `att-sample-${Date.now()}-3`,
-        name: "Giay_uy_quyen_chinh_hang_LOA_Roche.pdf",
-        size: "450 KB",
-        type: "application/pdf",
-        uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-        note: "Thư ủy quyền phân phối hợp pháp tại thị trường Việt Nam"
-      }
-    ];
-
-    setNewContractForm(prev => ({
-      ...prev,
-      attachments: [...prev.attachments, ...sampleFiles]
-    }));
-    showToast("success", "Đã thêm 3 tài liệu mẫu chuẩn hóa vào danh sách đính kèm!");
-  };
 
   const handleOpenDocViewer = (
     doc: {
@@ -780,6 +746,10 @@ export const LegalModule: React.FC = () => {
 
   const handleCreateTender = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newTenderForm.submissionDeadline.trim()) {
+      showToast("error", "Vui lòng nhập hạn nộp hồ sơ thầu.");
+      return;
+    }
     if (editing?.kind === "tender") {
       saveTenders(tenders.map(t => t.id === editing.id ? {
         ...t, code: newTenderForm.code, hospitalName: newTenderForm.hospitalName, packageName: newTenderForm.packageName,
@@ -815,15 +785,15 @@ export const LegalModule: React.FC = () => {
       hospitalName: "",
       packageName: "",
       bidValue: "",
-      submissionDeadline: "30/11/2026",
+      submissionDeadline: "",
       assignedLawyer: legalLeadName,
       notes: "",
       checklist: {
-        circulationLicense: true,
-        loaAuthorization: true,
-        iso13485: true,
-        financialReport: true,
-        gdpGspColdChain: true
+        circulationLicense: false,
+        loaAuthorization: false,
+        iso13485: false,
+        financialReport: false,
+        gdpGspColdChain: false
       },
       attachments: []
     });
@@ -869,6 +839,11 @@ export const LegalModule: React.FC = () => {
 
   const handleCreateLicense = (e: React.FormEvent) => {
     e.preventDefault();
+    // Số lưu hành / hạn hiệu lực phải lấy từ giấy phép thật (trước đây form tự điền số và hạn giả)
+    if (!newLicenseForm.licenseNumber.trim() || !newLicenseForm.expiryDate.trim()) {
+      showToast("error", "Vui lòng nhập đúng Số lưu hành và Ngày hết hạn theo giấy phép của Bộ Y Tế.");
+      return;
+    }
     if (editing?.kind === "license") {
       saveLicenses(licenses.map(l => l.id === editing.id ? {
         ...l, licenseNumber: newLicenseForm.licenseNumber, productName: newLicenseForm.productName,
@@ -899,14 +874,14 @@ export const LegalModule: React.FC = () => {
     saveLicenses(updated);
     setIsNewLicenseModalOpen(false);
     setNewLicenseForm({
-      licenseNumber: `26000${Date.now().toString().slice(-4)}/PCBB-BYT`,
+      licenseNumber: "",
       productName: "",
       deviceClass: "Loại C",
       manufacturer: "",
       origin: "",
       agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế",
       issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-      expiryDate: "31/12/2030",
+      expiryDate: "",
       notes: "",
       attachments: []
     });
@@ -960,7 +935,7 @@ export const LegalModule: React.FC = () => {
       department: user?.department || "Pháp Chế",
       riskNotes: "",
       riskLevel: "THAP",
-      expiryDate: "31/12/2026",
+      expiryDate: "",
       attachments: []
     });
     showToast("success", `Đã gửi yêu cầu thẩm định hợp đồng ${created.code} kèm ${created.attachments?.length || 0} tài liệu!`);
@@ -2007,14 +1982,6 @@ export const LegalModule: React.FC = () => {
                   <Paperclip className="w-3.5 h-3.5 text-emerald-600" />
                   <span>Đính Kèm Tài Liệu Hợp Đồng (PDF, Word, Excel, Bản Scan)</span>
                 </label>
-                <button
-                  type="button"
-                  onClick={handleAttachSampleTemplates}
-                  className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" />
-                  Đính kèm mẫu kiểm thử (3 file)
-                </button>
               </div>
 
               {/* Upload Drop Area */}

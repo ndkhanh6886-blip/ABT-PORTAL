@@ -29,12 +29,12 @@ export async function GET(req: NextRequest) {
     const totalFmt = new Intl.NumberFormat("vi-VN").format(parseFloat(q.total_amount || 0));
 
     // Dynamic company configuration from app_storage
-    let companyName = "Công ty TNHH Khoa học TBR";
-    let companyAddress = "51 Đường số 26, Phường An Lạc, TP. HCM";
-    let companyPhone = "028 3872 9999";
-    let companyEmail = "info@tbrscientific.com";
-    let companyTaxCode = "0314892019";
-    let companyRep = "BAN GIÁM ĐỐC TBRs";
+    let companyName = "";
+    let companyAddress = "";
+    let companyPhone = "";
+    let companyEmail = "";
+    let companyTaxCode = "";
+    let companyRep = "BAN GIÁM ĐỐC";
 
     try {
       const configRes = await query("SELECT data FROM app_storage WHERE key = $1", ["sales_company_config"]);
@@ -52,6 +52,16 @@ export async function GET(req: NextRequest) {
       }
     } catch (e) {
       console.error("Failed to load company config for quotation-pdf:", e);
+    }
+
+    // Thông tin pháp lý của công ty phải lấy từ Cấu hình. Trước đây thiếu cấu hình thì in mã số thuế, địa chỉ
+    // (và một số tài khoản ngân hàng không có thật) cố định trong code lên chứng từ gửi khách hàng.
+    const missingCompanyFields = ([["Tên công ty", companyName], ["Mã số thuế", companyTaxCode], ["Địa chỉ", companyAddress]] as [string, string][]).filter(([, v]) => !String(v || "").trim()).map(([label]) => label);
+    if (missingCompanyFields.length > 0) {
+      return new NextResponse(
+        `<h1>Chưa cấu hình thông tin công ty</h1><p>Thiếu: ${missingCompanyFields.join(", ")}. Quản trị viên vui lòng cập nhật Cấu hình thông tin công ty trước khi xuất chứng từ.</p>`,
+        { status: 503, headers: { "Content-Type": "text/html; charset=utf-8" } }
+      );
     }
 
     const rowsHtml = items.map((it: any, idx: number) => {
