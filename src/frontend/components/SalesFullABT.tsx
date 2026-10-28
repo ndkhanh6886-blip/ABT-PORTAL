@@ -68,6 +68,7 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { dispatchCompanyConfigUpdated, getDefaultCompanyConfig } from "@/frontend/utils/companyConfig";
 import * as XLSX from "xlsx";
 import { exportCustomerQuotationToExcel } from "@/frontend/utils/exportQuotationExcel";
+import { isLegacyMockAppTask } from "@/frontend/utils/legacyMockData";
 import { DEFAULT_VAT_RATE, preVatAmount } from "@/frontend/utils/vat";
 import { getMesApiBase } from "@/frontend/utils/mesApi";
 import { SalesEvaluationAnalytics } from "@/frontend/components/SalesEvaluationAnalytics";
@@ -4393,34 +4394,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         };
     }, []);
 
-    const isLegacyMockAppTask = (item: any) => {
-        if (!item) return false;
-        const title = (item.title || "").toLowerCase();
-        const lot = (item.productLot || "").toLowerCase();
-        const desc = (item.desc || item.description || "").toLowerCase();
-        const id = String(item.id || "").toUpperCase();
-        return (
-            title.includes("bảo trì định kỳ & hiệu chuẩn") ||
-            title.includes("xử lý khiếu nại tín hiệu kênh fam") ||
-            title.includes("tư vấn thiết kế layout phòng xét nghiệm") ||
-            title.includes("nghiệm thu & đào tạo vận hành máy real-time pcr") ||
-            title.includes("abi 7500") ||
-            lot.includes("lot-covid-fam-99") ||
-            lot.includes("sn-tbr-abi-003") ||
-            lot.includes("service-setup") ||
-            lot.includes("sn-abi-7500-202601") ||
-            desc.includes("lot-covid-fam-99") ||
-            desc.includes("sn-tbr-abi-003") ||
-            id === "APP-TSK-001" ||
-            id === "APP-TSK-002" ||
-            id === "APP-TSK-003" ||
-            id === "APP-TSK-004" ||
-            id === "REQ-APP-001" ||
-            id === "REQ-APP-002" ||
-            id === "REQ-APP-003" ||
-            id === "REQ-APP-004"
-        );
-    };
 
     // Cross-Department Coordination States (Yêu cầu phối hợp Application)
     const [sharedAppRequests, setSharedAppRequests] = useState<any[]>(() => {
