@@ -112,18 +112,17 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "change_password") {
-      // The signed-in user changes their own password; otherwise the username + current password identify the account
+      // Only the signed-in user changes their own password. Changing it with "username + current password"
+      // without a session let anyone who knew an employee code and the initial password take the account over.
       const me = await getAuthorizedUser(req, { allowPasswordChangePending: true });
       setAuditActor(me);
-      const lookup = me ? String(me.username) : String(username || "").trim();
-      if (!lookup || !currentPassword || !newPassword) {
+      if (!me) return unauthorizedResponse();
+      if (!currentPassword || !newPassword) {
         return NextResponse.json({ error: "Vui lòng nhập đầy đủ mật khẩu hiện tại và mật khẩu mới" }, { status: 400 });
       }
       const res = await query(
-        me
-          ? "SELECT id, username, password_hash, full_name, role, department, locked_until, COALESCE(session_version, 0) AS session_version FROM users WHERE id = $1"
-          : `SELECT id, username, password_hash, full_name, role, department, locked_until, COALESCE(session_version, 0) AS session_version FROM users WHERE ${USER_LOOKUP_WHERE} ${USER_LOOKUP_ORDER} LIMIT 1`,
-        [me ? me.id : lookup]
+        "SELECT id, username, password_hash, full_name, role, department, locked_until, COALESCE(session_version, 0) AS session_version FROM users WHERE id = $1",
+        [me.id]
       );
       const user = res.rows[0];
       if (!user) {
@@ -157,7 +156,7 @@ export async function POST(req: NextRequest) {
       );
       await logAudit("CHANGE_PASSWORD", "AUTH", `Người dùng ${user.full_name} (${user.username}) đã đổi mật khẩu thành công`, user.username, user.full_name);
       const response = NextResponse.json({ success: true, message: "Đổi mật khẩu thành công" });
-      if (me) await issueSession(req, upd.rows[0], response);
+      await issueSession(req, upd.rows[0], response);
       return response;
     }
 

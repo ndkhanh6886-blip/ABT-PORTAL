@@ -610,6 +610,13 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
     }
   };
 
+  // Thông báo mật khẩu tạm của các tài khoản vừa tạo (máy chủ chỉ trả về một lần)
+  const showInitialCredentials = (list: any) => {
+    if (!Array.isArray(list) || list.length === 0) return;
+    const lines = list.map((c: any) => `${c.username} (${c.full_name || ""}): ${c.password}`).join("\n");
+    alert(`🔑 Mật khẩu tạm của ${list.length} tài khoản mới — hãy lưu lại và giao riêng cho từng người (chỉ hiển thị một lần, phải đổi ở lần đăng nhập đầu):\n\n${lines}`);
+  };
+
   const [isSyncingUsers, setIsSyncingUsers] = useState(false);
   const handleSyncUsersFromPersonnel = async () => {
     setIsSyncingUsers(true);
@@ -622,6 +629,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       const data = await res.json();
       if (res.ok && data.success) {
         alert("✅ " + data.message);
+        showInitialCredentials(data.initial_credentials);
         await fetchData();
       } else {
         alert("❌ Lỗi: " + (data.error || "Không thể đồng bộ"));
@@ -759,6 +767,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
         if (res.ok && data.success) {
           alert(`✅ ${data.message || `Đã nạp thành công ${data.count || rawJson.length} nhân sự!`}`);
+          showInitialCredentials(data.initial_credentials);
           await fetchData();
         } else {
           alert("❌ Lỗi nạp file Excel: " + (data.error || "Không xác định"));
@@ -1305,6 +1314,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       const data = await res.json();
       if (res.ok && data.success) {
         showToast("success", formData.id ? "Cập nhật tài khoản thành công!" : "Tạo mới tài khoản thành công trên PostgreSQL 18!");
+        showInitialCredentials(data.initial_credentials);
         setIsUserModalOpen(false);
         fetchData();
       } else {
@@ -1438,6 +1448,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       const data = await res.json();
       if (res.ok && data.success) {
         showToast("success", personnelFormData.id ? "Cập nhật hồ sơ nhân sự thành công!" : "Thêm mới nhân sự thành công vào PostgreSQL 18!");
+        showInitialCredentials(data.initial_credentials);
         setIsPersonnelModalOpen(false);
         fetchData();
         if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("tbr_personnel_updated"));

@@ -1,6 +1,6 @@
 import fs from "fs";
 import { syncLegacySalesData } from "./legacySalesSync";
-import { hashPassword } from "@/backend/services/passwords";
+import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
 import path from "path";
 import { Pool, PoolClient, types } from "pg";
 
@@ -810,105 +810,24 @@ async function ensurePersonnelTableImpl() {
       );
     `);
 
-    const defaultPasswordHash = hashPassword("123456");
-
-    // 5. Ensure admin account exists in users table
-    await pool.query(
+    // 5. Ensure an admin account exists. A brand-new database gets INITIAL_ADMIN_PASSWORD or a random
+    //    one-time password printed once in the server log (it used to be the well-known "123456").
+    const initialAdminPassword = (process.env.INITIAL_ADMIN_PASSWORD || "").trim() || generateTemporaryPassword(14);
+    const adminIns = await pool.query(
       `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
        VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@tbrscientific.com', true, true)
-       ON CONFLICT (username) DO NOTHING;`,
-      [defaultPasswordHash]
+       ON CONFLICT (username) DO NOTHING
+       RETURNING id`,
+      [hashPassword(initialAdminPassword)]
     );
-
-    // 6. One-time clean reset for personnel and duplicate users (keeping only Super Admin)
-    try {
-      const resetFlag = await pool.query("SELECT 1 FROM app_storage WHERE key = 'personnel_reset_done_v1'");
-      if (resetFlag.rows.length === 0) {
-        await pool.query(`
-          DELETE FROM personnel;
-          DELETE FROM users WHERE username != 'admin';
-          INSERT INTO app_storage (key, data, updated_at) 
-          VALUES ('personnel_reset_done_v1', '{"reset": true}'::jsonb, NOW())
-          ON CONFLICT (key) DO NOTHING;
-        `);
-        console.log("✅ Đã làm sạch dữ liệu Nhân sự & Tài khoản người dùng cũ (giữ lại Super Admin).");
-      }
-    } catch (e: any) {
-      console.warn("Could not check/run personnel reset migration:", e?.message);
+    if (adminIns.rows.length > 0 && !process.env.INITIAL_ADMIN_PASSWORD) {
+      console.warn(`⚠️ Đã tạo tài khoản "admin" với mật khẩu tạm: ${initialAdminPassword} (bắt buộc đổi ở lần đăng nhập đầu).`);
     }
 
-    // 7. Migration v2: Auto-clean ghost duplicate records (TBRxxx/VIAxxx) from personnel, users and zalo_user_bindings
-    try {
-      const cleanGhostsFlag = await pool.query("SELECT 1 FROM app_storage WHERE key = 'personnel_clean_ghosts_v2'");
-      if (cleanGhostsFlag.rows.length === 0) {
-        await pool.query(`
-          DELETE FROM personnel 
-          WHERE (employee_code ~ '^TBR[0-9]+$' OR employee_code ~ '^VIA[0-9]+$')
-             OR (position = 'admin' AND employee_code != 'admin');
-
-          DELETE FROM users 
-          WHERE (username ~ '^TBR[0-9]+$' OR username ~ '^VIA[0-9]+$')
-            AND username != 'admin';
-
-          DELETE FROM zalo_user_bindings 
-          WHERE employee_id ~ '^TBR[0-9]+$' 
-             OR employee_id ~ '^VIA[0-9]+$'
-             OR (employee_id NOT IN (SELECT employee_code FROM personnel WHERE employee_code IS NOT NULL) AND employee_id != 'admin');
-
-          INSERT INTO app_storage (key, data, updated_at) 
-          VALUES ('personnel_clean_ghosts_v2', '{"cleaned": true}'::jsonb, NOW())
-          ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW();
-        `);
-        console.log("✅ Đã tự động dọn dẹp các bản ghi lặp lại (TBRxxx/VIAxxx) trên hệ thống.");
-      }
-    } catch (e: any) {
-      console.warn("Could not check/run ghost cleanup migration:", e?.message);
-    }
-
-    // 7b. Automatically ensure official user accounts exist for all personnel in personnel table
-    try {
-      await pool.query(
-        `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
-        SELECT 
-          p.employee_code AS username,
-          $1 AS password_hash,
-          p.full_name,
-          CASE 
-            WHEN p.department = 'Ban Giám Đốc' OR LOWER(p.position) LIKE '%giám đốc%' THEN 'admin'
-            WHEN p.department = 'Kế Toán' OR LOWER(p.department) LIKE '%kế toán%' THEN 
-              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%chief%' THEN 'accountant_head' ELSE 'accountant' END
-            WHEN p.department = 'Kho Vận' OR LOWER(p.department) LIKE '%kho%' THEN 
-              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%phụ trách%' OR LOWER(p.position) LIKE '%manager%' THEN 'warehouse_lead' ELSE 'warehouse' END
-            WHEN p.department = 'Pháp Chế' OR LOWER(p.department) LIKE '%pháp chế%' THEN 
-              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'legal_head' ELSE 'legal' END
-            WHEN p.department = 'Mua Hàng & Cung Ứng' OR LOWER(p.department) LIKE '%cung ứng%' OR LOWER(p.department) LIKE '%mua hàng%' THEN 
-              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%head%' THEN 'procurement_lead' ELSE 'procurement_specialist' END
-            WHEN p.department = 'Quản Lý Chất Lượng' OR p.department = 'QA/QC' OR p.department = 'QA / QC' OR LOWER(p.department) LIKE '%chất lượng%' THEN 
-              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%manager%' THEN 'qa_qc_lead' ELSE 'qa_qc' END
-            WHEN p.department LIKE '%Ứng Dụng%' OR p.department LIKE '%Application%' OR p.department LIKE '%Kỹ Thuật%' THEN 
-              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'app_head' ELSE 'app_rep' END
-            WHEN p.department = 'Kinh Doanh' OR p.department = 'Marketing' THEN 
-              CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%phó%' OR LOWER(p.position) LIKE '%giám đốc%' THEN 'sales_head' ELSE 'sales_rep' END
-            ELSE 'sales_rep'
-          END AS role,
-          p.department,
-          p.email,
-          CASE WHEN p.status = 'INACTIVE' THEN false ELSE true END AS is_active,
-          true AS must_change_password
-        FROM personnel p
-        WHERE p.employee_code IS NOT NULL 
-          AND p.employee_code != '' 
-          AND p.employee_code != 'admin'
-        ON CONFLICT (username) DO UPDATE SET
-          full_name = EXCLUDED.full_name,
-          department = EXCLUDED.department,
-          email = COALESCE(EXCLUDED.email, users.email);`,
-        [defaultPasswordHash]
-      );
-      console.log("✅ Đã đảm bảo toàn bộ nhân sự có tài khoản đăng nhập chính thức.");
-    } catch (e: any) {
-      console.warn("Could not sync personnel to users:", e?.message);
-    }
+    // 6-7. The former one-time "personnel reset" / "ghost cleanup" migrations deleted every user except admin
+    //      whenever their flag row was missing from app_storage (restored backup, deleted key): removed.
+    // 7b. Accounts are no longer created for every personnel row at start-up with the shared password "123456":
+    //      an administrator creates them (Cấu hình > Đồng bộ từ nhân sự), which issues a temporary password per person.
 
     // 8. Architectural Solution: Optimistic Locking for app_storage
     try {

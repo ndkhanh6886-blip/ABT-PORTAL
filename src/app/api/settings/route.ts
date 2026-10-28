@@ -1,12 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, ensurePersonnelTable, withTransaction } from "@/backend/db/db";
 import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
-import { hashPassword, verifyPassword } from "@/backend/services/passwords";
+import { hashPassword, verifyPassword, generateTemporaryPassword } from "@/backend/services/passwords";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { inferSystemRoleFromPosition } from "@/backend/services/permissions";
 
 // Mật khẩu khởi tạo cho tài khoản mới (được băm scrypt khi lưu; người dùng nên đổi ngay sau lần đăng nhập đầu)
-const DEFAULT_INITIAL_PASSWORD = "123456";
+/** Tài khoản vừa tạo kèm mật khẩu tạm (chỉ trả về một lần cho Quản trị viên để giao cho nhân viên). */
+type InitialCredential = { username: string; full_name: string; password: string };
+
+/**
+ * Mỗi tài khoản mới nhận mật khẩu tạm ngẫu nhiên riêng và phải đổi ở lần đăng nhập đầu.
+ * (Trước đây mọi tài khoản dùng chung "123456": ai biết mã nhân viên cũng đăng nhập / chiếm được tài khoản.)
+ */
+async function assignTemporaryPassword(username: string, fullName: string): Promise<InitialCredential> {
+  const password = generateTemporaryPassword();
+  await query("UPDATE users SET password_hash = $1, must_change_password = true WHERE username = $2", [hashPassword(password), username]);
+  return { username, full_name: fullName, password };
+}
+
+/** Hash of a random secret nobody knows: placeholder until assignTemporaryPassword runs. */
+function unusablePasswordHash(): string {
+  return hashPassword(generateTemporaryPassword(32));
+}
 
 /** Mã nhân viên tự sinh không trùng (thay cho Date.now() dễ trùng và ghi đè hồ sơ của người khác). */
 async function nextEmployeeCode(): Promise<string> {
@@ -26,15 +42,15 @@ async function nextEmployeeCode(): Promise<string> {
   }
 }
 
-async function syncPersonnelToUsers() {
-  await query(`
-    INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
+async function syncPersonnelToUsers(): Promise<InitialCredential[]> {
+  const res = await query(`
+    INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
     SELECT 
       p.employee_code AS username,
       $1 AS password_hash,
       p.full_name,
       CASE 
-        WHEN p.department = 'Ban Giám Đốc' OR LOWER(p.position) LIKE '%giám đốc%' THEN 'admin'
+        WHEN p.department = 'Ban Giám Đốc' THEN 'admin'
         WHEN p.department = 'Kế Toán' OR LOWER(p.department) LIKE '%kế toán%' THEN 
           CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%chief%' THEN 'accountant_head' ELSE 'accountant' END
         WHEN p.department = 'Kho Vận' OR LOWER(p.department) LIKE '%kho%' THEN 
@@ -53,7 +69,8 @@ async function syncPersonnelToUsers() {
       END AS role,
       p.department,
       p.email,
-      CASE WHEN p.status = 'INACTIVE' THEN false ELSE true END AS is_active
+      CASE WHEN p.status = 'INACTIVE' THEN false ELSE true END AS is_active,
+      true AS must_change_password
     FROM personnel p
     WHERE p.employee_code IS NOT NULL 
       AND p.employee_code != '' 
@@ -62,8 +79,14 @@ async function syncPersonnelToUsers() {
       full_name = EXCLUDED.full_name,
       department = EXCLUDED.department,
       role = CASE WHEN users.role = 'admin' THEN 'admin' ELSE EXCLUDED.role END,
-      email = COALESCE(EXCLUDED.email, users.email);
-  `, [hashPassword(DEFAULT_INITIAL_PASSWORD)]);
+      email = COALESCE(EXCLUDED.email, users.email)
+    RETURNING username, full_name, (xmax = 0) AS inserted;
+  `, [unusablePasswordHash()]);
+  const created: InitialCredential[] = [];
+  for (const r of res.rows) {
+    if (r.inserted) created.push(await assignTemporaryPassword(r.username, r.full_name));
+  }
+  return created;
 }
 
 export async function GET(req: NextRequest) {
@@ -111,16 +134,8 @@ export async function GET(req: NextRequest) {
         return { ...u, permissions: perms && typeof perms === "object" ? perms : {} };
       });
 
-      // If personnel exists but users table is empty or only has admin, automatically sync accounts
-      if (isAdmin && personnelRows.length > 0 && usersRows.length <= 1) {
-        try {
-          await syncPersonnelToUsers();
-          const uResRefreshed = await query("SELECT id, username, full_name, role, department, email, avatar, is_active, created_at, permissions FROM users ORDER BY id ASC");
-          usersRows = uResRefreshed.rows;
-        } catch (syncErr: any) {
-          console.warn("Auto-sync users from personnel error:", syncErr?.message);
-        }
-      }
+      // Tài khoản không còn được tạo ngầm khi mở màn hình (mật khẩu tạm phải được trả cho Quản trị viên):
+      // dùng nút "Đồng bộ tài khoản từ nhân sự" (sync_users_from_personnel).
 
       try {
         // Nhật ký hệ thống chỉ trả về cho quản trị viên
@@ -207,13 +222,16 @@ export async function POST(req: NextRequest) {
           [code, cleanName, department, position, cleanEmail, phone, status || "ACTIVE"]
         );
         // Tạo tài khoản đăng nhập tương ứng; không ghi đè tài khoản đã tồn tại
-        await query(
-          `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
-           VALUES ($1, $2, $3, $4, $5, $6, true)
-           ON CONFLICT (username) DO NOTHING`,
-          [code, hashPassword(DEFAULT_INITIAL_PASSWORD), cleanName, role, department, cleanEmail]
+        const ins = await query(
+          `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
+           VALUES ($1, $2, $3, $4, $5, $6, true, true)
+           ON CONFLICT (username) DO NOTHING
+           RETURNING username`,
+          [code, unusablePasswordHash(), cleanName, role, department, cleanEmail]
         );
+        const credential = ins.rows.length > 0 ? await assignTemporaryPassword(code, cleanName) : null;
         await logAudit("CREATE", "PERSONNEL", `Thêm mới nhân sự & tài khoản chat ${cleanName} (${code})`);
+        return NextResponse.json({ success: true, initial_credentials: credential ? [credential] : [] });
       }
       return NextResponse.json({ success: true });
     }
@@ -236,21 +254,22 @@ export async function POST(req: NextRequest) {
             full_name = 'Quản Trị Viên Hệ Thống',
             role = 'admin',
             is_active = true
-        `, [hashPassword(DEFAULT_INITIAL_PASSWORD)]);
-        await c.query(`
-          INSERT INTO app_storage (key, data, updated_at) 
-          VALUES ('personnel_reset_done_v1', '{"reset": true}'::jsonb, NOW())
-          ON CONFLICT (key) DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
-        `);
+        `, [unusablePasswordHash()]); // tài khoản admin đã có giữ nguyên mật khẩu (ON CONFLICT không đổi mật khẩu)
       });
       await logAudit("RESET", "SETTINGS", "Quản trị viên đã thực hiện Reset toàn bộ danh bạ nhân sự, tài khoản và danh mục Zalo");
       return NextResponse.json({ success: true, message: "Đã làm sạch toàn bộ dữ liệu Nhân sự, Tài khoản và Danh mục Zalo." });
     }
 
     if (action === "sync_users_from_personnel") {
-      await syncPersonnelToUsers();
-      await logAudit("SYNC", "SETTINGS", "Quản trị viên đã đồng bộ và khởi tạo tài khoản đăng nhập cho toàn bộ nhân sự");
-      return NextResponse.json({ success: true, message: "Đã tự động khởi tạo và đồng bộ tài khoản đăng nhập cho tất cả cán bộ nhân sự!" });
+      const created = await syncPersonnelToUsers();
+      await logAudit("SYNC", "SETTINGS", `Quản trị viên đã đồng bộ tài khoản đăng nhập từ nhân sự (${created.length} tài khoản mới)`);
+      return NextResponse.json({
+        success: true,
+        initial_credentials: created,
+        message: created.length > 0
+          ? `Đã tạo ${created.length} tài khoản mới với mật khẩu tạm (phải đổi ở lần đăng nhập đầu).`
+          : "Đã đồng bộ tài khoản đăng nhập, không có tài khoản mới."
+      });
     }
 
     if (action === "import_personnel_excel") {
@@ -261,6 +280,7 @@ export async function POST(req: NextRequest) {
 
       await ensurePersonnelTable();
       let count = 0;
+      const created: InitialCredential[] = [];
       // Mã dự phòng cho dòng thiếu mã: duy nhất trong lô (Date.now() trùng nhau giữa các dòng cùng mili-giây)
       const importBatchStamp = Date.now().toString(36).toUpperCase();
       let importAutoSeq = 0;
@@ -309,23 +329,25 @@ export async function POST(req: NextRequest) {
           [empCode, fullName, dept, position, email, phone, status]
         );
 
-        await query(
-          `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+        const userRes = await query(
+          `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, true)
            ON CONFLICT (username) DO UPDATE
            SET full_name = EXCLUDED.full_name,
                department = EXCLUDED.department,
                role = CASE WHEN users.role = 'admin' AND $4 != 'admin' THEN 'admin' ELSE EXCLUDED.role END,
                email = COALESCE(NULLIF(EXCLUDED.email, ''), users.email),
-               is_active = EXCLUDED.is_active`,
-          [empCode, hashPassword(DEFAULT_INITIAL_PASSWORD), fullName, resolvedRole, dept, email, status === "ACTIVE"]
+               is_active = EXCLUDED.is_active
+           RETURNING (xmax = 0) AS inserted`,
+          [empCode, unusablePasswordHash(), fullName, resolvedRole, dept, email, status === "ACTIVE"]
         );
+        if (userRes.rows[0]?.inserted) created.push(await assignTemporaryPassword(empCode, fullName));
 
         count++;
       }
 
       // 2. Automatically sync to users table from personnel
-      await syncPersonnelToUsers();
+      created.push(...(await syncPersonnelToUsers()));
 
       // 3. Automatically sync to Zalo bindings from personnel
       await syncPersonnelToZaloBindings();
@@ -335,7 +357,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         success: true,
         count,
-        message: `Đã nạp thành công ${count} nhân sự và tự động kích hoạt tài khoản đăng nhập + liên kết Zalo!`
+        initial_credentials: created,
+        message: `Đã nạp thành công ${count} nhân sự${created.length ? `, tạo ${created.length} tài khoản mới với mật khẩu tạm (phải đổi ở lần đăng nhập đầu)` : ""} và liên kết Zalo.`
       });
     }
 
@@ -388,12 +411,18 @@ export async function POST(req: NextRequest) {
         }
         await logAudit("UPDATE", "USER", `Cập nhật tài khoản ${username || id}`);
       } else {
+        // Mật khẩu Quản trị viên nhập hoặc mật khẩu tạm ngẫu nhiên; luôn phải đổi ở lần đăng nhập đầu
+        const initialPassword = password ? String(password) : generateTemporaryPassword();
         await query(
-          `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [username, hashPassword(String(password || DEFAULT_INITIAL_PASSWORD)), full_name, role, department, email, is_active !== false]
+          `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
+          [username, hashPassword(initialPassword), full_name, role, department, email, is_active !== false]
         );
         await logAudit("CREATE", "USER", `Tạo tài khoản mới ${username}`);
+        return NextResponse.json({
+          success: true,
+          initial_credentials: password ? [] : [{ username, full_name, password: initialPassword }]
+        });
       }
       return NextResponse.json({ success: true });
     }

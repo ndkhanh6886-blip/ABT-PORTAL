@@ -35,6 +35,19 @@ export function verifyPassword(password: string, stored: string | null | undefin
   return safeEqual(Buffer.from(password), Buffer.from(stored));
 }
 
+const TEMP_PASSWORD_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+
+/**
+ * Random one-time password for a new account (or an account created by a sync / import).
+ * Replaces the shared "123456": with it, anyone who knew an employee code could log in first.
+ */
+export function generateTemporaryPassword(length = 10): string {
+  const bytes = crypto.randomBytes(length);
+  let out = "";
+  for (let i = 0; i < length; i++) out += TEMP_PASSWORD_ALPHABET[bytes[i] % TEMP_PASSWORD_ALPHABET.length];
+  return out;
+}
+
 export function needsRehash(stored: string | null | undefined): boolean {
   return !stored || !stored.startsWith("scrypt$");
 }

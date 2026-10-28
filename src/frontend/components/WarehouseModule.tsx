@@ -1241,7 +1241,7 @@ export const WarehouseModule: React.FC = () => {
         "Mã nhân viên (*)": "NV-TBRs-001",
         "Họ và tên (*)": "Nguyễn Văn A",
         "Tên đăng nhập (*)": "a.nv",
-        "Mật khẩu khởi tạo": "123456",
+        "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kinh Doanh",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh Thiết Bị",
         "Vai trò hệ thống (*)": "sales_rep",
@@ -1253,7 +1253,7 @@ export const WarehouseModule: React.FC = () => {
         "Mã nhân viên (*)": "NV-TBRs-002",
         "Họ và tên (*)": "Trần Thị B",
         "Tên đăng nhập (*)": "b.tt",
-        "Mật khẩu khởi tạo": "123456",
+        "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kho Vận",
         "Chức vụ / Vị trí (*)": "Thủ Kho Vật Tư Sinh Phẩm",
         "Vai trò hệ thống (*)": "warehouse",
@@ -1265,7 +1265,7 @@ export const WarehouseModule: React.FC = () => {
         "Mã nhân viên (*)": "NV-TBRs-003",
         "Họ và tên (*)": "Lê Văn C",
         "Tên đăng nhập (*)": "c.lv",
-        "Mật khẩu khởi tạo": "123456",
+        "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Mua Hàng & Cung Ứng",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Mua Hàng Quốc Tế",
         "Vai trò hệ thống (*)": "procurement_specialist",
@@ -1277,7 +1277,7 @@ export const WarehouseModule: React.FC = () => {
         "Mã nhân viên (*)": "NV-TBRs-004",
         "Họ và tên (*)": "Phạm Văn D",
         "Tên đăng nhập (*)": "d.pv",
-        "Mật khẩu khởi tạo": "123456",
+        "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kỹ Thuật & Ứng Dụng",
         "Chức vụ / Vị trí (*)": "Kỹ Sư Ứng Dụng PCR",
         "Vai trò hệ thống (*)": "app_rep",
@@ -1609,6 +1609,10 @@ export const WarehouseModule: React.FC = () => {
       const data = await res.json();
       if (res.ok && data.success) {
         setActionNotice(`✅ ${data.message || "Đã nạp thành công dữ liệu Excel vào hệ thống!"}`);
+        if (Array.isArray(data.initial_credentials) && data.initial_credentials.length > 0) {
+          const lines = data.initial_credentials.map((c: any) => `${c.username} (${c.full_name || ""}): ${c.password}`).join("\n");
+          alert(`🔑 Mật khẩu tạm của ${data.initial_credentials.length} tài khoản mới — hãy lưu lại và giao riêng cho từng người (chỉ hiển thị một lần, phải đổi ở lần đăng nhập đầu):\n\n${lines}`);
+        }
         setPreviewImportRows([]);
         setPreviewContactRows([]);
         setActivePreviewSheetTab("customers");
