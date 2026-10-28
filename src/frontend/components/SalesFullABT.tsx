@@ -1684,11 +1684,11 @@ export function SalesFullABT() {
 
             if (isStock) {
                 repName = "Bộ Phận Kho Vận";
-                repId = "NV-TBR-007";
+                repId = "";
             } else {
                 if (repName.toLowerCase().includes("nguyễn đăng khánh") || repName.toLowerCase().includes("ndkhanh")) {
                     repName = "Phòng Kinh Doanh";
-                    repId = "NV-TBR-018";
+                    repId = "";
                 }
                 if (!repId && repName) {
                     const matched = (salesPersonnel || []).find((p: any) => 
@@ -4779,8 +4779,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 .filter((p: any) => p.status === "ACTIVE" || !p.status)
                 .map((p: any) => ({
                     id: p.id,
-                    employee_id: p.employee_code || `NV-TBR-${String(p.id).padStart(3, "0")}`,
-                    employee_code: p.employee_code || `NV-TBR-${String(p.id).padStart(3, "0")}`,
+                    employee_id: p.employee_code || `NV-TBRs-${String(p.id).padStart(3, "0")}`,
+                    employee_code: p.employee_code || `NV-TBRs-${String(p.id).padStart(3, "0")}`,
                     full_name: p.full_name,
                     department: p.department || "Kinh Doanh",
                     position: p.position || "Chuyên Viên Kinh Doanh",
@@ -6727,7 +6727,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return role === "warehouse" || role.includes("kho") || role.includes("thủ kho") || role.includes("logistics") ||
                dept.includes("kho") || dept.includes("warehouse") || dept.includes("logistics") ||
                pos.includes("kho") || pos.includes("thủ kho") || pos.includes("warehouse") || pos.includes("logistics") ||
-               empId.startsWith("KV-") || empId.startsWith("KHO-") || empId === "NV-TBR-007" || username === "khoa.dpb" ||
+               empId.startsWith("KV-") || empId.startsWith("KHO-") ||
                Boolean(can && (can("warehouse.view") || can("warehouse.outbound") || can("warehouse.inbound")));
     }, [user, loggedInStaff, can]);
 
@@ -12057,8 +12057,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const isStock = isStockOrder || factoryOrderCustomerName === defaultStockCustomer || factoryOrderCustomerName.includes("KHO LƯU TRỮ");
         const repId = isStock 
-            ? "NV-TBR-007" 
-            : (loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "NV-TBR-018");
+            ? "" 
+            : (loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "");
         let repName = isStock 
             ? "Bộ Phận Kho Vận" 
             : (loggedInStaff?.full_name || salesPersonnel[0]?.full_name || "Phòng Kinh Doanh");

@@ -1238,7 +1238,7 @@ export const WarehouseModule: React.FC = () => {
   const handleDownloadUserPersonnelTemplate = () => {
     const sampleData = [
       {
-        "Mã nhân viên (*)": "NV-TBR-010",
+        "Mã nhân viên (*)": "NV-TBRs-001",
         "Họ và tên (*)": "Nguyễn Văn A",
         "Tên đăng nhập (*)": "a.nv",
         "Mật khẩu khởi tạo": "123456",
@@ -1250,7 +1250,7 @@ export const WarehouseModule: React.FC = () => {
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBR-011",
+        "Mã nhân viên (*)": "NV-TBRs-002",
         "Họ và tên (*)": "Trần Thị B",
         "Tên đăng nhập (*)": "b.tt",
         "Mật khẩu khởi tạo": "123456",
@@ -1262,7 +1262,7 @@ export const WarehouseModule: React.FC = () => {
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBR-012",
+        "Mã nhân viên (*)": "NV-TBRs-003",
         "Họ và tên (*)": "Lê Văn C",
         "Tên đăng nhập (*)": "c.lv",
         "Mật khẩu khởi tạo": "123456",
@@ -1274,7 +1274,7 @@ export const WarehouseModule: React.FC = () => {
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBR-013",
+        "Mã nhân viên (*)": "NV-TBRs-004",
         "Họ và tên (*)": "Phạm Văn D",
         "Tên đăng nhập (*)": "d.pv",
         "Mật khẩu khởi tạo": "123456",

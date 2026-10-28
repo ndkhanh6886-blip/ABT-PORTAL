@@ -143,7 +143,7 @@ export const ZaloOperationsHub: React.FC = () => {
   const [isSavingBinding, setIsSavingBinding] = useState(false);
 
   // Chat Simulator State with Real Personnel Selection
-  const [selectedPersonnelCode, setSelectedPersonnelCode] = useState<string>("NV-TBR-018");
+  const [selectedPersonnelCode, setSelectedPersonnelCode] = useState<string>("");
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "bot"; text: string; time: string; buttons?: any[] }>>([
     {
       sender: "bot",
@@ -1700,7 +1700,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   <span>Thử nghiệm trong tab "Giả Lập Chat Zalo"</span>
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Chuyển sang tab <strong>Giả Lập Chat Zalo</strong> bên cạnh. Chọn 1 nhân sự đã liên kết SĐT (VD: NV-TBR-018) và gõ lệnh để kiểm tra cơ chế tự động tra kho, tính chiết khấu và kích hoạt duyệt của Ban Giám Đốc.
+                  Chuyển sang tab <strong>Giả Lập Chat Zalo</strong> bên cạnh. Chọn 1 nhân sự đã liên kết SĐT (VD: NV-TBRs-017) và gõ lệnh để kiểm tra cơ chế tự động tra kho, tính chiết khấu và kích hoạt duyệt của Ban Giám Đốc.
                 </p>
               </div>
             </div>

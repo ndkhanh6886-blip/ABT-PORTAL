@@ -1418,7 +1418,7 @@ export async function POST(req: NextRequest) {
             return "";
           };
 
-          const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-TBR");
+          const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-TBRs");
           const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên TBR";
           let username = getVal(["Tên đăng nhập (*)", "Tên đăng nhập", "username", "TenDangNhap"]);
           const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@tbr.vn` : "");

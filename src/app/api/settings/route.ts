@@ -11,12 +11,12 @@ const DEFAULT_INITIAL_PASSWORD = "123456";
 /** Mã nhân viên tự sinh không trùng (thay cho Date.now() dễ trùng và ghi đè hồ sơ của người khác). */
 async function nextEmployeeCode(): Promise<string> {
   const res = await query(
-    `SELECT COALESCE(MAX(CAST(SUBSTRING(employee_code FROM 'NV-TBR-([0-9]+)$') AS INTEGER)), 0) AS max_seq
-       FROM personnel WHERE employee_code ~ '^NV-TBR-[0-9]+$'`
+    `SELECT COALESCE(MAX(CAST(SUBSTRING(employee_code FROM 'NV-TBRs?-([0-9]+)$') AS INTEGER)), 0) AS max_seq
+       FROM personnel WHERE employee_code ~ '^NV-TBRs?-[0-9]+$'`
   );
   let seq = Number(res.rows[0]?.max_seq || 0) + 1;
   for (;;) {
-    const code = `NV-TBR-${String(seq).padStart(3, "0")}`;
+    const code = `NV-TBRs-${String(seq).padStart(3, "0")}`;
     const exists = await query(
       "SELECT 1 FROM personnel WHERE employee_code = $1 UNION ALL SELECT 1 FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1",
       [code]
@@ -263,7 +263,7 @@ export async function POST(req: NextRequest) {
           return "";
         };
 
-        const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV", "Mã"]) || `NV-TBR-${importBatchStamp}-${++importAutoSeq}`;
+        const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV", "Mã"]) || `NV-TBRs-${importBatchStamp}-${++importAutoSeq}`;
         const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên TBRs";
         const email = getVal(["Email (*)", "Email", "email"]) || "";
         const phone = getVal(["Số điện thoại", "phone", "SĐT", "Điện thoại"]);

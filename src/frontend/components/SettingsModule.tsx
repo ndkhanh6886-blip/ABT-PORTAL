@@ -637,7 +637,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
   const handleDownloadPersonnelTemplate = () => {
     const sampleData = [
       {
-        "Mã nhân viên (*)": "NV-TBR-001",
+        "Mã nhân viên (*)": "NV-TBRs-001",
         "Họ và tên (*)": "Nguyễn Văn A",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)",
@@ -646,7 +646,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBR-002",
+        "Mã nhân viên (*)": "NV-TBRs-002",
         "Họ và tên (*)": "Trần Thị B",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Phó Giám Đốc",
@@ -655,7 +655,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBR-003",
+        "Mã nhân viên (*)": "NV-TBRs-003",
         "Họ và tên (*)": "Lê Văn C",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Phó Giám Đốc",
@@ -664,7 +664,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBR-018",
+        "Mã nhân viên (*)": "NV-TBRs-004",
         "Họ và tên (*)": "Phạm Thị D",
         "Phòng ban (*)": "Kinh Doanh",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh (Sales Specialist)",
@@ -1405,10 +1405,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
     } else {
       const dept = presetDept || "Kinh Doanh";
       const defaultPos = presetPosition || getDeptInfo(dept)?.positions[0]?.title || "Chuyên Viên Kinh Doanh (Senior/Junior)";
-      const nextNum = (personnel.length + 1).toString().padStart(3, "0");
+      const maxSeq = personnel.reduce((max: number, p: any) => {
+        const m = String(p?.employee_code || "").match(/^NV-TBRs?-(\d+)$/);
+        return m ? Math.max(max, Number(m[1])) : max;
+      }, 0);
+      const nextNum = (maxSeq + 1).toString().padStart(3, "0");
       setPersonnelFormData({
         id: null,
-        employee_code: `NV-TBR-${nextNum}`,
+        employee_code: `NV-TBRs-${nextNum}`,
         full_name: "",
         department: dept,
         position: defaultPos,
@@ -3628,7 +3632,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     type="text"
                     value={personnelFormData.employee_code}
                     onChange={(e) => setPersonnelFormData({ ...personnelFormData, employee_code: e.target.value })}
-                    placeholder="NV-TBR-012"
+                    placeholder="NV-TBRs-012"
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
                     required
                   />
