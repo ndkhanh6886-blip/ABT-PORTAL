@@ -42,7 +42,12 @@ function keyPolicy(key: string): KeyPolicy {
   // Danh sách phương thức thanh toán (chi tiền NCC / thu tiền): ai cũng đọc, chỉ Quản trị viên sửa
   if (key === "finance_payment_methods") return { read: null, write: ["settings.view"] };
   if (key === "customer_industry_groups" || key.startsWith("sales_")) return { read: ["sales.view"], write: ["sales.view"] };
-  return { read: null, write: null };
+  // Bảng việc / lịch / thông báo dùng chung toàn công ty: mọi nhân viên đã đăng nhập
+  if (key.startsWith("unified_") || key === "tbr_activity_notifications") return { read: null, write: null };
+  if (key === "tbr_rfid_tags_list") return { read: null, write: ["warehouse.view"] };
+  // Khối dữ liệu chưa khai báo quyền: ai cũng đọc được nhưng chỉ Quản trị viên được ghi
+  // (trước đây mọi nhân viên đều ghi đè được toàn bộ khối)
+  return { read: null, write: [] };
 }
 
 function allowedBy(me: AuthorizedUser, perms: string[] | null) {
@@ -150,7 +155,10 @@ export async function POST(request: NextRequest) {
     const me = await getAuthorizedUser(request);
     setAuditActor(me);
     if (!me) return unauthorizedResponse();
-    if (!allowedBy(me, keyPolicy(key).write)) return forbiddenResponse("Bạn không có quyền sửa dữ liệu này.");
+    if (!allowedBy(me, keyPolicy(key).write)) {
+      console.warn(`[storage] Từ chối ghi khối "${key}" của ${me.username}: không có quyền.`);
+      return forbiddenResponse(`Bạn không có quyền sửa dữ liệu này (${key}).`);
+    }
     const hideCost = COST_BEARING_KEYS.has(key) && !canSeeCost(me);
 
     // Danh mục sản phẩm: ghi từng dòng vào catalog_items (không ghi lại cả khối)
@@ -198,10 +206,6 @@ export async function POST(request: NextRequest) {
 
     let data = isEnvelope ? body.data : body;
     if (hideCost) return forbiddenResponse("Không thể ghi đè toàn bộ danh mục có giá vốn.");
-    if (Array.isArray(data)) {
-      const cur = await query("SELECT data FROM app_storage WHERE key = $1", [key]);
-      data = await enforceApprovalGuards(key, cur.rows[0]?.data ?? null, data, me);
-    }
     if (data === undefined) {
       return NextResponse.json({ error: "Data is required" }, { status: 400 });
     }
@@ -212,6 +216,21 @@ export async function POST(request: NextRequest) {
     const ev = (expectedVersion !== undefined && expectedVersion !== null && !isNaN(Number(expectedVersion)))
       ? Number(expectedVersion)
       : null;
+
+    const cur = await query("SELECT data, version FROM app_storage WHERE key = $1", [key]);
+    const stored = cur.rows[0]?.data ?? null;
+    const storedHasData = Array.isArray(stored) ? stored.length > 0 : (stored !== null && typeof stored === "object" && Object.keys(stored).length > 0);
+    // Ghi đè NGUYÊN khối đang có dữ liệu mà không nêu phiên bản đã đọc: có thể xóa mất dữ liệu người khác vừa lưu
+    if (ev === null && storedHasData && !isAdminUser(me)) {
+      return NextResponse.json({
+        error: "Dữ liệu này đã có trên máy chủ. Vui lòng tải lại trang trước khi lưu để không ghi đè thay đổi của người khác.",
+        conflict: true,
+        currentVersion: cur.rows[0]?.version || 1
+      }, { status: 409 });
+    }
+    if (Array.isArray(data)) {
+      data = await enforceApprovalGuards(key, stored, data, me);
+    }
 
     const updateRes = await query(
       `INSERT INTO app_storage (key, data, version, updated_at)
