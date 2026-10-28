@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/backend/db/db";
 import { generateDocumentCode, getShortRepCode, getShortCustCode } from "@/backend/services/codeGenerator";
-import { addStock, sortByProductCode, reserveStock, releaseReservation, releaseReservationsFor } from "@/backend/services/inventoryLedger";
+import { addStock, sortByProductCode, reserveStock, releaseReservation, releaseReservationsFor, sweepExpiredReservations } from "@/backend/services/inventoryLedger";
 import { stableStringify } from "@/backend/services/storagePatch";
 import { getAuthorizedUser, unauthorizedResponse, forbiddenResponse, isAdminUser, setAuditActor } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
@@ -527,6 +527,7 @@ export async function GET(req: NextRequest) {
     if (!authUser) return unauthorizedResponse();
     setAuditActor(authUser);
     const canSeeCost = isAdminUser(authUser) || hasPermission(authUser, "warehouse.view_cost_price");
+    await sweepExpiredReservations(fn => withTransaction(fn));
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action") || "overview";
 

@@ -32,6 +32,7 @@ import {
   ensureProduct,
   appendCommercialCatalogEntry,
   sortByProductCode,
+  sweepExpiredReservations,
   LOT_EXPIRY_ISO_SQL
 } from "@/backend/services/inventoryLedger";
 
@@ -42,6 +43,7 @@ export async function GET(req: NextRequest) {
     if (!authUser) return unauthorizedResponse();
     setAuditActor(authUser);
     const canSeeCost = isAdminUser(authUser) || hasPermission(authUser, "warehouse.view_cost_price");
+    await sweepExpiredReservations(fn => withTransaction(fn));
     await ensurePersonnelTable();
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action") || "overview";

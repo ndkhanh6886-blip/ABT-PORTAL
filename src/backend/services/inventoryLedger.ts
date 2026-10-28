@@ -1,6 +1,7 @@
 import type { PoolClient } from "pg";
 import { HttpError } from "@/backend/db/db";
 import { appendCatalogEntry } from "@/backend/services/catalogStore";
+import { todayVN } from "@/backend/services/dates";
 
 /**
  * Inventory ledger (Deep Code Audit H1/H2/H5).
@@ -392,6 +393,8 @@ export async function reserveStock(c: Queryable, r: ReserveInput): Promise<numbe
   if (!code) throw new HttpError(400, "Thiếu mã sản phẩm cần giữ chỗ.");
   if (qty <= 0) throw new HttpError(400, "Số lượng giữ chỗ phải lớn hơn 0.");
 
+  // Trả lại tồn của các phiếu giữ chỗ đã quá hạn trước khi tính tồn khả dụng
+  await releaseExpiredReservations(c, code);
   const agg = await lockAggregate(c, code);
   if (!agg) throw new HttpError(409, `Mặt hàng ${r.productName || code} chưa có trong kho, không thể giữ chỗ.`);
   const available = toQty(agg.quantity_on_hand) - toQty(agg.quantity_allocated);
@@ -436,6 +439,40 @@ export async function releaseReservation(
   const qty = toQty(r.rows[0].quantity_reserved);
   if (agg) await decrementAllocated(c, productCode, qty, toQty(agg.quantity_allocated));
   return { released: true, product_code: productCode, quantity: qty };
+}
+
+/**
+ * Giải phóng các phiếu giữ chỗ đã quá hạn giữ (hold_until_date trước hôm nay, giờ Việt Nam) để trả lại tồn khả dụng.
+ * Trước đây hạn giữ chỉ được lưu mà không bao giờ áp dụng nên tồn khả dụng bị khóa vĩnh viễn.
+ */
+export async function releaseExpiredReservations(c: Queryable, productCode?: string): Promise<number> {
+  const due = await c.query(
+    `SELECT id FROM inventory_reservations
+      WHERE status = 'ACTIVE' AND hold_until_date IS NOT NULL AND hold_until_date < $1::date
+        AND ($2::text IS NULL OR product_code = $2::text)
+      ORDER BY product_code, id`,
+    [todayVN(), productCode ?? null]
+  );
+  let released = 0;
+  for (const row of due.rows) {
+    const r = await releaseReservation(c, Number(row.id), "Hệ thống", "Hết hạn giữ chỗ");
+    if (r.released) released++;
+  }
+  return released;
+}
+
+let lastExpirySweepAt = 0;
+/** Quét toàn bộ phiếu giữ chỗ quá hạn, tối đa 5 phút một lần (gọi khi mở màn hình Kho / Kinh doanh). */
+export async function sweepExpiredReservations(run: (fn: (c: Queryable) => Promise<number>) => Promise<number>): Promise<void> {
+  if (Date.now() - lastExpirySweepAt < 5 * 60 * 1000) return;
+  lastExpirySweepAt = Date.now();
+  try {
+    const n = await run(c => releaseExpiredReservations(c));
+    if (n > 0) console.info(`[inventory] Đã tự giải phóng ${n} phiếu giữ chỗ quá hạn.`);
+  } catch (err: any) {
+    lastExpirySweepAt = 0;
+    console.error("[inventory] Không giải phóng được phiếu giữ chỗ quá hạn:", err?.message || err);
+  }
 }
 
 /** Release all ACTIVE reservations of an order line (e.g. cancelled SO line) and give back allocation. */
