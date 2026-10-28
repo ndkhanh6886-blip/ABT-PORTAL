@@ -46,38 +46,32 @@ export async function GET(req: NextRequest) {
       let ordersRes;
       if (q) {
         ordersRes = await query(`
-          SELECT DISTINCT so.id, so.order_code, so.customer_name, so.order_date, so.delivery_status, 
+          SELECT so.id, so.order_code, so.customer_name, so.order_date, so.delivery_status, 
                  so.shipping_method, so.tracking_code, so.total_amount, so.items, 
                  so.vat_requested, so.vat_company_name, so.invoiced_delivery_slips
           FROM sales_orders so
-          LEFT JOIN sales_customers sc ON (
-            so.customer_id = sc.id
-            OR (
-              NULLIF(TRIM(so.customer_name), '') IS NOT NULL
-              AND NULLIF(TRIM(sc.name), '') IS NOT NULL
-              AND (so.customer_name ILIKE '%' || sc.name || '%' OR sc.name ILIKE '%' || so.customer_name || '%')
-            )
-          )
-          WHERE (so.customer_id = $1 OR LOWER(sc.customer_code) = LOWER($2))
+          -- Chỉ đơn của đúng khách hàng này: theo customer_id, hoặc đơn cũ chưa gắn id nhưng TRÙNG KHỚP tên
+          -- (trước đây so khớp gần đúng ILIKE nên khách "Viện A" xem được đơn của "Viện A - Chi nhánh B")
+          LEFT JOIN sales_customers sc ON sc.id = $1
+          WHERE (so.customer_id = $1
+             OR (so.customer_id IS NULL AND sc.id IS NOT NULL AND LOWER(sc.customer_code) = LOWER($2)
+                 AND LOWER(TRIM(so.customer_name)) = LOWER(TRIM(sc.name))))
             AND (so.order_code ILIKE $3 OR so.items::text ILIKE $3)
           ORDER BY so.id DESC
           LIMIT 25
         `, [Number(customerId) || 0, customerCode, `%${q}%`]);
       } else {
         ordersRes = await query(`
-          SELECT DISTINCT so.id, so.order_code, so.customer_name, so.order_date, so.delivery_status, 
+          SELECT so.id, so.order_code, so.customer_name, so.order_date, so.delivery_status, 
                  so.shipping_method, so.tracking_code, so.total_amount, so.items, 
                  so.vat_requested, so.vat_company_name, so.invoiced_delivery_slips
           FROM sales_orders so
-          LEFT JOIN sales_customers sc ON (
-            so.customer_id = sc.id
-            OR (
-              NULLIF(TRIM(so.customer_name), '') IS NOT NULL
-              AND NULLIF(TRIM(sc.name), '') IS NOT NULL
-              AND (so.customer_name ILIKE '%' || sc.name || '%' OR sc.name ILIKE '%' || so.customer_name || '%')
-            )
-          )
-          WHERE (so.customer_id = $1 OR LOWER(sc.customer_code) = LOWER($2))
+          -- Chỉ đơn của đúng khách hàng này: theo customer_id, hoặc đơn cũ chưa gắn id nhưng TRÙNG KHỚP tên
+          -- (trước đây so khớp gần đúng ILIKE nên khách "Viện A" xem được đơn của "Viện A - Chi nhánh B")
+          LEFT JOIN sales_customers sc ON sc.id = $1
+          WHERE (so.customer_id = $1
+             OR (so.customer_id IS NULL AND sc.id IS NOT NULL AND LOWER(sc.customer_code) = LOWER($2)
+                 AND LOWER(TRIM(so.customer_name)) = LOWER(TRIM(sc.name))))
           ORDER BY so.id DESC
           LIMIT 25
         `, [Number(customerId) || 0, customerCode]);
