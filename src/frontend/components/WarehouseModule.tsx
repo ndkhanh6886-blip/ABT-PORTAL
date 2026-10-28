@@ -155,7 +155,7 @@ export const WarehouseModule: React.FC = () => {
   const [selectedReserveItem, setSelectedReserveItem] = useState<any>(null);
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
   const [reserveFormData, setReserveFormData] = useState({
-    sales_rep_name: "Lê Hữu Nhân (Chuyên Viên Kinh Doanh)",
+    sales_rep_name: "",
     customer_name: "",
     quantity_reserved: 1,
     hold_until_date: toVNDateString(new Date(Date.now() + 7 * 86400000)),
@@ -326,48 +326,17 @@ export const WarehouseModule: React.FC = () => {
       p.department === "Ban Giám Đốc" || 
       p.department === "Marketing"
     );
-    if (list.length > 0) return list;
-    return [
-      { employee_code: "NV-TBR-023", full_name: "Lê Hữu Nhân", position: "Chuyên Viên Kinh Doanh", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-024", full_name: "K' Trọng Nghĩa", position: "Quản Lý Sản Phẩm (PM)", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-025", full_name: "Đỗ Phạm Bảo Ngọc", position: "Chuyên Viên Kinh Doanh", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-026", full_name: "Nguyễn Ánh Nhựt", position: "Chuyên Viên Kinh Doanh", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-027", full_name: "Phạm Nguyễn Minh Châu", position: "Chuyên Viên Kinh Doanh", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-018", full_name: "Phan Minh Nghĩa", position: "Sales Admin", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-019", full_name: "Phạm Thị Thu Thủy", position: "Sales Admin", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-020", full_name: "Lê Thị Thuỳ Trang", position: "Sales Admin", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-021", full_name: "Trần Thị Mỹ Linh", position: "Sales Admin", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-022", full_name: "Ngô Thị Yến Nhi", position: "Sales Admin", department: "Kinh Doanh" },
-      { employee_code: "NV-TBR-017", full_name: "Bùi Thị Hồng Tâm", position: "Chuyên viên Marketing", department: "Marketing" },
-      { employee_code: "NV-TBR-002", full_name: "Đỗ Ngọc Diễm Trúc", position: "Phó Giám Đốc", department: "Ban Giám Đốc" },
-      { employee_code: "NV-TBR-003", full_name: "Võ Thị Cẩm Giang", position: "Phó Giám Đốc", department: "Ban Giám Đốc" },
-      { employee_code: "NV-TBR-001", full_name: "Nguyễn Văn Hưng", position: "Tổng Giám Đốc (CEO)", department: "Ban Giám Đốc" }
-    ];
+    return list;
   }, [personnelList]);
 
   const warehouseStaff = useMemo(() => {
     const list = personnelList.filter(p => p.department === "Kho Vận");
-    if (list.length > 0) return list;
-    return [
-      { employee_code: "NV-TBR-008", full_name: "Trần Thị Minh Hậu", position: "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", department: "Kho Vận" },
-      { employee_code: "NV-TBR-007", full_name: "Dương Phương Bảo Khoa", position: "Trưởng Bộ Phận Kho Vận", department: "Kho Vận" },
-      { employee_code: "NV-TBR-009", full_name: "Hoàng Thị Huệ", position: "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", department: "Kho Vận" }
-    ];
+    return list;
   }, [personnelList]);
 
   // Real Hospital & Customer Mappings (Requirement: Searchable combobox + Click to pick)
   const allAvailableCustomers = useMemo(() => {
-    if (customerList && customerList.length > 0) return customerList;
-    return [
-      { id: 1, customer_code: "KH-BV-001", name: "Bệnh Viện Chợ Rẫy", classification: "Bệnh Viện Tuyến Trung Ương", province: "TP. Hồ Chí Minh" },
-      { id: 2, customer_code: "KH-BV-002", name: "Viện Pasteur TP.HCM", classification: "Viện Nghiên Cứu & Xét Nghiệm", province: "TP. Hồ Chí Minh" },
-      { id: 3, customer_code: "KH-BV-003", name: "Bệnh Viện Bạch Mai - Hà Nội", classification: "Bệnh Viện Hạng Đặc Biệt", province: "Hà Nội" },
-      { id: 4, customer_code: "KH-BV-004", name: "Bệnh Viện Đa Khoa Quốc Tế Vinmec", classification: "Bệnh Viện Quốc Tế JCI", province: "Hà Nội" },
-      { id: 5, customer_code: "KH-DL-005", name: "Công Ty Cổ Phần Thiết Bị Y Tế Đại Nam", classification: "Đại Lý Cấp 1", province: "TP. Hồ Chí Minh" },
-      { id: 6, customer_code: "KH-TT-006", name: "Trung Tâm Kiểm Chuẩn Xét Nghiệm TP.HCM", classification: "Cơ Quan Kiểm Chuẩn Nhà Nước", province: "TP. Hồ Chí Minh" },
-      { id: 7, customer_code: "KH-BV-007", name: "Bệnh Viện Đại Học Y Dược TP.HCM", classification: "Bệnh Viện Đa Khoa Hạng 1", province: "TP. Hồ Chí Minh" },
-      { id: 8, customer_code: "KH-BV-008", name: "Bệnh Viện Bệnh Nhiệt Đới TP.HCM", classification: "Bệnh Viện Chuyên Khoa Truyền Nhiễm", province: "TP. Hồ Chí Minh" }
-    ];
+    return customerList || [];
   }, [customerList]);
 
   const filteredCustomers = useMemo(() => {
@@ -930,7 +899,7 @@ export const WarehouseModule: React.FC = () => {
         "Địa chỉ": "458 Minh Khai, Hai Bà Trưng, Hà Nội",
         "Hạn mức công nợ (VNĐ)": 500000000,
         "Thời hạn nợ tối đa (Ngày)": 45,
-        "NVKD phụ trách": "Đỗ Ngọc Diễm Trúc",
+        "NVKD phụ trách": "Nguyễn Văn A",
         "Ghi chú chung": "Bệnh viện đa khoa quốc tế tiêu chuẩn JCI, đối tác trọng điểm"
       },
       {
@@ -943,7 +912,7 @@ export const WarehouseModule: React.FC = () => {
         "Địa chỉ": "120 Nguyễn Đình Chiểu, Q3, TP.HCM",
         "Hạn mức công nợ (VNĐ)": 300000000,
         "Thời hạn nợ tối đa (Ngày)": 30,
-        "NVKD phụ trách": "Huỳnh Hồng Hạnh",
+        "NVKD phụ trách": "Trần Thị B",
         "Ghi chú chung": "Đại lý phân phối cấp 1 khu vực miền Nam"
       },
       {
@@ -956,7 +925,7 @@ export const WarehouseModule: React.FC = () => {
         "Địa chỉ": "201B Nguyễn Chí Thanh, Phường 12, Quận 5, TP.HCM",
         "Hạn mức công nợ (VNĐ)": 800000000,
         "Thời hạn nợ tối đa (Ngày)": 60,
-        "NVKD phụ trách": "Cao Văn Đức Hinh",
+        "NVKD phụ trách": "Lê Văn C",
         "Ghi chú chung": "Bệnh viện tuyến trung ương hạng đặc biệt"
       }
     ];
@@ -1270,49 +1239,49 @@ export const WarehouseModule: React.FC = () => {
     const sampleData = [
       {
         "Mã nhân viên (*)": "NV-TBR-010",
-        "Họ và tên (*)": "Nguyễn Hoàng Nam",
-        "Tên đăng nhập (*)": "nam.nh",
+        "Họ và tên (*)": "Nguyễn Văn A",
+        "Tên đăng nhập (*)": "a.nv",
         "Mật khẩu khởi tạo": "123456",
         "Phòng ban (*)": "Kinh Doanh",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh Thiết Bị",
         "Vai trò hệ thống (*)": "sales_rep",
-        "Email (*)": "nam.nh@tbr.vn",
+        "Email (*)": "a.nv@tbr.vn",
         "Số điện thoại": "0912345670",
         "Trạng thái": "ACTIVE"
       },
       {
         "Mã nhân viên (*)": "NV-TBR-011",
-        "Họ và tên (*)": "Trần Thị Mai Phương",
-        "Tên đăng nhập (*)": "phuong.ttm",
+        "Họ và tên (*)": "Trần Thị B",
+        "Tên đăng nhập (*)": "b.tt",
         "Mật khẩu khởi tạo": "123456",
         "Phòng ban (*)": "Kho Vận",
         "Chức vụ / Vị trí (*)": "Thủ Kho Vật Tư Sinh Phẩm",
         "Vai trò hệ thống (*)": "warehouse",
-        "Email (*)": "phuong.ttm@tbr.vn",
+        "Email (*)": "b.tt@tbr.vn",
         "Số điện thoại": "0987654320",
         "Trạng thái": "ACTIVE"
       },
       {
         "Mã nhân viên (*)": "NV-TBR-012",
-        "Họ và tên (*)": "Lê Văn Thắng",
-        "Tên đăng nhập (*)": "thang.lv",
+        "Họ và tên (*)": "Lê Văn C",
+        "Tên đăng nhập (*)": "c.lv",
         "Mật khẩu khởi tạo": "123456",
         "Phòng ban (*)": "Mua Hàng & Cung Ứng",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Mua Hàng Quốc Tế",
         "Vai trò hệ thống (*)": "procurement_specialist",
-        "Email (*)": "thang.lv@tbr.vn",
+        "Email (*)": "c.lv@tbr.vn",
         "Số điện thoại": "0933221100",
         "Trạng thái": "ACTIVE"
       },
       {
         "Mã nhân viên (*)": "NV-TBR-013",
-        "Họ và tên (*)": "Vũ Đình Trọng",
-        "Tên đăng nhập (*)": "trong.vd",
+        "Họ và tên (*)": "Phạm Văn D",
+        "Tên đăng nhập (*)": "d.pv",
         "Mật khẩu khởi tạo": "123456",
         "Phòng ban (*)": "Kỹ Thuật & Ứng Dụng",
         "Chức vụ / Vị trí (*)": "Kỹ Sư Ứng Dụng PCR",
         "Vai trò hệ thống (*)": "app_rep",
-        "Email (*)": "trong.vd@tbr.vn",
+        "Email (*)": "d.pv@tbr.vn",
         "Số điện thoại": "0944556677",
         "Trạng thái": "ACTIVE"
       }
@@ -3672,7 +3641,7 @@ export const WarehouseModule: React.FC = () => {
                         type="button"
                         onClick={() => {
                           setSelectedReserveItem(item);
-                          const initialRep = salesStaff[0] ? `${salesStaff[0].full_name} (${salesStaff[0].position})` : "Lê Hữu Nhân (Chuyên Viên Kinh Doanh)";
+                          const initialRep = salesStaff[0] ? `${salesStaff[0].full_name} (${salesStaff[0].position})` : "";
                           setReserveFormData({
                             sales_rep_name: initialRep,
                             customer_name: "",
@@ -4144,7 +4113,7 @@ export const WarehouseModule: React.FC = () => {
                               <button
                                 onClick={() => {
                                   setSelectedReserveItem(item);
-                                  const initialRep = salesStaff[0] ? `${salesStaff[0].full_name} (${salesStaff[0].position})` : "Lê Hữu Nhân (Chuyên Viên Kinh Doanh)";
+                                  const initialRep = salesStaff[0] ? `${salesStaff[0].full_name} (${salesStaff[0].position})` : "";
                                   setReserveFormData({
                                     sales_rep_name: initialRep,
                                     customer_name: "",
@@ -5632,7 +5601,7 @@ export const WarehouseModule: React.FC = () => {
                           <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-slate-800/80">
                             <div>
                               <span className="text-slate-400 block text-[10px]">Hãng sản xuất:</span>
-                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "ABT / TBR"}</strong>
+                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "—"}</strong>
                             </div>
                             <div>
                               <span className="text-slate-400 block text-[10px]">Quy cách:</span>

@@ -443,7 +443,7 @@ export async function exportCustomerQuotationToExcel({
         const displayCode = it.parentCode || it.parent_code || (prod as any)?.parent_code || (prod as any)?.parent_item_code || itCode || "—";
         const itName = it.productName || it.product_name || it.name || prod?.name || itCode || "Sản phẩm";
         const spec = it.specification || prod?.specification || it.spec || "—";
-        const mfg = formatSupplierShortName(it.manufacturer || (prod as any)?.manufacturer || (prod as any)?.brand || "ABT");
+        const mfg = formatSupplierShortName(it.manufacturer || (prod as any)?.manufacturer || (prod as any)?.brand || "");
         const rawNote = it.notes || it.note || "";
         const note = (rawNote === prod?.notes || rawNote === "Imported from Excel") ? "" : rawNote;
         

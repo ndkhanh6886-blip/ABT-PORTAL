@@ -31,6 +31,7 @@ import {
 import { Modal } from "@/frontend/components/Modal";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
+import { usePersonnel, filterPersonnelByDept } from "@/frontend/utils/usePersonnel";
 
 export type DealStage =
   | "LEAD"          // Giai đoạn 1: Lead / Tiếp cận ban đầu (10%)
@@ -155,6 +156,8 @@ interface SalesDealsPipelineProps {
 export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNavigateToTab }) => {
   const { showToast } = useNotification();
   const { user } = useAuth();
+  const personnel = usePersonnel();
+  const salesStaff = useMemo(() => filterPersonnelByDept(personnel, ["kinh doanh", "sales", "marketing", "giám đốc"]), [personnel]);
 
   const [deals, setDeals] = useState<SalesDeal[]>([]);
 
@@ -173,13 +176,13 @@ export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNaviga
   // New Deal Form State
   const [newDealForm, setNewDealForm] = useState({
     title: "",
-    customerName: "Bệnh Viện Chợ Rẫy - TP.HCM",
+    customerName: "",
     hospitalDepartment: "Khoa Xét Nghiệm",
     productLine: "Real-time PCR & Kit Xét Nghiệm",
     estimatedValue: 500000000,
     stage: "LEAD" as DealStage,
     expectedCloseDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-    assignedRep: "Lê Hữu Nhân",
+    assignedRep: String(user?.full_name || user?.name || "").trim(),
     priority: "CAO" as SalesDeal["priority"],
     notes: ""
   });
@@ -438,10 +441,9 @@ export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNaviga
             className="px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-800 dark:text-slate-200 cursor-pointer"
           >
             <option value="all">Tất cả NVKD</option>
-            <option value="Lê Hữu Nhân">Lê Hữu Nhân (Chuyên Viên KD)</option>
-            <option value="K' Trọng Nghĩa">K' Trọng Nghĩa (Quản Lý Sản Phẩm - PM)</option>
-            <option value="Đỗ Phạm Bảo Ngọc">Đỗ Phạm Bảo Ngọc (Chuyên Viên KD)</option>
-            <option value="Phan Minh Nghĩa">Phan Minh Nghĩa (Admin Kinh Doanh)</option>
+            {salesStaff.map(p => (
+              <option key={p.employee_code || p.full_name} value={p.full_name}>{p.full_name}{p.position ? ` (${p.position})` : ""}</option>
+            ))}
           </select>
 
           <button
@@ -791,10 +793,13 @@ export const SalesDealsPipeline: React.FC<SalesDealsPipelineProps> = ({ onNaviga
                   onChange={e => setNewDealForm({ ...newDealForm, assignedRep: e.target.value })}
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white"
                 >
-                  <option value="Lê Hữu Nhân">Lê Hữu Nhân (Chuyên Viên KD)</option>
-                  <option value="K' Trọng Nghĩa">K' Trọng Nghĩa (Quản Lý Sản Phẩm - PM)</option>
-                  <option value="Đỗ Phạm Bảo Ngọc">Đỗ Phạm Bảo Ngọc (Chuyên Viên KD)</option>
-                  <option value="Phan Minh Nghĩa">Phan Minh Nghĩa (Admin Kinh Doanh)</option>
+                  <option value="">-- Chọn NVKD --</option>
+                  {newDealForm.assignedRep && !salesStaff.some(p => p.full_name === newDealForm.assignedRep) && (
+                    <option value={newDealForm.assignedRep}>{newDealForm.assignedRep}</option>
+                  )}
+                  {salesStaff.map(p => (
+                    <option key={p.employee_code || p.full_name} value={p.full_name}>{p.full_name}{p.position ? ` (${p.position})` : ""}</option>
+                  ))}
                 </select>
               </div>
 

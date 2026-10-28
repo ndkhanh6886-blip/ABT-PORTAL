@@ -284,14 +284,6 @@ export async function syncPersonnelToZaloBindings() {
       }
     }
 
-    // Update Director phone in zalo_config to CEO Nguyễn Văn Hưng if not already customized
-    await query(`
-      UPDATE zalo_config 
-      SET director_phone = COALESCE(NULLIF(director_phone, ''), '0916033652'),
-          director_zalo_id = COALESCE((SELECT zalo_user_id FROM zalo_user_bindings WHERE employee_id = 'NV-TBR-001' AND zalo_user_id IS NOT NULL), director_zalo_id, '')
-      WHERE id = 1
-    `);
-
     return { success: true, count: realPersonnel.length };
   } catch (error: any) {
     console.error("Error syncing personnel to Zalo bindings:", error);

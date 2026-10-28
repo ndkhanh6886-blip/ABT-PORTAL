@@ -1135,10 +1135,7 @@ export function ApplicationFullABT() {
                             if (dept === "application" || dept === "app" || role.includes("application") || role.includes("app")) {
                                 return true;
                             }
-                            
-                            // Default Application department personnel if department field is not set/synced
-                            const defaultAppNames = ["Vũ Nhật Tân", "Vũ Thị Quỳnh Như", "Mai Quí Minh", "Huỳnh Ngọc Nhi"];
-                            return defaultAppNames.some(dmName => dmName.toLowerCase() === name);
+                                                        return false;
                         });
                         setLabMembers(filtered);
                     } else {
@@ -1183,16 +1180,13 @@ export function ApplicationFullABT() {
                                 if (dept === "application" || dept === "app" || role.includes("application") || role.includes("app")) {
                                     return true;
                                 }
-                                
-                                // Default Application department personnel if department field is not set/synced
-                                const defaultAppNames = ["Vũ Nhật Tân", "Vũ Thị Quỳnh Như", "Mai Quí Minh", "Huỳnh Ngọc Nhi"];
-                                return defaultAppNames.some(dmName => dmName.toLowerCase() === name);
+                                                                return false;
                             })
                             .map((p: any) => ({
                                 id: p.employee_id,
                                 name: p.full_name,
                                 role: p.position,
-                                email: p.email || `${p.employee_id}@abtvn.com`,
+                                email: p.email || "",
                                 department: p.department || "Application",
                                 status: p.status || "Active"
                             }));
@@ -1481,7 +1475,7 @@ export function ApplicationFullABT() {
         // Fallback to all members if no specific Application staff are registered yet
         const targetList = appMembers.length > 0 ? appMembers : labMembers;
         const names = targetList.map((m: any) => m.name || m.username).filter(Boolean);
-        return names.length > 0 ? names : ["Vũ Nhật Tân", "Vũ Thị Quỳnh Như", "Mai Quí Minh", "Huỳnh Ngọc Nhi"];
+        return names;
     }, [labMembers]);
 
     // Available task options for planner based on assignee
@@ -1796,7 +1790,7 @@ export function ApplicationFullABT() {
             id: taskId,
             title: `[Kiểm chứng sự cố ${issue.id}] - ${issue.productName} Lô ${issue.lotNumber}`,
             desc: `Tiến hành thí nghiệm thực chứng tìm nguyên nhân lỗi chất lượng sản phẩm khách hàng báo cáo:\n"${issue.description}"`,
-            assignee: user?.name || "Vũ Nhật Tân",
+            assignee: user?.full_name || user?.name || "",
             category: "Xác định nguyên nhân sự cố chất lượng sản phẩm",
             priority: "Cao",
             status: "Chưa bắt đầu",
@@ -1988,7 +1982,7 @@ export function ApplicationFullABT() {
             id: Date.now(),
             title: newTaskTitle,
             desc: newTaskDesc,
-            assignee: newTaskAssignee || (uniqueEmployees[0] || "Vũ Nhật Tân"),
+            assignee: newTaskAssignee || (uniqueEmployees[0] || ""),
             category: newTaskCategory,
             priority: newTaskPriority,
             status: "Chưa bắt đầu",
@@ -2825,7 +2819,7 @@ export function ApplicationFullABT() {
                         {activeTab === "tasks" && (
                             <button
                                 onClick={() => {
-                                    setNewTaskAssignee(selectedEmployee !== "Tất cả" ? selectedEmployee : (uniqueEmployees[0] || "Vũ Nhật Tân"));
+                                    setNewTaskAssignee(selectedEmployee !== "Tất cả" ? selectedEmployee : (uniqueEmployees[0] || ""));
                                     setIsTaskCreateModalOpen(true);
                                 }}
                                 className="bg-primary hover:bg-primary/90 text-white font-bold text-xs px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-sm shadow-primary/20 active:scale-95 transition-all cursor-pointer"

@@ -638,38 +638,38 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
     const sampleData = [
       {
         "Mã nhân viên (*)": "NV-TBR-001",
-        "Họ và tên (*)": "Nguyễn Văn Hưng",
+        "Họ và tên (*)": "Nguyễn Văn A",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)",
-        "Email (*)": "hung.nv@tbrscientific.com",
-        "Số điện thoại": "0916033652",
+        "Email (*)": "a.nv@tbrscientific.com",
+        "Số điện thoại": "0900000001",
         "Trạng thái": "ACTIVE"
       },
       {
         "Mã nhân viên (*)": "NV-TBR-002",
-        "Họ và tên (*)": "Đỗ Ngọc Diễm Trúc",
+        "Họ và tên (*)": "Trần Thị B",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Phó Giám Đốc",
-        "Email (*)": "truc.dnd@tbrscientific.com",
-        "Số điện thoại": "0916217771",
+        "Email (*)": "b.tt@tbrscientific.com",
+        "Số điện thoại": "0900000002",
         "Trạng thái": "ACTIVE"
       },
       {
         "Mã nhân viên (*)": "NV-TBR-003",
-        "Họ và tên (*)": "Võ Thị Cẩm Giang",
+        "Họ và tên (*)": "Lê Văn C",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Phó Giám Đốc",
-        "Email (*)": "giang.vtc@tbrscientific.com",
-        "Số điện thoại": "0911629512",
+        "Email (*)": "c.lv@tbrscientific.com",
+        "Số điện thoại": "0900000003",
         "Trạng thái": "ACTIVE"
       },
       {
         "Mã nhân viên (*)": "NV-TBR-018",
-        "Họ và tên (*)": "Phan Minh Nghĩa",
+        "Họ và tên (*)": "Phạm Thị D",
         "Phòng ban (*)": "Kinh Doanh",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh (Sales Specialist)",
-        "Email (*)": "nghia.pm@tbrscientific.com",
-        "Số điện thoại": "0987875934",
+        "Email (*)": "d.pt@tbrscientific.com",
+        "Số điện thoại": "0900000004",
         "Trạng thái": "ACTIVE"
       }
     ];

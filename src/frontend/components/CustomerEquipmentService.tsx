@@ -42,6 +42,7 @@ import {
 import { Modal } from "@/frontend/components/Modal";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
+import { usePersonnel, filterPersonnelByDept } from "@/frontend/utils/usePersonnel";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 
 // Dòng thiết bị trong danh mục phân phối & dịch vụ kỹ thuật của TBRs / ABT
@@ -267,6 +268,8 @@ export const CustomerEquipmentService: React.FC = () => {
   const companyConfig = useCompanyConfig();
   const { showToast } = useNotification();
   const { user } = useAuth();
+  const personnel = usePersonnel();
+  const engineers = useMemo(() => filterPersonnelByDept(personnel, ["application", "ứng dụng", "kỹ thuật", "fse", "kỹ sư"]), [personnel]);
 
   const [activeSubTab, setActiveSubTab] = useState<"pm_schedule" | "breakfix" | "installed_base" | "sop_config">("pm_schedule");
   const [searchQuery, setSearchQuery] = useState("");
@@ -484,12 +487,12 @@ export const CustomerEquipmentService: React.FC = () => {
   // New PM Form
   const [pmForm, setPmForm] = useState({
     code: `PM-${new Date().getFullYear()}-Q${Math.floor(new Date().getMonth() / 3) + 1}-${Date.now().toString().slice(-3)}`,
-    hospitalName: "Bệnh Viện Chợ Rẫy - TP.HCM",
+    hospitalName: "",
     department: "Khoa Vi Sinh / Sinh Học Phân Tử",
     deviceId: "",
     category: "PCR_REALTIME" as EquipmentCategory,
     scheduledDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-    assignedEngineer: "Vũ Nhật Tân",
+    assignedEngineer: "",
     priority: "CAO" as CustomerDeviceService["priority"],
     serviceReportNotes: "Bảo trì định kỳ theo khuyến cáo nhà sản xuất và tiêu chuẩn ISO 13485.",
     hospitalContactPerson: "",
@@ -508,12 +511,12 @@ export const CustomerEquipmentService: React.FC = () => {
 
     setPmForm({
       code: `PM-${new Date().getFullYear()}-Q${Math.floor(new Date().getMonth() / 3) + 1}-${Date.now().toString().slice(-3)}`,
-      hospitalName: targetDev?.hospitalName || "Bệnh Viện Chợ Rẫy - TP.HCM",
+      hospitalName: targetDev?.hospitalName || "",
       department: targetDev?.department || "Khoa Xét Nghiệm",
       deviceId: targetDev?.id || "",
       category: cat,
       scheduledDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-      assignedEngineer: "Vũ Nhật Tân",
+      assignedEngineer: "",
       priority: "CAO",
       serviceReportNotes: "Bảo trì định kỳ theo khuyến cáo nhà sản xuất và tiêu chuẩn ISO 13485.",
       hospitalContactPerson: "",
@@ -526,12 +529,12 @@ export const CustomerEquipmentService: React.FC = () => {
   // New Break-fix Form
   const [breakfixForm, setBreakfixForm] = useState({
     code: `CM-${new Date().getFullYear()}-BF-${Date.now().toString().slice(-3)}`,
-    hospitalName: "Bệnh Viện Bạch Mai - Hà Nội",
+    hospitalName: "",
     department: "Khoa Xét Nghiệm",
     deviceId: "",
     category: "PCR_REALTIME" as EquipmentCategory,
     scheduledDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-    assignedEngineer: "Mai Quí Minh",
+    assignedEngineer: "",
     priority: "KHAN_CAP" as CustomerDeviceService["priority"],
     issueDescription: "",
     hospitalContactPerson: "",
@@ -543,12 +546,12 @@ export const CustomerEquipmentService: React.FC = () => {
     const cat = targetDev ? getCategoryForDevice(targetDev.category, targetDev.deviceName, categoryConfigs) : "PCR_REALTIME";
     setBreakfixForm({
       code: `CM-${new Date().getFullYear()}-BF-${Date.now().toString().slice(-3)}`,
-      hospitalName: targetDev?.hospitalName || "Bệnh Viện Bạch Mai - Hà Nội",
+      hospitalName: targetDev?.hospitalName || "",
       department: targetDev?.department || "Khoa Xét Nghiệm",
       deviceId: targetDev?.id || "",
       category: cat,
       scheduledDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-      assignedEngineer: "Mai Quí Minh",
+      assignedEngineer: "",
       priority: "KHAN_CAP",
       issueDescription: "",
       hospitalContactPerson: "",
@@ -568,7 +571,7 @@ export const CustomerEquipmentService: React.FC = () => {
     installationDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     warrantyExpiry: "31/12/2028",
     maintenanceIntervalMonths: 6,
-    assignedEngineer: "Vũ Nhật Tân"
+    assignedEngineer: ""
   });
 
   // Sync with PostgreSQL Backend Storage
@@ -1772,10 +1775,13 @@ export const CustomerEquipmentService: React.FC = () => {
                   onChange={e => setPmForm({ ...pmForm, assignedEngineer: e.target.value })}
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white"
                 >
-                  <option value="Vũ Nhật Tân">Vũ Nhật Tân (Trưởng Phòng FSE)</option>
-                  <option value="Mai Quí Minh">Mai Quí Minh (Kỹ Sư Thiết Bị)</option>
-                  <option value="Huỳnh Ngọc Nhi">Huỳnh Ngọc Nhi (Kỹ Sư Ứng Dụng)</option>
-                  <option value="Vũ Thị Quỳnh Như">Vũ Thị Quỳnh Như (Chuyên Viên FAS)</option>
+                  <option value="">-- Chọn kỹ sư --</option>
+                  {pmForm.assignedEngineer && !engineers.some(p => p.full_name === pmForm.assignedEngineer) && (
+                    <option value={pmForm.assignedEngineer}>{pmForm.assignedEngineer}</option>
+                  )}
+                  {engineers.map(p => (
+                    <option key={p.employee_code || p.full_name} value={p.full_name}>{p.full_name}{p.position ? ` (${p.position})` : ""}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -1921,10 +1927,13 @@ export const CustomerEquipmentService: React.FC = () => {
                   onChange={e => setBreakfixForm({ ...breakfixForm, assignedEngineer: e.target.value })}
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white"
                 >
-                  <option value="Vũ Nhật Tân">Vũ Nhật Tân (Trưởng Phòng FSE)</option>
-                  <option value="Mai Quí Minh">Mai Quí Minh (Kỹ Sư Thiết Bị)</option>
-                  <option value="Huỳnh Ngọc Nhi">Huỳnh Ngọc Nhi (Kỹ Sư Ứng Dụng)</option>
-                  <option value="Vũ Thị Quỳnh Như">Vũ Thị Quỳnh Như (Chuyên Viên FAS)</option>
+                  <option value="">-- Chọn kỹ sư --</option>
+                  {breakfixForm.assignedEngineer && !engineers.some(p => p.full_name === breakfixForm.assignedEngineer) && (
+                    <option value={breakfixForm.assignedEngineer}>{breakfixForm.assignedEngineer}</option>
+                  )}
+                  {engineers.map(p => (
+                    <option key={p.employee_code || p.full_name} value={p.full_name}>{p.full_name}{p.position ? ` (${p.position})` : ""}</option>
+                  ))}
                 </select>
               </div>
 

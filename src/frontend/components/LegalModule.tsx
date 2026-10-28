@@ -210,6 +210,29 @@ export const LegalModule: React.FC = () => {
   const [selectedTender, setSelectedTender] = useState<TenderDossier | null>(null);
   const [isTenderModalOpen, setIsTenderModalOpen] = useState(false);
 
+  // Phụ trách pháp chế: lấy từ danh sách nhân sự (bộ phận Pháp Chế), ưu tiên trưởng bộ phận
+  const [legalLead, setLegalLead] = useState<{ name: string; code: string } | null>(null);
+  useEffect(() => {
+    const loadLegalLead = async () => {
+      try {
+        const res = await fetch("/api/settings?action=overview");
+        if (!res.ok) return;
+        const data = await res.json();
+        const norm = (v: any) => String(v || "").toLowerCase();
+        const legalStaff = (Array.isArray(data.personnel) ? data.personnel : []).filter((p: any) =>
+          p?.full_name && p.status !== "INACTIVE" && (norm(p.department).includes("pháp chế") || norm(p.department).includes("legal"))
+        );
+        const isHead = (p: any) => ["trưởng", "head", "giám đốc", "manager"].some(k => norm(p.position).includes(k));
+        const lead = legalStaff.find(isHead) || legalStaff[0];
+        if (lead) setLegalLead({ name: String(lead.full_name).trim(), code: String(lead.employee_code || "").trim() });
+      } catch (err) {
+        console.error("Failed to load legal lead:", err);
+      }
+    };
+    loadLegalLead();
+  }, []);
+  const legalLeadName = legalLead?.name || "";
+
   // New Document Form
   const [newDocForm, setNewDocForm] = useState({
     code: "",
@@ -228,7 +251,7 @@ export const LegalModule: React.FC = () => {
     packageName: "",
     bidValue: "",
     submissionDeadline: "30/11/2026",
-    assignedLawyer: "Nguyễn Thị Ngọc Huyền",
+    assignedLawyer: legalLeadName,
     notes: "",
     checklist: {
       circulationLicense: true,
@@ -261,7 +284,7 @@ export const LegalModule: React.FC = () => {
     partnerName: "",
     type: "Bán hàng Bệnh Viện" as LegalContract["type"],
     value: "",
-    requester: user?.full_name || user?.name || "Nguyễn Thị Ngọc Huyền",
+    requester: user?.full_name || user?.name || "",
     department: user?.department || "Pháp Chế",
     riskNotes: "",
     riskLevel: "THAP" as LegalContract["riskLevel"],
@@ -470,8 +493,8 @@ export const LegalModule: React.FC = () => {
     if (kind === "doc") setIsNewDocModalOpen(false);
     if (editing?.kind !== kind) return;
     setEditing(null);
-    if (kind === "contract") setNewContractForm({ code: `HD-TBR-${Date.now().toString().slice(-4)}`, title: "", partnerName: "", type: "Bán hàng Bệnh Viện", value: "", requester: myName || "Nguyễn Thị Ngọc Huyền", department: user?.department || "Pháp Chế", riskNotes: "", riskLevel: "THAP", expiryDate: "31/12/2026", attachments: [] });
-    if (kind === "tender") setNewTenderForm({ code: `THAU-TBR-${Date.now().toString().slice(-4)}`, hospitalName: "", packageName: "", bidValue: "", submissionDeadline: "30/11/2026", assignedLawyer: "Nguyễn Thị Ngọc Huyền", notes: "", checklist: { circulationLicense: true, loaAuthorization: true, iso13485: true, financialReport: true, gdpGspColdChain: true }, attachments: [] });
+    if (kind === "contract") setNewContractForm({ code: `HD-TBR-${Date.now().toString().slice(-4)}`, title: "", partnerName: "", type: "Bán hàng Bệnh Viện", value: "", requester: myName, department: user?.department || "Pháp Chế", riskNotes: "", riskLevel: "THAP", expiryDate: "31/12/2026", attachments: [] });
+    if (kind === "tender") setNewTenderForm({ code: `THAU-TBR-${Date.now().toString().slice(-4)}`, hospitalName: "", packageName: "", bidValue: "", submissionDeadline: "30/11/2026", assignedLawyer: legalLeadName, notes: "", checklist: { circulationLicense: true, loaAuthorization: true, iso13485: true, financialReport: true, gdpGspColdChain: true }, attachments: [] });
     if (kind === "license") setNewLicenseForm({ licenseNumber: `26000${Date.now().toString().slice(-4)}/PCBB-BYT`, productName: "", deviceClass: "Loại C", manufacturer: "", origin: "", agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế", issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), expiryDate: "31/12/2030", notes: "", attachments: [] });
     if (kind === "doc") setNewDocForm({ code: "", title: "", category: "Nghị Định & Luật", issuingBody: "", effectiveDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), summary: "", attachments: [] });
   };
@@ -793,7 +816,7 @@ export const LegalModule: React.FC = () => {
       packageName: "",
       bidValue: "",
       submissionDeadline: "30/11/2026",
-      assignedLawyer: "Nguyễn Thị Ngọc Huyền",
+      assignedLawyer: legalLeadName,
       notes: "",
       checklist: {
         circulationLicense: true,
@@ -919,7 +942,7 @@ export const LegalModule: React.FC = () => {
       riskLevel: newContractForm.riskLevel,
       riskNotes: newContractForm.riskNotes || "Đã gửi dự thảo kèm file đính kèm chờ thẩm định pháp lý.",
       expiryDate: newContractForm.expiryDate,
-      assignedLawyer: "Nguyễn Thị Ngọc Huyền",
+      assignedLawyer: legalLeadName,
       attachments: newContractForm.attachments,
       createdBy: myName || undefined
     };
@@ -933,7 +956,7 @@ export const LegalModule: React.FC = () => {
       partnerName: "",
       type: "Bán hàng Bệnh Viện",
       value: "",
-      requester: user?.full_name || user?.name || "Nguyễn Thị Ngọc Huyền",
+      requester: user?.full_name || user?.name || "",
       department: user?.department || "Pháp Chế",
       riskNotes: "",
       riskLevel: "THAP",
@@ -982,7 +1005,7 @@ export const LegalModule: React.FC = () => {
               <div className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase">Phụ trách pháp chế</div>
               <div className="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center gap-1.5">
                 <User className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-                <span>Nguyễn Thị Ngọc Huyền (NV-TBR-010)</span>
+                <span>{legalLead ? `${legalLead.name}${legalLead.code ? ` (${legalLead.code})` : ""}` : "Chưa phân công"}</span>
               </div>
             </div>
 

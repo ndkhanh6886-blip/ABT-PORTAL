@@ -187,48 +187,6 @@ export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
 };
 
 
-export const DEPARTMENT_STAFF: Record<string, string[]> = {
-  "Ban Giám Đốc": [
-    "Nguyễn Văn Hưng (CEO)",
-    "Đỗ Ngọc Diễm Trúc (Phó Giám Đốc)",
-    "Võ Thị Cẩm Giang (Phó Giám Đốc)"
-  ],
-  "Application": [
-    "Vũ Nhật Tân (Trưởng Phòng)",
-    "Vũ Thị Quỳnh Như",
-    "Mai Quí Minh",
-    "Huỳnh Ngọc Nhi"
-  ],
-  "Kinh Doanh": [
-    "Lê Hữu Nhân",
-    "K' Trọng Nghĩa",
-    "Đỗ Phạm Bảo Ngọc",
-    "Nguyễn Ánh Nhựt",
-    "Phạm Nguyễn Minh Châu",
-    "Phan Minh Nghĩa",
-    "Phạm Thị Thu Thủy",
-    "Lê Thị Thuỳ Trang",
-    "Trần Thị Mỹ Linh",
-    "Ngô Thị Yến Nhi"
-  ],
-  "Kho & Vận Hành": [
-    "Dương Phương Bảo Khoa (Trưởng Bộ Phận)",
-    "Trần Thị Minh Hậu (Thủ Kho)",
-    "Hoàng Thị Huệ (Thủ Kho)"
-  ],
-  "Cung Ứng": [
-    "Trần Thị Trà My",
-    "Nguyễn Tấn Lộc"
-  ],
-  "Kế Toán": [
-    "Võ Thị Ngọc Giàu (Kế Toán Trưởng)",
-    "Nguyễn Thị Hạnh",
-    "Nguyễn Lệ Quân"
-  ],
-  "Pháp Chế": [
-    "Nguyễn Thị Ngọc Huyền"
-  ]
-};
 
 export interface ThematicStageTemplate {
   name: string;
@@ -587,8 +545,8 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     description: "Yêu cầu bộ phận Pháp chế thẩm định các điều khoản hợp đồng kinh tế, đại lý phân phối hoặc hồ sơ pháp lý dự thầu bệnh viện.",
     sla_days: 3,
     steps: [
-      { step_index: 0, title: "Tiếp nhận dự thảo hợp đồng & Kiểm tra tính pháp lý", dept: "Pháp Chế", assignee_name: "Nguyễn Thị Ngọc Huyền", sla_hours: 24, deliverables: "Biên bản thẩm tra pháp lý, rà soát điều khoản thanh toán, phạt vi phạm & bảo hành" },
-      { step_index: 1, title: "Hiệu chỉnh điều khoản & Phản hồi cho Sales", dept: "Pháp Chế", assignee_name: "Nguyễn Thị Ngọc Huyền", sla_hours: 24, deliverables: "Bản hợp đồng hoàn chỉnh (redline track changes) đạt chuẩn pháp lý" },
+      { step_index: 0, title: "Tiếp nhận dự thảo hợp đồng & Kiểm tra tính pháp lý", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Biên bản thẩm tra pháp lý, rà soát điều khoản thanh toán, phạt vi phạm & bảo hành" },
+      { step_index: 1, title: "Hiệu chỉnh điều khoản & Phản hồi cho Sales", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Bản hợp đồng hoàn chỉnh (redline track changes) đạt chuẩn pháp lý" },
       { step_index: 2, title: "Trình Ban Giám Đốc phê duyệt ký kết chính thức", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Hợp đồng kinh tế có chữ ký số / con dấu pháp nhân công ty" }
     ]
   }
@@ -690,21 +648,6 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
     let list = Array.isArray(personnelList) ? [...personnelList] : [];
     if (filterDepartment && filterDepartment !== "all") {
       list = list.filter(p => isSameWorkspaceDept(p.department, filterDepartment));
-      const normDept = normalizeWorkspaceDept(filterDepartment);
-      if (normDept && DEPARTMENT_STAFF[normDept]) {
-        DEPARTMENT_STAFF[normDept].forEach(rawName => {
-          const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
-          const posMatch = rawName.match(/\((.*?)\)/);
-          if (!list.some(p => sameStaffName(p.full_name, cleanName))) {
-            list.push({
-              full_name: cleanName,
-              employee_code: "",
-              position: posMatch ? posMatch[1] : `Nhân sự ${normDept}`,
-              department: normDept
-            });
-          }
-        });
-      }
     }
     if (!search.trim()) return list;
     const q = search.toLowerCase();
@@ -2293,7 +2236,6 @@ export const UnifiedWorkspace: React.FC = () => {
       return personnelList || [];
     }
 
-    const normDept = normalizeWorkspaceDept(currentDept);
     const list: any[] = [];
 
     if (personnelList && personnelList.length > 0) {
@@ -2304,20 +2246,6 @@ export const UnifiedWorkspace: React.FC = () => {
       });
     }
 
-    if (normDept && normDept !== "all" && DEPARTMENT_STAFF[normDept]) {
-      DEPARTMENT_STAFF[normDept].forEach(rawName => {
-        const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
-        const posMatch = rawName.match(/\((.*?)\)/);
-        if (!list.some((p: any) => sameStaffName(p.full_name || p, cleanName))) {
-          list.push({
-            full_name: cleanName,
-            employee_code: "",
-            position: posMatch ? posMatch[1] : `Nhân sự ${normDept}`,
-            department: normDept
-          });
-        }
-      });
-    }
 
     return list;
   }, [personnelList, selectedDept, rolePerspective, managerDept]);

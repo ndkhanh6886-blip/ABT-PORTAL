@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import { useAuth } from "@/frontend/contexts/AuthContext";
 import {
   MessageSquare,
   Send,
@@ -97,6 +98,7 @@ interface ZaloStats {
 }
 
 export const ZaloOperationsHub: React.FC = () => {
+  const { user } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<"approvals" | "chat_simulator" | "bindings" | "config" | "logs">("bindings");
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState<ZaloConfig>({
@@ -394,7 +396,7 @@ export const ZaloOperationsHub: React.FC = () => {
           action: "director_action",
           quote_code: quoteCode,
           decision,
-          approver_name: "Nguyễn Văn Hưng (Tổng Giám Đốc)"
+          approver_name: String(user?.full_name || user?.name || "Ban Giám Đốc")
         })
       });
       const data = await res.json();

@@ -687,9 +687,7 @@ const CustomerAllocationSearchInput: React.FC<{
 
 /** Tên "khách hàng" của đơn lưu kho nội bộ (SO Stock) theo thương hiệu đang chạy. */
 const defaultStockCustomerName = () =>
-    typeof window !== "undefined" && (window.location.port === "3006" || window.location.href.includes("3006"))
-        ? "Công ty Cổ phần Công nghệ VIA"
-        : "Công ty Cổ phần Công nghệ TBR";
+    "Công ty Cổ phần Công nghệ TBR";
 
 /** Mã SO do máy chủ cấp (SO26-KH-1001, SO26-STOCK-1001, ...): không bao giờ được đổi mã phía trình duyệt. */
 /** "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT- CHI NHÁNH LONG HẬU" -> "GIẢI PHÁP Y SINH ABT" (tên đầy đủ để ở tooltip). */
@@ -5498,9 +5496,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
         const isNvkdOrPm = ["KD-02", "KD-07", "KD-08", "KD-09", "KD-10", "KD-11", "KD-12"].includes(targetRepId);
         if (isNvkdOrPm) {
-            return "Phó trưởng phòng KD (Huỳnh Thị Ngọc Huyền)";
+            return "Phó trưởng phòng KD";
         }
-        return "PGĐ Kinh doanh (Đỗ Ngọc Diễm Trúc)";
+        return "PGĐ Kinh doanh";
     };
 
     const getWeeklyApproval = (week: number, repId: string): WeeklyApprovalRecord => {
@@ -5550,8 +5548,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             type: "info",
             category: "plan",
             sender: { name: repName, id: repId },
-            targetEmployeeIds: ["NV-TBR-002", "NV-TBR-001"],
-            targetEmployeeNames: ["Đỗ Ngọc Diễm Trúc", "Nguyễn Văn Hưng"],
+            targetRoles: ["admin", "sales_head"],
             link: { tab: "sales", subTab: "planner" }
         });
     };
@@ -7205,9 +7202,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     // Chuẩn hóa tên viết tắt / thương hiệu hãng sản xuất hiển thị trên Báo giá
     const formatSupplierShortName = (rawNameOrBrand: any): string => {
-        if (!rawNameOrBrand) return "ABT";
+        if (!rawNameOrBrand) return "";
         const str = String(rawNameOrBrand).trim();
-        if (!str || str === "—" || str === "-") return "ABT";
+        if (!str || str === "—" || str === "-") return "";
 
         // 1. Kiểm tra đối soát trực tiếp trong danh sách NCC hệ thống
         if (dbSuppliers && dbSuppliers.length > 0) {
@@ -7290,9 +7287,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 else if ((prod as any).brand && String((prod as any).brand).trim()) raw = String((prod as any).brand).trim();
                 else if ((prod as any).supplier && String((prod as any).supplier).trim()) raw = String((prod as any).supplier).trim();
                 else if ((prod as any).manufacturer && String((prod as any).manufacturer).trim()) raw = String((prod as any).manufacturer).trim();
-                else raw = "ABT";
+                else raw = "";
             } else {
-                raw = (prod as any)?.brand || (prod as any)?.manufacturer || "ABT";
+                raw = (prod as any)?.brand || (prod as any)?.manufacturer || "";
             }
         }
         return formatSupplierShortName(raw);
@@ -8873,7 +8870,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return {
                 productCode: it.productCode,
                 parentCode: parentCode,
-                manufacturer: formatSupplierShortName(it.manufacturer || ((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "ABT") : "ABT")),
+                manufacturer: formatSupplierShortName(it.manufacturer || ((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "") : "ABT")),
                 specification: it.specification || prod?.specification || "",
                 quantity: qty,
                 price: price,
@@ -10465,7 +10462,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const displayCode = it.parentCode || it.parent_code || (prod as any)?.parent_code || (prod as any)?.parent_item_code || itCode || "—";
                 const itName = it.productName || it.product_name || it.name || prod?.name || itCode || "Sản phẩm";
                 const spec = it.specification || prod?.specification || getProductSpecification(it) || "—";
-                const mfg = formatSupplierShortName(it.manufacturer || (prod as any)?.manufacturer || getProductManufacturer(it) || "ABT");
+                const mfg = formatSupplierShortName(it.manufacturer || (prod as any)?.manufacturer || getProductManufacturer(it) || "");
                 const rawNote = it.notes || it.note || "";
                 const note = (rawNote === prod?.notes || rawNote === "Imported from Excel") ? "" : rawNote;
 
@@ -12902,9 +12899,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return list;
     };
 
-    const defaultStockCustomer = typeof window !== "undefined" && (window.location.port === "3006" || window.location.href.includes("3006"))
-        ? "Công ty Cổ phần Công nghệ VIA"
-        : "Công ty Cổ phần Công nghệ TBR";
+    const defaultStockCustomer = "Công ty Cổ phần Công nghệ TBR";
 
     const checkIsPureStock = (o: any): boolean => {
         if (!o) return false;
@@ -12912,7 +12907,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (o.quoteId || o.quote_code) return false;
         // Nếu tên khách hàng không phải kho nội bộ / công ty chủ quản thì là đơn bán cho khách hàng
         const cName = String(o.customerName || "").trim();
-        if (cName && !cName.includes("Kho") && cName !== defaultStockCustomer && !cName.includes("TBR") && !cName.includes("VIA")) {
+        if (cName && !cName.includes("Kho") && cName !== defaultStockCustomer && !cName.includes("TBR")) {
             return false;
         }
         return Boolean(o.isStockOrder || o.orderCategory === "STOCK" || (o.id && String(o.id).includes("STOCK")));
@@ -14464,8 +14459,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     type: "info",
                     category: "delivery",
                     sender: { name: newSlip.creatorName || "Nhân viên" },
-                    targetEmployeeIds: ["NV-TBR-007", "NV-TBR-002", "NV-TBR-001"],
-                    targetEmployeeNames: ["Dương Phương Bảo Khoa", "Đỗ Ngọc Diễm Trúc", "Nguyễn Văn Hưng"],
+                    targetRoles: ["admin", "warehouse_lead", "warehouse"],
                     link: { tab: "sales", subTab: "orders" }
                 });
             }
@@ -25157,7 +25151,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     const prod = allSalesProducts.find(prod => prod.code === code) || biolabProducts.find(prod => prod.code === code);
                                                                                     const finalPrice = prod ? (prod[quotePriceTier] || prod.price) : 0;
                                                                                     const finalSpec = prod ? (prod.specification || (prod.name.toLowerCase().includes("kit") ? "50 test/hộp" : prod.unit || "")) : "50 test/hộp";
-                                                                                    const finalMfg = formatSupplierShortName((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "ABT") : "ABT");
+                                                                                    const finalMfg = formatSupplierShortName((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "") : "ABT");
                                                                                     const finalNotes = item.notes || (stockIntel.atp > 0 ? "Hàng có sẵn, giao ngay" : (stockIntel.incomingQty > 0 ? `Hàng đang về (${stockIntel.incomingQty} sp)` : "Hàng đặt, giao sau 2-4 tuần"));
                                                                                     const isEquip = isEquipmentProduct(prod, code);
                                                                                     const defaultConfigs = isEquip ? getDefaultEquipmentConfig(prod) : (item.configurations || []);
@@ -27825,7 +27819,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             </span>
                                                                         ) : null}
                                                                         <span className="text-[10px] text-slate-500 font-mono">
-                                                                            {p.brand || "ABT"}
+                                                                            {p.brand || "—"}
                                                                         </span>
                                                                     </div>
                                                                 </div>

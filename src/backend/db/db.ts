@@ -664,9 +664,7 @@ async function ensurePersonnelTableImpl() {
         path.join(process.cwd(), "src/backend/db/schema.sql"),
         path.join(__dirname, "schema.sql"),
         "/var/www/TBR-portal/src/backend/db/schema.sql",
-        "/var/www/tbr-portal/src/backend/db/schema.sql",
-        "/var/www/VIA-portal/src/backend/db/schema.sql",
-        "/var/www/via-portal/src/backend/db/schema.sql"
+        "/var/www/tbr-portal/src/backend/db/schema.sql"
       ];
       for (const p of candidates) {
         if (fs.existsSync(p)) {

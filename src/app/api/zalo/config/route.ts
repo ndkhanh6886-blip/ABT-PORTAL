@@ -376,7 +376,7 @@ export async function POST(req: NextRequest) {
 
     // 7. Test Chat Simulator
     if (action === "test_chat") {
-      const { senderName = "Bùi Lê Phương Quân (NVKD)", text, employee_id } = body;
+      const { senderName = me.full_name || me.username || "Nhân viên kinh doanh", text, employee_id } = body;
       const reply = await processZaloInboundMessage({
         senderId: `portal_sim_${me.username}`,
         senderName,

@@ -17,7 +17,7 @@ export interface ZaloMessageResponse {
 
 const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tbr-portal.vn";
 
-const QUOTE_CODE_REGEX = /BG-(?:TBR|VIA)-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
+const QUOTE_CODE_REGEX = /BG-TBR-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
 
 async function hasQuotationApprovalAuthority(senderBinding: any, senderId: string, directorZaloId: string): Promise<boolean> {
   if (
@@ -299,7 +299,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
 👤 NVKD Phụ Trách: ${q.sales_rep_name || "Nhân viên kinh doanh"}
 💰 Tổng Tiền Duyệt: ${totalFmt} VNĐ (Đã trừ chiết khấu ${q.discount_rate}%)
 📅 Thời Điểm Duyệt: ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
-✍ Người Phê Duyệt: ${senderBinding?.display_name || "Nguyễn Văn Hưng (Tổng Giám Đốc)"}
+✍ Người Phê Duyệt: ${senderBinding?.display_name || "Ban Giám Đốc"}
 
 Trạng thái báo giá đã được cập nhật sang [ĐÃ PHÊ DUYỆT]. NVKD có thể gửi file PDF chính thức đến khách hàng.`;
 
@@ -581,8 +581,7 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
       deliveryTerms = deliveryTerms || "Trong vòng 07 ngày làm việc kể từ ngày hợp đồng có hiệu lực.";
       paymentTerms = paymentTerms || existingCust?.payment_terms || "Chuyển khoản trong vòng 30 ngày kể từ ngày nhận đủ hóa đơn GTGT và biên bản bàn giao.";
 
-      const brandPrefix = BASE_APP_URL.includes("via") ? "VIA" : "TBR";
-      const isTBR = brandPrefix === "TBR";
+      const brandPrefix = "TBR";
       const contractCode = `HD-${brandPrefix}-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
 
       const contractMeta = {
@@ -626,7 +625,7 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
         typeof q.items === "string" ? q.items : JSON.stringify(q.items)
       ]);
 
-      const companyTitle = isTBR ? "Công ty TNHH Khoa học TBR" : "CÔNG TY TNHH XÉT NGHIỆM VIA";
+      const companyTitle = "Công ty TNHH Khoa học TBR";
       const contractPdfUrl = signedDocumentUrl("contract", contractCode);
 
       return {
@@ -755,9 +754,9 @@ Thêm KH: Bệnh Viện Ung Bướu, 47 Nguyễn Huy Lượng Quận Bình Thạ
       const taxCode = isTaxCode ? phoneOrTax : null;
       const phone = !isTaxCode && phoneOrTax ? phoneOrTax : null;
 
-      const salesRepName = senderBinding?.display_name || senderName || "Bùi Lê Phương Quân (NVKD)";
+      const salesRepName = senderBinding?.display_name || senderName || "Nhân viên kinh doanh";
       const salesRepId = senderBinding?.employee_id || "KD-01";
-      const brandPrefix = BASE_APP_URL.includes("via") ? "VIA" : "TBR";
+      const brandPrefix = "TBR";
       const newCustomerCode = `KH-${brandPrefix}-${Date.now().toString().slice(-4)}`;
       const isHospital = /(?:bệnh\s*viện|viện|phòng\s*khám|trung\s*tâm|cdc)/i.test(cleanName);
       const classification = isHospital ? "Bệnh viện / Cơ sở Y tế" : "Khách hàng trực tiếp";
@@ -1046,7 +1045,7 @@ Soạn: "Báo giá ${suggestedName}: 2 bộ HI-612, ck 0%"`
             total: unitPrice * qty,
             amount: unitPrice * qty,
             specification: p.specification || "",
-            manufacturer: p.manufacturer || "ABT"
+            manufacturer: p.manufacturer || ""
           });
         }
       }
@@ -1083,7 +1082,7 @@ ${sampleSkus}
       const requiresDirectorApproval = discountRate >= config.director_discount_threshold;
       const quoteCode = `BG-TBR-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
       const status = requiresDirectorApproval ? "PENDING_DIRECTOR_APPROVAL" : "APPROVED";
-      const salesRepName = senderBinding?.display_name || senderName || "Bùi Lê Phương Quân (NVKD)";
+      const salesRepName = senderBinding?.display_name || senderName || "Nhân viên kinh doanh";
 
       // Insert into sales_quotations
       const vnToday = todayVN();

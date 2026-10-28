@@ -29,6 +29,7 @@ import {
 import { Modal } from "@/frontend/components/Modal";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
+import { usePersonnel, filterPersonnelByDept } from "@/frontend/utils/usePersonnel";
 import { todayVN } from "@/backend/services/dates";
 
 export type TenderStatus =
@@ -230,7 +231,7 @@ const buildSalesRepOptions = (personnel: any[], users: any[]): SalesRepOption[] 
 };
 
 /** Giá trị mặc định của form "Theo Dõi Gói Thầu Mới" */
-const createDefaultBidForm = (defaultRep: string = "Lê Hữu Nhân") => ({
+const createDefaultBidForm = (defaultRep: string = "") => ({
   bidCode: `TBMT-${new Date().getFullYear()}-${Date.now().toString().slice(-4)}`,
   tenderName: "",
   hospitalName: "",
@@ -245,13 +246,10 @@ const createDefaultBidForm = (defaultRep: string = "Lê Hữu Nhân") => ({
   notes: ""
 });
 
-/** Danh sách kỹ sư FSE bảo trì */
-const FSE_OPTIONS = ["Vũ Nhật Tân", "Huỳnh Ngọc Nhi", "Vũ Thị Quỳnh Như"];
-
 /** Giá trị mặc định của form "Thêm Hợp Đồng Đặt Máy Mượn" */
-const createDefaultRentalForm = (defaultRep: string = "Lê Hữu Nhân") => ({
+const createDefaultRentalForm = (defaultRep: string = "") => ({
   code: `RR-${Date.now().toString().slice(-4)}`,
-  hospitalName: "Bệnh Viện Chợ Rẫy - TP.HCM",
+  hospitalName: "",
   department: "Khoa Vi Sinh / Sinh Học Phân Tử",
   placedDeviceName: "Hệ thống Real-time PCR TBR-9600",
   model: "TBR-PCR-9600",
@@ -263,12 +261,15 @@ const createDefaultRentalForm = (defaultRep: string = "Lê Hữu Nhân") => ({
   currentMonthActualTests: 520,
   pricePerTest: 120000,
   assignedSalesRep: defaultRep,
-  assignedFSE: FSE_OPTIONS[0]
+  assignedFSE: ""
 });
 
 export const HospitalBiddingManagement: React.FC = () => {
   const { showToast } = useNotification();
   const { user } = useAuth();
+  const personnel = usePersonnel();
+  // Danh sách kỹ sư FSE bảo trì: nhân sự Application / Kỹ thuật
+  const fseOptions = useMemo(() => filterPersonnelByDept(personnel, ["application", "ứng dụng", "kỹ thuật", "fse", "kỹ sư"]).map(p => p.full_name), [personnel]);
 
   const [activeSubTab, setActiveSubTab] = useState<"tenders" | "reagent_rental">("tenders");
   const [searchQuery, setSearchQuery] = useState("");
@@ -1709,10 +1710,11 @@ export const HospitalBiddingManagement: React.FC = () => {
                   onChange={e => setNewRentalForm({ ...newRentalForm, assignedFSE: e.target.value })}
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white"
                 >
-                  {newRentalForm.assignedFSE && !FSE_OPTIONS.includes(newRentalForm.assignedFSE) && (
+                  {newRentalForm.assignedFSE && !fseOptions.includes(newRentalForm.assignedFSE) && (
                     <option value={newRentalForm.assignedFSE}>{newRentalForm.assignedFSE}</option>
                   )}
-                  {FSE_OPTIONS.map(name => (
+                  <option value="">-- Chọn kỹ sư --</option>
+                  {fseOptions.map(name => (
                     <option key={name} value={name}>{name}</option>
                   ))}
                 </select>

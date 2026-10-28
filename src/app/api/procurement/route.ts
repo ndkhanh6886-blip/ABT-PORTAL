@@ -1925,7 +1925,7 @@ export async function POST(req: NextRequest) {
           workflow_code, workflow_type, title, priority, status, requester_name, requester_dept,
           assignee_name, target_dept, customer_name, product_info, due_date, description,
           results_summary, attachments, comments, logs
-        ) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, 'Trần Phương Uyên', 'Cung Ứng', $7, $8, $9, $10, $11, '[]'::json, '[]'::json, $12)`,
+        ) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, '', 'Cung Ứng', $7, $8, $9, $10, $11, '[]'::json, '[]'::json, $12)`,
         [
           code,
           "SALES_TO_PROCUREMENT",
