@@ -10034,6 +10034,7 @@ ${wf.description || ""}`}
                 personnelList={personnelList}
                 filterDepartment={rolePerspective === "manager" ? taskForm.department : undefined}
                 placeholder="Tìm & chọn nhân sự phụ trách..."
+                disabled={taskFormAccess !== "full"}
               />
             </div>
 
@@ -10054,6 +10055,7 @@ ${wf.description || ""}`}
                     customerList={customerList}
                     supplierList={supplierList}
                     prioritizeSuppliers={isProcTask}
+                    disabled={taskFormAccess !== "full"}
                     placeholder={
                       isProcTask
                         ? "Gõ tìm Nhà cung cấp (VD: Meridian, Liferiver, SSI...) hoặc Khách hàng..."
