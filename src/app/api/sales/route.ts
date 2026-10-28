@@ -894,21 +894,40 @@ export async function GET(req: NextRequest) {
       };
       const items: any[] = [];
       const add = (x: any) => items.push({ ...x, date: x.date || null });
-      const safe = (p: Promise<any>) => p.catch(() => ({ rows: [] as any[] }));
+      const safe = (p: Promise<any>) => p.catch((err: any) => {
+        console.error("[sales/customer_activity] Truy vấn lỗi, bỏ qua phần này:", err?.message || err);
+        return { rows: [] as any[] };
+      });
 
+      // Lọc ngay trong SQL theo khách hàng này (trước đây đọc toàn bộ 12 bảng rồi lọc bằng JavaScript):
+      // cùng quy tắc với sameCust: trùng customer_id, hoặc trùng tên (không phân biệt hoa thường / khoảng trắng)
+      const cid = Number(cust.id) || 0;
+      const byCust = (idCol: string | null, nameCol: string) =>
+        `(${idCol ? `(${idCol} = $1 AND $1 > 0) OR ` : "$1::int >= 0 AND "}LOWER(REGEXP_REPLACE(TRIM(COALESCE(${nameCol}, '')), '\\s+', ' ', 'g')) = $2)`;
+      const custParams = [cid, cName];
+      // Văn bản tự do: chỉ lấy dòng có nhắc tên (>= 6 ký tự) hoặc mã khách (>= 4 ký tự), mentions() kiểm tra lại
+      const mentionSql = (cols: string[]) => {
+        const conds: string[] = [];
+        if (cName.length >= 6) conds.push(...cols.map(c => `${c} ILIKE '%' || $1 || '%'`));
+        if (cCode.length >= 4) conds.push(...cols.map(c => `${c} ILIKE '%' || $2 || '%'`));
+        // $1/$2 luôn được tham chiếu để PostgreSQL xác định được kiểu tham số
+        return `($1::text IS NOT NULL AND $2::text IS NOT NULL AND ${conds.length ? `(${conds.join(" OR ")})` : "FALSE"})`;
+      };
+      const mentionParams = [cName, cCode];
       const [qRes, cRes, oRes, sRes, pRes, rRes, wRes, tRes, stRes, dRes, tcRes, plRes, storeRes] = await Promise.all([
-        safe(query("SELECT quote_code, customer_id, customer_name, sales_rep_name, date, total_amount, status, created_at FROM sales_quotations")),
-        safe(query("SELECT contract_code, customer_id, customer_name, sales_rep_name, title, sign_date, total_value, status, created_at FROM sales_contracts")),
-        safe(query("SELECT order_code, customer_id, customer_name, sales_rep_name, order_date, total_amount, delivery_status, invoiced_delivery_slips, created_at FROM sales_orders")),
-        safe(query("SELECT slip_code, order_code, customer_name, delivery_date, status, extra_data, created_at FROM sales_delivery_slips")),
-        safe(query("SELECT p.order_code, p.amount, p.payment_date, p.method, p.created_by, p.delivery_slip_code, o.customer_id, o.customer_name FROM sales_payments p JOIN sales_orders o ON o.id = p.order_id WHERE p.voided_at IS NULL")),
-        safe(query("SELECT rma_code, order_code, customer_id, customer_name, total_amount, status, created_at FROM rma_returns")),
-        safe(query("SELECT workflow_code, title, status, requester_name, assignee_name, target_dept, customer_name, created_at FROM workflow_requests")),
-        safe(query("SELECT task_code, title, assignee_name, customer_name, status, deadline, result, created_at FROM company_tasks")),
-        safe(query("SELECT task_code, title, assignee_name, customer_name, status, deadline, created_at FROM sales_tasks")),
-        safe(query("SELECT log_date, employee_name, work_content, result FROM sales_daily_logs")),
-        safe(query("SELECT id, customer_id, customer_name, activity_type, activity_date, content, performed_by, next_followup_date FROM tech_care_logs")),
-        safe(query("SELECT week_number, year, employee_name, plan_data, status FROM sales_plans")),
+        safe(query(`SELECT quote_code, customer_id, customer_name, sales_rep_name, date, total_amount, status, created_at FROM sales_quotations WHERE ${byCust("customer_id", "customer_name")}`, custParams)),
+        safe(query(`SELECT contract_code, customer_id, customer_name, sales_rep_name, title, sign_date, total_value, status, created_at FROM sales_contracts WHERE ${byCust("customer_id", "customer_name")}`, custParams)),
+        safe(query(`SELECT order_code, customer_id, customer_name, sales_rep_name, order_date, total_amount, delivery_status, invoiced_delivery_slips, created_at FROM sales_orders WHERE ${byCust("customer_id", "customer_name")}`, custParams)),
+        safe(query(`SELECT s.slip_code, s.order_code, s.customer_name, s.delivery_date, s.status, s.extra_data, s.created_at FROM sales_delivery_slips s
+                     WHERE ${byCust(null, "s.customer_name")} OR s.order_code IN (SELECT order_code FROM sales_orders WHERE ${byCust("customer_id", "customer_name")})`, custParams)),
+        safe(query(`SELECT p.order_code, p.amount, p.payment_date, p.method, p.created_by, p.delivery_slip_code, o.customer_id, o.customer_name FROM sales_payments p JOIN sales_orders o ON o.id = p.order_id WHERE p.voided_at IS NULL AND ${byCust("o.customer_id", "o.customer_name")}`, custParams)),
+        safe(query(`SELECT rma_code, order_code, customer_id, customer_name, total_amount, status, created_at FROM rma_returns WHERE ${byCust("customer_id", "customer_name")}`, custParams)),
+        safe(query(`SELECT workflow_code, title, status, requester_name, assignee_name, target_dept, customer_name, created_at FROM workflow_requests WHERE ${byCust(null, "customer_name")}`, custParams)),
+        safe(query(`SELECT task_code, title, assignee_name, customer_name, status, deadline, result, created_at FROM company_tasks WHERE ${byCust(null, "customer_name")}`, custParams)),
+        safe(query(`SELECT task_code, title, assignee_name, customer_name, status, deadline, created_at FROM sales_tasks WHERE ${byCust(null, "customer_name")}`, custParams)),
+        safe(query(`SELECT log_date, employee_name, work_content, result FROM sales_daily_logs WHERE ${mentionSql(["work_content", "result"])}`, mentionParams)),
+        safe(query(`SELECT id, customer_id, customer_name, activity_type, activity_date, content, performed_by, next_followup_date FROM tech_care_logs WHERE ${byCust("customer_id", "customer_name")}`, custParams)),
+        safe(query(`SELECT week_number, year, employee_name, plan_data, status FROM sales_plans WHERE ${mentionSql(["plan_data::text"])}`, mentionParams)),
         safe(query("SELECT key, data FROM app_storage WHERE key IN ('sales_deals_pipeline', 'unified_weekly_schedule', 'shared_app_requests', 'sales_specialized_plans', 'sales_daily_logs', 'sales_plans', 'sales_tasks')"))
       ]);
       for (const r of qRes.rows) if (sameCust(r.customer_name, r.customer_id)) add({ type: "quotation", date: day(r.date || r.created_at), code: r.quote_code, title: "Báo giá", amount: Number(r.total_amount) || 0, status: r.status, person: r.sales_rep_name });

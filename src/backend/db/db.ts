@@ -626,6 +626,23 @@ async function runIntegrityMigrations() {
       client.query(`ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS row_version INTEGER NOT NULL DEFAULT 0`)
     );
 
+    // Chỉ mục cho các cột tra cứu thường xuyên (lọc theo khách hàng, ngày, trạng thái, giữ chỗ)
+    await step("hot_column_indexes", () =>
+      client.query(`
+        CREATE INDEX IF NOT EXISTS idx_sales_orders_customer_id ON sales_orders (customer_id);
+        CREATE INDEX IF NOT EXISTS idx_sales_orders_order_date ON sales_orders (order_date DESC);
+        CREATE INDEX IF NOT EXISTS idx_sales_orders_delivery_status ON sales_orders (delivery_status);
+        CREATE INDEX IF NOT EXISTS idx_sales_quotations_customer_id ON sales_quotations (customer_id);
+        CREATE INDEX IF NOT EXISTS idx_sales_contracts_customer_id ON sales_contracts (customer_id);
+        CREATE INDEX IF NOT EXISTS idx_sales_payments_order_id ON sales_payments (order_id);
+        CREATE INDEX IF NOT EXISTS idx_sales_delivery_slips_order_code ON sales_delivery_slips (order_code);
+        CREATE INDEX IF NOT EXISTS idx_inventory_reservations_active ON inventory_reservations (status, product_code, hold_until_date);
+        CREATE INDEX IF NOT EXISTS idx_inventory_transactions_date ON inventory_transactions (date DESC);
+        CREATE INDEX IF NOT EXISTS idx_workflow_requests_status ON workflow_requests (status);
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC);
+      `)
+    );
+
     await step("inventory_checks", () =>
       client.query(`
         DO $$
