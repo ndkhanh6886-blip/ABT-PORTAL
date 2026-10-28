@@ -45,6 +45,8 @@ function keyPolicy(key: string): KeyPolicy {
   // Bảng việc / lịch / thông báo dùng chung toàn công ty: mọi nhân viên đã đăng nhập
   if (key.startsWith("unified_") || key === "tbr_activity_notifications") return { read: null, write: null };
   if (key === "tbr_rfid_tags_list") return { read: null, write: ["warehouse.view"] };
+  // Danh mục phân loại công việc: mọi người đọc, Quản trị viên sửa
+  if (key === "workspace_task_categories") return { read: null, write: ["settings.view"] };
   // Khối dữ liệu chưa khai báo quyền: ai cũng đọc được nhưng chỉ Quản trị viên được ghi
   // (trước đây mọi nhân viên đều ghi đè được toàn bộ khối)
   return { read: null, write: [] };

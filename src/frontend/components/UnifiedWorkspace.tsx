@@ -65,17 +65,37 @@ import { cn } from "@/backend/services/utils";
 import { todayVN, toVNDateString, nowVNDateTime } from "@/backend/services/dates";
 import { AttachmentPicker, AttachmentList, uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
+import {
+  WORKSPACE_TASK_DEPARTMENTS,
+  DEFAULT_TASK_CATEGORIES,
+  TASK_CATEGORY_STORAGE_KEY,
+  TASK_STATUSES,
+  TASK_RELATED_TYPES,
+  taskStatusLabel,
+  getTaskAccess,
+  normalizeWorkspaceDept,
+  isSameWorkspaceDept,
+  canonStaffName,
+  sameStaffName,
+} from "@/backend/services/workspaceTasks";
 
 // Configuration for Departments
+const DEPARTMENT_ICONS: Record<string, any> = {
+  "Ban Giám Đốc": Award,
+  "Kế Toán": DollarSign,
+  "Sales Admin": Briefcase,
+  "PM": Briefcase,
+  "Application": FlaskConical,
+  "Cung Ứng": ShoppingCart,
+  "Kinh Doanh": Briefcase,
+  "Lab": FlaskConical,
+  "Marketing": Briefcase,
+  "Pháp Chế": ShieldCheck,
+};
 export const DEPARTMENTS = [
   { id: "all", name: "Toàn công ty", icon: Building2 },
-  { id: "Kinh Doanh", name: "Kinh Doanh", icon: Briefcase },
-  { id: "Application", name: "Application (Lab)", icon: FlaskConical },
+  ...WORKSPACE_TASK_DEPARTMENTS.map(d => ({ id: d.id, name: d.label, icon: DEPARTMENT_ICONS[d.id] || Building2 })),
   { id: "Kho & Vận Hành", name: "Kho & Vận Hành", icon: Package },
-  { id: "Cung Ứng", name: "Cung Ứng", icon: ShoppingCart },
-  { id: "Pháp Chế", name: "Pháp Chế & Tuân Thủ", icon: ShieldCheck },
-  { id: "Kế Toán", name: "Kế Toán - Tài Chính", icon: DollarSign },
-  { id: "Ban Giám Đốc", name: "Ban Giám Đốc", icon: Award },
 ];
 
 export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
@@ -88,25 +108,7 @@ export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
   "đội vận chuyển"
 ]);
 
-/**
- * Tên nhân sự để so sánh: cùng một tên có thể được lưu ở dạng Unicode tổ hợp / dựng sẵn khác nhau, hoặc đặt dấu
- * kiểu cũ / mới ("Thùy" - "Thuỳ", "Hòa" - "Hoà"), có khoảng trắng thừa. Tên ở Tài khoản và ở Nhân sự lệch nhau
- * như vậy làm nhân viên không thấy việc được giao cho mình.
- */
-export function canonStaffName(name: any): string {
-  let s = String(name || "").normalize("NFC").toLowerCase().replace(/[\s\u00a0\u200b]+/g, " ").trim();
-  // đặt dấu kiểu mới (dấu trên chữ thứ hai của oa, oe, uy) -> kiểu cũ, để hai cách gõ trùng nhau
-  s = s.normalize("NFD").replace(/([ou])([\u0300\u0301\u0309\u0303\u0323])([aey])/g, "$1$3$2").normalize("NFC");
-  return s;
-}
 
-/** Hai tên là cùng một người (so sánh sau chuẩn hóa; tên đầy đủ chứa tên ngắn vẫn tính là trùng). */
-export function sameStaffName(a: any, b: any): boolean {
-  const x = canonStaffName(a);
-  const y = canonStaffName(b);
-  if (!x || !y) return false;
-  return x === y || x.includes(y) || y.includes(x);
-}
 
 export function cleanWorkspaceAssignee(name: any): string {
   const s = String(name || "").trim();
@@ -115,76 +117,8 @@ export function cleanWorkspaceAssignee(name: any): string {
   return s;
 }
 
-export function normalizeWorkspaceDept(raw: any): string {
-  const s = String(raw || "").trim();
-  if (!s) return "";
-  if (s === "all") return "all";
-  const l = s.toLowerCase();
-  if (l.includes("ứng dụng") || l.includes("application") || l.includes("kỹ thuật")) return "Application";
-  if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
-  if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
-  if (l.includes("kinh doanh") || l.includes("sales") || l.includes("marketing")) return "Kinh Doanh";
-  if (l.includes("pháp chế") || l.includes("legal") || l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "Pháp Chế";
-  if (l.includes("kế toán") || l.includes("tài chính") || l.includes("accounting")) return "Kế Toán";
-  if (l.includes("giám đốc") || l.includes("bod")) return "Ban Giám Đốc";
-  return s;
-}
 
-export function isSameWorkspaceDept(a: any, b: any): boolean {
-  const na = normalizeWorkspaceDept(a);
-  const nb = normalizeWorkspaceDept(b);
-  if (!na || !nb) return false;
-  if (na === "all" || nb === "all") return true;
-  return na.toLowerCase() === nb.toLowerCase();
-}
 
-export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
-  "Kinh Doanh": [
-    "Chăm sóc KH",
-    "Báo giá & Đàm phán",
-    "Hợp đồng & Đơn hàng",
-    "Theo dõi Giao hàng",
-    "Thu hồi Công nợ",
-    "Phát triển Thị trường / Khách mới",
-    "Hỗ trợ thầu / Dự án",
-    "Khác"
-  ],
-  "Application": [
-    "Demo máy & Thiết bị tại viện",
-    "Thử nghiệm mẫu & Đánh giá Kit",
-    "Đào tạo / HDSD khách hàng",
-    "Đánh giá QC nội bộ",
-    "Khắc phục sự cố kỹ thuật (Troubleshooting)",
-    "Viết SOP / Hướng dẫn quy trình",
-    "Bảo trì / Hiệu chuẩn thiết bị",
-    "Khác"
-  ],
-  "Kho & Vận Hành": [
-    "Nhập kho PO",
-    "Soạn hàng & Đóng gói phiếu xuất",
-    "Kiểm kê định kỳ",
-    "Giao nhận vận chuyển",
-    "Bảo quản kho lạnh / âm sâu",
-    "Khác"
-  ],
-  "Cung Ứng": [
-    "Tìm nguồn hàng & Đàm phán NCC",
-    "Lập đơn mua hàng (PO)",
-    "Theo dõi tiến độ giao hàng NCC",
-    "Thủ tục hải quan & Nhập khẩu",
-    "Đánh giá định kỳ NCC",
-    "Khác"
-  ],
-  "Pháp Chế": [
-    "Thẩm định Hợp đồng Kinh tế & Mua bán",
-    "Rà soát tính hợp pháp Hồ sơ Thầu Bệnh viện",
-    "Quản lý Giấy phép lưu hành & CFS / COA IVD",
-    "Thỏa thuận Bảo mật & Hợp đồng Đại lý",
-    "Bảo hộ Sở hữu trí tuệ thương hiệu TBR",
-    "Tư vấn Pháp luật Doanh nghiệp & Lao động",
-    "Khác"
-  ]
-};
 
 
 
@@ -1473,6 +1407,14 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [isDirector, userRole]);
 
   const isStaff = !isDirector && !isManager;
+  /** Người đang đăng nhập theo quy tắc phân quyền công việc dùng chung với máy chủ */
+  const taskActor = useMemo(() => ({
+    username: (user as any)?.username || "",
+    full_name: currentStaffName,
+    role: (can && can("workspace.approve_dept")) || isManager ? `${userRole} manager` : userRole,
+    department: rawUserDept,
+    isAdmin: isDirector,
+  }), [user, currentStaffName, can, isManager, userRole, rawUserDept, isDirector]);
   const rolePerspective = isDirector ? "director" : isManager ? "manager" : "staff";
   const managerDept = userDept && userDept !== "Ban Giám Đốc" ? userDept : "Application";
 
@@ -1863,11 +1805,11 @@ export const UnifiedWorkspace: React.FC = () => {
   });
 
   // Task Form State
-  const [taskForm, setTaskForm] = useState({
+  const [taskForm, setTaskForm] = useState<{ [key: string]: any; attachments: any[] }>({
     id: null as any,
     title: "",
     department: "Kinh Doanh",
-    task_category: "Chăm sóc KH",
+    task_category: "",
     assignee_name: "",
     customer_name: "",
     priority: "MEDIUM",
@@ -1875,8 +1817,79 @@ export const UnifiedWorkspace: React.FC = () => {
     deadline: todayVN(),
     description: "",
     result: "",
-    attachments: [] as any[]
+    attachments: [] as any[],
+    related_type: "",
+    related_ref: ""
   });
+
+  // Danh mục phân loại công việc dùng chung (Quản trị viên sửa trong "Sửa danh mục")
+  const [taskCategories, setTaskCategories] = useState<string[]>(DEFAULT_TASK_CATEGORIES);
+  const [isCategoryEditorOpen, setIsCategoryEditorOpen] = useState(false);
+  const [categoryDraft, setCategoryDraft] = useState("");
+  const [isSavingCategories, setIsSavingCategories] = useState(false);
+  useEffect(() => {
+    fetch(`/api/storage?key=${TASK_CATEGORY_STORAGE_KEY}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(j => {
+        const list = Array.isArray(j?.data) ? j.data.map((x: any) => String(x || "").trim()).filter(Boolean) : [];
+        if (list.length > 0) setTaskCategories(list);
+      })
+      .catch(err => console.error("[workspace] Không tải được danh mục phân loại công việc:", err));
+  }, []);
+  const saveTaskCategories = async () => {
+    const list = Array.from(new Set(categoryDraft.split("\n").map(x => x.trim()).filter(Boolean)));
+    if (list.length === 0) {
+      showToast("Danh mục phải có ít nhất 1 phân loại.", "warning");
+      return;
+    }
+    setIsSavingCategories(true);
+    try {
+      const res = await fetch("/api/storage", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: TASK_CATEGORY_STORAGE_KEY, data: list })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(`Chưa lưu được danh mục: ${err?.error || res.status}`, "error");
+        return;
+      }
+      setTaskCategories(list);
+      setIsCategoryEditorOpen(false);
+      showToast(`Đã lưu ${list.length} phân loại công việc.`, "success");
+    } catch {
+      showToast("Mất kết nối khi lưu danh mục phân loại.", "error");
+    } finally {
+      setIsSavingCategories(false);
+    }
+  };
+
+  // Dữ liệu cho ô "Liên quan tới"
+  const [recentOrders, setRecentOrders] = useState<any[]>([]);
+  const [salesDeals, setSalesDeals] = useState<any[] | null>(null);
+
+  /** Công việc gốc (trên máy chủ) của form đang mở và quyền của người đang đăng nhập trên nó */
+  const taskFormOriginal = taskForm.id ? tasks.find((t: any) => t.id === taskForm.id) : null;
+  const taskFormAccess = taskForm.id ? getTaskAccess(taskActor, taskFormOriginal || taskForm) : "full";
+
+  /** Gợi ý cho ô "Đối tượng liên quan" theo loại đang chọn */
+  const relatedOptions = useMemo((): string[] => {
+    const uniq = (arr: any[]) => Array.from(new Set(arr.map(x => String(x || "").trim()).filter(Boolean))).slice(0, 500);
+    switch (taskForm.related_type) {
+      case "CUSTOMER": return uniq(customerList.map((c: any) => c.name));
+      case "EMPLOYEE": return uniq(personnelList.map((p: any) => p.full_name));
+      case "ORDER": return uniq(recentOrders.map((o: any) => `${o.order_code}${o.customer_name ? ` - ${o.customer_name}` : ""}`));
+      case "CONTACT": return uniq(customerList.flatMap((c: any) => {
+        let contacts: any = c.contacts;
+        if (typeof contacts === "string") { try { contacts = JSON.parse(contacts); } catch { contacts = []; } }
+        const names = Array.isArray(contacts) ? contacts.map((x: any) => x?.name ? `${x.name} (${c.name})` : "") : [];
+        return c.contact_person ? [...names, `${c.contact_person} (${c.name})`] : names;
+      }));
+      case "LEAD": return uniq((salesDeals || []).map((d: any) => d?.title ? `${d.title}${d.customerName ? ` - ${d.customerName}` : ""}` : ""));
+      case "PROJECT": return uniq(labProjects.map((p: any) => p?.name || p?.title || p?.id));
+      default: return [];
+    }
+  }, [taskForm.related_type, customerList, personnelList, recentOrders, salesDeals, labProjects]);
 
   const openEditTask = (t: any) => {
     const atts = Array.isArray(t.attachments)
@@ -2044,6 +2057,7 @@ export const UnifiedWorkspace: React.FC = () => {
         setDailyLogs(data.daily || []);
         if (data.personnel) setPersonnelList(data.personnel);
         if (Array.isArray(data.customers)) setCustomerList(data.customers);
+        if (Array.isArray(data.orders)) setRecentOrders(data.orders);
         if (Array.isArray(data.products)) setProductList(data.products);
         setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
 
@@ -2929,7 +2943,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Statistics
   const stats = useMemo(() => {
-    const totalTasks = filteredTasks.length;
+    const totalTasks = filteredTasks.filter((t) => t.status !== "CANCELLED").length;
     const todoTasks = filteredTasks.filter((t) => t.status === "TODO").length;
     const inProgressTasks = filteredTasks.filter((t) => t.status === "IN_PROGRESS").length;
     const doneTasks = filteredTasks.filter((t) => t.status === "DONE").length;
@@ -3010,7 +3024,7 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     // Task metrics
-    const totalTasks = scopeTasks.length;
+    const totalTasks = scopeTasks.filter(t => t.status !== "CANCELLED").length;
     const doneTasks = scopeTasks.filter(t => t.status === "DONE").length;
     const inProgressTasks = scopeTasks.filter(t => t.status === "IN_PROGRESS").length;
     const todoTasks = scopeTasks.filter(t => t.status === "TODO").length;
@@ -3124,7 +3138,10 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     // Department Breakdown Scorecard (4 core depts + Khối Hành Chính / Khác nếu có task để tổng số việc luôn khớp 100% với 26/26 việc)
-    const coreDepts = ["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng"];
+    // Các phòng ban có công việc hoặc nhân sự (trong 10 phòng ban của TBRs); phần còn lại gộp vào "Khối Hành Chính & Khác"
+    const coreDepts = WORKSPACE_TASK_DEPARTMENTS.map(d => d.id).filter(id =>
+      scopeTasks.some(t => isSameWorkspaceDept(t.department, id)) || scopePersonnel.some(p => isSameWorkspaceDept(p.department, id))
+    );
     const isCoreDept = (deptName: string) => coreDepts.some(c => isSameWorkspaceDept(deptName, c));
     const otherTasksCheck = scopeTasks.filter(t => !isCoreDept(t.department));
     const otherStaffCheck = scopePersonnel.filter(p => !isCoreDept(p.department));
@@ -3136,7 +3153,7 @@ export const UnifiedWorkspace: React.FC = () => {
       const isOtherGroup = dName === "Khối Hành Chính & Khác";
       const matchDeptFn = (deptVal: string) => isOtherGroup ? !isCoreDept(deptVal) : isSameWorkspaceDept(deptVal, dName);
 
-      const dTasks = scopeTasks.filter(t => matchDeptFn(t.department));
+      const dTasks = scopeTasks.filter(t => matchDeptFn(t.department) && t.status !== "CANCELLED");
       const dDone = dTasks.filter(t => t.status === "DONE").length;
       const dInProg = dTasks.filter(t => t.status === "IN_PROGRESS").length;
       const dTodo = dTasks.filter(t => t.status === "TODO").length;
@@ -3353,17 +3370,22 @@ export const UnifiedWorkspace: React.FC = () => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return;
     try {
-      await fetch("/api/workflows?action=task", {
+      const res = await fetch("/api/workflows?action=task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...target, status: newStatus })
       });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(err?.error || `Không đổi được trạng thái (lỗi ${res.status})`, "error");
+        return;
+      }
       setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)));
-      showToast(`Đã chuyển trạng thái: ${newStatus}`, "info");
+      showToast(`Đã chuyển trạng thái: ${taskStatusLabel(newStatus)}`, "info");
 
       notifyActivity({
         title: newStatus === "DONE" ? "Hoàn thành công việc" : "Cập nhật tiến độ công việc",
-        message: `${currentStaffName} đã cập nhật công việc "${target.title}" sang trạng thái: ${newStatus === "DONE" ? "Đã hoàn tất (DONE)" : newStatus === "IN_PROGRESS" ? "Đang thực hiện" : "Cần làm"}.`,
+        message: `${currentStaffName} đã cập nhật công việc "${target.title}" sang trạng thái: ${taskStatusLabel(newStatus)}.`,
         type: newStatus === "DONE" ? "success" : "info",
         category: "task",
         sender: { name: currentStaffName },
@@ -5806,7 +5828,9 @@ export const UnifiedWorkspace: React.FC = () => {
       id: null,
       title: `[Triển khai ${ann.docCode}] ${ann.title}`,
       department: defaultDept,
-      task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
+      task_category: "",
+      related_type: "",
+      related_ref: "",
       assignee_name: currentStaffName,
       customer_name: "",
       priority: ann.priority === "URGENT" ? "URGENT" : "HIGH",
@@ -6053,21 +6077,7 @@ export const UnifiedWorkspace: React.FC = () => {
               >
                 {DEPARTMENTS.map((d) => (
                   <option key={d.id} value={d.id} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-1">
-                    {d.id === "all"
-                      ? "🏢 Toàn công ty"
-                      : d.id === "Kinh Doanh"
-                      ? "💼 Kinh Doanh"
-                      : d.id === "Application"
-                      ? "🔬 Application (Kỹ Thuật & Ứng Dụng)"
-                      : d.id === "Kho & Vận Hành"
-                      ? "📦 Kho & Vận Hành"
-                      : d.id === "Cung Ứng"
-                      ? "🛒 Mua Hàng & Cung Ứng"
-                      : d.id === "Pháp Chế"
-                      ? "⚖️ Pháp Chế & Tuân Thủ"
-                      : d.id === "Kế Toán"
-                      ? "💰 Kế Toán - Tài Chính"
-                      : "🏛️ Ban Giám Đốc"}
+                    {d.id === "all" ? "🏢 Toàn công ty" : d.name}
                   </option>
                 ))}
               </select>
@@ -6140,9 +6150,9 @@ export const UnifiedWorkspace: React.FC = () => {
               className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 font-semibold"
             >
               <option value="all">Tất cả trạng thái</option>
-              <option value="TODO">Cần làm</option>
-              <option value="IN_PROGRESS">Đang làm</option>
-              <option value="DONE">Hoàn tất</option>
+              {TASK_STATUSES.map(st => (
+                <option key={st.id} value={st.id}>{st.label}</option>
+              ))}
             </select>
           )}
 
@@ -6221,7 +6231,9 @@ export const UnifiedWorkspace: React.FC = () => {
                     id: null,
                     title: "",
                     department: defaultDept,
-                    task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
+                    task_category: "",
+                    related_type: "",
+                    related_ref: "",
                     assignee_name: currentStaffName,
                     customer_name: "",
                     priority: "MEDIUM",
@@ -6427,7 +6439,7 @@ export const UnifiedWorkspace: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
                     <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                      Cần Làm (TODO)
+                      Kế hoạch
                     </span>
                   </div>
                   <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400">
@@ -6489,17 +6501,17 @@ export const UnifiedWorkspace: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
                     <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                      Đã Hoàn Tất
+                      Hoàn tất / Hủy bỏ
                     </span>
                   </div>
                   <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
-                    {filteredTasks.filter((t) => t.status === "DONE").length}
+                    {filteredTasks.filter((t) => t.status === "DONE" || t.status === "CANCELLED").length}
                   </span>
                 </div>
 
                 <div className="space-y-2.5 min-h-[300px]">
                   {filteredTasks
-                    .filter((t) => t.status === "DONE")
+                    .filter((t) => t.status === "DONE" || t.status === "CANCELLED")
                     .map((task) => (
                       <TaskCard
                         key={task.id}
@@ -6508,7 +6520,7 @@ export const UnifiedWorkspace: React.FC = () => {
                         onEdit={openEditTask}
                       />
                     ))}
-                  {filteredTasks.filter((t) => t.status === "DONE").length === 0 && (
+                  {filteredTasks.filter((t) => t.status === "DONE" || t.status === "CANCELLED").length === 0 && (
                     <div className="text-center py-12 text-xs text-slate-400 italic">Không có công việc nào</div>
                   )}
                 </div>
@@ -6575,10 +6587,11 @@ export const UnifiedWorkspace: React.FC = () => {
                       <td className="py-3 px-4">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           t.status === "DONE" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
+                          t.status === "CANCELLED" ? "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400 line-through" :
                           t.status === "IN_PROGRESS" ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" :
                           "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
                         }`}>
-                          {t.status === "DONE" ? "Hoàn tất" : t.status === "IN_PROGRESS" ? "Đang làm" : "Cần làm"}
+                          {taskStatusLabel(t.status)}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
@@ -9935,6 +9948,16 @@ ${wf.description || ""}`}
         size="md"
       >
         <form onSubmit={handleSaveTask} className="space-y-3 p-1 text-xs">
+          {taskFormAccess !== "full" && (
+            <div className={`rounded-xl px-3 py-2 font-semibold border ${taskFormAccess === "progress"
+              ? "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/40 dark:border-blue-900 dark:text-blue-300"
+              : "bg-slate-100 border-slate-200 text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"}`}>
+              {taskFormAccess === "progress"
+                ? `Bạn là người được giao: chỉ cập nhật được trạng thái, báo cáo kết quả, đính kèm và trao đổi. Nội dung giao việc do ${taskFormOriginal?.created_by_name || "người giao việc / quản lý phòng ban"} quản lý.`
+                : "Bạn chỉ được xem công việc này (không phải người tạo, người được giao hoặc quản lý phòng ban)."}
+            </div>
+          )}
+          <fieldset disabled={taskFormAccess !== "full"} className="space-y-3 disabled:opacity-80">
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tiêu đề công việc *</label>
             <input
@@ -9954,29 +9977,43 @@ ${wf.description || ""}`}
                 value={taskForm.department}
                 onChange={(e) => {
                   const newDept = e.target.value;
-                  setTaskForm({
-                    ...taskForm,
-                    department: newDept,
-                    task_category: DEPARTMENT_CATEGORIES[newDept]?.[0] || "Chung"
-                  });
+                  setTaskForm({ ...taskForm, department: newDept });
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                <option value="Kinh Doanh">Kinh Doanh</option>
-                <option value="Application">Application (Lab)</option>
-                <option value="Kho & Vận Hành">Kho &amp; Vận Hành</option>
-                <option value="Cung Ứng">Cung Ứng</option>
+                {taskForm.department && !WORKSPACE_TASK_DEPARTMENTS.some(d => d.id === taskForm.department) && (
+                  <option value={taskForm.department}>{taskForm.department}</option>
+                )}
+                {WORKSPACE_TASK_DEPARTMENTS.map(d => (
+                  <option key={d.id} value={d.id}>{d.label}</option>
+                ))}
               </select>
             </div>
 
             <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Phân loại nghiệp vụ</label>
+              <label className="flex items-center justify-between font-bold text-slate-700 dark:text-slate-300 mb-1">
+                <span>Phân loại công việc *</span>
+                {isDirector && (
+                  <button
+                    type="button"
+                    onClick={() => { setCategoryDraft(taskCategories.join("\n")); setIsCategoryEditorOpen(true); }}
+                    className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+                  >
+                    Sửa danh mục
+                  </button>
+                )}
+              </label>
               <select
+                required
                 value={taskForm.task_category}
                 onChange={(e) => setTaskForm({ ...taskForm, task_category: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                {(DEPARTMENT_CATEGORIES[taskForm.department] || []).map((cat) => (
+                <option value="">-- Chọn phân loại --</option>
+                {taskForm.task_category && !taskCategories.includes(taskForm.task_category) && (
+                  <option value={taskForm.task_category}>{taskForm.task_category}</option>
+                )}
+                {taskCategories.map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -10028,7 +10065,10 @@ ${wf.description || ""}`}
             })()}
           </div>
 
+          </fieldset>
+
           <div className="grid grid-cols-3 gap-3">
+            <fieldset disabled={taskFormAccess !== "full"} className="contents">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Độ ưu tiên</label>
               <select
@@ -10042,20 +10082,23 @@ ${wf.description || ""}`}
                 <option value="URGENT">Khẩn cấp</option>
               </select>
             </div>
+            </fieldset>
 
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Trạng thái</label>
               <select
                 value={taskForm.status}
+                disabled={taskFormAccess === "view"}
                 onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                <option value="TODO">Cần làm</option>
-                <option value="IN_PROGRESS">Đang làm</option>
-                <option value="DONE">Đã hoàn tất</option>
+                {TASK_STATUSES.map(st => (
+                  <option key={st.id} value={st.id}>{st.label}</option>
+                ))}
               </select>
             </div>
 
+            <fieldset disabled={taskFormAccess !== "full"} className="contents">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Hạn chót</label>
               <DateInputVN
@@ -10064,8 +10107,10 @@ ${wf.description || ""}`}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
               />
             </div>
+            </fieldset>
           </div>
 
+          <fieldset disabled={taskFormAccess !== "full"} className="space-y-3 disabled:opacity-80">
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mô tả chi tiết</label>
             <textarea
@@ -10075,6 +10120,50 @@ ${wf.description || ""}`}
               className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
             />
           </div>
+
+          {/* LIÊN QUAN TỚI: khách hàng / nhân viên / đơn hàng / người liên hệ / đầu mối / dự án */}
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Liên quan tới</label>
+              <select
+                value={taskForm.related_type || ""}
+                onChange={(e) => {
+                  const t = e.target.value;
+                  setTaskForm({ ...taskForm, related_type: t, related_ref: "" });
+                  if (t === "LEAD" && salesDeals === null) {
+                    fetch("/api/storage?key=sales_deals_pipeline")
+                      .then(r => (r.ok ? r.json() : null))
+                      .then(j => setSalesDeals(Array.isArray(j?.data) ? j.data : []))
+                      .catch(() => setSalesDeals([]));
+                  }
+                }}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
+              >
+                <option value="">-- Không --</option>
+                {TASK_RELATED_TYPES.map(rt => (
+                  <option key={rt.id} value={rt.id}>{rt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đối tượng liên quan</label>
+              <input
+                type="text"
+                list="task-related-options"
+                disabled={!taskForm.related_type}
+                value={taskForm.related_ref || ""}
+                onChange={(e) => setTaskForm({ ...taskForm, related_ref: e.target.value })}
+                placeholder={taskForm.related_type ? "Gõ để tìm hoặc nhập tên / mã..." : "Chọn loại liên quan trước"}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium disabled:opacity-60"
+              />
+              <datalist id="task-related-options">
+                {relatedOptions.map((opt, i) => (
+                  <option key={`${opt}-${i}`} value={opt} />
+                ))}
+              </datalist>
+            </div>
+          </div>
+          </fieldset>
 
           {/* KẾT QUẢ THỰC HIỆN & BÁO CÁO NGHIỆM THU */}
           <div className="bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/80 rounded-xl p-3.5 space-y-2.5">
@@ -10417,7 +10506,7 @@ ${wf.description || ""}`}
 
           <div className="flex items-center justify-between flex-wrap gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             <div>
-              {taskForm.id && (
+              {taskForm.id && taskFormAccess === "full" && (
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
@@ -10516,15 +10605,63 @@ ${wf.description || ""}`}
                   Nhân bản thành việc mới
                 </button>
               )}
-              <button
-                type="submit"
-                className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
-              >
-                {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
-              </button>
+              {taskFormAccess !== "view" && (
+                <button
+                  type="submit"
+                  className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
+                >
+                  {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
+                </button>
+              )}
             </div>
           </div>
         </form>
+      </Modal>
+
+      {/* Danh mục phân loại công việc (Quản trị viên / BGĐ) */}
+      <Modal
+        isOpen={isCategoryEditorOpen}
+        onClose={() => setIsCategoryEditorOpen(false)}
+        title="DANH MỤC PHÂN LOẠI CÔNG VIỆC"
+        size="md"
+      >
+        <div className="space-y-3 p-1 text-xs">
+          <p className="text-slate-600 dark:text-slate-400">
+            Mỗi dòng là một phân loại. Công việc cũ đang dùng phân loại đã xóa vẫn giữ nguyên tên phân loại đó.
+          </p>
+          <textarea
+            rows={16}
+            value={categoryDraft}
+            onChange={(e) => setCategoryDraft(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
+          />
+          <div className="flex items-center justify-between gap-2">
+            <button
+              type="button"
+              onClick={() => setCategoryDraft(DEFAULT_TASK_CATEGORIES.join("\n"))}
+              className="px-3 py-2 rounded-xl font-bold border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300"
+            >
+              Khôi phục danh mục mặc định
+            </button>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsCategoryEditorOpen(false)}
+                className="px-4 py-2 rounded-xl font-bold border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300"
+              >
+                Đóng
+              </button>
+              <button
+                type="button"
+                disabled={isSavingCategories}
+                onClick={saveTaskCategories}
+                className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-60"
+              >
+                {isSavingCategories ? "Đang lưu..." : "Lưu danh mục"}
+              </button>
+            </div>
+          </div>
+        </div>
       </Modal>
 
       {/* ==================== MODAL 2: CREATE WORKFLOW ==================== */}
@@ -14670,7 +14807,10 @@ const TaskCard: React.FC<{
             Hoàn tất ✓
           </button>
         )}
-        {task.status === "DONE" && (
+        {task.status === "CANCELLED" && (
+          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400">Đã hủy bỏ</span>
+        )}
+        {(task.status === "DONE" || task.status === "CANCELLED") && (
           <button
             onClick={() => onStatusChange(task.id, "TODO")}
             className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 hover:bg-slate-200"
