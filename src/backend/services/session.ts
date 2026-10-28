@@ -39,6 +39,11 @@ export function sessionSecret(): string {
     .map(s => (s || "").trim())
     .find(s => s && !PUBLIC_EXAMPLE_SECRETS.has(s));
   if (explicit) return explicit;
+  // Production: khóa dẫn xuất từ thông tin CSDL (kèm mật khẩu mặc định công khai) đoán được -> giả mạo phiên.
+  // Không cho chạy production khi thiếu SESSION_SECRET riêng.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("Thiếu SESSION_SECRET (hoặc đang dùng giá trị mẫu công khai). Đặt SESSION_SECRET là chuỗi ngẫu nhiên >= 32 ký tự (openssl rand -hex 32) rồi khởi động lại.");
+  }
   if (!warnedFallbackSecret) {
     warnedFallbackSecret = true;
     console.warn("⚠️ CẢNH BÁO AN NINH: Chưa đặt SESSION_SECRET riêng. Đang dùng khóa dẫn xuất nội bộ cho TBRs Portal.");
