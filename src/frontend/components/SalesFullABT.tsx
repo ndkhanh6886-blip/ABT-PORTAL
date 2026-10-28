@@ -3182,24 +3182,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         "CH-DNA-LADDER-1KB"
     ]);
 
+    // Mã khung cho báo giá Oligo / hàng đặt riêng: chỉ là khung (tên, quy cách, đơn vị); hãng, NCC và giá do TBRs tự nhập.
+    // Chỉ được tạo khi danh mục chưa từng khởi tạo: mã đã bị xóa không tự thêm lại.
     const DEFAULT_COMMERCIAL_PRODUCTS: CommercialProduct[] = [
         {
             code: "OLIGO-PRIMER",
             name: "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
+            brand: "",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
             specification: "Nhập trình tự 5'-...-3' | Scale (25/50/100 nmol) | Tinh sạch (DSL/HPLC/PAGE)",
-            costPrice: 120000,
-            price: 180000,
-            priceDealer1: 165000,
-            priceDealer2: 150000,
+            costPrice: 0,
+            price: 0,
+            priceDealer1: 0,
+            priceDealer2: 0,
             warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 3-7 ngày",
+            leadTime: "",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
+            supplier: "",
             notes: "Mặt hàng đặt 1 lần theo trình tự riêng từng dòng"
         },
         {
@@ -3207,18 +3209,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
+            brand: "",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
             specification: "Nhập trình tự 5'[Reporter]-...-[Quencher]3' (VD: FAM-BHQ1 / HEX-BHQ1 / CY5-BHQ2 | HPLC)",
-            costPrice: 950000,
-            price: 1450000,
-            priceDealer1: 1350000,
-            priceDealer2: 1250000,
+            costPrice: 0,
+            price: 0,
+            priceDealer1: 0,
+            priceDealer2: 0,
             warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 5-10 ngày",
+            leadTime: "",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
+            supplier: "",
             notes: "Mặt hàng đặt 1 lần theo trình tự huỳnh quang riêng từng dòng"
         },
         {
@@ -3226,18 +3228,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Tổng hợp chuỗi Nucleotide chuẩn theo trình tự (5'→3')",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
+            brand: "",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Base",
             specification: "[Tên trình tự] 5'-...-3' (Số base | Scale 25/50/100 nmol)",
-            costPrice: 5500,
-            price: 8000,
-            priceDealer1: 7500,
-            priceDealer2: 7000,
+            costPrice: 0,
+            price: 0,
+            priceDealer1: 0,
+            priceDealer2: 0,
             warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 3-7 ngày",
+            leadTime: "",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
+            supplier: "",
             notes: "Mã khung thành phần 1: Tính theo số Base của chuỗi trình tự chuẩn"
         },
         {
@@ -3245,18 +3247,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Đánh dấu biến đổi Oligo (5'/3'/Internal Modification: FAM, HEX, VIC, CY5, BHQ1/2, MGB...)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
+            brand: "",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Nhãn",
             specification: "[Tên trình tự] Nhãn biến đổi 5'/3' (VD: 5'-FAM / 3'-BHQ1)",
-            costPrice: 450000,
-            price: 650000,
-            priceDealer1: 600000,
-            priceDealer2: 550000,
+            costPrice: 0,
+            price: 0,
+            priceDealer1: 0,
+            priceDealer2: 0,
             warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 5-10 ngày",
+            leadTime: "",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
+            supplier: "",
             notes: "Mã khung thành phần 2: Tính theo nhãn biến đổi huỳnh quang / quencher gắn vào trình tự"
         },
         {
@@ -3264,18 +3266,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
+            brand: "",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
             specification: "[Tên trình tự] Tinh sạch: HPLC / PAGE / Cartridge / Desalt",
-            costPrice: 200000,
-            price: 300000,
-            priceDealer1: 280000,
-            priceDealer2: 260000,
+            costPrice: 0,
+            price: 0,
+            priceDealer1: 0,
+            priceDealer2: 0,
             warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 3-7 ngày",
+            leadTime: "",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
+            supplier: "",
             notes: "Mã khung thành phần 3: Phí dịch vụ tinh sạch Oligo (HPLC / PAGE / Cartridge / Desalt)"
         },
         {
@@ -3283,18 +3285,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "IDT / Macrogen / PhuSa",
+            brand: "",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
             specification: "[Tên trình tự] Dịch vụ điều chế: Đông khô / Pha sẵn chuẩn 100 µM",
-            costPrice: 80000,
-            price: 150000,
-            priceDealer1: 135000,
-            priceDealer2: 120000,
+            costPrice: 0,
+            price: 0,
+            priceDealer1: 0,
+            priceDealer2: 0,
             warranty: "Theo COA từng tube",
-            leadTime: "Đặt tổng hợp 3-7 ngày",
+            leadTime: "",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "Nhà cung cấp tổng hợp Oligo",
+            supplier: "",
             notes: "Mã khung thành phần 4: Phí dịch vụ đông khô hoặc pha sẵn chuẩn nồng độ (100 µM / 10 µM)"
         },
         {
@@ -3302,7 +3304,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Hàng hóa / Sinh phẩm đặt riêng theo thông số đặc thù (Make-to-Order)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Hàng đặt theo yêu cầu",
-            brand: "Theo đơn đặt",
+            brand: "",
             origin: "Chính hãng",
             unit: "Bộ",
             specification: "Nhập quy cách / đặc tính kỹ thuật riêng của lần đặt hàng này",
@@ -3313,7 +3315,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             warranty: "Theo tiêu chuẩn hãng",
             leadTime: "Đặt hàng theo đơn",
             storageCondition: "2-8°C (Mát - Hóa chất, Mẫu test)",
-            supplier: "Nhà cung cấp chỉ định",
+            supplier: "",
             notes: "Mặt hàng đặt 1 lần theo đặc tính riêng"
         }
     ];
@@ -3454,11 +3456,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         const filtered = parsed
                             .filter((item: any) => item && !DEMO_COMMERCIAL_CODES.has(item.code))
                             .map((item: any) => ({ ...item, category: resolveActualProductCategory(item) }));
-                        if (filtered.length > 0) {
-                            const existingCodes = new Set(filtered.map((p: any) => p.code));
-                            const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(d.code));
-                            return [...missingDefaults, ...filtered];
-                        }
+                        if (filtered.length > 0) return filtered;
                     }
                 } catch (e) {
                     console.error("Failed to parse sales_commercial_products:", e);
@@ -3616,10 +3614,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const neverInitialised = data?.data === null || data?.data === undefined;
                     if (Array.isArray(data?.data)) {
                         const cleanData = data.data.filter((item: any) => item && !DEMO_COMMERCIAL_CODES.has(item.code));
-                        const enriched = enrichStorage(cleanData);
-                        const existingCodes = new Set(enriched.map((p: any) => p.code));
-                        const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(d.code));
-                        const merged = [...missingDefaults, ...enriched];
+                        const merged = enrichStorage(cleanData);
                         setCommercialProducts(merged);
                         try { localStorage.setItem("sales_commercial_products", JSON.stringify(merged)); } catch (e) {}
                     } else if (neverInitialised) {
@@ -7504,28 +7499,28 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const DEFAULT_OLIGO_PRESETS: OligoPresetItem[] = [
         // 1. Loại đánh dấu biến đổi (OLIGO-MOD)
-        { id: "mod-fam-bhq1", category: "MOD", label: "FAM-BHQ1", spec: "5'-FAM / 3'-BHQ1", defaultPrice: 650000, defaultQty: 1 },
-        { id: "mod-hex-bhq1", category: "MOD", label: "HEX-BHQ1", spec: "5'-HEX / 3'-BHQ1", defaultPrice: 650000, defaultQty: 1 },
-        { id: "mod-vic-bhq1", category: "MOD", label: "VIC-BHQ1", spec: "5'-VIC / 3'-BHQ1", defaultPrice: 750000, defaultQty: 1 },
-        { id: "mod-cy5-bhq2", category: "MOD", label: "CY5-BHQ2", spec: "5'-CY5 / 3'-BHQ2", defaultPrice: 850000, defaultQty: 1 },
-        { id: "mod-rox-bhq2", category: "MOD", label: "ROX-BHQ2", spec: "5'-ROX / 3'-BHQ2", defaultPrice: 750000, defaultQty: 1 },
-        { id: "mod-fam-mgb", category: "MOD", label: "FAM-MGB (TaqMan)", spec: "5'-FAM / 3'-MGBNFQ", defaultPrice: 1450000, defaultQty: 1 },
-        { id: "mod-vic-mgb", category: "MOD", label: "VIC-MGB (TaqMan)", spec: "5'-VIC / 3'-MGBNFQ", defaultPrice: 1550000, defaultQty: 1 },
-        { id: "mod-fam-zen", category: "MOD", label: "FAM-ZEN-IBFQ", spec: "5'-6-FAM / ZEN / 3'-IBFQ", defaultPrice: 950000, defaultQty: 1 },
-        { id: "mod-biotin-5", category: "MOD", label: "5'-Biotin", spec: "5'-Biotin", defaultPrice: 450000, defaultQty: 1 },
-        { id: "mod-fam-single", category: "MOD", label: "5'-FAM (Đơn nhãn)", spec: "5'-6-FAM", defaultPrice: 400000, defaultQty: 1 },
-        { id: "mod-phos-5", category: "MOD", label: "5'-Phosphate", spec: "5'-Phosphate (5'-P)", defaultPrice: 250000, defaultQty: 1 },
-        { id: "mod-amine-c6", category: "MOD", label: "5'-Amine (C6)", spec: "5'-Amino Modifier C6", defaultPrice: 350000, defaultQty: 1 },
+        { id: "mod-fam-bhq1", category: "MOD", label: "FAM-BHQ1", spec: "5'-FAM / 3'-BHQ1", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-hex-bhq1", category: "MOD", label: "HEX-BHQ1", spec: "5'-HEX / 3'-BHQ1", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-vic-bhq1", category: "MOD", label: "VIC-BHQ1", spec: "5'-VIC / 3'-BHQ1", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-cy5-bhq2", category: "MOD", label: "CY5-BHQ2", spec: "5'-CY5 / 3'-BHQ2", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-rox-bhq2", category: "MOD", label: "ROX-BHQ2", spec: "5'-ROX / 3'-BHQ2", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-fam-mgb", category: "MOD", label: "FAM-MGB (TaqMan)", spec: "5'-FAM / 3'-MGBNFQ", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-vic-mgb", category: "MOD", label: "VIC-MGB (TaqMan)", spec: "5'-VIC / 3'-MGBNFQ", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-fam-zen", category: "MOD", label: "FAM-ZEN-IBFQ", spec: "5'-6-FAM / ZEN / 3'-IBFQ", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-biotin-5", category: "MOD", label: "5'-Biotin", spec: "5'-Biotin", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-fam-single", category: "MOD", label: "5'-FAM (Đơn nhãn)", spec: "5'-6-FAM", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-phos-5", category: "MOD", label: "5'-Phosphate", spec: "5'-Phosphate (5'-P)", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-amine-c6", category: "MOD", label: "5'-Amine (C6)", spec: "5'-Amino Modifier C6", defaultPrice: 0, defaultQty: 1 },
         // 2. Phương pháp tinh sạch (OLIGO-PUR)
-        { id: "pur-hplc", category: "PUR", label: "HPLC", spec: "Tinh sạch HPLC", defaultPrice: 300000, defaultQty: 1 },
-        { id: "pur-page", category: "PUR", label: "PAGE", spec: "Tinh sạch PAGE", defaultPrice: 450000, defaultQty: 1 },
-        { id: "pur-opc", category: "PUR", label: "OPC (Cartridge)", spec: "Tinh sạch Cartridge (OPC)", defaultPrice: 200000, defaultQty: 1 },
-        { id: "pur-desalt", category: "PUR", label: "Desalt (Cơ bản)", spec: "Tinh sạch Desalt", defaultPrice: 100000, defaultQty: 1 },
+        { id: "pur-hplc", category: "PUR", label: "HPLC", spec: "Tinh sạch HPLC", defaultPrice: 0, defaultQty: 1 },
+        { id: "pur-page", category: "PUR", label: "PAGE", spec: "Tinh sạch PAGE", defaultPrice: 0, defaultQty: 1 },
+        { id: "pur-opc", category: "PUR", label: "OPC (Cartridge)", spec: "Tinh sạch Cartridge (OPC)", defaultPrice: 0, defaultQty: 1 },
+        { id: "pur-desalt", category: "PUR", label: "Desalt (Cơ bản)", spec: "Tinh sạch Desalt", defaultPrice: 0, defaultQty: 1 },
         // 3. Dịch vụ Đông khô / Pha sẵn (OLIGO-SVC)
-        { id: "svc-lyo", category: "SVC", label: "Đông khô", spec: "Đông khô (Lyophilized)", defaultPrice: 150000, defaultQty: 1 },
-        { id: "svc-te100", category: "SVC", label: "Pha 100 µM (TE)", spec: "Pha sẵn chuẩn 100 µM (TE Buffer)", defaultPrice: 150000, defaultQty: 1 },
-        { id: "svc-h2o10", category: "SVC", label: "Pha 10 µM (H2O)", spec: "Pha sẵn chuẩn 10 µM (Nuclease-free H2O)", defaultPrice: 150000, defaultQty: 1 },
-        { id: "svc-aliquot", category: "SVC", label: "Đông khô + Chia tube", spec: "Đông khô + Chia 2 tube (Aliquot)", defaultPrice: 200000, defaultQty: 1 },
+        { id: "svc-lyo", category: "SVC", label: "Đông khô", spec: "Đông khô (Lyophilized)", defaultPrice: 0, defaultQty: 1 },
+        { id: "svc-te100", category: "SVC", label: "Pha 100 µM (TE)", spec: "Pha sẵn chuẩn 100 µM (TE Buffer)", defaultPrice: 0, defaultQty: 1 },
+        { id: "svc-h2o10", category: "SVC", label: "Pha 10 µM (H2O)", spec: "Pha sẵn chuẩn 10 µM (Nuclease-free H2O)", defaultPrice: 0, defaultQty: 1 },
+        { id: "svc-aliquot", category: "SVC", label: "Đông khô + Chia tube", spec: "Đông khô + Chia 2 tube (Aliquot)", defaultPrice: 0, defaultQty: 1 },
     ];
 
     const [oligoPresets, setOligoPresets] = useState<OligoPresetItem[]>(() => {

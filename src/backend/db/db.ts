@@ -682,6 +682,44 @@ async function runIntegrityMigrations() {
       `)
     );
 
+    // 7 mã khung Oligo / hàng đặt riêng: bỏ hãng, NCC, giá, thời gian giao do bản cũ đặt sẵn (chỉ khi còn đúng giá trị mẫu),
+    // rồi xóa 2 NCC tự sinh từ đó ("Nhà cung cấp tổng hợp Oligo", "Nhà cung cấp chỉ định") nếu chưa dùng ở PO nào.
+    await step("strip_oligo_template_demo_data", async () => {
+      const seeds: Array<[string, number, number, number, number]> = [
+        ["OLIGO-PRIMER", 120000, 180000, 165000, 150000],
+        ["OLIGO-PROBE", 950000, 1450000, 1350000, 1250000],
+        ["OLIGO-BASE", 5500, 8000, 7500, 7000],
+        ["OLIGO-MOD", 450000, 650000, 600000, 550000],
+        ["OLIGO-PUR", 200000, 300000, 280000, 260000],
+        ["OLIGO-SVC", 80000, 150000, 135000, 120000],
+        ["CUSTOM-ORDER", 0, 0, 0, 0],
+      ];
+      for (const [code, cost, price, d1, d2] of seeds) {
+        await client.query(
+          `UPDATE catalog_items SET data = data
+              || CASE WHEN data->>'brand' IN ('IDT / Macrogen / PhuSa', 'Theo đơn đặt') THEN '{"brand": ""}'::jsonb ELSE '{}'::jsonb END
+              || CASE WHEN data->>'supplier' IN ('Nhà cung cấp tổng hợp Oligo', 'Nhà cung cấp chỉ định') THEN '{"supplier": ""}'::jsonb ELSE '{}'::jsonb END
+              || CASE WHEN data->>'leadTime' LIKE 'Đặt tổng hợp %' THEN '{"leadTime": ""}'::jsonb ELSE '{}'::jsonb END
+              || CASE WHEN COALESCE((data->>'costPrice')::numeric, 0) = $2 AND COALESCE((data->>'price')::numeric, 0) = $3
+                       AND COALESCE((data->>'priceDealer1')::numeric, 0) = $4 AND COALESCE((data->>'priceDealer2')::numeric, 0) = $5
+                      THEN '{"costPrice": 0, "price": 0, "priceDealer1": 0, "priceDealer2": 0}'::jsonb ELSE '{}'::jsonb END
+            WHERE code = $1`,
+          [code, cost, price, d1, d2]
+        );
+      }
+      await client.query(
+        `UPDATE products SET manufacturer = NULL
+          WHERE code IN ('OLIGO-PRIMER', 'OLIGO-PROBE', 'OLIGO-BASE', 'OLIGO-MOD', 'OLIGO-PUR', 'OLIGO-SVC', 'CUSTOM-ORDER')
+            AND manufacturer IN ('IDT / Macrogen / PhuSa', 'Theo đơn đặt', 'Nhà cung cấp tổng hợp Oligo', 'Nhà cung cấp chỉ định')`
+      );
+      await client.query(
+        `DELETE FROM procurement_suppliers s
+          WHERE s.name IN ('Nhà cung cấp tổng hợp Oligo', 'Nhà cung cấp chỉ định')
+            AND s.contact_person = 'Phòng Kinh Doanh / Cung Ứng'
+            AND NOT EXISTS (SELECT 1 FROM procurement_orders o WHERE o.supplier_id = s.id OR LOWER(TRIM(o.supplier_name)) = LOWER(TRIM(s.name)))`
+      );
+    });
+
     await step("inventory_checks", () =>
       client.query(`
         DO $$

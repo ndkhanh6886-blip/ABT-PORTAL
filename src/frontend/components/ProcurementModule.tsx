@@ -471,9 +471,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')",
         specification: "Nhập trình tự 5'-...-3' | Scale (25/50/100 nmol) | Tinh sạch (DSL/HPLC/PAGE)",
         unit: "Tube",
-        cost_price: 120000,
-        brand: "IDT / Macrogen / PhuSa",
-        manufacturer: "IDT / Macrogen / PhuSa",
+        cost_price: 0,
+        brand: "",
+        manufacturer: "",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -483,9 +483,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')",
         specification: "Nhập trình tự 5'[Reporter]-...-[Quencher]3' (VD: FAM-BHQ1 / HEX-BHQ1 / CY5-BHQ2 | HPLC)",
         unit: "Tube",
-        cost_price: 950000,
-        brand: "IDT / Macrogen / PhuSa",
-        manufacturer: "IDT / Macrogen / PhuSa",
+        cost_price: 0,
+        brand: "",
+        manufacturer: "",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -495,9 +495,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Tổng hợp chuỗi Nucleotide chuẩn theo trình tự (5'→3')",
         specification: "[Tên trình tự] 5'-...-3' (Số base | Scale 25/50/100 nmol)",
         unit: "Base",
-        cost_price: 5500,
-        brand: "IDT / Macrogen / PhuSa",
-        manufacturer: "IDT / Macrogen / PhuSa",
+        cost_price: 0,
+        brand: "",
+        manufacturer: "",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -507,9 +507,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Đánh dấu biến đổi Oligo (5'/3'/Internal Modification: FAM, HEX, VIC, CY5, BHQ1/2, MGB...)",
         specification: "[Tên trình tự] Nhãn biến đổi 5'/3' (VD: 5'-FAM / 3'-BHQ1)",
         unit: "Nhãn",
-        cost_price: 450000,
-        brand: "IDT / Macrogen / PhuSa",
-        manufacturer: "IDT / Macrogen / PhuSa",
+        cost_price: 0,
+        brand: "",
+        manufacturer: "",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -519,9 +519,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
         specification: "[Tên trình tự] Tinh sạch: HPLC / PAGE / Cartridge / Desalt",
         unit: "Tube",
-        cost_price: 200000,
-        brand: "IDT / Macrogen / PhuSa",
-        manufacturer: "IDT / Macrogen / PhuSa",
+        cost_price: 0,
+        brand: "",
+        manufacturer: "",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -531,9 +531,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
         specification: "[Tên trình tự] Dịch vụ điều chế: Đông khô / Pha sẵn chuẩn 100 µM",
         unit: "Tube",
-        cost_price: 80000,
-        brand: "IDT / Macrogen / PhuSa",
-        manufacturer: "IDT / Macrogen / PhuSa",
+        cost_price: 0,
+        brand: "",
+        manufacturer: "",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -544,8 +544,8 @@ export const ProcurementModule: React.FC = () => {
         specification: "Nhập quy cách / đặc tính kỹ thuật riêng của lần đặt hàng này",
         unit: "Bộ",
         cost_price: 0,
-        brand: "Theo đơn đặt",
-        manufacturer: "Theo đơn đặt",
+        brand: "",
+        manufacturer: "",
         storage_condition: "2-8°C (Kho mát - Hóa chất, Kháng thể)"
       }
     ];
