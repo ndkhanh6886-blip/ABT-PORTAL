@@ -131,6 +131,17 @@ const taskMatchesSalesRequest = (t: any, sr: any): boolean => {
 
 export function ApplicationFullABT() {
     const { showToast, notifyActivity } = useNotification();
+    // Kết quả lưu nền lên máy chủ: báo lỗi cho người dùng thay vì bỏ qua im lặng
+    const onSaveResult = (label: string) => async (res: Response) => {
+      if (res.ok) return;
+      const err = await res.json().catch(() => ({}));
+      console.error(`[application] Lưu "${label}" thất bại:`, res.status, err);
+      showToast(`Chưa lưu được dữ liệu (${label}) lên máy chủ: ${err?.error || `lỗi ${res.status}`}. Vui lòng tải lại trang và thử lại.`, "error");
+    };
+    const onSaveError = (label: string) => (err: any) => {
+      console.error(`[application] Mất kết nối khi lưu "${label}":`, err);
+      showToast(`Mất kết nối khi lưu dữ liệu (${label}). Thay đổi có thể chưa được lưu.`, "error");
+    };
     const { user, can } = useAuth();
     
     // Tab states: Customer Service (FSE), Lab Resources, Customer Issues, Weekly Planner, Tasks
@@ -804,7 +815,7 @@ export function ApplicationFullABT() {
                                 method: "POST",
                                 headers: { "Content-Type": "application/json" },
                                 body: JSON.stringify(sharedReqs)
-                            }).catch(() => {});
+                            }).then(onSaveResult("shared_app_requests")).catch(onSaveError("shared_app_requests"));
                         }
                     }
                 } catch (e) {}
@@ -2054,7 +2065,7 @@ export function ApplicationFullABT() {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify(updatedReqs)
-                        }).catch(() => {});
+                        }).then(onSaveResult("shared_app_requests")).catch(onSaveError("shared_app_requests"));
                     }
                 } catch (e) {}
             }
@@ -2064,7 +2075,7 @@ export function ApplicationFullABT() {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(updated)
-            }).catch(() => {});
+            }).then(onSaveResult("lab_app_tasks")).catch(onSaveError("lab_app_tasks"));
 
             if (typeof window !== "undefined") {
                 window.dispatchEvent(new Event("storage"));
@@ -2170,7 +2181,7 @@ export function ApplicationFullABT() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key: "lab_app_tasks", data: updatedTasks })
-        }).catch(() => {});
+        }).then(onSaveResult("lab_app_tasks")).catch(onSaveError("lab_app_tasks"));
         
         // Reset
         setNewTaskLogResult("");
@@ -2202,7 +2213,7 @@ export function ApplicationFullABT() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key: "lab_app_tasks", data: updatedTasks })
-        }).catch(() => {});
+        }).then(onSaveResult("lab_app_tasks")).catch(onSaveError("lab_app_tasks"));
         showToast("Đã xóa nhật ký kết quả", "info");
     };
 

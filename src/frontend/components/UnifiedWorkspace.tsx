@@ -1437,6 +1437,17 @@ export const renderWorkflowResultSummary = (summary: any) => {
 
 export const UnifiedWorkspace: React.FC = () => {
   const { showToast, notifyActivity, filteredNotifications, markAsRead } = useNotification();
+  // Kết quả lưu nền lên máy chủ: báo lỗi cho người dùng thay vì bỏ qua im lặng
+  const onSaveResult = (label: string) => async (res: Response) => {
+    if (res.ok) return;
+    const err = await res.json().catch(() => ({}));
+    console.error(`[workspace] Lưu "${label}" thất bại:`, res.status, err);
+    showToast(`Chưa lưu được dữ liệu (${label}) lên máy chủ: ${err?.error || `lỗi ${res.status}`}. Vui lòng tải lại trang và thử lại.`, "error");
+  };
+  const onSaveError = (label: string) => (err: any) => {
+    console.error(`[workspace] Mất kết nối khi lưu "${label}":`, err);
+    showToast(`Mất kết nối khi lưu dữ liệu (${label}). Thay đổi có thể chưa được lưu.`, "error");
+  };
   const { user, can } = useAuth();
   // Tạo / sửa / xóa quy trình mẫu: Quản trị viên hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
   const canManageTemplates = Boolean(can && can("workspace.manage_templates"));
@@ -2130,7 +2141,7 @@ export const UnifiedWorkspace: React.FC = () => {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(cleanedSched)
-            }).catch(() => {});
+            }).then(onSaveResult("unified_weekly_schedule")).catch(onSaveError("unified_weekly_schedule"));
           }
         } catch (err) {
           console.warn("Could not load weekly schedule:", err);

@@ -715,6 +715,17 @@ const isServerIssuedOrderCode = (code: string) => /^SO\d{2}-[A-Z0-9]{2,5}-\d{4,5
 
 export function SalesFullABT() {
     const { showToast, notifyActivity } = useNotification();
+    // Kết quả lưu nền lên máy chủ: báo lỗi cho người dùng thay vì bỏ qua im lặng (trước đây `.catch(() => {})`)
+    const onSaveResult = (label: string) => async (res: Response) => {
+        if (res.ok) return;
+        const err = await res.json().catch(() => ({}));
+        console.error(`[sales] Lưu "${label}" thất bại:`, res.status, err);
+        showToast(`Chưa lưu được dữ liệu (${label}) lên máy chủ: ${err?.error || `lỗi ${res.status}`}. Vui lòng tải lại trang và thử lại.`, "error");
+    };
+    const onSaveError = (label: string) => (err: any) => {
+        console.error(`[sales] Mất kết nối khi lưu "${label}":`, err);
+        showToast(`Mất kết nối khi lưu dữ liệu (${label}). Thay đổi có thể chưa được lưu.`, "error");
+    };
     const { user, can } = useAuth();
     const getApiBase = () => getMesApiBase();
 
@@ -2927,7 +2938,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ key: "sales_personnel_contacts", data: salesPersonnelContacts })
-                }).catch(() => {});
+                }).then(onSaveResult("sales_personnel_contacts")).catch(onSaveError("sales_personnel_contacts"));
             } catch (err) {}
         }
     }, [salesPersonnelContacts]);
@@ -2941,7 +2952,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ key: "sales_personnel_custom", data: salesPersonnel })
-                }).catch(() => {});
+                }).then(onSaveResult("sales_personnel_custom")).catch(onSaveError("sales_personnel_custom"));
             } catch (err) {}
         }
     }, [salesPersonnel]);
@@ -4962,7 +4973,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).catch(() => {});
+            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
         }
     };
 
@@ -4986,7 +4997,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).catch(() => {});
+            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
         }
     };
 
@@ -5010,7 +5021,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).catch(() => {});
+            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
         }
     };
 
@@ -5082,7 +5093,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).catch(() => {});
+            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
         }
 
         showToast("Đã lưu nhật ký kết quả công việc vào hệ thống!", "success");
@@ -5114,7 +5125,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).catch(() => {});
+            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
         }
 
         showToast("Đã xóa nhật ký kết quả", "info");
@@ -7554,7 +7565,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key: "sales_oligo_presets_v1", data: nextList })
-        }).catch(() => {});
+        }).then(onSaveResult("sales_oligo_presets_v1")).catch(onSaveError("sales_oligo_presets_v1"));
     };
 
     const handleAddOligoPreset = (cat: "MOD" | "PUR" | "SVC") => {
@@ -9189,7 +9200,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ quote_code: dq.id, id: dq.id })
-            }).catch(() => {});
+            }).then(onSaveResult("delete_quotation")).catch(onSaveError("delete_quotation"));
         });
         showToast(`Đã xóa thành công ${draftQuotes.length} báo giá nháp!`, "success");
     };
@@ -10086,7 +10097,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(matchedQuote)
-                }).catch(() => {});
+                }).then(onSaveResult("quotation")).catch(onSaveError("quotation"));
             }
         }
 
@@ -10129,7 +10140,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ contract_code: cid, id: cid })
-            }).catch(() => {});
+            }).then(onSaveResult("delete_contract")).catch(onSaveError("delete_contract"));
         });
         showToast(`Đã xóa ${deletedIds.length} hợp đồng thành công!`, "success");
     };
@@ -11768,7 +11779,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(matchedQuote)
-                }).catch(() => {});
+                }).then(onSaveResult("quotation")).catch(onSaveError("quotation"));
             }
         }
 
@@ -15584,7 +15595,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(updated)
-            }).catch(() => {});
+            }).then(onSaveResult("shared_app_requests")).catch(onSaveError("shared_app_requests"));
 
             // Also delete corresponding task in lab_app_tasks
             const storedTasks = localStorage.getItem("lab_app_tasks");
@@ -15606,7 +15617,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify(updatedTasks)
-                        }).catch(() => {});
+                        }).then(onSaveResult("lab_app_tasks")).catch(onSaveError("lab_app_tasks"));
                     }
                 } catch (e) {}
             }
@@ -26020,7 +26031,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_custom", data: next })
-                                                            }).catch(() => {});
+                                                            }).then(onSaveResult("sales_personnel_custom")).catch(onSaveError("sales_personnel_custom"));
                                                             return next;
                                                         });
                                                     }}
@@ -26041,7 +26052,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_custom", data: next })
-                                                            }).catch(() => {});
+                                                            }).then(onSaveResult("sales_personnel_custom")).catch(onSaveError("sales_personnel_custom"));
                                                             return next;
                                                         });
                                                         showToast(`Đã chuyển vị trí của ${p.full_name} thành "${val}"!`, "success");
@@ -26100,7 +26111,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_contacts", data: next })
-                                                            }).catch(() => {});
+                                                            }).then(onSaveResult("sales_personnel_contacts")).catch(onSaveError("sales_personnel_contacts"));
                                                             return next;
                                                         });
                                                     }}
@@ -26129,7 +26140,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_contacts", data: next })
-                                                            }).catch(() => {});
+                                                            }).then(onSaveResult("sales_personnel_contacts")).catch(onSaveError("sales_personnel_contacts"));
                                                             return next;
                                                         });
                                                     }}
@@ -26154,7 +26165,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_custom", data: next })
-                                                            }).catch(() => {});
+                                                            }).then(onSaveResult("sales_personnel_custom")).catch(onSaveError("sales_personnel_custom"));
                                                             return next;
                                                         });
                                                         showToast(`Đã xóa nhân sự ${p.full_name}!`, "info");
