@@ -68,6 +68,7 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { dispatchCompanyConfigUpdated, getDefaultCompanyConfig } from "@/frontend/utils/companyConfig";
 import * as XLSX from "xlsx";
 import { exportCustomerQuotationToExcel } from "@/frontend/utils/exportQuotationExcel";
+import { DEFAULT_VAT_RATE, preVatAmount } from "@/frontend/utils/vat";
 import { getMesApiBase } from "@/frontend/utils/mesApi";
 import { SalesEvaluationAnalytics } from "@/frontend/components/SalesEvaluationAnalytics";
 import { SalesPerformanceAnalytics } from "@/frontend/components/SalesPerformanceAnalytics";
@@ -959,7 +960,7 @@ export function SalesFullABT() {
                         const it = fgItemsMap[code] || {};
                         const bom = bomsMap[code] || {};
                         const name = it.item_name || bom.product_name || code;
-                        const spec = it.specification || bom.specification || "50 test/hộp";
+                        const spec = it.specification || bom.specification || "";
                         const category = bom.category || it.category || "PCR Kit";
                         const subcategory = bom.subcategory || it.subcategory || "Thành phẩm";
                         const price = Number(it.standard_price || bom.standard_price) || 2800000;
@@ -7193,10 +7194,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (prod?.unit && String(prod.unit).trim()) {
             return String(prod.unit).trim();
         }
-        const name = (it?.productName || prod?.name || it?.productCode || "").toLowerCase();
-        if (name.includes("kit") || name.includes("pcr") || name.includes("topspec") || name.includes("sqs-") || name.includes("inv-")) {
-            return "50 test/hộp";
-        }
+        // Không có quy cách trong danh mục: để trống thay vì tự điền "50 test/hộp" lên chứng từ
         return "—";
     };
 
@@ -7328,7 +7326,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
 
         const brand = prod?.brand || prod?.supplier || (prod?.isCommercial ? "Chính hãng" : "ABT");
-        const origin = prod?.origin || "Singapore / Mỹ / Châu Âu";
+        const origin = prod?.origin || "";
         const model = prod?.code || prod?.model || "";
         const name = prod?.name || "Thiết bị chính";
 
@@ -7342,7 +7340,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 unit: prod?.unit || "Bộ",
                 isIncluded: true,
                 isStandard: true,
-                notes: "Mới 100%, đồng bộ nguyên kiện"
+                notes: ""
             },
             {
                 id: `cfg-${Date.now()}-2`,
@@ -9371,7 +9369,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const rows = source.map((q, idx) => {
             const totalAmount = Number(q.totalAmount) || 0;
-            const totalBeforeVat = Number(q.totalBeforeVat) || Math.round(totalAmount / 1.08);
+            const totalBeforeVat = Number(q.totalBeforeVat) || preVatAmount(totalAmount, q.items);
             const totalVat = Number(q.totalVat) || (totalAmount - totalBeforeVat);
             const totalDiscount = Number(q.totalDiscount) || 0;
             const netBeforeVat = totalBeforeVat - totalDiscount;
@@ -12185,6 +12183,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const priceApprovalNotes = (!isStockOrder && hasZeroPrice) ? "Đơn hàng có mặt hàng 0đ / quà tặng cần BGĐ duyệt" : "";
 
         if (editingFactoryOrderId) {
+            // Giữ bản cũ để khôi phục nếu máy chủ không lưu được (không để màn hình hiện thay đổi chưa có trên CSDL)
+            const orderBeforeEdit = factoryOrders.find(o => o.id === editingFactoryOrderId);
+            const restoreOrderBeforeEdit = () => {
+                if (orderBeforeEdit) setFactoryOrders(prev => prev.map(o => o.id === editingFactoryOrderId ? orderBeforeEdit : o));
+            };
             setFactoryOrders(prev => prev.map(order => {
                 if (order.id === editingFactoryOrderId) {
                     const isFromStockEdit = factoryOrderFulfillmentSource === "STOCK" || order.procureStatus === "STOCK_DELIVERY";
@@ -12255,9 +12258,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }).then(async res => {
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
+                    restoreOrderBeforeEdit();
                     showToast(`Không lưu được thay đổi đơn ${editingFactoryOrderId} vào CSDL: ${err.error || res.status}`, "error");
                     return;
                 }
+                showToast(`Đã cập nhật yêu cầu đặt hàng ${editingFactoryOrderId} thành công!`, "success");
                 const json = await res.json().catch(() => ({}));
                 if (json && (json.is_credit_blocked !== undefined || json.price_approval_status)) {
                     setFactoryOrders(prev => prev.map(o => o.id === editingFactoryOrderId ? {
@@ -12269,10 +12274,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }
             }).catch(err => {
                 console.error("Error updating order in PostgreSQL:", err);
-                showToast(`Không kết nối được máy chủ khi lưu đơn ${editingFactoryOrderId}.`, "error");
+                restoreOrderBeforeEdit();
+                showToast(`Không kết nối được máy chủ khi lưu đơn ${editingFactoryOrderId}. Thay đổi chưa được lưu.`, "error");
             });
 
-            showToast(`Đã cập nhật yêu cầu đặt hàng ${editingFactoryOrderId} thành công!`, "success");
             setIsFactoryOrderModalOpen(false);
             setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
             setIsStockOrder(false);
@@ -12533,7 +12538,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return orderCode;
     };
 
-    const handleConfirmSingleMfgOrder = (e?: React.FormEvent | React.MouseEvent) => {
+    /** Gắn mã PR vào đơn bán trên máy chủ; báo lỗi rõ thay vì bỏ qua im lặng */
+    const persistOrderPrLink = async (payload: Record<string, any>): Promise<boolean> => {
+        try {
+            const res = await fetch("/api/sales?action=order", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) return true;
+            const err = await res.json().catch(() => ({}));
+            showToast(`Đã tạo đề xuất mua hàng nhưng chưa gắn được mã PR vào đơn ${payload.order_code}: ${err.error || res.status}`, "error");
+        } catch (err) {
+            console.error("Failed to link PR to sales order:", err);
+            showToast(`Đã tạo đề xuất mua hàng nhưng mất kết nối khi gắn mã PR vào đơn ${payload.order_code}.`, "error");
+        }
+        return false;
+    };
+
+    const handleConfirmSingleMfgOrder = async (e?: React.FormEvent | React.MouseEvent) => {
         if (e && typeof e.preventDefault === "function") {
             e.preventDefault();
         }
@@ -12572,10 +12595,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const candidatePrCode = (targetReq.prCode && targetReq.prCode.startsWith("PR26-"))
             ? targetReq.prCode
             : ((targetReq.id && targetReq.id.startsWith("SO")) ? targetReq.id.replace(/^SO/, "PR") : "PR26-TB-1001");
-        const prCode = candidatePrCode;
-
-        // 1. Update state immediately so UI updates in real-time
-        setFactoryOrders(prev => prev.map(req => {
+        let prCode = candidatePrCode;
+        const applyMfgPrToOrder = (finalPrCode: string) => setFactoryOrders(prev => prev.map(req => {
             if (req.id === targetReq.id) {
                 return {
                     ...req,
@@ -12583,7 +12604,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     hasMfg: true,
                     hasComm: true,
                     mfgStatus: "PENDING",
-                    prCode: prCode,
+                    prCode: finalPrCode,
                     procureStatus: "PR_PENDING",
                     mfgNotes: newNotes,
                     mfgEstDate: formattedEstDate
@@ -12613,7 +12634,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             ? ` (Đơn SO của NVKD: ${targetReq.salesRepName})`
             : "";
 
-        fetch("/api/procurement?action=create_pr", {
+        let prRes: Response;
+        let prData: any = {};
+        try {
+            prRes = await fetch("/api/procurement?action=create_pr", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -12627,27 +12651,32 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 description: `[Đơn bán ${targetReq.id}]${soOwnerNote} ${newNotes}`.trim(),
                 items: prItems
             })
-        }).then(res => res.json()).then(data => {
-            if (data?.code) {
-                setFactoryOrders(prev => prev.map(o => o.id === targetReq.id ? { ...o, prCode: data.code } : o));
-            }
-        }).catch(err => console.warn("Auto create PR error:", err));
+            });
+            prData = await prRes.json().catch(() => ({}));
+        } catch (err) {
+            console.error("Failed to create PR:", err);
+            showToast("Không kết nối được máy chủ để gửi đề xuất mua hàng. Vui lòng thử lại.", "error");
+            return;
+        }
+        if (!prRes.ok || !prData?.code) {
+            // Không đánh dấu "đã gửi PR" khi máy chủ chưa lưu được
+            showToast(`Chưa gửi được đề xuất mua hàng: ${prData?.error || prRes.status}. Vui lòng thử lại.`, "error");
+            return;
+        }
+        prCode = prData.code;
+        applyMfgPrToOrder(prCode);
 
         // 3. PO do phòng Cung ứng lập từ PR (Kinh doanh không tạo PO). 4. Lưu mã PR vào đơn bán.
         void mfgCode;
-        fetch("/api/sales?action=order", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                id: targetReq.id,
-                order_code: targetReq.order_code || targetReq.id,
-                pr_code: prCode,
-                procure_status: "PR_PENDING",
-                fulfillment_source: targetReq.fulfillmentSource || "COMMERCIAL"
-            })
-        }).catch(e => console.warn("Background update sales order PR error:", e));
+        const linkedMfg = await persistOrderPrLink({
+            id: targetReq.id,
+            order_code: targetReq.order_code || targetReq.id,
+            pr_code: prCode,
+            procure_status: "PR_PENDING",
+            fulfillment_source: targetReq.fulfillmentSource || "COMMERCIAL"
+        });
 
-        showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng (Cung ứng sẽ lập PO với nhà cung cấp).`, "success");
+        if (linkedMfg) showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng (Cung ứng sẽ lập PO với nhà cung cấp).`, "success");
         setSingleMfgTargetOrder(null);
     };
 
@@ -13438,19 +13467,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
         // PO sẽ do phòng Cung ứng lập từ PR này (đơn bán được tự cập nhật mã PO khi Cung ứng lập PO)
         // Also persist pr_code & procure_status to PostgreSQL sales_orders
-        fetch("/api/sales?action=order", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-                id: singleProcureTargetOrder.id,
-                order_code: singleProcureTargetOrder.order_code || singleProcureTargetOrder.id,
-                pr_code: prCode,
-                procure_status: "PR_PENDING",
-                fulfillment_source: singleProcureTargetOrder.fulfillmentSource || "COMMERCIAL"
-            })
-        }).catch(e => console.warn("Background update sales order PR error:", e));
+        const linkedProcure = await persistOrderPrLink({
+            id: singleProcureTargetOrder.id,
+            order_code: singleProcureTargetOrder.order_code || singleProcureTargetOrder.id,
+            pr_code: prCode,
+            procure_status: "PR_PENDING",
+            fulfillment_source: singleProcureTargetOrder.fulfillmentSource || "COMMERCIAL"
+        });
 
-        showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng thành công!`, "success");
+        if (linkedProcure) showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng thành công!`, "success");
         setSingleProcureTargetOrder(null);
     };
 
@@ -13847,15 +13872,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
             return req;
         }));
-        for (const req of selectedReqs) {
-            fetch("/api/sales?action=order", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: req.id, order_code: req.order_code || req.id, pr_code: combinedPrCode, procure_status: "PR_PENDING" })
-            }).catch(() => {});
-        }
+        const linkResults = await Promise.all(selectedReqs.map(req =>
+            persistOrderPrLink({ id: req.id, order_code: req.order_code || req.id, pr_code: combinedPrCode, procure_status: "PR_PENDING" })
+        ));
 
-        showToast(`Đã gửi Đề xuất mua hàng gộp ${combinedPrCode} sang phòng Cung Ứng (${selectedReqs.length} đơn).`, "success");
+        if (linkResults.every(Boolean)) showToast(`Đã gửi Đề xuất mua hàng gộp ${combinedPrCode} sang phòng Cung Ứng (${selectedReqs.length} đơn).`, "success");
 
         setIsCombineOrderModalOpen(false);
         setSelectedFactoryOrdersForCombine([]);
@@ -18355,7 +18376,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         ))
                                     );
                                     const quoteRevAfterVat = custQuotes.reduce((sum, q) => sum + (Number(q.totalAmount) || 0), 0);
-                                    const quoteRevBeforeVat = custQuotes.reduce((sum, q) => sum + (Number(q.totalBeforeVat) || Math.round((Number(q.totalAmount) || 0) / 1.08)), 0);
+                                    const quoteRevBeforeVat = custQuotes.reduce((sum, q) => sum + (Number(q.totalBeforeVat) || preVatAmount(Number(q.totalAmount) || 0, q.items)), 0);
                                     const quoteDiscountTotal = custQuotes.reduce((sum, q) => sum + (Number(q.totalDiscount) || 0), 0);
 
                                     return (
@@ -18619,7 +18640,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         .reduce((sum, log) => sum + (log.total || 0), 0);
 
                                                 const totalOrderRevenue = completedSoRevenue + customerRetailRevenue;
-                                                const totalOrderRevenueBeforeVat = Math.round(totalOrderRevenue / 1.08);
+                                                const totalOrderRevenueBeforeVat = Math.round(totalOrderRevenue / (1 + DEFAULT_VAT_RATE / 100)); // ước tính theo thuế suất mặc định
 
                                                 const displayRevAfterVat = totalOrderRevenue > 0 ? totalOrderRevenue : quoteRevAfterVat;
                                                 const displayRevBeforeVat = totalOrderRevenue > 0 ? totalOrderRevenueBeforeVat : quoteRevBeforeVat;
@@ -19334,7 +19355,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         ) : (
                                                             custQuotes.map((q: any) => {
                                                                 const gross = Number(q.totalAmount) || 0;
-                                                                const preVat = Number(q.totalBeforeVat) || Math.round(gross / 1.08);
+                                                                const preVat = Number(q.totalBeforeVat) || preVatAmount(gross, q.items);
                                                                 const discAmt = Number(q.totalDiscount) || 0;
                                                                 const discRate = preVat > 0 ? ((discAmt / preVat) * 100).toFixed(1) : "0";
                                                                 return (
@@ -19507,7 +19528,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         filteredQuotationsList.forEach(q => {
                             const gross = Number(q.totalAmount) || 0;
-                            const preVat = Number(q.totalBeforeVat) || Math.round(gross / 1.08);
+                            const preVat = Number(q.totalBeforeVat) || preVatAmount(gross, q.items);
                             const vat = Number(q.totalVat) || (gross - preVat);
                             const disc = Number(q.totalDiscount) || 0;
 
@@ -25151,7 +25172,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     const code = p.code;
                                                                                     const prod = allSalesProducts.find(prod => prod.code === code) || biolabProducts.find(prod => prod.code === code);
                                                                                     const finalPrice = prod ? (prod[quotePriceTier] || prod.price) : 0;
-                                                                                    const finalSpec = prod ? (prod.specification || (prod.name.toLowerCase().includes("kit") ? "50 test/hộp" : prod.unit || "")) : "50 test/hộp";
+                                                                                    const finalSpec = prod ? (prod.specification || prod.unit || "") : "";
                                                                                     const finalMfg = formatSupplierShortName((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "") : "ABT");
                                                                                     const finalNotes = item.notes || (stockIntel.atp > 0 ? "Hàng có sẵn, giao ngay" : (stockIntel.incomingQty > 0 ? `Hàng đang về (${stockIntel.incomingQty} sp)` : "Hàng đặt, giao sau 2-4 tuần"));
                                                                                     const isEquip = isEquipmentProduct(prod, code);
