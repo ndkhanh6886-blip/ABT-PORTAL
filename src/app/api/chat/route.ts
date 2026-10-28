@@ -417,8 +417,11 @@ export async function GET(req: NextRequest) {
       const resolvedType = chMeta?.channel_type || "CHANNEL";
 
       // Strict channel isolation: never mix DM messages into CHANNEL or CHANNEL messages into DIRECT
+      // Newest 200 messages, returned oldest-first (it used to return the OLDEST 200, so a channel with more
+      // messages never showed new ones and the read marker stopped at message #200)
       const res = await query(
-        `SELECT * FROM chat_messages m
+        `SELECT * FROM (
+         SELECT * FROM chat_messages m
          WHERE m.channel_id = $1
            AND (
              $2::text = ''
@@ -431,8 +434,10 @@ export async function GET(req: NextRequest) {
              OR ($3::text = 'DIRECT' AND COALESCE(m.channel_code, '') NOT IN ('general', 'sales', 'application', 'warehouse', 'procurement'))
              OR ($3::text NOT IN ('CHANNEL', 'DIRECT'))
            )
-         ORDER BY m.id ASC
-         LIMIT 200`,
+         ORDER BY m.id DESC
+         LIMIT 200
+         ) newest
+         ORDER BY newest.id ASC`,
         [resolvedChannelId, resolvedCode, resolvedType]
       );
 
