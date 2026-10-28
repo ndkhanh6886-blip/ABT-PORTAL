@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAuthorizedUser, unauthorizedResponse, setAuditActor } from "@/backend/services/authz";
 import fs from "fs";
+import fsp from "fs/promises";
 import path from "path";
+import crypto from "crypto";
+import { Readable } from "stream";
 
 const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 
@@ -44,7 +47,11 @@ function validateFileExtensionAndSize(originalName: string, totalSize: number): 
     return `Định dạng tệp ${ext} bị chặn vì lý do an toàn bảo mật hệ thống!`;
   }
 
-  if (ext && !ALLOWED_EXTENSIONS.has(ext)) {
+  if (!ext) {
+    return "Tệp không có phần mở rộng (.pdf, .xlsx, .jpg...) nên không thể xác định định dạng an toàn. Vui lòng đổi tên tệp rồi tải lại.";
+  }
+
+  if (!ALLOWED_EXTENSIONS.has(ext)) {
     return `Định dạng tệp ${ext} không được hỗ trợ. Vui lòng tải các định dạng văn phòng, thầu, ảnh, video hoặc file nén (.zip, .rar, .7z).`;
   }
 
@@ -64,7 +71,8 @@ function buildSafeUniqueFileName(originalName: string): string {
     .replace(/_+/g, "_")
     .replace(/^_|_$/g, "")
     .slice(0, 80);
-  return `${Date.now()}_${normalizedBase || "file"}${ext}`;
+  // Thêm chuỗi ngẫu nhiên: hai người tải cùng tên trong cùng mili-giây không ghi đè nhau, tên tệp khó đoán
+  return `${Date.now()}_${crypto.randomBytes(6).toString("hex")}_${normalizedBase || "file"}${ext}`;
 }
 
 export async function POST(req: NextRequest) {
@@ -97,25 +105,21 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: validationError }, { status: 400 });
       }
 
-      const partPath = path.join(UPLOAD_DIR, `.part_${uploadId}`);
+      // File tạm gắn với tài khoản: người khác không thể ghi chèn vào phần tải lên của mình
+      const partPath = path.join(UPLOAD_DIR, `.part_${Number(authUser.id) || 0}_${uploadId}`);
 
       // Nếu là chunk đầu tiên (0), xóa file tạm cũ nếu có
-      if (chunkIndex === 0 && fs.existsSync(partPath)) {
-        try {
-          fs.unlinkSync(partPath);
-        } catch {}
+      if (chunkIndex === 0) {
+        await fsp.unlink(partPath).catch(() => {}); // chưa có file tạm: không có gì để xóa
       }
 
       const chunkBytes = await chunkBlob.arrayBuffer();
-      const chunkBuffer = Buffer.from(chunkBytes);
-      fs.appendFileSync(partPath, chunkBuffer);
+      await fsp.appendFile(partPath, Buffer.from(chunkBytes));
 
       // Kiểm tra dung lượng tích lũy thực tế trên đĩa không vượt quá MAX_FILE_SIZE
-      const stat = fs.statSync(partPath);
+      const stat = await fsp.stat(partPath);
       if (stat.size > MAX_FILE_SIZE) {
-        try {
-          fs.unlinkSync(partPath);
-        } catch {}
+        await fsp.unlink(partPath).catch(err => console.error("[upload] Không xóa được tệp tạm quá cỡ:", err));
         return NextResponse.json(
           { error: "Tổng dung lượng tệp tải lên vượt quá giới hạn tối đa 250 MB." },
           { status: 413 }
@@ -136,7 +140,7 @@ export async function POST(req: NextRequest) {
       // Đã nhận đủ chunk cuối -> đổi tên file tạm sang file chính thức
       const uniqueName = buildSafeUniqueFileName(originalFileName);
       const finalPath = path.join(UPLOAD_DIR, uniqueName);
-      fs.renameSync(partPath, finalPath);
+      await fsp.rename(partPath, finalPath);
 
       const fileUrl = `/api/upload?file=${encodeURIComponent(uniqueName)}&name=${encodeURIComponent(originalFileName)}`;
 
@@ -165,13 +169,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
-
     const uniqueName = buildSafeUniqueFileName(file.name);
     const filePath = path.join(UPLOAD_DIR, uniqueName);
 
-    fs.writeFileSync(filePath, buffer);
+    await fsp.writeFile(filePath, Buffer.from(await file.arrayBuffer()));
 
     const fileUrl = `/api/upload?file=${encodeURIComponent(uniqueName)}&name=${encodeURIComponent(file.name)}`;
 
@@ -208,11 +209,11 @@ export async function GET(req: NextRequest) {
     const safeName = path.basename(fileName);
     const filePath = path.join(UPLOAD_DIR, safeName);
 
-    if (!fs.existsSync(filePath)) {
+    const fileStat = await fsp.stat(filePath).catch(() => null);
+    if (!fileStat || !fileStat.isFile()) {
       return NextResponse.json({ error: "Tệp tin không tồn tại hoặc đã bị xóa" }, { status: 404 });
     }
 
-    const fileBuffer = fs.readFileSync(filePath);
     const ext = path.extname(safeName).toLowerCase();
 
     let contentType = "application/octet-stream";
@@ -261,15 +262,35 @@ export async function GET(req: NextRequest) {
       ? `attachment; filename="${safeName}"; filename*=UTF-8''${encodedUtf8Name}`
       : `inline; filename="${safeName}"; filename*=UTF-8''${encodedUtf8Name}`;
 
-    return new NextResponse(fileBuffer, {
-      headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": disposition,
-        "X-Content-Type-Options": "nosniff",
-        "Cache-Control": "private, max-age=86400, immutable",
-      },
-    });
+    const baseHeaders: Record<string, string> = {
+      "Content-Type": contentType,
+      "Content-Disposition": disposition,
+      "X-Content-Type-Options": "nosniff",
+      "Cache-Control": "private, max-age=86400, immutable",
+      "Accept-Ranges": "bytes",
+    };
+
+    // Gửi tệp dạng luồng (stream) thay vì đọc cả tệp vào RAM; hỗ trợ Range để tua video
+    const size = fileStat.size;
+    const range = req.headers.get("range");
+    const m = range ? /^bytes=(\d*)-(\d*)$/.exec(range.trim()) : null;
+    if (m && (m[1] || m[2])) {
+      const start = m[1] ? Number(m[1]) : Math.max(0, size - Number(m[2]));
+      const end = m[1] && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+      if (start > end || start >= size) {
+        return new NextResponse(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+      }
+      const stream = Readable.toWeb(fs.createReadStream(filePath, { start, end })) as unknown as ReadableStream;
+      return new NextResponse(stream, {
+        status: 206,
+        headers: { ...baseHeaders, "Content-Range": `bytes ${start}-${end}/${size}`, "Content-Length": String(end - start + 1) },
+      });
+    }
+
+    const stream = Readable.toWeb(fs.createReadStream(filePath)) as unknown as ReadableStream;
+    return new NextResponse(stream, { headers: { ...baseHeaders, "Content-Length": String(size) } });
   } catch (error: any) {
+    console.error("[upload] Lỗi đọc tệp:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
