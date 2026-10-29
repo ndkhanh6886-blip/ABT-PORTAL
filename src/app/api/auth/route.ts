@@ -7,13 +7,14 @@ import { clientIp, hitRateLimit, isRateLimited } from "@/backend/services/rateLi
 
 const USER_LOOKUP_WHERE = `
   LOWER(username) = LOWER($1)
+  OR LOWER(COALESCE(login_name, '')) = LOWER($1)
   OR LOWER(username) = LOWER(REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))
   OR LOWER(username) = LOWER(REPLACE(REPLACE($1, 'NV-ABT', 'ABT'), 'NV-VIA', 'VIA'))
   OR LOWER(email) = LOWER($1)
   OR LOWER(full_name) = LOWER($1)`;
 
 // Exact username/email matches first so a shared full name can never shadow another account
-const USER_LOOKUP_ORDER = `ORDER BY (LOWER(username) = LOWER($1)) DESC, (LOWER(email) = LOWER($1)) DESC, id ASC`;
+const USER_LOOKUP_ORDER = `ORDER BY (LOWER(username) = LOWER($1)) DESC, (LOWER(COALESCE(login_name, '')) = LOWER($1)) DESC, (LOWER(email) = LOWER($1)) DESC, id ASC`;
 
 /** Initial / well-known passwords: accepted once, then the user must choose a new one. */
 const DEFAULT_PASSWORDS = new Set(["123456", "password123", "12345678", "admin", "admin123", "123456789"]);

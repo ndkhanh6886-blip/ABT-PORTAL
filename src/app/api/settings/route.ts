@@ -4,6 +4,7 @@ import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { hashPassword, verifyPassword, generateTemporaryPassword } from "@/backend/services/passwords";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { inferSystemRoleFromPosition } from "@/backend/services/permissions";
+import { setImportedLoginName } from "@/backend/services/accountImport";
 
 // Mật khẩu khởi tạo cho tài khoản mới (được băm scrypt khi lưu; người dùng nên đổi ngay sau lần đăng nhập đầu)
 /** Tài khoản vừa tạo kèm mật khẩu tạm (chỉ trả về một lần cho Quản trị viên để giao cho nhân viên). */
@@ -281,6 +282,7 @@ export async function POST(req: NextRequest) {
       await ensurePersonnelTable();
       let count = 0;
       const created: InitialCredential[] = [];
+      const importWarnings: string[] = [];
       // Mã dự phòng cho dòng thiếu mã: duy nhất trong lô (Date.now() trùng nhau giữa các dòng cùng mili-giây)
       const importBatchStamp = Date.now().toString(36).toUpperCase();
       let importAutoSeq = 0;
@@ -314,6 +316,9 @@ export async function POST(req: NextRequest) {
         const statusRaw = (getVal(["Trạng thái", "status"]) || "ACTIVE").toUpperCase();
         const status = statusRaw.includes("NGHỈ") || statusRaw.includes("INACTIVE") ? "INACTIVE" : "ACTIVE";
         const resolvedRole = inferSystemRoleFromPosition(dept, position, rawRole);
+        // Mật khẩu khởi tạo / tên đăng nhập ghi trong file (nếu có); mật khẩu luôn phải đổi ở lần đăng nhập đầu
+        const providedPassword = getVal(["Mật khẩu khởi tạo", "Mật khẩu", "password"]);
+        const providedLoginName = getVal(["Tên đăng nhập (*)", "Tên đăng nhập", "username", "TenDangNhap"]);
 
         // 1. Upsert into personnel (Single Source of Truth)
         await query(
@@ -329,19 +334,23 @@ export async function POST(req: NextRequest) {
           [empCode, fullName, dept, position, email, phone, status]
         );
 
+        // Tài khoản đã có chỉ nhận mật khẩu trong file khi người dùng chưa từng đổi mật khẩu
         const userRes = await query(
           `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
            VALUES ($1, $2, $3, $4, $5, $6, $7, true)
            ON CONFLICT (username) DO UPDATE
-           SET full_name = EXCLUDED.full_name,
+           SET password_hash = CASE WHEN $8::boolean AND COALESCE(users.must_change_password, false) THEN EXCLUDED.password_hash ELSE users.password_hash END,
+               full_name = EXCLUDED.full_name,
                department = EXCLUDED.department,
                role = CASE WHEN users.role = 'admin' AND $4 != 'admin' THEN 'admin' ELSE EXCLUDED.role END,
                email = COALESCE(NULLIF(EXCLUDED.email, ''), users.email),
                is_active = EXCLUDED.is_active
            RETURNING (xmax = 0) AS inserted`,
-          [empCode, unusablePasswordHash(), fullName, resolvedRole, dept, email, status === "ACTIVE"]
+          [empCode, providedPassword ? hashPassword(providedPassword) : unusablePasswordHash(), fullName, resolvedRole, dept, email, status === "ACTIVE", providedPassword !== ""]
         );
-        if (userRes.rows[0]?.inserted) created.push(await assignTemporaryPassword(empCode, fullName));
+        if (userRes.rows[0]?.inserted && !providedPassword) created.push(await assignTemporaryPassword(empCode, fullName));
+        const loginWarning = await setImportedLoginName(empCode, providedLoginName);
+        if (loginWarning) importWarnings.push(loginWarning);
 
         count++;
       }
@@ -358,7 +367,8 @@ export async function POST(req: NextRequest) {
         success: true,
         count,
         initial_credentials: created,
-        message: `Đã nạp thành công ${count} nhân sự${created.length ? `, tạo ${created.length} tài khoản mới với mật khẩu tạm (phải đổi ở lần đăng nhập đầu)` : ""} và liên kết Zalo.`
+        warnings: importWarnings,
+        message: `${importWarnings.length ? `Lưu ý:\n${importWarnings.join("\n")}\n\n` : ""}Đã nạp thành công ${count} nhân sự${created.length ? `, tạo ${created.length} tài khoản mới với mật khẩu tạm (phải đổi ở lần đăng nhập đầu)` : ""} và liên kết Zalo.`
       });
     }
 

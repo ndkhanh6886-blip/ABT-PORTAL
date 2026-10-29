@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, ensurePersonnelTable, withTransaction, httpErrorStatus, HttpError } from "@/backend/db/db";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
+import { setImportedLoginName } from "@/backend/services/accountImport";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
@@ -796,6 +797,7 @@ export async function POST(req: NextRequest) {
 
       let importedCount = 0;
       const initialCredentials: { username: string; full_name: string; password: string }[] = [];
+      const importWarnings: string[] = [];
 
       // Universal flexible value extractor for any row
       const createGetVal = (r: Record<string, any>) => {
@@ -1421,6 +1423,7 @@ export async function POST(req: NextRequest) {
           const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-ABT");
           const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên ABT";
           let username = getVal(["Tên đăng nhập (*)", "Tên đăng nhập", "username", "TenDangNhap"]);
+          const providedLoginName = username;
           const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@abtvn.com` : "");
           if (!username) {
             const emailPart = email.split("@")[0];
@@ -1484,15 +1487,14 @@ export async function POST(req: NextRequest) {
 
           // 2. Upsert into users table (account, with username matching employee_code)
           // New accounts get the file's password or a random temporary one (never the shared "123456");
-          // any password set here must be changed at first login.
+          // any password set here must be changed at first login. An existing account only takes the file's
+          // password while its user has never changed it (re-importing an old file must not reset real passwords).
           const initialPassword = providedPassword || generateTemporaryPassword();
           const userRes = await query(
             `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
              VALUES ($1, $2, $3, $4, $5, $6, $7, true)
              ON CONFLICT (username) DO UPDATE
-             SET password_hash = CASE WHEN $8::boolean THEN EXCLUDED.password_hash ELSE users.password_hash END,
-                 must_change_password = CASE WHEN $8::boolean THEN true ELSE users.must_change_password END,
-                 session_version = CASE WHEN $8::boolean THEN COALESCE(users.session_version, 0) + 1 ELSE users.session_version END,
+             SET password_hash = CASE WHEN $8::boolean AND COALESCE(users.must_change_password, false) THEN EXCLUDED.password_hash ELSE users.password_hash END,
                  full_name = EXCLUDED.full_name,
                  role = EXCLUDED.role,
                  department = EXCLUDED.department,
@@ -1504,6 +1506,8 @@ export async function POST(req: NextRequest) {
           if (userRes.rows[0]?.inserted && !providedPassword) {
             initialCredentials.push({ username: empCode, full_name: fullName, password: initialPassword });
           }
+          const loginWarning = await setImportedLoginName(empCode, providedLoginName);
+          if (loginWarning) importWarnings.push(loginWarning);
 
           importedCount++;
         }
@@ -1521,7 +1525,8 @@ export async function POST(req: NextRequest) {
         detected_type: detectedType,
         imported_count: importedCount,
         initial_credentials: initialCredentials,
-        message: `Đã nhập thành công ${importedCount} bản ghi (${detectedType}) vào hệ thống!`
+        warnings: importWarnings,
+        message: `Đã nhập thành công ${importedCount} bản ghi (${detectedType}) vào hệ thống!${importWarnings.length ? `\n\nLưu ý:\n${importWarnings.join("\n")}` : ""}`
       });
     }
 

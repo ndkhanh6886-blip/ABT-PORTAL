@@ -739,6 +739,14 @@ async function runIntegrityMigrations() {
       )
     );
 
+    // Tên đăng nhập riêng từ file nhập liệu (cột "Tên đăng nhập") khi khác Mã nhân viên
+    await step("users_login_name", () =>
+      client.query(`
+        ALTER TABLE users ADD COLUMN IF NOT EXISTS login_name VARCHAR(100);
+        CREATE UNIQUE INDEX IF NOT EXISTS users_login_name_lower_uidx ON users (LOWER(login_name)) WHERE login_name IS NOT NULL AND login_name <> '';
+      `)
+    );
+
     await step("inventory_checks", () =>
       client.query(`
         DO $$
