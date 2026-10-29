@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse } from "@/backend/services/authz";
 import { clientIp } from "@/backend/services/rateLimit";
 import type { AuthzActor } from "./core/authz";
-import { withTransaction, type Tx } from "./core/db";
+import { getFactoryPool, withTransaction, type Tx } from "./core/db";
 import { FactoryError } from "./core/errors";
 import { withIdempotency } from "./core/idempotency";
 import "./permissions";
@@ -19,10 +19,14 @@ export interface RouteContext {
 
 /**
  * Thin wrapper of every factory API route: shared ABT Portal login → factory actor (profile created
- * on first visit) → one transaction → errors mapped to status + Vietnamese message. Business rules
- * live in services; routes only parse and delegate.
+ * on first visit) → optional `before` step (e-signature re-authentication, which must commit its
+ * failed-attempt counter on its own) → one business transaction → errors mapped to status +
+ * Vietnamese message. Business rules live in services; routes only parse and delegate.
  */
-export function factoryRoute(handler: (tx: Tx, ctx: RouteContext) => Promise<unknown>) {
+export function factoryRoute(
+  handler: (tx: Tx, ctx: RouteContext) => Promise<unknown>,
+  opts: { before?: (ctx: RouteContext) => Promise<void> } = {}
+) {
   return async (req: Request, segment?: { params?: Promise<Record<string, string>> }) => {
     const user = await getAuthorizedUser(req);
     if (!user) return unauthorizedResponse();
@@ -37,15 +41,17 @@ export function factoryRoute(handler: (tx: Tx, ctx: RouteContext) => Promise<unk
     try {
       const params = (await segment?.params) ?? {};
       const body = req.method === "GET" || req.method === "HEAD" ? {} : await req.json().catch(() => ({}));
-      const result = await withTransaction(async (tx) => {
-        await tx.query(
-          `INSERT INTO core.user_profile (user_id, display_name) VALUES ($1, $2)
-           ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name
-           WHERE core.user_profile.display_name IS DISTINCT FROM EXCLUDED.display_name`,
-          [actor.userId, actor.name]
-        );
-        return handler(tx, { req, url: new URL(req.url), actor, params, body });
-      });
+      // Own statement, outside the business transaction: never holds the profile row lock
+      // while a signature check on another connection needs it.
+      await getFactoryPool().query(
+        `INSERT INTO core.user_profile (user_id, display_name) VALUES ($1, $2)
+         ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name
+         WHERE core.user_profile.display_name IS DISTINCT FROM EXCLUDED.display_name`,
+        [actor.userId, actor.name]
+      );
+      const ctx: RouteContext = { req, url: new URL(req.url), actor, params, body };
+      await opts.before?.(ctx);
+      const result = await withTransaction((tx) => handler(tx, ctx));
       return NextResponse.json(result ?? { ok: true });
     } catch (error: any) {
       if (error instanceof FactoryError) {
