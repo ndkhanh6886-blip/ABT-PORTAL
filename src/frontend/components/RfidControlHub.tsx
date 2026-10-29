@@ -106,7 +106,7 @@ export const RfidControlHub: React.FC = () => {
             if (!dynamicShelves[shelfKey]) {
               dynamicShelves[shelfKey] = {
                 label: shelfName,
-                zone: it.warehouse_location || "Kho TBRs",
+                zone: it.warehouse_location || "Kho ABT",
                 items: []
               };
             }
@@ -118,7 +118,7 @@ export const RfidControlHub: React.FC = () => {
                 name: it.product_name,
                 lot: it.lot_number || "L2601",
                 exp: it.expiry_date ? toVNDateString(new Date(it.expiry_date)) : "2026-12-31",
-                storage: it.warehouse_location || "Kho TBRs",
+                storage: it.warehouse_location || "Kho ABT",
                 expectedQty: it.quantity_on_hand || 10,
                 scannedQty: 0,
                 unit: it.unit || "Hộp"
@@ -540,7 +540,7 @@ export const RfidControlHub: React.FC = () => {
             "Mã Sản Phẩm": t.sku,
             "Số Lô": t.lot,
             "Tên Hàng Hóa": t.productName,
-            "Vị Trí Sổ Sách": t.location || "Kho TBRs",
+            "Vị Trí Sổ Sách": t.location || "Kho ABT",
             "Tồn Sổ Sách": 1,
             "Thực Tế Quét RFID": 1,
             "Chênh Lệch": 0,
@@ -568,7 +568,7 @@ export const RfidControlHub: React.FC = () => {
         if (saved) {
           const parsed = JSON.parse(saved);
           if (Array.isArray(parsed)) {
-            return parsed.filter((t: any) => !t.epc?.includes("HBV100") && !t.epc?.includes("TBR.EQ.") && !t.epc?.includes("VIA.EQ."));
+            return parsed.filter((t: any) => !t.epc?.includes("HBV100") && !t.epc?.includes("ABT.EQ.") && !t.epc?.includes("VIA.EQ."));
           }
         }
       } catch(e) {}
@@ -592,7 +592,7 @@ export const RfidControlHub: React.FC = () => {
     tagType: "CRYO" as "ON_METAL" | "CRYO" | "DECAL" | "CABLE_TIE",
     storageCondition: "-20°C (Kho Lạnh Âm)",
     quantity: 1,
-    printerIp: "192.168.1.150 (Zebra ZT411R - Kho TBRs)"
+    printerIp: "192.168.1.150 (Zebra ZT411R - Kho ABT)"
   });
   const [isEncoding, setIsEncoding] = useState(false);
   const [lastZplPreview, setLastZplPreview] = useState<string>("");
@@ -1565,14 +1565,14 @@ export const RfidControlHub: React.FC = () => {
                     onChange={(e) => {
                       const sku = e.target.value;
                       let name = "Kit Real-time PCR định lượng HBV";
-                      if (sku === "TBR-9600") name = "Hệ thống Real-time PCR 96 giếng tự động";
+                      if (sku === "ABT-9600") name = "Hệ thống Real-time PCR 96 giếng tự động";
                       if (sku === "MAG-BEADS-500") name = "Hóa chất tách chiết hạt từ (Magnetic Beads)";
                       setEncodeForm({ ...encodeForm, sku, productName: name });
                     }}
                     className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 font-bold"
                   >
                     <option value="KIT-HBV-100">Kit Real-time PCR định lượng HBV (Viêm gan B)</option>
-                    <option value="TBR-9600">Hệ thống Real-time PCR 96 giếng tự động TBR-9600</option>
+                    <option value="ABT-9600">Hệ thống Real-time PCR 96 giếng tự động ABT-9600</option>
                     <option value="MAG-BEADS-500">Hóa chất tách chiết hạt từ (Magnetic Beads)</option>
                   </select>
                 </div>
@@ -1793,7 +1793,7 @@ export const RfidControlHub: React.FC = () => {
             <div className="space-y-4 text-xs">
               <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 space-y-1">
                 <div className="font-bold text-indigo-900 dark:text-indigo-300">
-                  ℹ Cách máy quét kết nối với TBRs Portal:
+                  ℹ Cách máy quét kết nối với ABT Portal:
                 </div>
                 <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
                   1. <strong>Súng quét USB / Bluetooth HID thông thường:</strong> Tự động nhận ngay lập tức qua trình lắng nghe phím toàn màn hình mà <u>không cần ghép nối thêm</u>.<br/>

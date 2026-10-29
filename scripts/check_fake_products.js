@@ -1,9 +1,9 @@
 const { Pool } = require('pg');
-const pool = new Pool({ host: '127.0.0.1', port: 5432, user: 'postgres', password: process.env.PGPASSWORD, database: 'tbrs_portal' });
+const pool = new Pool({ host: '127.0.0.1', port: 5432, user: 'postgres', password: process.env.PGPASSWORD, database: 'abt_portal' });
 
 async function check() {
   const codes = [
-    'TBR-KIT-001', 'LBC-021', 'SQH-115.A', 'SQH-115.B', 'SQH-116.A', 'SQH-116.B',
+    'ABT-KIT-001', 'LBC-021', 'SQH-115.A', 'SQH-115.B', 'SQH-116.A', 'SQH-116.B',
     'EXS-021', 'EXS-022', 'EQ-EXTRACT-32', 'EQ-QPCR-96', 'DG-LIS-LAB', 'CS-TIP-FILTER'
   ];
 

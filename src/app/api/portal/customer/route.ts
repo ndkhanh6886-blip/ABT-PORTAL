@@ -12,7 +12,7 @@ function tooMany(req: NextRequest, bucket: string, limit: number, windowMs: numb
 }
 
 // Phiên của khách hàng (tách biệt hoàn toàn với phiên nhân viên)
-const CUSTOMER_COOKIE = "tbrs_customer_session";
+const CUSTOMER_COOKIE = "abt_customer_session";
 
 async function getCustomerSession(req: NextRequest) {
   const s = await verifySessionToken(req.cookies.get(CUSTOMER_COOKIE)?.value);
@@ -170,7 +170,7 @@ export async function POST(req: NextRequest) {
       if (custRes.rows.length === 0) {
         return NextResponse.json(
           { 
-            error: "Mã khách hàng hoặc Số điện thoại không khớp với hồ sơ y tế tại TBRs. Quý Viện vui lòng kiểm tra lại hoặc liên hệ Hotline hỗ trợ." 
+            error: "Mã khách hàng hoặc Số điện thoại không khớp với hồ sơ y tế tại ABT. Quý Viện vui lòng kiểm tra lại hoặc liên hệ Hotline hỗ trợ." 
           },
           { status: 401 }
         );
@@ -323,7 +323,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         success: true,
         incident_code: incidentCode,
-        message: "Hệ thống đã tiếp nhận báo cáo sự cố thành công! Đội ngũ Kỹ thuật & QA của TBRs sẽ liên hệ xử lý trong vòng 2 giờ làm việc."
+        message: "Hệ thống đã tiếp nhận báo cáo sự cố thành công! Đội ngũ Kỹ thuật & QA của ABT sẽ liên hệ xử lý trong vòng 2 giờ làm việc."
       });
     }
 

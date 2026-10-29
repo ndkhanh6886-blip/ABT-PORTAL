@@ -4,18 +4,30 @@
   --font-sans: "Be Vietnam Pro", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-serif: "Times New Roman", Times, serif;
   --font-mono: "Be Vietnam Pro", "Inter", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  /* TBRs: màu thương hiệu xanh theo logo TBR Scientific — mọi lớp orange-* hiển thị bằng dải xanh này */
-  --color-orange-50: #eef4fc;
-  --color-orange-100: #d9e6f8;
-  --color-orange-200: #b6cdf0;
-  --color-orange-300: #86ace4;
-  --color-orange-400: #5285d5;
-  --color-orange-500: #2a63c2;
-  --color-orange-600: #0c4a97;
-  --color-orange-700: #0a3f82;
-  --color-orange-800: #0b356a;
-  --color-orange-900: #0c2d58;
-  --color-orange-950: #081c38;
+  /* ABT: màu thương hiệu xanh theo logo ABT — mọi lớp orange-* hiển thị bằng dải xanh này */
+  --color-orange-50: #f0f9ff;
+  --color-orange-100: #e0f2fe;
+  --color-orange-200: #bae6fd;
+  --color-orange-300: #7dd3fc;
+  --color-orange-400: #38bdf8;
+  --color-orange-500: #0ea5e9;
+  --color-orange-600: #0284c7;
+  --color-orange-700: #0369a1;
+  --color-orange-800: #075985;
+  --color-orange-900: #0c4a6e;
+  --color-orange-950: #082f49;
+  /* ABT: màu chủ đạo xanh da trời — các lớp indigo-* (màu nhấn chính của Workspace, thanh menu) dùng cùng dải xanh da trời */
+  --color-indigo-50: #f0f9ff;
+  --color-indigo-100: #e0f2fe;
+  --color-indigo-200: #bae6fd;
+  --color-indigo-300: #7dd3fc;
+  --color-indigo-400: #38bdf8;
+  --color-indigo-500: #0ea5e9;
+  --color-indigo-600: #0284c7;
+  --color-indigo-700: #0369a1;
+  --color-indigo-800: #075985;
+  --color-indigo-900: #0c4a6e;
+  --color-indigo-950: #082f49;
   --color-slate-850: #151f32;
   --color-slate-750: #243247;
   /* in-between shades used by components (Tailwind has none: a button with bg-emerald-650 had no background) */
@@ -26,9 +38,9 @@
   --color-slate-150: #e9eef3;
   --color-emerald-650: #04855f;
   --color-emerald-450: #22c58b;
-  --color-indigo-650: #4a3fd9;
-  --color-indigo-350: #9aa6f9;
-  --color-indigo-250: #b7c0fc;
+  --color-indigo-650: #0277b2;
+  --color-indigo-350: #5ac8f9;
+  --color-indigo-250: #9bdcfc;
   --color-rose-450: #f8546b;
   --color-rose-350: #fc8a9a;
   /* bg-primary / text-primary được dùng ở nhiều nút nhưng chưa khai báo màu (nút không có nền) */
@@ -48,9 +60,9 @@
     --border-subtle: #f1f5f9;
     --text-main: #0f172a;
     --text-muted: #64748b;
-    --primary: #0c4a97;
-    --primary-hover: #0a3f82;
-    --primary-light: #eef4fc;
+    --primary: #0284c7;
+    --primary-hover: #0369a1;
+    --primary-light: #f0f9ff;
   }
 
   .dark {
@@ -61,9 +73,9 @@
     --border-subtle: #334155;
     --text-main: #f8fafc;
     --text-muted: #94a3b8;
-    --primary: #2a63c2;
-    --primary-hover: #5285d5;
-    --primary-light: #081c38;
+    --primary: #0ea5e9;
+    --primary-hover: #38bdf8;
+    --primary-light: #082f49;
   }
 }
 
@@ -94,18 +106,18 @@ body {
 }
 
 ::selection {
-  background-color: #0c4a97;
+  background-color: #0284c7;
   color: #ffffff;
 }
 
 /* ==========================================================================
-   TBRs BRAND BLUE IDENTITY (tên biến giữ nguyên để không phải sửa nơi dùng)
+   ABT BRAND BLUE IDENTITY (tên biến giữ nguyên để không phải sửa nơi dùng)
    ========================================================================== */
 :root {
-  --tbr-orange: #0c4a97;
-  --tbr-orange-hover: #0a3f82;
-  --tbr-orange-light: #eef4fc;
-  --tbr-orange-border: #b6cdf0;
+  --tbr-orange: #0284c7;
+  --tbr-orange-hover: #0369a1;
+  --tbr-orange-light: #f0f9ff;
+  --tbr-orange-border: #bae6fd;
 }
 
 /* ==========================================================================
@@ -196,14 +208,14 @@ html:not(.dark) {
 
   header nav button[class~="bg-orange-600"],
   header nav button[class~="bg-orange-500"] {
-    background-color: #0c4a97 !important;
+    background-color: #0284c7 !important;
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
   }
 
   header nav button[class~="bg-indigo-600"],
   header nav button[class~="bg-indigo-500"] {
-    background-color: #4f46e5 !important;
+    background-color: #0284c7 !important;
     color: #ffffff !important;
     -webkit-text-fill-color: #ffffff !important;
   }
@@ -457,13 +469,13 @@ html:not(.dark) {
   [class~="bg-indigo-100/80"] {
     background-color: #eef2ff !important;
     border-color: #c7d2fe !important;
-    color: #312e81 !important;
-    -webkit-text-fill-color: #312e81 !important;
+    color: #0c4a6e !important;
+    -webkit-text-fill-color: #0c4a6e !important;
   }
   button[class~="bg-indigo-50"]:hover,
   button[class~="bg-indigo-50/90"]:hover,
   button[class~="bg-indigo-50/80"]:hover {
-    background-color: #e0e7ff !important;
+    background-color: #e0f2fe !important;
   }
 
   [class~="bg-orange-50"],
@@ -471,15 +483,15 @@ html:not(.dark) {
   [class~="bg-orange-50/80"],
   [class~="bg-orange-100"],
   [class~="bg-orange-100/80"] {
-    background-color: #eef4fc !important;
-    border-color: #b6cdf0 !important;
-    color: #0b356a !important;
-    -webkit-text-fill-color: #0b356a !important;
+    background-color: #f0f9ff !important;
+    border-color: #bae6fd !important;
+    color: #075985 !important;
+    -webkit-text-fill-color: #075985 !important;
   }
   button[class~="bg-orange-50"]:hover,
   button[class~="bg-orange-50/90"]:hover,
   button[class~="bg-orange-50/80"]:hover {
-    background-color: #d9e6f8 !important;
+    background-color: #e0f2fe !important;
   }
 
   /* 1b. Remove dark -900/-950 gradients in Light Mode (convert to soft light surfaces) */
@@ -667,17 +679,17 @@ html:not(.dark) {
   span[class*="bg-orange-900/"],
   button[class*="bg-orange-950/"],
   button[class*="bg-orange-900/"] {
-    background-color: #eef4fc !important;
-    border-color: #86ace4 !important;
-    color: #0a3f82 !important;
-    -webkit-text-fill-color: #0a3f82 !important;
+    background-color: #f0f9ff !important;
+    border-color: #7dd3fc !important;
+    color: #0369a1 !important;
+    -webkit-text-fill-color: #0369a1 !important;
   }
   button[class~"bg-orange-950"] *,
   button[class~"bg-orange-900"] *,
   button[class*"bg-orange-950/"] *,
   button[class*"bg-orange-900/"] * {
-    color: #0a3f82 !important;
-    -webkit-text-fill-color: #0a3f82 !important;
+    color: #0369a1 !important;
+    -webkit-text-fill-color: #0369a1 !important;
   }
   div[class~="bg-violet-950"],
   div[class~="bg-violet-900"],
@@ -827,17 +839,17 @@ html:not(.dark) {
   button[class~="bg-indigo-900"],
   button[class*="bg-indigo-950/"],
   button[class*="bg-indigo-900/"] {
-    background-color: #e0e7ff !important;
-    border-color: #818cf8 !important;
-    color: #312e81 !important;
-    -webkit-text-fill-color: #312e81 !important;
+    background-color: #e0f2fe !important;
+    border-color: #38bdf8 !important;
+    color: #0c4a6e !important;
+    -webkit-text-fill-color: #0c4a6e !important;
   }
   button[class~="bg-indigo-950"] *,
   button[class~="bg-indigo-900"] *,
   button[class*="bg-indigo-950/"] *,
   button[class*="bg-indigo-900/"] * {
-    color: #312e81 !important;
-    -webkit-text-fill-color: #312e81 !important;
+    color: #0c4a6e !important;
+    -webkit-text-fill-color: #0c4a6e !important;
   }
 
   /* Product / Item summary card buttons inside table cells: clean light card instead of solid black box */
@@ -886,10 +898,10 @@ html:not(.dark) {
   }
   table td button.group[class*="bg-slate-9"] span[class*="bg-indigo-"],
   table td button.group[class*="bg-slate-8"] span[class*="bg-indigo-"] {
-    background-color: #e0e7ff !important;
-    border-color: #818cf8 !important;
-    color: #312e81 !important;
-    -webkit-text-fill-color: #312e81 !important;
+    background-color: #e0f2fe !important;
+    border-color: #38bdf8 !important;
+    color: #0c4a6e !important;
+    -webkit-text-fill-color: #0c4a6e !important;
   }
 
   /* High-Contrast Colored Text in Light Mode: Ensure 100% readability on light surfaces */
@@ -935,8 +947,8 @@ html:not(.dark) {
   [class*="text-indigo-400"],
   [class*="text-indigo-300"],
   [class*="text-indigo-200"] {
-    color: #3730a3 !important;
-    -webkit-text-fill-color: #3730a3 !important;
+    color: #075985 !important;
+    -webkit-text-fill-color: #075985 !important;
   }
   [class*="text-purple-400"],
   [class*="text-purple-300"],
@@ -2010,8 +2022,8 @@ html.dark :is([class~="text-slate-600"], [class~="text-slate-700"], [class~="tex
 /* Giao diện tối: chữ màu đậm (-600..-900) không khai báo màu riêng cho nền tối thì dùng sắc sáng của cùng màu.
    Bỏ qua phần tử có nền sáng riêng (bg-* mà không có dark:bg-*), vì trên nền sáng chữ đậm mới dễ đọc. */
 html.dark :is([class*="text-indigo-600"], [class*="text-indigo-700"], [class*="text-indigo-800"], [class*="text-indigo-900"]):not([class*="dark:text-"]):not(:is([class~="bg-white"], [class*="-50 "], [class$="-50"], [class*="-100 "], [class$="-100"], [class*="-200 "], [class$="-200"]):not([class*="dark:bg-"])) {
-  color: #a5b4fc !important;
-  -webkit-text-fill-color: #a5b4fc !important;
+  color: #7dd3fc !important;
+  -webkit-text-fill-color: #7dd3fc !important;
 }
 html.dark :is([class*="text-blue-600"], [class*="text-blue-700"], [class*="text-blue-800"], [class*="text-blue-900"]):not([class*="dark:text-"]):not(:is([class~="bg-white"], [class*="-50 "], [class$="-50"], [class*="-100 "], [class$="-100"], [class*="-200 "], [class$="-200"]):not([class*="dark:bg-"])) {
   color: #93c5fd !important;
@@ -2062,8 +2074,8 @@ html.dark :is([class*="text-red-600"], [class*="text-red-700"], [class*="text-re
   -webkit-text-fill-color: #fca5a5 !important;
 }
 html.dark :is([class*="text-orange-600"], [class*="text-orange-700"], [class*="text-orange-800"], [class*="text-orange-900"]):not([class*="dark:text-"]):not(:is([class~="bg-white"], [class*="-50 "], [class$="-50"], [class*="-100 "], [class$="-100"], [class*="-200 "], [class$="-200"]):not([class*="dark:bg-"])) {
-  color: #86ace4 !important;
-  -webkit-text-fill-color: #86ace4 !important;
+  color: #7dd3fc !important;
+  -webkit-text-fill-color: #7dd3fc !important;
 }
 html.dark :is([class*="text-amber-600"], [class*="text-amber-700"], [class*="text-amber-800"], [class*="text-amber-900"]):not([class*="dark:text-"]):not(:is([class~="bg-white"], [class*="-50 "], [class$="-50"], [class*="-100 "], [class$="-100"], [class*="-200 "], [class$="-200"]):not([class*="dark:bg-"])) {
   color: #fcd34d !important;
@@ -2074,15 +2086,15 @@ html.dark :is([class*="text-amber-600"], [class*="text-amber-700"], [class*="tex
    THEME TOGGLE BUTTON STYLING (SPECIALIZED)
    ========================================================================== */
 html:not(.dark) .theme-toggle-btn {
-  background-color: #eef4fc !important;
-  color: #0a3f82 !important;
-  border-color: #b6cdf0 !important;
-  -webkit-text-fill-color: #0a3f82 !important;
+  background-color: #f0f9ff !important;
+  color: #0369a1 !important;
+  border-color: #bae6fd !important;
+  -webkit-text-fill-color: #0369a1 !important;
 }
 
 html:not(.dark) .theme-toggle-btn * {
-  color: #0a3f82 !important;
-  -webkit-text-fill-color: #0a3f82 !important;
+  color: #0369a1 !important;
+  -webkit-text-fill-color: #0369a1 !important;
 }
 
 html.dark .theme-toggle-btn {
@@ -2098,13 +2110,13 @@ html.dark .theme-toggle-btn * {
 }
 
 /* ==========================================================================
-   TBR ORANGE MAPPING ACROSS COMPONENTS
+   ABT ORANGE MAPPING ACROSS COMPONENTS
    ========================================================================== */
 button[class*="bg-indigo-600"],
 button[class*="bg-indigo-500"],
 button[class*="bg-blue-600"],
 .btn-action {
-  background-color: #0c4a97 !important;
+  background-color: #0284c7 !important;
   color: #ffffff !important;
 }
 
@@ -2112,19 +2124,19 @@ button[class*="bg-indigo-600"]:hover,
 button[class*="bg-indigo-500"]:hover,
 button[class*="bg-blue-600"]:hover,
 .btn-action:hover {
-  background-color: #0a3f82 !important;
+  background-color: #0369a1 !important;
 }
 
 /* Active tab highlights in orange */
 .active-tab-orange {
-  background-color: #eef4fc !important;
-  color: #0c4a97 !important;
-  border-color: #b6cdf0 !important;
+  background-color: #f0f9ff !important;
+  color: #0284c7 !important;
+  border-color: #bae6fd !important;
 }
 
 .dark .active-tab-orange {
   background-color: rgba(234, 88, 12, 0.15) !important;
-  color: #5285d5 !important;
+  color: #38bdf8 !important;
   border-color: rgba(234, 88, 12, 0.3) !important;
 }
 
@@ -2139,7 +2151,7 @@ button[class*="bg-blue-600"]:hover,
 html:not(.dark) [class*="text-orange-500"],
 html:not(.dark) [class*="text-orange-600"],
 html:not(.dark) [class*="text-orange-700"] {
-  color: #0c4a97 !important;
+  color: #0284c7 !important;
 }
 
 .dark [class*="text-emerald-400"] {
@@ -2147,7 +2159,7 @@ html:not(.dark) [class*="text-orange-700"] {
 }
 
 .dark [class*="text-orange-400"] {
-  color: #86ace4 !important;
+  color: #7dd3fc !important;
 }
 
 /* Dark mode glassmorphism */

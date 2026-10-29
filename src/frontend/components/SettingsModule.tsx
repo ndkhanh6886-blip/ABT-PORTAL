@@ -109,7 +109,7 @@ export const DEPARTMENT_POSITIONS: Record<string, {
   "Ban Giám Đốc": {
     name: "Ban Giám Đốc (Board of Directors)",
     code: "BOD",
-    desc: "Hoạch định chiến lược kinh doanh, quản trị rủi ro và chỉ đạo điều hành toàn bộ bộ máy công ty TBRs",
+    desc: "Hoạch định chiến lược kinh doanh, quản trị rủi ro và chỉ đạo điều hành toàn bộ bộ máy công ty ABT",
     badgeColor: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/50 dark:text-orange-400 dark:border-orange-800",
     borderTheme: "border-orange-500",
     positions: [
@@ -647,38 +647,38 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
   const handleDownloadPersonnelTemplate = () => {
     const sampleData = [
       {
-        "Mã nhân viên (*)": "NV-TBRs-001",
+        "Mã nhân viên (*)": "NV-ABT-001",
         "Họ và tên (*)": "Nguyễn Văn A",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)",
-        "Email (*)": "a.nv@tbrscientific.com",
+        "Email (*)": "a.nv@abtvn.com",
         "Số điện thoại": "0900000001",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBRs-002",
+        "Mã nhân viên (*)": "NV-ABT-002",
         "Họ và tên (*)": "Trần Thị B",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Phó Giám Đốc",
-        "Email (*)": "b.tt@tbrscientific.com",
+        "Email (*)": "b.tt@abtvn.com",
         "Số điện thoại": "0900000002",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBRs-003",
+        "Mã nhân viên (*)": "NV-ABT-003",
         "Họ và tên (*)": "Lê Văn C",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Phó Giám Đốc",
-        "Email (*)": "c.lv@tbrscientific.com",
+        "Email (*)": "c.lv@abtvn.com",
         "Số điện thoại": "0900000003",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBRs-004",
+        "Mã nhân viên (*)": "NV-ABT-004",
         "Họ và tên (*)": "Phạm Thị D",
         "Phòng ban (*)": "Kinh Doanh",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh (Sales Specialist)",
-        "Email (*)": "d.pt@tbrscientific.com",
+        "Email (*)": "d.pt@abtvn.com",
         "Số điện thoại": "0900000004",
         "Trạng thái": "ACTIVE"
       }
@@ -730,7 +730,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       { wch: 34 }
     ];
 
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_NhanSu_TBRs.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_NhanSu_ABT.xlsx");
   };
 
   const handleImportPersonnelExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1418,13 +1418,13 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       const dept = presetDept || "Kinh Doanh";
       const defaultPos = presetPosition || getDeptInfo(dept)?.positions[0]?.title || "Chuyên Viên Kinh Doanh (Senior/Junior)";
       const maxSeq = personnel.reduce((max: number, p: any) => {
-        const m = String(p?.employee_code || "").match(/^NV-TBRs?-(\d+)$/);
+        const m = String(p?.employee_code || "").match(/^NV-ABT-(\d+)$/);
         return m ? Math.max(max, Number(m[1])) : max;
       }, 0);
       const nextNum = (maxSeq + 1).toString().padStart(3, "0");
       setPersonnelFormData({
         id: null,
-        employee_code: `NV-TBRs-${nextNum}`,
+        employee_code: `NV-ABT-${nextNum}`,
         full_name: "",
         department: dept,
         position: defaultPos,
@@ -2038,7 +2038,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
             <div>
               <h3 className="font-bold text-slate-900 dark:text-white text-base">
-                Danh Sách Cán Bộ Nhân Viên TBRs ({filteredPersonnel.length}/{personnel.length})
+                Danh Sách Cán Bộ Nhân Viên ABT ({filteredPersonnel.length}/{personnel.length})
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
                 Quản lý hồ sơ hành chính, phân công chức danh chuẩn theo từng phòng ban và kết nối tài khoản portal.
@@ -2250,7 +2250,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 <div className="flex items-center gap-2">
                   <Briefcase className="w-5 h-5 text-orange-500" />
                   <h3 className="font-bold text-slate-900 dark:text-white text-base uppercase">
-                    Cơ Cấu Tổ Chức &amp; Danh Mục Vị Trí Chức Danh TBRs
+                    Cơ Cấu Tổ Chức &amp; Danh Mục Vị Trí Chức Danh ABT
                   </h3>
                 </div>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -2811,11 +2811,11 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                           <div className="flex items-center gap-2">
                             <Layers className="w-5 h-5 text-orange-400" />
                             <h4 className="font-bold text-white text-sm uppercase tracking-wide">
-                              Tổng Hợp Định Biên Tổ Chức TBRs
+                              Tổng Hợp Định Biên Tổ Chức ABT
                             </h4>
                           </div>
                           <p className="text-[11px] text-slate-300 mt-1">
-                            Báo cáo ma trận phân bổ định biên nhân sự toàn bộ 7 phân hệ chuyên trách công ty TBRs.
+                            Báo cáo ma trận phân bổ định biên nhân sự toàn bộ 7 phân hệ chuyên trách công ty ABT.
                           </p>
                         </div>
                         <span className="px-2 py-0.5 rounded-lg bg-orange-500/20 text-orange-400 border border-orange-500/30 text-[10px] font-mono font-bold">
@@ -3367,7 +3367,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                   type="email"
                   value={formData.email}
                   onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                  placeholder="nguyenvanan@tbrscientific.com"
+                  placeholder="nguyenvanan@abtvn.com"
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
                   required
                 />
@@ -3527,7 +3527,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               <div className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-orange-500" />
                 <h3 className="font-bold text-slate-900 dark:text-white text-base">
-                  {personnelFormData.id ? "Cập Nhật Hồ Sơ Nhân Sự" : "Thêm Mới Cán Bộ Nhân Sự TBRs"}
+                  {personnelFormData.id ? "Cập Nhật Hồ Sơ Nhân Sự" : "Thêm Mới Cán Bộ Nhân Sự ABT"}
                 </h3>
               </div>
               <button
@@ -3624,8 +3624,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                         .trim()
                         .split(" ");
                       const suggestedEmail = cleanName.length > 1
-                        ? `${cleanName[cleanName.length - 1]}.${cleanName.slice(0, -1).map(w => w[0]).join("")}@tbrscientific.com`
-                        : `${cleanName[0] || ""}@tbrscientific.com`;
+                        ? `${cleanName[cleanName.length - 1]}.${cleanName.slice(0, -1).map(w => w[0]).join("")}@abtvn.com`
+                        : `${cleanName[0] || ""}@abtvn.com`;
 
                       setPersonnelFormData({
                         ...personnelFormData,
@@ -3645,7 +3645,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     type="text"
                     value={personnelFormData.employee_code}
                     onChange={(e) => setPersonnelFormData({ ...personnelFormData, employee_code: e.target.value })}
-                    placeholder="NV-TBRs-012"
+                    placeholder="NV-ABT-012"
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
                     required
                   />
@@ -3659,7 +3659,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     type="email"
                     value={personnelFormData.email}
                     onChange={(e) => setPersonnelFormData({ ...personnelFormData, email: e.target.value })}
-                    placeholder="hai.nv@tbrscientific.com"
+                    placeholder="hai.nv@abtvn.com"
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
                     required
                   />

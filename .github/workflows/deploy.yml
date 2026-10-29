@@ -46,7 +46,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TARGET_DIR="/var/www/TBRs-portal"
+          TARGET_DIR="/var/www/ABT-portal"
           cd "$TARGET_DIR"
 
           echo "Fetching commit ${GITHUB_SHA::7}..."
@@ -63,7 +63,7 @@ jobs:
           npm ci || npm install --no-audit --no-fund
           npm run build
 
-          echo "Restarting tbrs-portal..."
-          pm2 restart tbrs-portal
+          echo "Restarting abt-portal..."
+          pm2 restart abt-portal
           sleep 8
-          curl -fsS -o /dev/null http://localhost:8080 && echo "Deploy OK: $(git rev-parse --short HEAD)"
+          curl -fsS -o /dev/null http://localhost:3008/api/health && echo "Deploy OK: $(git rev-parse --short HEAD)"

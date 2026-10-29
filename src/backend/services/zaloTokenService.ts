@@ -196,7 +196,7 @@ export async function sendZaloCustomerServiceMessage(params: {
   error?: string;
   renewed?: boolean;
 }> {
-  const { recipientId, text, senderName = "TBRs OA Gateway" } = params;
+  const { recipientId, text, senderName = "ABT OA Gateway" } = params;
 
   if (!recipientId || !text) {
     return { success: false, status: "FAILED_INVALID_PARAMS", error: "Missing recipientId or text" };

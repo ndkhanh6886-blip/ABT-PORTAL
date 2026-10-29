@@ -66,15 +66,15 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
               onClick={() => { setActiveTab("workspace"); setIsMobileMoreOpen(false); }}
             >
               <div className="w-8 h-8 rounded-xl bg-white flex items-center justify-center shadow-sm shrink-0 overflow-hidden ring-1 ring-orange-200">
-                <img src="/icon.png" alt="TBR Scientific" className="w-7 h-7 object-contain" />
+                <img src="/icon.png" alt="ABT" className="w-7 h-7 object-contain" />
               </div>
               <div className="leading-none">
                 <div className="flex items-center gap-1.5">
                   <span className="font-extrabold tracking-tight text-slate-900 dark:text-white text-sm sm:text-base whitespace-nowrap">
-                    TBRs PORTAL
+                    ABT PORTAL
                   </span>
                   <span className="hidden xl:inline-block px-1.5 py-0.5 text-[9px] font-bold rounded-full bg-orange-50 dark:bg-orange-950/60 text-orange-700 dark:text-orange-400 border border-orange-200 dark:border-orange-800 whitespace-nowrap">
-                    TBRs Scientific
+                    Y Sinh ABT
                   </span>
                 </div>
                 <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-500 tracking-wider uppercase block mt-0.5 whitespace-nowrap">
@@ -246,7 +246,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 </div>
                 <div className="hidden sm:block text-left text-xs leading-tight max-w-[140px]">
                   <div className="font-bold text-slate-900 dark:text-white flex items-center gap-1">
-                    <span className="truncate">{activeUser?.name || activeUser?.full_name || "Cán bộ TBRs"}</span>
+                    <span className="truncate">{activeUser?.name || activeUser?.full_name || "Cán bộ ABT"}</span>
                     <ChevronDown className="w-3 h-3 text-slate-400 group-hover:text-slate-600 transition-transform shrink-0" />
                   </div>
                   <div className="text-[10px] text-slate-400 dark:text-slate-500 font-medium truncate">
@@ -439,7 +439,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 <h3 className="text-sm sm:text-base font-extrabold text-slate-900 dark:text-white">
                   Danh Mục Phân Hệ &amp; Tiện Ích
                 </h3>
-                <p className="text-[11px] text-slate-500 dark:text-slate-400">Chọn phân hệ làm việc trên TBRs Portal</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">Chọn phân hệ làm việc trên ABT Portal</p>
               </div>
               <button
                 onClick={() => setIsMobileMoreOpen(false)}

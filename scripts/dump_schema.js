@@ -6,7 +6,7 @@ const pool = new Pool({
   port: 5432,
   user: 'postgres',
   password: process.env.PGPASSWORD,
-  database: 'tbrs_portal'
+  database: 'abt_portal'
 });
 
 async function main() {
@@ -17,7 +17,7 @@ async function main() {
     ORDER BY table_name
   `);
 
-  let schemaSql = `-- Auto-generated complete database schema for TBR & VIA Portal\n\n`;
+  let schemaSql = `-- Auto-generated complete database schema for ABT & VIA Portal\n\n`;
 
   for (const { table_name } of tablesRes.rows) {
     if (table_name === 'inventory_items_backup') continue;

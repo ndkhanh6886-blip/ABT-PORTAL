@@ -274,7 +274,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
   useEffect(() => {
     // Kiểm tra phiên lưu trong sessionStorage
     try {
-      const saved = sessionStorage.getItem("tbrs_customer_session");
+      const saved = sessionStorage.getItem("abt_customer_session");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (parsed && parsed.customer_code) {
@@ -357,7 +357,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
       if (res.ok && data.customer) {
         setCustomer(data.customer);
         try {
-          sessionStorage.setItem("tbrs_customer_session", JSON.stringify(data.customer));
+          sessionStorage.setItem("abt_customer_session", JSON.stringify(data.customer));
         } catch (e) {}
 
         // Điền trước thông tin cho form đánh giá và báo cáo sự cố
@@ -387,7 +387,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
     setSearchQuery("");
     setLoginError("");
     try {
-      sessionStorage.removeItem("tbrs_customer_session");
+      sessionStorage.removeItem("abt_customer_session");
     } catch (e) {}
   };
 
@@ -415,7 +415,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
       });
       const data = await res.json();
       if (res.ok && data.success) {
-        setFbSuccessMsg("Cảm ơn Quý khách! Đánh giá chất lượng của Quý khách đã được ghi nhận vào hệ thống quản lý ISO 9001 của TBRs.");
+        setFbSuccessMsg("Cảm ơn Quý khách! Đánh giá chất lượng của Quý khách đã được ghi nhận vào hệ thống quản lý ISO 9001 của ABT.");
         setFbComments("");
       } else {
         alert(data.error || "Lỗi khi gửi đánh giá");
@@ -514,11 +514,11 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
       <header className="w-full px-6 py-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md flex items-center justify-between sticky top-0 z-30">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-500 to-emerald-600 flex items-center justify-center font-black text-white text-base shadow-lg shadow-teal-500/20 ring-2 ring-teal-400/20">
-            TBRs
+            ABT
           </div>
           <div className="text-left">
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-base tracking-tight text-white font-mono">TBRs CLIENT HUB</span>
+              <span className="font-extrabold text-base tracking-tight text-white font-mono">ABT CLIENT HUB</span>
               <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
                 customer 
                   ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" 
@@ -565,7 +565,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
             className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 flex items-center gap-1.5 transition-all cursor-pointer"
           >
             <ArrowLeft className="w-4 h-4 text-orange-400" />
-            <span>Cổng Nội Bộ TBRs</span>
+            <span>Cổng Nội Bộ ABT</span>
           </button>
         </div>
       </header>
@@ -606,7 +606,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                   required
                   value={loginCode}
                   onChange={(e) => setLoginCode(e.target.value.toUpperCase())}
-                  placeholder="Ví dụ: KH-TBR-001"
+                  placeholder="Ví dụ: KH-ABT-001"
                   className="w-full px-4 py-3 bg-slate-950 border border-slate-800 focus:border-teal-500 rounded-xl text-sm font-mono font-bold text-white placeholder-slate-600 focus:outline-none transition-all uppercase"
                 />
                 <p className="text-[10px] text-slate-500">Mã định danh khách hàng trên hợp đồng nguyên tắc hoặc hóa đơn VAT.</p>
@@ -654,7 +654,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                 className="text-xs text-slate-400 hover:text-slate-200 inline-flex items-center gap-1 transition-colors cursor-pointer"
               >
                 <ArrowLeft className="w-3.5 h-3.5 text-orange-400" />
-                <span>Quay lại Cổng Đăng Nhập Nội Bộ TBRs</span>
+                <span>Quay lại Cổng Đăng Nhập Nội Bộ ABT</span>
               </button>
             </div>
           </div>
@@ -753,7 +753,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
 
                 {orders.length === 0 ? (
                   <div className="p-8 text-center bg-slate-900/60 border border-slate-800 rounded-2xl text-slate-500 text-xs">
-                    Chưa có đơn hàng nào được ghi nhận cho tài khoản [{customer?.customer_code}] {customer?.name}. Quý Viện vui lòng liên hệ nhân viên phụ trách TBRs nếu cần đối soát.
+                    Chưa có đơn hàng nào được ghi nhận cho tài khoản [{customer?.customer_code}] {customer?.name}. Quý Viện vui lòng liên hệ nhân viên phụ trách ABT nếu cần đối soát.
                   </div>
                 ) : (
                   orders.map((ord) => {
@@ -853,7 +853,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                             <Thermometer className="w-3.5 h-3.5 text-cyan-400" />
                             Nhiệt độ bảo quản: <strong className="text-cyan-300">-20°C (Đá khô CO2)</strong>
                           </span>
-                          <span>Vận đơn: <strong className="font-mono text-white">{selectedOrder.tracking_code || "TBR-EXP-01"}</strong></span>
+                          <span>Vận đơn: <strong className="font-mono text-white">{selectedOrder.tracking_code || "ABT-EXP-01"}</strong></span>
                         </div>
                       </div>
                     </div>
@@ -970,7 +970,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                 </div>
                 <h2 className="text-xl font-black text-white mt-1">Góp Ý &amp; Đánh Giá Trải Nghiệm Khách Hàng</h2>
                 <p className="text-xs text-slate-400 mt-1">
-                  Ý kiến của Quý khách là cơ sở trọng yếu để TBRs cải tiến chất lượng chuỗi lạnh và nâng cao năng lực hỗ trợ kỹ thuật xét nghiệm.
+                  Ý kiến của Quý khách là cơ sở trọng yếu để ABT cải tiến chất lượng chuỗi lạnh và nâng cao năng lực hỗ trợ kỹ thuật xét nghiệm.
                 </p>
               </div>
 
@@ -1047,7 +1047,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                 <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="text-xs font-bold text-white">
-                      Khả năng Quý khách giới thiệu TBRs cho đồng nghiệp hoặc phòng xét nghiệm khác? (NPS)
+                      Khả năng Quý khách giới thiệu ABT cho đồng nghiệp hoặc phòng xét nghiệm khác? (NPS)
                     </label>
                     <span className="font-mono font-black text-amber-400 text-sm">{npsScore} / 10 Điểm</span>
                   </div>
@@ -1216,7 +1216,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                     Mã Ticket Sự Cố Của Quý Khách: <strong className="font-mono text-amber-300 text-sm bg-black/40 px-2 py-0.5 rounded">{createdIncidentCode}</strong>
                   </div>
                   <p className="text-[11px] text-slate-300">
-                    Ban Quản lý Chất lượng (QA) và Chuyên viên Kỹ thuật sinh học phân tử của TBRs đã nhận được thông báo khẩn và sẽ chủ động liên hệ Quý viện để hỗ trợ xử lý mẫu.
+                    Ban Quản lý Chất lượng (QA) và Chuyên viên Kỹ thuật sinh học phân tử của ABT đã nhận được thông báo khẩn và sẽ chủ động liên hệ Quý viện để hỗ trợ xử lý mẫu.
                   </p>
                 </div>
               )}
@@ -1454,7 +1454,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                         <span>Thông Tin Kỹ Thuật Phục Vụ Xác Định Nguyên Nhân (CAPA / Root Cause)</span>
                       </div>
                       <p className="text-[10px] text-slate-400">
-                        Cung cấp dữ liệu thực tế tại phòng Lab giúp Chuyên viên Kỹ thuật TBRs tái lập thí nghiệm và tìm chính xác nguyên nhân gốc rễ.
+                        Cung cấp dữ liệu thực tế tại phòng Lab giúp Chuyên viên Kỹ thuật ABT tái lập thí nghiệm và tìm chính xác nguyên nhân gốc rễ.
                       </p>
                     </div>
 
@@ -1876,7 +1876,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                     <Activity className="w-4 h-4 text-teal-400" />
                     Tra Cứu Tiến Trình Xử Lý Ticket Sự Cố
                   </h3>
-                  <p className="text-[11px] text-slate-400">Kiểm tra kết luận điều tra và hành động khắc phục CAPA từ TBRs</p>
+                  <p className="text-[11px] text-slate-400">Kiểm tra kết luận điều tra và hành động khắc phục CAPA từ ABT</p>
                 </div>
               </div>
 
@@ -1971,7 +1971,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
                             2. Thẩm định &amp; Khảo sát
                           </strong>
                           <span className="text-slate-400 text-[10px]">
-                            Phụ trách: {trackedIncident.handled_by || "Kỹ thuật & App TBRs"}
+                            Phụ trách: {trackedIncident.handled_by || "Kỹ thuật & App ABT"}
                           </span>
                         </div>
                       </div>
@@ -2162,7 +2162,7 @@ export const CustomerPortalView: React.FC<CustomerPortalViewProps> = ({ onBackTo
 
       {/* Footer */}
       <footer className="border-t border-slate-800/80 bg-slate-950 px-6 py-4 text-center text-xs text-slate-500">
-        <p>© 2026 TBRs Co., Ltd • Hệ Thống Chăm Sóc Đối Tác Y Tế &amp; Cảnh Giác Thiết Bị Sinh Học Chuẩn ISO 13485</p>
+        <p>© 2026 ABT Co., Ltd • Hệ Thống Chăm Sóc Đối Tác Y Tế &amp; Cảnh Giác Thiết Bị Sinh Học Chuẩn ISO 13485</p>
       </footer>
     </div>
   );

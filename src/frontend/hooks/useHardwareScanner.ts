@@ -62,7 +62,7 @@ export function useHardwareScanner(options: UseHardwareScannerOptions = {}) {
     const fullString = buffer.map((b) => b.char).join("");
 
     // If it arrived fast OR if it matches standard EPC/Barcode pattern
-    const isEpc = fullString.startsWith("TBR.");
+    const isEpc = fullString.startsWith("ABT.");
     const isBarcode = fullString.includes("-") || fullString.length >= 6;
 
     if (isFast || isEpc || isBarcode) {

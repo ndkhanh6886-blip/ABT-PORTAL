@@ -5,7 +5,7 @@ async function cleanStorage() {
     host: '127.0.0.1',
     user: 'postgres',
     password: process.env.PGPASSWORD,
-    database: 'tbrs_portal',
+    database: 'abt_portal',
     port: 5432
   });
 

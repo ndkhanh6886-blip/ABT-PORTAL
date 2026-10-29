@@ -1,14 +1,14 @@
 /**
- * Server-side session tokens for TBRs Portal.
+ * Server-side session tokens for ABT Portal.
  *
- * A session is an HMAC-SHA256 signed token stored in the httpOnly cookie `tbrs_session`.
+ * A session is an HMAC-SHA256 signed token stored in the httpOnly cookie `abt_session`.
  * Only Web Crypto is used so the same code runs in `src/proxy.ts` and in route handlers.
  *
  * Secret: SESSION_SECRET (or the legacy JWT_SECRET). Without either, a secret derived from the
  * database credentials is used so existing deployments keep working, with a warning.
  */
 
-export const SESSION_COOKIE = "tbrs_session";
+export const SESSION_COOKIE = "abt_session";
 export const SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
 
 export type SessionUser = {
@@ -46,9 +46,9 @@ export function sessionSecret(): string {
   }
   if (!warnedFallbackSecret) {
     warnedFallbackSecret = true;
-    console.warn("⚠️ CẢNH BÁO AN NINH: Chưa đặt SESSION_SECRET riêng. Đang dùng khóa dẫn xuất nội bộ cho TBRs Portal.");
+    console.warn("⚠️ CẢNH BÁO AN NINH: Chưa đặt SESSION_SECRET riêng. Đang dùng khóa dẫn xuất nội bộ cho ABT Portal.");
   }
-  return `tbrs-portal-hmac-v2::${process.env.PGHOST || "127.0.0.1"}::${process.env.PGDATABASE || "tbrs_portal"}::${process.env.PGPASSWORD || "tbr-enterprise-2026"}`;
+  return `abt-portal-hmac-v2::${process.env.PGHOST || "127.0.0.1"}::${process.env.PGDATABASE || "abt_portal"}::${process.env.PGPASSWORD || "tbr-enterprise-2026"}`;
 }
 
 const encoder = new TextEncoder();

@@ -20,7 +20,7 @@ export async function GET(req: NextRequest) {
   // Endpoint công khai: chỉ trả trạng thái, không lộ lỗi CSDL / thông tin máy chủ
   const healthData = {
     status: isHealthy ? "OK" : "DEGRADED",
-    service: "TBRs Portal",
+    service: "ABT Portal",
     timestamp: new Date().toISOString(),
     database: { status: isHealthy ? "healthy" : "unhealthy", latencyMs: dbLatencyMs },
   };

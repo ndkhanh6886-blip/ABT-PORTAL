@@ -162,8 +162,8 @@ export async function POST(req: NextRequest) {
       } else {
         bindingRes = await query(
           `SELECT id, employee_id, display_name FROM zalo_user_bindings
-            WHERE employee_id = $1 OR employee_id = REPLACE(REPLACE($1, 'TBR', 'NV-TBR-'), 'VIA', 'NV-VIA-')
-               OR REPLACE(REPLACE(employee_id, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA') = $1
+            WHERE employee_id = $1 OR employee_id = REPLACE(REPLACE($1, 'ABT', 'NV-ABT-'), 'VIA', 'NV-VIA-')
+               OR REPLACE(REPLACE(employee_id, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA') = $1
             LIMIT 1`,
           [me.username]
         );
@@ -234,7 +234,7 @@ export async function POST(req: NextRequest) {
           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             oa_id || "125246484401171420",
-            oa_name || "Công ty TNHH Khoa học TBR",
+            oa_name || "Công ty TNHH Giải pháp Y sinh ABT",
             app_id || "",
             secret_key || "",
             access_token || "",
@@ -304,7 +304,7 @@ export async function POST(req: NextRequest) {
       // Log outbound message to notify Sales
       await query(
         `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content)
-         VALUES ('system_oa', 'Zalo OA TBRs', 'OUTBOUND', 'APPROVAL', $1)`,
+         VALUES ('system_oa', 'Zalo OA ABT', 'OUTBOUND', 'APPROVAL', $1)`,
         [`${decision === "APPROVE" ? "✅ BAN GIÁM ĐỐC ĐÃ DUYỆT" : "❌ BAN GIÁM ĐỐC TỪ CHỐI"} Báo giá ${quote_code} bởi ${approver_name}.`]
       );
 
@@ -416,7 +416,7 @@ export async function POST(req: NextRequest) {
           let advice = "";
           if (zaloData.error === -216 || zaloData.error === -210) {
             advice = "Các nguyên nhân phổ biến:\n" +
-              "1. ĐÃ TẠO NHẦM TOKEN: Khi tạo token tại developers.zalo.me/tools/explorer, bạn đã chọn 'User Access Token' thay vì 'OA Access Token' (phải chọn loại OA và tích chọn đúng OA 'Công ty TNHH Khoa học TBR').\n" +
+              "1. ĐÃ TẠO NHẦM TOKEN: Khi tạo token tại developers.zalo.me/tools/explorer, bạn đã chọn 'User Access Token' thay vì 'OA Access Token' (phải chọn loại OA và tích chọn đúng OA 'Công ty TNHH Giải pháp Y sinh ABT').\n" +
               "2. TOKEN ĐÃ HẾT HẠN HOẶC BỊ THU HỒI: Access Token của Zalo có hạn 25 giờ. Nếu đã có người bấm tạo lại token hoặc dùng Refresh Token, token cũ lập tức bị Zalo vô hiệu hóa.\n" +
               "3. CHƯA LIÊN KẾT APP VỚI OA: Vào developers.zalo.me > Chọn App > Mục Official Account kiểm tra xem App đã được liên kết với OA của công ty hay chưa.\n" +
               "4. COPY THIẾU KÝ TỰ: Chuỗi Access Token rất dài (~400-500 ký tự), hãy đảm bảo bôi đen toàn bộ (Ctrl+A) khi copy.";

@@ -88,7 +88,7 @@ const DEFAULT_DB_WORKFLOW_TEMPLATES = [
     source_dept: "Kinh Doanh",
     target_dept: "Application",
     icon: "FlaskConical",
-    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab TBR hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
+    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab ABT hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
     sla_days: 5,
     steps: [
       { step_index: 0, title: "Tiếp nhận & Thẩm định mẫu / Thiết bị", dept: "Application", assignee_name: "", sla_hours: 24, deliverables: "Xác nhận loại mẫu sinh học, hóa chất tương thích, phân công nhân sự & lịch Demo" },
@@ -121,7 +121,7 @@ const DEFAULT_DB_WORKFLOW_TEMPLATES = [
     steps: [
       { step_index: 0, title: "Tiếp nhận đề xuất PR & Khảo sát nhà cung cấp", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
       { step_index: 1, title: "Trình duyệt ban giám đốc & Phát hành đơn PO", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Đơn đặt hàng PO có chữ ký phê duyệt" },
-      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho TBR", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
+      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho ABT", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
     ]
   },
   {

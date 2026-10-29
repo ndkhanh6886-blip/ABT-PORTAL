@@ -10,7 +10,7 @@ import { sessionSecret, getSessionFromRequest } from "@/backend/services/session
 export type DocumentKind = "quotation" | "contract";
 
 const DEFAULT_TTL_DAYS = Number(process.env.DOCUMENT_LINK_TTL_DAYS || 30);
-const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tbr-portal.vn";
+const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://portal.abtvn.com";
 
 function signature(kind: DocumentKind, code: string, exp: number): string {
   return crypto
@@ -45,7 +45,7 @@ export async function canAccessDocument(req: Request, kind: DocumentKind, code: 
 
 export function documentAccessDeniedResponse(): Response {
   return new Response(
-    "<h1>Liên kết không hợp lệ hoặc đã hết hạn</h1><p>Vui lòng yêu cầu nhân viên kinh doanh gửi lại liên kết tài liệu mới, hoặc đăng nhập TBRs Portal để xem.</p>",
+    "<h1>Liên kết không hợp lệ hoặc đã hết hạn</h1><p>Vui lòng yêu cầu nhân viên kinh doanh gửi lại liên kết tài liệu mới, hoặc đăng nhập ABT Portal để xem.</p>",
     { status: 403, headers: { "Content-Type": "text/html; charset=utf-8" } }
   );
 }

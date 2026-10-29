@@ -17,7 +17,7 @@ async function getChatIdentity(req: NextRequest): Promise<ChatIdentity | null> {
   try {
     const p = await query(
       `SELECT employee_code FROM personnel
-        WHERE employee_code = $1 OR REPLACE(REPLACE(employee_code, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA') = $1 LIMIT 1`,
+        WHERE employee_code = $1 OR REPLACE(REPLACE(employee_code, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA') = $1 LIMIT 1`,
       [me.username]
     );
     if (p.rows[0]?.employee_code) aliases.add(String(p.rows[0].employee_code).toLowerCase());
@@ -198,8 +198,8 @@ export async function GET(req: NextRequest) {
           WHERE (
             TRIM(LOWER(full_name)) = TRIM(LOWER($1))
             OR TRIM(LOWER(username)) = TRIM(LOWER($1))
-            OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA')))
-            OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-TBR', 'TBR'), 'NV-VIA', 'VIA')))
+            OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA')))
+            OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-ABT', 'ABT'), 'NV-VIA', 'VIA')))
             OR TRIM(LOWER(email)) = TRIM(LOWER($1))
             OR ($1 ILIKE '%admin%' AND username = 'admin')
             OR ($1 ILIKE '%quản trị%' AND username = 'admin')
@@ -215,7 +215,7 @@ export async function GET(req: NextRequest) {
           const aliasRes = await query(
             `SELECT u.username, u.full_name, u.email, p.employee_code 
              FROM users u 
-             LEFT JOIN personnel p ON (u.username = REPLACE(REPLACE(p.employee_code, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA') OR TRIM(LOWER(u.full_name)) = TRIM(LOWER(p.full_name)))
+             LEFT JOIN personnel p ON (u.username = REPLACE(REPLACE(p.employee_code, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA') OR TRIM(LOWER(u.full_name)) = TRIM(LOWER(p.full_name)))
              WHERE TRIM(LOWER(u.full_name)) = TRIM(LOWER($1)) 
                 OR TRIM(LOWER(u.username)) = TRIM(LOWER($1)) 
                 OR TRIM(LOWER(u.email)) = TRIM(LOWER($1))
@@ -320,7 +320,7 @@ export async function GET(req: NextRequest) {
             u.full_name as full_name,
             COALESCE(u.department, 'Ban Giám Đốc') as department,
             'Quản trị viên hệ thống' as position,
-            COALESCE(u.email, 'admin@tbr.vn') as email,
+            COALESCE(u.email, 'admin@abtvn.com') as email,
             '' as phone,
             'admin' as employee_code,
             u.last_seen_at,
@@ -612,7 +612,7 @@ export async function POST(req: NextRequest) {
           SET last_seen_at = NOW() 
           WHERE TRIM(LOWER(full_name)) = TRIM(LOWER($1))
              OR TRIM(LOWER(username)) = TRIM(LOWER($1))
-             OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA')))
+             OR TRIM(LOWER(username)) = TRIM(LOWER(REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA')))
              OR ($1 ILIKE '%admin%' AND username = 'admin')
              OR ($1 ILIKE '%quản trị%' AND username = 'admin')
         `, [sender_name]).catch(() => {});
@@ -740,7 +740,7 @@ export async function POST(req: NextRequest) {
           created.channel_code,
           created_by || "Hệ Thống",
           "Điều phối",
-          department || "TBR",
+          department || "ABT",
           welcomeText
         ]
       );
@@ -982,7 +982,7 @@ export async function POST(req: NextRequest) {
           channel.channel_code,
           "Hệ Thống",
           "Thông báo",
-          "TBR",
+          "ABT",
           `${added_by || "Thành viên"} đã thêm ${new_members.join(", ")} vào nhóm trao đổi.`
         ]
       );
@@ -1017,7 +1017,7 @@ export async function POST(req: NextRequest) {
           updated.channel_code,
           "Hệ Thống",
           "Cài đặt",
-          "TBR",
+          "ABT",
           `${user_name || "Quản trị viên"} đã cập nhật thông tin nhóm: "${name}".`
         ]
       );
@@ -1050,7 +1050,7 @@ export async function POST(req: NextRequest) {
           channel.channel_code,
           "Hệ Thống",
           "Thông báo",
-          "TBR",
+          "ABT",
           `${removed_by || "Quản trị"} đã xóa ${member_name} khỏi nhóm trao đổi.`
         ]
       );
@@ -1082,7 +1082,7 @@ export async function POST(req: NextRequest) {
           channel.channel_code,
           "Hệ Thống",
           "Thông báo",
-          "TBR",
+          "ABT",
           `${member_name} đã rời khỏi nhóm trao đổi.`
         ]
       );

@@ -120,7 +120,7 @@ export interface HospitalTender {
   tenderType: TenderType;
   biddingMethod: "RONG_RAI_QUA_MANG" | "CHAO_HANG_CANH_TRANH" | "CHI_DINH_THAU";
   packageBudget: number; // Giá gói thầu (VNĐ)
-  ourBidPrice: number; // Giá dự thầu của TBRs (VNĐ)
+  ourBidPrice: number; // Giá dự thầu của ABT (VNĐ)
   submissionDeadline: string; // Thời điểm đóng thầu dd/mm/yyyy HH:mm
   bidSecurityAmount: number; // Giá trị bảo lãnh dự thầu ngân hàng (VNĐ)
   status: TenderStatus;
@@ -251,9 +251,9 @@ const createDefaultRentalForm = (defaultRep: string = "") => ({
   code: `RR-${Date.now().toString().slice(-4)}`,
   hospitalName: "",
   department: "Khoa Vi Sinh / Sinh Học Phân Tử",
-  placedDeviceName: "Hệ thống Real-time PCR TBR-9600",
-  model: "TBR-PCR-9600",
-  serialNumber: `SN-TBR-2026-${Date.now().toString().slice(-3)}`,
+  placedDeviceName: "Hệ thống Real-time PCR ABT-9600",
+  model: "ABT-PCR-9600",
+  serialNumber: `SN-ABT-2026-${Date.now().toString().slice(-3)}`,
   associatedReagents: "Kit Real-time PCR HPV High Risk & HBV Định Lượng",
   startDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
   endDate: new Date(Date.now() + 730 * 24 * 60 * 60 * 1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
@@ -292,7 +292,7 @@ export const HospitalBiddingManagement: React.FC = () => {
   // Close / Lost Tender Form State
   const [closeTenderForm, setCloseTenderForm] = useState({
     status: "TRUOT_THAU" as TenderStatus,
-    lostReason: "Giá dự thầu của TBRs cao hơn đối thủ",
+    lostReason: "Giá dự thầu của ABT cao hơn đối thủ",
     customReason: "",
     winningCompetitor: "",
     winningBidPrice: 0,
@@ -661,7 +661,7 @@ export const HospitalBiddingManagement: React.FC = () => {
     setSelectedTenderForClose(tender);
     setCloseTenderForm({
       status: targetStatus,
-      lostReason: tender.lostReason || "Giá dự thầu của TBRs cao hơn đối thủ",
+      lostReason: tender.lostReason || "Giá dự thầu của ABT cao hơn đối thủ",
       customReason: "",
       winningCompetitor: tender.winningCompetitor || "",
       winningBidPrice: tender.winningBidPrice || 0,
@@ -1241,7 +1241,7 @@ export const HospitalBiddingManagement: React.FC = () => {
               <span>Mô Hình Đặt Máy Xét Nghiệm Cho Mượn - Tiêu Hao Hóa Chất (Reagent Rental Agreements)</span>
             </h4>
             <p className="mt-1 text-slate-600 dark:text-slate-300 leading-relaxed">
-              TBRs / ABT trang bị máy xét nghiệm (Real-time PCR, Tách chiết,...) tại bệnh viện không thu tiền máy. Bệnh viện cam kết sản lượng tiêu thụ kit test tối thiểu hàng tháng. Hệ thống tự động đối soát và phát tín hiệu cảnh báo nếu viện chạy dưới 70% định mức cam kết.
+              ABT trang bị máy xét nghiệm (Real-time PCR, Tách chiết,...) tại bệnh viện không thu tiền máy. Bệnh viện cam kết sản lượng tiêu thụ kit test tối thiểu hàng tháng. Hệ thống tự động đối soát và phát tín hiệu cảnh báo nếu viện chạy dưới 70% định mức cam kết.
             </p>
           </div>
 
@@ -1450,7 +1450,7 @@ export const HospitalBiddingManagement: React.FC = () => {
 
               <div className="space-y-1">
                 <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                  Giá Dự Thầu TBRs (VNĐ)
+                  Giá Dự Thầu ABT (VNĐ)
                 </label>
                 <MoneyInput
                   value={newBidForm.ourBidPrice}
@@ -1568,7 +1568,7 @@ export const HospitalBiddingManagement: React.FC = () => {
                   type="text"
                   value={newRentalForm.placedDeviceName}
                   onChange={e => setNewRentalForm({ ...newRentalForm, placedDeviceName: e.target.value })}
-                  placeholder="Ví dụ: Hệ thống Real-time PCR TBR-9600"
+                  placeholder="Ví dụ: Hệ thống Real-time PCR ABT-9600"
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white font-bold"
                   required
                 />
@@ -1584,7 +1584,7 @@ export const HospitalBiddingManagement: React.FC = () => {
                   type="text"
                   value={newRentalForm.model}
                   onChange={e => setNewRentalForm({ ...newRentalForm, model: e.target.value })}
-                  placeholder="Ví dụ: TBR-PCR-9600"
+                  placeholder="Ví dụ: ABT-PCR-9600"
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
                   required
                 />
@@ -1598,7 +1598,7 @@ export const HospitalBiddingManagement: React.FC = () => {
                   type="text"
                   value={newRentalForm.serialNumber}
                   onChange={e => setNewRentalForm({ ...newRentalForm, serialNumber: e.target.value })}
-                  placeholder="Ví dụ: SN-TBR-2026-088"
+                  placeholder="Ví dụ: SN-ABT-2026-088"
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
                   required
                 />
@@ -1758,7 +1758,7 @@ export const HospitalBiddingManagement: React.FC = () => {
               </div>
               <div className="text-[11px] text-slate-500 flex items-center justify-between">
                 <span>Chủ đầu tư: <strong>{selectedTenderForClose.hospitalName}</strong></span>
-                <span>Giá dự thầu TBRs: <strong className="text-emerald-600 font-mono">{formatVND(selectedTenderForClose.ourBidPrice)} VNĐ</strong></span>
+                <span>Giá dự thầu ABT: <strong className="text-emerald-600 font-mono">{formatVND(selectedTenderForClose.ourBidPrice)} VNĐ</strong></span>
               </div>
             </div>
 
@@ -1810,7 +1810,7 @@ export const HospitalBiddingManagement: React.FC = () => {
                 onChange={e => setCloseTenderForm({ ...closeTenderForm, lostReason: e.target.value })}
                 className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-900 dark:text-white"
               >
-                <option value="Giá dự thầu của TBRs cao hơn đối thủ">Giá dự thầu của TBRs cao hơn đối thủ</option>
+                <option value="Giá dự thầu của ABT cao hơn đối thủ">Giá dự thầu của ABT cao hơn đối thủ</option>
                 <option value="Hồ sơ kỹ thuật chưa đáp ứng yêu cầu HSMT">Hồ sơ kỹ thuật chưa đáp ứng yêu cầu HSMT</option>
                 <option value="Đối thủ có ưu thế công nghệ hoặc độc quyền thiết bị">Đối thủ có ưu thế công nghệ hoặc độc quyền thiết bị</option>
                 <option value="Không kịp bổ sung làm rõ hồ sơ theo hạn định">Không kịp bổ sung làm rõ hồ sơ theo hạn định</option>
@@ -2025,7 +2025,7 @@ export const HospitalBiddingManagement: React.FC = () => {
                 />
                 <div className="text-[10px] text-slate-400">
                   {winTenderForm.status === "TRUNG_MOT_PHAN" 
-                    ? "Tổng giá trị của các phân lô mà TBRs trúng thầu"
+                    ? "Tổng giá trị của các phân lô mà ABT trúng thầu"
                     : "Giá trúng thầu chính thức được phê duyệt"}
                 </div>
               </div>

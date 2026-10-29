@@ -7,7 +7,7 @@ conn = psycopg2.connect(
     port=5432,
     user="postgres",
     password=os.environ.get('PGPASSWORD', ''),
-    database="tbrs_portal"
+    database="abt_portal"
 )
 cursor = conn.cursor()
 

@@ -79,7 +79,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       status: "ACTIVE",
-      message: "TBRs Healthcare Zalo Webhook Gateway is running and ready.",
+      message: "ABT Healthcare Zalo Webhook Gateway is running and ready.",
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
@@ -134,7 +134,7 @@ export async function POST(req: NextRequest) {
         await sendZaloCustomerServiceMessage({
           recipientId: senderId,
           text: result.text,
-          senderName: "TBRs OA Gateway"
+          senderName: "ABT OA Gateway"
         });
       } catch (replyErr) {
         console.warn("Zalo OpenAPI CS reply logging error:", replyErr);

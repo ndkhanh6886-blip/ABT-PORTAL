@@ -172,7 +172,7 @@ export interface GenerateCodeOptions {
  *   - BG26-PA-0005 (Báo giá năm 2026 cho Viện Pasteur, báo giá số 5)
  *   - HD26-YD-0002 (Hợp đồng năm 2026 với ĐH Y Dược, hợp đồng số 2)
  *   - PX26-CR-0001 (Phiếu xuất kho cho BV Chợ Rẫy)
- *   - PO26-TB-0012 (Đơn mua hàng PO của TBRs)
+ *   - PO26-TB-0012 (Đơn mua hàng PO của ABT)
  *   - WF26-AP-0008 (Quy trình liên phòng ban Application)
  * 
  * Đảm bảo 100% không bao giờ trùng khi nhiều nhân viên làm song song nhờ Row-Level Lock Database.

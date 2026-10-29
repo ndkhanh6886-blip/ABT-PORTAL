@@ -604,7 +604,7 @@ CREATE TABLE public.inventory_items (
     product_name character varying(255) NOT NULL,
     quantity_on_hand integer DEFAULT 0,
     quantity_allocated integer DEFAULT 0,
-    warehouse_location character varying(100) DEFAULT 'Kho TBR Trung Tâm'::character varying,
+    warehouse_location character varying(100) DEFAULT 'Kho ABT Trung Tâm'::character varying,
     shelf_position character varying(100),
     last_updated timestamp without time zone DEFAULT CURRENT_TIMESTAMP,
     lot_number character varying(100),
@@ -750,7 +750,7 @@ CREATE TABLE public.inventory_transactions (
     reference_code character varying(100),
     date date NOT NULL,
     performed_by character varying(150),
-    warehouse_name character varying(100) DEFAULT 'Kho TBR Trung Tâm'::character varying,
+    warehouse_name character varying(100) DEFAULT 'Kho ABT Trung Tâm'::character varying,
     items jsonb DEFAULT '[]'::jsonb NOT NULL,
     notes text,
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP
@@ -1803,7 +1803,7 @@ ALTER SEQUENCE public.workflow_templates_id_seq OWNED BY public.workflow_templat
 CREATE TABLE public.zalo_config (
     id integer NOT NULL,
     oa_id character varying(100) DEFAULT '398247192834719'::character varying,
-    oa_name character varying(150) DEFAULT 'Công Ty TNHH Thiết Bị & Hóa Chất TBR (Zalo OA Doanh Nghiệp)'::character varying,
+    oa_name character varying(150) DEFAULT 'Công Ty TNHH Thiết Bị & Hóa Chất ABT (Zalo OA Doanh Nghiệp)'::character varying,
     app_id character varying(100) DEFAULT '482910481920481'::character varying,
     secret_key character varying(150) DEFAULT 'tbr_zalo_sec_89f0293a4bc'::character varying,
     access_token text DEFAULT 'zalo_access_token_demo_valid'::text,

@@ -149,7 +149,7 @@ export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promis
       p.specification || "",
       Number(p.standard_price) || 0,
       Number(p.cost_price) || 0,
-      p.manufacturer || "TBR Phân Phối",
+      p.manufacturer || "ABT Phân Phối",
       p.origin || "Nhập khẩu / Chính hãng",
       Number(p.min_stock_level) || 10,
       p.storage_condition || null,
@@ -169,7 +169,7 @@ export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promis
               standard_price = CASE WHEN $3::numeric > 0 THEN $3::numeric ELSE standard_price END,
               storage_condition = COALESCE(NULLIF(storage_condition, ''), NULLIF($4::text, '')),
               manufacturer = CASE
-                WHEN (manufacturer IS NULL OR manufacturer = '' OR manufacturer = 'TBR' OR manufacturer = 'VIA' OR manufacturer ILIKE '%Phân Phối%')
+                WHEN (manufacturer IS NULL OR manufacturer = '' OR manufacturer = 'ABT' OR manufacturer = 'VIA' OR manufacturer ILIKE '%Phân Phối%')
                      AND $5::text <> '' AND $5::text NOT ILIKE '%Phân Phối%'
                 THEN $5::text
                 ELSE manufacturer

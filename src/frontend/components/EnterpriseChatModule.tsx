@@ -60,7 +60,7 @@ import {
 import { nowVNDateTime } from "@/backend/services/dates";
 
 export const normalizeUserName = (name?: string): string => {
-  if (!name) return "Nhân viên TBR";
+  if (!name) return "Nhân viên ABT";
   const trimmed = name.trim();
   const lower = trimmed.toLowerCase();
   if (
@@ -406,7 +406,7 @@ export const EnterpriseChatModule: React.FC = () => {
     );
     return {
       name: otherName,
-      department: p?.department || c.department || "Nhân viên TBR",
+      department: p?.department || c.department || "Nhân viên ABT",
       position: p?.position || "Đồng nghiệp",
       phone: p?.phone || "",
       email: p?.email || ""
@@ -1734,7 +1734,7 @@ export const EnterpriseChatModule: React.FC = () => {
             </div>
             <div>
               <h2 className="font-extrabold text-xs text-slate-900 dark:text-white leading-tight">
-                TBR Communication
+                ABT Communication
               </h2>
               <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold flex items-center gap-1 truncate max-w-[170px]" title={`Tài khoản hiện tại của bạn: ${currentUserName}`}>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
@@ -3104,7 +3104,7 @@ export const EnterpriseChatModule: React.FC = () => {
             <p className="font-extrabold text-sm text-slate-900 dark:text-white mt-0.5">
               {activeChannel.channel_type === "DIRECT" ? recipientProfile?.name : `#${activeChannel.name}`}
             </p>
-            <p className="text-slate-500 text-xs mt-1 leading-relaxed">{activeChannel.description || "Nhóm trao đổi phối hợp công việc TBR"}</p>
+            <p className="text-slate-500 text-xs mt-1 leading-relaxed">{activeChannel.description || "Nhóm trao đổi phối hợp công việc ABT"}</p>
           </div>
 
           <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
@@ -3161,7 +3161,7 @@ export const EnterpriseChatModule: React.FC = () => {
                           </span>
                         </div>
                         <span className="text-[9px] text-slate-400 block truncate">
-                          {p?.department || "TBR"}
+                          {p?.department || "ABT"}
                         </span>
                       </div>
                     </div>
@@ -3469,7 +3469,7 @@ export const EnterpriseChatModule: React.FC = () => {
                       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-indigo-600 text-white font-bold text-[11px]"
                     >
                       <span>{memName}</span>
-                      <span className="text-indigo-200 text-[10px]">({p?.department || "TBR"})</span>
+                      <span className="text-indigo-200 text-[10px]">({p?.department || "ABT"})</span>
                       <button
                         type="button"
                         onClick={() => setNewChannelForm(prev => ({

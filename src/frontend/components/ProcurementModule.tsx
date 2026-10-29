@@ -629,7 +629,7 @@ export const ProcurementModule: React.FC = () => {
   // Requirement 6 (4e): Edit an existing PR that has not yet been fully converted to a PO
   const handleEditPR = (pr: any) => {
     const existingItems = getPRItems(pr)
-      .filter((it: any) => !it.is_missing_catalog_product && it.product_code && it.product_code !== "TBR-ITEM")
+      .filter((it: any) => !it.is_missing_catalog_product && it.product_code && it.product_code !== "ABT-ITEM")
       .map((it: any) => ({
         ...it,
         is_custom: Boolean(it.is_custom),
@@ -726,7 +726,7 @@ export const ProcurementModule: React.FC = () => {
         updated[index] = {
           ...updated[index],
           is_custom: true,
-          product_code: updated[index].product_code?.startsWith("TBR-") ? "" : updated[index].product_code,
+          product_code: updated[index].product_code?.startsWith("ABT-") ? "" : updated[index].product_code,
           specification: updated[index].specification || "",
           unit: updated[index].unit || "Cái"
         };
@@ -863,7 +863,7 @@ export const ProcurementModule: React.FC = () => {
   const handleDownloadSupplierTemplate = () => {
     const sampleData = [
       {
-        "Mã NCC (*)": "NCC-TBR-001",
+        "Mã NCC (*)": "NCC-ABT-001",
         "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 1 (dòng minh họa - xóa trước khi nhập)",
         "Người liên hệ": "Người liên hệ NCC 1",
         "Số điện thoại": "0901234567",
@@ -874,7 +874,7 @@ export const ProcurementModule: React.FC = () => {
         "Đánh giá": 5
       },
       {
-        "Mã NCC (*)": "NCC-TBR-002",
+        "Mã NCC (*)": "NCC-ABT-002",
         "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 2 (dòng minh họa - xóa trước khi nhập)",
         "Người liên hệ": "Người liên hệ NCC 2",
         "Số điện thoại": "0987654321",
@@ -888,7 +888,7 @@ export const ProcurementModule: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Mau_Nha_Cung_Cap");
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_TBR.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_ABT.xlsx");
   };
 
   const handleSupplierExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1609,7 +1609,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     setReceiveHeader({
       receipt_date: todayVN(),
       warehouse_name: "Kho Trung Tâm",
-      received_by: user?.full_name || user?.username || "Thủ kho TBR",
+      received_by: user?.full_name || user?.username || "Thủ kho ABT",
       vat_invoice_no: "",
       vat_invoice_date: "",
       shipping_unit: "",
@@ -2022,7 +2022,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const handleDownloadCatalogTemplate = () => {
     const sample = [
       {
-        "Mã hàng (*)": "TBR-KIT-001",
+        "Mã hàng (*)": "ABT-KIT-001",
         "Tên sản phẩm (*)": "Bộ Kít Tách Chiết RNA/DNA Viral",
         "Quy cách": "50 test/hộp",
         "Đơn vị tính": "Hộp",
@@ -2030,7 +2030,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         "Ghi chú": "Bảng giá áp dụng quý 4/2026"
       },
       {
-        "Mã hàng (*)": "TBR-PCR-002",
+        "Mã hàng (*)": "ABT-PCR-002",
         "Tên sản phẩm (*)": "MasterMix Real-time PCR 2X",
         "Quy cách": "100 phản ứng/lọ",
         "Đơn vị tính": "Lọ",
@@ -2139,7 +2139,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const rawCode = String(it.product_code || "").trim();
       const rawName = String(it.product_name || "").trim();
 
-      if (!rawCode || rawCode.toUpperCase() === "TBR-ITEM" || rawCode.toUpperCase() === "MÃ MỚI") {
+      if (!rawCode || rawCode.toUpperCase() === "ABT-ITEM" || rawCode.toUpperCase() === "MÃ MỚI") {
         alert(
           `⚠️ Không thể tạo PR (Lỗi ở dòng mặt hàng #${i + 1}): Chưa có Mã sản phẩm / Mã sản xuất cụ thể!\n\nVui lòng chọn đúng sản phẩm từ Bảng mã sản xuất (hoặc nhập Mã hàng cụ thể) trước khi lưu đề xuất mua hàng.`
         );
@@ -2257,7 +2257,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     for (const rawIt of prItems) {
       const rawCode = String(rawIt?.product_code || "").trim();
       const rawName = cleanItemName(String(rawIt?.product_name || "").trim());
-      const isFakeCode = !rawCode || rawCode.toUpperCase() === "TBR-ITEM" || rawCode.toUpperCase() === "MÃ MỚI";
+      const isFakeCode = !rawCode || rawCode.toUpperCase() === "ABT-ITEM" || rawCode.toUpperCase() === "MÃ MỚI";
 
       const catalogMatch = mergedCatalogProducts.find((p: any) => {
         const pCode = String(p.code || "").trim();
@@ -2314,7 +2314,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     }
 
     // If PR still has no valid product code & name (e.g. legacy workflow where user only typed request title),
-    // flag it explicitly instead of fabricating "TBR-ITEM" + pr.title
+    // flag it explicitly instead of fabricating "ABT-ITEM" + pr.title
     if (normalizedItems.length === 0) {
       return [
         {
@@ -2581,7 +2581,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const handleConvertPRToPO = (pr: any) => {
     const prItems = getPRItems(pr);
     const hasMissingCatalogItem = prItems.some(
-      (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM" || !it.product_name
+      (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "ABT-ITEM" || !it.product_name
     );
     if (hasMissingCatalogItem) {
       alert(
@@ -2764,7 +2764,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         items.forEach((it, idx) => {
           const itemKey = `${prKey}___${idx}`;
           if (selectedItemKeysForConsolidate.includes(itemKey)) {
-            if (it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM") {
+            if (it.is_missing_catalog_product || !it.product_code || it.product_code === "ABT-ITEM") {
               return;
             }
             involvedPRKeys.add(prKey);
@@ -3281,7 +3281,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               onClick={() => {
                 setSupplierForm({
                   id: null,
-                  supplier_code: `NCC-TBR-${Date.now().toString().slice(-4)}`,
+                  supplier_code: `NCC-ABT-${Date.now().toString().slice(-4)}`,
                   name: "",
                   short_name: "",
                   contact_person: "",
@@ -4653,7 +4653,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 Hồ Sơ & Đánh Giá Các Nhà Cung Cấp / Hãng Sản Xuất
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của TBR.
+                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của ABT.
               </p>
             </div>
 
@@ -4704,7 +4704,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 onClick={() => {
                   setSupplierForm({
                     id: null,
-                    supplier_code: `NCC-TBR-${Date.now().toString().slice(-4)}`,
+                    supplier_code: `NCC-ABT-${Date.now().toString().slice(-4)}`,
                     name: "",
                     short_name: "",
                     contact_person: "",
@@ -7622,7 +7622,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                   <option value="">
                                     {q
                                       ? `-- Kết quả lọc "${q}" (${filteredList.length} sản phẩm phù hợp) --`
-                                      : `-- Bấm để chọn mặt hàng trong danh mục TBR (${mergedCatalogProducts.length} SP) --`}
+                                      : `-- Bấm để chọn mặt hàng trong danh mục ABT (${mergedCatalogProducts.length} SP) --`}
                                   </option>
                                   {!filteredList.some((p: any) => p.code === it.product_code) && it.product_code && (
                                     <option value={it.product_code}>
@@ -7697,7 +7697,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 type="text"
                                 value={it.product_code}
                                 onChange={(e) => handlePRItemChange(idx, "product_code", e.target.value)}
-                                placeholder="VD: TBR-NEW-01..."
+                                placeholder="VD: ABT-NEW-01..."
                                 className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-xs"
                               />
                             </div>
@@ -8233,7 +8233,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   const prKey = pr.workflow_code || String(pr.id);
                   const items = getPRItems(pr);
                   const hasOnlyMissing = items.every(
-                    (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM"
+                    (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "ABT-ITEM"
                   );
                   if (hasOnlyMissing) {
                     invalidPRsWithoutProduct.push(pr);
@@ -8241,7 +8241,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   }
 
                   items.forEach((it: any, idx: number) => {
-                    if (it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM") {
+                    if (it.is_missing_catalog_product || !it.product_code || it.product_code === "ABT-ITEM") {
                       return;
                     }
                     const itemKey = `${prKey}___${idx}`;

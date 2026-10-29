@@ -46,7 +46,7 @@ async function ensureSupplierShortName() {
       UPDATE procurement_suppliers SET short_name = 'Phương Đông' WHERE supplier_code = 'NCC0116' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Bio Basic' WHERE name ILIKE '%Bio Basic%' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'ABT' WHERE (name ILIKE '%ABT%' OR name ILIKE '%LONG HẬU%') AND (short_name IS NULL OR short_name = '');
-      UPDATE procurement_suppliers SET short_name = 'TBR' WHERE name ILIKE '%TBR%' AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'ABT' WHERE name ILIKE '%ABT%' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Meridian' WHERE (name ILIKE '%Meridian%' OR name ILIKE '%Bioline%') AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Liferiver' WHERE (name ILIKE '%Liferiver%' OR name ILIKE '%Shanghai ZJ%') AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'SSI' WHERE name ILIKE '%SSI%' AND (short_name IS NULL OR short_name = '');
@@ -487,7 +487,7 @@ export async function POST(req: NextRequest) {
         );
         await logAudit("UPDATE", "PROCUREMENT", `Cập nhật thông tin NCC ${name} (${cleanShortName || '—'})`);
       } else {
-        const code = supplier_code || `NCC-TBR-${Date.now().toString().slice(-4)}`;
+        const code = supplier_code || `NCC-ABT-${Date.now().toString().slice(-4)}`;
         await query(
           `INSERT INTO procurement_suppliers (supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
@@ -965,7 +965,7 @@ export async function POST(req: NextRequest) {
 
           const code = po_code || await generateDocumentCode({
             docType: "PO",
-            customPrefix: "TBR",
+            customPrefix: "ABT",
             tagMode: "GENERAL"
           });
           finalPoCode = code;
@@ -1559,7 +1559,7 @@ export async function POST(req: NextRequest) {
 
         const targetWarehouse = String(warehouse_name || "Kho Trung Tâm").trim() || "Kho Trung Tâm";
         const effectiveDate = receipt_date && /^\d{4}-\d{2}-\d{2}$/.test(String(receipt_date)) ? String(receipt_date) : todayVN();
-        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho TBR").trim();
+        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho ABT").trim();
 
         const inboundCode = await generateDocumentCode({ docType: "PNK", tagMode: "GENERAL" });
         const txItems = clean.map(x => ({
@@ -1639,7 +1639,7 @@ export async function POST(req: NextRequest) {
             code: x.pCode,
             name: pName,
             category: it.category || "Hàng Thương Mại",
-            brand: po.supplier_name || it.supplier_name || "TBR Phân Phối",
+            brand: po.supplier_name || it.supplier_name || "ABT Phân Phối",
             origin: it.origin || "Chính hãng",
             unit: x.unit || it.unit || "Hộp",
             specification: x.specification || it.specification || "",
@@ -1730,7 +1730,7 @@ export async function POST(req: NextRequest) {
         : await generateDocumentCode({
             docType: "PR",
             customerName: customer_name,
-            customPrefix: isStockOrder ? "STOCK" : "TBR",
+            customPrefix: isStockOrder ? "STOCK" : "ABT",
             tagMode: isStockOrder ? "STOCK" : (customer_name ? "CUSTOMER" : "GENERAL")
           });
 
@@ -1745,7 +1745,7 @@ export async function POST(req: NextRequest) {
         const it = structuredItems[i];
         const codeStr = String(it?.product_code || "").trim();
         const nameStr = String(it?.product_name || "").trim();
-        if (!codeStr || codeStr.toUpperCase() === "TBR-ITEM" || codeStr.toUpperCase() === "MÃ MỚI" || !nameStr) {
+        if (!codeStr || codeStr.toUpperCase() === "ABT-ITEM" || codeStr.toUpperCase() === "MÃ MỚI" || !nameStr) {
           return NextResponse.json(
             {
               error: `Không thể tạo Đề xuất mua hàng (PR): Mặt hàng ở dòng #${i + 1} chưa có Mã sản phẩm (SKU) hoặc Tên hàng cụ thể! Vui lòng chọn sản phẩm từ Bảng mã sản xuất.`
@@ -1918,7 +1918,7 @@ export async function POST(req: NextRequest) {
     // 10. Consolidate Multiple PRs into a Unified PO (Requirement 4 - H3)
     if (action === "consolidate_prs_to_po") {
       const { supplier_id, supplier_name, pr_ids, selected_item_keys, items, expected_delivery_date, notes, created_by } = body;
-      const poCode = await generateDocumentCode({ docType: "PO", customPrefix: "TBR", tagMode: "GENERAL" });
+      const poCode = await generateDocumentCode({ docType: "PO", customPrefix: "ABT", tagMode: "GENERAL" });
       const totalAmount = (items || []).reduce((acc: number, it: any) => acc + (parseFloat(it.quantity) || 1) * (parseFloat(it.unit_price) || 0), 0);
 
       const result = await withTransaction(async (c) => {

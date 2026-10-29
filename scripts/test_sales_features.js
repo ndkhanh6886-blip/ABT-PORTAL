@@ -54,7 +54,7 @@ async function runTests() {
     {
       id: "DEAL-2026-001",
       code: "DEAL-BVCR-01",
-      title: "Gói cung cấp 02 Hệ thống Real-time PCR TBR-9600 & Kit HPV",
+      title: "Gói cung cấp 02 Hệ thống Real-time PCR ABT-9600 & Kit HPV",
       customerName: "Bệnh Viện Chợ Rẫy - TP.HCM",
       hospitalDepartment: "Khoa Vi Sinh / Sinh Học Phân Tử",
       productLine: "Real-time PCR & Kit HPV Chẩn Đoán",
@@ -134,7 +134,7 @@ async function runTests() {
       assignedRep: "Trần Tài",
       assignedRepId: "NV02",
       priority: "TRUNG_BINH",
-      notes: "Đã hoàn tất ký HĐ số HĐ-2026/TBR-DHYD/088, chuyển đơn cho Kho chuẩn bị giao hàng.",
+      notes: "Đã hoàn tất ký HĐ số HĐ-2026/ABT-DHYD/088, chuyển đơn cho Kho chuẩn bị giao hàng.",
       createdAt: "20/07/2026"
     },
     {
@@ -222,7 +222,7 @@ async function runTests() {
       bidSecurityAmount: 250000000,
       status: "DANG_DANH_GIA",
       leadSalesRep: "Trần Tài",
-      competitorsInfo: "Đang mở hồ sơ tài chính; giá dự thầu của TBR thấp hơn đối thủ 6%.",
+      competitorsInfo: "Đang mở hồ sơ tài chính; giá dự thầu của ABT thấp hơn đối thủ 6%.",
       notes: "Đang chờ Quyết định phê duyệt kết quả lựa chọn nhà thầu từ Giám đốc Bệnh viện.",
       totalDeliveryCalls: 12,
       completedDeliveryCalls: 0
@@ -242,7 +242,7 @@ async function runTests() {
       status: "TRUNG_THAU",
       leadSalesRep: "Nguyễn Thị Lan",
       contractAwardDate: "05/09/2026",
-      notes: "Đã ký Hợp đồng khung số HĐK-2026/QY175/TBR. Đã đặt 01 máy TBR-9600 và gọi giao đợt 1 (1.000 test).",
+      notes: "Đã ký Hợp đồng khung số HĐK-2026/QY175/ABT. Đã đặt 01 máy ABT-9600 và gọi giao đợt 1 (1.000 test).",
       totalDeliveryCalls: 6,
       completedDeliveryCalls: 1
     },
@@ -298,9 +298,9 @@ async function runTests() {
       code: "RR-BVCR-01",
       hospitalName: "Bệnh Viện Chợ Rẫy - TP.HCM",
       department: "Khoa Vi Sinh / Sinh Học Phân Tử",
-      placedDeviceName: "Hệ thống Real-time PCR TBR-9600",
-      model: "TBR-PCR-9600",
-      serialNumber: "SN-TBR-2024-8891",
+      placedDeviceName: "Hệ thống Real-time PCR ABT-9600",
+      model: "ABT-PCR-9600",
+      serialNumber: "SN-ABT-2024-8891",
       associatedReagents: "Kit Real-time PCR HPV High Risk & HBV Định Lượng",
       startDate: "01/01/2025",
       endDate: "31/12/2027",
@@ -317,7 +317,7 @@ async function runTests() {
       hospitalName: "Bệnh Viện Quân Y 175",
       department: "Khoa Xét Nghiệm Trung Tâm",
       placedDeviceName: "Hệ thống Tách Chiết Tự Động MagPure 32",
-      model: "TBR-MagPure-32",
+      model: "ABT-MagPure-32",
       serialNumber: "SN-MAG-32-2025-012",
       associatedReagents: "Hóa chất tách chiết tự động MagPure Blood & Tissue DNA",
       startDate: "15/02/2025",

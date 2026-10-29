@@ -103,7 +103,7 @@ export const ZaloOperationsHub: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState<ZaloConfig>({
     oa_id: "125246484401171420",
-    oa_name: "Công ty TNHH Khoa học TBR",
+    oa_name: "Công ty TNHH Giải pháp Y sinh ABT",
     app_id: "2331222115598746556",
     secret_key: "",
     access_token: "",
@@ -147,7 +147,7 @@ export const ZaloOperationsHub: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "bot"; text: string; time: string; buttons?: any[] }>>([
     {
       sender: "bot",
-      text: "👋 Xin chào! Tôi là Trợ lý điều hành Zalo Công ty TNHH Khoa học TBR kết nối cơ sở dữ liệu thực tế. Bạn có thể soạn báo giá, tra cứu tồn kho, giữ chỗ hoặc nộp Daily tại đây!",
+      text: "👋 Xin chào! Tôi là Trợ lý điều hành Zalo Công ty TNHH Giải pháp Y sinh ABT kết nối cơ sở dữ liệu thực tế. Bạn có thể soạn báo giá, tra cứu tồn kho, giữ chỗ hoặc nộp Daily tại đây!",
       time: "Vừa xong"
     }
   ]);
@@ -461,7 +461,7 @@ export const ZaloOperationsHub: React.FC = () => {
     }
   };
 
-  const webhookPublicUrl = typeof window !== "undefined" ? `${window.location.origin}/api/zalo/webhook` : "https://tbr-portal.vn/api/zalo/webhook";
+  const webhookPublicUrl = typeof window !== "undefined" ? `${window.location.origin}/api/zalo/webhook` : "https://portal.abtvn.com/api/zalo/webhook";
 
   const handleCopyWebhook = () => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {
@@ -528,7 +528,7 @@ export const ZaloOperationsHub: React.FC = () => {
             </h1>
 
             <p className="text-xs text-slate-600 dark:text-blue-200 max-w-3xl leading-relaxed">
-              Soạn báo giá PDF tự động từ tin nhắn Zalo, tra cứu tồn kho FEFO, giữ chỗ hàng và cơ chế <strong className="text-slate-900 dark:text-white font-bold">Ban Giám Đốc phê duyệt 1-chạm</strong> mức chiết khấu lớn kết nối trực tiếp với <strong className="text-slate-900 dark:text-white font-bold">danh mục nhân sự thực tế</strong> của TBRs.
+              Soạn báo giá PDF tự động từ tin nhắn Zalo, tra cứu tồn kho FEFO, giữ chỗ hàng và cơ chế <strong className="text-slate-900 dark:text-white font-bold">Ban Giám Đốc phê duyệt 1-chạm</strong> mức chiết khấu lớn kết nối trực tiếp với <strong className="text-slate-900 dark:text-white font-bold">danh mục nhân sự thực tế</strong> của ABT.
             </p>
           </div>
 
@@ -765,7 +765,7 @@ export const ZaloOperationsHub: React.FC = () => {
                 <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
                   Nhân sự đã có Số điện thoại trong hồ sơ nhưng chưa từng tương tác với trang Zalo OA của công ty nên Zalo chưa cấp mã định danh bảo mật <strong>Zalo User ID</strong>.
                   <br />
-                  👉 <strong>Cách quét OA (Kích hoạt kết nối):</strong> Nhân sự dùng điện thoại mở Zalo &gt; Tìm kiếm Zalo OA <strong>"Công ty TNHH Khoa học TBR"</strong> (hoặc quét mã QR OA) &gt; Bấm <strong>Quan tâm</strong> &gt; Nhắn 1 tin nhắn bất kỳ (Ví dụ: <code className="bg-amber-100 dark:bg-amber-900/60 px-1 rounded font-mono">menu</code> hoặc <code className="bg-amber-100 dark:bg-amber-900/60 px-1 rounded font-mono">xin chao</code>). Hệ thống sẽ tự động bắt lấy Zalo User ID và chuyển sang trạng thái <strong className="text-emerald-700 dark:text-emerald-400">"Đã kết nối"</strong> (Xanh lá).
+                  👉 <strong>Cách quét OA (Kích hoạt kết nối):</strong> Nhân sự dùng điện thoại mở Zalo &gt; Tìm kiếm Zalo OA <strong>"Công ty TNHH Giải pháp Y sinh ABT"</strong> (hoặc quét mã QR OA) &gt; Bấm <strong>Quan tâm</strong> &gt; Nhắn 1 tin nhắn bất kỳ (Ví dụ: <code className="bg-amber-100 dark:bg-amber-900/60 px-1 rounded font-mono">menu</code> hoặc <code className="bg-amber-100 dark:bg-amber-900/60 px-1 rounded font-mono">xin chao</code>). Hệ thống sẽ tự động bắt lấy Zalo User ID và chuyển sang trạng thái <strong className="text-emerald-700 dark:text-emerald-400">"Đã kết nối"</strong> (Xanh lá).
                 </p>
               </div>
             </div>
@@ -1286,7 +1286,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   <button
                     type="button"
                     disabled={isSendingChat}
-                    onClick={() => handleSendSimChat("Duyệt BG-TBR-2609-0001")}
+                    onClick={() => handleSendSimChat("Duyệt BG-ABT-2609-0001")}
                     className="w-full text-left p-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-xs font-semibold transition-all cursor-pointer"
                   >
                     <div className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 mb-1">
@@ -1307,10 +1307,10 @@ export const ZaloOperationsHub: React.FC = () => {
               <div className="bg-blue-600 text-white px-4 py-3 rounded-t-[30px] flex items-center justify-between shadow-sm">
                 <div className="flex items-center gap-2.5">
                   <div className="w-8 h-8 rounded-full bg-white text-blue-600 font-black flex items-center justify-center text-xs shadow-sm">
-                    TBRs
+                    ABT
                   </div>
                   <div>
-                    <div className="font-bold text-xs leading-tight">Công ty TNHH Khoa học TBR</div>
+                    <div className="font-bold text-xs leading-tight">Công ty TNHH Giải pháp Y sinh ABT</div>
                     <div className="text-[10px] text-blue-100 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-300 inline-block" />
                       <span>Zalo OA Doanh Nghiệp (Online)</span>
@@ -1689,7 +1689,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   <span>Nhắn tin thực tế từ điện thoại vào OA</span>
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Mở Zalo trên điện thoại, tìm <strong>"Công ty TNHH Khoa học TBR"</strong>, bấm Quan tâm và gửi tin nhắn (ví dụ: <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">menu</code> hoặc <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">báo giá</code>). Sau đó kiểm tra tab <strong>Nhật Ký Tin Nhắn</strong>.
+                  Mở Zalo trên điện thoại, tìm <strong>"Công ty TNHH Giải pháp Y sinh ABT"</strong>, bấm Quan tâm và gửi tin nhắn (ví dụ: <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">menu</code> hoặc <code className="bg-slate-100 dark:bg-slate-800 px-1 rounded font-mono">báo giá</code>). Sau đó kiểm tra tab <strong>Nhật Ký Tin Nhắn</strong>.
                 </p>
               </div>
 
@@ -1700,7 +1700,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   <span>Thử nghiệm trong tab "Giả Lập Chat Zalo"</span>
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Chuyển sang tab <strong>Giả Lập Chat Zalo</strong> bên cạnh. Chọn 1 nhân sự đã liên kết SĐT (VD: NV-TBRs-017) và gõ lệnh để kiểm tra cơ chế tự động tra kho, tính chiết khấu và kích hoạt duyệt của Ban Giám Đốc.
+                  Chuyển sang tab <strong>Giả Lập Chat Zalo</strong> bên cạnh. Chọn 1 nhân sự đã liên kết SĐT (VD: NV-ABT-017) và gõ lệnh để kiểm tra cơ chế tự động tra kho, tính chiết khấu và kích hoạt duyệt của Ban Giám Đốc.
                 </p>
               </div>
             </div>

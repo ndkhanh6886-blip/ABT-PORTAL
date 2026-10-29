@@ -226,8 +226,8 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-pcr-3", name: "Bộ phụ kiện tiêu chuẩn (Cáp nguồn, cáp mạng, khay đỡ, adapter)", model: "Std. Pack", origin: "Tianlong", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ từ nhà sản xuất" },
             { id: "cfg-pcr-4", name: "Bộ lưu điện trực tuyến UPS Online Santak 2kVA (Bảo vệ nguồn điện)", model: "Santak C2K-LCD", origin: "Santak", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Lưu điện và chống xung nhiễu điện áp" },
             { id: "cfg-pcr-5", name: "Bộ máy vi tính điều khiển Core i5, RAM 16GB, SSD 512GB + Màn hình Dell 24 inch", model: "OptiPlex 7010", origin: "Dell", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Cài sẵn hệ điều hành và phần mềm Gentier" },
-            { id: "cfg-pcr-6", name: "Dịch vụ kỹ thuật: Giao hàng, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bàn giao hồ sơ thẩm định và chứng nhận đào tạo" },
-            { id: "cfg-pcr-7", name: "Gói bảo hành chính hãng 24 tháng & bảo dưỡng định kỳ 06 tháng/lần", model: "Warranty 24M", origin: "Tianlong / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong vòng 24h" }
+            { id: "cfg-pcr-6", name: "Dịch vụ kỹ thuật: Giao hàng, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bàn giao hồ sơ thẩm định và chứng nhận đào tạo" },
+            { id: "cfg-pcr-7", name: "Gói bảo hành chính hãng 24 tháng & bảo dưỡng định kỳ 06 tháng/lần", model: "Warranty 24M", origin: "Tianlong / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong vòng 24h" }
         ],
         notes: "Dòng máy PCR định lượng cao cấp độ nhạy cao dùng cho phòng lab xét nghiệm đạt chuẩn ISO 15189"
     },
@@ -255,8 +255,8 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-ext-2", name: "Khối thanh từ 96 mẫu (96-well Magnetic Rod)", model: "Mag-96", origin: "Tianlong", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ theo máy" },
             { id: "cfg-ext-3", name: "Giá đỡ khay đĩa Deep-well 96 và giá đựng tip từ", model: "Plate Holder", origin: "Tianlong", quantity: 2, unit: "Cái", isStandard: true, isIncluded: true, notes: "Inox chuyên dụng kháng hóa chất" },
             { id: "cfg-ext-4", name: "Bộ lưu điện Santak 1kVA lưu điện dự phòng", model: "TG1000", origin: "Santak", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Trang bị bảo vệ máy khi ngắt điện" },
-            { id: "cfg-ext-5", name: "Dịch vụ vận chuyển, lắp đặt, nghiệm thu & đào tạo vận hành", model: "Service", origin: "Việt Nam (TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Đào tạo kỹ thuật viên phòng xét nghiệm" },
-            { id: "cfg-ext-6", name: "Gói bảo hành chính hãng 12 tháng tận nơi", model: "Warranty 12M", origin: "Tianlong / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Linh kiện thay thế chính hãng có sẵn" }
+            { id: "cfg-ext-5", name: "Dịch vụ vận chuyển, lắp đặt, nghiệm thu & đào tạo vận hành", model: "Service", origin: "Việt Nam (ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Đào tạo kỹ thuật viên phòng xét nghiệm" },
+            { id: "cfg-ext-6", name: "Gói bảo hành chính hãng 12 tháng tận nơi", model: "Warranty 12M", origin: "Tianlong / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Linh kiện thay thế chính hãng có sẵn" }
         ],
         notes: "Tách chiết DNA/RNA tự động cho mẫu bệnh phẩm máu, huyết thanh, mô, dịch phết..."
     },
@@ -285,7 +285,7 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-bsc-3", name: "Hệ thống đèn chiếu sáng LED và đèn UV diệt khuẩn 30W hẹn giờ", model: "Lighting & UV", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Khóa liên động an toàn đèn UV và kính" },
             { id: "cfg-bsc-4", name: "02 ổ cắm điện chống nước chuẩn IP54 bên trong buồng làm việc", model: "Power Socket", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Cung cấp nguồn cho máy vortex/shaker nhỏ" },
             { id: "cfg-bsc-5", name: "Dịch vụ: Lắp đặt, thẩm định tốc độ gió, kiểm tra rò rỉ màng lọc & cấp giấy kiểm định", model: "Certification Package", origin: "Việt Nam", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm chứng nhận hiệu chuẩn kiểm định độc lập" },
-            { id: "cfg-bsc-6", name: "Gói bảo hành chính hãng 24 tháng", model: "Warranty 24M", origin: "Haier Biomedical / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bảo hành tận nơi 24 tháng" }
+            { id: "cfg-bsc-6", name: "Gói bảo hành chính hãng 24 tháng", model: "Warranty 24M", origin: "Haier Biomedical / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bảo hành tận nơi 24 tháng" }
         ],
         notes: "Bảo vệ tối đa người thao tác, mẫu thử và môi trường phòng xét nghiệm"
     },
@@ -312,7 +312,7 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-cen-1", name: "Thân máy ly tâm lạnh TGL-16M", model: "TGL-16M", origin: "Anting / Dlab", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Mới 100%, bảo hành 12 tháng" },
             { id: "cfg-cen-2", name: "Rotor góc bằng hợp kim nhôm 24 vị trí x 1.5/2.0ml", model: "NO.1 Angle Rotor", origin: "Chính hãng", quantity: 1, unit: "Cái", isStandard: true, isIncluded: true, notes: "Hấp tiệt trùng được ở 121°C" },
             { id: "cfg-cen-3", name: "Bộ adapter chuyển đổi cho tube PCR 0.2ml và 0.5ml", model: "Adapter Kit", origin: "Chính hãng", quantity: 24, unit: "Cái", isStandard: true, isIncluded: true, notes: "Mỗi loại 24 cái" },
-            { id: "cfg-cen-4", name: "Dịch vụ lắp đặt, bàn giao kỹ thuật & bảo hành 12 tháng", model: "Service & Warranty", origin: "Việt Nam (TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật định kỳ" }
+            { id: "cfg-cen-4", name: "Dịch vụ lắp đặt, bàn giao kỹ thuật & bảo hành 12 tháng", model: "Service & Warranty", origin: "Việt Nam (ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật định kỳ" }
         ],
         notes: "Chuyên dụng cho ly tâm tách chiết sinh học phân tử và kết tủa mẫu"
     },
@@ -339,7 +339,7 @@ const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
             { id: "cfg-nano-1", name: "Thân máy đo quang vi lượng Nano-100 tích hợp màn hình cảm ứng", model: "Nano-100", origin: "Allsheng", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Đo trực tiếp không cần cuvette, không cần PC" },
             { id: "cfg-nano-2", name: "Bút quang học kiểm tra chuẩn máy (Calibration Check Pen)", model: "Cal-Pen", origin: "Allsheng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Kiểm tra độ chính xác định kỳ" },
             { id: "cfg-nano-3", name: "Dây cáp nguồn, bút cảm ứng, adapter và cổng USB sao lưu dữ liệu", model: "Acc-Nano", origin: "Allsheng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ theo máy" },
-            { id: "cfg-nano-4", name: "Dịch vụ lắp đặt, chuyển giao kỹ thuật & bảo hành 12 tháng", model: "Service", origin: "TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kỹ sư TBR hướng dẫn tận nơi" }
+            { id: "cfg-nano-4", name: "Dịch vụ lắp đặt, chuyển giao kỹ thuật & bảo hành 12 tháng", model: "Service", origin: "ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kỹ sư ABT hướng dẫn tận nơi" }
         ],
         notes: "Định lượng chuẩn xác nồng độ DNA/RNA trước khi chạy phản ứng PCR/Realtime PCR"
     }
@@ -689,7 +689,7 @@ const CustomerAllocationSearchInput: React.FC<{
 
 /** Tên "khách hàng" của đơn lưu kho nội bộ (SO Stock) theo thương hiệu đang chạy. */
 const defaultStockCustomerName = () =>
-    "Công ty Cổ phần Công nghệ TBR";
+    "Công ty Cổ phần Công nghệ ABT";
 
 /** Mã SO do máy chủ cấp (SO26-KH-1001, SO26-STOCK-1001, ...): không bao giờ được đổi mã phía trình duyệt. */
 /** "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT- CHI NHÁNH LONG HẬU" -> "GIẢI PHÁP Y SINH ABT" (tên đầy đủ để ở tooltip). */
@@ -1623,7 +1623,7 @@ export function SalesFullABT() {
             let orderId = o?.order_code || (typeof o?.id === "string" && o.id.startsWith("SO") ? o.id : (o?.orderCode || o?.code || (o?.id ? String(o.id) : "")));
             const custName = (o.customerName || o.customer_name || "").trim();
             const hasQuote = Boolean(o.quoteId || o.quote_code);
-            const hasRealCustomer = Boolean(custName && !String(custName).includes("Kho Tổng TBR") && !String(custName).includes("Lưu Kho Nội Bộ") && custName !== defaultStockCustomerName());
+            const hasRealCustomer = Boolean(custName && !String(custName).includes("Kho Tổng ABT") && !String(custName).includes("Lưu Kho Nội Bộ") && custName !== defaultStockCustomerName());
             const isStock = Boolean((o.isStockOrder === true || o.orderCategory === "STOCK" || o.is_stock_order === true || o.applied_price_policy === "STOCK" || String(o.notes || "").includes("STOCK")) && !hasQuote && !hasRealCustomer);
 
             const isWronglyNamedStock = Boolean(orderId.includes("STOCK") && !isStock);
@@ -2971,7 +2971,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (typeof window !== "undefined") return localStorage.getItem("sales_default_quote_delivery_terms") || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.";
         return "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.";
     });
-    const TBR_DEFAULT_PAYMENT_TERMS = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ TBR – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
+    const TBR_DEFAULT_PAYMENT_TERMS = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ ABT – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
     const [quotePaymentTerms, setQuotePaymentTerms] = useState(() => {
         if (typeof window !== "undefined") {
             const saved = localStorage.getItem("sales_default_quote_payment_terms");
@@ -3182,7 +3182,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         "CH-DNA-LADDER-1KB"
     ]);
 
-    // Mã khung cho báo giá Oligo / hàng đặt riêng: chỉ là khung (tên, quy cách, đơn vị); hãng, NCC và giá do TBRs tự nhập.
+    // Mã khung cho báo giá Oligo / hàng đặt riêng: chỉ là khung (tên, quy cách, đơn vị); hãng, NCC và giá do ABT tự nhập.
     // Chỉ được tạo khi danh mục chưa từng khởi tạo: mã đã bị xóa không tự thêm lại.
     const DEFAULT_COMMERCIAL_PRODUCTS: CommercialProduct[] = [
         {
@@ -3739,7 +3739,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             isEquipment: p.isEquipment || (p.category ? p.category.includes("Thiết bị") : false),
             configurations: p.configurations || [],
             isCommercial: true,
-            badge: (p.brand === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC")))) ? "🧪 TBR / ABT" : `🛒 ${p.brand || "Thương mại"}`
+            badge: (p.brand === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC")))) ? "🧪 ABT" : `🛒 ${p.brand || "Thương mại"}`
         }));
         const mfg = biolabProducts
             .filter(p => !commCodes.has(p.code))
@@ -3764,13 +3764,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 isEquipment: (p as any).isEquipment || false,
                 configurations: (p as any).configurations || [],
                 isCommercial: false,
-                badge: "🧪 TBR / ABT"
+                badge: "🧪 ABT"
             }));
         const existingCodes = new Set([...comm.map(p => p.code), ...mfg.map(p => p.code)]);
         const dbItems = dbMasterProducts
             .filter(p => p.code && !existingCodes.has(p.code))
             .map(p => {
-                const isMfg = p.manufacturer === "ABT" || p.manufacturer === "TBR" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC") || p.code.startsWith("TBR")));
+                const isMfg = p.manufacturer === "ABT" || p.manufacturer === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC") || p.code.startsWith("ABT")));
                 // Tuyệt đối không lấy cost_price làm giá bán khi standard_price để trống (0)
                 const priceNum = Number(p.standard_price) || 0;
                 const costNum = Number(p.cost_price) || 0;
@@ -3796,7 +3796,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     isEquipment: (p.category ? p.category.includes("Thiết bị") : false) || (p.code ? p.code.startsWith("EQ-") : false),
                     configurations: [],
                     isCommercial: !isMfg,
-                    badge: isMfg ? "🧪 TBR / ABT" : `🛒 ${p.manufacturer || "Thương mại"}`
+                    badge: isMfg ? "🧪 ABT" : `🛒 ${p.manufacturer || "Thương mại"}`
                 };
             });
         return [...comm, ...mfg, ...dbItems];
@@ -4178,7 +4178,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [vatEmail, setVatEmail] = useState("");
     const [invoiceNotes, setInvoiceNotes] = useState("");
     const [partialInvItemVatRates, setPartialInvItemVatRates] = useState<Record<string, number>>({});
-    const [shippingMethod, setShippingMethod] = useState("Xe lạnh chuyên dụng TBR (-20°C đến 8°C)");
+    const [shippingMethod, setShippingMethod] = useState("Xe lạnh chuyên dụng ABT (-20°C đến 8°C)");
     const [trackingCode, setTrackingCode] = useState("");
 
     // Phase 3: Contract Expiry & File Attachments (Yêu cầu 3)
@@ -4761,8 +4761,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 .filter((p: any) => p.status === "ACTIVE" || !p.status)
                 .map((p: any) => ({
                     id: p.id,
-                    employee_id: p.employee_code || `NV-TBRs-${String(p.id).padStart(3, "0")}`,
-                    employee_code: p.employee_code || `NV-TBRs-${String(p.id).padStart(3, "0")}`,
+                    employee_id: p.employee_code || `NV-ABT-${String(p.id).padStart(3, "0")}`,
+                    employee_code: p.employee_code || `NV-ABT-${String(p.id).padStart(3, "0")}`,
                     full_name: p.full_name,
                     department: p.department || "Kinh Doanh",
                     position: p.position || "Chuyên Viên Kinh Doanh",
@@ -7203,7 +7203,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         // 2. Bộ quy tắc nhận diện thương hiệu phổ biến
         if (upper.includes("ABT") || upper.includes("LONG HẬU") || upper.includes("LONG HAU") || upper.includes("Y SINH ABT")) return "ABT";
-        if (upper.includes("TBR")) return "TBR";
+        if (upper.includes("ABT")) return "ABT";
         if (upper.includes("PHÙ SA") || upper.includes("PHU SA")) return "Phù Sa";
         if (upper.includes("HOÀNG KIM") || upper.includes("HOANG KIM")) return "Hoàng Kim";
         if (upper.includes("NAM YẾN") || upper.includes("NAM YEN")) return "Nam Yến";
@@ -7371,7 +7371,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 id: `cfg-${Date.now()}-6`,
                 name: "Dịch vụ: Vận chuyển, lắp đặt, chạy thử nghiệm thu & đào tạo vận hành tận nơi (Kèm IQ/OQ/PQ)",
                 model: "Service Package",
-                origin: "Việt Nam (Kỹ sư TBR)",
+                origin: "Việt Nam (Kỹ sư ABT)",
                 quantity: 1,
                 unit: "Gói",
                 isIncluded: true,
@@ -10453,7 +10453,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     (quote.tax_rate !== undefined ? quote.tax_rate : 8)))));
                 const itemVatRate = !isNaN(Number(rawRate)) && Number(rawRate) >= 0 ? Number(rawRate) : 8;
                 const vatBadgeHtml = hasMultipleVatRates
-                    ? `<span style="display: inline-block; font-size: 10px; font-weight: bold; background: #e0e7ff; color: #3730a3; padding: 1px 5px; border-radius: 3px; margin-left: 6px;">VAT ${itemVatRate}%</span>`
+                    ? `<span style="display: inline-block; font-size: 10px; font-weight: bold; background: #e0f2fe; color: #075985; padding: 1px 5px; border-radius: 3px; margin-left: 6px;">VAT ${itemVatRate}%</span>`
                     : '';
                 const vatTagText = hasMultipleVatRates ? `VAT ${itemVatRate}%` : '';
                 const displayNote = note ? (note.toLowerCase().includes("vat") ? note : `${note}${vatTagText ? ` (${vatTagText})` : ''}`) : (vatTagText || "—");
@@ -10474,7 +10474,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 ${itemImage ? `<img src="${itemImage}" alt="thumb" style="width: 30px; height: 30px; object-fit: contain; border-radius: 4px; border: 1px solid #cbd5e1; background: #fff; flex-shrink: 0;" />` : ''}
                                 <div>
                                     <strong>${itName}</strong>${vatBadgeHtml}
-                                    ${hasConfig ? `<div style="font-size: 10px; color: #4338ca; font-weight: bold; margin-top: 2px;">(Hệ thống trọn gói kèm ${validConfigs.length} hạng mục cấu hình)</div>` : ''}
+                                    ${hasConfig ? `<div style="font-size: 10px; color: #0369a1; font-weight: bold; margin-top: 2px;">(Hệ thống trọn gói kèm ${validConfigs.length} hạng mục cấu hình)</div>` : ''}
                                 </div>
                             </div>
                         </td>
@@ -10566,11 +10566,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 <body>
                     <div class="header">
                         <div style="display: flex; align-items: center; gap: 14px;">
-                            <img src="/logo-tbr.png" alt="Logo" style="height: 54px; width: auto; object-fit: contain;" onerror="this.style.display='none'" />
+                            <img src="/logo-abt.png" alt="Logo" style="height: 54px; width: auto; object-fit: contain;" onerror="this.style.display='none'" />
                             <div class="company-info">
                                 <div class="company-name">${companyName}</div>
                                 <div>Địa chỉ: ${companyAddress}</div>
-                                <div>Điện thoại: ${companyPhone || "028.66 76 77 62"} | Email: ${companyEmail || "sales@tbr.vn - tbrtop@gmail.com"}</div>
+                                <div>Điện thoại: ${companyPhone || "028 2216 0885"} | Email: ${companyEmail || "sales@abtvn.com"}</div>
                                 ${companyTaxCode ? `<div>Mã số thuế: ${companyTaxCode}</div>` : ""}
                             </div>
                         </div>
@@ -10709,7 +10709,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     companyPhone,
                     companyEmail,
                     companyTaxCode,
-                    companyWebsite: "www.tbr.vn"
+                    companyWebsite: "www.abtvn.com"
                 },
                 formatSupplierShortName,
                 readVietnameseCurrency,
@@ -10782,7 +10782,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div>
                                     <strong>${it.productName || it.name || it.productCode || "Sản phẩm, hàng hóa"}</strong>
                                     ${spec ? `<div style="font-size: 11px; color: #475569; margin-top: 2px;">Quy cách: ${spec}</div>` : ""}
-                                    ${hasConfig ? `<div style="font-size: 10px; color: #4338ca; font-weight: bold; margin-top: 2px;">(Hệ thống trọn gói kèm ${validConfigs.length} hạng mục cấu hình)</div>` : ''}
+                                    ${hasConfig ? `<div style="font-size: 10px; color: #0369a1; font-weight: bold; margin-top: 2px;">(Hệ thống trọn gói kèm ${validConfigs.length} hạng mục cấu hình)</div>` : ''}
                                 </div>
                             </div>
                         </td>
@@ -12362,7 +12362,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             tracking_code: trackingCode
         };
 
-        // Sync directly to TBR PostgreSQL backend
+        // Sync directly to ABT PostgreSQL backend
         fetch("/api/sales?action=order", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -12699,7 +12699,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
             return req;
         }));
-        showToast(`Đơn hàng ${poCode} đã về kho TBR thành công! Có thể xuất giao cho khách.`, "success");
+        showToast(`Đơn hàng ${poCode} đã về kho ABT thành công! Có thể xuất giao cho khách.`, "success");
     };
 
     // ===== HELPER LUỒNG PHIẾU GIAO HÀNG THEO ĐỢT =====
@@ -12914,7 +12914,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return list;
     };
 
-    const defaultStockCustomer = "Công ty Cổ phần Công nghệ TBR";
+    const defaultStockCustomer = "Công ty Cổ phần Công nghệ ABT";
 
     const checkIsPureStock = (o: any): boolean => {
         if (!o) return false;
@@ -12922,7 +12922,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (o.quoteId || o.quote_code) return false;
         // Nếu tên khách hàng không phải kho nội bộ / công ty chủ quản thì là đơn bán cho khách hàng
         const cName = String(o.customerName || "").trim();
-        if (cName && !cName.includes("Kho") && cName !== defaultStockCustomer && !cName.includes("TBR")) {
+        if (cName && !cName.includes("Kho") && cName !== defaultStockCustomer && !cName.includes("ABT")) {
             return false;
         }
         return Boolean(o.isStockOrder || o.orderCategory === "STOCK" || (o.id && String(o.id).includes("STOCK")));
@@ -13467,7 +13467,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const handleCompleteProcureOrder = (orderId: string) => {
         const order = factoryOrders.find(o => o.id === orderId);
         const poCode = (order?.procureOrderCode || order?.mfgOrderCode || `PO-${orderId}`).replace(/^ĐHX-/, "PO-");
-        if (!window.confirm(`Xác nhận hàng của đơn ${orderId} (${poCode}) đã về kho TBR và kiểm đếm nhập kho đầy đủ?`)) {
+        if (!window.confirm(`Xác nhận hàng của đơn ${orderId} (${poCode}) đã về kho ABT và kiểm đếm nhập kho đầy đủ?`)) {
             return;
         }
         setFactoryOrders(prev => prev.map(req => {
@@ -14247,7 +14247,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     transaction_code: `${isInbound ? "PNK" : "PXK"}-${cleanId}${suffix}`,
                     reference_code: slip.orderCode,
                     date: todayVN(),
-                    performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho TBR",
+                    performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho ABT",
                     warehouse_name: is13B ? "Kho Trung Tâm" : (slip.dispatchLocation || "Kho Trung Tâm"),
                     items: valid.map((it: any) => ({
                         product_code: it.selectedLotProductCode || getItemCode(it),
@@ -14487,7 +14487,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     // Bước 2 (Slide 2): Kho xác nhận Đã giao hàng (hàng đã xuất ra khỏi kho & bàn giao đi giao)
     const handleConfirmWarehouseShipped = (slip: any) => {
-        const staffName = loggedInStaff?.full_name || user?.name || slip.dispatcherName || "Thủ kho TBR";
+        const staffName = loggedInStaff?.full_name || user?.name || slip.dispatcherName || "Thủ kho ABT";
         const updated = {
             ...slip,
             deliveryStatus: "WAREHOUSE_DELIVERED",
@@ -15909,7 +15909,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             // Strictly exclude any warehouse entity from customer CRM list
             const isWarehouse = c.name === "Kho Trung Tâm" || 
                 c.customer_code === "KH-01" || 
-                (c.name && (c.name.toLowerCase().includes("13b") || c.name.toLowerCase().includes("kho tbr"))) ||
+                (c.name && (c.name.toLowerCase().includes("13b") || c.name.toLowerCase().includes("kho abt"))) ||
                 (c.customer_code && c.customer_code.toLowerCase().includes("13b"));
             if (isWarehouse) return false;
 
@@ -22355,7 +22355,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </span>
                             </div>
                             <p className="text-[10px] text-slate-500 mt-0.5">
-                                Danh mục thống nhất toàn bộ sản phẩm, hóa chất sinh phẩm và thiết bị phân phối của Công ty TBR.
+                                Danh mục thống nhất toàn bộ sản phẩm, hóa chất sinh phẩm và thiết bị phân phối của Công ty ABT.
                             </p>
                         </div>
 
@@ -24521,8 +24521,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             { id: `cfg-${Date.now()}-3`, name: "Bộ phụ kiện tiêu chuẩn kết nối & vận hành chuẩn từ nhà sản xuất", model: "Std. Accessories", origin: commBrand || "Chính hãng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Dây nguồn, cáp dữ liệu, khay đỡ, adapter" },
                                             { id: `cfg-${Date.now()}-4`, name: "Bộ lưu điện UPS Online chuyên dụng (Bảo vệ ổn định nguồn điện)", model: "Online 2kVA", origin: "Santak / APC", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Khuyến nghị trang bị bảo vệ thiết bị" },
                                             { id: `cfg-${Date.now()}-5`, name: "Bộ máy vi tính điều khiển Core i5, RAM 16GB, SSD 512GB + Màn hình Full HD", model: "OptiPlex", origin: "Dell / HP", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Trang bị đồng bộ theo yêu cầu phòng xét nghiệm" },
-                                            { id: `cfg-${Date.now()}-6`, name: "Dịch vụ: Vận chuyển, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm biên bản nghiệm thu & cấp chứng nhận" },
-                                            { id: `cfg-${Date.now()}-7`, name: `Gói bảo hành chính hãng ${commWarranty || "24 tháng"} & bảo dưỡng định kỳ`, model: "Warranty", origin: commBrand || "TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong 24-48h" }
+                                            { id: `cfg-${Date.now()}-6`, name: "Dịch vụ: Vận chuyển, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm biên bản nghiệm thu & cấp chứng nhận" },
+                                            { id: `cfg-${Date.now()}-7`, name: `Gói bảo hành chính hãng ${commWarranty || "24 tháng"} & bảo dưỡng định kỳ`, model: "Warranty", origin: commBrand || "ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong 24-48h" }
                                         ];
                                         setCommConfigurations(sampleConfigs);
                                     }}
@@ -24850,7 +24850,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 {(() => {
                                     const isWarehouse = (name: string) => {
                                         const n = (name || "").toLowerCase();
-                                        return n.includes("kho tbr") || n.includes("kho trung tâm") || n.includes("13b");
+                                        return n.includes("kho abt") || n.includes("kho trung tâm") || n.includes("13b");
                                     };
                                     const uniqueList: any[] = [];
                                     const seen = new Set<string>();
@@ -26402,7 +26402,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         {(() => {
                                             const isWarehouse = (name: string) => {
                                                 const n = (name || "").toLowerCase();
-                                                return n.includes("kho tbr") || n.includes("kho trung tâm") || n.includes("13b");
+                                                return n.includes("kho abt") || n.includes("kho trung tâm") || n.includes("13b");
                                             };
                                             const uniqueList: any[] = [];
                                             const seen = new Set<string>();
@@ -27968,7 +27968,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                             {allocList.length === 0 ? (
                                                 <div className="text-[11px] text-slate-500 italic py-1">
-                                                    Chưa gán khách hàng cụ thể (100% số lượng sẽ đưa vào Tồn kho tự do dự phòng của TBR).
+                                                    Chưa gán khách hàng cụ thể (100% số lượng sẽ đưa vào Tồn kho tự do dự phòng của ABT).
                                                 </div>
                                             ) : (
                                                 <div className="space-y-1.5">
@@ -28111,7 +28111,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         onChange={(e) => setShippingMethod(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-medium"
                                     >
-                                        <option value="Xe lạnh chuyên dụng TBR (-20°C đến 8°C)">🚛 Xe lạnh chuyên dụng TBR (-20°C đến 8°C)</option>
+                                        <option value="Xe lạnh chuyên dụng ABT (-20°C đến 8°C)">🚛 Xe lạnh chuyên dụng ABT (-20°C đến 8°C)</option>
                                         <option value="Grab / Ahamove Express (Nội thành)">🛵 Grab / Ahamove Express (Nội thành hỏa tốc)</option>
                                         <option value="Chành xe liên tỉnh (Hàng khô/bảo ôn)">🚚 Chành xe liên tỉnh (Hàng khô / Thùng xốp đá gel)</option>
                                         <option value="NVKD trực tiếp giao & bàn giao">👤 NVKD trực tiếp giao & bàn giao</option>
@@ -28121,7 +28121,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Mã vận đơn / Số chuyến xe</label>
                                     <input
                                         type="text"
-                                        placeholder="VD: TBR-EXP-2026-088, Ahamove #98234..."
+                                        placeholder="VD: ABT-EXP-2026-088, Ahamove #98234..."
                                         value={trackingCode}
                                         onChange={(e) => setTrackingCode(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-slate-600"
@@ -28933,8 +28933,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 else currentStep = 1;
                             }
 
-                            const shipping = viewingFactoryOrderItems.shipping_method || viewingFactoryOrderItems.shippingMethod || viewingFactoryOrderItems.rawOrder?.shipping_method || "Xe lạnh chuyên dụng TBR (-20°C đến 8°C)";
-                            const tracking = viewingFactoryOrderItems.tracking_code || viewingFactoryOrderItems.trackingCode || viewingFactoryOrderItems.rawOrder?.tracking_code || `TBR-EXP-${viewingFactoryOrderItems.id?.replace(/\D/g, '') || "2026"}`;
+                            const shipping = viewingFactoryOrderItems.shipping_method || viewingFactoryOrderItems.shippingMethod || viewingFactoryOrderItems.rawOrder?.shipping_method || "Xe lạnh chuyên dụng ABT (-20°C đến 8°C)";
+                            const tracking = viewingFactoryOrderItems.tracking_code || viewingFactoryOrderItems.trackingCode || viewingFactoryOrderItems.rawOrder?.tracking_code || `ABT-EXP-${viewingFactoryOrderItems.id?.replace(/\D/g, '') || "2026"}`;
                             const vatReq = viewingFactoryOrderItems.vat_requested || viewingFactoryOrderItems.vatRequested || viewingFactoryOrderItems.rawOrder?.vat_requested;
 
                             return (
@@ -32688,7 +32688,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa điểm thực hiện</label>
                                     <textarea
                                         rows={2}
-                                        placeholder="Ví dụ: Khách sạn Rex, Quận 1 hoặc Phòng Lab TBR"
+                                        placeholder="Ví dụ: Khách sạn Rex, Quận 1 hoặc Phòng Lab ABT"
                                         value={planLocation}
                                         onChange={(e) => setPlanLocation(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y"
@@ -34412,7 +34412,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="text-xs font-bold text-white flex items-center gap-1.5">
                                 <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
                                 {loggedInStaff?.full_name || user?.name || "Cán bộ phụ trách"}
-                                <span className="text-[10px] text-indigo-400 font-mono">({loggedInStaff?.employee_id || loggedInStaff?.employee_code || "KD-TBR"})</span>
+                                <span className="text-[10px] text-indigo-400 font-mono">({loggedInStaff?.employee_id || loggedInStaff?.employee_code || "KD-ABT"})</span>
                             </div>
                         </div>
                         <span className="text-[10px] font-mono bg-slate-950 text-slate-400 px-2.5 py-1 rounded border border-slate-850 font-semibold">
@@ -35989,7 +35989,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-bold text-center"
                             />
                             <span className="text-[10px] text-slate-400 mt-1 block">
-                                Tồn kho trung tâm TBR Trung Tâm khả dụng: <strong className="text-emerald-400 font-mono">{stock13b[giveStockProductCode] || 0}</strong>
+                                Tồn kho trung tâm ABT Trung Tâm khả dụng: <strong className="text-emerald-400 font-mono">{stock13b[giveStockProductCode] || 0}</strong>
                             </span>
                         </div>
                     </div>
@@ -36096,7 +36096,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     {(() => {
                                         const isWarehouse = (name: string) => {
                                             const n = (name || "").toLowerCase();
-                                            return n.includes("kho tbr") || n.includes("kho trung tâm") || n.includes("13b");
+                                            return n.includes("kho abt") || n.includes("kho trung tâm") || n.includes("13b");
                                         };
                                         const repId = isManagerOrAdmin ? retailSaleEmployee : (loggedInStaff?.employee_id || "");
                                         const repCustomers = salesNvkdCustomers.filter(c => !c.salesRepId || c.salesRepId === repId);
@@ -37188,7 +37188,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-lg p-2.5 flex items-center gap-2 text-xs text-indigo-200">
                             <Package className="w-4 h-4 text-indigo-400 shrink-0" />
                             <span>
-                                <strong>Nguyên tắc Quản lý Kho TBR:</strong> Nghiệp vụ cài đặt giữ chỗ gắn liền với <strong>Số Lô (LOT)</strong>, <strong>Hạn dùng (EXP)</strong> và <strong>Tồn kho thực tế</strong>, do đó được thực hiện tập trung tại <strong>Tab Quản lý kho</strong>. Sổ theo dõi dưới đây hiển thị dữ liệu giữ chỗ phục vụ Sales tra cứu đối chiếu.
+                                <strong>Nguyên tắc Quản lý Kho ABT:</strong> Nghiệp vụ cài đặt giữ chỗ gắn liền với <strong>Số Lô (LOT)</strong>, <strong>Hạn dùng (EXP)</strong> và <strong>Tồn kho thực tế</strong>, do đó được thực hiện tập trung tại <strong>Tab Quản lý kho</strong>. Sổ theo dõi dưới đây hiển thị dữ liệu giữ chỗ phục vụ Sales tra cứu đối chiếu.
                             </span>
                         </div>
 

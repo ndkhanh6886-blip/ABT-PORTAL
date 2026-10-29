@@ -7,8 +7,8 @@ import { clientIp, hitRateLimit, isRateLimited } from "@/backend/services/rateLi
 
 const USER_LOOKUP_WHERE = `
   LOWER(username) = LOWER($1)
-  OR LOWER(username) = LOWER(REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA'))
-  OR LOWER(username) = LOWER(REPLACE(REPLACE($1, 'NV-TBR', 'TBR'), 'NV-VIA', 'VIA'))
+  OR LOWER(username) = LOWER(REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))
+  OR LOWER(username) = LOWER(REPLACE(REPLACE($1, 'NV-ABT', 'ABT'), 'NV-VIA', 'VIA'))
   OR LOWER(email) = LOWER($1)
   OR LOWER(full_name) = LOWER($1)`;
 

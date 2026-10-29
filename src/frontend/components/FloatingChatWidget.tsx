@@ -55,7 +55,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
     activeChannelIdRef.current = activeChannelId;
   }, [activeChannelId]);
 
-  const currentUserName = user?.name || (user as any)?.full_name || "Nhân viên TBRs";
+  const currentUserName = user?.name || (user as any)?.full_name || "Nhân viên ABT";
   const currentUserKey = String((user as any)?.username || currentUserName).trim().toLowerCase();
   const currentUserRole = user?.role || "Thành viên";
   const currentUserDept = (user as any)?.department || "Kinh Doanh";
@@ -427,7 +427,7 @@ export const FloatingChatWidget: React.FC<FloatingChatWidgetProps> = ({ activeTa
               </div>
               <div className="overflow-hidden">
                 <div className="flex items-center gap-1 font-bold text-xs truncate">
-                  <span>{activeChannel ? getChannelDisplayName(activeChannel) : "Chat TBRs"}</span>
+                  <span>{activeChannel ? getChannelDisplayName(activeChannel) : "Chat ABT"}</span>
                 </div>
                 <span className="text-[10px] text-white/80 block truncate">
                   {activeChannel?.department || "Trò chuyện nhanh nội bộ"}

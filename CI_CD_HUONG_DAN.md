@@ -24,7 +24,7 @@ Truy cập vào trang GitHub Repository của bạn:
 | `SERVER_USER` | **Có** | Tài khoản đăng nhập máy chủ (Ví dụ: `root` hoặc `ubuntu`) |
 | `SERVER_SSH_KEY` | **Có** | Khóa SSH Private Key (`id_rsa` hoặc `id_ed25519`) của máy tính/server để truy cập không cần mật khẩu. |
 | `SERVER_PORT` | Không | Cổng SSH (Mặc định là `22`) |
-| `SERVER_PROJECT_PATH` | Không | Đường dẫn thư mục dự án trên máy chủ (Mặc định: `/var/www/tbr-portal` đối với TBR, hoặc `/var/www/via-portal` đối với VIA) |
+| `SERVER_PROJECT_PATH` | Không | Đường dẫn thư mục dự án trên máy chủ (Mặc định: `/var/www/abt-portal` đối với ABT, hoặc `/var/www/via-portal` đối với VIA) |
 
 ---
 
@@ -34,12 +34,12 @@ Trước khi kích hoạt CI/CD lần đầu, trên máy chủ VPS anh chỉ c�
 
 ```bash
 # 1. Tạo thư mục chứa dự án
-sudo mkdir -p /var/www/tbr-portal
-sudo chown -R $USER:$USER /var/www/tbr-portal
+sudo mkdir -p /var/www/abt-portal
+sudo chown -R $USER:$USER /var/www/abt-portal
 
 # 2. Clone mã nguồn về lần đầu
-git clone https://github.com/ndkhanh6886-blip/TBR-portal.git /var/www/tbr-portal
-cd /var/www/tbr-portal
+git clone https://github.com/ndkhanh6886-blip/ABT-portal.git /var/www/abt-portal
+cd /var/www/abt-portal
 
 # 3. Tạo file cấu hình môi trường bảo mật trên server
 cp .env.production.example .env.local

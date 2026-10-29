@@ -71,13 +71,13 @@ export const BarcodePrintModal: React.FC<BarcodePrintModalProps> = ({
 
     // 1. Generate 2D QR Code data payload
     const qrPayload = JSON.stringify({
-      tbr_id: "TBR-IVD-VN",
+      tbr_id: "ABT-IVD-VN",
       sku: item.product_code,
       lot: item.batch_lot,
       exp: item.expiry_date,
       storage: item.storage_condition || "-20°C",
       serial: item.serial_number || `SN-${item.batch_lot}-001`,
-      url: `https://portal.tbr.vn/verify?sku=${encodeURIComponent(item.product_code)}&lot=${encodeURIComponent(item.batch_lot)}`
+      url: `https://portal.abtvn.com/verify?sku=${encodeURIComponent(item.product_code)}&lot=${encodeURIComponent(item.batch_lot)}`
     });
 
     QRCode.toDataURL(qrPayload, {
@@ -175,7 +175,7 @@ export const BarcodePrintModal: React.FC<BarcodePrintModalProps> = ({
                 </span>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Thiết kế tem nhãn chuyên dụng cho sinh phẩm, kit chẩn đoán IVD và thiết bị TBRs
+                Thiết kế tem nhãn chuyên dụng cho sinh phẩm, kit chẩn đoán IVD và thiết bị ABT
               </p>
             </div>
           </div>
@@ -324,7 +324,7 @@ export const BarcodePrintModal: React.FC<BarcodePrintModalProps> = ({
                       onChange={(e) => setIncludeCompany(e.target.checked)}
                       className="rounded text-indigo-600 focus:ring-indigo-500"
                     />
-                    <span className="text-slate-700 dark:text-slate-300">Tiêu đề TBRs</span>
+                    <span className="text-slate-700 dark:text-slate-300">Tiêu đề ABT</span>
                   </label>
                   <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
                     <input
@@ -361,7 +361,7 @@ export const BarcodePrintModal: React.FC<BarcodePrintModalProps> = ({
                   : "w-[340px] min-h-[220px] p-3.5"
               }`}
             >
-              {/* Header Công ty TNHH Khoa học TBR */}
+              {/* Header Công ty TNHH Giải pháp Y sinh ABT */}
               {includeCompany && (
                 <div className={`border-b border-slate-900 flex items-center justify-between ${labelSize === "35x22" ? "pb-0.5 mb-1" : "pb-1 mb-2 border-b-2"}`}>
                   <div className="flex items-center gap-1.5">
@@ -369,7 +369,7 @@ export const BarcodePrintModal: React.FC<BarcodePrintModalProps> = ({
                       {companyConfig.companyName?.slice(0, 1)?.toUpperCase() || "T"}
                     </div>
                     <span className={`font-black tracking-tight uppercase ${labelSize === "35x22" ? "text-[8px]" : "text-[10px]"}`}>
-                      {companyConfig.companyName || "Công ty TNHH Khoa học TBR"}
+                      {companyConfig.companyName || "Công ty TNHH Giải pháp Y sinh ABT"}
                     </span>
                   </div>
                   <span className={`font-mono font-bold text-slate-500 ${labelSize === "35x22" ? "text-[7px]" : "text-[8px]"}`}>IVD STANDARD</span>

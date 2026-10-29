@@ -80,17 +80,17 @@ export async function exportCustomerQuotationToExcel({
     const repFullName = quote.salesRepName || repObj?.full_name || "Nhân viên kinh doanh";
     const cleanRepName = stripVietnameseHonorifics(repFullName);
     const repPhone = quote.salesRepPhone || salesPersonnelContacts[quote.salesRepId]?.phone || companyConfig.phone || "0987 875 934";
-    const repEmail = quote.salesRepEmail || salesPersonnelContacts[quote.salesRepId]?.email || repObj?.email || companyConfig.email || "sales@tbrscientific.com";
+    const repEmail = quote.salesRepEmail || salesPersonnelContacts[quote.salesRepId]?.email || repObj?.email || companyConfig.email || "sales@abtvn.com";
 
-    const compName = companyConfig.companyName || "Công ty TNHH Khoa học TBR";
-    const compAddress = companyConfig.companyAddress || "Xưởng 5.04, Nhà xưởng cao tầng, Lô L2, đường Long Hậu - Hiệp Phước, KCN Long Hậu, Xã Cần Giuộc, Tỉnh Tây Ninh, Việt Nam";
-    const compPhone = companyConfig.companyPhone || "028.667.03268 - 0343.797.727";
-    const compEmail = companyConfig.companyEmail || "sales01@tbrscientific.com";
-    const compTaxCode = companyConfig.companyTaxCode || "1102031182";
-    const compWebsite = companyConfig.companyWebsite || "www.tbrscientific.com";
+    const compName = companyConfig.companyName || "Công ty TNHH Giải pháp Y sinh ABT";
+    const compAddress = companyConfig.companyAddress || "Xưởng 6.07 và 5.02, Lô L2, Đường Long Hậu-Hiệp Phước, KCN Long Hậu, Xã Cần Giuộc, Tỉnh Tây Ninh, Việt Nam";
+    const compPhone = companyConfig.companyPhone || "028 2216 0885";
+    const compEmail = companyConfig.companyEmail || "sales@abtvn.com";
+    const compTaxCode = companyConfig.companyTaxCode || "0315562387";
+    const compWebsite = companyConfig.companyWebsite || "www.abtvn.com";
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "TBR Portal Enterprise";
+    workbook.creator = "ABT Portal Enterprise";
     workbook.lastModifiedBy = cleanRepName;
     workbook.created = new Date();
     workbook.modified = new Date();
@@ -248,7 +248,7 @@ export async function exportCustomerQuotationToExcel({
     let hasLogoImage = false;
     if (typeof window !== "undefined") {
         try {
-            const logoUrl = companyConfig.companyLogo || "/logo-tbrs.png";
+            const logoUrl = companyConfig.companyLogo || "/logo-abt.png";
             const resp = await fetch(logoUrl);
             if (resp.ok) {
                 const arrBuf = await resp.arrayBuffer();

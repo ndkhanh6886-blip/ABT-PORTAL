@@ -341,7 +341,7 @@ export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]>
         { name: "Kiểm tra bộ chứng từ xuất nhập khẩu (Invoice, Packing List, CO, CQ, BL)", estimatedDays: 2 },
         { name: "Đăng ký kiểm tra chất lượng nhà nước / Giấy phép nhập khẩu BYT", estimatedDays: 3 },
         { name: "Truyền tờ khai hải quan điện tử & Phối hợp thông quan tại cửa khẩu", estimatedDays: 2 },
-        { name: "Điều xe lạnh chuyên dụng vận chuyển hàng về kho TBR an toàn", estimatedDays: 1 }
+        { name: "Điều xe lạnh chuyên dụng vận chuyển hàng về kho ABT an toàn", estimatedDays: 1 }
       ]
     },
     {
@@ -416,7 +416,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     sourceDept: "Kinh Doanh",
     targetDept: "Application",
     icon: "FlaskConical",
-    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab TBR hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
+    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab ABT hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
     sla_days: 5,
     steps: [
       { step_index: 0, title: "Tiếp nhận & Thẩm định mẫu / Thiết bị", dept: "Application", assignee_name: "", sla_hours: 24, deliverables: "Xác nhận loại mẫu sinh học, hóa chất tương thích, phân công nhân sự & lịch Demo" },
@@ -451,7 +451,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     steps: [
       { step_index: 0, title: "Tiếp nhận đề xuất PR & Khảo sát nhà cung cấp", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
       { step_index: 1, title: "Trình duyệt ban giám đốc & Phát hành đơn PO", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Đơn đặt hàng PO có chữ ký phê duyệt" },
-      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho TBR", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
+      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho ABT", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
     ]
   },
   {
@@ -706,7 +706,7 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
                         )}
                       </div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        {p.position || "Nhân sự TBR"} • {p.department || "TBR"}
+                        {p.position || "Nhân sự ABT"} • {p.department || "ABT"}
                       </div>
                     </div>
                     {isSelected && (
@@ -1373,7 +1373,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const userRole = (user?.role || "").toLowerCase();
   const rawUserDept = (user as any)?.department || "Kinh Doanh";
   const userDept = normalizeWorkspaceDept(rawUserDept) || "Kinh Doanh";
-  const currentStaffName = user?.name || (user as any)?.full_name || "Cán bộ TBR";
+  const currentStaffName = user?.name || (user as any)?.full_name || "Cán bộ ABT";
 
   const isDirector = useMemo(() => {
     return userRole === "admin" || userRole.includes("director") || userRole.includes("giám đốc") || rawUserDept.toLowerCase().includes("giám đốc");
@@ -3116,7 +3116,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     // Department Breakdown Scorecard (4 core depts + Khối Hành Chính / Khác nếu có task để tổng số việc luôn khớp 100% với 26/26 việc)
-    // Các phòng ban có công việc hoặc nhân sự (trong 10 phòng ban của TBRs); phần còn lại gộp vào "Khối Hành Chính & Khác"
+    // Các phòng ban có công việc hoặc nhân sự (trong 10 phòng ban của ABT); phần còn lại gộp vào "Khối Hành Chính & Khác"
     const coreDepts = WORKSPACE_TASK_DEPARTMENTS.map(d => d.id).filter(id =>
       scopeTasks.some(t => isSameWorkspaceDept(t.department, id)) || scopePersonnel.some(p => isSameWorkspaceDept(p.department, id))
     );
@@ -6952,7 +6952,7 @@ ${wf.description || ""}`}
 
                           <div className="flex items-center gap-x-4 gap-y-1.5 text-xs text-slate-600 dark:text-slate-400 flex-wrap">
                             <span className="inline-flex items-center gap-1">
-                              <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ TBR"}
+                              <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ ABT"}
                             </span>
                             {wf.product_info && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 font-medium">
@@ -11102,7 +11102,7 @@ ${wf.description || ""}`}
                               .filter((p: any) => p.full_name && !stepAssignees.includes(p.full_name))
                               .map((p: any) => (
                                 <option key={p.id || p.employee_code || p.full_name} value={p.full_name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                                  + {p.full_name} ({p.department || "TBR"})
+                                  + {p.full_name} ({p.department || "ABT"})
                                 </option>
                               ))}
                           </select>
@@ -11545,7 +11545,7 @@ ${wf.description || ""}`}
                               .filter((p: any) => p.full_name && !stAssignees.includes(p.full_name))
                               .map((p: any) => (
                                 <option key={p.id || p.employee_code || p.full_name} value={p.full_name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                                  + {p.full_name} ({p.department || "TBR"})
+                                  + {p.full_name} ({p.department || "ABT"})
                                 </option>
                               ))}
                           </select>
@@ -12084,7 +12084,7 @@ ${wf.description || ""}`}
                 {selectedWorkflowForRecord.title}
               </h3>
               <div className="text-slate-500 text-[11px] mt-1 flex flex-wrap gap-3">
-                <span>Khách hàng: <strong>{selectedWorkflowForRecord.customer_name || "Nội bộ TBR"}</strong></span>
+                <span>Khách hàng: <strong>{selectedWorkflowForRecord.customer_name || "Nội bộ ABT"}</strong></span>
                 {selectedWorkflowForRecord.product_info && <span>Thiết bị / SP: <strong>{selectedWorkflowForRecord.product_info}</strong></span>}
                 <span>Người yêu cầu: <strong>{selectedWorkflowForRecord.requester_name}</strong></span>
               </div>
@@ -14479,7 +14479,7 @@ ${wf.description || ""}`}
                         className="flex items-center justify-between px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-slate-800 text-[11px]"
                       >
                         <span className="font-bold text-slate-800 dark:text-slate-200">
-                          ✓ {ack.name} <span className="text-slate-400 font-normal">({ack.dept || "TBR"})</span>
+                          ✓ {ack.name} <span className="text-slate-400 font-normal">({ack.dept || "ABT"})</span>
                         </span>
                         <span className="font-mono text-[10px] text-slate-400">{ack.time}</span>
                       </div>
@@ -14666,7 +14666,7 @@ ${wf.description || ""}`}
                     <FileText className="w-12 h-12 text-indigo-400 mx-auto" />
                     <div className="font-bold text-white text-sm">{activeName}</div>
                     <p className="text-xs text-slate-400">
-                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ TBR Portal.
+                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ ABT Portal.
                     </p>
                     <a
                       href={activeUrl}

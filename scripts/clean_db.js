@@ -5,7 +5,7 @@ const pool = new Pool({
   port: 5432,
   user: 'postgres',
   password: process.env.PGPASSWORD,
-  database: 'tbrs_portal'
+  database: 'abt_portal'
 });
 
 async function main() {

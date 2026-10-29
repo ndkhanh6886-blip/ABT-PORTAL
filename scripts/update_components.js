@@ -4,7 +4,7 @@ const pool = new Pool({
   port: 5432,
   user: 'postgres',
   password: process.env.PGPASSWORD,
-  database: 'tbrs_portal'
+  database: 'abt_portal'
 });
 
 async function run() {
@@ -21,8 +21,8 @@ async function run() {
         const components = matchedComps.map((c, idx) => {
           const lotSuffix = idx === 0 ? '-C1' : '-C2';
           let shelf = 'Kho Thường (Kệ K-01)';
-          if (c.storage_condition && c.storage_condition.includes('2-8')) shelf = 'Tủ Mát TBR (Kệ TM-02)';
-          else if (c.storage_condition && c.storage_condition.includes('-20')) shelf = 'Tủ Lạnh Âm TBR (Ngăn F-01)';
+          if (c.storage_condition && c.storage_condition.includes('2-8')) shelf = 'Tủ Mát ABT (Kệ TM-02)';
+          else if (c.storage_condition && c.storage_condition.includes('-20')) shelf = 'Tủ Lạnh Âm ABT (Ngăn F-01)';
 
           return {
             component_code: c.component_code,

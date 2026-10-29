@@ -259,8 +259,8 @@ export async function GET(req: NextRequest) {
                 lot_number: itLot || lot || "LOT-TIÊU-CHUẨN",
                 quantity: Number(it.quantity) || 1,
                 unit_price: Number(it.unitPrice || it.unit_price) || 0,
-                shipping_method: ord.shipping_method || "Xe lạnh chuyên dụng TBR",
-                tracking_code: ord.tracking_code || "TBR-EXP-01"
+                shipping_method: ord.shipping_method || "Xe lạnh chuyên dụng ABT",
+                tracking_code: ord.tracking_code || "ABT-EXP-01"
               });
             }
           });
@@ -453,7 +453,7 @@ export async function POST(req: NextRequest) {
             "INBOUND",
             reference_code || vat_invoice_no || "N/A",
             date || todayVN(),
-            performed_by || "Thủ kho TBR",
+            performed_by || "Thủ kho ABT",
             warehouse_name || "Kho Trung Tâm",
             JSON.stringify(items || []),
             notes || (supplier_name ? `Nhà cung cấp: ${supplier_name}` : "")
@@ -477,7 +477,7 @@ export async function POST(req: NextRequest) {
             specification: item.specification || "",
             standard_price: Number(item.standard_price) || 0, // ĐỂ TRỐNG GIÁ BÁN (0) NẾU CHƯA THIẾT LẬP ĐỂ QUẢN LÝ ĐỊNH GIÁ
             cost_price: Number(item.cost_price) || Number(item.unit_price) || 0,
-            manufacturer: item.manufacturer || item.brand || item.supplier_name || "TBR Phân Phối",
+            manufacturer: item.manufacturer || item.brand || item.supplier_name || "ABT Phân Phối",
             origin: item.origin || "Nhập khẩu / Chính hãng",
             min_stock_level: item.min_stock_level || 10,
             storage_condition: item.storage_condition || item.storageCondition || null
@@ -488,7 +488,7 @@ export async function POST(req: NextRequest) {
             code: pCode,
             name: item.product_name || item.name || pCode,
             category: resolvedItemCat,
-            brand: item.manufacturer || item.brand || supplier_name || "TBR Phân Phối",
+            brand: item.manufacturer || item.brand || supplier_name || "ABT Phân Phối",
             origin: item.origin || "Chính hãng",
             unit: item.unit || "Hộp",
             specification: item.specification || "",
@@ -554,7 +554,7 @@ export async function POST(req: NextRequest) {
         await c.query(
           `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [code, "OUTBOUND", reference_code, date || todayVN(), performed_by || "Thủ kho TBR", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
+          [code, "OUTBOUND", reference_code, date || todayVN(), performed_by || "Thủ kho ABT", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
         );
       });
 
@@ -692,7 +692,7 @@ export async function POST(req: NextRequest) {
       const { reservation_id, reason, actor } = body;
       // H5: CAS on status = 'ACTIVE'; quantity comes from the DB, never from the client. Double-click = no-op.
       const result = await withTransaction((c) =>
-        releaseReservation(c, Number(reservation_id), actor || "Thủ kho TBR", reason || "Giải phóng lại cho kho")
+        releaseReservation(c, Number(reservation_id), actor || "Thủ kho ABT", reason || "Giải phóng lại cho kho")
       );
 
       if (result.released) {
@@ -1021,7 +1021,7 @@ export async function POST(req: NextRequest) {
 
           await query(
             `INSERT INTO products (code, name, manufacturer, category, specification, unit, cost_price, standard_price, min_stock_level, storage_condition)
-             VALUES ($1::text, COALESCE($2::text, $1::text), COALESCE($3, 'TBR'), COALESCE($4, 'Vật tư y tế'), $5, COALESCE($6, 'Hộp'),
+             VALUES ($1::text, COALESCE($2::text, $1::text), COALESCE($3, 'ABT'), COALESCE($4, 'Vật tư y tế'), $5, COALESCE($6, 'Hộp'),
                      COALESCE($7, 0), COALESCE($8, 0), COALESCE($9, 10), $10::text)
              ON CONFLICT (code) DO UPDATE
              SET name = COALESCE($2, products.name),
@@ -1049,7 +1049,7 @@ export async function POST(req: NextRequest) {
             code: pCode,
             name: pName || pCode,
             category: cat || "Hàng Thương Mại",
-            brand: brand || supplierCol || "TBR Phân Phối",
+            brand: brand || supplierCol || "ABT Phân Phối",
             supplier: supplierCol || brand || "",
             origin: "Chính hãng",
             unit: unit || "Hộp",
@@ -1157,7 +1157,7 @@ export async function POST(req: NextRequest) {
           const vatInvoice = getVal(["Số Hóa Đơn VAT / Tờ khai HQ", "Số Hóa Đơn VAT / Tờ Khai Hải Quan", "Số Hóa Đơn VAT", "vat_invoice_no"]);
           const supplier = getVal(["Nhà Cung Cấp", "Nhà cung cấp / Nguồn hàng", "Nhãn hiệu", "Hãng sản xuất", "supplier_name"], catalogProd?.manufacturer || "");
           const warehouse = getVal(["Kho Tiếp Nhận", "Kho lưu trữ", "Khu vực kho"], "Kho Trung Tâm");
-          const performedBy = getVal(["Thủ Kho / Người Tiếp Nhận", "Người tiếp nhận"], "Thủ kho TBR");
+          const performedBy = getVal(["Thủ Kho / Người Tiếp Nhận", "Người tiếp nhận"], "Thủ kho ABT");
           const shippingUnit = getVal(["Đơn vị vận chuyển / Giao hàng", "Đơn vị vận chuyển"]);
           const notes = getVal(["Ghi chú", "Ghi chú chứng từ / Chất lượng", "notes"]);
 
@@ -1261,7 +1261,7 @@ export async function POST(req: NextRequest) {
                 specification: p.spec,
                 standard_price: Number(p.r["Giá niêm yết"]) || Number(p.r["Giá bán"]) || 0, // Để trống (0) nếu chưa có giá
                 cost_price: p.unitCost,
-                manufacturer: p.supplier || "TBR Phân Phối",
+                manufacturer: p.supplier || "ABT Phân Phối",
                 origin: "Chính hãng / Tiêu chuẩn ISO",
                 min_stock_level: 10,
                 storage_condition: p.storageCondition
@@ -1272,7 +1272,7 @@ export async function POST(req: NextRequest) {
                 code: p.pCode,
                 name: p.pName,
                 category: resolvedInboundCat,
-                brand: p.supplier || "TBR Phân Phối",
+                brand: p.supplier || "ABT Phân Phối",
                 origin: "Chính hãng",
                 unit: p.unit || "Hộp",
                 specification: p.spec || "",
@@ -1335,7 +1335,7 @@ export async function POST(req: NextRequest) {
           const pName = getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "product_name"], pCode);
           const qty = Number(getVal(["Số lượng đặt mua (*)", "Số lượng", "quantity"])) || 1;
           const uPrice = Number(getVal(["Đơn giá mua (VNĐ)", "Đơn giá", "unit_price"])) || 0;
-          const note = getVal(["Ghi chú giao hàng", "Ghi chú", "notes"], "Nhập từ file Excel PO TBR");
+          const note = getVal(["Ghi chú giao hàng", "Ghi chú", "notes"], "Nhập từ file Excel PO ABT");
 
           const items = [{ product_code: pCode, product_name: pName, quantity: qty, unit_price: uPrice, total: qty * uPrice }];
           const totalAmt = qty * uPrice;
@@ -1418,10 +1418,10 @@ export async function POST(req: NextRequest) {
             return "";
           };
 
-          const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-TBRs");
-          const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên TBR";
+          const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-ABT");
+          const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên ABT";
           let username = getVal(["Tên đăng nhập (*)", "Tên đăng nhập", "username", "TenDangNhap"]);
-          const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@tbr.vn` : "");
+          const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@abtvn.com` : "");
           if (!username) {
             const emailPart = email.split("@")[0];
             username = emailPart || empCode.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1513,7 +1513,7 @@ export async function POST(req: NextRequest) {
 
         await logAudit("IMPORT_EXCEL", "USERS_PERSONNEL", `Nạp thành công ${importedCount} tài khoản & hồ sơ nhân sự liên kết từ Excel`);
       } else {
-        return NextResponse.json({ error: "Không nhận diện được định dạng file Excel phù hợp với các mẫu chuẩn TBR." }, { status: 400 });
+        return NextResponse.json({ error: "Không nhận diện được định dạng file Excel phù hợp với các mẫu chuẩn ABT." }, { status: 400 });
       }
 
       return NextResponse.json({

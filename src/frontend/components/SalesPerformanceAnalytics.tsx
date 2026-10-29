@@ -182,7 +182,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
             order_code: ord.order_code,
             date: ord.deliveredAt ? String(ord.deliveredAt).slice(0, 10) : (ord.deliveryDate || todayVN()),
             customer_code: ord.customer_code || ord.customerId || "KH-CUSTOM",
-            customer_name: ord.customer_name || ord.customerName || "Khách hàng TBRs",
+            customer_name: ord.customer_name || ord.customerName || "Khách hàng ABT",
             customer_group: ord.customer_group || ord.customerGroup || "Khách hàng doanh nghiệp",
             sales_rep_id: ord.sales_rep_id || ord.salesRepId || "UNASSIGNED",
             sales_rep_name: ord.sales_rep_name || ord.salesRepName || "Chưa gán NVKD",
@@ -832,14 +832,14 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
 
   // Distinct palette colors for donut chart & items
   const PALETTE = [
-    "#6366f1", // Indigo
+    "#0ea5e9", // Indigo
     "#10b981", // Emerald
     "#f59e0b", // Amber
     "#0ea5e9", // Sky
     "#a855f7", // Purple
     "#f43f5e", // Rose
     "#14b8a6", // Teal
-    "#2a63c2"  // Orange
+    "#0ea5e9"  // Orange
   ];
 
   return (
@@ -1876,7 +1876,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                 className="w-6 sm:w-8 rounded-t-lg transition-all duration-500 shadow-md group-hover:brightness-125 cursor-pointer relative"
                                 style={{
                                   height: `${height}px`,
-                                  background: `linear-gradient(to top, #4338ca, ${color})`
+                                  background: `linear-gradient(to top, #0369a1, ${color})`
                                 }}
                               />
                             </div>
@@ -1940,7 +1940,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                 className="h-full rounded-full transition-all duration-700"
                                 style={{
                                   width: `${Math.max(4, pct)}%`,
-                                  background: `linear-gradient(to right, #4338ca, ${color})`
+                                  background: `linear-gradient(to right, #0369a1, ${color})`
                                 }}
                               />
                             </div>
@@ -2067,7 +2067,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                               <line x1="0" y1={height / 2} x2={width} y2={height / 2} stroke="#1e293b" strokeDasharray="4" strokeWidth="1" />
 
                               {/* Gross Revenue Line (Indigo) */}
-                              <path d={grossPath} fill="none" stroke="#6366f1" strokeWidth="3" />
+                              <path d={grossPath} fill="none" stroke="#0ea5e9" strokeWidth="3" />
                               {/* Collected Line (Emerald) */}
                               <path d={collectedPath} fill="none" stroke="#10b981" strokeWidth="2.5" strokeDasharray="3 3" />
 
@@ -2076,7 +2076,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                 const { x, y } = getCoords(p.revenue_gross, idx);
                                 return (
                                   <g key={idx}>
-                                    <circle cx={x} cy={y} r="5" fill="#6366f1" stroke="#0f172a" strokeWidth="2" className="cursor-pointer" />
+                                    <circle cx={x} cy={y} r="5" fill="#0ea5e9" stroke="#0f172a" strokeWidth="2" className="cursor-pointer" />
                                     <text x={x} y={y - 10} fill="#94a3b8" fontSize="9" textAnchor="middle" fontFamily="monospace">
                                       {Math.round(p.revenue_gross / 1000000)}Tr
                                     </text>

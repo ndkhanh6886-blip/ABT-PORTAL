@@ -138,7 +138,7 @@ async function runComprehensiveAudit() {
   results.push({ module: 'Cài Đặt & Quản Trị (4 Sub-tabs)', status: 'PASS', tabsCount: 4 });
 
   console.log('\n========================================================================');
-  console.log('TỔNG HỢP KIỂM ĐỊNH TOÀN DIỆN HỆ THỐNG TBR PORTAL:');
+  console.log('TỔNG HỢP KIỂM ĐỊNH TOÀN DIỆN HỆ THỐNG ABT PORTAL:');
   console.log('========================================================================');
   let totalTabs = 0;
   results.forEach((r, idx) => {

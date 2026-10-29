@@ -6,8 +6,8 @@ import { NotificationProvider } from "@/frontend/contexts/NotificationContext";
 import ErrorBoundary from "@/frontend/components/ErrorBoundary";
 
 export const metadata: Metadata = {
-  title: "TBRs Portal - Công ty TNHH Khoa học TBR",
-  description: "Hệ thống quản trị kinh doanh thuần túy, kho hàng, application, cung ứng và cấu hình nhật ký cho Công ty TNHH Khoa học TBR trên cơ sở dữ liệu PostgreSQL",
+  title: "ABT Portal - Công ty TNHH Giải pháp Y sinh ABT",
+  description: "Hệ thống quản trị kinh doanh thuần túy, kho hàng, application, cung ứng và cấu hình nhật ký cho Công ty TNHH Giải pháp Y sinh ABT trên cơ sở dữ liệu PostgreSQL",
   icons: {
     icon: "/favicon.ico",
   },

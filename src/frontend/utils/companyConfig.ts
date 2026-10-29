@@ -15,15 +15,15 @@ export interface CompanyConfig {
 export const COMPANY_CONFIG_UPDATED_EVENT = "sales_company_config_updated";
 
 export const getDefaultCompanyConfig = (): CompanyConfig => {
-  // TBRs (TBRs Scientific): thông tin mặc định, Quản trị viên có thể sửa trong cấu hình công ty
+  // ABT (Công ty TNHH Giải pháp Y sinh ABT): thông tin mặc định, Quản trị viên có thể sửa trong cấu hình công ty
   return {
-    companyName: "Công ty TNHH Khoa học TBR",
-    companyAddress: "Xưởng 5.04, Nhà xưởng cao tầng, Lô L2, đường Long Hậu - Hiệp Phước, KCN Long Hậu, Xã Cần Giuộc, Tỉnh Tây Ninh, Việt Nam",
-    companyPhone: "028.667.03268 - 0343.797.727",
-    companyEmail: "sales01@tbrscientific.com",
-    companyTaxCode: "1102031182",
-    companyRepresentative: "",
-    companyRepresentativeRole: "",
+    companyName: "Công ty TNHH Giải pháp Y sinh ABT",
+    companyAddress: "Xưởng 6.07 và 5.02, Lô L2, Đường Long Hậu-Hiệp Phước, KCN Long Hậu, Xã Cần Giuộc, Tỉnh Tây Ninh, Việt Nam",
+    companyPhone: "028 2216 0885",
+    companyEmail: "sales@abtvn.com",
+    companyTaxCode: "0315562387",
+    companyRepresentative: "NGUYỄN VĂN TÙNG",
+    companyRepresentativeRole: "Giám đốc",
   };
 };
 

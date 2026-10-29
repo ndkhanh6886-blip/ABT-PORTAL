@@ -1,7 +1,7 @@
 # CẨM NANG HƯỚNG DẪN SỬ DỤNG HỆ THỐNG ZALO ĐIỀU HÀNH
-## (CÔNG TY CỔ PHẦN CÔNG NGHỆ TBR - ZALO OA BOT)
+## (CÔNG TY CỔ PHẦN CÔNG NGHỆ ABT - ZALO OA BOT)
 
-> **Đơn vị phát hành**: CÔNG TY CỔ PHẦN CÔNG NGHỆ TBR  
+> **Đơn vị phát hành**: CÔNG TY CỔ PHẦN CÔNG NGHỆ ABT  
 > **Đối tượng áp dụng**: Ban Giám Đốc, Đội ngũ Kinh Doanh (Sales), Quản Lý Kho & Quản Trị Viên Hệ Thống.  
 > **Phiên bản**: Zalo OpenAPI v3.0 • Zalo Cloud Tier Package (Gói Tăng Trưởng) • Cập nhật tính năng Quản lý Khách hàng, Báo giá & Soạn Hợp Đồng tự động
 
@@ -18,19 +18,19 @@
 8. [Nghiệp vụ 6: Giữ chỗ hàng hóa khẩn cấp (48 Giờ)](#8-nghiệp-vụ-6-giữ-chỗ-hàng-hóa-khẩn-cấp-48-giờ)
 9. [Nghiệp vụ 7: Báo cáo ngày (Daily Log) & Tài liệu CO/CQ](#9-nghiệp-vụ-7-báo-cáo-ngày-daily-log--tài-liệu-cocq)
 10. [Bảng tổng hợp nhanh các câu lệnh](#10-bảng-tổng-hợp-nhanh-các-câu-lệnh)
-11. [Hướng dẫn dành cho Quản trị viên trên TBR Portal](#11-hướng-dẫn-dành-cho-quản-trị-viên-trên-tbr-portal)
+11. [Hướng dẫn dành cho Quản trị viên trên ABT Portal](#11-hướng-dẫn-dành-cho-quản-trị-viên-trên-tbr-portal)
 
 ---
 
 ## 1. KHÁI QUÁT MÔ HÌNH HOẠT ĐỘNG
 
-Hệ thống Zalo Điều Hành kết nối trực tiếp tài khoản **Zalo Official Account (OA)** của Công ty cổ phần Công nghệ TBR với cơ sở dữ liệu **TBR Portal**. Nhân sự và Ban Giám Đốc chỉ cần thao tác bằng tin nhắn Zalo trên điện thoại di động:
+Hệ thống Zalo Điều Hành kết nối trực tiếp tài khoản **Zalo Official Account (OA)** của Công ty cổ phần Công nghệ ABT với cơ sở dữ liệu **ABT Portal**. Nhân sự và Ban Giám Đốc chỉ cần thao tác bằng tin nhắn Zalo trên điện thoại di động:
 
 ```mermaid
 flowchart LR
-    A["Nhân sự / Khách hàng\n(App Zalo Di Động)"] <--> B["Zalo OA Công ty cổ phần Công nghệ TBR\n(Zalo Cloud Open API)"]
-    B <--> C["TBR Gateway\n(Bộ xử lý NLP & Bảo mật)"]
-    C <--> D[("Cơ sở dữ liệu TBR\nKhách Hàng - Báo Giá - Hợp Đồng - Kho")]
+    A["Nhân sự / Khách hàng\n(App Zalo Di Động)"] <--> B["Zalo OA Công ty cổ phần Công nghệ ABT\n(Zalo Cloud Open API)"]
+    B <--> C["ABT Gateway\n(Bộ xử lý NLP & Bảo mật)"]
+    C <--> D[("Cơ sở dữ liệu ABT\nKhách Hàng - Báo Giá - Hợp Đồng - Kho")]
 ```
 
 * **Sales (Kinh doanh)**:
@@ -50,12 +50,12 @@ flowchart LR
 > Zalo bảo mật số điện thoại của người dùng, vì vậy hệ thống nhận diện nhân sự qua **Zalo User ID**. Mỗi nhân viên chỉ cần kích hoạt **01 lần duy nhất**.
 
 ### Cách 1: Nhân viên tự kích hoạt (Nhanh nhất)
-1. Mở ứng dụng Zalo cá nhân, tìm và bấm **Quan tâm** trang Zalo OA Công ty cổ phần Công nghệ TBR.
-2. Nhắn tin chứa **Số điện thoại** (ví dụ: `0987875934`) hoặc **Mã nhân viên** (ví dụ: `NV-TBR-018`).
+1. Mở ứng dụng Zalo cá nhân, tìm và bấm **Quan tâm** trang Zalo OA Công ty cổ phần Công nghệ ABT.
+2. Nhắn tin chứa **Số điện thoại** (ví dụ: `0987875934`) hoặc **Mã nhân viên** (ví dụ: `NV-ABT-018`).
 3. Hệ thống tự động xác thực và kích hoạt quyền điều hành ngay lập tức.
 
-### Cách 2: Quản trị viên gán trên TBR Portal
-1. Truy cập TBR Portal ➔ Vào mục **Zalo Điều Hành** ➔ Chọn tab **Lịch sử Tin nhắn**.
+### Cách 2: Quản trị viên gán trên ABT Portal
+1. Truy cập ABT Portal ➔ Vào mục **Zalo Điều Hành** ➔ Chọn tab **Lịch sử Tin nhắn**.
 2. Tìm dòng tin nhắn của nhân sự (nhãn vàng `CHƯA LIÊN KẾT`).
 3. Bấm **`+ Gán Zalo ID`** ➔ Chọn nhân sự trong danh bạ ➔ Bấm **Lưu**.
 
@@ -63,7 +63,7 @@ flowchart LR
 
 ## 3. NGHIỆP VỤ 1: TRA CỨU TỒN KHO & HẠN DÙNG (FEFO)
 
-Áp dụng chuẩn **FEFO (First Expired, First Out)** — tự động ưu tiên hiển thị các lô hàng có hạn dùng gần nhất trong kho TBR.
+Áp dụng chuẩn **FEFO (First Expired, First Out)** — tự động ưu tiên hiển thị các lô hàng có hạn dùng gần nhất trong kho ABT.
 
 ### Các mẫu câu lệnh hợp lệ:
 * `Tồn kho [Mã SKU]` *(Ví dụ: `Tồn kho HI-612`)*
@@ -79,14 +79,14 @@ flowchart LR
 1. [HI-612] TopSENSI ® HBV Real-time PCR Kit
    • Tồn khả dụng: 130 Hộp (Đang giữ chỗ: 20)
    • Số Lô: L260901 • HSD: 15/09/2027 (FEFO)
-   • Vị trí lưu kho: Kệ A1-02 (Kho TBR Trung Tâm)
+   • Vị trí lưu kho: Kệ A1-02 (Kho ABT Trung Tâm)
 ```
 
 ---
 
 ## 4. NGHIỆP VỤ 2: TRA CỨU & THÊM MỚI KHÁCH HÀNG QUA ZALO
 
-Tính năng này giúp nhân viên kinh doanh tra cứu xem cơ sở y tế / khách hàng đã tồn tại trên phần mềm TBR hay chưa. Nếu chưa có, bot sẽ hỏi và hướng dẫn tạo mới ngay, sau đó có thể soạn báo giá trực tiếp cho khách hàng đó.
+Tính năng này giúp nhân viên kinh doanh tra cứu xem cơ sở y tế / khách hàng đã tồn tại trên phần mềm ABT hay chưa. Nếu chưa có, bot sẽ hỏi và hướng dẫn tạo mới ngay, sau đó có thể soạn báo giá trực tiếp cho khách hàng đó.
 
 ```mermaid
 flowchart TD
@@ -96,7 +96,7 @@ flowchart TD
     B -- "CHƯA CÓ" --> E["🔍 Báo không tìm thấy"]
     E --> F["❓ Hỏi có muốn nhập mới KH không?\nKèm cú pháp hướng dẫn nhập nhanh"]
     F --> G["Sales gõ: Thêm KH: [Tên], [Địa chỉ], [SĐT/MST]"]
-    G --> H["✅ Tạo mã KH-TBR-XXXX thành công"]
+    G --> H["✅ Tạo mã KH-ABT-XXXX thành công"]
     H --> D
 ```
 
@@ -143,7 +143,7 @@ Soạn: "Báo giá Bệnh Viện Hùng Vương: 2 bộ HI-612, ck 0%"
 ### D. Cú pháp nhập / tạo mới khách hàng qua Zalo
 * **Cú pháp**: `Thêm KH: [Tên khách hàng], [Địa chỉ], [SĐT hoặc MST], [Người liên hệ]`
 * **Ví dụ**: `Thêm KH: Bệnh Viện Hùng Vương, 128 Hồng Bàng Q5 TP.HCM, 02838558510, Bác sĩ Trưởng Khoa`
-* Hệ thống tự động cấp mã `KH-TBR-XXXX`, lưu vào bảng khách hàng trên TBR Portal và mở quyền báo giá ngay!
+* Hệ thống tự động cấp mã `KH-ABT-XXXX`, lưu vào bảng khách hàng trên ABT Portal và mở quyền báo giá ngay!
 
 ---
 
@@ -178,19 +178,19 @@ Khi khách hàng đã đồng ý với bảng báo giá, Sales hoặc Quản lý
 
 ```mermaid
 flowchart TD
-    A["Sales gõ: Hợp đồng BG-TBR-2610-9017"] --> B["Bot kiểm tra Báo Giá trong hệ thống TBR"]
+    A["Sales gõ: Hợp đồng BG-ABT-2610-9017"] --> B["Bot kiểm tra Báo Giá trong hệ thống ABT"]
     B --> C["📋 Bot gửi tin nhắn YÊU CẦU THÔNG TIN CƠ BẢN\n(Đại diện Bên B, Địa chỉ, MST, Giao hàng, Thanh toán)"]
     C --> D{"Sales phản hồi thông tin"}
     D -- "Cung cấp chi tiết" --> E["Gõ: HĐ BG-...: Đại diện: ..., ĐC: ..., Giao hàng: ..."]
     D -- "Xác nhận mặc định" --> F["Gõ: Tạo HĐ BG-... mặc định"]
-    E --> G["✅ Hệ thống sinh mã Hợp đồng HD-TBR-XXXX\nLưu vào Database & Cấp File Hợp Đồng PDF"]
+    E --> G["✅ Hệ thống sinh mã Hợp đồng HD-ABT-XXXX\nLưu vào Database & Cấp File Hợp Đồng PDF"]
     F --> G
     G --> H["Bot gửi lại tin nhắn tóm tắt + Link/Button xem & tải Hợp Đồng"]
 ```
 
 ### Bước 1: Yêu cầu soạn hợp đồng
 Sales gửi tin nhắn:
-`Hợp đồng [Mã Báo Giá]` *(Ví dụ: `Hợp đồng BG-TBR-2610-9017` hoặc `Soạn hợp đồng từ BG-TBR-2610-9017`)*
+`Hợp đồng [Mã Báo Giá]` *(Ví dụ: `Hợp đồng BG-ABT-2610-9017` hoặc `Soạn hợp đồng từ BG-ABT-2610-9017`)*
 
 ---
 
@@ -200,7 +200,7 @@ Bot tự động dò thông tin hồ sơ của khách hàng trong cơ sở dữ 
 ```text
 📋 YÊU CẦU THÔNG TIN CƠ BẢN ĐỂ SOẠN THẢO HỢP ĐỒNG:
 
-Hệ thống đã tìm thấy Báo giá [BG-TBR-2610-9017]
+Hệ thống đã tìm thấy Báo giá [BG-ABT-2610-9017]
 🏥 Đơn vị / Bên Mua (Bên B): Bệnh Viện Chợ Rẫy
 💰 Tổng giá trị hợp đồng: 11.340.000 VNĐ (Đã bao gồm VAT 8%)
 
@@ -213,13 +213,13 @@ Hệ thống đã tìm thấy Báo giá [BG-TBR-2610-9017]
 5. Điều kiện thanh toán (Mặc định: Chuyển khoản trong vòng 30 ngày)
 
 ✍️ CÚ PHÁP PHẢN HỒI LẠI ĐỂ TẠO FILE HỢP ĐỒNG:
-"HĐ BG-TBR-2610-9017: Đại diện: [Họ tên - Chức vụ], ĐC: [Địa chỉ], MST: [MST], Giao hàng: [Số ngày], TT: [Số ngày]"
+"HĐ BG-ABT-2610-9017: Đại diện: [Họ tên - Chức vụ], ĐC: [Địa chỉ], MST: [MST], Giao hàng: [Số ngày], TT: [Số ngày]"
 
 💡 Ví dụ mẫu:
-HĐ BG-TBR-2610-9017: Đại diện: PGS.TS Nguyễn Trường Sơn - Giám Đốc, ĐC: 201B Nguyễn Chí Thanh Q5 TP.HCM, MST: 0301441837, Giao hàng: 7 ngày, TT: 30 ngày
+HĐ BG-ABT-2610-9017: Đại diện: PGS.TS Nguyễn Trường Sơn - Giám Đốc, ĐC: 201B Nguyễn Chí Thanh Q5 TP.HCM, MST: 0301441837, Giao hàng: 7 ngày, TT: 30 ngày
 
 👉 Hoặc nếu đồng ý sử dụng toàn bộ thông tin mặc định theo hồ sơ khách hàng, bạn chỉ cần gửi:
-"Tạo HĐ BG-TBR-2610-9017 mặc định"
+"Tạo HĐ BG-ABT-2610-9017 mặc định"
 ```
 
 ---
@@ -227,17 +227,17 @@ HĐ BG-TBR-2610-9017: Đại diện: PGS.TS Nguyễn Trường Sơn - Giám Đ�
 ### Bước 3: Sales gửi lại thông tin và nhận File Hợp Đồng PDF
 
 #### Cách 1: Gửi kèm thông tin chi tiết
-`HĐ BG-TBR-2610-9017: Đại diện: PGS.TS Nguyễn Trường Sơn - Giám Đốc, ĐC: 201B Nguyễn Chí Thanh Q5 TP.HCM, MST: 0301441837, Giao hàng: 5 ngày, TT: 30 ngày`
+`HĐ BG-ABT-2610-9017: Đại diện: PGS.TS Nguyễn Trường Sơn - Giám Đốc, ĐC: 201B Nguyễn Chí Thanh Q5 TP.HCM, MST: 0301441837, Giao hàng: 5 ngày, TT: 30 ngày`
 
 #### Cách 2: Đồng ý sử dụng thông tin mặc định
-`Tạo HĐ BG-TBR-2610-9017 mặc định`
+`Tạo HĐ BG-ABT-2610-9017 mặc định`
 
 #### Mẫu Bot phản hồi xác nhận & Cấp File Hợp Đồng PDF:
 ```text
-📜 ĐÃ SOẠN THẢO HỢP ĐỒNG MUA BÁN THÀNH CÔNG! [HD-TBR-2610-9104]
-✅ Căn cứ theo Báo giá số: BG-TBR-2610-9017
+📜 ĐÃ SOẠN THẢO HỢP ĐỒNG MUA BÁN THÀNH CÔNG! [HD-ABT-2610-9104]
+✅ Căn cứ theo Báo giá số: BG-ABT-2610-9017
 
-🏢 BÊN BÁN (BÊN A): CÔNG TY CỔ PHẦN CÔNG NGHỆ TBR
+🏢 BÊN BÁN (BÊN A): CÔNG TY CỔ PHẦN CÔNG NGHỆ ABT
 🏥 BÊN MUA (BÊN B): Bệnh Viện Chợ Rẫy
 👤 Đại diện Bên B: PGS.TS Nguyễn Trường Sơn — Chức vụ: Giám Đốc
 📍 Địa chỉ giao hàng: 201B Nguyễn Chí Thanh, P.12, Q.5, TP.HCM
@@ -248,20 +248,20 @@ HĐ BG-TBR-2610-9017: Đại diện: PGS.TS Nguyễn Trường Sơn - Giám Đ�
 👨‍💼 NVKD quản lý: Bùi Lê Phương Quân
 
 📎 ĐƯỜNG LINK XEM & TẢI FILE HỢP ĐỒNG CHÍNH THỨC (PDF/IN ẤN):
-https://tbr-portal.vn/api/zalo/contract-pdf?code=HD-TBR-2610-9104
+https://portal.abtvn.com/api/zalo/contract-pdf?code=HD-ABT-2610-9104
 ```
 
 > [!TIP]
-> File Hợp Đồng được xuất chuẩn mẫu pháp lý Việt Nam (*Quốc hiệu, Tiêu ngữ, Căn cứ Luật Dân sự & Luật Thương mại, Bảng danh mục sản phẩm, Điều khoản bảo hành, giao hàng, thanh toán và chữ ký đại diện xác thực của TBR*). Sales có thể bấm trực tiếp nút **`📜 Mở File Hợp Đồng`** trên Zalo để xem hoặc in ấn / lưu PDF gửi khách hàng!
+> File Hợp Đồng được xuất chuẩn mẫu pháp lý Việt Nam (*Quốc hiệu, Tiêu ngữ, Căn cứ Luật Dân sự & Luật Thương mại, Bảng danh mục sản phẩm, Điều khoản bảo hành, giao hàng, thanh toán và chữ ký đại diện xác thực của ABT*). Sales có thể bấm trực tiếp nút **`📜 Mở File Hợp Đồng`** trên Zalo để xem hoặc in ấn / lưu PDF gửi khách hàng!
 
 ---
 
 ## 7. NGHIỆP VỤ 5: BAN GIÁM ĐỐC PHÊ DUYỆT CHIẾT KHẤU QUA ZALO
 
-Dành riêng cho tài khoản Ban Giám Đốc TBR. Khi Sales xin chiết khấu từ 10% trở lên, Ban Giám Đốc nhận được thông báo chi tiết và có thể duyệt bằng 3 cách:
+Dành riêng cho tài khoản Ban Giám Đốc ABT. Khi Sales xin chiết khấu từ 10% trở lên, Ban Giám Đốc nhận được thông báo chi tiết và có thể duyệt bằng 3 cách:
 
-1. **Nhắn tin trực tiếp**: `Duyệt [Mã Báo Giá]` *(Ví dụ: `Duyệt BG-TBR-2610-1092`)*
-2. **Bấm nút tương tác**: Bấm nút **`[✅ Duyệt BG-TBR-XXXX]`** trên Zalo.
+1. **Nhắn tin trực tiếp**: `Duyệt [Mã Báo Giá]` *(Ví dụ: `Duyệt BG-ABT-2610-1092`)*
+2. **Bấm nút tương tác**: Bấm nút **`[✅ Duyệt BG-ABT-XXXX]`** trên Zalo.
 3. **Duyệt trên Web Portal**: Vào tab **Phê duyệt chiết khấu BGĐ** và bấm **Duyệt**.
 
 ---
@@ -296,20 +296,20 @@ Dùng khi cần khóa tạm thời số lượng tồn kho để phục vụ kh�
 | Nghiệp vụ | Cú pháp ví dụ | Kết quả nhận được từ Bot |
 | :--- | :--- | :--- |
 | **Tra cứu khách hàng** | `Khách hàng BV Chợ Rẫy` hoặc `Check KH 0314892019` | Thông tin khách hàng / Hướng dẫn tạo mới nếu chưa có |
-| **Thêm mới khách hàng** | `Thêm KH: BV Hùng Vương, 128 Hồng Bàng Q5, 02838558510` | Cấp mã `KH-TBR-XXXX`, lưu DB Portal và mở quyền báo giá ngay |
+| **Thêm mới khách hàng** | `Thêm KH: BV Hùng Vương, 128 Hồng Bàng Q5, 02838558510` | Cấp mã `KH-ABT-XXXX`, lưu DB Portal và mở quyền báo giá ngay |
 | **Soạn báo giá tự động** | `Báo giá BV Chợ Rẫy: 10 HI-612, ck 5%` | Bảng tính chiết khấu + VAT + Link PDF tải về chính thức |
-| **Soạn Hợp Đồng từ Báo Giá** | `Hợp đồng BG-TBR-2610-9017` | Yêu cầu thông tin cơ bản & cấp file Hợp Đồng PDF chính thức |
-| **Tạo Hợp Đồng mặc định** | `Tạo HĐ BG-TBR-2610-9017 mặc định` | Xuất file Hợp Đồng ngay theo hồ sơ khách hàng có sẵn |
-| **BGĐ Duyệt chiết khấu** | `Duyệt BG-TBR-2610-1092` | Xác nhận duyệt & mở khóa link PDF Báo Giá chính thức |
+| **Soạn Hợp Đồng từ Báo Giá** | `Hợp đồng BG-ABT-2610-9017` | Yêu cầu thông tin cơ bản & cấp file Hợp Đồng PDF chính thức |
+| **Tạo Hợp Đồng mặc định** | `Tạo HĐ BG-ABT-2610-9017 mặc định` | Xuất file Hợp Đồng ngay theo hồ sơ khách hàng có sẵn |
+| **BGĐ Duyệt chiết khấu** | `Duyệt BG-ABT-2610-1092` | Xác nhận duyệt & mở khóa link PDF Báo Giá chính thức |
 | **Tra cứu tồn kho FEFO** | `Tồn kho HI-612` hoặc `Check kho SQH-115` | Tồn khả dụng, số lô, hạn dùng FEFO, vị trí lưu kho |
 | **Giữ chỗ kho 48h** | `Giữ chỗ 10 SQH-115 cho BV Bạch Mai` | Cấp mã `RES-XXXX`, khóa tồn kho 48h tránh xuất trùng |
-| **Nộp báo cáo Daily** | `Daily: Demo máy thành công tại Chợ Rẫy` | Đồng bộ vào mục Nhật ký điều hành TBR Portal |
+| **Nộp báo cáo Daily** | `Daily: Demo máy thành công tại Chợ Rẫy` | Đồng bộ vào mục Nhật ký điều hành ABT Portal |
 | **Tài liệu & CO/CQ** | `Tài liệu PCR` hoặc `CO CQ kit HBV` | Link tải IFU Tiếng Việt, Giấy phép Bộ Y Tế, CO/CQ |
 | **Trợ giúp & Menu lệnh** | `Menu` hoặc `Help` | Cẩm nang danh mục câu lệnh nhanh |
 
 ---
 
-## 11. HƯỚNG DẪN DÀNH CHO QUẢN TRỊ VIÊN TRÊN TBR PORTAL
+## 11. HƯỚNG DẪN DÀNH CHO QUẢN TRỊ VIÊN TRÊN ABT PORTAL
 
 Quản trị viên truy cập mục **Zalo Điều Hành (Zalo Hub)**:
 

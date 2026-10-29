@@ -184,7 +184,7 @@ export const WarehouseModule: React.FC = () => {
   const [prFormData, setPRFormData] = useState({
     requestedQty: 50,
     urgentLevel: "CAO - Cần gấp phòng ngừa đứt gãy hàng cung ứng",
-    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức TBR."
+    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức ABT."
   });
 
   const [isPushSalesModalOpen, setIsPushSalesModalOpen] = useState(false);
@@ -319,7 +319,7 @@ export const WarehouseModule: React.FC = () => {
     }
   };
 
-  // Real TBR Staff Mappings
+  // Real ABT Staff Mappings
   const salesStaff = useMemo(() => {
     const list = personnelList.filter(p => 
       p.department === "Kinh Doanh" || 
@@ -647,7 +647,7 @@ export const WarehouseModule: React.FC = () => {
       totalListVal += lVal;
 
       // 1. By Brand
-      const brand = it.manufacturer || "TBR Phân Phối";
+      const brand = it.manufacturer || "ABT Phân Phối";
       if (!byBrandMap[brand]) {
         byBrandMap[brand] = { brand, count: 0, totalQty: 0, costVal: 0, listVal: 0 };
       }
@@ -800,7 +800,7 @@ export const WarehouseModule: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          product_code: targetProd.product_code || "TBR-GENERIC",
+          product_code: targetProd.product_code || "ABT-GENERIC",
           product_name: targetProd.product_name || "Sản phẩm thu hồi",
           lot_number: targetLot,
           reason: recallReason,
@@ -874,7 +874,7 @@ export const WarehouseModule: React.FC = () => {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(rows);
       XLSX.utils.book_append_sheet(wb, ws, "Danh_Sach_Thu_Hoi");
-      XLSX.writeFile(wb, `Danh_Sach_Thu_Hoi_Lo_${traceResult.lot_number || "TBR"}_${todayVN()}.xlsx`);
+      XLSX.writeFile(wb, `Danh_Sach_Thu_Hoi_Lo_${traceResult.lot_number || "ABT"}_${todayVN()}.xlsx`);
       setActionNotice("✅ Đã xuất thành công Bảng liên hệ thu hồi khách hàng ra file Excel!");
     } catch (e) {
       alert("Lỗi khi xuất file Excel thu hồi");
@@ -1039,7 +1039,7 @@ export const WarehouseModule: React.FC = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, wsCustomers, "Thong_Tin_Khach_Hang");
     XLSX.utils.book_append_sheet(wb, wsContacts, "Danh_Sach_Nguoi_Lien_He");
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Khach_Hang_Va_Nguoi_Lien_He_TBR.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Khach_Hang_Va_Nguoi_Lien_He_ABT.xlsx");
   };
 
   const handleDownloadProductTemplate = () => {
@@ -1177,14 +1177,14 @@ export const WarehouseModule: React.FC = () => {
     XLSX.utils.book_append_sheet(wb, wsProducts, "Danh_Muc_SanPham_Va_Gia");
     XLSX.utils.book_append_sheet(wb, wsComponents, "Dinh_Muc_Phu_Kien_BOM");
     XLSX.utils.book_append_sheet(wb, wsGuide, "Huong_Dan_Quy_Dinh");
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_SanPham_BangGia_Kem_BOM_TBR.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_SanPham_BangGia_Kem_BOM_ABT.xlsx");
   };
 
   const handleDownloadPOTemplate = () => {
     const firstProd = products[0] || { code: "HI-007.A (B32)", name: "TopPURE Maga Quick Genomic DNA/RNA Extraction Kit", cost_price: 1800000 };
     const sampleData = [
       {
-        "Mã đơn PO (*)": `PO-TBR-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+        "Mã đơn PO (*)": `PO-ABT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
         "Nhà cung cấp (*)": "Công ty TNHH Giải pháp Y Sinh ABT",
         "Ngày đặt hàng (*)": todayVN(),
         "Hạn giao dự kiến (*)": toVNDateString(new Date(Date.now() + 10 * 86400000)),
@@ -1198,13 +1198,13 @@ export const WarehouseModule: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Mau_Don_Hang_PO");
-    XLSX.writeFile(wb, "Mau_Don_Dat_Hang_PO_TBR.xlsx");
+    XLSX.writeFile(wb, "Mau_Don_Dat_Hang_PO_ABT.xlsx");
   };
 
   const handleDownloadSupplierTemplate = () => {
     const sampleData = [
       {
-        "Mã NCC (*)": "NCC-TBR-001",
+        "Mã NCC (*)": "NCC-ABT-001",
         "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 1 (dòng minh họa - xóa trước khi nhập)",
         "Người liên hệ": "Người liên hệ NCC 1",
         "Số điện thoại": "0901234567",
@@ -1215,7 +1215,7 @@ export const WarehouseModule: React.FC = () => {
         "Đánh giá": 5
       },
       {
-        "Mã NCC (*)": "NCC-TBR-002",
+        "Mã NCC (*)": "NCC-ABT-002",
         "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 2 (dòng minh họa - xóa trước khi nhập)",
         "Người liên hệ": "Người liên hệ NCC 2",
         "Số điện thoại": "0987654321",
@@ -1229,56 +1229,56 @@ export const WarehouseModule: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Mau_Nha_Cung_Cap");
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_TBR.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_ABT.xlsx");
   };
 
   const handleDownloadUserPersonnelTemplate = () => {
     const sampleData = [
       {
-        "Mã nhân viên (*)": "NV-TBRs-001",
+        "Mã nhân viên (*)": "NV-ABT-001",
         "Họ và tên (*)": "Nguyễn Văn A",
         "Tên đăng nhập (*)": "a.nv",
         "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kinh Doanh",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh Thiết Bị",
         "Vai trò hệ thống (*)": "sales_rep",
-        "Email (*)": "a.nv@tbr.vn",
+        "Email (*)": "a.nv@abtvn.com",
         "Số điện thoại": "0912345670",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBRs-002",
+        "Mã nhân viên (*)": "NV-ABT-002",
         "Họ và tên (*)": "Trần Thị B",
         "Tên đăng nhập (*)": "b.tt",
         "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kho Vận",
         "Chức vụ / Vị trí (*)": "Thủ Kho Vật Tư Sinh Phẩm",
         "Vai trò hệ thống (*)": "warehouse",
-        "Email (*)": "b.tt@tbr.vn",
+        "Email (*)": "b.tt@abtvn.com",
         "Số điện thoại": "0987654320",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBRs-003",
+        "Mã nhân viên (*)": "NV-ABT-003",
         "Họ và tên (*)": "Lê Văn C",
         "Tên đăng nhập (*)": "c.lv",
         "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Mua Hàng & Cung Ứng",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Mua Hàng Quốc Tế",
         "Vai trò hệ thống (*)": "procurement_specialist",
-        "Email (*)": "c.lv@tbr.vn",
+        "Email (*)": "c.lv@abtvn.com",
         "Số điện thoại": "0933221100",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-TBRs-004",
+        "Mã nhân viên (*)": "NV-ABT-004",
         "Họ và tên (*)": "Phạm Văn D",
         "Tên đăng nhập (*)": "d.pv",
         "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kỹ Thuật & Ứng Dụng",
         "Chức vụ / Vị trí (*)": "Kỹ Sư Ứng Dụng PCR",
         "Vai trò hệ thống (*)": "app_rep",
-        "Email (*)": "d.pv@tbr.vn",
+        "Email (*)": "d.pv@abtvn.com",
         "Số điện thoại": "0944556677",
         "Trạng thái": "ACTIVE"
       }
@@ -1339,7 +1339,7 @@ export const WarehouseModule: React.FC = () => {
         "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận",
         "Vai Trò Hệ Thống": "warehouse_lead",
         "Tên Tiếng Anh": "Warehouse Manager",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho TBR, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho ABT, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
       },
       {
         "Phòng Ban": "Kho Vận",
@@ -1462,7 +1462,7 @@ export const WarehouseModule: React.FC = () => {
       { wch: 70 }  // Quyền hạn
     ];
 
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_TaiKhoan_NhanSu_TBR.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_TaiKhoan_NhanSu_ABT.xlsx");
   };
 
   // ==========================================
@@ -1779,7 +1779,7 @@ export const WarehouseModule: React.FC = () => {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(storageRows), "Định Giá Theo Nhiệt Độ");
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(riskRows), "Định Giá Theo Hạn Dùng");
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(skuRows), "Chi Tiết Từng SKU");
-      XLSX.writeFile(wb, `Bao_Cao_Dinh_Gia_Ton_Kho_TBR_${todayVN()}.xlsx`);
+      XLSX.writeFile(wb, `Bao_Cao_Dinh_Gia_Ton_Kho_ABT_${todayVN()}.xlsx`);
       setActionNotice("✅ Đã xuất báo cáo định giá tồn kho thành công ra file Excel với đầy đủ các chỉ tiêu!");
     } catch (e) {
       alert("Lỗi khi xuất file Excel báo cáo định giá tồn kho");
@@ -2010,7 +2010,7 @@ export const WarehouseModule: React.FC = () => {
             product_code: it.product_code.trim(),
             product_name: it.product_name.trim(),
             category: it.category || matchedCatalogProd?.category || "Hàng Thương Mại",
-            manufacturer: it.manufacturer || matchedCatalogProd?.manufacturer || inboundForm.supplier_name || "TBR Phân Phối",
+            manufacturer: it.manufacturer || matchedCatalogProd?.manufacturer || inboundForm.supplier_name || "ABT Phân Phối",
             specification: it.specification || matchedCatalogProd?.specification || "",
             unit: it.unit || matchedCatalogProd?.unit || "Hộp",
             quantity: Number(it.quantity) || 1,
@@ -2242,7 +2242,7 @@ export const WarehouseModule: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(exportRows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "DinhMuc_BOM_Kit");
-    const fileName = parentCode ? `BOM_${parentCode}_TBR.xlsx` : `Danh_Muc_BOM_Toan_Bo_Kit_TBR.xlsx`;
+    const fileName = parentCode ? `BOM_${parentCode}_ABT.xlsx` : `Danh_Muc_BOM_Toan_Bo_Kit_ABT.xlsx`;
     XLSX.writeFile(wb, fileName);
   };
 
@@ -2269,7 +2269,7 @@ export const WarehouseModule: React.FC = () => {
       order_code: outboundForm.reference_code || "SO-2026-088",
       customer_name: outboundForm.customer_name || "Bệnh viện Đa Khoa / Viện Nghiên Cứu",
       warehouse_name: outboundForm.warehouse_name || "Kho Trung Tâm",
-      performed_by: outboundForm.performed_by || "Thủ kho TBR",
+      performed_by: outboundForm.performed_by || "Thủ kho ABT",
       product_code: selectedProdCode,
       product_name: selectedProd?.name || outboundForm.items[0]?.product_name,
       quantity: qty,
@@ -2531,7 +2531,7 @@ export const WarehouseModule: React.FC = () => {
           const manufacturer =
             String(r["Nhãn hiệu"] || r["Hãng SX"] || r["Hãng sản xuất"] || r["manufacturer"] || r["brand"] || "").trim() ||
             matchedProd?.manufacturer ||
-            "TBR Phân Phối";
+            "ABT Phân Phối";
 
           const quantity =
             Number(
@@ -2752,7 +2752,7 @@ export const WarehouseModule: React.FC = () => {
 
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Ton_Kho_TBR");
+    XLSX.utils.book_append_sheet(wb, ws, "Ton_Kho_ABT");
     XLSX.writeFile(wb, `TBR_Bao_Cao_Ton_Kho_${todayVN()}.xlsx`);
   };
 
@@ -2891,7 +2891,7 @@ export const WarehouseModule: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          order_code: `RES-TBR-${Date.now().toString().slice(-5)}`,
+          order_code: `RES-ABT-${Date.now().toString().slice(-5)}`,
           customer_name: reserveFormData.customer_name,
           sales_rep_name: reserveFormData.sales_rep_name,
           product_code: selectedReserveItem.product_code,
@@ -2930,7 +2930,7 @@ export const WarehouseModule: React.FC = () => {
           reservation_id: reservation.id,
           product_code: reservation.product_code,
           quantity_reserved: reservation.quantity_reserved,
-          actor: "Thủ kho TBR",
+          actor: "Thủ kho ABT",
           reason: "Thủ kho giải phóng lại cho tồn khả dụng chung"
         })
       });
@@ -2996,11 +2996,11 @@ export const WarehouseModule: React.FC = () => {
           <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
             <Package className="w-6 h-6" />
             <h2 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">
-              HỆ THỐNG QUẢN LÝ KHO TBR
+              HỆ THỐNG QUẢN LÝ KHO ABT
             </h2>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) TBR.
+            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) ABT.
           </p>
         </div>
 
@@ -3528,7 +3528,7 @@ export const WarehouseModule: React.FC = () => {
                     lot_number: item.lot_number ? `${item.lot_number}-C${idx + 1}` : `L-C${idx + 1}`,
                     expiry_date: item.expiry_date || '2028-12-31',
                     storage_condition: c.storage_condition,
-                    shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát TBR (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
+                    shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát ABT (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
                   }));
 
               return (
@@ -3777,7 +3777,7 @@ export const WarehouseModule: React.FC = () => {
                         lot_number: item.lot_number ? `${item.lot_number}-C${idx + 1}` : `L-C${idx + 1}`,
                         expiry_date: item.expiry_date || '2028-12-31',
                         storage_condition: c.storage_condition,
-                        shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát TBR (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
+                        shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát ABT (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
                       }));
 
                   return (
@@ -3848,7 +3848,7 @@ export const WarehouseModule: React.FC = () => {
                       {isAtpViewMode && (
                         <td className="py-3 px-3">
                           <div className="font-bold text-indigo-600 dark:text-indigo-400">
-                            {item.manufacturer || "TBR"}
+                            {item.manufacturer || "ABT"}
                           </div>
                           <div className="text-[10px] text-slate-500 mt-0.5">
                             {item.category || "Sinh phẩm"}
@@ -4423,7 +4423,7 @@ export const WarehouseModule: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
-                        {tx.performed_by || "Thủ kho TBR"}
+                        {tx.performed_by || "Thủ kho ABT"}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-slate-500">
                         {tx.date ? formatDayVN(tx.date) : ""}
@@ -4955,7 +4955,7 @@ export const WarehouseModule: React.FC = () => {
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 flex items-center justify-between">
                 <span>Biên lợi nhuận trung bình</span>
-                <span className="font-bold text-cyan-600">Đạt định mức TBR</span>
+                <span className="font-bold text-cyan-600">Đạt định mức ABT</span>
               </p>
             </div>
           </div>
@@ -5817,7 +5817,7 @@ export const WarehouseModule: React.FC = () => {
                               x{c.quantity}
                             </td>
                             <td className="py-3 px-3 text-[11px]">
-                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng TBR"}</div>
+                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng ABT"}</div>
                               <div className="text-[10px] font-mono text-sky-400 mt-0.5">{c.tracking_code || "—"}</div>
                             </td>
                             <td className="py-3 px-3 text-[11px] text-slate-300 font-sans">
@@ -6089,7 +6089,7 @@ export const WarehouseModule: React.FC = () => {
               <p className="text-[11px] text-slate-500 mb-3">
                 {isDraggingGeneralExcel
                   ? "Hệ thống sẽ tự động phân tích và nhận diện cấu trúc cột"
-                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu TBR"}
+                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu ABT"}
               </p>
               <button
                 type="button"
@@ -6446,7 +6446,7 @@ export const WarehouseModule: React.FC = () => {
                           {currentProduct?.name || activeParentCode}
                         </h3>
                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                          Quy cách: <strong>{currentProduct?.specification || "Tiêu chuẩn"}</strong> • ĐVT: <strong>{currentProduct?.unit || "Bộ"}</strong> • Hãng SX: <strong>{currentProduct?.manufacturer || "TBR"}</strong>
+                          Quy cách: <strong>{currentProduct?.specification || "Tiêu chuẩn"}</strong> • ĐVT: <strong>{currentProduct?.unit || "Bộ"}</strong> • Hãng SX: <strong>{currentProduct?.manufacturer || "ABT"}</strong>
                         </div>
                       </div>
 
@@ -6758,7 +6758,7 @@ export const WarehouseModule: React.FC = () => {
               <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <strong className="text-emerald-900 dark:text-emerald-300 block mb-0.5">
-                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn TBR:
+                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn ABT:
                   </strong>
                   <p className="text-emerald-800 dark:text-emerald-400 text-[11px] leading-relaxed">
                     Chỉ cần nhập <strong>7 cột cốt lõi</strong>: <code>Mã SP</code>, <code>Số Lô (Lot)</code>, <code>Hạn dùng (Date)</code>, <code>Số lượng</code>, <code>Giá trị / Đơn giá đầu kỳ</code>, <code>Nhiệt độ bảo quản</code>, <code>Khu vực / Vị trí kho</code>. <br />
@@ -8128,7 +8128,7 @@ export const WarehouseModule: React.FC = () => {
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho TBR"}
+                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho ABT"}
                   </p>
                 </div>
               </div>
@@ -8153,7 +8153,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Thủ Kho / Người Thực Hiện</span>
-                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho TBR"}</strong>
+                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho ABT"}</strong>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Ngày Lập Chứng Từ</span>
@@ -8797,7 +8797,7 @@ export const WarehouseModule: React.FC = () => {
                   <span className="font-bold uppercase text-purple-700 dark:text-purple-400 block text-xs">
                     I. ĐẠI DIỆN BÊN GIAO ({companyConfig.companyName ? companyConfig.companyName.toUpperCase() : "BÊN GIAO"})
                   </span>
-                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI TBR"}</strong></div>
+                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI ABT"}</strong></div>
                   <div>Kho xuất hàng: <strong>{handoverData.warehouse_name}</strong></div>
                   <div>Người thực hiện bàn giao: <strong>{handoverData.performed_by}</strong></div>
                 </div>
@@ -9087,7 +9087,7 @@ export const WarehouseModule: React.FC = () => {
                                 </span>
                               </div>
                               <div className="text-[10px] text-slate-500 mt-1">
-                                📍 {comp.shelf_position || "Kho TBR"}
+                                📍 {comp.shelf_position || "Kho ABT"}
                               </div>
                               {isDiffTemp && (
                                 <span className="inline-block text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">

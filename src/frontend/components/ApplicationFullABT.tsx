@@ -1874,7 +1874,7 @@ export function ApplicationFullABT() {
             <html>
                 <head>
                     <meta charset="utf-8">
-                    <title>Báo Cáo Tổng Hợp Sự Cố Khách Hàng - TBRs Portal</title>
+                    <title>Báo Cáo Tổng Hợp Sự Cố Khách Hàng - ABT Portal</title>
                     <style>
                         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; padding: 30px; color: #333; }
                         h2 { text-align: center; color: #0284c7; margin-bottom: 5px; }
@@ -1888,7 +1888,7 @@ export function ApplicationFullABT() {
                 </head>
                 <body>
                     <h2>BÁO CÁO TỔNG HỢP SỰ CỐ CHẤT LƯỢNG KHÁCH HÀNG</h2>
-                    <div class="subtitle">Ngày xuất báo cáo: ${dateStr} | Hệ thống TBRs Portal</div>
+                    <div class="subtitle">Ngày xuất báo cáo: ${dateStr} | Hệ thống ABT Portal</div>
                     <table>
                         <thead>
                             <tr>

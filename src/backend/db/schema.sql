@@ -1,4 +1,4 @@
--- Auto-generated complete database schema for TBR & VIA Portal
+-- Auto-generated complete database schema for ABT & VIA Portal
 
 CREATE TABLE IF NOT EXISTS "app_storage" (
   "key" VARCHAR(255) NOT NULL,
@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS "inventory_items" (
   "product_name" VARCHAR(255) NOT NULL,
   "quantity_on_hand" INTEGER DEFAULT 0 CHECK (quantity_on_hand >= 0),
   "quantity_allocated" INTEGER DEFAULT 0 CHECK (quantity_allocated >= 0),
-  "warehouse_location" VARCHAR(100) DEFAULT 'Kho TBR Trung Tâm'::character varying,
+  "warehouse_location" VARCHAR(100) DEFAULT 'Kho ABT Trung Tâm'::character varying,
   "shelf_position" VARCHAR(100),
   "last_updated" TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   "lot_number" VARCHAR(100),
@@ -295,7 +295,7 @@ CREATE TABLE IF NOT EXISTS "inventory_transactions" (
   "reference_code" VARCHAR(100),
   "date" DATE NOT NULL,
   "performed_by" VARCHAR(150),
-  "warehouse_name" VARCHAR(100) DEFAULT 'Kho TBR Trung Tâm'::character varying,
+  "warehouse_name" VARCHAR(100) DEFAULT 'Kho ABT Trung Tâm'::character varying,
   "items" JSONB DEFAULT '[]'::jsonb NOT NULL,
   "notes" TEXT,
   "created_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
@@ -709,7 +709,7 @@ CREATE TABLE IF NOT EXISTS "workflow_templates" (
 CREATE TABLE IF NOT EXISTS "zalo_config" (
   "id" SERIAL,
   "oa_id" VARCHAR(100) DEFAULT ''::character varying,
-  "oa_name" VARCHAR(150) DEFAULT 'Công Ty TNHH Thiết Bị & Hóa Chất TBR (Zalo OA Doanh Nghiệp)'::character varying,
+  "oa_name" VARCHAR(150) DEFAULT 'Công Ty TNHH Thiết Bị & Hóa Chất ABT (Zalo OA Doanh Nghiệp)'::character varying,
   "app_id" VARCHAR(100) DEFAULT ''::character varying,
   "secret_key" VARCHAR(150) DEFAULT ''::character varying,
   "access_token" TEXT DEFAULT ''::text,

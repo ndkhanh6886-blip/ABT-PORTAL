@@ -5,7 +5,7 @@ const pool = new Pool({
   port: parseInt(process.env.PGPORT || '5432'),
   user: process.env.PGUSER || 'postgres',
   password: process.env.PGPASSWORD,
-  database: process.env.PGDATABASE || 'tbrs_portal'
+  database: process.env.PGDATABASE || 'abt_portal'
 });
 
 async function run() {

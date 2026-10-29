@@ -27,12 +27,12 @@ function unusablePasswordHash(): string {
 /** Mã nhân viên tự sinh không trùng (thay cho Date.now() dễ trùng và ghi đè hồ sơ của người khác). */
 async function nextEmployeeCode(): Promise<string> {
   const res = await query(
-    `SELECT COALESCE(MAX(CAST(SUBSTRING(employee_code FROM 'NV-TBRs?-([0-9]+)$') AS INTEGER)), 0) AS max_seq
-       FROM personnel WHERE employee_code ~ '^NV-TBRs?-[0-9]+$'`
+    `SELECT COALESCE(MAX(CAST(SUBSTRING(employee_code FROM 'NV-ABT-([0-9]+)$') AS INTEGER)), 0) AS max_seq
+       FROM personnel WHERE employee_code ~ '^NV-ABT-[0-9]+$'`
   );
   let seq = Number(res.rows[0]?.max_seq || 0) + 1;
   for (;;) {
-    const code = `NV-TBRs-${String(seq).padStart(3, "0")}`;
+    const code = `NV-ABT-${String(seq).padStart(3, "0")}`;
     const exists = await query(
       "SELECT 1 FROM personnel WHERE employee_code = $1 UNION ALL SELECT 1 FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1",
       [code]
@@ -203,7 +203,7 @@ export async function POST(req: NextRequest) {
              role = CASE WHEN role = 'admin' THEN 'admin' ELSE $4 END,
              is_active = $5
            WHERE $6 <> '' AND (username = $6
-              OR username = REPLACE(REPLACE($6, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA'))`,
+              OR username = REPLACE(REPLACE($6, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))`,
           [cleanName, department, cleanEmail, role, (status !== "INACTIVE"), employee_code || ""]
         );
         await logAudit("UPDATE", "PERSONNEL", `Cập nhật nhân sự & tài khoản chat ${cleanName} (${employee_code})`);
@@ -249,7 +249,7 @@ export async function POST(req: NextRequest) {
         await c.query("DELETE FROM zalo_user_bindings WHERE employee_id != 'admin'");
         await c.query(`
           INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
-          VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@tbrscientific.com', true)
+          VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@abtvn.com', true)
           ON CONFLICT (username) DO UPDATE SET
             full_name = 'Quản Trị Viên Hệ Thống',
             role = 'admin',
@@ -304,8 +304,8 @@ export async function POST(req: NextRequest) {
           return "";
         };
 
-        const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV", "Mã"]) || `NV-TBRs-${importBatchStamp}-${++importAutoSeq}`;
-        const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên TBRs";
+        const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV", "Mã"]) || `NV-ABT-${importBatchStamp}-${++importAutoSeq}`;
+        const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên ABT";
         const email = getVal(["Email (*)", "Email", "email"]) || "";
         const phone = getVal(["Số điện thoại", "phone", "SĐT", "Điện thoại"]);
         const dept = getVal(["Phòng ban (*)", "Phòng ban", "department"]) || "Kinh Doanh";
@@ -369,14 +369,14 @@ export async function POST(req: NextRequest) {
         await query(`
           DELETE FROM users 
           WHERE username = $1 
-             OR username = REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA')
-             OR username = REPLACE(REPLACE($1, 'TBR', 'NV-TBR-'), 'VIA', 'NV-VIA-')
+             OR username = REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA')
+             OR username = REPLACE(REPLACE($1, 'ABT', 'NV-ABT-'), 'VIA', 'NV-VIA-')
         `, [employee_code]);
         await query(`
           DELETE FROM zalo_user_bindings 
           WHERE employee_id = $1 
-             OR employee_id = REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA')
-             OR employee_id = REPLACE(REPLACE($1, 'TBR', 'NV-TBR-'), 'VIA', 'NV-VIA-')
+             OR employee_id = REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA')
+             OR employee_id = REPLACE(REPLACE($1, 'ABT', 'NV-ABT-'), 'VIA', 'NV-VIA-')
         `, [employee_code]).catch(() => {});
       }
       await logAudit("DELETE", "PERSONNEL", `Xóa hồ sơ nhân sự, tài khoản & liên kết Zalo ${full_name || id} (${employee_code || ""})`);
@@ -404,7 +404,7 @@ export async function POST(req: NextRequest) {
           const cleanEmail = String(email).trim().toLowerCase();
           await query(
             `UPDATE personnel SET email = $1
-             WHERE employee_code = REPLACE(REPLACE($2, 'TBR', 'NV-TBR-'), 'VIA', 'NV-VIA-')
+             WHERE employee_code = REPLACE(REPLACE($2, 'ABT', 'NV-ABT-'), 'VIA', 'NV-VIA-')
                 OR employee_code = $2`,
             [cleanEmail, username]
           );
@@ -466,7 +466,7 @@ export async function POST(req: NextRequest) {
       const numId = (id && !isNaN(Number(id))) ? Number(id) : null;
       const cleanPerms = JSON.stringify(permissions || {});
 
-      // Cập nhật đa tầng an toàn: theo ID số, Username chính thức, hoặc các định dạng mã nhân viên (NV-TBR / TBRs / NV-VIA / VIA)
+      // Cập nhật đa tầng an toàn: theo ID số, Username chính thức, hoặc các định dạng mã nhân viên (NV-ABT / NV-VIA / VIA)
       const updateRes = await query(
         `UPDATE users 
          SET permissions = $1::jsonb 

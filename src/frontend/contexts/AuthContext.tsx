@@ -60,7 +60,7 @@ function mapDbRole(dbRole: string): string {
 function mapServerUser(dbUser: any, previous?: Partial<User>): User {
     return {
         ...(previous || {}),
-        id: "TBR-" + String(dbUser.id).padStart(2, "0"),
+        id: "ABT-" + String(dbUser.id).padStart(2, "0"),
         name: dbUser.full_name,
         full_name: dbUser.full_name,
         role: mapDbRole(dbUser.role),

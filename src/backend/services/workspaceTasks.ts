@@ -3,7 +3,7 @@
  * phòng ban, phân loại, trạng thái, đối tượng liên quan và quyền sửa / xóa.
  */
 
-/** 10 phòng ban của TBRs dùng khi tạo công việc (id giữ nguyên giá trị cũ để dữ liệu cũ vẫn khớp) */
+/** 10 phòng ban của ABT dùng khi tạo công việc (id giữ nguyên giá trị cũ để dữ liệu cũ vẫn khớp) */
 export const WORKSPACE_TASK_DEPARTMENTS: { id: string; label: string }[] = [
   { id: "Ban Giám Đốc", label: "Ban Giám Đốc" },
   { id: "Kế Toán", label: "Kế Toán" },

@@ -15,9 +15,9 @@ export interface ZaloMessageResponse {
   quoteData?: any;
 }
 
-const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tbr-portal.vn";
+const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://portal.abtvn.com";
 
-const QUOTE_CODE_REGEX = /BG-TBR-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
+const QUOTE_CODE_REGEX = /BG-ABT-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
 
 async function hasQuotationApprovalAuthority(senderBinding: any, senderId: string, directorZaloId: string): Promise<boolean> {
   if (
@@ -34,7 +34,7 @@ async function hasQuotationApprovalAuthority(senderBinding: any, senderId: strin
     const uRes = await query(
       `SELECT id, username, role, department, full_name, permissions FROM users
         WHERE username = $1
-           OR username = REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA')
+           OR username = REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA')
         LIMIT 1`,
       [empId]
     );
@@ -89,7 +89,7 @@ export async function processZaloInboundMessage(params: {
     console.warn("Binding lookup error:", err);
   }
 
-  // 1B. LINKING: the message contains a one-time code "LK-XXXXXX" created by the employee in TBRs Portal
+  // 1B. LINKING: the message contains a one-time code "LK-XXXXXX" created by the employee in ABT Portal
   if (!senderBinding) {
     try {
       const codeMatch = rawText.toUpperCase().match(/LK-[A-F0-9]{6}/);
@@ -131,7 +131,7 @@ export async function processZaloInboundMessage(params: {
 `🎉 XÁC THỰC THÀNH CÔNG!
 Chào mừng ${senderBinding.display_name} [${senderBinding.employee_id}] (${senderBinding.department} - ${senderBinding.position || 'Nhân sự'})!
 
-✅ Tài khoản Zalo của bạn đã được LIÊN KẾT CHÍNH THỨC với Trung tâm Điều hành Công ty TNHH Khoa học TBR.
+✅ Tài khoản Zalo của bạn đã được LIÊN KẾT CHÍNH THỨC với Trung tâm Điều hành Công ty TNHH Giải pháp Y sinh ABT.
 
 Từ bây giờ, bạn có thể thực hiện trực tiếp trên Zalo:
 1. 📋 Soạn báo giá tự động: Gõ ví dụ "Báo giá BV Chợ Rẫy: 10 kit HBV, ck 5%"
@@ -160,12 +160,12 @@ Gõ "menu" hoặc "help" bất kỳ lúc nào để xem danh sách lệnh hỗ t
       recipientId: senderId,
       messageType: "TEXT",
       text: 
-`👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty TNHH Khoa học TBR.
+`👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty TNHH Giải pháp Y sinh ABT.
 
-⚠️ Hiện tại tài khoản Zalo này CHƯA ĐƯỢC LIÊN KẾT với hồ sơ nhân sự trên hệ thống TBRs Portal.
+⚠️ Hiện tại tài khoản Zalo này CHƯA ĐƯỢC LIÊN KẾT với hồ sơ nhân sự trên hệ thống ABT Portal.
 
-👉 ĐỂ LIÊN KẾT TÀI KHOẢN (dành cho nhân viên TBRs):
-1. Đăng nhập TBRs Portal → bấm vào tên của bạn → "Bảo mật tài khoản" → "Tạo mã liên kết Zalo".
+👉 ĐỂ LIÊN KẾT TÀI KHOẢN (dành cho nhân viên ABT):
+1. Đăng nhập ABT Portal → bấm vào tên của bạn → "Bảo mật tài khoản" → "Tạo mã liên kết Zalo".
 2. Nhắn mã vừa nhận (dạng LK-XXXXXX, hiệu lực 30 phút) vào khung chat này.
 
 Vì lý do bảo mật, hệ thống không liên kết theo số điện thoại hay mã nhân viên.`
@@ -186,7 +186,7 @@ Vì lý do bảo mật, hệ thống không liên kết theo số điện thoạ
 Nhân sự: ${empName}${empCode}
 Trạng thái: ❌ KHÔNG KẾT NỐI (Chưa có số điện thoại Zalo trong hồ sơ)
 
-Hồ sơ nhân sự của bạn trên TBRs Portal hiện đang để trống thông tin số điện thoại, do đó hệ thống chưa thể kích hoạt tính năng điều hành, kiểm tra kho và nhận lệnh qua Zalo.
+Hồ sơ nhân sự của bạn trên ABT Portal hiện đang để trống thông tin số điện thoại, do đó hệ thống chưa thể kích hoạt tính năng điều hành, kiểm tra kho và nhận lệnh qua Zalo.
 
 👉 HƯỚNG DẪN KÍCH HOẠT:
 Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số điện thoại chính thức vào danh mục nhân sự.`
@@ -197,7 +197,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
   let config = {
     director_discount_threshold: 10.0,
     director_zalo_id: "zalo_dir_bld_01",
-    oa_name: "Công ty TNHH Khoa học TBR"
+    oa_name: "Công ty TNHH Giải pháp Y sinh ABT"
   };
   try {
     const cfgRes = await query("SELECT * FROM zalo_config LIMIT 1");
@@ -206,7 +206,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
         ...config,
         director_discount_threshold: parseFloat(cfgRes.rows[0].director_discount_threshold) || 10.0,
         director_zalo_id: cfgRes.rows[0].director_zalo_id || "zalo_dir_bld_01",
-        oa_name: cfgRes.rows[0].oa_name || "Công ty TNHH Khoa học TBR"
+        oa_name: cfgRes.rows[0].oa_name || "Công ty TNHH Giải pháp Y sinh ABT"
       };
     }
   } catch (err) {
@@ -224,7 +224,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
 
   // ==============================================================
   // INTENT 1: BAN GIÁM ĐỐC PHÊ DUYỆT BÁO GIÁ CHIẾT KHẤU LỚN
-  // Cú pháp: "Duyệt BG-TBR-XXXX" hoặc bấm nút phê duyệt
+  // Cú pháp: "Duyệt BG-ABT-XXXX" hoặc bấm nút phê duyệt
   // ==============================================================
   if (
     lowerText.startsWith("duyệt ") ||
@@ -240,7 +240,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
       return {
         recipientId: senderId,
         messageType: "TEXT",
-        text: "⚠️ Vui lòng chỉ định rõ mã báo giá cần phê duyệt. Ví dụ: 'Duyệt BG-TBR-2609-089'"
+        text: "⚠️ Vui lòng chỉ định rõ mã báo giá cần phê duyệt. Ví dụ: 'Duyệt BG-ABT-2609-089'"
       };
     }
 
@@ -320,7 +320,7 @@ Trạng thái báo giá đã được cập nhật sang [ĐÃ PHÊ DUYỆT]. NVK
 
   // ==============================================================
   // INTENT 2: BAN GIÁM ĐỐC TỪ CHỐI BÁO GIÁ CHIẾT KHẤU LỚN
-  // Cú pháp: "Từ chối BG-TBR-XXXX [Lý do]"
+  // Cú pháp: "Từ chối BG-ABT-XXXX [Lý do]"
   // ==============================================================
   if (lowerText.startsWith("từ chối ") || lowerText.startsWith("tu choi ") || lowerText.startsWith("reject ")) {
     const quoteCodeMatch = rawText.match(QUOTE_CODE_REGEX);
@@ -330,7 +330,7 @@ Trạng thái báo giá đã được cập nhật sang [ĐÃ PHÊ DUYỆT]. NVK
       return {
         recipientId: senderId,
         messageType: "TEXT",
-        text: "⚠️ Vui lòng chỉ định mã báo giá cần từ chối. Ví dụ: 'Từ chối BG-TBR-2609-089 Chiết khấu quá cao'"
+        text: "⚠️ Vui lòng chỉ định mã báo giá cần từ chối. Ví dụ: 'Từ chối BG-ABT-2609-089 Chiết khấu quá cao'"
       };
     }
 
@@ -411,9 +411,9 @@ Trạng thái báo giá đã được cập nhật sang [ĐÃ PHÊ DUYỆT]. NVK
 Vui lòng cung cấp mã báo giá cần lập hợp đồng mua bán.
 
 💡 Ví dụ:
-• "Hợp đồng BG-TBR-2610-9017"
-• "Soạn hợp đồng từ BG-TBR-2610-9017"
-• "Tạo HĐ BG-TBR-2610-9017 mặc định"`
+• "Hợp đồng BG-ABT-2610-9017"
+• "Soạn hợp đồng từ BG-ABT-2610-9017"
+• "Tạo HĐ BG-ABT-2610-9017 mặc định"`
       };
     }
 
@@ -581,7 +581,7 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
       deliveryTerms = deliveryTerms || "Trong vòng 07 ngày làm việc kể từ ngày hợp đồng có hiệu lực.";
       paymentTerms = paymentTerms || existingCust?.payment_terms || "Chuyển khoản trong vòng 30 ngày kể từ ngày nhận đủ hóa đơn GTGT và biên bản bàn giao.";
 
-      const brandPrefix = "TBR";
+      const brandPrefix = "ABT";
       const contractCode = `HD-${brandPrefix}-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
 
       const contractMeta = {
@@ -625,7 +625,7 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
         typeof q.items === "string" ? q.items : JSON.stringify(q.items)
       ]);
 
-      const companyTitle = "Công ty TNHH Khoa học TBR";
+      const companyTitle = "Công ty TNHH Giải pháp Y sinh ABT";
       const contractPdfUrl = signedDocumentUrl("contract", contractCode);
 
       return {
@@ -756,7 +756,7 @@ Thêm KH: Bệnh Viện Ung Bướu, 47 Nguyễn Huy Lượng Quận Bình Thạ
 
       const salesRepName = senderBinding?.display_name || senderName || "Nhân viên kinh doanh";
       const salesRepId = senderBinding?.employee_id || "KD-01";
-      const brandPrefix = "TBR";
+      const brandPrefix = "ABT";
       const newCustomerCode = `KH-${brandPrefix}-${Date.now().toString().slice(-4)}`;
       const isHospital = /(?:bệnh\s*viện|viện|phòng\s*khám|trung\s*tâm|cdc)/i.test(cleanName);
       const classification = isHospital ? "Bệnh viện / Cơ sở Y tế" : "Khách hàng trực tiếp";
@@ -1058,7 +1058,7 @@ Soạn: "Báo giá ${suggestedName}: 2 bộ HI-612, ck 0%"`
           messageType: "TEXT",
           text: `⚠️ CHƯA NHẬN DIỆN ĐƯỢC MÃ HÀNG CẦN BÁO GIÁ
 
-Vui lòng ghi rõ mã sản phẩm của TBRs trong tin nhắn.
+Vui lòng ghi rõ mã sản phẩm của ABT trong tin nhắn.
 Ví dụ:
 • "Báo giá BV Bạch Mai: 10 SQH-115, 2 EQ-EXTRACT-32, ck 12%"
 • "Báo giá BV Chợ Rẫy: 20 EXS-021, 5 CS-TIP-FILTER, ck 5%"
@@ -1080,7 +1080,7 @@ ${sampleSkus}
 
       // Determine approval status based on Director Discount Threshold!
       const requiresDirectorApproval = discountRate >= config.director_discount_threshold;
-      const quoteCode = `BG-TBR-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
+      const quoteCode = `BG-ABT-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
       const status = requiresDirectorApproval ? "PENDING_DIRECTOR_APPROVAL" : "APPROVED";
       const salesRepName = senderBinding?.display_name || senderName || "Nhân viên kinh doanh";
 
@@ -1261,7 +1261,7 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
         return `${i + 1}. [${row.product_code}] ${row.product_name}
    • Tồn khả dụng: ${availableQty} ${row.unit || "Hộp"} (Đang giữ chỗ: ${row.quantity_allocated || 0})
    • Số Lô: ${row.lot_number || "Chưa có Lô"} • HSD: ${expDate} (FEFO)
-   • Vị trí lưu kho: ${row.shelf_position || "Kệ chính"} (${row.warehouse_location || "Kho TBRs"})`;
+   • Vị trí lưu kho: ${row.shelf_position || "Kệ chính"} (${row.warehouse_location || "Kho ABT"})`;
       }).join("\n\n");
 
       return {
@@ -1494,7 +1494,7 @@ Dữ liệu đã tự động đồng bộ vào mục [Nhật Ký Daily] trên P
   return {
     recipientId: senderId,
     messageType: "TEXT",
-    text: `👋 XIN CHÀO! ĐÂY LÀ TRỢ LÝ ĐIỀU HÀNH DI ĐỘNG Công ty TNHH Khoa học TBR (ZALO BOT)
+    text: `👋 XIN CHÀO! ĐÂY LÀ TRỢ LÝ ĐIỀU HÀNH DI ĐỘNG Công ty TNHH Giải pháp Y sinh ABT (ZALO BOT)
 
 Danh sách câu lệnh nhanh hỗ trợ nhân sự và quản lý:
 
@@ -1510,7 +1510,7 @@ Danh sách câu lệnh nhanh hỗ trợ nhân sự và quản lý:
    (Nếu chiết khấu ≥ ${config.director_discount_threshold}%, hệ thống sẽ tự động chuyển tiếp Ban Giám Đốc duyệt)
 
 4. 📜 Soạn Hợp Đồng Từ Báo Giá:
-   Gõ: "Hợp đồng BG-TBR-2610-9017"
+   Gõ: "Hợp đồng BG-ABT-2610-9017"
    (Bot sẽ hướng dẫn cung cấp thông tin hoặc tạo hợp đồng gửi lại file PDF chính thức)
 
 5. 📦 Tra Cứu Tồn Kho & Hạn Dùng (FEFO):
@@ -1523,9 +1523,9 @@ Danh sách câu lệnh nhanh hỗ trợ nhân sự và quản lý:
    Gõ: "Daily: Hôm nay demo xong tại BV Chợ Rẫy, mai qua BV Nhi Đồng"
 
 8. 📚 Tra Cứu Tài Liệu Y Tế & CO/CQ:
-   Gõ: "Tài liệu TBR-9600" hoặc "CO CQ kit HCV"
+   Gõ: "Tài liệu ABT-9600" hoặc "CO CQ kit HCV"
 
 9. ✍ Ban Giám Đốc Phê Duyệt:
-   Gõ: "Duyệt BG-TBR-XXXX" hoặc bấm nút phê duyệt trực tiếp.`
+   Gõ: "Duyệt BG-ABT-XXXX" hoặc bấm nút phê duyệt trực tiếp.`
   };
 }

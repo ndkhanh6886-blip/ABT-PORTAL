@@ -434,7 +434,7 @@ export const ApplicationEvaluationAnalytics: React.FC<ApplicationEvaluationAnaly
                         </span>
                     </div>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                        Hệ thống đo lường khối lượng công việc, tỷ lệ hoàn thành kế hoạch tuần và kỷ luật báo cáo của kỹ sư ứng dụng TBRs.
+                        Hệ thống đo lường khối lượng công việc, tỷ lệ hoàn thành kế hoạch tuần và kỷ luật báo cáo của kỹ sư ứng dụng ABT.
                     </p>
                 </div>
 

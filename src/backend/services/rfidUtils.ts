@@ -1,5 +1,5 @@
 /**
- * RFID & Barcode Core Utilities for TBRs Healthcare Portal
+ * RFID & Barcode Core Utilities for ABT Healthcare Portal
  * Standard compliance: GS1 SGTIN-96, Code 128, QR Code, Zebra ZPL II
  */
 
@@ -26,8 +26,8 @@ export interface RawRfidScan {
 }
 
 /**
- * Encodes a product into a standard GS1-style EPC format for TBRs Healthcare
- * Example format: TBR.[CATEGORY].[SKU].[LOT].[SERIAL]
+ * Encodes a product into a standard GS1-style EPC format for ABT Healthcare
+ * Example format: ABT.[CATEGORY].[SKU].[LOT].[SERIAL]
  */
 export function generateEpcCode(
   categoryCode: string,
@@ -39,7 +39,7 @@ export function generateEpcCode(
   const cleanSku = (sku || "PROD").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 10);
   const cleanLot = (lot || "L001").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
   const cleanSerial = String(serialOrIndex).padStart(6, "0");
-  return `TBR.${cleanCat}.${cleanSku}.${cleanLot}.${cleanSerial}`;
+  return `ABT.${cleanCat}.${cleanSku}.${cleanLot}.${cleanSerial}`;
 }
 
 /**
@@ -53,7 +53,7 @@ export function decodeEpcCode(epc: string): {
   lot: string;
   serial: string;
 } {
-  if (!epc || !epc.startsWith("TBR.")) {
+  if (!epc || !epc.startsWith("ABT.")) {
     return {
       isValid: false,
       prefix: "",
@@ -66,7 +66,7 @@ export function decodeEpcCode(epc: string): {
   const parts = epc.split(".");
   return {
     isValid: parts.length >= 5,
-    prefix: parts[0] || "TBR",
+    prefix: parts[0] || "ABT",
     category: parts[1] || "",
     sku: parts[2] || "",
     lot: parts[3] || "",
@@ -111,7 +111,7 @@ export function generateZplRfidCode(params: {
 ^RFW,H,1,2,${Math.ceil(epcHex.length / 4)}^FD${epcHex}^FS
 
 ; --- Visual Header ---
-^FO40,30^A0N,28,28^FDCONG TY TNHH KHOA HOC TBR^FS
+^FO40,30^A0N,28,28^FDCONG TY TNHH KHOA HOC ABT^FS
 ^FO40,65^GB520,2,2^FS
 
 ; --- Product Name ---
@@ -129,7 +129,7 @@ export function generateZplRfidCode(params: {
 ^FO420,110^BQN,2,4^FDQA,${epcCode}^FS
 
 ; --- RFID Tag Visual Indicator ---
-^FO40,300^A0N,16,16^FDRFID UHF EPC Gen2 Verified [TBRs WMS 4.0]^FS
+^FO40,300^A0N,16,16^FDRFID UHF EPC Gen2 Verified [ABT WMS 4.0]^FS
 ^FO40,320^A0N,14,14^FDEPC: ${epcCode}^FS
 
 ^PQ${copies},0,1,Y
@@ -260,8 +260,8 @@ export function parseScannedCode(raw: string): ParsedScanResult {
     return { raw: "", type: "BARCODE_1D", isValid: false };
   }
 
-  // 1. Check if RFID EPC Gen2 format: TBR.[CAT].[SKU].[LOT].[SERIAL]
-  if (clean.startsWith("TBR.")) {
+  // 1. Check if RFID EPC Gen2 format: ABT.[CAT].[SKU].[LOT].[SERIAL]
+  if (clean.startsWith("ABT.")) {
     const epc = decodeEpcCode(clean);
     return {
       raw: clean,
@@ -274,7 +274,7 @@ export function parseScannedCode(raw: string): ParsedScanResult {
     };
   }
 
-  // 2. Check if 2D QR Code JSON format: {"tbr_id":"TBR-IVD-VN","sku":"...","lot":"..."}
+  // 2. Check if 2D QR Code JSON format: {"tbr_id":"ABT-IVD-VN","sku":"...","lot":"..."}
   if (clean.startsWith("{") && clean.endsWith("}")) {
     try {
       const parsed = JSON.parse(clean);

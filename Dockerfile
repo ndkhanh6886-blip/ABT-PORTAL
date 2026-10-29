@@ -1,4 +1,4 @@
-# Dockerfile for TBR Portal Enterprise Production Deployment
+# Dockerfile for ABT Portal Enterprise Production Deployment
 FROM node:20-alpine AS base
 
 # Step 1: Install dependencies only when needed
@@ -26,7 +26,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3007
+ENV PORT=3008
 ENV HOSTNAME="0.0.0.0"
 
 RUN addgroup --system --gid 1001 nodejs
@@ -43,6 +43,6 @@ RUN mkdir -p /app/uploads && chown -R nextjs:nodejs /app/uploads
 
 USER nextjs
 
-EXPOSE 3007
+EXPOSE 3008
 
 CMD ["npm", "start"]

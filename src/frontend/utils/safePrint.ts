@@ -21,7 +21,7 @@ export function writeSafePrintDocument(
 <style>
   html, body { margin: 0; height: 100%; background: #e2e8f0; }
   .bar { position: fixed; top: 10px; right: 14px; z-index: 10; display: flex; gap: 8px; }
-  .bar button { font: 600 13px system-ui, sans-serif; padding: 8px 14px; border-radius: 10px; border: 0; cursor: pointer; background: #0c4a97; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+  .bar button { font: 600 13px system-ui, sans-serif; padding: 8px 14px; border-radius: 10px; border: 0; cursor: pointer; background: #0284c7; color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.2); }
   .bar button.secondary { background: #fff; color: #334155; }
   iframe { border: 0; width: 100%; height: 100%; background: #fff; display: block; }
   @media print { .bar { display: none; } }

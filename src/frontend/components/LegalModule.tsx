@@ -103,7 +103,7 @@ export interface LegalDocument {
   id: string;
   code: string;
   title: string;
-  category: "Nghị Định & Luật" | "Thông Tư Bộ Y Tế" | "Tiêu Chuẩn ISO/TCVN" | "Biểu Mẫu Chuẩn TBRs";
+  category: "Nghị Định & Luật" | "Thông Tư Bộ Y Tế" | "Tiêu Chuẩn ISO/TCVN" | "Biểu Mẫu Chuẩn ABT";
   issuingBody: string;
   effectiveDate: string;
   status: "DANG_HIEU_LUC" | "HET_HIEU_LUC" | "BI_THAY_THE";
@@ -246,7 +246,7 @@ export const LegalModule: React.FC = () => {
 
   // New Tender Form
   const [newTenderForm, setNewTenderForm] = useState({
-    code: `THAU-TBR-${Date.now().toString().slice(-4)}`,
+    code: `THAU-ABT-${Date.now().toString().slice(-4)}`,
     hospitalName: "",
     packageName: "",
     bidValue: "",
@@ -279,7 +279,7 @@ export const LegalModule: React.FC = () => {
 
   // Form state for new contract
   const [newContractForm, setNewContractForm] = useState({
-    code: `HD-TBR-${Date.now().toString().slice(-4)}`,
+    code: `HD-ABT-${Date.now().toString().slice(-4)}`,
     title: "",
     partnerName: "",
     type: "Bán hàng Bệnh Viện" as LegalContract["type"],
@@ -493,8 +493,8 @@ export const LegalModule: React.FC = () => {
     if (kind === "doc") setIsNewDocModalOpen(false);
     if (editing?.kind !== kind) return;
     setEditing(null);
-    if (kind === "contract") setNewContractForm({ code: `HD-TBR-${Date.now().toString().slice(-4)}`, title: "", partnerName: "", type: "Bán hàng Bệnh Viện", value: "", requester: myName, department: user?.department || "Pháp Chế", riskNotes: "", riskLevel: "THAP", expiryDate: "", attachments: [] });
-    if (kind === "tender") setNewTenderForm({ code: `THAU-TBR-${Date.now().toString().slice(-4)}`, hospitalName: "", packageName: "", bidValue: "", submissionDeadline: "", assignedLawyer: legalLeadName, notes: "", checklist: { circulationLicense: false, loaAuthorization: false, iso13485: false, financialReport: false, gdpGspColdChain: false }, attachments: [] });
+    if (kind === "contract") setNewContractForm({ code: `HD-ABT-${Date.now().toString().slice(-4)}`, title: "", partnerName: "", type: "Bán hàng Bệnh Viện", value: "", requester: myName, department: user?.department || "Pháp Chế", riskNotes: "", riskLevel: "THAP", expiryDate: "", attachments: [] });
+    if (kind === "tender") setNewTenderForm({ code: `THAU-ABT-${Date.now().toString().slice(-4)}`, hospitalName: "", packageName: "", bidValue: "", submissionDeadline: "", assignedLawyer: legalLeadName, notes: "", checklist: { circulationLicense: false, loaAuthorization: false, iso13485: false, financialReport: false, gdpGspColdChain: false }, attachments: [] });
     if (kind === "license") setNewLicenseForm({ licenseNumber: "", productName: "", deviceClass: "Loại C", manufacturer: "", origin: "", agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế", issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), expiryDate: "", notes: "", attachments: [] });
     if (kind === "doc") setNewDocForm({ code: "", title: "", category: "Nghị Định & Luật", issuingBody: "", effectiveDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), summary: "", attachments: [] });
   };
@@ -781,7 +781,7 @@ export const LegalModule: React.FC = () => {
     saveTenders(updated);
     setIsNewTenderModalOpen(false);
     setNewTenderForm({
-      code: `THAU-TBR-${Date.now().toString().slice(-4)}`,
+      code: `THAU-ABT-${Date.now().toString().slice(-4)}`,
       hospitalName: "",
       packageName: "",
       bidValue: "",
@@ -860,7 +860,7 @@ export const LegalModule: React.FC = () => {
       licenseNumber: newLicenseForm.licenseNumber,
       productName: newLicenseForm.productName,
       deviceClass: newLicenseForm.deviceClass,
-      manufacturer: newLicenseForm.manufacturer || "TBR Diagnostics",
+      manufacturer: newLicenseForm.manufacturer || "ABT Diagnostics",
       origin: newLicenseForm.origin || "Việt Nam",
       agency: newLicenseForm.agency,
       issueDate: newLicenseForm.issueDate,
@@ -926,7 +926,7 @@ export const LegalModule: React.FC = () => {
     setIsNewContractModalOpen(false);
     // Reset form
     setNewContractForm({
-      code: `HD-TBR-${Date.now().toString().slice(-4)}`,
+      code: `HD-ABT-${Date.now().toString().slice(-4)}`,
       title: "",
       partnerName: "",
       type: "Bán hàng Bệnh Viện",
@@ -1533,7 +1533,7 @@ export const LegalModule: React.FC = () => {
                 Thư Viện Văn Bản Pháp Quy &amp; Biểu Mẫu Chuẩn Hóa Y Tế
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Tra cứu, tải lên văn bản luật, nghị định Bộ Y Tế, tiêu chuẩn ISO 13485 và các biểu mẫu hợp đồng mẫu TBRs
+                Tra cứu, tải lên văn bản luật, nghị định Bộ Y Tế, tiêu chuẩn ISO 13485 và các biểu mẫu hợp đồng mẫu ABT
               </p>
             </div>
 
@@ -1564,7 +1564,7 @@ export const LegalModule: React.FC = () => {
                 { id: "Nghị Định & Luật", label: "Nghị Định & Luật" },
                 { id: "Thông Tư Bộ Y Tế", label: "Thông Tư BYT" },
                 { id: "Tiêu Chuẩn ISO/TCVN", label: "ISO / TCVN" },
-                { id: "Biểu Mẫu Chuẩn TBRs", label: "Biểu Mẫu TBRs" }
+                { id: "Biểu Mẫu Chuẩn ABT", label: "Biểu Mẫu ABT" }
               ].map((cat) => (
                 <button
                   key={cat.id}
@@ -1718,7 +1718,7 @@ export const LegalModule: React.FC = () => {
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs space-y-4">
             <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
               <ShieldCheck className="w-5 h-5 text-emerald-600" />
-              Quy Trình Thẩm Định Pháp Lý Bắt Buộc Chuẩn Hóa TBRs (Standard Legal SOP)
+              Quy Trình Thẩm Định Pháp Lý Bắt Buộc Chuẩn Hóa ABT (Standard Legal SOP)
             </h4>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-slate-600 dark:text-slate-400">
               <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-1">
@@ -2099,7 +2099,7 @@ export const LegalModule: React.FC = () => {
                   <option value="Nghị Định &amp; Luật">Nghị Định &amp; Luật</option>
                   <option value="Thông Tư Bộ Y Tế">Thông Tư Bộ Y Tế</option>
                   <option value="Tiêu Chuẩn ISO/TCVN">Tiêu Chuẩn ISO / TCVN</option>
-                  <option value="Biểu Mẫu Chuẩn TBRs">Biểu Mẫu Chuẩn TBRs</option>
+                  <option value="Biểu Mẫu Chuẩn ABT">Biểu Mẫu Chuẩn ABT</option>
                 </select>
               </div>
             </div>
@@ -2127,7 +2127,7 @@ export const LegalModule: React.FC = () => {
                   type="text"
                   value={newDocForm.issuingBody}
                   onChange={(e) => setNewDocForm({ ...newDocForm, issuingBody: e.target.value })}
-                  placeholder="ví dụ: Chính Phủ, Bộ Y Tế hoặc Ban Pháp Chế TBRs"
+                  placeholder="ví dụ: Chính Phủ, Bộ Y Tế hoặc Ban Pháp Chế ABT"
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
                   required
                 />
@@ -2628,7 +2628,7 @@ export const LegalModule: React.FC = () => {
                 type="text"
                 value={newLicenseForm.productName}
                 onChange={(e) => setNewLicenseForm({ ...newLicenseForm, productName: e.target.value })}
-                placeholder="ví dụ: Hệ thống xét nghiệm Real-time PCR tự động TBR-9600"
+                placeholder="ví dụ: Hệ thống xét nghiệm Real-time PCR tự động ABT-9600"
                 className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
                 required
               />
@@ -2643,7 +2643,7 @@ export const LegalModule: React.FC = () => {
                   type="text"
                   value={newLicenseForm.manufacturer}
                   onChange={(e) => setNewLicenseForm({ ...newLicenseForm, manufacturer: e.target.value })}
-                  placeholder="ví dụ: TBRs Diagnostics Lab Inc."
+                  placeholder="ví dụ: ABT Diagnostics Lab Inc."
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
                 />
               </div>
@@ -2935,7 +2935,7 @@ export const LegalModule: React.FC = () => {
                             ĐƠN VỊ ĐỀ XUẤT / CUNG ỨNG:
                           </div>
                           <div className="font-bold text-slate-900">
-                            {companyConfig.companyName || "CÔNG TY CỔ PHẦN CÔNG NGHỆ SINH HỌC & THIẾT BỊ Y TẾ TBRs"}
+                            {companyConfig.companyName || "CÔNG TY CỔ PHẦN CÔNG NGHỆ SINH HỌC & THIẾT BỊ Y TẾ ABT"}
                           </div>
                           <div><span className="text-slate-500">Mã số thuế:</span> {companyConfig.companyTaxCode || "0314892288"}</div>
                           <div><span className="text-slate-500">Địa chỉ:</span> {companyConfig.companyAddress || "51 Đường số 26, Phường An Lạc, TP. HCM"}</div>
@@ -2958,7 +2958,7 @@ export const LegalModule: React.FC = () => {
                         <div>
                           <strong className="text-slate-900 text-sm">NỘI DUNG TRÍCH YẾU &amp; PHẠM VI ÁP DỤNG:</strong>
                           <p className="mt-1 text-slate-700 bg-amber-50/60 p-3 rounded-xl border border-amber-200 text-xs">
-                            {docToView.summary || "Toàn bộ tài liệu quy chuẩn pháp lý và hồ sơ số hóa đã được Ban Pháp Chế TBRs kiểm tra tính hợp lệ và tuân thủ các quy định hiện hành của Bộ Y Tế."}
+                            {docToView.summary || "Toàn bộ tài liệu quy chuẩn pháp lý và hồ sơ số hóa đã được Ban Pháp Chế ABT kiểm tra tính hợp lệ và tuân thủ các quy định hiện hành của Bộ Y Tế."}
                           </p>
                         </div>
 
@@ -3004,7 +3004,7 @@ export const LegalModule: React.FC = () => {
                             <div className="h-24 flex flex-col items-center justify-center relative">
                               <div className="w-28 h-28 rounded-full border-2 border-dashed border-rose-600/80 p-1 flex flex-col items-center justify-center text-rose-600 rotate-[-8deg] bg-rose-50/20 shadow-xs">
                                 <span className="text-[7.5px] font-black uppercase text-center leading-tight">
-                                  {companyConfig.companyName ? companyConfig.companyName.toUpperCase() : "CÔNG TY CP CÔNG NGHỆ TBRs"}
+                                  {companyConfig.companyName ? companyConfig.companyName.toUpperCase() : "CÔNG TY CP CÔNG NGHỆ ABT"}
                                 </span>
                                 <span className="text-[9px] font-black my-0.5">★ ★ ★</span>
                                 <span className="text-[8.5px] font-bold text-center">ĐÃ KÝ SỐ</span>
@@ -3136,10 +3136,10 @@ export const LegalModule: React.FC = () => {
                           <div className="flex items-center justify-between border-b pb-4">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-xl bg-teal-600 text-white font-black flex items-center justify-center text-base">
-                                {companyConfig.companyName?.slice(0, 3)?.toUpperCase() || "TBR"}
+                                {companyConfig.companyName?.slice(0, 3)?.toUpperCase() || "ABT"}
                               </div>
                               <div>
-                                <div className="font-bold text-slate-900 text-sm">{companyConfig.companyName || "TBR SCIENTIFIC"}</div>
+                                <div className="font-bold text-slate-900 text-sm">{companyConfig.companyName || "ABT SCIENTIFIC"}</div>
                                 <div className="text-[11px] text-slate-500">Kho Tài Liệu Pháp Lý &amp; Hồ Sơ Thầu Số Hóa</div>
                               </div>
                             </div>
@@ -3160,7 +3160,7 @@ export const LegalModule: React.FC = () => {
                           <div className="space-y-3 text-xs leading-relaxed text-slate-700 border-t pt-4">
                             <div className="font-bold text-slate-900 text-sm">NỘI DUNG TÀI LIỆU SỐ HÓA:</div>
                             <p>
-                              Tài liệu này được lưu trữ tập trung trên hệ thống cơ sở dữ liệu TBRs Portal và liên kết với mã hồ sơ <strong>{docToView.code}</strong>.
+                              Tài liệu này được lưu trữ tập trung trên hệ thống cơ sở dữ liệu ABT Portal và liên kết với mã hồ sơ <strong>{docToView.code}</strong>.
                             </p>
                             <ul className="list-disc pl-5 space-y-1">
                               <li>Tiêu đề văn bản: <strong>{docToView.title}</strong></li>
@@ -3174,8 +3174,8 @@ export const LegalModule: React.FC = () => {
                           </div>
 
                           <div className="pt-6 border-t flex items-center justify-between text-xs text-slate-400">
-                            <span>Trang 1 / 1 (Bản xem trực tiếp trên hệ thống TBRs Portal)</span>
-                            <span className="font-mono">TBR-LEGAL-SECURED-2026</span>
+                            <span>Trang 1 / 1 (Bản xem trực tiếp trên hệ thống ABT Portal)</span>
+                            <span className="font-mono">ABT-LEGAL-SECURED-2026</span>
                           </div>
                         </div>
                       </div>

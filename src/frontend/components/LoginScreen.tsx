@@ -74,16 +74,16 @@ export const LoginScreen: React.FC = () => {
       <header className="relative z-10 w-full px-6 py-4 flex items-center justify-between border-b border-slate-800/80 bg-slate-950/60 backdrop-blur-md">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-white flex items-center justify-center shadow-lg ring-2 ring-orange-400/30 overflow-hidden">
-            <img src="/icon.png" alt="TBR Scientific" className="w-9 h-9 object-contain" />
+            <img src="/icon.png" alt="ABT" className="w-9 h-9 object-contain" />
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <span className="font-extrabold text-base tracking-tight text-white font-mono">TBRs PORTAL</span>
+              <span className="font-extrabold text-base tracking-tight text-white font-mono">ABT PORTAL</span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30">
-                TBRs Scientific
+                Y Sinh ABT
               </span>
             </div>
-            <p className="text-[11px] text-slate-400 text-left">Công ty TNHH Khoa học TBR</p>
+            <p className="text-[11px] text-slate-400 text-left">Công ty TNHH Giải pháp Y sinh ABT</p>
           </div>
         </div>
 
@@ -96,7 +96,7 @@ export const LoginScreen: React.FC = () => {
               className="px-3 py-1.5 rounded-lg text-xs font-bold transition-all bg-orange-600 text-white shadow-sm flex items-center gap-1.5 cursor-pointer"
             >
               <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Cổng Nội Bộ TBRs</span>
+              <span>Cổng Nội Bộ ABT</span>
             </button>
             <button
               type="button"
@@ -310,7 +310,7 @@ export const LoginScreen: React.FC = () => {
 
       {/* Footer */}
       <footer className="relative z-10 w-full py-4 px-6 text-center text-xs text-slate-500 border-t border-slate-800/80 bg-slate-950/40">
-        TBRs PORTAL v2.0 • Hệ Thống Điều Hành &amp; Quản Trị Phân Phối Sinh Phẩm Y Tế • PostgreSQL 18
+        ABT PORTAL v2.0 • Hệ Thống Điều Hành &amp; Quản Trị Phân Phối Sinh Phẩm Y Tế • PostgreSQL 18
       </footer>
     </div>
   );

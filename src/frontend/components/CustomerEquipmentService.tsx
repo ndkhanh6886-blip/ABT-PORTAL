@@ -45,7 +45,7 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { usePersonnel, filterPersonnelByDept } from "@/frontend/utils/usePersonnel";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 
-// Dòng thiết bị trong danh mục phân phối & dịch vụ kỹ thuật của TBRs / ABT
+// Dòng thiết bị trong danh mục phân phối & dịch vụ kỹ thuật của ABT
 export type EquipmentCategory =
   | "PCR_REALTIME"       // Real-time PCR, PCR thường, Digital PCR
   | "EXTRACTION"         // Máy tách chiết DNA/RNA tự động, Robot phân phối mẫu
@@ -94,7 +94,7 @@ export const DEFAULT_EQUIPMENT_CATEGORIES_CONFIG: Record<string, SOPChecklistCon
   EXTRACTION: {
     name: "Máy Tách Chiết Tự Động & Robot Mẫu",
     badgeColor: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300 border-emerald-200",
-    standardProtocol: "Quy chuẩn kỹ thuật TBR-MagPure & Liquid Handling Workstation",
+    standardProtocol: "Quy chuẩn kỹ thuật ABT-MagPure & Liquid Handling Workstation",
     checklist: [
       { key: "magneticRods", label: "1. Vệ sinh & khử nhiễm thanh từ / đầu bao tip nam châm" },
       { key: "heatingStrip", label: "2. Hiệu chuẩn thanh gia nhiệt ủ ly giải mẫu (Lysis 56°C - 80°C)" },
@@ -277,7 +277,7 @@ export const CustomerEquipmentService: React.FC = () => {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [hospitalFilter, setHospitalFilter] = useState("all");
 
-  // Installed Base (Danh bạ thiết bị đa dạng các dòng sản phẩm TBRs đã lắp đặt tại bệnh viện)
+  // Installed Base (Danh bạ thiết bị đa dạng các dòng sản phẩm ABT đã lắp đặt tại bệnh viện)
   const [installedDevices, setInstalledDevices] = useState<CustomerInstalledDevice[]>([]);
 
   // Service Tickets & PM Schedule (Lịch bảo trì định kỳ & Sửa chữa sự cố đa dòng máy)
@@ -562,10 +562,10 @@ export const CustomerEquipmentService: React.FC = () => {
 
   // New Installed Device Form
   const [newDeviceForm, setNewDeviceForm] = useState({
-    deviceName: "Hệ thống Real-time PCR Tự Động TBR-9600",
-    model: "TBR-PCR-9600",
+    deviceName: "Hệ thống Real-time PCR Tự Động ABT-9600",
+    model: "ABT-PCR-9600",
     category: "PCR_REALTIME" as EquipmentCategory,
-    serialNumber: `SN-TBR-${Date.now().toString().slice(-5)}`,
+    serialNumber: `SN-ABT-${Date.now().toString().slice(-5)}`,
     hospitalName: "",
     department: "Khoa Xét Nghiệm",
     installationDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
@@ -711,7 +711,7 @@ export const CustomerEquipmentService: React.FC = () => {
       category: cat,
       hospitalName: dev?.hospitalName || pmForm.hospitalName,
       department: dev?.department || pmForm.department,
-      deviceName: dev?.deviceName || "Thiết bị y tế TBRs",
+      deviceName: dev?.deviceName || "Thiết bị y tế ABT",
       model: dev?.model || "Standard Model",
       serialNumber: dev?.serialNumber || "SN-PENDING",
       assignedEngineer: pmForm.assignedEngineer,
@@ -743,7 +743,7 @@ export const CustomerEquipmentService: React.FC = () => {
       category: cat,
       hospitalName: dev?.hospitalName || breakfixForm.hospitalName,
       department: dev?.department || breakfixForm.department,
-      deviceName: dev?.deviceName || "Thiết bị y tế TBRs",
+      deviceName: dev?.deviceName || "Thiết bị y tế ABT",
       model: dev?.model || "Standard Model",
       serialNumber: dev?.serialNumber || "SN-PENDING",
       assignedEngineer: breakfixForm.assignedEngineer,
@@ -767,7 +767,7 @@ export const CustomerEquipmentService: React.FC = () => {
     e.preventDefault();
     const newDevice: CustomerInstalledDevice = {
       id: `DEV-${Date.now().toString().slice(-5)}`,
-      deviceCode: `TBR-EQ-${Date.now().toString().slice(-4)}`,
+      deviceCode: `ABT-EQ-${Date.now().toString().slice(-4)}`,
       category: newDeviceForm.category,
       deviceName: newDeviceForm.deviceName,
       model: newDeviceForm.model,
@@ -1307,7 +1307,7 @@ export const CustomerEquipmentService: React.FC = () => {
                   <div>
                     <span className="text-slate-400">Kỹ sư FSE phụ trách:</span>
                     <div className="font-bold text-slate-900 dark:text-white text-sm mt-0.5">{srv.assignedEngineer}</div>
-                    <div className="text-slate-500 text-[11px]">Đội Dịch vụ Kỹ thuật TBRs (FSE Team)</div>
+                    <div className="text-slate-500 text-[11px]">Đội Dịch vụ Kỹ thuật ABT (FSE Team)</div>
                   </div>
                 </div>
 
@@ -1416,7 +1416,7 @@ export const CustomerEquipmentService: React.FC = () => {
           <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
             <div>
               <h3 className="font-bold text-slate-900 dark:text-white text-sm">
-                Cơ Sở Thiết Bị Xét Nghiệm TBRs Đã Lắp Đặt Tại Khách Hàng (Customer Installed Base)
+                Cơ Sở Thiết Bị Xét Nghiệm ABT Đã Lắp Đặt Tại Khách Hàng (Customer Installed Base)
               </h3>
               <p className="text-xs text-slate-500 mt-0.5">
                 Theo dõi toàn diện số Serial, hạn bảo hành, phân loại dòng máy và kỹ sư phụ trách từng máy tại các bệnh viện.
@@ -2178,10 +2178,10 @@ export const CustomerEquipmentService: React.FC = () => {
                 <div className="flex items-center justify-between border-b-2 border-slate-800 pb-4">
                   <div className="flex items-center gap-3">
                     <div className="w-12 h-12 rounded-xl bg-orange-600 text-white font-black flex items-center justify-center text-lg">
-                      {companyConfig.companyName?.slice(0, 3)?.toUpperCase() || "TBR"}
+                      {companyConfig.companyName?.slice(0, 3)?.toUpperCase() || "ABT"}
                     </div>
                     <div>
-                      <div className="font-bold text-slate-900 text-base">{companyConfig.companyName || "CÔNG TY CỔ PHẦN CÔNG NGHỆ SINH HỌC & THIẾT BỊ Y TẾ TBRs"}</div>
+                      <div className="font-bold text-slate-900 text-base">{companyConfig.companyName || "CÔNG TY CỔ PHẦN CÔNG NGHỆ SINH HỌC & THIẾT BỊ Y TẾ ABT"}</div>
                       <div className="text-xs text-slate-500 font-sans">PHÒNG ỨNG DỤNG LÂM SÀNG &amp; DỊCH VỤ KỸ THUẬT (FAS / FSE)</div>
                       <div className="text-[11px] text-slate-400 font-sans">Hotline Kỹ Thuật: {companyConfig.companyPhone || "0908 123 456"} {companyConfig.companyEmail ? `• Email: ${companyConfig.companyEmail}` : ""}</div>
                     </div>

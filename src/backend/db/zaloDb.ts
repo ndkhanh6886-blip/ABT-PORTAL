@@ -21,7 +21,7 @@ export async function initZaloDatabase(force = false): Promise<{ success: boolea
       CREATE TABLE IF NOT EXISTS zalo_config (
         id SERIAL PRIMARY KEY,
         oa_id VARCHAR(100) DEFAULT '',
-        oa_name VARCHAR(150) DEFAULT 'Công ty TNHH Khoa học TBR (Zalo OA Doanh Nghiệp)',
+        oa_name VARCHAR(150) DEFAULT 'Công ty TNHH Giải pháp Y sinh ABT (Zalo OA Doanh Nghiệp)',
         app_id VARCHAR(100) DEFAULT '',
         secret_key VARCHAR(150) DEFAULT '',
         access_token TEXT DEFAULT '',
@@ -44,7 +44,7 @@ export async function initZaloDatabase(force = false): Promise<{ success: boolea
           webhook_verify_token, director_discount_threshold, director_phone, director_zalo_id
         ) VALUES (
           '',
-          'Công ty TNHH Khoa học TBR (Zalo OA Doanh Nghiệp)',
+          'Công ty TNHH Giải pháp Y sinh ABT (Zalo OA Doanh Nghiệp)',
           '',
           '',
           '',
@@ -143,7 +143,7 @@ export async function syncPersonnelToZaloBindings() {
     // 1b. Clean up duplicate ghost records from personnel table if any exist
     await query(`
       DELETE FROM personnel 
-      WHERE (employee_code ~ '^TBR[0-9]+$' OR employee_code ~ '^VIA[0-9]+$')
+      WHERE (employee_code ~ '^ABT[0-9]+$' OR employee_code ~ '^VIA[0-9]+$')
          OR (position = 'admin' AND employee_code != 'admin')
     `).catch(() => {});
 
@@ -154,14 +154,14 @@ export async function syncPersonnelToZaloBindings() {
         zalo_user_id = COALESCE(target.zalo_user_id, src.zalo_user_id),
         phone_number = COALESCE(target.phone_number, src.phone_number)
       FROM zalo_user_bindings src
-      WHERE (src.employee_id = REPLACE(REPLACE(target.employee_id, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA'))
+      WHERE (src.employee_id = REPLACE(REPLACE(target.employee_id, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))
         AND src.employee_id != target.employee_id
     `).catch(() => {});
 
     // 1d. Delete ghost duplicate records and orphaned records from zalo_user_bindings
     await query(`
       DELETE FROM zalo_user_bindings 
-      WHERE employee_id ~ '^TBR[0-9]+$' 
+      WHERE employee_id ~ '^ABT[0-9]+$' 
          OR employee_id ~ '^VIA[0-9]+$'
          OR employee_id NOT IN (SELECT employee_code FROM personnel WHERE employee_code IS NOT NULL)
     `).catch(() => {});
@@ -300,7 +300,7 @@ export async function clearMockZaloData() {
     await query("TRUNCATE TABLE zalo_message_logs RESTART IDENTITY");
 
     // 2. Delete test quotations created during testing
-    await query("DELETE FROM sales_quotations WHERE quote_code LIKE 'BG-TBR-2609-%'");
+    await query("DELETE FROM sales_quotations WHERE quote_code LIKE 'BG-ABT-2609-%'");
 
     // 3. Re-sync personnel
     await syncPersonnelToZaloBindings();

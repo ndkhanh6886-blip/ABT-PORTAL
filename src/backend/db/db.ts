@@ -23,7 +23,7 @@ export function setAuditActorContext(actor: { username: string; fullName: string
   auditActorStore.enterWith(actor);
 }
 
-// Global database connection pool for TBRs Portal (PostgreSQL 18)
+// Global database connection pool for ABT Portal (PostgreSQL 18)
 if (process.env.NODE_ENV === "production" && !process.env.PGPASSWORD) {
   console.warn("⚠️ CẢNH BÁO AN NINH: Biến môi trường PGPASSWORD chưa được thiết lập trong môi trường Production!");
 }
@@ -33,7 +33,7 @@ const pool = new Pool({
   port: parseInt(process.env.PGPORT || "5432"),
   user: process.env.PGUSER || "postgres",
   password: process.env.PGPASSWORD || "12345678",
-  database: process.env.PGDATABASE || "tbrs_portal",
+  database: process.env.PGDATABASE || "abt_portal",
   max: 25,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
@@ -720,6 +720,25 @@ async function runIntegrityMigrations() {
       );
     });
 
+    // Thông tin pháp nhân của ABT cho chứng từ in từ máy chủ (hợp đồng / báo giá gửi qua Zalo) ở CSDL mới.
+    // Chỉ tạo khi chưa có cấu hình; Quản trị viên sửa trong Cấu hình > Thông tin công ty.
+    await step("seed_company_config_abt", () =>
+      client.query(
+        `INSERT INTO app_storage (key, data, version, updated_at)
+         VALUES ('sales_company_config', $1::jsonb, 1, now())
+         ON CONFLICT (key) DO NOTHING`,
+        [JSON.stringify({
+          companyName: "Công ty TNHH Giải pháp Y sinh ABT",
+          companyAddress: "Xưởng 6.07 và 5.02, Lô L2, Đường Long Hậu-Hiệp Phước, KCN Long Hậu, Xã Cần Giuộc, Tỉnh Tây Ninh, Việt Nam",
+          companyPhone: "028 2216 0885",
+          companyEmail: "sales@abtvn.com",
+          companyTaxCode: "0315562387",
+          companyRepresentative: "NGUYỄN VĂN TÙNG",
+          companyRepresentativeRole: "Giám đốc",
+        })]
+      )
+    );
+
     await step("inventory_checks", () =>
       client.query(`
         DO $$
@@ -762,8 +781,8 @@ async function ensurePersonnelTableImpl() {
       const candidates = [
         path.join(process.cwd(), "src/backend/db/schema.sql"),
         path.join(__dirname, "schema.sql"),
-        "/var/www/TBR-portal/src/backend/db/schema.sql",
-        "/var/www/tbr-portal/src/backend/db/schema.sql"
+        "/var/www/ABT-portal/src/backend/db/schema.sql",
+        "/var/www/abt-portal/src/backend/db/schema.sql"
       ];
       for (const p of candidates) {
         if (fs.existsSync(p)) {
@@ -774,6 +793,33 @@ async function ensurePersonnelTableImpl() {
       }
     } catch (e: any) {
       console.warn("Could not execute schema.sql:", e?.message);
+    }
+
+    // 0b. schema.sql chỉ có cấu trúc, không có ràng buộc UNIQUE mà các lệnh ON CONFLICT bên dưới cần:
+    //     trên CSDL mới, tạo tài khoản admin / nhân sự / liên kết Zalo bị lỗi và các migration sau đó không chạy.
+    //     Tạo chỉ mục duy nhất khi cột chưa có (CSDL đang chạy đã có ràng buộc thì bỏ qua).
+    for (const [table, column] of [
+      ["users", "username"],
+      ["personnel", "employee_code"],
+      ["sales_contracts", "contract_code"],
+      ["zalo_user_bindings", "employee_id"],
+      ["zalo_user_bindings", "zalo_user_id"],
+    ] as const) {
+      try {
+        const exists = await pool.query(
+          `SELECT 1 FROM pg_index i
+             JOIN pg_class t ON t.oid = i.indrelid
+             JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = i.indkey[0]
+            WHERE t.relname = $1 AND a.attname = $2 AND i.indisunique AND i.indnatts = 1
+            LIMIT 1`,
+          [table, column]
+        );
+        if (exists.rows.length === 0) {
+          await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS ${table}_${column}_uidx ON ${table} (${column})`);
+        }
+      } catch (e: any) {
+        console.error(`[MIGRATION] Không tạo được ràng buộc duy nhất ${table}.${column}:`, e?.message);
+      }
     }
 
     // 1. Ensure columns exist on users table
@@ -876,7 +922,7 @@ async function ensurePersonnelTableImpl() {
     const initialAdminPassword = (process.env.INITIAL_ADMIN_PASSWORD || "").trim() || generateTemporaryPassword(14);
     const adminIns = await pool.query(
       `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
-       VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@tbrscientific.com', true, true)
+       VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@abtvn.com', true, true)
        ON CONFLICT (username) DO NOTHING
        RETURNING id`,
       [hashPassword(initialAdminPassword)]

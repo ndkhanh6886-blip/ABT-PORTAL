@@ -375,7 +375,7 @@ export async function GET(req: NextRequest) {
     <div class="national-title">CỘNG HÒA XÃ HỘI CHỦ NGHĨA VIỆT NAM</div>
     <div class="motto">Độc lập - Tự do - Hạnh phúc</div>
     <div class="contract-title">HỢP ĐỒNG MUA BÁN HÀNG HÓA &amp; SINH PHẨM Y TẾ</div>
-    <div class="contract-meta">Số: <strong>${c.contract_code}</strong> / HĐMB-TBRS</div>
+    <div class="contract-meta">Số: <strong>${c.contract_code}</strong> / HĐMB-ABT</div>
   </div>
 
   <div class="legal-basis">
@@ -385,7 +385,7 @@ export async function GET(req: NextRequest) {
     - Căn cứ vào nhu cầu của Bên Mua và khả năng cung cấp hàng hóa của Bên Bán.
   </div>
 
-  <p>Hôm nay, ngày ${day} tháng ${month} năm ${year}, tại văn phòng Công ty TNHH Khoa học TBR, chúng tôi gồm có:</p>
+  <p>Hôm nay, ngày ${day} tháng ${month} năm ${year}, tại văn phòng Công ty TNHH Giải pháp Y sinh ABT, chúng tôi gồm có:</p>
 
   <!-- BÊN A -->
   <div class="party-title">BÊN BÁN (BÊN A): ${companyName}</div>
@@ -489,7 +489,7 @@ export async function GET(req: NextRequest) {
         ${['ACTIVE', 'APPROVED', 'SIGNED', 'COMPLETED'].includes(String(c.status || '').toUpperCase())
           ? `[ ĐÃ XÁC THỰC BỞI ${companyRep} ]`
           : '[ DỰ THẢO — CHỜ PHÊ DUYỆT ]'}<br>
-        <span style="font-size: 10pt; font-weight: normal; color: #64748b;">Hệ Thống Quản Lý TBRs Portal</span>
+        <span style="font-size: 10pt; font-weight: normal; color: #64748b;">Hệ Thống Quản Lý ABT Portal</span>
       </div>
       <div style="margin-top: 20px;">
         <strong>${companyRep}</strong><br>
