@@ -15,8 +15,8 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
   {
     code: "THU_KHO",
     name: "Thủ kho",
-    description: "Lập và ghi sổ phiếu kho, giữ chỗ tồn kho.",
-    permissions: ["master.data.view", "inv.stock.view", "inv.document.create", "inv.document.post", "inv.reservation.manage"],
+    description: "Lập và ghi sổ phiếu kho, giữ chỗ tồn kho, nhận hàng mua vào kho.",
+    permissions: ["master.data.view", "inv.stock.view", "inv.document.create", "inv.document.post", "inv.reservation.manage", "purchase.receipt.post"],
   },
   {
     code: "TRUONG_KHO",
@@ -31,6 +31,7 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
       "inv.document.post",
       "inv.document.reverse",
       "inv.reservation.manage",
+      "purchase.receipt.post",
     ],
   },
   {
@@ -65,8 +66,26 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
   {
     code: "MUA_HANG_NVL",
     name: "Cung ứng NVL",
-    description: "Quản lý nhà cung cấp và xem danh mục vật tư.",
-    permissions: ["master.data.view", "master.partner.manage", "inv.stock.view"],
+    description: "Quản lý nhà cung cấp, xử lý đề nghị mua đã duyệt, lập và phát hành đơn mua NVL.",
+    permissions: ["master.data.view", "master.partner.manage", "inv.stock.view", "purchase.pr.view", "purchase.po.view", "purchase.po.manage"],
+  },
+  {
+    code: "NHAN_VIEN_PHONG",
+    name: "Nhân viên phòng (đề nghị mua)",
+    description: "Lập đề nghị mua NVL cho phòng. Cấp với phạm vi phòng.",
+    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.create"],
+  },
+  {
+    code: "TRUONG_PHONG",
+    name: "Trưởng phòng",
+    description: "Lập và duyệt đề nghị mua NVL của phòng. Cấp với phạm vi phòng.",
+    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.create", "purchase.pr.approve"],
+  },
+  {
+    code: "BAN_GIAM_DOC",
+    name: "Ban giám đốc",
+    description: "Duyệt đề nghị mua vượt ngưỡng (ký điện tử), xem đề nghị và đơn mua.",
+    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.approve", "purchase.pr.approve_bod", "purchase.po.view"],
   },
   {
     code: "QUAN_TRI_NHA_MAY",

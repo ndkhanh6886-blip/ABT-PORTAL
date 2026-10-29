@@ -155,3 +155,17 @@ export async function createLocation(tx: Tx, actor: AuthzActor, input: unknown) 
   }
   return insertRecord(tx, actor, "master.location", "location", data);
 }
+
+export async function listPartners(tx: Tx, actor: AuthzActor, query: { q?: string; role?: string }) {
+  await authorize(tx, actor, "master.data.view").catch(async () => authorize(tx, actor, "master.partner.manage"));
+  const role = ["supplier", "customer", "subcontractor"].includes(query.role ?? "") ? `is_${query.role}` : null;
+  return (
+    await tx.query(
+      `SELECT id, code, name, tax_code, is_supplier, is_customer, is_subcontractor, is_internal, address, payment_terms, status
+         FROM master.partner
+        WHERE status = 'ACTIVE' ${role ? `AND ${role}` : ""} AND ($1 = '' OR code ILIKE '%' || $1 || '%' OR name ILIKE '%' || $1 || '%' OR tax_code ILIKE '%' || $1 || '%')
+        ORDER BY name LIMIT 300`,
+      [(query.q ?? "").trim().slice(0, 100)]
+    )
+  ).rows;
+}

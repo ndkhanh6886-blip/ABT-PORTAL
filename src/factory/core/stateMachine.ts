@@ -120,7 +120,8 @@ export async function runTransition<S extends string, Row extends { id: string; 
   machine: MachineDef<S, Row>,
   actor: AuthzActor,
   req: TransitionRequest,
-  opts: { signerAuthenticated?: boolean } = {}
+  /** trusted: a module-internal follow-up of an action the calling module already authorised (no permission check). */
+  opts: { signerAuthenticated?: boolean; trusted?: boolean } = {}
 ): Promise<Row> {
   const loaded = await tx.query(`SELECT * FROM ${machine.table} WHERE id = $1 FOR UPDATE`, [req.id]);
   const row = loaded.rows[0] as Row | undefined;
@@ -132,7 +133,7 @@ export async function runTransition<S extends string, Row extends { id: string; 
   if (!t) {
     throw invalid(`Không thể thực hiện "${req.action}" khi bản ghi đang ở trạng thái ${row.status}.`, undefined, "INVALID_TRANSITION");
   }
-  await authorize(tx, actor, t.permission, await machine.scopeOf?.(row, tx));
+  if (!opts.trusted) await authorize(tx, actor, t.permission, await machine.scopeOf?.(row, tx));
   const reason = req.reason?.trim() || null;
   if (t.reasonRequired && !reason) throw invalid("Thao tác này bắt buộc nhập lý do.", undefined, "REASON_REQUIRED");
   const ctx: GuardContext<Row> = { tx, actor, row, payload: req.payload ?? {}, reason };

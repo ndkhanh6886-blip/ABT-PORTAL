@@ -20,6 +20,7 @@ import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal
 import { FactoryProvider } from "@/frontend/factory/FactoryProvider";
 import { FactoryWarehouseModule } from "@/frontend/factory/warehouse/FactoryWarehouseModule";
 import { FactorySettingsModule } from "@/frontend/factory/settings/FactorySettingsModule";
+import { FactoryPurchaseModule } from "@/frontend/factory/purchase/FactoryPurchaseModule";
 import { FactoryQaModule } from "@/frontend/factory/qa/FactoryQaModule";
 
 export default function Home() {
@@ -130,6 +131,7 @@ export default function Home() {
         {activeTab === "settings" && can("settings.view") && <SettingsModule initialSubTab={settingsSubTab} />}
         {activeTab === "factory-warehouse" && <FactoryWarehouseModule />}
         {activeTab === "factory-settings" && <FactorySettingsModule />}
+        {activeTab === "factory-purchase" && <FactoryPurchaseModule />}
         {activeTab === "factory-qa" && <FactoryQaModule />}
         </DataSyncGate>
       </main>
