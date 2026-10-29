@@ -684,10 +684,10 @@ html:not(.dark) {
     color: #0369a1 !important;
     -webkit-text-fill-color: #0369a1 !important;
   }
-  button[class~"bg-orange-950"] *,
-  button[class~"bg-orange-900"] *,
-  button[class*"bg-orange-950/"] *,
-  button[class*"bg-orange-900/"] * {
+  button[class~="bg-orange-950"] *,
+  button[class~="bg-orange-900"] *,
+  button[class*="bg-orange-950/"] *,
+  button[class*="bg-orange-900/"] * {
     color: #0369a1 !important;
     -webkit-text-fill-color: #0369a1 !important;
   }
@@ -708,10 +708,10 @@ html:not(.dark) {
     color: #4c1d95 !important;
     -webkit-text-fill-color: #4c1d95 !important;
   }
-  button[class~"bg-violet-950"] *,
-  button[class~"bg-violet-900"] *,
-  button[class*"bg-violet-950/"] *,
-  button[class*"bg-violet-900/"] * {
+  button[class~="bg-violet-950"] *,
+  button[class~="bg-violet-900"] *,
+  button[class*="bg-violet-950/"] *,
+  button[class*="bg-violet-900/"] * {
     color: #4c1d95 !important;
     -webkit-text-fill-color: #4c1d95 !important;
   }
@@ -732,10 +732,10 @@ html:not(.dark) {
     color: #701a75 !important;
     -webkit-text-fill-color: #701a75 !important;
   }
-  button[class~"bg-fuchsia-950"] *,
-  button[class~"bg-fuchsia-900"] *,
-  button[class*"bg-fuchsia-950/"] *,
-  button[class*"bg-fuchsia-900/"] * {
+  button[class~="bg-fuchsia-950"] *,
+  button[class~="bg-fuchsia-900"] *,
+  button[class*="bg-fuchsia-950/"] *,
+  button[class*="bg-fuchsia-900/"] * {
     color: #701a75 !important;
     -webkit-text-fill-color: #701a75 !important;
   }
@@ -756,10 +756,10 @@ html:not(.dark) {
     color: #831843 !important;
     -webkit-text-fill-color: #831843 !important;
   }
-  button[class~"bg-pink-950"] *,
-  button[class~"bg-pink-900"] *,
-  button[class*"bg-pink-950/"] *,
-  button[class*"bg-pink-900/"] * {
+  button[class~="bg-pink-950"] *,
+  button[class~="bg-pink-900"] *,
+  button[class*="bg-pink-950/"] *,
+  button[class*="bg-pink-900/"] * {
     color: #831843 !important;
     -webkit-text-fill-color: #831843 !important;
   }
