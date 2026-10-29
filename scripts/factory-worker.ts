@@ -10,6 +10,7 @@ async function main() {
   const { processOutbox, runDailyJobs } = await import("../src/factory/core/worker");
   const { closeFactoryPool } = await import("../src/factory/core/db");
   await import("../src/factory/jobs");
+  const { dispatchKdOutbox } = await import("../src/backend/services/factoryBridge");
 
   let stopping = false;
   const stop = () => {
@@ -23,6 +24,8 @@ async function main() {
   while (!stopping) {
     try {
       const r = await processOutbox();
+      const kd = await dispatchKdOutbox();
+      if (kd) console.log(JSON.stringify({ level: "info", msg: "kd outbox", sent: kd }));
       if (r.processed || r.failed) console.log(JSON.stringify({ level: "info", msg: "outbox", ...r }));
       if (Date.now() - lastDaily >= DAILY_CHECK_MS) {
         lastDaily = Date.now();

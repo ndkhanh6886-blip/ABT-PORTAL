@@ -31,6 +31,9 @@ export const itemFields = {
   is_manufacturable: z.boolean().default(false),
   hazard_class: optionalText,
   kd_item_code: z.string().trim().max(60).optional().nullable().transform((s) => s || null),
+  /** Unit the Kinh doanh side orders in (e.g. "Hộp"), and how many base units one of it holds. */
+  kd_unit: z.string().trim().max(30).optional().nullable().transform((s) => s || null),
+  kd_unit_factor: z.coerce.number().positive("hệ số quy đổi phải lớn hơn 0").default(1),
   notes: optionalText,
 };
 

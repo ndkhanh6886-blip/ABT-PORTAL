@@ -3,3 +3,4 @@
 import "./permissions";
 import "./qms/lotQuality";
 import "./qms/ncr";
+import "./intake/gateway";

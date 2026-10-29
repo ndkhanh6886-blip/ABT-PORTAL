@@ -10,6 +10,7 @@ import { listAllowedActions, preAuthenticate, runTransition, type MachineDef, ty
 import { verifyPortalPassword } from "./portalBridge";
 import { z } from "zod";
 import { withIdempotency } from "./core/idempotency";
+import { processOutbox } from "./core/worker";
 import "./modules";
 
 export interface RouteContext {
@@ -56,6 +57,7 @@ export function factoryRoute(
       const ctx: RouteContext = { req, url: new URL(req.url), actor, params, body };
       await opts.before?.(ctx);
       const result = await withTransaction((tx) => handler(tx, ctx));
+      kickOutbox();
       return NextResponse.json(result ?? { ok: true });
     } catch (error: any) {
       if (error instanceof FactoryError) {
@@ -68,6 +70,20 @@ export function factoryRoute(
       return NextResponse.json({ error: `Lỗi hệ thống (mã tra cứu ${requestId.slice(0, 8)}). Vui lòng báo quản trị viên.`, code: "INTERNAL" }, { status: 500 });
     }
   };
+}
+
+let kicking = false;
+/** Delivers fresh events right after a commit (best effort); the worker retries whatever fails. */
+function kickOutbox(): void {
+  if (kicking) return;
+  kicking = true;
+  setTimeout(() => {
+    processOutbox(50)
+      .catch(() => {})
+      .finally(() => {
+        kicking = false;
+      });
+  }, 0);
 }
 
 /** Document-creating commands: the client sends an Idempotency-Key header; a resend returns the first result. */

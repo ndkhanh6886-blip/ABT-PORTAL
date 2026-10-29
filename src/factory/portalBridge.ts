@@ -2,6 +2,8 @@ import { query } from "@/backend/db/db";
 import { verifyPassword } from "@/backend/services/passwords";
 import type { PasswordVerifier } from "./core/signature";
 import type { UserDirectory } from "./core/roles";
+import { setKdGateway } from "./intake/gateway";
+import { applyFactoryEvent } from "@/backend/services/factoryBridge";
 
 /**
  * The only place the factory reads ABT Portal accounts (shared login, Q3). Kept behind small
@@ -27,3 +29,6 @@ export const verifyPortalPassword: PasswordVerifier = async (userId, password) =
   const r = (await query("SELECT password_hash, is_active FROM users WHERE id = $1", [userId])).rows[0];
   return Boolean(r && r.is_active !== false && verifyPassword(password, r.password_hash));
 };
+
+// Factory → Kinh doanh events are applied by the Kinh doanh bridge (its own transaction and inbox).
+setKdGateway({ deliver: (event) => applyFactoryEvent(event) });

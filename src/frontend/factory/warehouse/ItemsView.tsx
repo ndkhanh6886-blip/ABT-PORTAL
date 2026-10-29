@@ -30,6 +30,37 @@ interface ItemRow {
   min_stock: string;
   receipt_qc_required: boolean;
   status: string;
+  version: number;
+  kd_item_code: string | null;
+  kd_unit: string | null;
+  kd_unit_factor: string;
+}
+
+/** Links the item to the Kinh doanh product code used on internal POs, and how many base units one KD unit holds. */
+function KdMapping({ item }: { item: ItemRow }) {
+  const qc = useQueryClient();
+  const save = useMutation({
+    mutationFn: (patch: { kd_item_code: string | null; kd_unit: string | null; kd_unit_factor: number }) =>
+      api(`/api/factory/master/items/${item.id}`, { method: "PATCH", json: { version: item.version, ...patch, reason: "Gắn mã hàng Kinh doanh" } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["factory", "items"] }),
+    onError: (e) => window.alert((e as Error).message),
+  });
+  return (
+    <button
+      className="text-sky-700 dark:text-sky-400 underline underline-offset-2 cursor-pointer"
+      onClick={() => {
+        const code = window.prompt("Mã hàng bên Kinh doanh (để trống để bỏ liên kết):", item.kd_item_code ?? "");
+        if (code === null) return;
+        const unit = code ? window.prompt("Đơn vị Kinh doanh đặt (ví dụ Hộp, Kit):", item.kd_unit ?? "") : "";
+        if (unit === null) return;
+        const factor = code ? window.prompt(`1 ${unit || "đơn vị KD"} bằng bao nhiêu ${item.base_uom}?`, String(Number(item.kd_unit_factor) || 1)) : "1";
+        if (factor === null) return;
+        save.mutate({ kd_item_code: code.trim() || null, kd_unit: unit?.trim() || null, kd_unit_factor: Number(factor.replace(",", ".")) || 1 });
+      }}
+    >
+      {item.kd_item_code ? `${item.kd_item_code} (1 ${item.kd_unit ?? "ĐV"} = ${fmtQty(item.kd_unit_factor)} ${item.base_uom})` : "Gắn mã KD"}
+    </button>
+  );
 }
 
 const emptyForm = { code: "", name: "", item_type: "REAGENT", base_uom: "", tracking: "LOT", storage_condition: "RT", shelf_life_days: "", min_stock: "0", receipt_qc_required: true };
@@ -142,7 +173,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
       {items.data && items.data.rows.length === 0 && <Empty>Chưa có vật tư nào.</Empty>}
       {items.data && items.data.rows.length > 0 && (
         <>
-          <Table head={["Mã", "Tên", "Loại", "ĐVT gốc", "Quản lý", "Bảo quản", "Tồn tối thiểu", "QC nhận hàng", "Trạng thái"]}>
+          <Table head={["Mã", "Tên", "Loại", "ĐVT gốc", "Quản lý", "Bảo quản", "Tồn tối thiểu", "QC nhận hàng", "Mã hàng KD", "Trạng thái"]}>
             {items.data.rows.map((r) => (
               <tr key={r.id}>
                 <td className="py-2 pr-3 font-mono font-semibold whitespace-nowrap">{r.code}</td>
@@ -153,6 +184,7 @@ export function ItemsView({ canManage }: { canManage: boolean }) {
                 <td className="py-2 pr-3 whitespace-nowrap">{STORAGE_LABEL[r.storage_condition]}</td>
                 <td className="py-2 pr-3 text-right">{fmtQty(r.min_stock)}</td>
                 <td className="py-2 pr-3">{r.receipt_qc_required ? "Có" : "Không"}</td>
+                <td className="py-2 pr-3 whitespace-nowrap">{canManage ? <KdMapping item={r} /> : r.kd_item_code ?? "—"}</td>
                 <td className="py-2 pr-3"><StatusBadge status={r.status === "ACTIVE" ? "RELEASED" : "EXPIRED"} label={r.status === "ACTIVE" ? "Đang dùng" : "Ngừng"} /></td>
               </tr>
             ))}

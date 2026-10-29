@@ -16,7 +16,7 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     code: "THU_KHO",
     name: "Thủ kho",
     description: "Lập và ghi sổ phiếu kho, giữ chỗ tồn kho, nhận hàng mua vào kho.",
-    permissions: ["master.data.view", "inv.stock.view", "inv.document.create", "inv.document.post", "inv.reservation.manage", "purchase.receipt.post"],
+    permissions: ["master.data.view", "inv.stock.view", "inv.document.create", "inv.document.post", "inv.reservation.manage", "purchase.receipt.post", "intake.order.view", "intake.shipment.post"],
   },
   {
     code: "TRUONG_KHO",
@@ -80,7 +80,7 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     code: "TRUONG_PHONG",
     name: "Trưởng phòng",
     description: "Lập và duyệt đề nghị mua NVL của phòng. Cấp với phạm vi phòng.",
-    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.create", "purchase.pr.approve", "qms.qc.view", "qms.ncr.propose"],
+    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.create", "purchase.pr.approve", "qms.qc.view", "qms.ncr.propose", "intake.order.view", "intake.order.accept", "intake.order.manage", "intake.shipment.post"],
   },
   {
     code: "BAN_GIAM_DOC",

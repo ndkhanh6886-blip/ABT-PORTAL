@@ -1,5 +1,6 @@
 "use client";
 
+import { FactoryBridgePanel } from "./procurement/FactoryBridgePanel";
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import {
@@ -220,7 +221,7 @@ const PO_CLOSED_STATUSES = ["COMPLETED", "CANCELLED"];
 export const ProcurementModule: React.FC = () => {
   const { notifyActivity } = useNotification();
   const companyConfig = useCompanyConfig();
-  const [subTab, setSubTab] = useState<"orders" | "pr" | "suppliers" | "payables" | "restock" | "lookup">("orders");
+  const [subTab, setSubTab] = useState<"orders" | "pr" | "suppliers" | "payables" | "restock" | "lookup" | "factory">("orders");
   const [alertSubView, setAlertSubView] = useState<"restock" | "near_expiry">("restock");
   const mainSectionRef = useRef<HTMLDivElement>(null);
   const scrollToMainSection = () => {
@@ -3509,7 +3510,23 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           <Search className="w-4 h-4" />
           <span>Tra Cứu Dòng Hàng</span>
         </button>
+
+        <button
+          id="subtab-btn-factory"
+          onClick={() => setSubTab("factory")}
+          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
+            subTab === "factory" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
+          }`}
+        >
+          <span>Nhà Máy (nội bộ)</span>
+        </button>
       </div>
+
+      {subTab === "factory" && (
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+          <FactoryBridgePanel />
+        </div>
+      )}
 
       {subTab === "lookup" && (
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">

@@ -45,8 +45,8 @@ describe("attachments", () => {
 
 describe("outbox worker", () => {
   it("delivers events, retries a failing handler and isolates it from the others", async () => {
-    // drain events left by other tests first
-    while ((await processOutbox(500)).processed > 0);
+    // isolate from events left by other test files (some need gateways this file does not set up)
+    await getFactoryPool().query("UPDATE core.outbox_event SET processed_at = now() WHERE processed_at IS NULL");
     let calls = 0;
     onEvent("test.flaky", async () => {
       calls++;
