@@ -89,6 +89,18 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.approve", "purchase.pr.approve_bod", "purchase.po.view", "qms.qc.view", "qms.ncr.approve_bod"],
   },
   {
+    code: "OLIGO_NHAN_VIEN",
+    name: "Nhân viên Tổng hợp Oligo",
+    description: "Tính thông số trình tự, xem danh mục modification. Cấp với phạm vi phòng Oligo.",
+    permissions: ["oligo.view", "master.data.view", "inv.stock.view"],
+  },
+  {
+    code: "OLIGO_TRUONG_PHONG",
+    name: "Trưởng phòng Tổng hợp Oligo",
+    description: "Như nhân viên Oligo, cộng sửa danh mục base / modification.",
+    permissions: ["oligo.view", "oligo.catalog.manage", "master.data.view", "inv.stock.view"],
+  },
+  {
     code: "QUAN_TRI_NHA_MAY",
     name: "Quản trị nhà máy",
     description: "Cơ cấu tổ chức, vai trò, cấp quyền, mẫu mã số, tham số, xem audit trail.",

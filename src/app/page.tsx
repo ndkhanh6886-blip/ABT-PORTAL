@@ -23,6 +23,7 @@ import { FactoryWarehouseModule } from "@/frontend/factory/warehouse/FactoryWare
 import { FactorySettingsModule } from "@/frontend/factory/settings/FactorySettingsModule";
 import { FactoryPurchaseModule } from "@/frontend/factory/purchase/FactoryPurchaseModule";
 import { FactoryOrdersModule } from "@/frontend/factory/orders/FactoryOrdersModule";
+import { FactoryOligoModule } from "@/frontend/factory/oligo/FactoryOligoModule";
 import { FactoryQaModule } from "@/frontend/factory/qa/FactoryQaModule";
 
 export default function Home() {
@@ -136,6 +137,7 @@ export default function Home() {
         {activeTab === "factory-warehouse" && <FactoryWarehouseModule />}
         {activeTab === "factory-settings" && <FactorySettingsModule />}
         {activeTab === "factory-orders" && <FactoryOrdersModule />}
+        {activeTab === "factory-oligo" && <FactoryOligoModule />}
         {activeTab === "factory-purchase" && <FactoryPurchaseModule />}
         {activeTab === "factory-qa" && <FactoryQaModule />}
         </DataSyncGate>

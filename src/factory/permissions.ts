@@ -5,3 +5,4 @@ import "./inv/permissions";
 import "./qms/permissions";
 import "./purchase/permissions";
 import "./intake/permissions";
+import "./oligo/catalog";
