@@ -49,7 +49,10 @@ registerLotQualityGuards({
     {
       code: "QC_RESULT",
       message: "Kết quả QC được duyệt gần nhất của lô không phải ĐẠT.",
-      check: async ({ tx, row }) => (await latestReviewed(tx, row.id))?.overall_result === "PASS",
+      // a concession (NCR "use as is") approved by QA and the board also allows release
+      check: async ({ tx, row }) =>
+        (await latestReviewed(tx, row.id))?.overall_result === "PASS" ||
+        Boolean((await tx.query("SELECT 1 FROM qms.ncr WHERE lot_id = $1 AND disposition = 'USE_AS_IS' AND status IN ('APPROVED', 'CLOSED')", [row.id])).rowCount),
     },
     {
       code: "SAME_PERSON",

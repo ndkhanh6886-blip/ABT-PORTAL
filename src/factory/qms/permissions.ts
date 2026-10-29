@@ -8,4 +8,7 @@ registerPermissions([
   { code: "qms.qc.review", description: "Xem xét và ký duyệt kết quả QC", gxpCritical: true },
   { code: "qms.qc.lead", description: "Hủy phiếu QC, yêu cầu kiểm lại" },
   { code: "qms.deviation.report", description: "Báo cáo sai lệch" },
+  { code: "qms.ncr.propose", description: "Đề xuất hướng xử lý NCR, điều tra sai lệch (trưởng bộ phận)" },
+  { code: "qms.ncr.approve", description: "QA duyệt hướng xử lý NCR, đóng NCR / sai lệch (ký điện tử)", gxpCritical: true },
+  { code: "qms.ncr.approve_bod", description: "Ban giám đốc duyệt chấp nhận đặc cách (ký điện tử)", gxpCritical: true },
 ]);

@@ -67,7 +67,7 @@ export async function listStock(tx: Tx, actor: AuthzActor, query: unknown) {
   params.push(q.page_size, (q.page - 1) * q.page_size);
   const rows = (
     await tx.query(
-      `SELECT b.id, l.id AS lot_id, i.code AS item_code, i.name AS item_name, i.base_uom, l.code AS lot_code, l.mfr_lot_no, l.status AS lot_status,
+      `SELECT b.id, b.item_id, b.location_id, l.id AS lot_id, i.code AS item_code, i.name AS item_name, i.base_uom, l.code AS lot_code, l.mfr_lot_no, l.status AS lot_status,
               l.expiry_date, w.code AS warehouse_code, loc.code AS location_code, loc.is_quarantine,
               b.qty_on_hand::text AS qty_on_hand, b.qty_reserved::text AS qty_reserved,
               (b.qty_on_hand - b.qty_reserved)::text AS qty_available

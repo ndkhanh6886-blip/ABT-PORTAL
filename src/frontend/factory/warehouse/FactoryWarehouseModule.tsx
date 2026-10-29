@@ -2,14 +2,15 @@
 
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Boxes, ListTree, Warehouse } from "lucide-react";
+import { Boxes, FileStack, ListTree, Warehouse } from "lucide-react";
 import { api, useFactoryMe } from "../api";
 import { Empty, ErrorNote } from "../ui";
+import { DocumentsView } from "./DocumentsView";
 import { ItemsView } from "./ItemsView";
 import { StockView } from "./StockView";
 import { WarehousesView, type WarehouseRow } from "./WarehousesView";
 
-type SubTab = "stock" | "items" | "warehouses";
+type SubTab = "stock" | "documents" | "items" | "warehouses";
 
 /** "Kho Nhà Máy": stock of the factory warehouses, fully separate from the Kinh doanh warehouse. */
 export function FactoryWarehouseModule() {
@@ -22,6 +23,7 @@ export function FactoryWarehouseModule() {
   });
   const tabs: { key: SubTab; label: string; icon: React.ElementType; show: boolean }[] = [
     { key: "stock", label: "Tồn kho theo lô", icon: Boxes, show: perms.has("inv.stock.view") },
+    { key: "documents", label: "Phiếu kho", icon: FileStack, show: perms.has("inv.stock.view") },
     { key: "items", label: "Danh mục vật tư", icon: ListTree, show: perms.has("master.data.view") || perms.has("master.item.manage") },
     { key: "warehouses", label: "Kho & vị trí", icon: Warehouse, show: perms.has("inv.stock.view") || perms.has("master.warehouse.manage") },
   ];
@@ -50,6 +52,7 @@ export function FactoryWarehouseModule() {
         ))}
       </div>
       {active === "stock" && <StockView warehouses={warehouses.data ?? []} />}
+      {active === "documents" && <DocumentsView warehouses={warehouses.data ?? []} canCreate={perms.has("inv.document.create") && perms.has("inv.document.post")} />}
       {active === "items" && <ItemsView canManage={perms.has("master.item.manage")} />}
       {active === "warehouses" && <WarehousesView warehouses={warehouses.data ?? []} canManage={perms.has("master.warehouse.manage")} error={warehouses.error} />}
     </div>

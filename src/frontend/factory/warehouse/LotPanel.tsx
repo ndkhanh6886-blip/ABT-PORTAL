@@ -3,7 +3,8 @@
 import React from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
-import { api, fmtDate } from "../api";
+import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
+import { PutAway } from "./PutAway";
 import { Button, Card, ErrorNote, StatusBadge } from "../ui";
 
 interface LotDetail {
@@ -18,6 +19,7 @@ interface LotDetail {
   received_date: string;
   origin: string;
   version: number;
+  balances: { location_id: string; location_code: string; is_quarantine: boolean; warehouse_id: string; warehouse_code: string; qty_on_hand: string; qty_reserved: string }[];
   qc_tests: { id: string; code: string; test_kind: string; status: string; overall_result: string | null; created_at: string }[];
   actions: AllowedAction[];
 }
@@ -40,6 +42,7 @@ const QC_STATUS: Record<string, string> = {
 /** Lot detail: quality status, QC history and the quality actions the user may run (signed where required). */
 export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => void }) {
   const qc = useQueryClient();
+  const me = useFactoryMe();
   const lot = useQuery({ queryKey: ["factory", "lot", lotId], queryFn: () => api<LotDetail>(`/api/factory/inv/lots/${lotId}`) });
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["factory", "lot", lotId] });
@@ -60,6 +63,13 @@ export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => voi
             <div><dt className="text-slate-400">Hạn dùng</dt><dd>{fmtDate(l.expiry_date)}</dd></div>
             <div><dt className="text-slate-400">Nhận ngày</dt><dd>{fmtDate(l.received_date)}</dd></div>
           </dl>
+          <div className="text-xs">
+            <b>Tồn theo vị trí:</b>{" "}
+            {l.balances.length === 0 ? "không còn tồn" : l.balances.map((b) => `${b.warehouse_code}·${b.location_code}${b.is_quarantine ? " (biệt trữ)" : ""}: ${fmtQty(b.qty_on_hand)}`).join(" · ")}
+          </div>
+          {l.status === "RELEASED" && me.data?.permissions.includes("inv.document.post") && l.balances.some((b) => b.is_quarantine) && (
+            <PutAway lotId={l.id} warehouseId={l.balances.find((b) => b.is_quarantine)!.warehouse_id} onDone={refresh} />
+          )}
           <ActionBar endpoint={`/api/factory/inv/lots/${l.id}/actions`} version={l.version} actions={l.actions} labels={LOT_ACTION_LABEL} onDone={refresh} />
           <div>
             <h3 className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Phiếu QC của lô</h3>

@@ -54,6 +54,7 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
       "qms.qc.review",
       "qms.qc.lead",
       "qms.spec.approve",
+      "qms.ncr.approve",
       "qms.deviation.report",
     ],
   },
@@ -79,13 +80,13 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     code: "TRUONG_PHONG",
     name: "Trưởng phòng",
     description: "Lập và duyệt đề nghị mua NVL của phòng. Cấp với phạm vi phòng.",
-    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.create", "purchase.pr.approve"],
+    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.create", "purchase.pr.approve", "qms.qc.view", "qms.ncr.propose"],
   },
   {
     code: "BAN_GIAM_DOC",
     name: "Ban giám đốc",
     description: "Duyệt đề nghị mua vượt ngưỡng (ký điện tử), xem đề nghị và đơn mua.",
-    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.approve", "purchase.pr.approve_bod", "purchase.po.view"],
+    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.approve", "purchase.pr.approve_bod", "purchase.po.view", "qms.qc.view", "qms.ncr.approve_bod"],
   },
   {
     code: "QUAN_TRI_NHA_MAY",

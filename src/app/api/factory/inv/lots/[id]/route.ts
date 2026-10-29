@@ -29,5 +29,14 @@ export const GET = factoryRoute(async (tx, { actor, params }) => {
       [params.id]
     )
   ).rows;
-  return { ...lot, qc_tests: tests, actions: await allowedActionsFor(tx, lotMachine, actor, lot) };
+  const balances = (
+    await tx.query(
+      `SELECT b.location_id, loc.code AS location_code, loc.is_quarantine, w.id AS warehouse_id, w.code AS warehouse_code,
+              b.qty_on_hand::text AS qty_on_hand, b.qty_reserved::text AS qty_reserved
+         FROM inv.stock_balance b JOIN master.location loc ON loc.id = b.location_id JOIN master.warehouse w ON w.id = loc.warehouse_id
+        WHERE b.lot_id = $1 AND b.qty_on_hand > 0 ORDER BY w.code, loc.code`,
+      [params.id]
+    )
+  ).rows;
+  return { ...lot, qc_tests: tests, balances, actions: await allowedActionsFor(tx, lotMachine, actor, lot) };
 });
