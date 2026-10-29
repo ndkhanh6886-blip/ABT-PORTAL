@@ -56,6 +56,10 @@ export const sequenceMachine = defineMachine<SeqStatus, OligoSequence>({
     { action: "qc_cancelled", from: "QC", to: "POST_PROCESSING", permission: "qms.qc.lead", reasonRequired: true },
     { action: "qc_passed", from: "QC", to: "COMPLETED", permission: "qms.qc.review" },
     { action: "qc_failed", from: "QC", to: "FAILED", permission: "qms.qc.review", reasonRequired: true },
+    // approved NCR dispositions (oligo/fulfilment.ts) and delivery
+    { action: "rework", from: "FAILED", to: "POST_PROCESSING", permission: "qms.ncr.approve", reasonRequired: true },
+    { action: "concession", from: "FAILED", to: "COMPLETED", permission: "qms.ncr.approve_bod", reasonRequired: true },
+    { action: "deliver", from: ["COMPLETED", "POOLED"], to: "DELIVERED", permission: "oligo.delivery.manage" },
   ],
 });
 

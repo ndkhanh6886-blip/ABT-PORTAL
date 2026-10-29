@@ -152,7 +152,7 @@ export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
   const shipments = (
     await tx.query(
       `SELECT s.id, s.code, s.status, s.ship_mode, s.created_at, s.delivered_at, s.kd_acknowledged_at, s.kd_inbound_code, s.version, w.code AS warehouse_code
-         FROM intake.shipment s JOIN master.warehouse w ON w.id = s.warehouse_id WHERE s.order_id = $1 ORDER BY s.created_at`,
+         FROM intake.shipment s LEFT JOIN master.warehouse w ON w.id = s.warehouse_id WHERE s.order_id = $1 ORDER BY s.created_at`,
       [id]
     )
   ).rows;

@@ -1,6 +1,6 @@
 import type { Tx } from "../core/db";
 import { authorize, type AuthzActor } from "../core/authz";
-import { notFound } from "../core/errors";
+import { invalid, notFound } from "../core/errors";
 import { defineMachine, runTransition, type Guard } from "../core/stateMachine";
 import { lotMachine } from "../inv/lots";
 import "./permissions";
@@ -10,6 +10,8 @@ export const DISPOSITIONS = ["SCRAP", "REWORK", "RESYNTHESIZE", "USE_AS_IS", "RE
 export interface Ncr {
   id: string;
   code: string;
+  entity_type: string;
+  entity_id: string;
   lot_id: string | null;
   disposition: string;
   proposed_by: number | null;
@@ -17,10 +19,24 @@ export interface Ncr {
   version: number;
 }
 
+/**
+ * What a module does with an approved disposition of its own subject (e.g. an Oligo sequence: resynthesize,
+ * rework, use as is). `check` refuses a disposition that makes no sense for the subject, with the reason.
+ */
+export interface NcrSubjectHandler {
+  check?(tx: Tx, ncr: Ncr, disposition: string): Promise<string | null>;
+  onApproved?(tx: Tx, actor: AuthzActor, ncr: Ncr): Promise<void>;
+}
+const subjects = new Map<string, NcrSubjectHandler>();
+export function registerNcrSubject(entityType: string, handler: NcrSubjectHandler) {
+  subjects.set(entityType, handler);
+}
+
 const notProposer: Guard<Ncr> = { code: "SAME_PERSON", message: "Người duyệt phải khác người đề xuất hướng xử lý.", check: ({ actor, row }) => row.proposed_by !== actor.userId };
 
 /** Scrap / return: the lot leaves the usable stock (REJECTED) as soon as the disposition is approved. */
 async function applyDisposition(tx: Tx, actor: AuthzActor, ncr: Ncr): Promise<void> {
+  await subjects.get(ncr.entity_type)?.onApproved?.(tx, actor, ncr);
   if (!ncr.lot_id || !["SCRAP", "RETURN_TO_SUPPLIER"].includes(ncr.disposition)) return;
   const lot = (await tx.query("SELECT status, version FROM inv.lot WHERE id = $1", [ncr.lot_id])).rows[0];
   if (lot && ["PENDING_QC", "ON_HOLD"].includes(lot.status)) {
@@ -46,6 +62,17 @@ export const ncrMachine = defineMachine<NcrStatus, Ncr>({
           check: ({ payload }) => (DISPOSITIONS as readonly string[]).includes(String(payload.disposition)),
         },
         { code: "NOTE", message: "Ghi rõ căn cứ đề xuất.", check: ({ payload }) => String(payload.note ?? "").trim().length >= 5 },
+        {
+          code: "DISPOSITION_FIT",
+          message: "Hướng xử lý không phù hợp với đối tượng của NCR.",
+          check: async ({ tx, row, payload }) => {
+            const h = subjects.get(row.entity_type);
+            if (!h?.check || !(DISPOSITIONS as readonly string[]).includes(String(payload?.disposition))) return true;
+            const why = await h.check(tx, row, String(payload.disposition));
+            if (why) throw invalid(why, undefined, "DISPOSITION_FIT");
+            return true;
+          },
+        },
       ],
       patch: ({ actor, payload }) => ({ disposition: payload.disposition, proposed_by: actor.userId, proposal_note: String(payload.note).trim() }),
     },
@@ -75,6 +102,7 @@ export const ncrMachine = defineMachine<NcrStatus, Ncr>({
       signature: "APPROVED",
       guards: [notProposer],
       patch: ({ actor }) => ({ disposition_approved_by: actor.userId }),
+      effects: ({ tx, actor, updated }) => applyDisposition(tx, actor, updated),
     },
     { action: "reject", from: ["DISPOSITION_PROPOSED", "PENDING_BOD"], to: "OPEN", permission: "qms.ncr.approve", reasonRequired: true, patch: () => ({ disposition: "PENDING" }) },
     {
@@ -143,10 +171,11 @@ export async function getNcr(tx: Tx, actor: AuthzActor, id: string) {
   const ncr = (
     await tx.query(
       `SELECT n.*, d.code AS deviation_code, d.severity, d.status AS deviation_status, d.version AS deviation_version, d.description AS deviation_description,
-              l.code AS lot_code, i.code AS item_code, i.name AS item_name,
+              l.code AS lot_code, i.code AS item_code, i.name AS item_name, sq.code AS sequence_code, sq.name AS sequence_name,
               pp.display_name AS proposed_by_name, ap.display_name AS approved_by_name
          FROM qms.ncr n LEFT JOIN qms.deviation d ON d.id = n.deviation_id
          LEFT JOIN inv.lot l ON l.id = n.lot_id LEFT JOIN master.item i ON i.id = n.item_id
+         LEFT JOIN oligo.oligo_sequence sq ON n.entity_type = 'OLIGO_SEQUENCE' AND sq.id = n.entity_id
          LEFT JOIN core.user_profile pp ON pp.user_id = n.proposed_by LEFT JOIN core.user_profile ap ON ap.user_id = n.disposition_approved_by
         WHERE n.id = $1`,
       [id]

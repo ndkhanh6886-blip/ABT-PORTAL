@@ -1,18 +1,19 @@
 "use client";
 
 import React, { useState } from "react";
-import { Calculator, ClipboardList, Combine, FlaskConical, ListTree, Microscope, Settings2 } from "lucide-react";
+import { Calculator, ClipboardList, Combine, FlaskConical, ListTree, Microscope, Settings2, Truck } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { Empty } from "../ui";
 import { BatchesView } from "./BatchesView";
 import { CalculatorView } from "./CalculatorView";
 import { CatalogView } from "./CatalogView";
+import { DeliveryView } from "./DeliveryView";
 import { EquipmentView } from "./EquipmentView";
 import { PostProcessView } from "./PostProcessView";
 import { OligoOrdersView } from "./OligoOrdersView";
 import { PoolsView } from "./PoolsView";
 
-type SubTab = "orders" | "pools" | "batches" | "post" | "equipment" | "calc" | "catalog";
+type SubTab = "orders" | "pools" | "batches" | "post" | "delivery" | "equipment" | "calc" | "catalog";
 
 /** "Tổng Hợp Oligo": screens of the Oligo department (post-synthesis and QC follow). */
 export function FactoryOligoModule() {
@@ -24,6 +25,7 @@ export function FactoryOligoModule() {
     { key: "pools", label: "Gộp tổng hợp", icon: Combine },
     { key: "batches", label: "Mẻ tổng hợp", icon: FlaskConical },
     { key: "post", label: "Hậu tổng hợp & QC", icon: Microscope },
+    { key: "delivery", label: "Nhãn & giao hàng", icon: Truck },
     { key: "equipment", label: "Máy & định mức", icon: Settings2 },
     { key: "calc", label: "Tính thông số", icon: Calculator },
     { key: "catalog", label: "Danh mục modification", icon: ListTree },
@@ -49,7 +51,8 @@ export function FactoryOligoModule() {
       {tab === "orders" && <OligoOrdersView canManage={perms.has("oligo.order.manage")} />}
       {tab === "pools" && <PoolsView canManage={perms.has("oligo.order.manage")} />}
       {tab === "batches" && <BatchesView canManage={perms.has("oligo.batch.manage")} />}
-      {tab === "post" && <PostProcessView canManage={perms.has("oligo.post.manage")} />}
+      {tab === "post" && <PostProcessView canManage={perms.has("oligo.post.manage")} canLabel={perms.has("oligo.delivery.manage")} />}
+      {tab === "delivery" && <DeliveryView canManage={perms.has("oligo.delivery.manage")} />}
       {tab === "equipment" && <EquipmentView canManageAssets={perms.has("asset.manage")} canManageRules={perms.has("oligo.reagent.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} />}
       {tab === "calc" && <CalculatorView />}
       {tab === "catalog" && <CatalogView canManage={perms.has("oligo.catalog.manage")} />}

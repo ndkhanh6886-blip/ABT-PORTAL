@@ -26,7 +26,7 @@ const DEV_ACTIONS = { investigate: "Bắt đầu điều tra", define_action: "�
 
 interface NcrRow {
   id: string; code: string; status: string; disposition: string; description: string; created_at: string;
-  deviation_code: string | null; severity: string | null; lot_code: string | null; item_code: string | null; item_name: string | null;
+  deviation_code: string | null; severity: string | null; lot_code: string | null; item_code: string | null; item_name: string | null; sequence_code: string | null; sequence_name: string | null;
 }
 interface NcrDetail extends NcrRow {
   version: number; proposal_note: string | null; proposed_by_name: string | null; approved_by_name: string | null;
@@ -71,7 +71,7 @@ function NcrPanel({ id, onClose }: { id: string; onClose: () => void }) {
       {n && (
         <div className="flex flex-col gap-3 text-xs">
           <p>
-            <StatusBadge status={NCR_STATUS[n.status][0]} label={NCR_STATUS[n.status][1]} /> · {n.lot_code ? `Lô ${n.lot_code} · ${n.item_code} ${n.item_name}` : "—"} · Hướng xử lý: <b>{DISPOSITION[n.disposition]}</b>
+            <StatusBadge status={NCR_STATUS[n.status][0]} label={NCR_STATUS[n.status][1]} /> · {n.lot_code ? `Lô ${n.lot_code} · ${n.item_code} ${n.item_name}` : n.sequence_code ? `Oligo ${n.sequence_code} · ${n.sequence_name}` : "—"} · Hướng xử lý: <b>{DISPOSITION[n.disposition]}</b>
           </p>
           <p>{n.description}</p>
           {n.proposal_note && <p>Đề xuất ({n.proposed_by_name}): {n.proposal_note}</p>}
@@ -109,7 +109,7 @@ export function NcrView() {
                 <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{n.code}</td>
                 <td className="py-2 pr-3 font-mono">{n.deviation_code ?? "—"}</td>
                 <td className="py-2 pr-3">{n.severity ?? "—"}</td>
-                <td className="py-2 pr-3">{n.lot_code ? `${n.lot_code} · ${n.item_code}` : "—"}</td>
+                <td className="py-2 pr-3">{n.lot_code ? `${n.lot_code} · ${n.item_code}` : n.sequence_code ? `Oligo ${n.sequence_code}` : "—"}</td>
                 <td className="py-2 pr-3">{DISPOSITION[n.disposition] ?? n.disposition}</td>
                 <td className="py-2 pr-3"><StatusBadge status={NCR_STATUS[n.status]?.[0] ?? "EXPIRED"} label={NCR_STATUS[n.status]?.[1] ?? n.status} /></td>
                 <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(n.created_at)}</td>

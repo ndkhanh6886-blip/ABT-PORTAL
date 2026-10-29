@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { QC_STATUS_LABEL } from "../qa/QcTestsView";
+import { printWithReprint } from "./labels";
 import { FORMAT, PURIFICATION, SEQ_STATUS } from "./shared";
 
 interface Row {
@@ -26,7 +27,7 @@ interface Detail {
 const num = (v: string | null | undefined) => (v == null ? "" : String(Number(v)));
 const refreshKeys = ["oligo-post", "oligo-post-detail", "oligo-orders", "oligo-order", "qc-tests"];
 
-function PostPanel({ id, canManage, onClose }: { id: string; canManage: boolean; onClose: () => void }) {
+function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage: boolean; canLabel: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const d = useQuery({ queryKey: ["factory", "oligo-post-detail", id], queryFn: () => api<Detail>(`/api/factory/oligo/post/${id}`) });
   const [f, setF] = useState<Record<string, any>>({});
@@ -106,6 +107,12 @@ function PostPanel({ id, canManage, onClose }: { id: string; canManage: boolean;
                   <Button onClick={() => act.mutate(() => save().then(() => api(`/api/factory/oligo/post/${id}/submit`, { method: "POST" })))} disabled={act.isPending}>Lưu và gửi QC</Button>
                 </div>
               )}
+              {canLabel && rec.od_total != null && (
+                <div>
+                  <Button variant="ghost" onClick={() => act.mutate(() => printWithReprint([id]))} disabled={act.isPending}>In nhãn ống ({rec.tube_count})</Button>
+                  {s.status !== "COMPLETED" && <span className="text-[11px] text-slate-500 ml-2">Nhãn in trước khi QC đạt ghi “CHƯA XUẤT XƯỞNG”.</span>}
+                </div>
+              )}
             </>
           )}
           {d.data!.qc_tests.length > 0 && (
@@ -129,13 +136,13 @@ function PostPanel({ id, canManage, onClose }: { id: string; canManage: boolean;
 const FILTERS: [string, string][] = [["", "Cần xử lý"], ["SYNTHESIZED", "Đã tổng hợp"], ["POST_PROCESSING", "Hậu tổng hợp"], ["QC", "Đang QC"], ["COMPLETED", "Hoàn thành"], ["FAILED", "Lỗi"]];
 
 /** Sequences from finished batches through post-processing and QC. */
-export function PostProcessView({ canManage }: { canManage: boolean }) {
+export function PostProcessView({ canManage, canLabel }: { canManage: boolean; canLabel: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const list = useQuery({ queryKey: ["factory", "oligo-post", status], queryFn: () => api<Row[]>(`/api/factory/oligo/post${status ? `?status=${status}` : ""}`) });
   return (
     <div className="flex flex-col gap-3">
-      {selected && <PostPanel key={selected} id={selected} canManage={canManage} onClose={() => setSelected(null)} />}
+      {selected && <PostPanel key={selected} id={selected} canManage={canManage} canLabel={canLabel} onClose={() => setSelected(null)} />}
       <Card
         title="Hậu tổng hợp & QC"
         actions={
