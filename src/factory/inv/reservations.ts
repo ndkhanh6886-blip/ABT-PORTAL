@@ -123,3 +123,32 @@ export function releaseDemandReservations(tx: Tx, actor: AuthzActor, demandType:
 export async function releaseLotReservations(tx: Tx, actor: AuthzActor, lotId: string): Promise<void> {
   await releaseWhere(tx, actor, "r.lot_id = $1", [lotId], "Lô bị tạm giữ / hết hạn");
 }
+
+/**
+ * Reserves `qty_base` of one specific lot (e.g. the CPG column chosen for a position), from released,
+ * unexpired stock outside quarantine in the given warehouses. Balances are locked in key order.
+ */
+export async function reserveLot(
+  tx: Tx,
+  actor: AuthzActor,
+  req: { lot_id: string; qty_base: number; warehouse_ids: string[]; demand_entity_type: DemandType; demand_entity_id: string }
+): Promise<ReservationResult[]> {
+  const lot = (await tx.query("SELECT item_id, code FROM inv.lot WHERE id = $1", [req.lot_id])).rows[0];
+  if (!lot) throw invalid("Lô không tồn tại.");
+  const candidates = (await findCandidates(tx, lot.item_id, req.warehouse_ids, { lock: true })).filter((c) => c.lot_id === req.lot_id);
+  const plan = allocate(candidates, req.qty_base);
+  if (plan.shortfall > 1e-9) {
+    throw new FactoryError(422, "INSUFFICIENT_STOCK", `Lô ${lot.code} không đủ tồn khả dụng (đã giải phóng, còn hạn, ngoài biệt trữ).`, { lot_id: req.lot_id });
+  }
+  const results: ReservationResult[] = [];
+  for (const p of plan.picks) {
+    await tx.query("UPDATE inv.stock_balance SET qty_reserved = qty_reserved + $2, updated_at = now() WHERE id = $1", [p.candidate.balance_id, p.qty]);
+    const r = await tx.query(
+      `INSERT INTO inv.reservation (balance_id, item_id, lot_id, location_id, qty_base, demand_entity_type, demand_entity_id, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING id`,
+      [p.candidate.balance_id, p.candidate.item_id, p.candidate.lot_id, p.candidate.location_id, p.qty, req.demand_entity_type, req.demand_entity_id, actor.userId]
+    );
+    results.push({ reservation_id: r.rows[0].id, item_id: p.candidate.item_id, lot_id: p.candidate.lot_id, location_id: p.candidate.location_id, qty_base: p.qty });
+  }
+  return results;
+}

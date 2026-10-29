@@ -35,3 +35,15 @@ export const ORDER_STATUS: Record<string, [string, string]> = {
   FAILED: ["REJECTED", "Lỗi"],
   CANCELLED: ["EXPIRED", "Đã hủy"],
 };
+
+export interface OligoUnit { id: string; code: string; name: string }
+export const useOligoUnits = (perm: string) =>
+  useQuery({ queryKey: ["factory", "oligo-units", perm], queryFn: () => api<OligoUnit[]>(`/api/factory/oligo/units?perm=${perm}`), staleTime: 300_000 });
+
+export const BATCH_STATUS: Record<string, [string, string]> = {
+  PLANNED: ["QUARANTINE", "Đã lập kế hoạch"],
+  RUNNING: ["PENDING_QC", "Đang chạy"],
+  COMPLETED: ["RELEASED", "Hoàn thành"],
+  CANCELLED: ["CANCELLED", "Đã hủy"],
+  ABORTED: ["REJECTED", "Dừng giữa chừng"],
+};

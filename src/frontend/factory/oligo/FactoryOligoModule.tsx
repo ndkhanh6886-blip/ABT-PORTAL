@@ -1,17 +1,19 @@
 "use client";
 
 import React, { useState } from "react";
-import { Calculator, ClipboardList, Combine, ListTree } from "lucide-react";
+import { Calculator, ClipboardList, Combine, FlaskConical, ListTree, Settings2 } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { Empty } from "../ui";
+import { BatchesView } from "./BatchesView";
 import { CalculatorView } from "./CalculatorView";
 import { CatalogView } from "./CatalogView";
+import { EquipmentView } from "./EquipmentView";
 import { OligoOrdersView } from "./OligoOrdersView";
 import { PoolsView } from "./PoolsView";
 
-type SubTab = "orders" | "pools" | "calc" | "catalog";
+type SubTab = "orders" | "pools" | "batches" | "equipment" | "calc" | "catalog";
 
-/** "Tổng Hợp Oligo": first screens of the Oligo department (orders, synthesis batches and QC follow). */
+/** "Tổng Hợp Oligo": screens of the Oligo department (post-synthesis and QC follow). */
 export function FactoryOligoModule() {
   const me = useFactoryMe();
   const perms = new Set(me.data?.permissions ?? []);
@@ -19,6 +21,8 @@ export function FactoryOligoModule() {
   const tabs: { key: SubTab; label: string; icon: React.ElementType }[] = [
     { key: "orders", label: "Đơn Oligo", icon: ClipboardList },
     { key: "pools", label: "Gộp tổng hợp", icon: Combine },
+    { key: "batches", label: "Mẻ tổng hợp", icon: FlaskConical },
+    { key: "equipment", label: "Máy & định mức", icon: Settings2 },
     { key: "calc", label: "Tính thông số", icon: Calculator },
     { key: "catalog", label: "Danh mục modification", icon: ListTree },
   ];
@@ -42,6 +46,8 @@ export function FactoryOligoModule() {
       </div>
       {tab === "orders" && <OligoOrdersView canManage={perms.has("oligo.order.manage")} />}
       {tab === "pools" && <PoolsView canManage={perms.has("oligo.order.manage")} />}
+      {tab === "batches" && <BatchesView canManage={perms.has("oligo.batch.manage")} />}
+      {tab === "equipment" && <EquipmentView canManageAssets={perms.has("asset.manage")} canManageRules={perms.has("oligo.reagent.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} />}
       {tab === "calc" && <CalculatorView />}
       {tab === "catalog" && <CatalogView canManage={perms.has("oligo.catalog.manage")} />}
     </div>

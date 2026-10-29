@@ -44,6 +44,12 @@ export const sequenceMachine = defineMachine<SeqStatus, OligoSequence>({
     { action: "unsplit", from: "SPLIT", to: "PENDING", permission: "oligo.order.manage" },
     { action: "pool", from: "PENDING", to: "POOLED", permission: "oligo.order.manage" },
     { action: "unpool", from: "POOLED", to: "PENDING", permission: "oligo.order.manage" },
+    // driven by synthesis batches (run as trusted follow-ups of the batch action)
+    { action: "queue", from: "PENDING", to: "QUEUED", permission: "oligo.batch.manage" },
+    { action: "dequeue", from: "QUEUED", to: "PENDING", permission: "oligo.batch.manage" },
+    { action: "start_synthesis", from: "QUEUED", to: "SYNTHESIZING", permission: "oligo.batch.manage" },
+    { action: "synthesized", from: "SYNTHESIZING", to: "SYNTHESIZED", permission: "oligo.batch.manage" },
+    { action: "fail", from: ["SYNTHESIZING", "POST_PROCESSING", "QC"], to: "FAILED", permission: "oligo.batch.manage", reasonRequired: true },
   ],
 });
 

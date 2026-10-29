@@ -11,7 +11,7 @@ registerPermissions([
 ]);
 
 const COLUMNS =
-  "id, code, name, kind, base_letter, nn_role, mw::float AS mw, mw_delta::float AS mw_delta, ext_coeff_260::float AS ext_coeff_260, aliases, position_type, status, version";
+  "id, code, name, kind, base_letter, nn_role, mw::float AS mw, mw_delta::float AS mw_delta, ext_coeff_260::float AS ext_coeff_260, aliases, position_type, status, version, amidite_item_id";
 
 /** Catalogue cached until any entry changes (count + newest update), so edits apply at once everywhere. */
 let cache: { key: string; entries: CatalogEntry[] } | null = null;
@@ -39,6 +39,7 @@ const updateSchema = z.object({
   aliases: z.array(z.string().trim().min(1).max(40)).max(50).optional(),
   position_type: z.enum(["ANY", "5PRIME", "3PRIME", "INTERNAL"]).optional(),
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
+  amidite_item_id: z.string().uuid().nullable().optional(),
 });
 
 /** Parameter changes alter every later calculation: reason required and audited old → new; aliases must stay unambiguous. */

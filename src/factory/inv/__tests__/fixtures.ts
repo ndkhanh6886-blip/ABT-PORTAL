@@ -54,7 +54,7 @@ export async function makeItem(site: Site, over: Record<string, unknown> = {}) {
 }
 
 /** Lot received into quarantine with `qty` µL, then released (skip QC) and moved to a shelf. */
-export async function stockedLot(site: Site, itemId: string, qty: number, expiry: string | null, opts: { release?: boolean; shelf?: string } = {}) {
+export async function stockedLot(site: Site, itemId: string, qty: number, expiry: string | null, opts: { release?: boolean; shelf?: string; uom?: string } = {}) {
   return withTransaction(async (tx) => {
     const lot = await createLot(tx, site.admin, {
       item_id: itemId,
@@ -65,7 +65,7 @@ export async function stockedLot(site: Site, itemId: string, qty: number, expiry
       doc_type: "RECEIPT",
       reason_code: "OPENING",
       warehouse_id: site.warehouse,
-      lines: [{ item_id: itemId, lot_id: lot.id, to_location_id: site.quarantine, qty, uom: "µL" }],
+      lines: [{ item_id: itemId, lot_id: lot.id, to_location_id: site.quarantine, qty, uom: opts.uom ?? "µL" }],
     });
     await postStockDocument(tx, site.admin, rec.id, rec.version);
     if (opts.release === false) return lot;
@@ -74,7 +74,7 @@ export async function stockedLot(site: Site, itemId: string, qty: number, expiry
       doc_type: "TRANSFER",
       reason_code: "PUTAWAY",
       warehouse_id: site.warehouse,
-      lines: [{ item_id: itemId, lot_id: lot.id, from_location_id: site.quarantine, to_location_id: opts.shelf ?? site.shelf, qty, uom: "µL" }],
+      lines: [{ item_id: itemId, lot_id: lot.id, from_location_id: site.quarantine, to_location_id: opts.shelf ?? site.shelf, qty, uom: opts.uom ?? "µL" }],
     });
     await postStockDocument(tx, site.admin, move.id, move.version);
     return released;

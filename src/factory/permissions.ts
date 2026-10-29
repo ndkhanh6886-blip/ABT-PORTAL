@@ -7,3 +7,5 @@ import "./purchase/permissions";
 import "./intake/permissions";
 import "./oligo/catalog";
 import "./oligo/orders";
+import "./oligo/batches";
+import "./asset/service";
