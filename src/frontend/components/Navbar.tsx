@@ -24,10 +24,12 @@ import {
   Scale,
   Smartphone,
   Menu,
-  X
+  X,
+  Warehouse
 } from "lucide-react";
+import { hasAny, useFactoryMe } from "@/frontend/factory/api";
 
-export type MainTab = "workspace" | "sales" | "warehouse" | "application" | "procurement" | "legal" | "chat" | "zalo" | "settings";
+export type MainTab = "workspace" | "sales" | "warehouse" | "application" | "procurement" | "legal" | "chat" | "zalo" | "settings" | "factory-warehouse";
 
 interface NavbarProps {
   activeTab: MainTab;
@@ -43,6 +45,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
   const [isMobileMoreOpen, setIsMobileMoreOpen] = useState(false);
   const [chatUnreadCount, setChatUnreadCount] = useState(0);
   const activeUser = user || currentUser;
+  const factoryMe = useFactoryMe(Boolean(user));
+  const canFactoryWarehouse = hasAny(factoryMe.data, ["inv", "master", "core.org"]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -150,6 +154,20 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 >
                   <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
                   <span>Cung Ứng</span>
+                </button>
+              )}
+
+              {canFactoryWarehouse && (
+                <button
+                  onClick={() => setActiveTab("factory-warehouse")}
+                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                    activeTab === "factory-warehouse"
+                      ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
+                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  <Warehouse className="w-3.5 h-3.5 shrink-0" />
+                  <span>Kho Nhà Máy</span>
                 </button>
               )}
 
@@ -408,12 +426,12 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
         <button
           onClick={() => setIsMobileMoreOpen(prev => !prev)}
           className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
-            isMobileMoreOpen || ["procurement", "legal", "chat", "zalo", "settings"].includes(activeTab)
+            isMobileMoreOpen || ["procurement", "factory-warehouse", "legal", "chat", "zalo", "settings"].includes(activeTab)
               ? "text-orange-600 dark:text-orange-400 font-extrabold"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
           }`}
         >
-          <div className={`p-1 rounded-xl transition-transform ${isMobileMoreOpen || ["procurement", "legal", "chat", "zalo", "settings"].includes(activeTab) ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
+          <div className={`p-1 rounded-xl transition-transform ${isMobileMoreOpen || ["procurement", "factory-warehouse", "legal", "chat", "zalo", "settings"].includes(activeTab) ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
             {isMobileMoreOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </div>
           <span className="text-[10px] mt-0.5 tracking-tight font-bold">Thêm</span>
@@ -543,6 +561,25 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                   <div className="min-w-0">
                     <div className="text-xs font-bold leading-tight truncate">Cung Ứng</div>
                     <div className="text-[10px] text-slate-400 truncate">Đơn PO &amp; Mua hàng</div>
+                  </div>
+                </button>
+              )}
+
+              {canFactoryWarehouse && (
+                <button
+                  onClick={() => { setActiveTab("factory-warehouse"); setIsMobileMoreOpen(false); }}
+                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
+                    activeTab === "factory-warehouse"
+                      ? "bg-sky-50 dark:bg-sky-950/50 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 font-bold"
+                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
+                  }`}
+                >
+                  <div className="p-2 rounded-xl bg-sky-100 dark:bg-sky-950/70 text-sky-700 dark:text-sky-400 shrink-0">
+                    <Warehouse className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold leading-tight truncate">Kho Nhà Máy</div>
+                    <div className="text-[10px] text-slate-400 truncate">NVL, lô &amp; tồn kho nhà máy</div>
                   </div>
                 </button>
               )}

@@ -1,4 +1,8 @@
-import { Pool, PoolClient } from "pg";
+import { Pool, PoolClient, types } from "pg";
+
+// DATE columns stay "YYYY-MM-DD" strings (calendar dates have no time zone); same rule as ABT Portal.
+// NUMERIC stays a string so quantities never pass through binary floating point.
+types.setTypeParser(1082, (v: string) => v);
 
 /**
  * Connection pool of the factory database (`abt_factory`). Same PostgreSQL server as ABT Portal,

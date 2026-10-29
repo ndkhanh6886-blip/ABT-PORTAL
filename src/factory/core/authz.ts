@@ -8,6 +8,8 @@ export interface PermissionDef {
   gxpCritical?: boolean;
   /** ABT Portal administrators hold it without a factory role, so they can set the factory up. */
   bootstrapAdmin?: boolean;
+  /** Only the system actor (jobs, automatic follow-ups) holds it; no role can grant it. */
+  systemOnly?: boolean;
 }
 
 /**
@@ -53,7 +55,12 @@ export async function syncPermissions(tx: Tx): Promise<void> {
 export interface AuthzActor extends Actor {
   /** ABT Portal administrator (settings.view): only `bootstrapAdmin` permissions follow from it. */
   isPortalAdmin?: boolean;
+  /** Scheduled jobs and automatic effects; holds exactly the `systemOnly` permissions. */
+  isSystem?: boolean;
 }
+
+/** Actor of jobs and automatic transitions. User id 0 never belongs to a person. */
+export const SYSTEM_ACTOR: AuthzActor = { userId: 0, name: "Hệ thống", isSystem: true };
 
 /**
  * True when the user holds the permission through an active role (own or delegated to them), whose
@@ -62,6 +69,7 @@ export interface AuthzActor extends Actor {
 export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission: string, orgUnitId?: string | null): Promise<boolean> {
   const def = registry.get(permission);
   if (!def) throw new Error(`Quyền chưa được khai báo: ${permission}`);
+  if (def.systemOnly || actor.isSystem) return Boolean(def.systemOnly && actor.isSystem);
   if (def.bootstrapAdmin && actor.isPortalAdmin) return true;
   const res = await tx.query(
     `WITH RECURSIVE ancestors AS (

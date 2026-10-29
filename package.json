@@ -8,7 +8,8 @@
     "start": "next start -p 3008",
     "lint": "eslint",
     "test": "vitest run",
-    "factory:migrate": "tsx scripts/factory-migrate.ts"
+    "factory:migrate": "tsx scripts/factory-migrate.ts",
+    "factory:worker": "tsx scripts/factory-worker.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.90.5",

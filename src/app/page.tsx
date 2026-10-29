@@ -17,6 +17,8 @@ import { LoginScreen } from "@/frontend/components/LoginScreen";
 import { SearchableSelectEnhancer } from "@/frontend/components/SearchableSelectEnhancer";
 import { DataSyncGate } from "@/frontend/components/DataSyncGate";
 import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal";
+import { FactoryProvider } from "@/frontend/factory/FactoryProvider";
+import { FactoryWarehouseModule } from "@/frontend/factory/warehouse/FactoryWarehouseModule";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<MainTab>("workspace");
@@ -109,6 +111,7 @@ export default function Home() {
   }
 
   return (
+    <FactoryProvider>
     <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-950 transition-colors duration-200 w-full">
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} currentUser={user} />
 
@@ -123,6 +126,7 @@ export default function Home() {
         {activeTab === "chat" && <EnterpriseChatModule />}
         {activeTab === "zalo" && can("zalo.view") && <ZaloOperationsHub />}
         {activeTab === "settings" && can("settings.view") && <SettingsModule initialSubTab={settingsSubTab} />}
+        {activeTab === "factory-warehouse" && <FactoryWarehouseModule />}
         </DataSyncGate>
       </main>
 
@@ -132,5 +136,6 @@ export default function Home() {
       {/* Bổ sung ô gõ tìm nhanh cho mọi danh sách xổ (select) trong portal */}
       <SearchableSelectEnhancer />
     </div>
+    </FactoryProvider>
   );
 }

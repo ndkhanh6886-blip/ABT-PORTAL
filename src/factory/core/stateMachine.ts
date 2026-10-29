@@ -16,6 +16,7 @@ export interface GuardContext<Row> {
   actor: AuthzActor;
   row: Row;
   payload: Record<string, unknown>;
+  reason?: string | null;
 }
 
 export interface Guard<Row> {
@@ -44,7 +45,7 @@ export interface MachineDef<S extends string, Row> {
   terminal: readonly S[];
   transitions: TransitionDef<S, Row>[];
   /** Org unit used for scoped permissions (e.g. the owning department). */
-  scopeOf?: (row: Row) => string | null | undefined;
+  scopeOf?: (row: Row, tx: Tx) => string | null | undefined | Promise<string | null | undefined>;
 }
 
 export function defineMachine<S extends string, Row extends { id: string; status: S; version: number }>(
@@ -129,10 +130,10 @@ export async function runTransition<S extends string, Row extends { id: string; 
   if (!t) {
     throw invalid(`Không thể thực hiện "${req.action}" khi bản ghi đang ở trạng thái ${row.status}.`, undefined, "INVALID_TRANSITION");
   }
-  await authorize(tx, actor, t.permission, machine.scopeOf?.(row));
+  await authorize(tx, actor, t.permission, await machine.scopeOf?.(row, tx));
   const reason = req.reason?.trim() || null;
   if (t.reasonRequired && !reason) throw invalid("Thao tác này bắt buộc nhập lý do.", undefined, "REASON_REQUIRED");
-  const ctx: GuardContext<Row> = { tx, actor, row, payload: req.payload ?? {} };
+  const ctx: GuardContext<Row> = { tx, actor, row, payload: req.payload ?? {}, reason };
   const failed = await failedGuards(t.guards, ctx);
   if (failed.length) {
     throw new FactoryError(422, "GUARD_FAILED", `Chưa đủ điều kiện: ${failed.map((f) => f.message).join(" ")}`, failed);
@@ -179,7 +180,7 @@ export async function listAllowedActions<S extends string, Row extends { id: str
 ) {
   const result: { action: string; to: S; signature?: SignatureMeaning; reasonRequired: boolean; blockedBy: string[] }[] = [];
   for (const t of actionsFrom(machine, row.status)) {
-    if (!(await hasFactoryPermission(tx, actor, t.permission, machine.scopeOf?.(row)))) continue;
+    if (!(await hasFactoryPermission(tx, actor, t.permission, await machine.scopeOf?.(row, tx)))) continue;
     const failed = await failedGuards(t.guards, { tx, actor, row, payload: {} });
     result.push({ action: t.action, to: t.to, signature: t.signature, reasonRequired: Boolean(t.reasonRequired), blockedBy: failed.map((f) => f.message) });
   }
