@@ -192,6 +192,20 @@ export async function recomputeOrderStatus(tx: Tx, actor: AuthzActor, orderId: s
   }
 }
 
+/** Re-derives every order the given sequences serve, pool members of a pool master included. */
+export async function recomputeOrdersOf(tx: Tx, actor: AuthzActor, sequenceIds: string[]): Promise<void> {
+  const orders = (
+    await tx.query(
+      `SELECT DISTINCT s.order_id FROM oligo.oligo_sequence s WHERE s.id = ANY($1::uuid[]) AND s.order_id IS NOT NULL
+       UNION
+       SELECT DISTINCT m.order_id FROM oligo.oligo_pool p JOIN oligo.oligo_pool_member pm ON pm.pool_id = p.id JOIN oligo.oligo_sequence m ON m.id = pm.sequence_id
+        WHERE p.master_sequence_id = ANY($1::uuid[])`,
+      [sequenceIds]
+    )
+  ).rows;
+  for (const o of orders) await recomputeOrderStatus(tx, actor, o.order_id);
+}
+
 /** Cancels an order whose sequences have not gone to synthesis yet. */
 export async function cancelOligoOrder(tx: Tx, actor: AuthzActor, orderId: string, reason: unknown) {
   const why = parseInput(z.string().trim().min(3, "nhập lý do hủy"), reason);

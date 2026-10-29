@@ -15,7 +15,7 @@ import { raiseDeviation } from "../qms/incidents";
 import { analyze } from "./analyzer";
 import { loadCatalog } from "./catalog";
 import { estimateConsumption, type ReagentRule } from "./consumption";
-import { recomputeOrderStatus } from "./orders";
+import { recomputeOrdersOf } from "./orders";
 import { sequenceMachine } from "./sequences";
 
 registerPermissions([
@@ -52,16 +52,7 @@ async function moveSequences(tx: Tx, actor: AuthzActor, batchId: string, action:
   for (const r of rows) {
     await runTransition(tx, sequenceMachine, actor, { id: r.sequence_id, action, expectedVersion: r.seq_version, reason }, { trusted: true });
   }
-  const orders = (
-    await tx.query(
-      `SELECT DISTINCT s.order_id FROM oligo.oligo_sequence s WHERE s.id = ANY($1::uuid[]) AND s.order_id IS NOT NULL
-       UNION
-       SELECT DISTINCT m.order_id FROM oligo.oligo_pool p JOIN oligo.oligo_pool_member pm ON pm.pool_id = p.id JOIN oligo.oligo_sequence m ON m.id = pm.sequence_id
-        WHERE p.master_sequence_id = ANY($1::uuid[])`,
-      [rows.map((r) => r.sequence_id)]
-    )
-  ).rows;
-  for (const o of orders) await recomputeOrderStatus(tx, actor, o.order_id);
+  await recomputeOrdersOf(tx, actor, rows.map((r) => r.sequence_id));
 }
 
 /** Issues everything reserved for the batch, one document per warehouse, consuming the reservations. */

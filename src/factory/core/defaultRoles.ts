@@ -92,13 +92,13 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     code: "OLIGO_NHAN_VIEN",
     name: "Nhân viên Tổng hợp Oligo",
     description: "Tính thông số trình tự, xem danh mục modification. Cấp với phạm vi phòng Oligo.",
-    permissions: ["oligo.view", "oligo.order.manage", "oligo.batch.manage", "asset.view", "master.data.view", "inv.stock.view"],
+    permissions: ["oligo.view", "oligo.order.manage", "oligo.batch.manage", "oligo.post.manage", "asset.view", "master.data.view", "inv.stock.view"],
   },
   {
     code: "OLIGO_TRUONG_PHONG",
     name: "Trưởng phòng Tổng hợp Oligo",
     description: "Như nhân viên Oligo, cộng sửa danh mục base / modification.",
-    permissions: ["oligo.view", "oligo.catalog.manage", "oligo.order.manage", "oligo.batch.manage", "oligo.batch.lead", "oligo.reagent.manage", "asset.view", "asset.manage", "master.data.view", "inv.stock.view"],
+    permissions: ["oligo.view", "oligo.catalog.manage", "oligo.order.manage", "oligo.batch.manage", "oligo.batch.lead", "oligo.post.manage", "oligo.reagent.manage", "asset.view", "asset.manage", "master.data.view", "inv.stock.view"],
   },
   {
     code: "QUAN_TRI_NHA_MAY",

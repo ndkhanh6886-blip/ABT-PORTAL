@@ -8,4 +8,5 @@ import "./intake/permissions";
 import "./oligo/catalog";
 import "./oligo/orders";
 import "./oligo/batches";
+import "./oligo/postProcess";
 import "./asset/service";

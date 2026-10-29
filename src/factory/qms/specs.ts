@@ -30,9 +30,13 @@ const parameterSchema = z
     upper_limit: z.coerce.number().optional().nullable(),
     target: z.string().trim().max(200).optional().nullable(),
     is_critical: z.boolean().default(true),
+    // Oligo only: value computed by the server from the sequence (e.g. ΔMW), and purifications the parameter applies to (none = all)
+    derived_metric: z.enum(["MW_DELTA_DA", "OD_TOTAL", "YIELD_NMOL", "YIELD_UG"]).optional().nullable(),
+    oligo_purifications: z.array(z.enum(["DESALT", "OPC", "HPLC", "PAGE"])).max(4).optional().nullable(),
   })
   .refine((p) => p.value_type === "NUMERIC" || (p.lower_limit == null && p.upper_limit == null), { message: "chỉ chỉ tiêu dạng số mới có giới hạn" })
-  .refine((p) => p.lower_limit == null || p.upper_limit == null || p.lower_limit <= p.upper_limit, { message: "giới hạn dưới phải ≤ giới hạn trên" });
+  .refine((p) => p.lower_limit == null || p.upper_limit == null || p.lower_limit <= p.upper_limit, { message: "giới hạn dưới phải ≤ giới hạn trên" })
+  .refine((p) => !p.derived_metric || p.value_type === "NUMERIC", { message: "chỉ tiêu tính tự động phải là dạng số" });
 
 const draftSchema = z.object({
   name: z.string().trim().min(1, "bắt buộc").max(200),
@@ -41,6 +45,9 @@ const draftSchema = z.object({
   notes: z.string().trim().max(2000).optional().nullable(),
   parameters: z.array(parameterSchema).min(1, "cần ít nhất một chỉ tiêu").max(100),
 });
+const oligoOnly = (applies: string, params: z.infer<typeof parameterSchema>[]) => {
+  if (applies !== "OLIGO" && params.some((p) => p.derived_metric || p.oligo_purifications?.length)) throw invalid("Chỉ tiêu tính tự động / theo kiểu tinh sạch chỉ dùng cho tiêu chuẩn Oligo.");
+};
 
 export const specMachine = defineMachine<SpecStatus, QcSpec>({
   entityType: "qc_spec",
@@ -73,9 +80,9 @@ async function insertParameters(tx: Tx, specId: string, params: z.infer<typeof p
   let seq = 0;
   for (const p of params) {
     await tx.query(
-      `INSERT INTO qms.qc_spec_parameter (spec_id, seq, name, method, unit, value_type, lower_limit, upper_limit, target, is_critical)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-      [specId, ++seq, p.name, p.method ?? null, p.unit ?? null, p.value_type, p.lower_limit ?? null, p.upper_limit ?? null, p.target ?? null, p.is_critical]
+      `INSERT INTO qms.qc_spec_parameter (spec_id, seq, name, method, unit, value_type, lower_limit, upper_limit, target, is_critical, derived_metric, oligo_purifications)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      [specId, ++seq, p.name, p.method ?? null, p.unit ?? null, p.value_type, p.lower_limit ?? null, p.upper_limit ?? null, p.target ?? null, p.is_critical, p.derived_metric ?? null, p.oligo_purifications?.length ? p.oligo_purifications : null]
     );
   }
 }
@@ -85,6 +92,7 @@ export async function createSpecDraft(tx: Tx, actor: AuthzActor, input: unknown,
   await authorize(tx, actor, "qms.spec.manage");
   const data = parseInput(draftSchema, input);
   if (["ITEM", "RECEIPT", "PRODUCT"].includes(data.applies_to) && !data.item_id) throw invalid("Tiêu chuẩn cho vật tư / thành phẩm phải chọn vật tư.");
+  oligoOnly(data.applies_to, data.parameters);
   let code: string;
   let revision = 1;
   if (fromCode) {
@@ -118,6 +126,7 @@ export async function updateSpecDraft(tx: Tx, actor: AuthzActor, id: string, inp
   if (!cur) throw notFound("tiêu chuẩn QC");
   if (cur.status !== "DRAFT") throw invalid("Chỉ sửa được bản nháp. Tạo phiên bản mới để thay đổi tiêu chuẩn đang hiệu lực.");
   if (cur.version !== version) throw conflict("Tiêu chuẩn vừa được người khác sửa. Tải lại rồi thực hiện lại.", "STALE_VERSION");
+  oligoOnly(cur.applies_to, rest.parameters);
   await tx.query("DELETE FROM qms.qc_spec_parameter WHERE spec_id = $1", [id]);
   await insertParameters(tx, id, rest.parameters);
   const upd = (

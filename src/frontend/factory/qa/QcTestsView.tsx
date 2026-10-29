@@ -17,6 +17,8 @@ interface QcRow {
   lot_code: string | null;
   item_code: string | null;
   item_name: string | null;
+  sequence_code: string | null;
+  sequence_name: string | null;
   created_at: string;
 }
 interface Parameter {
@@ -30,6 +32,7 @@ interface Parameter {
   upper_limit: string | null;
   target: string | null;
   is_critical: boolean;
+  derived_metric: "MW_DELTA_DA" | "OD_TOTAL" | "YIELD_NMOL" | "YIELD_UG" | null;
 }
 interface QcDetail extends QcRow {
   version: number;
@@ -39,7 +42,8 @@ interface QcDetail extends QcRow {
   spec_version: number;
   retest_reason: string | null;
   parameters: Parameter[];
-  results: { parameter_id: string; value_numeric: string | null; value_text: string | null; passed: boolean | null }[];
+  results: { parameter_id: string; value_numeric: string | null; observed_numeric: string | null; value_text: string | null; passed: boolean | null }[];
+  subject: { label: string; reference: Record<string, any> | null } | null;
   actions: AllowedAction[];
 }
 
@@ -51,6 +55,28 @@ export const QC_STATUS_LABEL: Record<string, string> = {
   CANCELLED: "Đã hủy",
 };
 const ACTION_LABEL: Record<string, string> = { start: "Bắt đầu kiểm nghiệm", submit_results: "Gửi kết quả", review: "Duyệt kết quả", return: "Trả lại", cancel: "Hủy phiếu" };
+
+const DERIVED_HINT: Record<string, string> = { OD_TOTAL: "tổng OD", YIELD_NMOL: "nmol", YIELD_UG: "µg" };
+/** Values the server takes from the post-synthesis record: nothing to type. */
+const fromSubject = (p: Parameter) => p.derived_metric != null && p.derived_metric !== "MW_DELTA_DA";
+
+/** Reference data of an Oligo sequence under test (theoretical values and the post-synthesis measurement). */
+function OligoReference({ r }: { r: Record<string, any> }) {
+  const items: [string, React.ReactNode][] = [
+    ["Trình tự", <span key="s" className="font-mono break-all">{r.normalized_sequence}</span>],
+    ["Số base", r.base_count],
+    ["MW lý thuyết", `${r.mw} Da`],
+    ["ε260", r.ext_coeff_260],
+    ["Thang / tinh sạch", `${r.scale_code} · ${r.purification}`],
+    ["Đo được", r.od_total != null ? `${r.od_total} OD · ${r.nmol} nmol · ${r.ug} µg` : "—"],
+    ["Cam kết thang", r.scale_od_min != null ? `≥ ${r.scale_od_min} OD` : `${r.scale_nmol} nmol tổng hợp`],
+  ];
+  return (
+    <div className="grid gap-x-4 gap-y-1 sm:grid-cols-2 text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
+      {items.map(([k, v]) => <div key={k}><span className="text-slate-500">{k}: </span>{v}</div>)}
+    </div>
+  );
+}
 
 const limits = (p: Parameter) =>
   p.value_type === "NUMERIC"
@@ -66,7 +92,11 @@ function QcDetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const [values, setValues] = useState<Record<string, string>>({});
   useEffect(() => {
     if (!test.data) return;
-    setValues(Object.fromEntries(test.data.results.map((r) => [r.parameter_id, r.value_numeric != null ? String(Number(r.value_numeric)) : r.value_text ?? ""])));
+    setValues(
+      Object.fromEntries(
+        test.data.results.map((r) => [r.parameter_id, r.observed_numeric != null ? String(Number(r.observed_numeric)) : r.value_numeric != null ? String(Number(r.value_numeric)) : r.value_text ?? ""])
+      )
+    );
   }, [test.data]);
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["factory", "qc-test", id] });
@@ -79,8 +109,8 @@ function QcDetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
         method: "PUT",
         json: {
           results: test.data!.parameters
-            .filter((p) => (values[p.id] ?? "") !== "")
-            .map((p) => (p.value_type === "NUMERIC" ? { parameter_id: p.id, value_numeric: Number(values[p.id].replace(",", ".")) } : { parameter_id: p.id, value_text: values[p.id] })),
+            .filter((p) => fromSubject(p) || (values[p.id] ?? "") !== "")
+            .map((p) => fromSubject(p) ? { parameter_id: p.id } :  (p.value_type === "NUMERIC" ? { parameter_id: p.id, value_numeric: Number(values[p.id].replace(",", ".")) } : { parameter_id: p.id, value_text: values[p.id] })),
         },
       }),
     onSuccess: refresh,
@@ -99,9 +129,10 @@ function QcDetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
       {t && (
         <div className="flex flex-col gap-3">
           <p className="text-xs text-slate-600 dark:text-slate-300">
-            {t.lot_code ? `Lô ${t.lot_code} — ${t.item_code} ${t.item_name}` : t.spec_name} · {QC_STATUS_LABEL[t.status]} · Kiểm nghiệm: {t.analyst_name ?? "—"} · Duyệt: {t.reviewer_name ?? "—"}
+            {t.lot_code ? `Lô ${t.lot_code} — ${t.item_code} ${t.item_name}` : t.subject?.label ?? t.spec_name} · {QC_STATUS_LABEL[t.status]} · Kiểm nghiệm: {t.analyst_name ?? "—"} · Duyệt: {t.reviewer_name ?? "—"}
             {t.retest_reason && <> · Kiểm lại vì: {t.retest_reason}</>}
           </p>
+          {t.subject?.reference && <OligoReference r={t.subject.reference} />}
           <Table head={["#", "Chỉ tiêu", "Phương pháp", "Yêu cầu", "Kết quả", "Đánh giá"]}>
             {t.parameters.map((p) => {
               const r = result(p.id);
@@ -112,7 +143,9 @@ function QcDetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
                   <td className="py-2 pr-3">{p.method ?? "—"}</td>
                   <td className="py-2 pr-3 whitespace-nowrap">{limits(p)} {p.unit ?? ""}</td>
                   <td className="py-2 pr-3 min-w-36">
-                    {editable ? (
+                    {editable && fromSubject(p) ? (
+                      <span className="text-[11px] text-slate-500">Tự lấy {DERIVED_HINT[p.derived_metric!]} từ hậu tổng hợp khi lưu</span>
+                    ) : editable ? (
                       p.value_type === "PASS_FAIL" ? (
                         <select className={inputClass} value={values[p.id] ?? ""} onChange={(e) => setValues({ ...values, [p.id]: e.target.value })}>
                           <option value="">—</option>
@@ -120,10 +153,16 @@ function QcDetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
                           <option value="FAIL">Không đạt</option>
                         </select>
                       ) : (
-                        <input className={inputClass} inputMode={p.value_type === "NUMERIC" ? "decimal" : "text"} value={values[p.id] ?? ""} onChange={(e) => setValues({ ...values, [p.id]: e.target.value })} />
+                        <input
+                          className={inputClass}
+                          inputMode={p.value_type === "NUMERIC" ? "decimal" : "text"}
+                          placeholder={p.derived_metric === "MW_DELTA_DA" ? "MW đo được (Da)" : undefined}
+                          value={values[p.id] ?? ""}
+                          onChange={(e) => setValues({ ...values, [p.id]: e.target.value })}
+                        />
                       )
                     ) : r ? (
-                      r.value_numeric != null ? `${Number(r.value_numeric)} ${p.unit ?? ""}` : r.value_text === "PASS" ? "Đạt" : r.value_text === "FAIL" ? "Không đạt" : r.value_text
+                      r.value_numeric != null ? `${Number(r.value_numeric)} ${p.unit ?? ""}${r.observed_numeric != null ? ` (đo ${Number(r.observed_numeric)})` : ""}` : r.value_text === "PASS" ? "Đạt" : r.value_text === "FAIL" ? "Không đạt" : r.value_text
                     ) : (
                       "—"
                     )}
@@ -178,7 +217,7 @@ export function QcTestsView() {
             {list.data.map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
                 <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
-                <td className="py-2 pr-3">{r.lot_code ? `${r.lot_code} · ${r.item_code} ${r.item_name}` : "—"}</td>
+                <td className="py-2 pr-3">{r.lot_code ? `${r.lot_code} · ${r.item_code} ${r.item_name}` : r.sequence_code ? `Oligo ${r.sequence_code} · ${r.sequence_name}` : "—"}</td>
                 <td className="py-2 pr-3">{r.test_kind}</td>
                 <td className="py-2 pr-3">{r.spec_code}</td>
                 <td className="py-2 pr-3 whitespace-nowrap">{QC_STATUS_LABEL[r.status]}</td>
