@@ -1,20 +1,24 @@
 "use client";
 
 import React, { useState } from "react";
-import { Calculator, ListTree } from "lucide-react";
+import { Calculator, ClipboardList, Combine, ListTree } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { Empty } from "../ui";
 import { CalculatorView } from "./CalculatorView";
 import { CatalogView } from "./CatalogView";
+import { OligoOrdersView } from "./OligoOrdersView";
+import { PoolsView } from "./PoolsView";
 
-type SubTab = "calc" | "catalog";
+type SubTab = "orders" | "pools" | "calc" | "catalog";
 
 /** "Tổng Hợp Oligo": first screens of the Oligo department (orders, synthesis batches and QC follow). */
 export function FactoryOligoModule() {
   const me = useFactoryMe();
   const perms = new Set(me.data?.permissions ?? []);
-  const [tab, setTab] = useState<SubTab>("calc");
+  const [tab, setTab] = useState<SubTab>("orders");
   const tabs: { key: SubTab; label: string; icon: React.ElementType }[] = [
+    { key: "orders", label: "Đơn Oligo", icon: ClipboardList },
+    { key: "pools", label: "Gộp tổng hợp", icon: Combine },
     { key: "calc", label: "Tính thông số", icon: Calculator },
     { key: "catalog", label: "Danh mục modification", icon: ListTree },
   ];
@@ -36,6 +40,8 @@ export function FactoryOligoModule() {
           </button>
         ))}
       </div>
+      {tab === "orders" && <OligoOrdersView canManage={perms.has("oligo.order.manage")} />}
+      {tab === "pools" && <PoolsView canManage={perms.has("oligo.order.manage")} />}
       {tab === "calc" && <CalculatorView />}
       {tab === "catalog" && <CatalogView canManage={perms.has("oligo.catalog.manage")} />}
     </div>
