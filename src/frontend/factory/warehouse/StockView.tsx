@@ -4,9 +4,11 @@ import React, { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty } from "../api";
 import { Card, Empty, ErrorNote, inputClass, LOT_STATUS_LABEL, Pager, StatusBadge, Table } from "../ui";
+import { LotPanel } from "./LotPanel";
 
 interface StockRow {
   id: string;
+  lot_id: string | null;
   item_code: string;
   item_name: string;
   base_uom: string;
@@ -27,6 +29,7 @@ export function StockView({ warehouses }: { warehouses: { id: string; code: stri
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
+  const [lotId, setLotId] = useState<string | null>(null);
   const params = new URLSearchParams({ page: String(page), page_size: "50" });
   if (warehouseId) params.set("warehouse_id", warehouseId);
   if (q.trim()) params.set("q", q.trim());
@@ -43,6 +46,8 @@ export function StockView({ warehouses }: { warehouses: { id: string; code: stri
   };
 
   return (
+    <>
+    {lotId && <LotPanel key={lotId} lotId={lotId} onClose={() => setLotId(null)} />}
     <Card title="Tồn kho theo lô và vị trí">
       <div className="grid gap-2 sm:grid-cols-3 mb-3">
         <select className={inputClass} value={warehouseId} onChange={(e) => reset(() => setWarehouseId(e.target.value))} aria-label="Kho">
@@ -75,7 +80,13 @@ export function StockView({ warehouses }: { warehouses: { id: string; code: stri
                   <div className="text-slate-500 dark:text-slate-400">{r.item_name}</div>
                 </td>
                 <td className="py-2 pr-3 whitespace-nowrap">
-                  <div className="font-mono">{r.lot_code ?? "—"}</div>
+                  {r.lot_id ? (
+                    <button className="font-mono text-sky-700 dark:text-sky-400 underline underline-offset-2 cursor-pointer" onClick={() => setLotId(r.lot_id)} title="Xem lô, QC và thao tác chất lượng">
+                      {r.lot_code}
+                    </button>
+                  ) : (
+                    <div className="font-mono">—</div>
+                  )}
                   <div className="text-slate-500 dark:text-slate-400">{r.mfr_lot_no ?? ""}</div>
                 </td>
                 <td className="py-2 pr-3">{r.lot_status ? <StatusBadge status={r.lot_status} /> : "—"}</td>
@@ -96,5 +107,6 @@ export function StockView({ warehouses }: { warehouses: { id: string; code: stri
         </>
       )}
     </Card>
+    </>
   );
 }

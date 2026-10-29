@@ -4,9 +4,13 @@ import { getAuthorizedUser, isAdminUser, unauthorizedResponse } from "@/backend/
 import { clientIp } from "@/backend/services/rateLimit";
 import type { AuthzActor } from "./core/authz";
 import { getFactoryPool, withTransaction, type Tx } from "./core/db";
-import { FactoryError } from "./core/errors";
+import { FactoryError, notFound } from "./core/errors";
+import { parseInput } from "./core/records";
+import { listAllowedActions, preAuthenticate, runTransition, type MachineDef, type TransitionRequest } from "./core/stateMachine";
+import { verifyPortalPassword } from "./portalBridge";
+import { z } from "zod";
 import { withIdempotency } from "./core/idempotency";
-import "./permissions";
+import "./modules";
 
 export interface RouteContext {
   req: Request;
@@ -73,3 +77,43 @@ export async function idempotent<T>(tx: Tx, ctx: RouteContext, endpoint: string,
 }
 
 export const queryObject = (url: URL) => Object.fromEntries(url.searchParams.entries());
+
+/** Body of every state-machine action request from the UI. */
+const actionBody = z.object({
+  action: z.string().min(1).max(40),
+  expectedVersion: z.number().int().min(0),
+  reason: z.string().trim().max(1000).optional().nullable(),
+  payload: z.record(z.unknown()).optional(),
+  credential: z.object({ method: z.enum(["PIN", "PASSWORD"]), secret: z.string().min(1).max(200) }).optional(),
+});
+
+/**
+ * POST handler running one state-machine action on the record `params.id`. A signature is verified
+ * before the business transaction (failed attempts are committed and count toward the lock-out);
+ * `run` lets a module wrap the transition (e.g. superseding the previous effective spec).
+ */
+export function machineActionRoute<S extends string, Row extends { id: string; status: S; version: number }>(
+  machine: MachineDef<S, Row>,
+  run: (tx: Tx, actor: AuthzActor, req: TransitionRequest) => Promise<unknown> = (tx, actor, req) =>
+    runTransition(tx, machine, actor, req, { signerAuthenticated: true })
+) {
+  const toRequest = (ctx: RouteContext): TransitionRequest => ({ ...parseInput(actionBody, ctx.body), id: ctx.params.id });
+  return factoryRoute((tx, ctx) => run(tx, ctx.actor, toRequest(ctx)), {
+    before: async (ctx) => {
+      const req = toRequest(ctx);
+      const row = (await getFactoryPool().query(`SELECT status FROM ${machine.table} WHERE id = $1`, [req.id])).rows[0];
+      if (!row) throw notFound("bản ghi");
+      await preAuthenticate(machine, row.status, req, ctx.actor, verifyPortalPassword);
+    },
+  });
+}
+
+/** Actions the signed-in user may run on a record now (drives the buttons). */
+export async function allowedActionsFor<S extends string, Row extends { id: string; status: S; version: number }>(
+  tx: Tx,
+  machine: MachineDef<S, Row>,
+  actor: AuthzActor,
+  row: Row
+) {
+  return listAllowedActions(tx, machine, actor, row);
+}

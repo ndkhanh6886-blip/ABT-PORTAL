@@ -2,3 +2,4 @@
 import "./core/authz";
 import "./master/permissions";
 import "./inv/permissions";
+import "./qms/permissions";

@@ -36,14 +36,31 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
   {
     code: "QC_ANALYST",
     name: "Kiểm nghiệm viên QC",
-    description: "Lấy mẫu QC cho lô.",
-    permissions: ["master.data.view", "inv.stock.view", "inv.lot.sample"],
+    description: "Lấy mẫu QC cho lô, thực hiện kiểm nghiệm và nhập kết quả.",
+    permissions: ["master.data.view", "inv.stock.view", "inv.lot.sample", "qms.qc.view", "qms.qc.analyze", "qms.deviation.report"],
   },
   {
     code: "QA_RELEASER",
     name: "QA giải phóng lô",
-    description: "Giải phóng, tạm giữ, loại lô (cần chữ ký điện tử).",
-    permissions: ["master.data.view", "inv.stock.view", "inv.lot.release", "inv.lot.hold", "inv.lot.reject"],
+    description: "Duyệt kết quả QC, phê duyệt tiêu chuẩn, giải phóng / tạm giữ / loại lô (cần chữ ký điện tử).",
+    permissions: [
+      "master.data.view",
+      "inv.stock.view",
+      "inv.lot.release",
+      "inv.lot.hold",
+      "inv.lot.reject",
+      "qms.qc.view",
+      "qms.qc.review",
+      "qms.qc.lead",
+      "qms.spec.approve",
+      "qms.deviation.report",
+    ],
+  },
+  {
+    code: "QA_SOAN_TIEU_CHUAN",
+    name: "Soạn tiêu chuẩn QC",
+    description: "Soạn bản nháp tiêu chuẩn QC và phiên bản mới.",
+    permissions: ["master.data.view", "qms.qc.view", "qms.spec.manage"],
   },
   {
     code: "MUA_HANG_NVL",
@@ -59,16 +76,30 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
   },
 ];
 
+/**
+ * Creates missing default roles. A default role nobody has edited yet (no "update" in its audit trail)
+ * also receives permissions added to its definition in later releases; an edited role is left as is.
+ */
 export async function ensureDefaultRoles(tx: Tx): Promise<string[]> {
-  const created: string[] = [];
+  const changed: string[] = [];
   for (const r of DEFAULT_ROLES) {
     const ins = await tx.query(
       "INSERT INTO core.role (code, name, description) VALUES ($1, $2, $3) ON CONFLICT (code) DO NOTHING RETURNING id",
       [r.code, r.name, r.description]
     );
-    if (!ins.rowCount) continue;
-    await tx.query("INSERT INTO core.role_permission (role_id, permission_code) SELECT $1, unnest($2::text[])", [ins.rows[0].id, r.permissions]);
-    created.push(r.code);
+    if (ins.rowCount) {
+      await tx.query("INSERT INTO core.role_permission (role_id, permission_code) SELECT $1, unnest($2::text[])", [ins.rows[0].id, r.permissions]);
+      changed.push(r.code);
+      continue;
+    }
+    const role = (await tx.query("SELECT id FROM core.role WHERE code = $1", [r.code])).rows[0];
+    const edited = await tx.query("SELECT 1 FROM core.audit_log WHERE entity_type = 'role' AND entity_id = $1 AND action = 'update' LIMIT 1", [role.id]);
+    if (edited.rowCount) continue;
+    const added = await tx.query(
+      "INSERT INTO core.role_permission (role_id, permission_code) SELECT $1, unnest($2::text[]) ON CONFLICT DO NOTHING RETURNING permission_code",
+      [role.id, r.permissions]
+    );
+    if (added.rowCount) changed.push(`${r.code} (+${added.rowCount} quyền)`);
   }
-  return created;
+  return changed;
 }

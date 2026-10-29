@@ -4,7 +4,7 @@ import { addDays, vnToday } from "../core/dates";
 import { invalid } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord } from "../core/records";
-import { defineMachine, runTransition, type Guard } from "../core/stateMachine";
+import { defineMachine, runTransition, type Guard, type GuardContext } from "../core/stateMachine";
 import { releaseLotReservations } from "./reservations";
 import "./permissions";
 
@@ -32,12 +32,29 @@ export const QC_PENDING_GUARD: Guard<Lot> = {
 };
 const releaseGuards: Guard<Lot>[] = [QC_PENDING_GUARD];
 const unholdGuards: Guard<Lot>[] = [];
+const sampleGuards: Guard<Lot>[] = [];
+type LotEffect = (ctx: GuardContext<Lot> & { updated: Lot }) => Promise<void>;
+const sampleEffects: LotEffect[] = [];
+const rejectEffects: LotEffect[] = [];
 
-/** Called by the QMS module: replaces the placeholder with the real QC / NCR checks. */
-export function registerLotQualityGuards(guards: { release: Guard<Lot>[]; unhold: Guard<Lot>[] }): void {
-  releaseGuards.splice(0, releaseGuards.length, ...guards.release);
-  unholdGuards.splice(0, unholdGuards.length, ...guards.unhold);
+/** Called by the QMS module: replaces the placeholder with the real QC / NCR checks and effects. */
+export function registerLotQualityGuards(hooks: {
+  release: Guard<Lot>[];
+  unhold: Guard<Lot>[];
+  sample?: Guard<Lot>[];
+  onSample?: LotEffect[];
+  onReject?: LotEffect[];
+}): void {
+  releaseGuards.splice(0, releaseGuards.length, ...hooks.release);
+  unholdGuards.splice(0, unholdGuards.length, ...hooks.unhold);
+  sampleGuards.splice(0, sampleGuards.length, ...(hooks.sample ?? []));
+  sampleEffects.splice(0, sampleEffects.length, ...(hooks.onSample ?? []));
+  rejectEffects.splice(0, rejectEffects.length, ...(hooks.onReject ?? []));
 }
+
+const runAll = (effects: LotEffect[]) => async (ctx: GuardContext<Lot> & { updated: Lot }) => {
+  for (const e of effects) await e(ctx);
+};
 
 export const lotMachine = defineMachine<LotStatus, Lot>({
   entityType: "lot",
@@ -59,9 +76,9 @@ export const lotMachine = defineMachine<LotStatus, Lot>({
         },
       ],
     },
-    { action: "sample", from: "QUARANTINE", to: "PENDING_QC", permission: "inv.lot.sample" },
+    { action: "sample", from: "QUARANTINE", to: "PENDING_QC", permission: "inv.lot.sample", guards: sampleGuards, effects: runAll(sampleEffects) },
     { action: "release", from: "PENDING_QC", to: "RELEASED", permission: "inv.lot.release", signature: "RELEASED", guards: releaseGuards },
-    { action: "reject", from: ["PENDING_QC", "ON_HOLD"], to: "REJECTED", permission: "inv.lot.reject", reasonRequired: true },
+    { action: "reject", from: ["PENDING_QC", "ON_HOLD"], to: "REJECTED", permission: "inv.lot.reject", reasonRequired: true, effects: runAll(rejectEffects) },
     {
       action: "hold",
       from: "RELEASED",

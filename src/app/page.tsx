@@ -20,6 +20,7 @@ import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal
 import { FactoryProvider } from "@/frontend/factory/FactoryProvider";
 import { FactoryWarehouseModule } from "@/frontend/factory/warehouse/FactoryWarehouseModule";
 import { FactorySettingsModule } from "@/frontend/factory/settings/FactorySettingsModule";
+import { FactoryQaModule } from "@/frontend/factory/qa/FactoryQaModule";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<MainTab>("workspace");
@@ -129,6 +130,7 @@ export default function Home() {
         {activeTab === "settings" && can("settings.view") && <SettingsModule initialSubTab={settingsSubTab} />}
         {activeTab === "factory-warehouse" && <FactoryWarehouseModule />}
         {activeTab === "factory-settings" && <FactorySettingsModule />}
+        {activeTab === "factory-qa" && <FactoryQaModule />}
         </DataSyncGate>
       </main>
 

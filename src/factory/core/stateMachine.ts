@@ -34,6 +34,8 @@ export interface TransitionDef<S extends string, Row> {
   guards?: Guard<Row>[];
   signature?: SignatureMeaning;
   reasonRequired?: boolean;
+  /** Columns of the entity written in the same UPDATE as the status (e.g. reviewer, result). Names come from code only. */
+  patch?: (ctx: GuardContext<Row>) => Record<string, unknown> | Promise<Record<string, unknown>>;
   /** Runs after the status update, same transaction; may write related records. */
   effects?: (ctx: GuardContext<Row> & { updated: Row }) => Promise<void>;
 }
@@ -141,10 +143,16 @@ export async function runTransition<S extends string, Row extends { id: string; 
   if (t.signature && !opts.signerAuthenticated) {
     throw invalid("Thao tác này cần chữ ký điện tử: nhập mã PIN hoặc mật khẩu.", undefined, "SIGNATURE_REQUIRED");
   }
+  const patch = (await t.patch?.(ctx)) ?? {};
+  const patchCols = Object.keys(patch);
+  for (const c of patchCols) {
+    if (!/^[a-z_]+$/.test(c) || ["id", "status", "version"].includes(c)) throw new Error(`Cột không được phép trong patch: ${c}`);
+  }
   const upd = await tx.query(
     `UPDATE ${machine.table} SET status = $2, version = version + 1, updated_at = now(), updated_by = $3
+       ${patchCols.map((c, i) => `, ${c} = $${i + 5}`).join("")}
       WHERE id = $1 AND version = $4 RETURNING *`,
-    [row.id, t.to, actor.userId, row.version]
+    [row.id, t.to, actor.userId, row.version, ...patchCols.map((c) => patch[c])]
   );
   const updated = upd.rows[0] as Row;
   await t.effects?.({ ...ctx, updated });
@@ -164,7 +172,10 @@ export async function runTransition<S extends string, Row extends { id: string; 
     entityType: machine.entityType,
     entityId: row.id,
     action: t.action,
-    changes: { status: [row.status, t.to] },
+    changes: {
+      status: [row.status, t.to],
+      ...Object.fromEntries(patchCols.map((c) => [c, [(row as Record<string, unknown>)[c] ?? null, patch[c] ?? null]])),
+    },
     reason,
   });
   await enqueueEvent(tx, `${machine.entityType}.${t.action}`, { id: row.id, from: row.status, to: t.to, by: actor.userId });

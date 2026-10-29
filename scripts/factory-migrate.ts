@@ -13,7 +13,7 @@ async function main() {
   await withTransaction(syncPermissions);
   const { ensureDefaultRoles } = await import("../src/factory/core/defaultRoles");
   const roles = await withTransaction(ensureDefaultRoles);
-  if (roles.length) console.log(`Đã tạo vai trò mặc định: ${roles.join(", ")}`);
+  if (roles.length) console.log(`Vai trò mặc định đã tạo hoặc bổ sung: ${roles.join(", ")}`);
   console.log(applied.length ? `Đã chạy ${applied.length} migration.` : "Không có migration mới.");
   await closeFactoryPool();
 }
