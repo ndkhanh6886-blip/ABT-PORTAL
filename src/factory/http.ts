@@ -40,6 +40,7 @@ export function factoryRoute(
       userId: Number(user.id),
       name: user.full_name || user.username,
       isPortalAdmin: isAdminUser(user),
+      isRootAdmin: user.role === "admin",
       requestId,
       ip: clientIp(req),
     };

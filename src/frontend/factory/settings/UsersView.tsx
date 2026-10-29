@@ -21,6 +21,7 @@ interface UserRow {
   full_name: string;
   department: string | null;
   is_active: boolean;
+  role?: string;
   org_unit_id: string | null;
   has_pin: boolean;
   grants: Grant[];
@@ -59,6 +60,7 @@ function UserCard({ user, roles, units, isSelf }: { user: UserRow; roles: Role[]
         <div>
           <div className="text-sm font-bold text-slate-800 dark:text-slate-100">
             {user.full_name} {!user.is_active && <span className="text-rose-600 text-xs">(đã khóa)</span>}
+            {user.role === "admin" && <span className="ml-1 px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 text-[10px] font-bold">Root admin · toàn quyền</span>}
           </div>
           <div className="text-[11px] text-slate-400">
             {user.username} · {user.department || "—"} · PIN: {user.has_pin ? "đã đặt" : "chưa đặt"}

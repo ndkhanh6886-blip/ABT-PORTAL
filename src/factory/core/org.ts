@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tx } from "./db";
-import { authorize, getPermission, hasFactoryPermission, type AuthzActor } from "./authz";
+import { authorize, getPermission, grantablePermissions, hasFactoryPermission, type AuthzActor } from "./authz";
 import { invalid } from "./errors";
 import { insertRecord, parseInput } from "./records";
 
@@ -33,6 +33,7 @@ export async function listOrgUnits(tx: Tx) {
 
 /** Permission codes the user holds somewhere (any scope): drives which tabs/buttons the UI offers. Every action is re-checked server-side. */
 export async function heldPermissions(tx: Tx, actor: AuthzActor): Promise<string[]> {
+  if (actor.isRootAdmin) return grantablePermissions();
   const res = await tx.query(
     `SELECT DISTINCT rp.permission_code FROM core.user_role ur
        JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'

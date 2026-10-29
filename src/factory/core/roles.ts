@@ -13,6 +13,8 @@ export interface DirectoryUser {
   full_name: string;
   department: string | null;
   is_active: boolean;
+  /** ABT Portal role; "admin" = root administrator of the factory. */
+  role?: string;
 }
 export interface UserDirectory {
   search(q: string, limit: number): Promise<DirectoryUser[]>;

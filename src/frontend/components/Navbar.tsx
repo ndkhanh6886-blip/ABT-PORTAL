@@ -51,6 +51,12 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
   const factoryMe = useFactoryMe(Boolean(user));
   const canFactoryWarehouse = hasAny(factoryMe.data, ["inv", "master"]);
   const canFactorySettings = Boolean(factoryMe.data?.permissions.length);
+  // Khối Kinh doanh groups the four Kinh doanh modules; the Navbar shows one entry for them
+  const businessTabs = (["sales", "warehouse", "application", "procurement"] as const).filter((t) => can(`${t}.view`));
+  const canBusiness = businessTabs.length > 0;
+  const isBusinessTab = (businessTabs as readonly string[]).includes(activeTab);
+  const firstBusinessTab: MainTab = isBusinessTab ? activeTab : businessTabs[0] ?? "sales";
+  const isSettingsTab = activeTab === "settings" || activeTab === "factory-settings";
   const canFactoryOrders = hasAny(factoryMe.data, ["intake"]);
   const canFactoryPurchase = hasAny(factoryMe.data, ["purchase", "master.partner"]);
   const canFactoryQa = hasAny(factoryMe.data, ["qms.qc.view"]);
@@ -108,59 +114,17 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 <span>Điều Hành</span>
               </button>
 
-              {can("sales.view") && (
+              {canBusiness && (
                 <button
-                  onClick={() => setActiveTab("sales")}
+                  onClick={() => setActiveTab(firstBusinessTab)}
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "sales"
+                    isBusinessTab
                       ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
                       : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
                   }`}
                 >
                   <Briefcase className="w-3.5 h-3.5 shrink-0" />
-                  <span>Kinh Doanh</span>
-                </button>
-              )}
-
-              {can("warehouse.view") && (
-                <button
-                  onClick={() => setActiveTab("warehouse")}
-                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "warehouse"
-                      ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <Package className="w-3.5 h-3.5 shrink-0" />
-                  <span>Quản Lý Kho</span>
-                </button>
-              )}
-
-              {can("application.view") && (
-                <button
-                  onClick={() => setActiveTab("application")}
-                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "application"
-                      ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <FlaskConical className="w-3.5 h-3.5 shrink-0" />
-                  <span>Application</span>
-                </button>
-              )}
-
-              {can("procurement.view") && (
-                <button
-                  onClick={() => setActiveTab("procurement")}
-                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "procurement"
-                      ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <ShoppingCart className="w-3.5 h-3.5 shrink-0" />
-                  <span>Cung Ứng</span>
+                  <span>Khối Kinh Doanh</span>
                 </button>
               )}
 
@@ -220,20 +184,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 </button>
               )}
 
-              {canFactorySettings && (
-                <button
-                  onClick={() => setActiveTab("factory-settings")}
-                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "factory-settings"
-                      ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5 shrink-0" />
-                  <span>Cấu hình Nhà Máy</span>
-                </button>
-              )}
-
               {can("legal.view") && (
                 <button
                   onClick={() => setActiveTab("legal")}
@@ -283,11 +233,11 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 </button>
               )}
 
-              {can("settings.view") && (
+              {(can("settings.view") || canFactorySettings) && (
                 <button
-                  onClick={() => setActiveTab("settings")}
+                  onClick={() => setActiveTab(can("settings.view") ? "settings" : "factory-settings")}
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "settings"
+                    isSettingsTab
                       ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
                       : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
                   }`}
@@ -438,63 +388,31 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
           <span className="text-[10px] mt-0.5 tracking-tight font-bold">Điều Hành</span>
         </button>
 
-        {can("sales.view") && (
+        {canBusiness && (
           <button
-            onClick={() => { setActiveTab("sales"); setIsMobileMoreOpen(false); }}
+            onClick={() => { setActiveTab(firstBusinessTab); setIsMobileMoreOpen(false); }}
             className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
-              activeTab === "sales" && !isMobileMoreOpen
+              isBusinessTab && !isMobileMoreOpen
                 ? "text-orange-600 dark:text-orange-400 font-extrabold"
                 : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
             }`}
           >
-            <div className={`p-1 rounded-xl transition-transform ${activeTab === "sales" && !isMobileMoreOpen ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
+            <div className={`p-1 rounded-xl transition-transform ${isBusinessTab && !isMobileMoreOpen ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
               <Briefcase className="w-5 h-5" />
             </div>
-            <span className="text-[10px] mt-0.5 tracking-tight font-bold">Kinh Doanh</span>
-          </button>
-        )}
-
-        {can("warehouse.view") && (
-          <button
-            onClick={() => { setActiveTab("warehouse"); setIsMobileMoreOpen(false); }}
-            className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
-              activeTab === "warehouse" && !isMobileMoreOpen
-                ? "text-orange-600 dark:text-orange-400 font-extrabold"
-                : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
-            }`}
-          >
-            <div className={`p-1 rounded-xl transition-transform ${activeTab === "warehouse" && !isMobileMoreOpen ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
-              <Package className="w-5 h-5" />
-            </div>
-            <span className="text-[10px] mt-0.5 tracking-tight font-bold">Kho Hàng</span>
-          </button>
-        )}
-
-        {can("application.view") && (
-          <button
-            onClick={() => { setActiveTab("application"); setIsMobileMoreOpen(false); }}
-            className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
-              activeTab === "application" && !isMobileMoreOpen
-                ? "text-orange-600 dark:text-orange-400 font-extrabold"
-                : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
-            }`}
-          >
-            <div className={`p-1 rounded-xl transition-transform ${activeTab === "application" && !isMobileMoreOpen ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
-              <FlaskConical className="w-5 h-5" />
-            </div>
-            <span className="text-[10px] mt-0.5 tracking-tight font-bold">Kỹ Thuật</span>
+            <span className="text-[10px] mt-0.5 tracking-tight font-bold">Khối KD</span>
           </button>
         )}
 
         <button
           onClick={() => setIsMobileMoreOpen(prev => !prev)}
           className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
-            isMobileMoreOpen || ["procurement", "factory-orders", "factory-purchase", "factory-qa", "factory-warehouse", "factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab)
+            isMobileMoreOpen || ["factory-orders", "factory-purchase", "factory-qa", "factory-warehouse", "factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab)
               ? "text-orange-600 dark:text-orange-400 font-extrabold"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
           }`}
         >
-          <div className={`p-1 rounded-xl transition-transform ${isMobileMoreOpen || ["procurement", "factory-orders", "factory-purchase", "factory-qa", "factory-warehouse", "factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab) ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
+          <div className={`p-1 rounded-xl transition-transform ${isMobileMoreOpen || ["factory-orders", "factory-purchase", "factory-qa", "factory-warehouse", "factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab) ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
             {isMobileMoreOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </div>
           <span className="text-[10px] mt-0.5 tracking-tight font-bold">Thêm</span>
@@ -552,11 +470,11 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 </div>
               </button>
 
-              {can("sales.view") && (
+              {canBusiness && (
                 <button
-                  onClick={() => { setActiveTab("sales"); setIsMobileMoreOpen(false); }}
+                  onClick={() => { setActiveTab(firstBusinessTab); setIsMobileMoreOpen(false); }}
                   className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "sales"
+                    isBusinessTab
                       ? "bg-orange-50 dark:bg-orange-950/50 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300 font-bold"
                       : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
                   }`}
@@ -565,65 +483,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                     <Briefcase className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Kinh Doanh</div>
-                    <div className="text-[10px] text-slate-400 truncate">CRM, Báo giá, Đơn SO</div>
-                  </div>
-                </button>
-              )}
-
-              {can("warehouse.view") && (
-                <button
-                  onClick={() => { setActiveTab("warehouse"); setIsMobileMoreOpen(false); }}
-                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "warehouse"
-                      ? "bg-orange-50 dark:bg-orange-950/50 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300 font-bold"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="p-2 rounded-xl bg-amber-100 dark:bg-amber-950/70 text-amber-600 dark:text-amber-400 shrink-0">
-                    <Package className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Quản Lý Kho</div>
-                    <div className="text-[10px] text-slate-400 truncate">Xuất nhập tồn &amp; Lô</div>
-                  </div>
-                </button>
-              )}
-
-              {can("application.view") && (
-                <button
-                  onClick={() => { setActiveTab("application"); setIsMobileMoreOpen(false); }}
-                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "application"
-                      ? "bg-orange-50 dark:bg-orange-950/50 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300 font-bold"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="p-2 rounded-xl bg-purple-100 dark:bg-purple-950/70 text-purple-600 dark:text-purple-400 shrink-0">
-                    <FlaskConical className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Application</div>
-                    <div className="text-[10px] text-slate-400 truncate">Kỹ thuật &amp; Ứng dụng</div>
-                  </div>
-                </button>
-              )}
-
-              {can("procurement.view") && (
-                <button
-                  onClick={() => { setActiveTab("procurement"); setIsMobileMoreOpen(false); }}
-                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "procurement"
-                      ? "bg-orange-50 dark:bg-orange-950/50 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300 font-bold"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="p-2 rounded-xl bg-orange-100 dark:bg-orange-950/70 text-orange-600 dark:text-orange-400 shrink-0">
-                    <ShoppingCart className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Cung Ứng</div>
-                    <div className="text-[10px] text-slate-400 truncate">Đơn PO &amp; Mua hàng</div>
+                    <div className="text-xs font-bold leading-tight truncate">Khối Kinh Doanh</div>
+                    <div className="text-[10px] text-slate-400 truncate">Kinh doanh, Kho, Application, Cung ứng</div>
                   </div>
                 </button>
               )}
@@ -704,25 +565,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 </button>
               )}
 
-              {canFactorySettings && (
-                <button
-                  onClick={() => { setActiveTab("factory-settings"); setIsMobileMoreOpen(false); }}
-                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "factory-settings"
-                      ? "bg-sky-50 dark:bg-sky-950/50 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 font-bold"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="p-2 rounded-xl bg-sky-100 dark:bg-sky-950/70 text-sky-700 dark:text-sky-400 shrink-0">
-                    <SlidersHorizontal className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Cấu hình Nhà Máy</div>
-                    <div className="text-[10px] text-slate-400 truncate">PIN, vai trò &amp; phân quyền</div>
-                  </div>
-                </button>
-              )}
-
               {can("legal.view") && (
                 <button
                   onClick={() => { setActiveTab("legal"); setIsMobileMoreOpen(false); }}
@@ -780,11 +622,11 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 </button>
               )}
 
-              {can("settings.view") && (
+              {(can("settings.view") || canFactorySettings) && (
                 <button
-                  onClick={() => { setActiveTab("settings"); setIsMobileMoreOpen(false); }}
+                  onClick={() => { setActiveTab(can("settings.view") ? "settings" : "factory-settings"); setIsMobileMoreOpen(false); }}
                   className={`col-span-2 p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "settings"
+                    isSettingsTab
                       ? "bg-orange-50 dark:bg-orange-950/50 border-orange-300 dark:border-orange-700 text-orange-700 dark:text-orange-300 font-bold"
                       : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
                   }`}

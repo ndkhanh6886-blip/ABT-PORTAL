@@ -114,3 +114,43 @@ describe("own PIN", () => {
     await authenticateSigner(u.userId, { method: "PIN", secret: "583920" });
   });
 });
+
+describe("root administrator", () => {
+  it("holds every grantable permission in every department, never a system-only one", async () => {
+    const root = { ...(await createUser("Root")), isRootAdmin: true };
+    const dept = await createOrgUnit("OLIGO");
+    await withTransaction(async (tx) => {
+      expect(await hasFactoryPermission(tx, root, "inv.lot.release")).toBe(true);
+      expect(await hasFactoryPermission(tx, root, "purchase.pr.approve", dept)).toBe(true);
+      expect(await hasFactoryPermission(tx, root, "inv.lot.system")).toBe(false);
+      const { heldPermissions } = await import("../org");
+      const held = await heldPermissions(tx, root);
+      expect(held).toContain("qms.ncr.approve_bod");
+      expect(held).not.toContain("inv.lot.system");
+    });
+  });
+
+  it("grants roles to others but is still bound by separation of duties on a record", async () => {
+    const root = { ...(await createUser("Root", "583920")), isRootAdmin: true };
+    const role = await withTransaction((tx) => createRole(tx, root, { code: code(), name: "Thủ kho", permissions: ["inv.stock.view"] }));
+    const staff = await createUser("Nhân viên");
+    await withTransaction((tx) => grantRole(tx, root, directory, { user_id: staff.userId, role_id: role.id }));
+    await withTransaction(async (tx) => expect(await hasFactoryPermission(tx, staff, "inv.stock.view")).toBe(true));
+
+    const own = await withTransaction((tx) =>
+      createRole(tx, root, { code: code(), name: "Bản nháp của root", permissions: [] })
+    );
+    expect(own.code).toBeTruthy();
+    const { createSpecDraft, specMachine } = await import("../../qms/specs");
+    const { makeItem, makeSite } = await import("../../inv/__tests__/fixtures");
+    const { preAuthenticate, runTransition } = await import("../stateMachine");
+    const site = await makeSite();
+    const item = await makeItem(site);
+    const draft = await withTransaction((tx) =>
+      createSpecDraft(tx, root, { name: "TC", applies_to: "ITEM", item_id: item.id, parameters: [{ name: "a", value_type: "PASS_FAIL" }] })
+    );
+    const req = { id: draft.id, action: "approve", expectedVersion: draft.version, credential: { method: "PIN" as const, secret: "583920" } };
+    await preAuthenticate(specMachine, "DRAFT", req, root);
+    await expect(withTransaction((tx) => runTransition(tx, specMachine, root, req, { signerAuthenticated: true }))).rejects.toThrow(/khác người soạn/);
+  });
+});

@@ -4,5 +4,5 @@ import { heldPermissions } from "@/factory/core/org";
 /** The signed-in user's factory profile and held permissions (used to show tabs and buttons). */
 export const GET = factoryRoute(async (tx, { actor }) => {
   const profile = (await tx.query("SELECT user_id, display_name, org_unit_id, (pin_hash IS NOT NULL) AS has_pin FROM core.user_profile WHERE user_id = $1", [actor.userId])).rows[0];
-  return { profile, permissions: await heldPermissions(tx, actor) };
+  return { profile, is_root: Boolean(actor.isRootAdmin), permissions: await heldPermissions(tx, actor) };
 });

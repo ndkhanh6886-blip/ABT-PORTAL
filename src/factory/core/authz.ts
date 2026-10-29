@@ -25,6 +25,11 @@ export function registerPermissions(defs: PermissionDef[]): void {
   }
 }
 
+/** Every permission a role can hold (system-only ones excluded). */
+export function grantablePermissions(): string[] {
+  return [...registry.values()].filter((d) => !d.systemOnly).map((d) => d.code).sort();
+}
+
 export function getPermission(code: string): PermissionDef | undefined {
   return registry.get(code);
 }
@@ -55,6 +60,12 @@ export async function syncPermissions(tx: Tx): Promise<void> {
 export interface AuthzActor extends Actor {
   /** ABT Portal administrator (settings.view): only `bootstrapAdmin` permissions follow from it. */
   isPortalAdmin?: boolean;
+  /**
+   * Root administrator: ABT Portal account with role "admin". Holds every grantable factory permission in
+   * every department and grants roles to others. Separation of duties on a record (approver ≠ performer)
+   * and e-signatures still apply to it.
+   */
+  isRootAdmin?: boolean;
   /** Scheduled jobs and automatic effects; holds exactly the `systemOnly` permissions. */
   isSystem?: boolean;
 }
@@ -70,6 +81,7 @@ export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission
   const def = registry.get(permission);
   if (!def) throw new Error(`Quyền chưa được khai báo: ${permission}`);
   if (def.systemOnly || actor.isSystem) return Boolean(def.systemOnly && actor.isSystem);
+  if (actor.isRootAdmin) return true;
   if (def.bootstrapAdmin && actor.isPortalAdmin) return true;
   const res = await tx.query(
     `WITH RECURSIVE ancestors AS (

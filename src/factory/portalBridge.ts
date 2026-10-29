@@ -12,12 +12,12 @@ import { applyFactoryEvent } from "@/backend/services/factoryBridge";
 export const portalDirectory: UserDirectory = {
   async search(q, limit) {
     const res = await query(
-      `SELECT id, username, full_name, department, is_active FROM users
+      `SELECT id, username, full_name, department, is_active, role FROM users
         WHERE role <> 'customer' AND ($1 = '' OR username ILIKE '%' || $1 || '%' OR full_name ILIKE '%' || $1 || '%' OR department ILIKE '%' || $1 || '%')
         ORDER BY is_active DESC, full_name LIMIT $2`,
       [q, limit]
     );
-    return res.rows.map((r: any) => ({ id: Number(r.id), username: r.username, full_name: r.full_name, department: r.department, is_active: r.is_active !== false }));
+    return res.rows.map((r: any) => ({ id: Number(r.id), username: r.username, full_name: r.full_name, department: r.department, is_active: r.is_active !== false, role: r.role }));
   },
   async get(id) {
     const r = (await query("SELECT id, username, full_name, department, is_active FROM users WHERE id = $1 AND role <> 'customer'", [id])).rows[0];

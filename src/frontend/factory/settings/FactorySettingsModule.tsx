@@ -33,6 +33,11 @@ export function FactorySettingsModule() {
 
   return (
     <div className="flex flex-col gap-3">
+      {me.data?.is_root && (
+        <div className="rounded-2xl border border-amber-200 dark:border-amber-900 bg-amber-50 dark:bg-amber-950/30 px-4 py-2 text-xs text-amber-900 dark:text-amber-200">
+          Bạn là <b>Root admin</b>: có toàn bộ quyền của nhà máy ở mọi phòng và cấp vai trò cho người khác. Các bước cần ký vẫn yêu cầu PIN, và vẫn không được tự duyệt hồ sơ do chính mình thực hiện.
+        </div>
+      )}
       <div className="flex items-center gap-1 overflow-x-auto no-scrollbar rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1">
         {visible.map((t) => (
           <button

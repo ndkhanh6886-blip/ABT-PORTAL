@@ -15,6 +15,7 @@
 | Q5 | Ngưỡng tiền cần BGĐ duyệt PR và dung sai nhận hàng vượt PO là **tham số cấu hình** (`core.setting`) |
 | Q6 | Mẫu mã số mới, cấp từ bộ đếm phía server, không trùng khi tạo đồng thời (mục 5) |
 | Q7 | Chỉ tham khảo **công thức tính thông số Oligo** của OligoFlow cũ (MW, ε260, nmol/OD, µg/OD, Tm) để kết quả thống nhất |
+| Q8 | **Root admin** = tài khoản ABT Portal có vai trò `admin`: có mọi quyền nhà máy (trừ quyền chỉ dành cho hệ thống) ở mọi phòng và cấp vai trò cho người khác. Vẫn phải ký PIN ở các bước cần ký và vẫn bị chặn tự duyệt hồ sơ do chính mình thực hiện (29/10/2026) |
 
 ## 2. Điều chỉnh công nghệ so với prompt gốc
 

@@ -30,6 +30,8 @@ export const factoryQueryClient = new QueryClient({
 
 export interface FactoryMe {
   profile: { user_id: number; display_name: string; org_unit_id: string | null; has_pin: boolean };
+  /** Root administrator: every factory permission, grants roles to others. */
+  is_root: boolean;
   permissions: string[];
 }
 

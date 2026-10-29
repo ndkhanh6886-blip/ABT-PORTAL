@@ -18,6 +18,7 @@ import { SearchableSelectEnhancer } from "@/frontend/components/SearchableSelect
 import { DataSyncGate } from "@/frontend/components/DataSyncGate";
 import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal";
 import { FactoryProvider } from "@/frontend/factory/FactoryProvider";
+import { BUSINESS_TABS, BusinessTabs, SETTINGS_TABS, SettingsTabs } from "@/frontend/components/GroupTabs";
 import { FactoryWarehouseModule } from "@/frontend/factory/warehouse/FactoryWarehouseModule";
 import { FactorySettingsModule } from "@/frontend/factory/settings/FactorySettingsModule";
 import { FactoryPurchaseModule } from "@/frontend/factory/purchase/FactoryPurchaseModule";
@@ -121,6 +122,8 @@ export default function Home() {
 
       <main className="flex-1 w-full px-2 sm:px-4 lg:px-6 py-3.5 sm:py-4 pb-24 lg:pb-5">
         <DataSyncGate key={user.username || user.id}>
+        {BUSINESS_TABS.includes(activeTab) && <BusinessTabs active={activeTab} onChange={setActiveTab} />}
+        {SETTINGS_TABS.includes(activeTab) && <SettingsTabs active={activeTab} onChange={setActiveTab} />}
         {activeTab === "workspace" && <UnifiedWorkspace />}
         {activeTab === "sales" && can("sales.view") && <SalesFullABT />}
         {activeTab === "warehouse" && can("warehouse.view") && <WarehouseModule />}
