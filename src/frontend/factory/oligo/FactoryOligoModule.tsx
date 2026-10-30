@@ -1,10 +1,11 @@
 "use client";
 
 import React, { useState } from "react";
-import { Calculator, ClipboardList, Combine, AlertTriangle, Beaker, Dna, FlaskConical, ListChecks, ListTree, Microscope, Settings2, Truck } from "lucide-react";
+import { Calculator, ClipboardList, Combine, AlertTriangle, Beaker, CalendarDays, Dna, FlaskConical, ListChecks, ListTree, Microscope, Settings2, Truck } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { Empty } from "../ui";
 import { AnalysisView } from "./AnalysisView";
+import { PlannerView } from "./PlannerView";
 import { TraceView } from "./TraceView";
 import { IncidentsView } from "../qa/IncidentsView";
 import { BatchesView } from "./BatchesView";
@@ -21,7 +22,7 @@ import { PreparationView } from "../prep/PreparationView";
 import { OligoOrdersView } from "./OligoOrdersView";
 import { PoolsView } from "./PoolsView";
 
-type SubTab = "orders" | "analysis" | "pools" | "batches" | "post" | "delivery" | "equipment" | "sop" | "prep" | "quality" | "calc" | "catalog";
+type SubTab = "orders" | "analysis" | "pools" | "batches" | "post" | "delivery" | "equipment" | "sop" | "prep" | "quality" | "planner" | "calc" | "catalog";
 
 /** "Tổng Hợp Oligo": screens of the Oligo department (post-synthesis and QC follow). */
 export function FactoryOligoModule() {
@@ -39,6 +40,7 @@ export function FactoryOligoModule() {
     { key: "equipment", label: "Thiết bị & định mức", icon: Settings2 },
     { key: "sop", label: "Quy trình SOP", icon: ListChecks },
     { key: "prep", label: "Pha chế hóa chất", icon: Beaker },
+    { key: "planner", label: "Kế hoạch công việc", icon: CalendarDays },
     { key: "calc", label: "Tính thông số", icon: Calculator },
     { key: "catalog", label: "Danh mục modification", icon: ListTree },
   ];
@@ -82,6 +84,7 @@ export function FactoryOligoModule() {
       )}
       {tab === "sop" && <SopConfigView canManage={perms.has("oligo.sop.manage")} />}
       {tab === "prep" && <PreparationView canManage={perms.has("prep.formula.manage")} canExecute={perms.has("prep.execute")} />}
+      {tab === "planner" && <PlannerView myUserId={me.data?.profile.user_id ?? null} />}
       {tab === "calc" && <CalculatorView />}
       {tab === "catalog" && <CatalogView canManage={perms.has("oligo.catalog.manage")} />}
     </div>
