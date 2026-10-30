@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { Calculator, ClipboardList, Combine, Beaker, FlaskConical, ListChecks, ListTree, Microscope, Settings2, Truck } from "lucide-react";
+import { Calculator, ClipboardList, Combine, Beaker, Dna, FlaskConical, ListChecks, ListTree, Microscope, Settings2, Truck } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { Empty } from "../ui";
+import { AnalysisView } from "./AnalysisView";
 import { BatchesView } from "./BatchesView";
 import { CalculatorView } from "./CalculatorView";
 import { CatalogView } from "./CatalogView";
@@ -16,7 +17,7 @@ import { PreparationView } from "../prep/PreparationView";
 import { OligoOrdersView } from "./OligoOrdersView";
 import { PoolsView } from "./PoolsView";
 
-type SubTab = "orders" | "pools" | "batches" | "post" | "delivery" | "equipment" | "sop" | "prep" | "calc" | "catalog";
+type SubTab = "orders" | "analysis" | "pools" | "batches" | "post" | "delivery" | "equipment" | "sop" | "prep" | "calc" | "catalog";
 
 /** "Tổng Hợp Oligo": screens of the Oligo department (post-synthesis and QC follow). */
 export function FactoryOligoModule() {
@@ -25,6 +26,7 @@ export function FactoryOligoModule() {
   const [tab, setTab] = useState<SubTab>("orders");
   const tabs: { key: SubTab; label: string; icon: React.ElementType }[] = [
     { key: "orders", label: "Đơn Oligo", icon: ClipboardList },
+    { key: "analysis", label: "Phân tích trình tự", icon: Dna },
     { key: "pools", label: "Gộp tổng hợp", icon: Combine },
     { key: "batches", label: "Mẻ tổng hợp", icon: FlaskConical },
     { key: "post", label: "Hậu tổng hợp & QC", icon: Microscope },
@@ -54,6 +56,7 @@ export function FactoryOligoModule() {
         ))}
       </div>
       {tab === "orders" && <OligoOrdersView canManage={perms.has("oligo.order.manage")} />}
+      {tab === "analysis" && <AnalysisView canManageOrders={perms.has("oligo.order.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} />}
       {tab === "pools" && <PoolsView canManage={perms.has("oligo.order.manage")} />}
       {tab === "batches" && <BatchesView canManage={perms.has("oligo.batch.manage")} canApplyRules={perms.has("oligo.reagent.manage")} />}
       {tab === "post" && <PostProcessView canManage={perms.has("oligo.post.manage")} canLabel={perms.has("oligo.delivery.manage")} />}

@@ -147,7 +147,7 @@ export async function splitSequence(tx: Tx, actor: AuthzActor, id: string, input
 /** Undoes a split while none of the tubes has moved on. */
 export async function unsplitSequence(tx: Tx, actor: AuthzActor, id: string) {
   const s = await lockSequence(tx, id);
-  const children = (await tx.query("SELECT id, status FROM oligo.oligo_sequence WHERE parent_sequence_id = $1 AND relation = 'SPLIT' AND status <> 'CANCELLED' FOR UPDATE", [id])).rows;
+  const children = (await tx.query("SELECT id, status FROM oligo.oligo_sequence WHERE parent_sequence_id = $1 AND relation IN ('SPLIT', 'FRAGMENT') AND status <> 'CANCELLED' FOR UPDATE", [id])).rows;
   if (children.some((c) => c.status !== "PENDING")) throw invalid("Có ống đã gộp hoặc đã xếp mẻ, không hủy tách được.");
   await move(tx, actor, s, "unsplit");
   await tx.query("UPDATE oligo.oligo_sequence SET status = 'CANCELLED', version = version + 1, updated_at = now(), updated_by = $2 WHERE id = ANY($1::uuid[])", [
