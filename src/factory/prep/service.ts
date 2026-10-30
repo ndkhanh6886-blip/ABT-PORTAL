@@ -27,6 +27,7 @@ const formulaSchema = z.object({
   basis_uom: z.string().min(1),
   shelf_life_days: z.coerce.number().int().positive().optional().nullable(),
   requires_qc: z.boolean().default(false),
+  incubation_days: z.coerce.number().int().min(0).max(365).default(0),
   instructions: z.string().trim().max(4000).optional().nullable(),
   status: z.enum(["ACTIVE", "INACTIVE"]).default("ACTIVE"),
   lines: z.array(lineSchema).min(1, "công thức cần ít nhất một nguyên liệu").max(50),
@@ -48,9 +49,9 @@ export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, 
     if ((await tx.query("SELECT 1 FROM prep.formula WHERE code = $1", [d.code])).rowCount) throw conflict(`Đã có công thức ${d.code}.`, "DUPLICATE");
     formulaId = (
       await tx.query(
-        `INSERT INTO prep.formula (code, name, category, output_item_id, basis_qty, basis_uom, shelf_life_days, requires_qc, instructions, status, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11) RETURNING id`,
-        [d.code, d.name, d.category ?? null, d.output_item_id, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId]
+        `INSERT INTO prep.formula (code, name, category, output_item_id, basis_qty, basis_uom, shelf_life_days, requires_qc, instructions, status, created_by, updated_by, incubation_days)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11, $12) RETURNING id`,
+        [d.code, d.name, d.category ?? null, d.output_item_id, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
       )
     ).rows[0].id;
     await writeAudit(tx, actor, { entityType: "prep_formula", entityId: formulaId!, action: "create", changes: { code: [null, d.code], lines: [null, d.lines.length] } });
@@ -62,8 +63,8 @@ export async function saveFormula(tx: Tx, actor: AuthzActor, id: string | null, 
     const before = (await tx.query("SELECT item_id, qty::float AS qty, uom FROM prep.formula_line WHERE formula_id = $1 ORDER BY line_no", [id])).rows;
     await tx.query(
       `UPDATE prep.formula SET name = $2, category = $3, output_item_id = $4, basis_qty = $5, basis_uom = $6, shelf_life_days = $7, requires_qc = $8, instructions = $9, status = $10,
-              version = version + 1, updated_at = now(), updated_by = $11 WHERE id = $1`,
-      [id, d.name, d.category ?? null, d.output_item_id, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId]
+              incubation_days = $12, version = version + 1, updated_at = now(), updated_by = $11 WHERE id = $1`,
+      [id, d.name, d.category ?? null, d.output_item_id, d.basis_qty, d.basis_uom, d.shelf_life_days ?? null, d.requires_qc, d.instructions ?? null, d.status, actor.userId, d.incubation_days]
     );
     await tx.query("DELETE FROM prep.formula_line WHERE formula_id = $1", [id]);
     await writeAudit(tx, actor, {
@@ -158,11 +159,18 @@ export async function prepare(tx: Tx, actor: AuthzActor, input: unknown) {
   const shelf = f.shelf_life_days ? addDays(today, f.shelf_life_days) : null;
   const expiry = [shelf, ...expiries].filter((x): x is string => Boolean(x)).sort()[0] ?? null;
   const qcNeeded = f.requires_qc || outItem.receipt_qc_required;
-  const location = qcNeeded
+  // an incubated reagent waits in quarantine until "incubated" is confirmed (then QC, or released and put away)
+  const incubate = Number(f.incubation_days) > 0;
+  const hold = qcNeeded || incubate;
+  if (incubate && !qcNeeded) {
+    const loc = d.to_location_id ? (await tx.query("SELECT warehouse_id, is_quarantine FROM master.location WHERE id = $1", [d.to_location_id])).rows[0] : null;
+    if (!loc || loc.warehouse_id !== wh.id || loc.is_quarantine) throw invalid("Chọn vị trí cất lô pha sau khi ủ (vị trí thường của kho).");
+  }
+  const location = hold
     ? (await tx.query("SELECT id FROM master.location WHERE warehouse_id = $1 AND is_quarantine AND status = 'ACTIVE' ORDER BY code LIMIT 1", [wh.id])).rows[0]?.id
     : d.to_location_id;
-  if (!location) throw invalid(qcNeeded ? "Kho chưa có vị trí biệt trữ để chờ QC lô pha." : "Chọn vị trí cất lô pha.");
-  if (!qcNeeded) {
+  if (!location) throw invalid(hold ? "Kho chưa có vị trí biệt trữ để chờ ủ / QC lô pha." : "Chọn vị trí cất lô pha.");
+  if (!hold) {
     const loc = (await tx.query("SELECT warehouse_id, is_quarantine FROM master.location WHERE id = $1", [location])).rows[0];
     if (!loc || loc.warehouse_id !== wh.id || loc.is_quarantine) throw invalid("Vị trí cất phải là vị trí thường của kho đã chọn.");
   }
@@ -184,7 +192,7 @@ export async function prepare(tx: Tx, actor: AuthzActor, input: unknown) {
   await tx.query("UPDATE inv.lot SET origin_entity_id = $2 WHERE id = $1", [lot.id, prep.id]);
   const issueId = await post({ doc_type: "ISSUE", reason_code: "PREPARATION", warehouse_id: wh.id, source_entity_type: "PREPARATION", source_entity_id: prep.id, lines: issueLines });
   // no QC: released before it is booked onto a normal location (a quarantined lot may only sit in quarantine)
-  if (!qcNeeded) {
+  if (!hold) {
     const cur = (await tx.query("SELECT version FROM inv.lot WHERE id = $1", [lot.id])).rows[0];
     await runTransition(tx, lotMachine, actor, { id: lot.id, action: "skip_qc", expectedVersion: cur.version }, { trusted: true });
   }
@@ -192,9 +200,11 @@ export async function prepare(tx: Tx, actor: AuthzActor, input: unknown) {
     doc_type: "RECEIPT", reason_code: "PREPARATION", warehouse_id: wh.id, source_entity_type: "PREPARATION", source_entity_id: prep.id,
     lines: [{ item_id: outItem.id, lot_id: lot.id, to_location_id: location, qty: round6(outBase), uom: outItem.base_uom }],
   });
-  await tx.query("UPDATE prep.preparation SET issue_document_id = $2, receipt_document_id = $3 WHERE id = $1", [prep.id, issueId, receiptId]);
+  await tx.query("UPDATE prep.preparation SET issue_document_id = $2, receipt_document_id = $3, to_location_id = $4, incubation_until = $5 WHERE id = $1", [
+    prep.id, issueId, receiptId, d.to_location_id ?? null, incubate ? addDays(today, Number(f.incubation_days)) : null,
+  ]);
   await writeAudit(tx, actor, { entityType: "preparation", entityId: prep.id, action: "prepare", changes: { code: [null, code], lot: [null, lot.code], qty: [null, `${round6(outBase)} ${outItem.base_uom}`] } });
-  return { ...prep, lot_code: lot.code, qc_needed: qcNeeded, expiry_date: expiry };
+  return { ...prep, lot_code: lot.code, qc_needed: qcNeeded, expiry_date: expiry, incubation_until: incubate ? addDays(today, Number(f.incubation_days)) : null };
 }
 
 /** Cancels a preparation whose lot is still untouched: both documents are reversed (ingredients back to their lots). */
@@ -220,7 +230,7 @@ export async function cancelPreparation(tx: Tx, actor: AuthzActor, id: string, r
 export async function listPreparations(tx: Tx, actor: AuthzActor) {
   const rows = (
     await tx.query(
-      `SELECT p.id, p.code, p.status, p.qty_out::float AS qty_out, p.uom_out, p.prepared_at, p.lines, p.notes, p.cancel_reason, p.warehouse_id,
+      `SELECT p.id, p.code, p.status, p.qty_out::float AS qty_out, p.uom_out, p.prepared_at, p.lines, p.notes, p.cancel_reason, p.warehouse_id, p.incubation_until, p.incubated_at, p.to_location_id,
               f.code AS formula_code, f.name AS formula_name, l.code AS lot_code, l.status AS lot_status, l.expiry_date, u.display_name AS prepared_by_name, w.owner_org_unit_id
          FROM prep.preparation p JOIN prep.formula f ON f.id = p.formula_id JOIN inv.lot l ON l.id = p.lot_id JOIN master.warehouse w ON w.id = p.warehouse_id
          LEFT JOIN core.user_profile u ON u.user_id = p.prepared_by

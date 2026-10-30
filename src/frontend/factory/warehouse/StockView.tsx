@@ -22,6 +22,7 @@ interface StockRow {
   qty_on_hand: string;
   qty_reserved: string;
   qty_available: string;
+  incubation_until: string | null;
 }
 
 export function StockView({ warehouses }: { warehouses: { id: string; code: string; name: string }[] }) {
@@ -89,7 +90,7 @@ export function StockView({ warehouses }: { warehouses: { id: string; code: stri
                   )}
                   <div className="text-slate-500 dark:text-slate-400">{r.mfr_lot_no ?? ""}</div>
                 </td>
-                <td className="py-2 pr-3">{r.lot_status ? <StatusBadge status={r.lot_status} /> : "—"}</td>
+                <td className="py-2 pr-3">{r.lot_status ? <StatusBadge status={r.lot_status} /> : "—"}{r.incubation_until && <div className="text-[11px] text-amber-700 dark:text-amber-400">Đang ủ đến {fmtDate(r.incubation_until)}</div>}</td>
                 <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(r.expiry_date)}</td>
                 <td className="py-2 pr-3 whitespace-nowrap">
                   {r.warehouse_code} · {r.location_code}

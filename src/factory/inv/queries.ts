@@ -69,6 +69,7 @@ export async function listStock(tx: Tx, actor: AuthzActor, query: unknown) {
     await tx.query(
       `SELECT b.id, b.item_id, b.location_id, l.id AS lot_id, i.code AS item_code, i.name AS item_name, i.base_uom, l.code AS lot_code, l.mfr_lot_no, l.status AS lot_status,
               l.expiry_date, w.code AS warehouse_code, loc.code AS location_code, loc.is_quarantine,
+              (SELECT pr.incubation_until FROM prep.preparation pr WHERE pr.lot_id = l.id AND pr.status = 'DONE' AND pr.incubated_at IS NULL) AS incubation_until,
               b.qty_on_hand::text AS qty_on_hand, b.qty_reserved::text AS qty_reserved,
               (b.qty_on_hand - b.qty_reserved)::text AS qty_available
        ${from}

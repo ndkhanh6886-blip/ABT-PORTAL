@@ -5,16 +5,21 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { ItemPicker } from "../oligo/EquipmentView";
+import { printPreparation } from "./printPrep";
 
 interface Line { line_no?: number; item_id: string; qty: number; uom: string; item_code?: string; item_name?: string }
 interface Formula {
   id: string; code: string; name: string; category: string | null; output_item_id: string; output_code: string; output_name: string; basis_qty: number; basis_uom: string;
-  shelf_life_days: number | null; requires_qc: boolean; instructions: string | null; status: string; version: number; lines: Line[];
+  shelf_life_days: number | null; requires_qc: boolean; incubation_days: number; instructions: string | null; status: string; version: number; lines: Line[];
 }
 interface Prep {
   id: string; code: string; status: string; qty_out: number; uom_out: string; prepared_at: string; formula_code: string; formula_name: string; lot_code: string; lot_status: string;
-  expiry_date: string | null; prepared_by_name: string | null; notes: string | null; cancel_reason: string | null;
+  expiry_date: string | null; prepared_by_name: string | null; notes: string | null; cancel_reason: string | null; incubation_until: string | null; incubated_at: string | null;
   lines: { item_code: string; lot_code: string | null; qty_base: number; uom: string }[];
+}
+interface PrepOrder {
+  id: string; code: string; status: string; qty: number; uom: string; planned_date: string; formula_code: string; formula_name: string; created_by_name: string | null;
+  reserved: { item_code: string; lot_code: string | null; qty: number; uom: string }[] | null;
 }
 interface WhOpt { id: string; code: string; name: string; locations: { id: string; code: string; name: string }[] }
 
@@ -24,13 +29,13 @@ function FormulaEditor({ base, onClose }: { base?: Formula; onClose: () => void 
   const qc = useQueryClient();
   const [f, setF] = useState({
     code: base?.code ?? "", name: base?.name ?? "", category: base?.category ?? "", output_item_id: base?.output_item_id ?? "", basis_qty: String(base?.basis_qty ?? ""),
-    basis_uom: base?.basis_uom ?? "mL", shelf_life_days: base?.shelf_life_days ? String(base.shelf_life_days) : "", requires_qc: base?.requires_qc ?? false,
+    basis_uom: base?.basis_uom ?? "mL", shelf_life_days: base?.shelf_life_days ? String(base.shelf_life_days) : "", requires_qc: base?.requires_qc ?? false, incubation_days: String(base?.incubation_days ?? 0),
     instructions: base?.instructions ?? "", status: base?.status ?? "ACTIVE",
   });
   const [lines, setLines] = useState<(Line & { label?: string })[]>(base?.lines.map((l) => ({ ...l, label: `${l.item_code} · ${l.item_name}` })) ?? [{ item_id: "", qty: 0, uom: "mL" }]);
   const save = useMutation({
     mutationFn: () => {
-      const body = { ...f, basis_qty: Number(f.basis_qty), shelf_life_days: f.shelf_life_days ? Number(f.shelf_life_days) : null, lines: lines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty), uom: l.uom })) };
+      const body = { ...f, basis_qty: Number(f.basis_qty), shelf_life_days: f.shelf_life_days ? Number(f.shelf_life_days) : null, incubation_days: Number(f.incubation_days || 0), lines: lines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty), uom: l.uom })) };
       if (!base) return api("/api/factory/prep/formulas", { method: "POST", idempotent: true, json: body });
       const reason = window.prompt("Lý do sửa công thức:");
       if (!reason) throw new Error("Cần lý do sửa.");
@@ -66,6 +71,7 @@ function FormulaEditor({ base, onClose }: { base?: Formula; onClose: () => void 
         <span>Thành phẩm pha:</span>
         <ItemPicker value={f.output_item_id} current={base ? `${base.output_code} · ${base.output_name}` : undefined} onChange={(id) => setF({ ...f, output_item_id: id })} />
         <label className="flex items-center gap-1"><input type="checkbox" checked={f.requires_qc} onChange={(e) => setF({ ...f, requires_qc: e.target.checked })} />Cần QC trước khi dùng</label>
+        <label className="flex items-center gap-1">Thời gian ủ tối thiểu<input className={`${inputClass} w-16`} type="number" min="0" max="365" value={f.incubation_days} onChange={(e) => setF({ ...f, incubation_days: e.target.value })} />ngày</label>
       </div>
       <div className="text-xs font-bold">Nguyên liệu (cho một mẻ chuẩn)</div>
       {lines.map((l, i) => (
@@ -89,22 +95,27 @@ function FormulaEditor({ base, onClose }: { base?: Formula; onClose: () => void 
 
 function PrepareForm({ formula, onDone }: { formula: Formula; onDone: () => void }) {
   const opts = useQuery({ queryKey: ["factory", "prep-options"], queryFn: () => api<WhOpt[]>("/api/factory/prep/options") });
-  const [f, setF] = useState({ qty: String(formula.basis_qty), uom: formula.basis_uom, warehouse_id: "", to_location_id: "", notes: "" });
+  const [f, setF] = useState({ qty: String(formula.basis_qty), uom: formula.basis_uom, warehouse_id: "", to_location_id: "", notes: "", mode: "now", planned_date: new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10) });
   const wh = opts.data?.find((w) => w.id === f.warehouse_id) ?? (opts.data?.length === 1 ? opts.data[0] : undefined);
   const factor = Number(f.qty) / formula.basis_qty;
   const run = useMutation({
-    mutationFn: () =>
-      api<{ code: string; lot_code: string; qc_needed: boolean }>("/api/factory/prep/preparations", {
-        method: "POST",
-        idempotent: true,
-        json: { formula_id: formula.id, qty: Number(f.qty), uom: f.uom, warehouse_id: wh?.id, to_location_id: formula.requires_qc ? null : f.to_location_id || null, notes: f.notes || null },
-      }),
+    mutationFn: () => {
+      const body = { formula_id: formula.id, qty: Number(f.qty), uom: f.uom, warehouse_id: wh?.id, to_location_id: formula.requires_qc ? null : f.to_location_id || null, notes: f.notes || null };
+      return f.mode === "order"
+        ? api<{ code: string; lot_code?: string; qc_needed?: boolean; incubation_until?: string | null }>("/api/factory/prep/orders", { method: "POST", idempotent: true, json: { ...body, planned_date: f.planned_date } })
+        : api<{ code: string; lot_code?: string; qc_needed?: boolean; incubation_until?: string | null }>("/api/factory/prep/preparations", { method: "POST", idempotent: true, json: body });
+    },
     onSuccess: onDone,
   });
   if (opts.data && !opts.data.length) return <Empty>Bạn chưa có quyền pha chế ở kho nào.</Empty>;
   return (
     <form className="flex flex-col gap-3 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30" onSubmit={(e) => { e.preventDefault(); run.mutate(); }}>
       <div className="text-xs font-bold">Lệnh pha: {formula.code} — {formula.name} → {formula.output_code} {formula.output_name}</div>
+      <div className="flex gap-3 text-xs">
+        <label className="flex items-center gap-1"><input type="radio" checked={f.mode === "now"} onChange={() => setF({ ...f, mode: "now" })} />Pha ngay</label>
+        <label className="flex items-center gap-1"><input type="radio" checked={f.mode === "order"} onChange={() => setF({ ...f, mode: "order" })} />Lập lệnh chờ (giữ chỗ nguyên liệu)</label>
+        {f.mode === "order" && <input className={`${inputClass} w-40`} type="date" value={f.planned_date} onChange={(e) => setF({ ...f, planned_date: e.target.value })} aria-label="Ngày pha dự kiến" />}
+      </div>
       <div className="grid gap-3 sm:grid-cols-4 items-end">
         <Field label="Lượng pha *">
           <div className="flex gap-1">
@@ -121,9 +132,9 @@ function PrepareForm({ formula, onDone }: { formula: Formula; onDone: () => void
           </Field>
         )}
         {formula.requires_qc ? (
-          <p className="text-[11px] text-slate-500">Lô pha vào vị trí biệt trữ, chờ QA/QC lấy mẫu và giải phóng.</p>
+          <p className="text-[11px] text-slate-500">Lô pha vào vị trí biệt trữ{formula.incubation_days ? `, ủ ${formula.incubation_days} ngày` : ""}, chờ QA/QC lấy mẫu và giải phóng.</p>
         ) : (
-          <Field label="Cất vào vị trí *">
+          <Field label={formula.incubation_days ? `Cất vào sau ủ ${formula.incubation_days} ngày *` : "Cất vào vị trí *"}>
             <select className={inputClass} value={f.to_location_id} onChange={(e) => setF({ ...f, to_location_id: e.target.value })} required>
               <option value="">Chọn</option>
               {wh?.locations.map((l) => <option key={l.id} value={l.id}>{l.code} · {l.name}</option>)}
@@ -143,8 +154,12 @@ function PrepareForm({ formula, onDone }: { formula: Formula; onDone: () => void
         </Table>
       )}
       <p className="text-[11px] text-slate-500">Nguyên liệu lấy theo hạn dùng sớm nhất (lô đã giải phóng, còn hạn). Hạn của lô pha không vượt hạn nguyên liệu sớm nhất.</p>
-      <div><Button type="submit" disabled={run.isPending}>{run.isPending ? "Đang pha…" : "Xác nhận pha chế"}</Button></div>
-      {run.data && <p className="text-xs text-emerald-700 dark:text-emerald-400">Đã tạo lệnh {run.data.code}, lô {run.data.lot_code}{run.data.qc_needed ? " (chờ QC)" : ""}.</p>}
+      <div><Button type="submit" disabled={run.isPending}>{run.isPending ? "Đang lưu…" : f.mode === "order" ? "Lập lệnh pha" : "Xác nhận pha chế"}</Button></div>
+      {run.data && (
+        <p className="text-xs text-emerald-700 dark:text-emerald-400">
+          {run.data.lot_code ? `Đã pha ${run.data.code}, lô ${run.data.lot_code}${run.data.incubation_until ? ` (đang ủ đến ${fmtDate(run.data.incubation_until)})` : ""}${run.data.qc_needed ? " (chờ QC)" : ""}.` : `Đã lập lệnh ${run.data.code}, nguyên liệu đã được giữ chỗ.`}
+        </p>
+      )}
       <ErrorNote error={run.error} />
     </form>
   );
@@ -157,15 +172,28 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
   const preps = useQuery({ queryKey: ["factory", "prep-log"], queryFn: () => api<Prep[]>("/api/factory/prep/preparations") });
   const [editing, setEditing] = useState<Formula | "new" | null>(null);
   const [preparing, setPreparing] = useState<Formula | null>(null);
+  const refresh = () => ["prep-log", "prep-orders"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   const cancel = useMutation({
     mutationFn: ({ id, reason }: { id: string; reason: string }) => api(`/api/factory/prep/preparations/${id}/cancel`, { method: "POST", json: { reason } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["factory", "prep-log"] }),
+    onSuccess: refresh,
   });
+  const incubated = useMutation({ mutationFn: (id: string) => api(`/api/factory/prep/preparations/${id}/incubated`, { method: "POST", json: {} }), onSuccess: refresh });
+  const orders = useQuery({ queryKey: ["factory", "prep-orders"], queryFn: () => api<PrepOrder[]>("/api/factory/prep/orders") });
+  const orderAct = useMutation({
+    mutationFn: ({ id, act }: { id: string; act: "execute" | "cancel" }) => {
+      if (act === "execute") return api(`/api/factory/prep/orders/${id}/execute`, { method: "POST", idempotent: true, json: {} });
+      const reason = window.prompt("Lý do hủy lệnh pha:");
+      if (!reason) throw new Error("Cần lý do.");
+      return api(`/api/factory/prep/orders/${id}/cancel`, { method: "POST", json: { reason } });
+    },
+    onSuccess: refresh,
+  });
+  const today = new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
   return (
     <div className="flex flex-col gap-3">
       <Card title="Công thức pha chế" actions={canManage && !editing && <Button onClick={() => setEditing("new")}>+ Công thức</Button>}>
         {editing && <FormulaEditor key={editing === "new" ? "new" : editing.id} base={editing === "new" ? undefined : editing} onClose={() => setEditing(null)} />}
-        {preparing && <PrepareForm key={preparing.id} formula={preparing} onDone={() => { qc.invalidateQueries({ queryKey: ["factory", "prep-log"] }); }} />}
+        {preparing && <PrepareForm key={preparing.id} formula={preparing} onDone={refresh} />}
         <ErrorNote error={formulas.error} />
         {formulas.data?.length === 0 && !editing && <Empty>Chưa có công thức (ví dụ: Deblock 3% TCA/DCM, Cap A/B, Oxidizer, pha loãng amidite 0.1 M, đệm HPLC).</Empty>}
         {formulas.data && formulas.data.length > 0 && (
@@ -177,7 +205,7 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
                 <td className="py-1.5 pr-3 text-xs">{f.output_code} · {f.output_name}</td>
                 <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{fmtQty(f.basis_qty)} {f.basis_uom}</td>
                 <td className="py-1.5 pr-3 text-xs">{f.lines.map((l) => `${l.item_code} ${fmtQty(l.qty)} ${l.uom}`).join(" · ")}</td>
-                <td className="py-1.5 pr-3 text-xs">{f.shelf_life_days ? `${f.shelf_life_days} ngày` : "—"}{f.requires_qc && " · cần QC"}</td>
+                <td className="py-1.5 pr-3 text-xs">{f.shelf_life_days ? `${f.shelf_life_days} ngày` : "—"}{f.requires_qc && " · cần QC"}{f.incubation_days > 0 && ` · ủ ${f.incubation_days} ngày`}</td>
                 <td className="py-1.5 pr-3 text-right whitespace-nowrap">
                   {canExecute && f.status === "ACTIVE" && <Button variant="ghost" onClick={() => setPreparing(preparing?.id === f.id ? null : f)}>Pha</Button>}
                   {canManage && <Button variant="ghost" onClick={() => setEditing(f)}>Sửa</Button>}
@@ -187,8 +215,30 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
           </Table>
         )}
       </Card>
+      <Card title="Lệnh pha chế chờ thực hiện">
+        <ErrorNote error={orders.error ?? orderAct.error} />
+        {orders.data?.filter((o) => o.status === "PLANNED").length === 0 && <Empty>Không có lệnh chờ. Lập lệnh bằng nút “Pha” → “Lập lệnh chờ”.</Empty>}
+        {orders.data && orders.data.some((o) => o.status === "PLANNED") && (
+          <Table head={["Lệnh", "Công thức", "Lượng", "Ngày pha", "Nguyên liệu giữ chỗ", "Người lập", ""]}>
+            {orders.data.filter((o) => o.status === "PLANNED").map((o) => (
+              <tr key={o.id}>
+                <td className="py-1.5 pr-3 font-mono text-xs">{o.code}</td>
+                <td className="py-1.5 pr-3 text-xs">{o.formula_code} · {o.formula_name}</td>
+                <td className="py-1.5 pr-3 text-right text-xs">{fmtQty(o.qty)} {o.uom}</td>
+                <td className="py-1.5 pr-3 text-xs">{fmtDate(o.planned_date)}</td>
+                <td className="py-1.5 pr-3 text-xs">{(o.reserved ?? []).map((r) => `${r.item_code} ${r.lot_code ?? ""} ${fmtQty(r.qty)} ${r.uom}`).join(" · ") || "—"}</td>
+                <td className="py-1.5 pr-3 text-xs">{o.created_by_name ?? ""}</td>
+                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                  {canExecute && <Button variant="ghost" onClick={() => orderAct.mutate({ id: o.id, act: "execute" })} disabled={orderAct.isPending}>Thực hiện pha</Button>}
+                  {canExecute && <Button variant="ghost" onClick={() => orderAct.mutate({ id: o.id, act: "cancel" })}>Hủy</Button>}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Card>
       <Card title="Nhật ký pha chế">
-        <ErrorNote error={preps.error ?? cancel.error} />
+        <ErrorNote error={preps.error ?? cancel.error ?? incubated.error} />
         {preps.data?.length === 0 && <Empty>Chưa có lệnh pha.</Empty>}
         {preps.data && preps.data.length > 0 && (
           <Table head={["Lệnh", "Công thức", "Lô pha", "Lượng", "Nguyên liệu đã dùng (lô)", "Hạn dùng", "Người / lúc", ""]}>
@@ -199,9 +249,17 @@ export function PreparationView({ canManage, canExecute }: { canManage: boolean;
                 <td className="py-1.5 pr-3 text-xs"><span className="font-mono">{p.lot_code}</span> <StatusBadge status={p.lot_status} label={LOT_STATUS[p.lot_status]} /></td>
                 <td className="py-1.5 pr-3 text-right text-xs whitespace-nowrap">{fmtQty(p.qty_out)} {p.uom_out}</td>
                 <td className="py-1.5 pr-3 text-xs">{p.lines.map((l) => `${l.item_code} ${l.lot_code ?? ""} ${fmtQty(l.qty_base)} ${l.uom}`).join(" · ")}</td>
-                <td className="py-1.5 pr-3 text-xs">{fmtDate(p.expiry_date)}</td>
+                <td className="py-1.5 pr-3 text-xs">
+                  {fmtDate(p.expiry_date)}
+                  {p.incubation_until && !p.incubated_at && <div className="text-amber-700 dark:text-amber-400">Đang ủ đến {fmtDate(p.incubation_until)}</div>}
+                  {p.incubated_at && <div className="text-slate-500">Ủ xong {fmtDate(p.incubated_at)}</div>}
+                </td>
                 <td className="py-1.5 pr-3 text-xs whitespace-nowrap">{p.prepared_by_name ?? ""} · {new Date(p.prepared_at).toLocaleString("vi-VN")}</td>
-                <td className="py-1.5 pr-3 text-right">
+                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                  <Button variant="ghost" onClick={() => printPreparation(p.id).catch((e) => window.alert(e.message))}>In phiếu</Button>
+                  {canExecute && p.status === "DONE" && p.incubation_until && !p.incubated_at && (
+                    <Button variant="ghost" disabled={p.incubation_until > today || incubated.isPending} title={p.incubation_until > today ? "Chưa đủ thời gian ủ" : undefined} onClick={() => incubated.mutate(p.id)}>Ủ xong</Button>
+                  )}
                   {canExecute && p.status === "DONE" && (
                     <Button variant="ghost" onClick={() => { const r = window.prompt("Lý do hủy lệnh pha (chỉ hủy được khi lô pha chưa dùng):"); if (r) cancel.mutate({ id: p.id, reason: r }); }}>Hủy</Button>
                   )}
