@@ -17,6 +17,7 @@ import { loadCatalog } from "./catalog";
 import { estimateConsumption, type ReagentRule } from "./consumption";
 import { recomputeOrdersOf } from "./orders";
 import { sequenceMachine } from "./sequences";
+import { followInstalledBottles, reservePortLines } from "./synthPorts";
 
 registerPermissions([
   { code: "oligo.batch.manage", description: "Lập, chạy, hoàn tất, hủy mẻ tổng hợp Oligo" },
@@ -88,7 +89,12 @@ async function adjustToActual(tx: Tx, actor: AuthzActor, batch: Batch, reagents:
     if (diff === 0) continue;
     const item = await getItem(tx, u.item_id);
     if (diff > 0) {
-      const plan = allocate(await findCandidates(tx, u.item_id, warehouses, { lock: true }), diff);
+      // the bottle on the port first, then FEFO
+      const portLot = (await tx.query("SELECT lot_id FROM oligo.batch_port_use WHERE batch_id = $1 AND item_id = $2 LIMIT 1", [batch.id, u.item_id])).rows[0]?.lot_id;
+      const cands = await findCandidates(tx, u.item_id, warehouses, { lock: true });
+      const first = portLot ? allocate(cands.filter((c) => c.lot_id === portLot), diff) : { picks: [], shortfall: diff };
+      const second = first.shortfall > 1e-9 ? allocate(cands.filter((c) => c.lot_id !== portLot), first.shortfall) : { picks: [], shortfall: 0 };
+      const plan = { picks: [...first.picks, ...second.picks], shortfall: second.shortfall };
       if (plan.shortfall > 1e-9) throw invalid(`Không đủ tồn ${item.code} để ghi phần dùng vượt dự kiến (${diff} ${item.base_uom}).`, undefined, "INSUFFICIENT_STOCK");
       const byWh = new Map<string, any[]>();
       for (const p of plan.picks) {
@@ -103,7 +109,7 @@ async function adjustToActual(tx: Tx, actor: AuthzActor, batch: Batch, reagents:
       const src = (
         await tx.query(
           `SELECT l.lot_id, l.from_location_id, d.warehouse_id FROM inv.stock_document_line l JOIN inv.stock_document d ON d.id = l.document_id
-            WHERE d.source_entity_type = 'SYNTHESIS_BATCH' AND d.source_entity_id = $1 AND l.item_id = $2 AND d.doc_type = 'ISSUE' ORDER BY l.line_no LIMIT 1`,
+            WHERE d.source_entity_type = 'SYNTHESIS_BATCH' AND d.source_entity_id = $1 AND l.item_id = $2 AND d.doc_type = 'ISSUE' ORDER BY d.created_at DESC, l.line_no LIMIT 1`,
           [batch.id, u.item_id]
         )
       ).rows[0];
@@ -152,6 +158,7 @@ export const batchMachine = defineMachine<BatchStatus, Batch>({
       guards: [{ code: "ASSET", message: "Máy tổng hợp không sẵn sàng hoặc quá hạn hiệu chuẩn.", check: async ({ tx, row }) => assertUsable(tx, row.synthesizer_id).then(() => true, () => false) }],
       patch: ({ actor }) => ({ started_at: new Date(), operator_id: actor.userId }),
       effects: async ({ tx, actor, updated }) => {
+        await followInstalledBottles(tx, actor, updated);
         await issueReserved(tx, actor, updated);
         await moveSequences(tx, actor, updated.id, "start_synthesis");
       },
@@ -278,9 +285,11 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
     ]);
     await reserveLot(tx, actor, { lot_id: a.p.column_lot_id, qty_base: 1, warehouse_ids: warehouses, demand_entity_type: DEMAND, demand_entity_id: batch.id });
   }
+  // roles fed by a port on the machine are held from the bottle installed there; the rest FEFO
+  const ported = await reservePortLines(tx, actor, batch, lines);
   const perItem = new Map<string, number>();
-  for (const l of lines) {
-    const itemId = l.item_id ?? l.catalog_item_id ?? null;
+  for (const l of ported.rest) {
+    const itemId = l.catalog_item_id ?? l.item_id ?? null;
     if (!itemId) throw invalid(`Định mức "${l.label}" chưa gắn vật tư. Vào Tổng hợp Oligo → Định mức hóa chất để gắn mã vật tư.`, undefined, "REAGENT_UNMAPPED");
     const item = await getItem(tx, itemId);
     const qty = Math.round((await toBaseQty(tx, item, l.qty, l.uom)) * 1e6) / 1e6;
@@ -289,9 +298,14 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   for (const [itemId, qty] of [...perItem.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
     if (qty <= 0) continue;
     await reserve(tx, actor, { item_id: itemId, qty_base: qty, warehouse_ids: warehouses, demand_entity_type: DEMAND, demand_entity_id: batch.id });
-    await tx.query("INSERT INTO oligo.synthesis_reagent_use (batch_id, role, item_id, est_qty_base) VALUES ($1, $2, $3, $4)", [
-      batch.id, lines.filter((l) => (l.item_id ?? l.catalog_item_id) === itemId).map((l) => l.role).join(", "), itemId, qty,
-    ]);
+  }
+  const total = new Map(perItem);
+  for (const [itemId, qty] of ported.perItem) total.set(itemId, (total.get(itemId) ?? 0) + qty);
+  for (const [itemId, qty] of [...total.entries()].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (qty <= 0) continue;
+    const roles = (await tx.query("SELECT role FROM oligo.batch_port_use WHERE batch_id = $1 AND item_id = $2", [batch.id, itemId])).rows.map((r) => r.role);
+    roles.push(...ported.rest.filter((l) => (l.catalog_item_id ?? l.item_id) === itemId).map((l) => l.role));
+    await tx.query("INSERT INTO oligo.synthesis_reagent_use (batch_id, role, item_id, est_qty_base) VALUES ($1, $2, $3, $4)", [batch.id, roles.join(", "), itemId, Math.round(qty * 1e6) / 1e6]);
   }
   await moveSequences(tx, actor, batch.id, "queue");
   await writeAudit(tx, actor, { entityType: "synthesis_batch", entityId: batch.id, action: "plan", changes: { code: [null, code], positions: [null, analysed.length] } });

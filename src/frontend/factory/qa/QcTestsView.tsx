@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, useFactoryMe } from "../api";
+import { printTestCoa } from "../coa";
 import { Button, Card, Empty, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
 
 interface QcRow {
@@ -181,6 +182,9 @@ function QcDetailPanel({ id, onClose }: { id: string; onClose: () => void }) {
           <ErrorNote error={save.error ?? retest.error} />
           {t.overall_result && <p className="text-sm font-bold">Kết luận: <StatusBadge status={t.overall_result === "PASS" ? "RELEASED" : "REJECTED"} label={t.overall_result === "PASS" ? "ĐẠT" : "KHÔNG ĐẠT"} /></p>}
           <ActionBar endpoint={`/api/factory/qms/tests/${t.id}/actions`} version={t.version} actions={t.actions} labels={ACTION_LABEL} onDone={refresh} />
+          {t.status === "REVIEWED" && (
+            <div><Button variant="ghost" onClick={() => printTestCoa(t.id).catch((e) => window.alert(e.message))}>In phiếu kết quả (COA)</Button></div>
+          )}
           {t.status === "REVIEWED" && me.data?.permissions.includes("qms.qc.lead") && (
             <div>
               <Button variant="ghost" onClick={() => { const r = window.prompt("Lý do kiểm lại:"); if (r) retest.mutate(r); }}>Tạo phiếu kiểm lại</Button>

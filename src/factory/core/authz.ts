@@ -114,3 +114,24 @@ export async function authorize(tx: Tx, actor: AuthzActor, permission: string, o
     throw forbidden(`Bạn chưa có quyền "${registry.get(permission)?.description ?? permission}". Liên hệ trưởng phòng hoặc quản trị viên để được cấp.`);
   }
 }
+
+/**
+ * Settings shared by one department type (e.g. the Oligo catalogue, reagent rules, SOPs) have no org unit:
+ * the permission granted in any scope is enough.
+ */
+export async function authorizeAnywhere(tx: Tx, actor: AuthzActor, permission: string): Promise<void> {
+  const def = registry.get(permission);
+  if (!def) throw new Error(`Quyền chưa được khai báo: ${permission}`);
+  if (await hasFactoryPermission(tx, actor, permission)) return;
+  const units = (await tx.query("SELECT DISTINCT scope_org_unit_id AS id FROM core.user_role WHERE user_id = $1 AND revoked_at IS NULL AND scope_org_unit_id IS NOT NULL", [actor.userId])).rows;
+  for (const u of units) if (await hasFactoryPermission(tx, actor, permission, u.id)) return;
+  const delegated = (
+    await tx.query(
+      `SELECT DISTINCT ur.scope_org_unit_id AS id FROM core.delegation d JOIN core.user_role ur ON ur.user_id = d.from_user_id AND ur.role_id = d.role_id
+        WHERE d.to_user_id = $1 AND d.revoked_at IS NULL AND ur.scope_org_unit_id IS NOT NULL`,
+      [actor.userId]
+    )
+  ).rows;
+  for (const u of delegated) if (await hasFactoryPermission(tx, actor, permission, u.id)) return;
+  throw forbidden(`Bạn chưa có quyền "${def.description}". Liên hệ trưởng phòng hoặc quản trị viên để được cấp.`);
+}

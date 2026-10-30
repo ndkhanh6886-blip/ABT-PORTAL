@@ -6,6 +6,7 @@ import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { QC_STATUS_LABEL } from "../qa/QcTestsView";
 import { printWithReprint } from "./labels";
+import { StepLogForm, StepTable, type FrozenStep, type StepLog } from "./StepLogForm";
 import { FORMAT, PURIFICATION, SEQ_STATUS } from "./shared";
 
 interface Row {
@@ -17,10 +18,12 @@ interface Rec {
   cleavage_done: boolean; deprotection_done: boolean; purification_done: boolean;
   a260: string | null; dilution_factor: string; path_cm: string; stock_volume_ul: string | null; target_conc_um: string | null; tube_count: number; notes: string | null;
   od_total: string | null; nmol: string | null; ug: string | null; resuspend_volume_ul: string | null; od_per_tube: string | null;
+  workflow_steps: FrozenStep[] | null;
 }
 interface Detail {
   sequence: { id: string; code: string; name: string; status: string; normalized_sequence: string; mw: string; nmol_per_od: string; ug_per_od: string; scale_code: string; order_code: string | null };
   record: Rec | null;
+  steps: StepLog[];
   qc_tests: { id: string; code: string; status: string; overall_result: string | null }[];
 }
 
@@ -78,12 +81,22 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
           )}
           {rec && (
             <>
-              <div className="flex flex-wrap gap-4 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
-                {check("cleavage_done", "Cắt khỏi cột")}
-                {check("deprotection_done", "Khử bảo vệ")}
-                {check("purification_done", `Tinh sạch ${PURIFICATION[rec.purification as keyof typeof PURIFICATION]}`)}
-                <span className="text-xs text-slate-500">Dạng giao: {FORMAT[rec.format as keyof typeof FORMAT]}</span>
-              </div>
+              {rec.workflow_steps ? (
+                <>
+                  <StepTable steps={rec.workflow_steps} logs={d.data!.steps} />
+                  {editable && rec.workflow_steps[d.data!.steps.length] && (
+                    <StepLogForm key={d.data!.steps.length} step={rec.workflow_steps[d.data!.steps.length]} sequenceIds={[id]} odReady={Number(rec.od_total) > 0} onDone={refresh} />
+                  )}
+                  <span className="text-xs text-slate-500">Dạng giao: {FORMAT[rec.format as keyof typeof FORMAT]} · Đo OD (bước định lượng):</span>
+                </>
+              ) : (
+                <div className="flex flex-wrap gap-4 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+                  {check("cleavage_done", "Cắt khỏi cột")}
+                  {check("deprotection_done", "Khử bảo vệ")}
+                  {check("purification_done", `Tinh sạch ${PURIFICATION[rec.purification as keyof typeof PURIFICATION]}`)}
+                  <span className="text-xs text-slate-500">Dạng giao: {FORMAT[rec.format as keyof typeof FORMAT]} · Chưa có quy trình SOP cho kiểu tinh sạch này: dùng các bước cơ bản.</span>
+                </div>
+              )}
               <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end">
                 {input("a260", "A260 đo được")}
                 {input("dilution_factor", "Hệ số pha loãng")}
@@ -136,8 +149,21 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
 const FILTERS: [string, string][] = [["", "Cần xử lý"], ["SYNTHESIZED", "Đã tổng hợp"], ["POST_PROCESSING", "Hậu tổng hợp"], ["QC", "Đang QC"], ["COMPLETED", "Hoàn thành"], ["FAILED", "Lỗi"]];
 
 /** Sequences from finished batches through post-processing and QC. */
+/** One step for several sequences at once (same next step of the same SOP), as OligoFlow's batch step logging. */
+function BulkStep({ ids, onDone }: { ids: string[]; onDone: () => void }) {
+  const first = useQuery({ queryKey: ["factory", "oligo-post-detail", ids[0]], queryFn: () => api<Detail>(`/api/factory/oligo/post/${ids[0]}`) });
+  const rec = first.data?.record;
+  const step = rec?.workflow_steps?.[first.data!.steps.length];
+  if (!first.data) return null;
+  if (!step) return <p className="text-[11px] text-amber-700 dark:text-amber-400">Trình tự đầu tiên đã chọn không theo SOP hoặc đã xong mọi bước.</p>;
+  if (step.kind === "QUANTIFICATION") return <p className="text-[11px] text-slate-500">Bước đo OD ghi riêng từng trình tự (mở từng trình tự để nhập kết quả đo).</p>;
+  return <StepLogForm key={`${ids.join()}-${step.step_no}`} step={step} sequenceIds={ids} odReady onDone={onDone} />;
+}
+
 export function PostProcessView({ canManage, canLabel }: { canManage: boolean; canLabel: boolean }) {
+  const qc = useQueryClient();
   const [selected, setSelected] = useState<string | null>(null);
+  const [picked, setPicked] = useState<string[]>([]);
   const [status, setStatus] = useState("");
   const list = useQuery({ queryKey: ["factory", "oligo-post", status], queryFn: () => api<Row[]>(`/api/factory/oligo/post${status ? `?status=${status}` : ""}`) });
   return (
@@ -153,10 +179,26 @@ export function PostProcessView({ canManage, canLabel }: { canManage: boolean; c
       >
         <ErrorNote error={list.error} />
         {list.data?.length === 0 && <Empty>Không có trình tự nào.</Empty>}
+        {canManage && picked.length > 0 && (
+          <div className="mb-3">
+            <BulkStep
+              ids={picked}
+              onDone={() => {
+                setPicked([]);
+                refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
+              }}
+            />
+          </div>
+        )}
         {list.data && list.data.length > 0 && (
-          <Table head={["Trình tự", "Đơn", "Hạn giao", "Thang / tinh sạch", "Tổng OD", "nmol", "QC", "Trạng thái"]}>
+          <Table head={["", "Trình tự", "Đơn", "Hạn giao", "Thang / tinh sạch", "Tổng OD", "nmol", "QC", "Trạng thái"]}>
             {list.data.map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
+                <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
+                  {canManage && r.status === "POST_PROCESSING" && (
+                    <input type="checkbox" checked={picked.includes(r.id)} onChange={() => setPicked(picked.includes(r.id) ? picked.filter((x) => x !== r.id) : [...picked, r.id])} aria-label={`Chọn ${r.code} để ghi bước chung`} />
+                  )}
+                </td>
                 <td className="py-2 pr-3 font-mono text-xs">{r.code} <span className="font-sans text-slate-500">{r.name}</span></td>
                 <td className="py-2 pr-3 font-mono text-xs">{r.order_code ?? "gộp"}</td>
                 <td className="py-2 pr-3 text-xs whitespace-nowrap">{fmtDate(r.due_date)}</td>

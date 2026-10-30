@@ -13,6 +13,7 @@ import { registerNcrSubject, type Ncr } from "../qms/ncr";
 import { analyze, pyRound } from "./analyzer";
 import { loadCatalog } from "./catalog";
 import { insertSequence, recomputeOrdersOf, visibleOligoUnits } from "./orders";
+import { openRecord } from "./postProcess";
 import { sequenceMachine } from "./sequences";
 
 registerPermissions([{ code: "oligo.delivery.manage", description: "In nhãn ống Oligo, giao Oligo cho Kinh doanh / bàn giao nội bộ" }]);
@@ -72,9 +73,7 @@ registerNcrSubject("OLIGO_SEQUENCE", {
       // the measured product goes back to post-processing (e.g. re-purification) and is measured and tested again
       const old = (await tx.query("UPDATE oligo.post_process SET status = 'VOID', version = version + 1, updated_at = now() WHERE sequence_id = $1 AND status = 'SUBMITTED' RETURNING *", [s.id])).rows[0];
       await move(tx, actor, s, "rework", why, true);
-      await tx.query("INSERT INTO oligo.post_process (sequence_id, batch_id, purification, format, notes, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $6)", [
-        s.id, old.batch_id, old.purification, old.format, `Làm lại theo NCR ${ncr.code}`, actor.userId,
-      ]);
+      await openRecord(tx, actor, { sequence_id: s.id, batch_id: old.batch_id, purification: old.purification, format: old.format, notes: `Làm lại theo NCR ${ncr.code}` });
     } else if (ncr.disposition === "USE_AS_IS") await move(tx, actor, s, "concession", why, true);
     // SCRAP: the sequence stays failed
     await recomputeOrdersOf(tx, actor, [s.id]);

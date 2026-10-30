@@ -10,4 +10,7 @@ import "./oligo/orders";
 import "./oligo/batches";
 import "./oligo/postProcess";
 import "./oligo/fulfilment";
+import "./oligo/postSop";
 import "./asset/service";
+import "./asset/slots";
+import "./prep/service";

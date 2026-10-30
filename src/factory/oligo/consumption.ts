@@ -23,6 +23,8 @@ export interface SequenceForConsumption {
   code: string;
   molecule_type: "DNA" | "RNA";
   tokens: Token[];
+  /** Only cycles from this one on (1 = the 3' token on the column); used to split consumption at a bottle change. */
+  fromCycle?: number;
 }
 
 export interface ConsumptionLine {
@@ -67,9 +69,13 @@ export function estimateConsumption(
   const perCycle = rules.filter((r) => r.status === "ACTIVE" && r.basis === "PER_CYCLE");
   const modDefault = active.get("MOD_DEFAULT");
   for (const s of sequences) {
-    const cycles = s.tokens.length;
+    const n = s.tokens.length;
+    const from = Math.max(1, s.fromCycle ?? 1);
+    const cycles = Math.max(0, n - from + 1);
+    if (!cycles) continue;
     for (const r of perCycle) add(r.role, cycles * Number(r.qty));
     s.tokens.forEach((t, idx) => {
+      if (n - idx < from) return; // synthesis runs 3' → 5': token idx is coupled at cycle n − idx
       const isPlainBase = !t.entry ? true : t.entry.kind === "BASE" && t.entry.code !== "I";
       if (isPlainBase && t.base) {
         const members = DEGENERATE[t.base] ?? [t.base];

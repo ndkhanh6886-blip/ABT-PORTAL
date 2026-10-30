@@ -152,3 +152,8 @@ export async function reserveLot(
   }
   return results;
 }
+
+/** Frees what one demand holds on one lot (e.g. a batch whose bottle on the synthesizer was changed before the run). */
+export function releaseDemandLotReservations(tx: Tx, actor: AuthzActor, demandType: DemandType, demandId: string, lotId: string, reason: string): Promise<number> {
+  return releaseWhere(tx, actor, "r.demand_entity_type = $1 AND r.demand_entity_id = $2 AND r.lot_id = $3", [demandType, demandId, lotId], reason);
+}

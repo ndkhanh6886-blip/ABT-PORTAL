@@ -82,7 +82,7 @@ export function BatchPlanForm({ onCreated }: { onCreated: (id: string) => void }
         </Field>
         <Field label="Chương trình máy"><input className={inputClass} value={program} onChange={(e) => setProgram(e.target.value)} placeholder="tùy chọn" /></Field>
       </div>
-      {cand.data && cand.data.synthesizers.length === 0 && <Empty>Phòng chưa khai báo máy tổng hợp (tab Máy & định mức).</Empty>}
+      {cand.data && cand.data.synthesizers.length === 0 && <Empty>Phòng chưa khai báo máy tổng hợp (tab Thiết bị & định mức).</Empty>}
       {cand.data && visible.length === 0 && <Empty>Không có trình tự nào đang chờ tổng hợp.</Empty>}
       {visible.length > 0 && (
         <Table head={["Vị trí", "Trình tự", "Đơn", "Hạn giao", "Thang", "Tinh sạch", "Số base", "Chuỗi"]}>

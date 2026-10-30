@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
-import { authorize, registerPermissions, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, registerPermissions, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { parseInput, updateRecord } from "../core/records";
 import { analyze, SequenceError, type Analysis, type CatalogEntry } from "./analyzer";
@@ -44,7 +44,7 @@ const updateSchema = z.object({
 
 /** Parameter changes alter every later calculation: reason required and audited old → new; aliases must stay unambiguous. */
 export async function updateCatalogEntry(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
-  await authorize(tx, actor, "oligo.catalog.manage");
+  await authorizeAnywhere(tx, actor, "oligo.catalog.manage");
   const { version, reason, ...patch } = parseInput(updateSchema, input);
   const cur = (await tx.query("SELECT code, kind, mw, mw_delta FROM oligo.modification WHERE id = $1", [id])).rows[0];
   if (!cur) throw notFound("mục danh mục");

@@ -1,0 +1,134 @@
+"use client";
+
+import React, { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, fmtDate, fmtQty } from "../api";
+import { Button, Card, Empty, ErrorNote, inputClass, Table } from "../ui";
+
+interface PortRow {
+  port_no: number; role: string; label: string | null; current_lot_id: string | null; lot_code: string | null; expiry_date: string | null; installed_at: string | null;
+  rule_name: string | null; display_name: string | null; available: number | null;
+  item: { id: string; code: string; name: string; base_uom: string } | null;
+  lots: { lot_id: string; code: string; available: number; expiry_date: string | null }[];
+}
+interface PortsData {
+  synthesizer: { id: string; code: string; name: string };
+  ports: PortRow[];
+  events: { port_no: number; role: string; event: string; swap_cycle: number | null; qty: number | null; created_at: string; lot_code: string | null; old_lot_code: string | null; batch_code: string | null }[];
+}
+interface RuleOpt { role: string; name: string; display_name: string | null }
+
+const EVENT: Record<string, string> = { INSTALL: "Lắp chai", REMOVE: "Tháo chai", SWAP: "Thay chai trong mẻ" };
+
+/** Ports of one synthesizer (as OligoFlow): which reagent each port feeds and which bottle (lot) is on it. */
+export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: { synthId: string; canConfigure: boolean; canOperate: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const data = useQuery({ queryKey: ["factory", "oligo-ports", synthId], queryFn: () => api<PortsData>(`/api/factory/oligo/synthesizers/${synthId}/ports`) });
+  const rules = useQuery({ queryKey: ["factory", "oligo-reagent-rules"], queryFn: () => api<RuleOpt[]>("/api/factory/oligo/reagent-rules") });
+  const mods = useQuery({ queryKey: ["factory", "oligo-catalog"], queryFn: () => api<{ code: string; kind: string; status: string }[]>("/api/factory/oligo/modifications") });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<{ port_no: string; role: string; label: string }[]>([]);
+  useEffect(() => {
+    if (data.data) setDraft(data.data.ports.map((p) => ({ port_no: String(p.port_no), role: p.role, label: p.label ?? "" })));
+  }, [data.data]);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["factory", "oligo-ports", synthId] });
+  const save = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/oligo/synthesizers/${synthId}/ports`, {
+        method: "PUT",
+        json: { ports: draft.filter((d) => d.port_no && d.role).map((d) => ({ port_no: Number(d.port_no), role: d.role, label: d.label || null })) },
+      }),
+    onSuccess: () => {
+      setEditing(false);
+      refresh();
+    },
+  });
+  const bottle = useMutation({
+    mutationFn: ({ port, lot }: { port: number; lot: string | null }) => api(`/api/factory/oligo/synthesizers/${synthId}/ports/${port}/bottle`, { method: "PUT", json: { lot_id: lot } }),
+    onSuccess: refresh,
+  });
+  const roleOptions = [
+    ...(rules.data ?? []).filter((r) => r.role !== "MOD_DEFAULT").map((r) => ({ value: r.role, label: `${r.role} — ${r.display_name ?? r.name}` })),
+    ...(mods.data ?? []).filter((m) => m.kind !== "BASE" && m.status === "ACTIVE").map((m) => ({ value: `MOD:${m.code}`, label: `Amidite ${m.code}` })),
+  ];
+  const d = data.data;
+
+  return (
+    <Card title={d ? `Cổng hóa chất — ${d.synthesizer.code} ${d.synthesizer.name}` : "Cổng hóa chất"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
+      <ErrorNote error={data.error ?? bottle.error} />
+      {d && !editing && (
+        <div className="flex flex-col gap-3">
+          {d.ports.length === 0 && <Empty>Chưa khai báo cổng. Máy chưa có cổng thì hóa chất được giữ chỗ theo hạn dùng (FEFO) từ kho.</Empty>}
+          {d.ports.length > 0 && (
+            <Table head={["Cổng", "Hóa chất", "Mã hàng", "Chai đang lắp", "Còn (sổ kho)", "Hạn dùng", "Lắp / thay chai"]}>
+              {d.ports.map((p) => (
+                <tr key={p.port_no}>
+                  <td className="py-1.5 pr-3 font-bold">{p.port_no}</td>
+                  <td className="py-1.5 pr-3 text-xs"><span className="font-mono">{p.role}</span> {p.label ?? p.display_name ?? p.rule_name ?? ""}</td>
+                  <td className="py-1.5 pr-3 text-xs">{p.item ? `${p.item.code} · ${p.item.name}` : <span className="text-amber-700 dark:text-amber-400">chưa gắn mã hàng</span>}</td>
+                  <td className="py-1.5 pr-3 font-mono text-xs">{p.lot_code ?? <span className="font-sans text-amber-700 dark:text-amber-400">Trống</span>}</td>
+                  <td className="py-1.5 pr-3 text-right text-xs">{p.available == null ? "—" : `${fmtQty(p.available)} ${p.item?.base_uom ?? ""}`}</td>
+                  <td className="py-1.5 pr-3 text-xs">{fmtDate(p.expiry_date)}</td>
+                  <td className="py-1.5 pr-3">
+                    {canOperate && (
+                      <select
+                        className={`${inputClass} w-56`}
+                        value={p.current_lot_id ?? ""}
+                        disabled={bottle.isPending}
+                        onChange={(e) => bottle.mutate({ port: p.port_no, lot: e.target.value || null })}
+                        aria-label={`Chai cho cổng ${p.port_no}`}
+                      >
+                        <option value="">— tháo chai —</option>
+                        {p.lots.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.code} (còn {fmtQty(l.available)}{l.expiry_date ? `, HD ${fmtDate(l.expiry_date)}` : ""})</option>)}
+                      </select>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </Table>
+          )}
+          <p className="text-[11px] text-slate-500">
+            Lập mẻ giữ chỗ hóa chất của mỗi cổng từ chai đang lắp; đổi chai trước khi chạy thì mẻ tự chuyển sang chai mới. Đang chạy mẻ thì thay chai tại màn hình mẻ, ghi chu kỳ thay —
+            phần tiêu hao từ chu kỳ đó trở đi tính cho chai mới. Chai hết thật nhưng sổ kho còn: kho kiểm kê điều chỉnh.
+          </p>
+          {canConfigure && <div><Button variant="ghost" onClick={() => setEditing(true)}>Cấu hình cổng</Button></div>}
+          {d.events.length > 0 && (
+            <Table head={["Lúc", "Cổng", "Sự kiện", "Chai mới", "Chai cũ", "Mẻ / chu kỳ"]}>
+              {d.events.map((e, i) => (
+                <tr key={i}>
+                  <td className="py-1 pr-3 text-xs whitespace-nowrap">{new Date(e.created_at).toLocaleString("vi-VN")}</td>
+                  <td className="py-1 pr-3 text-xs">{e.port_no} · {e.role}</td>
+                  <td className="py-1 pr-3 text-xs">{EVENT[e.event] ?? e.event}</td>
+                  <td className="py-1 pr-3 font-mono text-xs">{e.lot_code ?? "—"}</td>
+                  <td className="py-1 pr-3 font-mono text-xs">{e.old_lot_code ?? "—"}</td>
+                  <td className="py-1 pr-3 text-xs">{e.batch_code ? `${e.batch_code} từ chu kỳ ${e.swap_cycle} (${fmtQty(e.qty)})` : "—"}</td>
+                </tr>
+              ))}
+            </Table>
+          )}
+        </div>
+      )}
+      {d && editing && (
+        <form className="flex flex-col gap-2" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+          {draft.map((p, i) => (
+            <div key={i} className="flex flex-wrap gap-2 items-center">
+              <input className={`${inputClass} w-20`} type="number" min="1" max="200" placeholder="Cổng" value={p.port_no} onChange={(e) => setDraft(draft.map((x, j) => (j === i ? { ...x, port_no: e.target.value } : x)))} />
+              <select className={`${inputClass} w-72`} value={p.role} onChange={(e) => setDraft(draft.map((x, j) => (j === i ? { ...x, role: e.target.value } : x)))} aria-label="Hóa chất">
+                <option value="">Chọn hóa chất</option>
+                {roleOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+              <input className={`${inputClass} w-48`} placeholder="Nhãn (tùy chọn)" value={p.label} onChange={(e) => setDraft(draft.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+              <button type="button" className="text-rose-600 text-xs cursor-pointer" onClick={() => setDraft(draft.filter((_, j) => j !== i))}>Xóa</button>
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <Button type="button" variant="ghost" onClick={() => setDraft([...draft, { port_no: String((Math.max(0, ...draft.map((x) => Number(x.port_no) || 0)) + 1)), role: "", label: "" }])}>+ Thêm cổng</Button>
+            <Button type="button" variant="ghost" onClick={() => setEditing(false)}>Hủy</Button>
+            <Button type="submit" disabled={save.isPending}>Lưu cấu hình</Button>
+          </div>
+          <ErrorNote error={save.error} />
+        </form>
+      )}
+    </Card>
+  );
+}

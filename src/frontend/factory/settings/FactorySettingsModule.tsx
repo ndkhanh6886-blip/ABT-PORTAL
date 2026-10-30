@@ -1,16 +1,17 @@
 "use client";
 
 import React, { useState } from "react";
-import { Building2, KeyRound, ShieldCheck, UserCog, UsersRound } from "lucide-react";
+import { Building2, KeyRound, ShieldCheck, SlidersHorizontal, UserCog, UsersRound } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { ErrorNote } from "../ui";
 import { DelegationsView } from "./DelegationsView";
 import { OrgUnitsView } from "./OrgUnitsView";
+import { ParamsView } from "./ParamsView";
 import { PinView } from "./PinView";
 import { RolesView } from "./RolesView";
 import { UsersView } from "./UsersView";
 
-type SubTab = "pin" | "delegations" | "users" | "roles" | "org";
+type SubTab = "pin" | "delegations" | "users" | "roles" | "org" | "params";
 
 /** "Cấu hình Nhà Máy": own signature PIN for everyone; org structure, roles and grants for administrators. */
 export function FactorySettingsModule() {
@@ -23,6 +24,7 @@ export function FactorySettingsModule() {
     { key: "users", label: "Người dùng & quyền", icon: UsersRound, show: manageRoles },
     { key: "roles", label: "Vai trò", icon: ShieldCheck, show: manageRoles },
     { key: "org", label: "Cơ cấu tổ chức", icon: Building2, show: perms.has("core.org.manage") },
+    { key: "params", label: "Tham số (COA …)", icon: SlidersHorizontal, show: perms.has("core.setting.manage") },
   ];
   const visible = tabs.filter((t) => t.show);
   const [tab, setTab] = useState<SubTab>("pin");
@@ -57,6 +59,7 @@ export function FactorySettingsModule() {
       {active === "users" && <UsersView />}
       {active === "roles" && <RolesView />}
       {active === "org" && <OrgUnitsView />}
+      {active === "params" && <ParamsView />}
     </div>
   );
 }

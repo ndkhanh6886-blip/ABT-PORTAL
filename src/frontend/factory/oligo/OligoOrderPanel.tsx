@@ -4,16 +4,33 @@ import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, fmtDate } from "../api";
 import { Button, Card, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { printOrderCoa } from "../coa";
 import { FORMAT, ORDER_STATUS, PRODUCT, PURIFICATION, SEQ_STATUS, useScales } from "./shared";
 
 interface Seq {
   id: string; code: string; name: string; normalized_sequence: string; base_count: number; molecule_type: string; product_type: string; scale_code: string;
-  purification: string; format: string; mw: number; tm: number; nmol_per_od: number; gc_percent: number; warnings: string[]; status: string;
+  purification: string; format: string; mw: number; tm: number; nmol_per_od: number; ug_per_od: number; ext_coeff_260: number; gc_percent: number;
+  raw_sequence: string; modifications: string[]; warnings: string[]; status: string;
   relation: string | null; pool_master_code: string | null; version: number;
 }
 interface OrderDetail {
   id: string; code: string; status: string; customer_label: string | null; due_date: string | null; kd_po_code: string | null; internal_order_code: string | null;
   sequences: Seq[];
+}
+
+/** Parameter table of an order as CSV (Excel opens it through the BOM), for the customer or the COA. */
+function exportCsv(o: OrderDetail) {
+  const head = ["Mã", "Tên", "Trình tự 5'-3'", "Số base", "Loại", "Thang", "Tinh sạch", "Dạng", "MW (Da)", "Tm (°C)", "GC %", "ε260 (L/mol·cm)", "nmol/OD", "µg/OD", "Modification"];
+  const q = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const rows = o.sequences
+    .filter((s) => s.status !== "CANCELLED")
+    .map((s) => [s.code, s.name, s.normalized_sequence, s.base_count, s.molecule_type, s.scale_code, s.purification, s.format, s.mw, s.tm, s.gc_percent, s.ext_coeff_260, s.nmol_per_od, s.ug_per_od, s.modifications.join(" ")].map(q).join(","));
+  const blob = new Blob(["﻿" + [head.map(q).join(","), ...rows].join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${o.code}-thong-so.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
 }
 
 function AddSequences({ orderId, onDone }: { orderId: string; onDone: () => void }) {
@@ -91,9 +108,13 @@ export function OligoOrderPanel({ id, onClose }: { id: string; onClose: () => vo
           <p>
             <StatusBadge status={ORDER_STATUS[o.status][0]} label={ORDER_STATUS[o.status][1]} /> · {o.customer_label ?? "—"} · Hạn giao {fmtDate(o.due_date)}
             {o.kd_po_code && ` · PO Kinh doanh ${o.kd_po_code} (${o.internal_order_code})`}
+            {o.sequences.length > 0 && <Button variant="ghost" className="ml-2" onClick={() => exportCsv(o)}>Xuất bảng thông số (Excel)</Button>}
+            {o.sequences.some((s) => ["COMPLETED", "DELIVERED", "POOLED"].includes(s.status)) && (
+              <Button variant="ghost" className="ml-1" onClick={() => printOrderCoa(o.id).catch((e) => window.alert(e.message))}>In COA đơn</Button>
+            )}
           </p>
           {!["COMPLETED", "DELIVERED", "CANCELLED"].includes(o.status) && <AddSequences orderId={o.id} onDone={refresh} />}
-          <Table head={["", "Mã", "Tên", "Trình tự", "Dài", "Loại", "Thang / tinh sạch", "MW", "Tm", "nmol/OD", "Trạng thái", ""]}>
+          <Table head={["", "Mã", "Tên", "Trình tự", "Dài", "Loại", "Thang / tinh sạch", "MW (Da)", "Tm (°C)", "GC %", "ε260", "nmol/OD", "µg/OD", "Trạng thái", ""]}>
             {o.sequences.map((s) => (
               <tr key={s.id} className={s.status === "CANCELLED" ? "opacity-50" : ""}>
                 <td className="py-2 pr-2">{s.status === "PENDING" && <input type="checkbox" checked={picked.has(s.id)} onChange={() => { const n = new Set(picked); if (n.has(s.id)) n.delete(s.id); else n.add(s.id); setPicked(n); }} aria-label="Chọn để gộp" />}</td>
@@ -101,6 +122,8 @@ export function OligoOrderPanel({ id, onClose }: { id: string; onClose: () => vo
                 <td className="py-2 pr-3">{s.name}{s.relation === "SPLIT" && <span className="text-slate-400"> (ống tách)</span>}</td>
                 <td className="py-2 pr-3 font-mono break-all max-w-80">
                   {s.normalized_sequence}
+                  {s.raw_sequence !== s.normalized_sequence && <div className="font-sans text-[11px] text-slate-400">nhập: {s.raw_sequence}</div>}
+                  {s.modifications.length > 0 && <div className="font-sans text-[11px] text-sky-700 dark:text-sky-400">Modification: {s.modifications.join(", ")}</div>}
                   {s.warnings.map((w, i) => <div key={i} className="font-sans text-[11px] text-amber-700 dark:text-amber-400">⚠ {w}</div>)}
                 </td>
                 <td className="py-2 pr-3 text-right">{s.base_count}</td>
@@ -108,7 +131,10 @@ export function OligoOrderPanel({ id, onClose }: { id: string; onClose: () => vo
                 <td className="py-2 pr-3 whitespace-nowrap">{scales.data?.find((x) => x.code === s.scale_code)?.label ?? s.scale_code} · {PURIFICATION[s.purification as keyof typeof PURIFICATION]} · {FORMAT[s.format as keyof typeof FORMAT]}</td>
                 <td className="py-2 pr-3 text-right whitespace-nowrap">{s.mw.toLocaleString("vi-VN")}</td>
                 <td className="py-2 pr-3 text-right">{s.tm.toLocaleString("vi-VN")}</td>
+                <td className="py-2 pr-3 text-right">{s.gc_percent.toLocaleString("vi-VN")}</td>
+                <td className="py-2 pr-3 text-right whitespace-nowrap">{s.ext_coeff_260.toLocaleString("vi-VN")}</td>
                 <td className="py-2 pr-3 text-right">{s.nmol_per_od.toLocaleString("vi-VN")}</td>
+                <td className="py-2 pr-3 text-right">{s.ug_per_od.toLocaleString("vi-VN")}</td>
                 <td className="py-2 pr-3 whitespace-nowrap">
                   <StatusBadge status={SEQ_STATUS[s.status][0]} label={SEQ_STATUS[s.status][1]} />
                   {s.pool_master_code && <div className="text-[11px] text-slate-400">vào {s.pool_master_code}</div>}

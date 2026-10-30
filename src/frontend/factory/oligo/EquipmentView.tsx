@@ -5,9 +5,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Table } from "../ui";
 import { useOligoUnits, useScales } from "./shared";
+import { SynthPortsPanel } from "./SynthPortsPanel";
 
 interface Asset { id: string; code: string; name: string; status: string; owner_name: string; next_calibration_due: string | null; column_positions: number | null; supported_scales: string[] | null; model: string | null; serial_no: string | null }
-interface Rule { role: string; name: string; basis: string; qty: number; uom: string; item_id: string | null; status: string; version: number; item_code: string | null; item_name: string | null; base_uom: string | null }
+interface Rule { role: string; name: string; display_name: string | null; is_visible: boolean; basis: string; qty: number; uom: string; item_id: string | null; status: string; version: number; item_code: string | null; item_name: string | null; base_uom: string | null }
 
 const BASIS: Record<string, string> = { PER_CYCLE: "mỗi chu kỳ", PER_COUPLING: "mỗi lần ghép base", PER_MOD: "mỗi modification" };
 const ASSET_STATUS: Record<string, string> = { IN_SERVICE: "Đang dùng", UNDER_MAINTENANCE: "Bảo trì", OUT_OF_CALIBRATION: "Hết hiệu chuẩn", RETIRED: "Ngừng" };
@@ -71,7 +72,7 @@ function NewSynthesizer() {
 interface ItemOpt { id: string; code: string; name: string; base_uom: string }
 
 /** Searchable stock item select (server-side search, 30 hits). */
-function ItemPicker({ value, current, onChange }: { value: string; current?: string; onChange: (id: string) => void }) {
+export function ItemPicker({ value, current, onChange }: { value: string; current?: string; onChange: (id: string) => void }) {
   const [q, setQ] = useState("");
   const items = useQuery({
     queryKey: ["factory", "items-pick", q],
@@ -94,17 +95,32 @@ function RuleRow({ r, canManage }: { r: Rule; canManage: boolean }) {
   const [edit, setEdit] = useState(false);
   const [qty, setQty] = useState(String(r.qty));
   const [itemId, setItemId] = useState(r.item_id ?? "");
+  const [display, setDisplay] = useState(r.display_name ?? "");
+  const [visible, setVisible] = useState(r.is_visible);
   const save = useMutation({
-    mutationFn: (reason: string) => api(`/api/factory/oligo/reagent-rules/${encodeURIComponent(r.role)}`, { method: "PATCH", json: { version: r.version, qty: Number(qty), item_id: itemId || null, reason } }),
+    mutationFn: (reason: string) =>
+      api(`/api/factory/oligo/reagent-rules/${encodeURIComponent(r.role)}`, {
+        method: "PATCH",
+        json: { version: r.version, qty: Number(qty), item_id: itemId || null, display_name: display || null, is_visible: visible, reason },
+      }),
     onSuccess: () => {
       setEdit(false);
       qc.invalidateQueries({ queryKey: ["factory", "oligo-reagent-rules"] });
     },
   });
   return (
-    <tr>
+    <tr className={r.is_visible ? "" : "opacity-60"}>
       <td className="py-1.5 pr-3 font-mono text-xs">{r.role}</td>
-      <td className="py-1.5 pr-3 text-xs">{r.name}</td>
+      <td className="py-1.5 pr-3 text-xs">
+        {edit ? (
+          <div className="flex flex-col gap-1">
+            <input className={`${inputClass} w-40`} placeholder={r.name} value={display} onChange={(e) => setDisplay(e.target.value)} aria-label="Tên hiển thị" />
+            <label className="flex items-center gap-1"><input type="checkbox" checked={visible} onChange={(e) => setVisible(e.target.checked)} />Hiện cho KTV</label>
+          </div>
+        ) : (
+          <>{r.display_name ?? r.name}{!r.is_visible && <span className="text-slate-400"> (ẩn)</span>}</>
+        )}
+      </td>
       <td className="py-1.5 pr-3 text-xs whitespace-nowrap">
         {edit ? <input className={`${inputClass} w-24`} type="number" step="any" min="0" value={qty} onChange={(e) => setQty(e.target.value)} /> : r.qty} {r.uom} / {BASIS[r.basis]}
       </td>
@@ -124,6 +140,34 @@ function RuleRow({ r, canManage }: { r: Rule; canManage: boolean }) {
         )}
       </td>
     </tr>
+  );
+}
+
+/** A reagent role of one's own (as OligoFlow), e.g. a second activator, or a rule for one modification's amidite. */
+function NewRule() {
+  const qc = useQueryClient();
+  const [f, setF] = useState({ role: "", name: "", basis: "PER_CYCLE", qty: "", uom: "mL" });
+  const add = useMutation({
+    mutationFn: () => api("/api/factory/oligo/reagent-rules", { method: "POST", json: { ...f, qty: Number(f.qty) } }),
+    onSuccess: () => {
+      setF({ role: "", name: "", basis: "PER_CYCLE", qty: "", uom: "mL" });
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-reagent-rules"] });
+    },
+  });
+  return (
+    <form className="flex flex-wrap gap-2 items-end mb-3" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
+      <Field label="Mã vai trò" hint="Trùng mã modification (vd FAM) = định mức riêng của amidite đó"><input className={`${inputClass} w-32`} value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })} required /></Field>
+      <Field label="Tên"><input className={`${inputClass} w-44`} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
+      <Field label="Tính theo">
+        <select className={`${inputClass} w-44`} value={f.basis} onChange={(e) => setF({ ...f, basis: e.target.value })}>
+          {Object.entries(BASIS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+        </select>
+      </Field>
+      <Field label="Định mức"><input className={`${inputClass} w-24`} type="number" step="any" min="0" value={f.qty} onChange={(e) => setF({ ...f, qty: e.target.value })} required /></Field>
+      <Field label="Đơn vị"><input className={`${inputClass} w-20`} value={f.uom} onChange={(e) => setF({ ...f, uom: e.target.value })} required /></Field>
+      <Button type="submit" variant="ghost" disabled={add.isPending}>+ Thêm vai trò</Button>
+      <div className="w-full"><ErrorNote error={add.error} /></div>
+    </form>
   );
 }
 
@@ -162,7 +206,8 @@ function AmiditeRow({ m, label, canManage }: { m: Mod; label: string | undefined
 }
 
 /** Synthesizers of the Oligo department and the consumption rules (OligoFlow model) that size reservations. */
-export function EquipmentView({ canManageAssets, canManageRules, canManageCatalog }: { canManageAssets: boolean; canManageRules: boolean; canManageCatalog: boolean }) {
+export function EquipmentView({ canManageAssets, canManageRules, canManageCatalog, canOperate }: { canManageAssets: boolean; canManageRules: boolean; canManageCatalog: boolean; canOperate: boolean }) {
+  const [portsOf, setPortsOf] = useState<string | null>(null);
   const mods = useQuery({ queryKey: ["factory", "oligo-catalog"], queryFn: () => api<Mod[]>("/api/factory/oligo/modifications") });
   const modItems = useQuery({
     queryKey: ["factory", "items-by-id", mods.data?.map((m) => m.amidite_item_id).filter(Boolean).join(",")],
@@ -177,12 +222,13 @@ export function EquipmentView({ canManageAssets, canManageRules, canManageCatalo
   const rules = useQuery({ queryKey: ["factory", "oligo-reagent-rules"], queryFn: () => api<Rule[]>("/api/factory/oligo/reagent-rules") });
   return (
     <div className="flex flex-col gap-3">
+      {portsOf && <SynthPortsPanel key={portsOf} synthId={portsOf} canConfigure={canManageAssets} canOperate={canOperate} onClose={() => setPortsOf(null)} />}
       <Card title="Máy tổng hợp">
         {canManageAssets && <NewSynthesizer />}
         <ErrorNote error={assets.error} />
         {assets.data?.length === 0 && <Empty>Chưa khai báo máy tổng hợp.</Empty>}
         {assets.data && assets.data.length > 0 && (
-          <Table head={["Mã", "Tên", "Phòng", "Model / serial", "Số cột", "Thang", "Hạn hiệu chuẩn", "Trạng thái"]}>
+          <Table head={["Mã", "Tên", "Phòng", "Model / serial", "Số cột", "Thang", "Hạn hiệu chuẩn", "Trạng thái", ""]}>
             {assets.data.map((a) => (
               <tr key={a.id}>
                 <td className="py-1.5 pr-3 font-mono">{a.code}</td>
@@ -193,16 +239,18 @@ export function EquipmentView({ canManageAssets, canManageRules, canManageCatalo
                 <td className="py-1.5 pr-3 text-xs">{a.supported_scales?.length ? a.supported_scales.join(", ") : "Mọi thang"}</td>
                 <td className="py-1.5 pr-3 text-xs">{fmtDate(a.next_calibration_due)}</td>
                 <td className="py-1.5 pr-3 text-xs">{ASSET_STATUS[a.status] ?? a.status}</td>
+                <td className="py-1.5 pr-3 text-right"><Button variant="ghost" onClick={() => setPortsOf(a.id)}>Cổng hóa chất</Button></td>
               </tr>
             ))}
           </Table>
         )}
       </Card>
       <Card title="Định mức hóa chất tổng hợp">
-        <p className="text-[11px] text-slate-500 mb-2">Dùng để giữ chỗ khi lập mẻ; lượng thực tế nhập khi kết thúc mẻ. Mỗi vai trò phải gắn một mã hàng trong kho NVL. Amidite của modification gắn tại Danh mục modification.</p>
+        <p className="text-[11px] text-slate-500 mb-2">Dùng để giữ chỗ khi lập mẻ; lượng thực tế nhập khi kết thúc mẻ. Mỗi vai trò phải gắn một mã hàng trong kho NVL. Amidite của modification gắn ở bảng dưới. Máy có cổng hóa chất thì lấy từ chai đang lắp trên cổng.</p>
+        {canManageRules && <NewRule />}
         <ErrorNote error={rules.error} />
         {rules.data && (
-          <Table head={["Vai trò", "Tên", "Định mức", "Mã hàng kho", ""]}>
+          <Table head={["Vai trò", "Tên hiển thị", "Định mức", "Mã hàng kho", ""]}>
             {rules.data.map((r) => <RuleRow key={r.role} r={r} canManage={canManageRules} />)}
           </Table>
         )}

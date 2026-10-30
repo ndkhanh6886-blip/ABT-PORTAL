@@ -12,6 +12,7 @@ interface Batch {
   code: string;
   status: string;
   version: number;
+  synthesizer_id: string;
   program_name: string | null;
   synthesizer_code: string;
   synthesizer_name: string;
@@ -73,13 +74,48 @@ function FinishForm({ batch, onDone }: { batch: Batch; onDone: () => void }) {
   );
 }
 
+/** Bottle change during the run: from the given cycle on, the new bottle feeds the port. */
+function SwapBottle({ batch, onDone }: { batch: Batch; onDone: () => void }) {
+  const ports = useQuery({
+    queryKey: ["factory", "oligo-ports", batch.synthesizer_id],
+    queryFn: () => api<{ ports: { port_no: number; role: string; lot_code: string | null; lots: { lot_id: string; code: string; available: number }[] }[] }>(`/api/factory/oligo/synthesizers/${batch.synthesizer_id}/ports`),
+  });
+  const [f, setF] = useState({ port_no: "", lot_id: "", cycle: "" });
+  const port = ports.data?.ports.find((p) => String(p.port_no) === f.port_no);
+  const maxCycle = Math.max(0, ...batch.positions.map((p) => p.couplings));
+  const swap = useMutation({
+    mutationFn: () => api(`/api/factory/oligo/batches/${batch.id}/swap-bottle`, { method: "POST", idempotent: true, json: { port_no: Number(f.port_no), lot_id: f.lot_id, cycle: Number(f.cycle) } }),
+    onSuccess: () => {
+      setF({ port_no: "", lot_id: "", cycle: "" });
+      onDone();
+    },
+  });
+  if (!ports.data?.ports.length) return null;
+  return (
+    <form className="flex flex-wrap gap-2 items-end p-3 rounded-xl border border-slate-200 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); swap.mutate(); }}>
+      <span className="text-xs font-bold w-full">Thay chai trong mẻ</span>
+      <select className={`${inputClass} w-56`} value={f.port_no} onChange={(e) => setF({ ...f, port_no: e.target.value, lot_id: "" })} aria-label="Cổng" required>
+        <option value="">Chọn cổng</option>
+        {ports.data.ports.map((p) => <option key={p.port_no} value={p.port_no}>{p.port_no} · {p.role} (đang: {p.lot_code ?? "trống"})</option>)}
+      </select>
+      <select className={`${inputClass} w-56`} value={f.lot_id} onChange={(e) => setF({ ...f, lot_id: e.target.value })} aria-label="Chai mới" required>
+        <option value="">Chai mới</option>
+        {port?.lots.filter((l) => l.code !== port.lot_code).map((l) => <option key={l.lot_id} value={l.lot_id}>{l.code} (còn {fmtQty(l.available)})</option>)}
+      </select>
+      <input className={`${inputClass} w-36`} type="number" min="2" max={maxCycle} placeholder={`Từ chu kỳ (2–${maxCycle})`} value={f.cycle} onChange={(e) => setF({ ...f, cycle: e.target.value })} required />
+      <Button type="submit" variant="ghost" disabled={swap.isPending}>Ghi thay chai</Button>
+      <div className="w-full"><ErrorNote error={swap.error} /></div>
+    </form>
+  );
+}
+
 export function BatchPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const qc = useQueryClient();
   const b = useQuery({ queryKey: ["factory", "oligo-batch", id], queryFn: () => api<Batch>(`/api/factory/oligo/batches/${id}`) });
   const [finishing, setFinishing] = useState(false);
   const refresh = () => {
     setFinishing(false);
-    for (const k of ["oligo-batch", "oligo-batches", "oligo-batch-candidates", "oligo-orders", "oligo-order"]) qc.invalidateQueries({ queryKey: ["factory", k] });
+    for (const k of ["oligo-batch", "oligo-batches", "oligo-batch-candidates", "oligo-orders", "oligo-order", "oligo-ports"]) qc.invalidateQueries({ queryKey: ["factory", k] });
   };
   const d = b.data;
   const canFinish = d?.actions.some((a) => a.action === "finish");
@@ -102,6 +138,7 @@ export function BatchPanel({ id, onClose }: { id: string; onClose: () => void })
             {canFinish && !finishing && <Button onClick={() => setFinishing(true)}>Kết thúc mẻ…</Button>}
           </div>
           {finishing && <FinishForm batch={d} onDone={refresh} />}
+          {d.status === "RUNNING" && canFinish && <SwapBottle batch={d} onDone={refresh} />}
           <Table head={["Vị trí", "Trình tự", "Thang", "Lô cột", "Số lần ghép", "Hiệu suất", "Kết quả", "Trạng thái trình tự"]}>
             {d.positions.map((p) => (
               <tr key={p.position_no}>

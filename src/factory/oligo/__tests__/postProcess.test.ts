@@ -7,6 +7,8 @@ import { approveSpec, createSpecDraft, specMachine } from "../../qms/specs";
 import { getQcTest, qcTestMachine, saveResults } from "../../qms/qcTests";
 import { addSequences, createOligoOrder } from "../orders";
 import { getPostProcess, quantify, savePostProcess, sendToQc, startPostProcess } from "../postProcess";
+import { coaForTest } from "../../qms/coa";
+import { orderCoa } from "../coa";
 import "../../modules";
 
 afterAll(closeFactoryPool);
@@ -133,6 +135,16 @@ describe("post-synthesis and Oligo QC", () => {
     await act(qcTestMachine, qa, "qms.qc_test", test.id, "review", signed);
     expect(await seqStatus(s.id)).toBe("COMPLETED");
     expect((await db().query("SELECT status FROM oligo.oligo_order WHERE id = $1", [order.id])).rows[0].status).toBe("COMPLETED");
+
+    // the certificate shows the reviewed results and the reviewer's signature, for the test and for the order
+    await expect(withTransaction((tx) => coaForTest(tx, analyst, t.id))).resolves.toBeTruthy();
+    const coa = await withTransaction((tx) => coaForTest(tx, qa, test.id));
+    expect(coa.signature).toMatchObject({ meaning: "REVIEWED" });
+    const oc = await withTransaction((tx) => orderCoa(tx, op, order.id));
+    expect(oc.sequences).toHaveLength(1);
+    expect(oc.sequences[0]).toMatchObject({ code: s.code, measured: { od_total: 25 } });
+    const delta = oc.sequences[0].qc!.results.find((r: any) => r.name.startsWith("Sai lệch"));
+    expect(delta).toMatchObject({ value_numeric: 1.2, passed: true });
   });
 
   it("a failing review fails the sequence with an NCR; a cancelled test returns it to post-processing", async () => {

@@ -8,6 +8,7 @@ import { runTransition } from "../core/stateMachine";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { pyRound } from "./analyzer";
 import { recomputeOrdersOf, visibleOligoUnits } from "./orders";
+import { stepLogs, workflowFor } from "./postSop";
 import { sequenceMachine } from "./sequences";
 
 registerPermissions([{ code: "oligo.post.manage", description: "Hậu tổng hợp Oligo: cắt, khử bảo vệ, tinh sạch, đo OD, hoàn nguyên / chia ống, gửi QC" }]);
@@ -38,17 +39,24 @@ const move = async (tx: Tx, actor: AuthzActor, seq: { id: string; version: numbe
   return out;
 };
 
+/** A new post-processing record; it follows (a frozen copy of) the SOP workflow of the purification when one is configured. */
+export async function openRecord(tx: Tx, actor: AuthzActor, f: { sequence_id: string; batch_id: string | null; purification: string; format: string; notes?: string }) {
+  const wf = await workflowFor(tx, f.purification);
+  return (
+    await tx.query(
+      `INSERT INTO oligo.post_process (sequence_id, batch_id, purification, format, notes, workflow_id, workflow_revision, workflow_steps, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING *`,
+      [f.sequence_id, f.batch_id, f.purification, f.format, f.notes ?? null, wf?.id ?? null, wf?.revision ?? null, wf ? JSON.stringify(wf.steps) : null, actor.userId]
+    )
+  ).rows[0];
+}
+
 /** SYNTHESIZED → POST_PROCESSING: opens the post-processing record with the ordered purification and format. */
 export async function startPostProcess(tx: Tx, actor: AuthzActor, seqId: string) {
   const s = await lockSequence(tx, seqId);
   await move(tx, actor, s, "start_post");
   const batch = (await tx.query("SELECT batch_id FROM oligo.synthesis_position WHERE sequence_id = $1 AND result = 'OK' ORDER BY batch_id DESC LIMIT 1", [seqId])).rows[0];
-  const rec = (
-    await tx.query(
-      `INSERT INTO oligo.post_process (sequence_id, batch_id, purification, format, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $5) RETURNING *`,
-      [seqId, batch?.batch_id ?? null, s.purification, s.format, actor.userId]
-    )
-  ).rows[0];
+  const rec = await openRecord(tx, actor, { sequence_id: seqId, batch_id: batch?.batch_id ?? null, purification: s.purification, format: s.format });
   await writeAudit(tx, actor, { entityType: "oligo_post_process", entityId: rec.id, action: "create", changes: { sequence: [null, s.code] } });
   return rec;
 }
@@ -79,6 +87,8 @@ export async function savePostProcess(tx: Tx, actor: AuthzActor, seqId: string, 
   if (cur.version !== data.version) throw conflict("Hồ sơ hậu tổng hợp vừa được người khác sửa. Tải lại rồi nhập lại.", "STALE_VERSION");
   const next: Record<string, any> = {};
   for (const k of EDITABLE) next[k] = data[k] === undefined ? cur[k] : data[k];
+  // with an SOP the steps are confirmed one by one (logStep), not ticked here
+  if (cur.workflow_steps) for (const k of ["cleavage_done", "deprotection_done", "purification_done"] as const) next[k] = cur[k];
   for (const k of ["a260", "dilution_factor", "path_cm", "stock_volume_ul", "target_conc_um"]) if (next[k] != null) next[k] = Number(next[k]);
   if (cur.format === "LYOPHILIZED") next.target_conc_um = null;
   const measured = next.a260 != null && next.stock_volume_ul != null;
@@ -109,10 +119,13 @@ export async function sendToQc(tx: Tx, actor: AuthzActor, seqId: string) {
   const s = await lockSequence(tx, seqId);
   const rec = await liveRecord(tx, seqId, true);
   if (!rec || rec.status !== "OPEN") throw invalid("Trình tự chưa có hồ sơ hậu tổng hợp đang mở.");
+  const sop: { name: string }[] | null = rec.workflow_steps;
+  const logged = Number((await tx.query("SELECT count(*) FROM oligo.ps_step_log WHERE post_process_id = $1", [rec.id])).rows[0].count);
   const missing = [
-    !rec.cleavage_done && "cắt khỏi cột",
-    !rec.deprotection_done && "khử bảo vệ",
-    !rec.purification_done && `tinh sạch ${rec.purification}`,
+    sop && logged < sop.length && `các bước SOP (${sop.slice(logged).map((x) => x.name).join(", ")})`,
+    !sop && !rec.cleavage_done && "cắt khỏi cột",
+    !sop && !rec.deprotection_done && "khử bảo vệ",
+    !sop && !rec.purification_done && `tinh sạch ${rec.purification}`,
     !(Number(rec.od_total) > 0) && "đo OD260",
     rec.format === "LIQUID" && rec.resuspend_volume_ul == null && "nồng độ hoàn nguyên",
   ].filter(Boolean);
@@ -155,7 +168,8 @@ export async function getPostProcess(tx: Tx, actor: AuthzActor, seqId: string) {
   const qc_tests = (
     await tx.query("SELECT id, code, status, overall_result, created_at, reviewed_at FROM qms.qc_test WHERE entity_type = 'OLIGO_SEQUENCE' AND entity_id = $1 ORDER BY created_at", [seqId])
   ).rows;
-  return { sequence: s, record, qc_tests };
+  const steps = record?.workflow_steps ? await stepLogs(tx, record.id) : [];
+  return { sequence: s, record, steps, qc_tests };
 }
 
 // ---- QA/QC hooks: what the Oligo department hands to the QC test of a sequence ----

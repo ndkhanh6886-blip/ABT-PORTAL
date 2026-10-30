@@ -1,8 +1,8 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, type AuthzActor } from "../core/authz";
-import { notFound } from "../core/errors";
+import { authorize, authorizeAnywhere, type AuthzActor } from "../core/authz";
+import { invalid, notFound } from "../core/errors";
 import { parseInput } from "../core/records";
 import { listAllowedActions } from "../core/stateMachine";
 import { batchMachine } from "./batches";
@@ -12,7 +12,7 @@ export async function listReagentRules(tx: Tx, actor: AuthzActor) {
   await authorize(tx, actor, "oligo.view");
   return (
     await tx.query(
-      `SELECT r.role, r.name, r.basis, r.qty::float AS qty, r.uom, r.item_id, r.status, r.version, i.code AS item_code, i.name AS item_name, i.base_uom
+      `SELECT r.role, r.name, r.display_name, r.is_visible, r.basis, r.qty::float AS qty, r.uom, r.item_id, r.status, r.version, i.code AS item_code, i.name AS item_name, i.base_uom
          FROM oligo.reagent_rule r LEFT JOIN master.item i ON i.id = r.item_id
         ORDER BY array_position(ARRAY['PER_CYCLE','PER_COUPLING','PER_MOD'], r.basis), r.role`
     )
@@ -26,23 +26,51 @@ const ruleSchema = z.object({
   uom: z.string().min(1).optional(),
   item_id: z.string().uuid().nullable().optional(),
   status: z.enum(["ACTIVE", "INACTIVE"]).optional(),
+  display_name: z.string().trim().max(100).nullable().optional(),
+  is_visible: z.boolean().optional(),
 });
 
 /** Consumption rules drive reservations and issues of every later batch: audited with a reason. */
 export async function updateReagentRule(tx: Tx, actor: AuthzActor, role: string, input: unknown) {
-  await authorize(tx, actor, "oligo.reagent.manage");
+  await authorizeAnywhere(tx, actor, "oligo.reagent.manage");
   const data = parseInput(ruleSchema, input);
   const cur = (await tx.query("SELECT * FROM oligo.reagent_rule WHERE role = $1 FOR UPDATE", [role])).rows[0];
   if (!cur) throw notFound("định mức");
   if (cur.version !== data.version) throw notFound("định mức (vừa bị sửa — tải lại)");
-  const next = { qty: data.qty ?? Number(cur.qty), uom: data.uom ?? cur.uom, item_id: data.item_id === undefined ? cur.item_id : data.item_id, status: data.status ?? cur.status };
-  await tx.query("UPDATE oligo.reagent_rule SET qty = $2, uom = $3, item_id = $4, status = $5, version = version + 1, updated_at = now(), updated_by = $6 WHERE role = $1", [
-    role, next.qty, next.uom, next.item_id, next.status, actor.userId,
+  const next = {
+    qty: data.qty ?? Number(cur.qty), uom: data.uom ?? cur.uom, item_id: data.item_id === undefined ? cur.item_id : data.item_id, status: data.status ?? cur.status,
+    display_name: data.display_name === undefined ? cur.display_name : data.display_name || null, is_visible: data.is_visible ?? cur.is_visible,
+  };
+  await tx.query("UPDATE oligo.reagent_rule SET qty = $2, uom = $3, item_id = $4, status = $5, display_name = $7, is_visible = $8, version = version + 1, updated_at = now(), updated_by = $6 WHERE role = $1", [
+    role, next.qty, next.uom, next.item_id, next.status, actor.userId, next.display_name, next.is_visible,
   ]);
   const changes: Record<string, [unknown, unknown]> = {};
   if (Number(cur.qty) !== next.qty) changes.qty = [Number(cur.qty), next.qty];
-  for (const k of ["uom", "item_id", "status"] as const) if (cur[k] !== next[k]) changes[k] = [cur[k], next[k]];
+  for (const k of ["uom", "item_id", "status", "display_name", "is_visible"] as const) if (cur[k] !== next[k]) changes[k] = [cur[k], next[k]];
   await writeAudit(tx, actor, { entityType: "oligo_reagent_rule", entityId: role, action: "update", changes, reason: data.reason });
+}
+
+const newRuleSchema = z.object({
+  role: z.string().trim().regex(/^[A-Za-z0-9_+-]{2,40}$/, "mã vai trò: chữ, số, _ - +, 2–40 ký tự"),
+  name: z.string().trim().min(1).max(100),
+  basis: z.enum(["PER_CYCLE", "PER_COUPLING", "PER_MOD"]),
+  qty: z.coerce.number().min(0),
+  uom: z.string().min(1),
+  item_id: z.string().uuid().nullable().optional(),
+});
+
+/**
+ * A role of one's own (as OligoFlow): PER_CYCLE is used every coupling; a PER_MOD / PER_COUPLING role named
+ * like a modification code (e.g. FAM) is that modification's own amidite rule instead of MOD_DEFAULT.
+ */
+export async function createReagentRule(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhere(tx, actor, "oligo.reagent.manage");
+  const d = parseInput(newRuleSchema, input);
+  if ((await tx.query("SELECT 1 FROM oligo.reagent_rule WHERE role = $1", [d.role])).rowCount) throw invalid(`Đã có vai trò ${d.role}.`);
+  await tx.query("INSERT INTO oligo.reagent_rule (role, name, basis, qty, uom, item_id, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7)", [
+    d.role, d.name, d.basis, d.qty, d.uom, d.item_id ?? null, actor.userId,
+  ]);
+  await writeAudit(tx, actor, { entityType: "oligo_reagent_rule", entityId: d.role, action: "create", changes: { role: [null, d.role], qty: [null, d.qty] } });
 }
 
 export async function listBatches(tx: Tx, actor: AuthzActor, status?: string) {
