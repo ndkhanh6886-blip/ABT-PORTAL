@@ -6,11 +6,12 @@ import { api, fmtDate } from "../api";
 import { Card, Empty, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
 import { BatchPanel } from "./BatchPanel";
 import { BatchPlanForm } from "./BatchPlanForm";
+import { ConsumptionReports } from "./ConsumptionReports";
 import { BATCH_STATUS } from "./shared";
 
 interface Row { id: string; code: string; status: string; program_name: string | null; synthesizer_code: string; synthesizer_name: string; position_count: number; created_at: string; started_at: string | null }
 
-export function BatchesView({ canManage }: { canManage: boolean }) {
+export function BatchesView({ canManage, canApplyRules }: { canManage: boolean; canApplyRules: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [status, setStatus] = useState("");
   const list = useQuery({ queryKey: ["factory", "oligo-batches", status], queryFn: () => api<Row[]>(`/api/factory/oligo/batches${status ? `?status=${status}` : ""}`) });
@@ -44,6 +45,7 @@ export function BatchesView({ canManage }: { canManage: boolean }) {
           </Table>
         )}
       </Card>
+      <ConsumptionReports canApply={canApplyRules} />
     </div>
   );
 }

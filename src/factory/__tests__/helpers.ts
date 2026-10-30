@@ -7,12 +7,17 @@ import { getFactoryPool, withTransaction, type Tx } from "../core/db";
 import type { AuthzActor } from "../core/authz";
 import "./fixtures/permissions";
 
-let nextUserId = 900_000 + Math.floor(Math.random() * 50_000);
-
-/** Creates a factory user profile with a fresh id (ids never clash between tests). */
+/**
+ * Creates a factory user profile with a fresh id: the next id after the highest test id in the database
+ * (test files run one at a time, so ids never clash — a random start per file did, now and then).
+ */
 export async function createUser(name = "Người dùng thử", pin?: string): Promise<AuthzActor> {
-  const userId = nextUserId++;
-  await getFactoryPool().query("INSERT INTO core.user_profile (user_id, display_name) VALUES ($1, $2)", [userId, name]);
+  const userId = (
+    await getFactoryPool().query(
+      "INSERT INTO core.user_profile (user_id, display_name) SELECT greatest(coalesce(max(user_id), 0), 899999) + 1, $1 FROM core.user_profile WHERE user_id >= 900000 RETURNING user_id",
+      [name]
+    )
+  ).rows[0].user_id as number;
   if (pin) {
     const { setPin } = await import("../core/signature");
     await withTransaction((tx) => setPin(tx, userId, pin));

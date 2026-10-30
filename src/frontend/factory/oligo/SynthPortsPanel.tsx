@@ -18,6 +18,29 @@ interface PortsData {
 }
 interface RuleOpt { role: string; name: string; display_name: string | null }
 
+/** Taking a bottle off with the measured volumes: calibrates the rule and books the difference on the lot. */
+function RemoveBottle({ synthId, port, onDone }: { synthId: string; port: PortRow; onDone: () => void }) {
+  const [f, setF] = useState({ volume_start: "", volume_left: "", uom: port.item?.base_uom ?? "mL", adjust_stock: true, notes: "" });
+  const remove = useMutation({
+    mutationFn: () =>
+      api<{ ratio: number | null; suggested_qty: number | null }>(`/api/factory/oligo/synthesizers/${synthId}/ports/${port.port_no}/remove`, {
+        method: "POST",
+        json: { ...f, volume_start: Number(f.volume_start), volume_left: Number(f.volume_left), notes: f.notes || null },
+      }),
+    onSuccess: onDone,
+  });
+  return (
+    <form className="flex flex-wrap gap-1 items-center text-xs" onSubmit={(e) => { e.preventDefault(); remove.mutate(); }}>
+      <input className={`${inputClass} w-24`} inputMode="decimal" placeholder="Lúc lắp" value={f.volume_start} onChange={(e) => setF({ ...f, volume_start: e.target.value })} required aria-label="Dung tích chai lúc lắp" />
+      <input className={`${inputClass} w-24`} inputMode="decimal" placeholder="Còn lại" value={f.volume_left} onChange={(e) => setF({ ...f, volume_left: e.target.value })} required aria-label="Lượng còn lại khi tháo" />
+      <input className={`${inputClass} w-14`} value={f.uom} onChange={(e) => setF({ ...f, uom: e.target.value })} aria-label="Đơn vị" />
+      <label className="flex items-center gap-1"><input type="checkbox" checked={f.adjust_stock} onChange={(e) => setF({ ...f, adjust_stock: e.target.checked })} />Ghi chênh lệch vào kho</label>
+      <Button type="submit" variant="ghost" disabled={remove.isPending}>Tháo chai</Button>
+      {remove.error != null && <ErrorNote error={remove.error} />}
+    </form>
+  );
+}
+
 const EVENT: Record<string, string> = { INSTALL: "Lắp chai", REMOVE: "Tháo chai", SWAP: "Thay chai trong mẻ" };
 
 /** Ports of one synthesizer (as OligoFlow): which reagent each port feeds and which bottle (lot) is on it. */
@@ -60,7 +83,7 @@ export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: 
         <div className="flex flex-col gap-3">
           {d.ports.length === 0 && <Empty>Chưa khai báo cổng. Máy chưa có cổng thì hóa chất được giữ chỗ theo hạn dùng (FEFO) từ kho.</Empty>}
           {d.ports.length > 0 && (
-            <Table head={["Cổng", "Hóa chất", "Mã hàng", "Chai đang lắp", "Còn (sổ kho)", "Hạn dùng", "Lắp / thay chai"]}>
+            <Table head={["Cổng", "Hóa chất", "Mã hàng", "Chai đang lắp", "Còn (sổ kho)", "Hạn dùng", "Lắp / thay chai", "Tháo chai (đo lượng còn)"]}>
               {d.ports.map((p) => (
                 <tr key={p.port_no}>
                   <td className="py-1.5 pr-3 font-bold">{p.port_no}</td>
@@ -78,16 +101,18 @@ export function SynthPortsPanel({ synthId, canConfigure, canOperate, onClose }: 
                         onChange={(e) => bottle.mutate({ port: p.port_no, lot: e.target.value || null })}
                         aria-label={`Chai cho cổng ${p.port_no}`}
                       >
-                        <option value="">— tháo chai —</option>
+                        <option value="">— không lắp —</option>
                         {p.lots.map((l) => <option key={l.lot_id} value={l.lot_id}>{l.code} (còn {fmtQty(l.available)}{l.expiry_date ? `, HD ${fmtDate(l.expiry_date)}` : ""})</option>)}
                       </select>
                     )}
                   </td>
+                  <td className="py-1.5 pr-3">{canOperate && p.current_lot_id && <RemoveBottle synthId={synthId} port={p} onDone={refresh} />}</td>
                 </tr>
               ))}
             </Table>
           )}
           <p className="text-[11px] text-slate-500">
+            Tháo chai hết: nhập dung tích lúc lắp và lượng còn lại — hệ thống so với lượng các mẻ đã ghi sổ, đề xuất định mức mới (xem ở Mẻ tổng hợp → Hiệu chuẩn định mức).
             Lập mẻ giữ chỗ hóa chất của mỗi cổng từ chai đang lắp; đổi chai trước khi chạy thì mẻ tự chuyển sang chai mới. Đang chạy mẻ thì thay chai tại màn hình mẻ, ghi chu kỳ thay —
             phần tiêu hao từ chu kỳ đó trở đi tính cho chai mới. Chai hết thật nhưng sổ kho còn: kho kiểm kê điều chỉnh.
           </p>

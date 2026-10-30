@@ -55,7 +55,7 @@ export function FactoryOligoModule() {
       </div>
       {tab === "orders" && <OligoOrdersView canManage={perms.has("oligo.order.manage")} />}
       {tab === "pools" && <PoolsView canManage={perms.has("oligo.order.manage")} />}
-      {tab === "batches" && <BatchesView canManage={perms.has("oligo.batch.manage")} />}
+      {tab === "batches" && <BatchesView canManage={perms.has("oligo.batch.manage")} canApplyRules={perms.has("oligo.reagent.manage")} />}
       {tab === "post" && <PostProcessView canManage={perms.has("oligo.post.manage")} canLabel={perms.has("oligo.delivery.manage")} />}
       {tab === "delivery" && <DeliveryView canManage={perms.has("oligo.delivery.manage")} />}
       {tab === "equipment" && (

@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtQty } from "../api";
 import { ActionBar, type AllowedAction } from "../actions";
 import { Button, Card, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
+import { BatchVisual, type BatchLot } from "./BatchVisual";
 import { BATCH_STATUS, SEQ_STATUS } from "./shared";
 
 interface Batch {
@@ -20,6 +21,8 @@ interface Batch {
   finished_at: string | null;
   positions: { position_no: number; couplings: number; coupling_efficiency_pct: number | null; result: string | null; sequence_code: string; name: string; normalized_sequence: string; scale_code: string; sequence_status: string; column_lot_code: string }[];
   reagents: { item_id: string; role: string; est_qty_base: number; actual_qty_base: number | null; item_code: string; item_name: string; base_uom: string }[];
+  column_positions: number | null;
+  lots: BatchLot[];
   actions: AllowedAction[];
 }
 
@@ -109,12 +112,49 @@ function SwapBottle({ batch, onDone }: { batch: Batch; onDone: () => void }) {
   );
 }
 
+const local = (v: string | null) => {
+  if (!v) return "";
+  const d = new Date(v);
+  return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+};
+
+/** Correction of the recorded run times, with a reason (audited). */
+function EditTimes({ batch, onDone }: { batch: Batch; onDone: () => void }) {
+  const [f, setF] = useState({ started_at: local(batch.started_at), finished_at: local(batch.finished_at), reason: "" });
+  const save = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/oligo/batches/${batch.id}/times`, {
+        method: "PUT",
+        json: {
+          version: batch.version,
+          started_at: f.started_at ? new Date(f.started_at).toISOString() : null,
+          finished_at: batch.status === "RUNNING" ? undefined : f.finished_at ? new Date(f.finished_at).toISOString() : null,
+          reason: f.reason,
+        },
+      }),
+    onSuccess: onDone,
+  });
+  return (
+    <form className="flex flex-wrap gap-2 items-end p-3 rounded-xl border border-slate-200 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+      <label className="text-xs">Bắt đầu<input className={`${inputClass} w-48`} type="datetime-local" value={f.started_at} onChange={(e) => setF({ ...f, started_at: e.target.value })} required /></label>
+      {batch.status !== "RUNNING" && (
+        <label className="text-xs">Kết thúc<input className={`${inputClass} w-48`} type="datetime-local" value={f.finished_at} onChange={(e) => setF({ ...f, finished_at: e.target.value })} required /></label>
+      )}
+      <label className="text-xs">Lý do *<input className={`${inputClass} w-64`} value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} required /></label>
+      <Button type="submit" variant="ghost" disabled={save.isPending}>Lưu giờ</Button>
+      <div className="w-full"><ErrorNote error={save.error} /></div>
+    </form>
+  );
+}
+
 export function BatchPanel({ id, onClose }: { id: string; onClose: () => void }) {
   const qc = useQueryClient();
   const b = useQuery({ queryKey: ["factory", "oligo-batch", id], queryFn: () => api<Batch>(`/api/factory/oligo/batches/${id}`) });
   const [finishing, setFinishing] = useState(false);
+  const [editTimes, setEditTimes] = useState(false);
   const refresh = () => {
     setFinishing(false);
+    setEditTimes(false);
     for (const k of ["oligo-batch", "oligo-batches", "oligo-batch-candidates", "oligo-orders", "oligo-order", "oligo-ports"]) qc.invalidateQueries({ queryKey: ["factory", k] });
   };
   const d = b.data;
@@ -132,10 +172,15 @@ export function BatchPanel({ id, onClose }: { id: string; onClose: () => void })
             <span>Chương trình: {d.program_name ?? "—"}</span>
             <span>Bắt đầu: {fmtTime(d.started_at)}</span>
             <span>Kết thúc: {fmtTime(d.finished_at)}</span>
+            {d.started_at && <button type="button" className="text-sky-700 dark:text-sky-400 underline cursor-pointer" onClick={() => setEditTimes(!editTimes)}>Sửa giờ</button>}
           </div>
+          {editTimes && <EditTimes batch={d} onDone={refresh} />}
           <div className="flex flex-wrap gap-2 items-start">
             <ActionBar endpoint={`/api/factory/oligo/batches/${d.id}/actions`} version={d.version} actions={d.actions.filter((a) => a.action !== "finish")} labels={LABELS} onDone={refresh} />
             {canFinish && !finishing && <Button onClick={() => setFinishing(true)}>Kết thúc mẻ…</Button>}
+          </div>
+          <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800">
+            <BatchVisual positions={d.positions} columnCount={d.column_positions} lots={d.lots} />
           </div>
           {finishing && <FinishForm batch={d} onDone={refresh} />}
           {d.status === "RUNNING" && canFinish && <SwapBottle batch={d} onDone={refresh} />}

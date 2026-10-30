@@ -8,6 +8,8 @@ import { makeItem, makeSite, stockedLot } from "../../inv/__tests__/fixtures";
 import { batchMachine, planBatch } from "../batches";
 import { addSequences, createOligoOrder } from "../orders";
 import { configurePorts, listPorts, setBottle, swapBottle } from "../synthPorts";
+import { applyCalibration, removeAndCalibrate } from "../bottleCalibration";
+import { consumptionReport } from "../consumptionReport";
 import "../../modules";
 
 afterAll(closeFactoryPool);
@@ -79,6 +81,27 @@ describe("synthesizer ports and bottles", () => {
     expect(await onHand(t.lotB.id)).toBeCloseTo(183, 6); // the extra comes from the bottle now on the port
     const ev = (await db().query("SELECT event, swap_cycle FROM oligo.bottle_event WHERE synthesizer_id = $1 ORDER BY created_at", [t.synth.id])).rows;
     expect(ev.map((e) => e.event)).toEqual(["INSTALL", "SWAP"]);
+
+    // the report shows the batch's variance: 2 mL over the estimate
+    const report = await withTransaction((tx) => consumptionReport(tx, t.op, {}));
+    const v = report.variance.find((r: any) => r.batch_id === b.id)!;
+    expect(v.diff).toBeCloseTo(2, 6);
+
+    // bottle B comes off: 200 mL at install, 180 mL left → it gave 20 mL, batches booked 15 (swap) + 2 (extra) = 17 mL
+    await expect(withTransaction((tx) => removeAndCalibrate(tx, t.op, t.synth.id, 1, { volume_start: 200, volume_left: 210, uom: "mL" }))).rejects.toThrow(/không được lớn hơn/);
+    const cal = await withTransaction((tx) => removeAndCalibrate(tx, t.op, t.synth.id, 1, { volume_start: 200, volume_left: 180, uom: "mL" }));
+    expect(Number(cal.booked_qty)).toBeCloseTo(17, 6);
+    expect(Number(cal.ratio)).toBeCloseTo(1.1765, 4);
+    expect(Number(cal.suggested_qty)).toBeCloseTo(3.5294, 4); // ACN 3.0 mL/cycle × 20/17
+    expect(await onHand(t.lotB.id)).toBeCloseTo(180, 6); // the 3 mL not booked by batches is issued now
+    expect((await db().query("SELECT current_lot_id FROM oligo.synth_port WHERE synthesizer_id = $1 AND port_no = 1", [t.synth.id])).rows[0].current_lot_id).toBeNull();
+
+    const lead = await createUser("Trưởng phòng Oligo");
+    await grant(lead, ["oligo.reagent.manage"], t.site.dept);
+    await expect(withTransaction((tx) => applyCalibration(tx, t.op, cal.id, "Theo hiệu chuẩn chai"))).rejects.toThrow(/quyền/);
+    await withTransaction((tx) => applyCalibration(tx, lead, cal.id, "Theo hiệu chuẩn chai"));
+    expect(Number((await db().query("SELECT qty FROM oligo.reagent_rule WHERE role = 'ACN'")).rows[0].qty)).toBeCloseTo(3.5294, 4);
+    await db().query("UPDATE oligo.reagent_rule SET qty = 3.0 WHERE role = 'ACN'"); // other tests rely on the seeded rule
   });
 
   it("a bottle changed between plan and start moves the batch's hold to the new bottle", async () => {

@@ -111,7 +111,30 @@ export async function getBatch(tx: Tx, actor: AuthzActor, id: string) {
       [id]
     )
   ).rows;
-  return { ...b, positions, reagents, actions: await listAllowedActions(tx, batchMachine, actor, b) };
+  const synth = (await tx.query("SELECT column_positions FROM oligo.synthesizer WHERE asset_id = $1", [b.synthesizer_id])).rows[0];
+  // what the batch holds or took from each lot (reservations before the run, the stock ledger after), with what the lot still has
+  const lots = (
+    await tx.query(
+      `WITH moved AS (
+         SELECT sl.item_id, sl.lot_id, -sum(sl.qty_delta_base) AS used
+           FROM inv.stock_ledger sl JOIN inv.stock_document_line dl ON dl.id = sl.document_line_id JOIN inv.stock_document d ON d.id = dl.document_id
+          WHERE d.source_entity_type = 'SYNTHESIS_BATCH' AND d.source_entity_id = $1 GROUP BY sl.item_id, sl.lot_id),
+       held AS (
+         SELECT item_id, lot_id, sum(qty_base - qty_consumed) AS held FROM inv.reservation
+          WHERE demand_entity_type = 'SYNTHESIS_BATCH' AND demand_entity_id = $1 AND status = 'ACTIVE' GROUP BY item_id, lot_id)
+       SELECT coalesce(m.item_id, h.item_id) AS item_id, coalesce(m.lot_id, h.lot_id) AS lot_id, coalesce(m.used, 0)::float AS used, coalesce(h.held, 0)::float AS held,
+              i.code AS item_code, i.name AS item_name, i.base_uom, i.item_type, l.code AS lot_code, l.expiry_date,
+              (SELECT coalesce(sum(qty_on_hand), 0) FROM inv.stock_balance WHERE lot_id = coalesce(m.lot_id, h.lot_id))::float AS on_hand,
+              pu.port_no, pu.role AS port_role
+         FROM moved m FULL JOIN held h ON h.item_id = m.item_id AND h.lot_id IS NOT DISTINCT FROM m.lot_id
+         JOIN master.item i ON i.id = coalesce(m.item_id, h.item_id) LEFT JOIN inv.lot l ON l.id = coalesce(m.lot_id, h.lot_id)
+         LEFT JOIN oligo.batch_port_use pu ON pu.batch_id = $1 AND pu.lot_id = coalesce(m.lot_id, h.lot_id)
+        WHERE coalesce(m.used, 0) <> 0 OR coalesce(h.held, 0) <> 0
+        ORDER BY i.item_type, i.code, l.code`,
+      [id]
+    )
+  ).rows;
+  return { ...b, column_positions: synth?.column_positions ?? null, positions, reagents, lots, actions: await listAllowedActions(tx, batchMachine, actor, b) };
 }
 
 /**
@@ -148,4 +171,36 @@ export async function batchCandidates(tx: Tx, actor: AuthzActor, orgUnitId: stri
     )
   ).rows;
   return { sequences, synthesizers, column_lots };
+}
+
+const timesSchema = z.object({
+  version: z.number().int().min(0),
+  started_at: z.string().datetime({ offset: true }).optional().nullable(),
+  finished_at: z.string().datetime({ offset: true }).optional().nullable(),
+  reason: z.string().trim().min(3, "nhập lý do sửa giờ"),
+});
+
+/** Corrects the recorded run times (e.g. entered after the fact). Never in the future, start before end; audited old → new. */
+export async function editBatchTimes(tx: Tx, actor: AuthzActor, id: string, input: unknown) {
+  const d = parseInput(timesSchema, input);
+  const b = (await tx.query("SELECT * FROM oligo.synthesis_batch WHERE id = $1 FOR UPDATE", [id])).rows[0];
+  if (!b) throw notFound("mẻ tổng hợp");
+  await authorize(tx, actor, "oligo.batch.manage", b.org_unit_id);
+  if (b.version !== d.version) throw invalid("Mẻ vừa thay đổi. Tải lại.", undefined, "STALE_VERSION");
+  if (!["RUNNING", "COMPLETED", "ABORTED"].includes(b.status)) throw invalid("Chỉ sửa giờ của mẻ đã bắt đầu chạy.");
+  const started = d.started_at === undefined ? b.started_at : d.started_at ? new Date(d.started_at) : null;
+  const finished = b.status === "RUNNING" ? null : d.finished_at === undefined ? b.finished_at : d.finished_at ? new Date(d.finished_at) : null;
+  const now = Date.now() + 60_000;
+  if (!started) throw invalid("Mẻ đã chạy phải có giờ bắt đầu.");
+  if (started.getTime() > now || (finished && finished.getTime() > now)) throw invalid("Giờ không được ở tương lai.");
+  if (finished && finished < started) throw invalid("Giờ kết thúc phải sau giờ bắt đầu.");
+  if (b.status !== "RUNNING" && !finished) throw invalid("Mẻ đã kết thúc phải có giờ kết thúc.");
+  await tx.query("UPDATE oligo.synthesis_batch SET started_at = $2, finished_at = $3, version = version + 1, updated_at = now(), updated_by = $4 WHERE id = $1", [id, started, finished, actor.userId]);
+  await writeAudit(tx, actor, {
+    entityType: "synthesis_batch",
+    entityId: id,
+    action: "edit_times",
+    changes: { started_at: [b.started_at, started], finished_at: [b.finished_at, finished] },
+    reason: d.reason,
+  });
 }
