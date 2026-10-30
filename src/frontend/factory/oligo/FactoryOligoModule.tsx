@@ -14,6 +14,7 @@ import { DeliveryView } from "./DeliveryView";
 import { EquipmentView } from "./EquipmentView";
 import { InstrumentsView } from "./InstrumentsView";
 import { AssetEventsView } from "./AssetEventsView";
+import { ColumnsView } from "./ColumnsView";
 import { PostProcessView } from "./PostProcessView";
 import { SopConfigView } from "./SopConfigView";
 import { PreparationView } from "../prep/PreparationView";
@@ -75,6 +76,7 @@ export function FactoryOligoModule() {
         <div className="flex flex-col gap-3">
           <EquipmentView canManageAssets={perms.has("asset.manage")} canManageRules={perms.has("oligo.reagent.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} canOperate={perms.has("oligo.batch.manage")} />
           <InstrumentsView canManage={perms.has("asset.manage")} canOperate={perms.has("asset.operate")} />
+          <ColumnsView canManage={perms.has("asset.manage")} />
           <AssetEventsView canPlan={perms.has("asset.operate") || perms.has("asset.manage")} />
         </div>
       )}

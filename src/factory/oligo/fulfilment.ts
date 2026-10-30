@@ -95,11 +95,18 @@ export async function printLabels(tx: Tx, actor: AuthzActor, input: unknown) {
     await tx.query(
       `SELECT s.id, s.code, s.name, s.org_unit_id, s.status, s.normalized_sequence, s.base_count, s.mw::float AS mw, s.tm::float AS tm, s.scale_code, s.purification, s.format,
               s.modifications, o.code AS order_code, o.customer_label, sc.label AS scale_label,
-              pp.od_total::float AS od_total, pp.nmol::float AS nmol, pp.ug::float AS ug, pp.tube_count, pp.target_conc_um::float AS conc_um, pp.resuspend_volume_ul::float AS volume_ul,
+              -- a pooled member (customer tube) takes its aliquot of the pool master's measurement
+              coalesce(pp.od_total, pa.od)::float AS od_total, coalesce(pp.nmol, pa.nmol)::float AS nmol, coalesce(pp.ug, pa.ug)::float AS ug,
+              coalesce(pp.tube_count, pa.tube_count) AS tube_count, coalesce(pp.target_conc_um, mpp.target_conc_um)::float AS conc_um,
+              coalesce(pp.resuspend_volume_ul, pa.volume_ul)::float AS volume_ul, CASE WHEN s.status = 'POOLED' THEN m.status ELSE s.status END AS eff_status,
               EXISTS (SELECT 1 FROM oligo.label_print lp WHERE lp.sequence_id = s.id) AS printed
          FROM oligo.oligo_sequence s JOIN oligo.scale sc ON sc.code = s.scale_code
          LEFT JOIN oligo.oligo_order o ON o.id = s.order_id
          LEFT JOIN oligo.post_process pp ON pp.sequence_id = s.id AND pp.status <> 'VOID'
+         LEFT JOIN oligo.oligo_pool pl ON pl.id = s.pool_id AND s.status = 'POOLED'
+         LEFT JOIN oligo.oligo_sequence m ON m.id = pl.master_sequence_id
+         LEFT JOIN oligo.post_process mpp ON mpp.sequence_id = m.id AND mpp.status <> 'VOID'
+         LEFT JOIN oligo.pool_aliquot pa ON pa.master_post_process_id = mpp.id AND pa.sequence_id = s.id
         WHERE s.id = ANY($1::uuid[]) ORDER BY s.code`,
       [data.sequence_ids]
     )
@@ -108,7 +115,8 @@ export async function printLabels(tx: Tx, actor: AuthzActor, input: unknown) {
   const labels = [];
   for (const r of rows) {
     await authorize(tx, actor, "oligo.delivery.manage", r.org_unit_id);
-    if (!LABEL_STATUSES.includes(r.status) || r.od_total == null) throw invalid(`${r.code}: chỉ in nhãn khi đã đo OD ở hậu tổng hợp.`);
+    if (r.status === "POOLED" && r.od_total == null) throw invalid(`${r.code} nằm trong mẻ gộp: chia ống cho trình tự gộp trước khi in nhãn.`, undefined, "ALIQUOT_MISSING");
+    if (!LABEL_STATUSES.includes(r.eff_status) || r.od_total == null) throw invalid(`${r.code}: chỉ in nhãn khi đã đo OD ở hậu tổng hợp.`);
     if (r.printed && !data.reason) throw invalid(`${r.code} đã in nhãn. In lại cần ghi lý do.`, undefined, "REPRINT_REASON");
     await tx.query("INSERT INTO oligo.label_print (sequence_id, labels, reprint, reason, printed_by) VALUES ($1, $2, $3, $4, $5)", [
       r.id, r.tube_count, r.printed, r.printed ? data.reason : null, actor.userId,
@@ -120,7 +128,7 @@ export async function printLabels(tx: Tx, actor: AuthzActor, input: unknown) {
         mw: r.mw, tm: r.tm, scale: r.scale_label, purification: r.purification, format: r.format, modifications: r.modifications,
         tube: `${i}/${r.tube_count}`, od: pyRound(r.od_total / r.tube_count, 2), nmol: pyRound(r.nmol / r.tube_count, 1),
         volume_ul: r.format === "LIQUID" && r.volume_ul ? pyRound(r.volume_ul / r.tube_count, 1) : null, conc_um: r.format === "LIQUID" ? r.conc_um : null,
-        released: r.status === "COMPLETED", date: vnToday(),
+        released: r.eff_status === "COMPLETED", date: vnToday(),
       });
     }
   }
@@ -134,13 +142,14 @@ async function deliverable(tx: Tx, orderId: string) {
   return (
     await tx.query(
       `SELECT s.id, s.code, s.name, s.status, s.version, s.base_count, s.scale_code, s.purification,
-              coalesce(pp.tube_count, mpp.tube_count, 1) AS tube_count,
-              EXISTS (SELECT 1 FROM oligo.label_print lp WHERE lp.sequence_id = coalesce(m.id, s.id)) AS labelled
+              coalesce(pp.tube_count, pa.tube_count, mpp.tube_count, 1) AS tube_count,
+              EXISTS (SELECT 1 FROM oligo.label_print lp WHERE lp.sequence_id IN (s.id, m.id)) AS labelled
          FROM oligo.oligo_sequence s
          LEFT JOIN oligo.oligo_pool p ON p.id = s.pool_id AND s.status = 'POOLED'
          LEFT JOIN oligo.oligo_sequence m ON m.id = p.master_sequence_id
          LEFT JOIN oligo.post_process pp ON pp.sequence_id = s.id AND pp.status = 'SUBMITTED'
          LEFT JOIN oligo.post_process mpp ON mpp.sequence_id = m.id AND mpp.status = 'SUBMITTED'
+         LEFT JOIN oligo.pool_aliquot pa ON pa.master_post_process_id = mpp.id AND pa.sequence_id = s.id
         WHERE s.order_id = $1 AND (s.status = 'COMPLETED' OR (s.status = 'POOLED' AND m.status = 'COMPLETED'))
           AND NOT EXISTS (SELECT 1 FROM oligo.delivery_item di WHERE di.sequence_id = s.id)
         ORDER BY s.line_no, s.code`,

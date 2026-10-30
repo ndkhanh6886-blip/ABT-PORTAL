@@ -6,6 +6,7 @@ import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { QC_STATUS_LABEL } from "../qa/QcTestsView";
 import { printWithReprint } from "./labels";
+import { PoolAliquotForm } from "./PoolAliquotForm";
 import { StepLogForm, StepTable, type FrozenStep, type StepLog } from "./StepLogForm";
 import { FORMAT, PURIFICATION, SEQ_STATUS } from "./shared";
 
@@ -21,7 +22,7 @@ interface Rec {
   workflow_steps: FrozenStep[] | null;
 }
 interface Detail {
-  sequence: { id: string; code: string; name: string; status: string; normalized_sequence: string; mw: string; nmol_per_od: string; ug_per_od: string; scale_code: string; order_code: string | null };
+  sequence: { id: string; code: string; name: string; status: string; relation: string | null; normalized_sequence: string; mw: string; nmol_per_od: string; ug_per_od: string; scale_code: string; order_code: string | null };
   record: Rec | null;
   steps: StepLog[];
   qc_tests: { id: string; code: string; status: string; overall_result: string | null }[];
@@ -83,7 +84,7 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
             <>
               {rec.workflow_steps ? (
                 <>
-                  <StepTable steps={rec.workflow_steps} logs={d.data!.steps} />
+                  <StepTable steps={rec.workflow_steps} logs={d.data!.steps} seqId={id} canCorrect={editable} onCorrected={refresh} />
                   {editable && rec.workflow_steps[d.data!.steps.length] && (
                     <StepLogForm key={d.data!.steps.length} step={rec.workflow_steps[d.data!.steps.length]} sequenceIds={[id]} odReady={Number(rec.od_total) > 0} onDone={refresh} />
                   )}
@@ -128,6 +129,7 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
               )}
             </>
           )}
+          {s.relation === "POOL_MASTER" && rec && Number(rec.od_total) > 0 && <PoolAliquotForm masterId={id} canEdit={canManage} onDone={refresh} />}
           {d.data!.qc_tests.length > 0 && (
             <Table head={["Phiếu QC", "Trạng thái", "Kết quả"]}>
               {d.data!.qc_tests.map((t) => (

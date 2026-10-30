@@ -7,11 +7,11 @@ import { Button, Card, Empty, ErrorNote, Field, inputClass, Table } from "../ui"
 import { ItemPicker } from "./EquipmentView";
 import { PURIFICATION } from "./shared";
 
-export interface StepField { key: string; label: string; type: "NUMBER" | "TEXT" | "EQUIPMENT" | "REAGENT"; unit?: string | null; required: boolean; item_id?: string | null; default_qty?: number | null; uom?: string | null }
+export interface StepField { key: string; label: string; type: "NUMBER" | "TEXT" | "EQUIPMENT" | "REAGENT" | "COLUMN"; unit?: string | null; required: boolean; item_id?: string | null; default_qty?: number | null; uom?: string | null }
 interface Method { id: string; category: string; name: string; kind: "STANDARD" | "QUANTIFICATION"; target_hours: number | null; fields: StepField[]; status: string; version: number }
 interface Workflow { id: string; name: string; description: string | null; purifications: string[]; steps: { method_id: string; name?: string | null }[]; revision: number; status: string; version: number }
 
-export const FIELD_TYPE: Record<StepField["type"], string> = { NUMBER: "Số", TEXT: "Chữ", EQUIPMENT: "Thiết bị", REAGENT: "Hóa chất (trừ kho)" };
+export const FIELD_TYPE: Record<StepField["type"], string> = { NUMBER: "Số", TEXT: "Chữ", EQUIPMENT: "Thiết bị", REAGENT: "Hóa chất (trừ kho)", COLUMN: "Cột sắc ký (khấu hao)" };
 const blankField = (): StepField => ({ key: "", label: "", type: "NUMBER", unit: "", required: true });
 const slug = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/gi, "d").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").replace(/^(\d)/, "f_$1").slice(0, 40);
 
