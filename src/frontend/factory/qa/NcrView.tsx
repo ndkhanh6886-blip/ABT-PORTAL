@@ -81,7 +81,8 @@ function NcrPanel({ id, onClose }: { id: string; onClose: () => void }) {
           {n.deviation_id && (
             <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex flex-col gap-2">
               <p>Sai lệch <b>{n.deviation_code}</b> ({n.severity}) — {n.deviation_status}: {n.deviation_description}</p>
-              <ActionBar endpoint={`/api/factory/qms/deviations/${n.deviation_id}/actions`} version={n.deviation_version} actions={n.deviation_actions} labels={DEV_ACTIONS} onDone={refresh} />
+              <ActionBar endpoint={`/api/factory/qms/deviations/${n.deviation_id}/actions`} version={n.deviation_version} actions={n.deviation_actions.filter((a) => a.action !== "define_action")} labels={DEV_ACTIONS} onDone={refresh} />
+              {n.deviation_actions.some((a) => a.action === "define_action") && <p className="text-[11px] text-slate-500">Ghi nguyên nhân và CAPA ở tab Sự cố &amp; CAPA.</p>}
             </div>
           )}
         </div>

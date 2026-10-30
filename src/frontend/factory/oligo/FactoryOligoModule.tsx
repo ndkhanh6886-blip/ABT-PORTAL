@@ -1,10 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
-import { Calculator, ClipboardList, Combine, Beaker, Dna, FlaskConical, ListChecks, ListTree, Microscope, Settings2, Truck } from "lucide-react";
+import { Calculator, ClipboardList, Combine, AlertTriangle, Beaker, Dna, FlaskConical, ListChecks, ListTree, Microscope, Settings2, Truck } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { Empty } from "../ui";
 import { AnalysisView } from "./AnalysisView";
+import { TraceView } from "./TraceView";
+import { IncidentsView } from "../qa/IncidentsView";
 import { BatchesView } from "./BatchesView";
 import { CalculatorView } from "./CalculatorView";
 import { CatalogView } from "./CatalogView";
@@ -18,7 +20,7 @@ import { PreparationView } from "../prep/PreparationView";
 import { OligoOrdersView } from "./OligoOrdersView";
 import { PoolsView } from "./PoolsView";
 
-type SubTab = "orders" | "analysis" | "pools" | "batches" | "post" | "delivery" | "equipment" | "sop" | "prep" | "calc" | "catalog";
+type SubTab = "orders" | "analysis" | "pools" | "batches" | "post" | "delivery" | "equipment" | "sop" | "prep" | "quality" | "calc" | "catalog";
 
 /** "Tổng Hợp Oligo": screens of the Oligo department (post-synthesis and QC follow). */
 export function FactoryOligoModule() {
@@ -32,6 +34,7 @@ export function FactoryOligoModule() {
     { key: "batches", label: "Mẻ tổng hợp", icon: FlaskConical },
     { key: "post", label: "Hậu tổng hợp & QC", icon: Microscope },
     { key: "delivery", label: "Nhãn & giao hàng", icon: Truck },
+    { key: "quality", label: "Sự cố & truy vết", icon: AlertTriangle },
     { key: "equipment", label: "Thiết bị & định mức", icon: Settings2 },
     { key: "sop", label: "Quy trình SOP", icon: ListChecks },
     { key: "prep", label: "Pha chế hóa chất", icon: Beaker },
@@ -62,6 +65,12 @@ export function FactoryOligoModule() {
       {tab === "batches" && <BatchesView canManage={perms.has("oligo.batch.manage")} canApplyRules={perms.has("oligo.reagent.manage")} />}
       {tab === "post" && <PostProcessView canManage={perms.has("oligo.post.manage")} canLabel={perms.has("oligo.delivery.manage")} />}
       {tab === "delivery" && <DeliveryView canManage={perms.has("oligo.delivery.manage")} />}
+      {tab === "quality" && (
+        <div className="flex flex-col gap-3">
+          <TraceView />
+          <IncidentsView canReport={perms.has("qms.deviation.report")} />
+        </div>
+      )}
       {tab === "equipment" && (
         <div className="flex flex-col gap-3">
           <EquipmentView canManageAssets={perms.has("asset.manage")} canManageRules={perms.has("oligo.reagent.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} canOperate={perms.has("oligo.batch.manage")} />

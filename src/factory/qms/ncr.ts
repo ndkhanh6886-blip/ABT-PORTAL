@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { Tx } from "../core/db";
 import { authorize, type AuthzActor } from "../core/authz";
 import { invalid, notFound } from "../core/errors";
@@ -133,7 +134,19 @@ interface Deviation {
   severity: string;
   status: DevStatus;
   version: number;
+  root_cause?: string | null;
+  corrective_action?: string | null;
+  preventive_action?: string | null;
 }
+
+const capaSchema = z.object({
+  root_cause: z.string().trim().min(5, "ghi nguyên nhân gốc").max(4000),
+  corrective_action: z.string().trim().min(5, "ghi biện pháp khắc phục").max(4000),
+  preventive_action: z.string().trim().max(4000).optional().nullable(),
+  action_owner: z.string().trim().max(200).optional().nullable(),
+  action_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+});
+const serious = (severity: string) => ["HIGH", "CRITICAL"].includes(severity);
 
 export const deviationMachine = defineMachine<DevStatus, Deviation>({
   entityType: "deviation",
@@ -142,7 +155,27 @@ export const deviationMachine = defineMachine<DevStatus, Deviation>({
   terminal: ["CLOSED"],
   transitions: [
     { action: "investigate", from: "OPEN", to: "UNDER_INVESTIGATION", permission: "qms.ncr.propose" },
-    { action: "define_action", from: "UNDER_INVESTIGATION", to: "ACTION_DEFINED", permission: "qms.ncr.propose", reasonRequired: true },
+    {
+      // the CAPA record: root cause and corrective action; serious deviations also need a preventive action
+      action: "define_action",
+      from: "UNDER_INVESTIGATION",
+      to: "ACTION_DEFINED",
+      permission: "qms.ncr.propose",
+      guards: [
+        {
+          code: "CAPA",
+          message: "Ghi nguyên nhân gốc và biện pháp khắc phục; sai lệch HIGH/CRITICAL cần cả biện pháp phòng ngừa.",
+          check: ({ row, payload }) => {
+            const p = capaSchema.safeParse(payload);
+            return p.success && (!serious(row.severity) || Boolean(p.data.preventive_action && p.data.preventive_action.length >= 5));
+          },
+        },
+      ],
+      patch: ({ payload }) => {
+        const d = capaSchema.parse(payload);
+        return { root_cause: d.root_cause, corrective_action: d.corrective_action, preventive_action: d.preventive_action ?? null, action_owner: d.action_owner ?? null, action_due: d.action_due ?? null };
+      },
+    },
     {
       action: "close",
       from: ["OPEN", "UNDER_INVESTIGATION", "ACTION_DEFINED"],
@@ -158,10 +191,11 @@ export const deviationMachine = defineMachine<DevStatus, Deviation>({
         },
         {
           code: "CAPA_REQUIRED",
-          message: "Sai lệch mức HIGH/CRITICAL cần CAPA trước khi đóng (phân hệ CAPA chưa có).",
-          check: ({ row }) => !["HIGH", "CRITICAL"].includes(row.severity),
+          message: "Sai lệch mức HIGH/CRITICAL phải điều tra và ghi CAPA (nguyên nhân, khắc phục, phòng ngừa) trước khi đóng.",
+          check: ({ row }) => !serious(row.severity) || Boolean(row.root_cause && row.corrective_action && row.preventive_action),
         },
       ],
+      patch: () => ({ closed_at: new Date() }),
     },
   ],
 });

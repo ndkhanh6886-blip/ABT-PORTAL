@@ -1,14 +1,15 @@
 "use client";
 
 import React, { useState } from "react";
-import { ClipboardCheck, FileWarning, ScrollText } from "lucide-react";
+import { AlertTriangle, ClipboardCheck, FileWarning, ScrollText } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { Empty } from "../ui";
+import { IncidentsView } from "./IncidentsView";
 import { NcrView } from "./NcrView";
 import { QcTestsView } from "./QcTestsView";
 import { SpecsView } from "./SpecsView";
 
-type SubTab = "tests" | "specs" | "ncr";
+type SubTab = "tests" | "specs" | "ncr" | "incidents";
 
 /** "QA/QC": independent department serving the three production departments. */
 export function FactoryQaModule() {
@@ -18,6 +19,7 @@ export function FactoryQaModule() {
   const tabs: { key: SubTab; label: string; icon: React.ElementType }[] = [
     { key: "tests", label: "Phiếu QC", icon: ClipboardCheck },
     { key: "specs", label: "Tiêu chuẩn QC", icon: ScrollText },
+    { key: "incidents", label: "Sự cố & CAPA", icon: AlertTriangle },
     { key: "ncr", label: "Sai lệch & NCR", icon: FileWarning },
   ];
   if (me.isLoading) return <div className="text-sm text-slate-400 p-6">Đang tải…</div>;
@@ -41,6 +43,7 @@ export function FactoryQaModule() {
       {tab === "tests" && <QcTestsView />}
       {tab === "specs" && <SpecsView />}
       {tab === "ncr" && <NcrView />}
+      {tab === "incidents" && <IncidentsView canReport={perms.has("qms.deviation.report")} />}
     </div>
   );
 }
