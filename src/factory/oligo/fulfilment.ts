@@ -90,7 +90,15 @@ const LABEL_STATUSES = ["POST_PROCESSING", "QC", "COMPLETED"];
  * for liquid oligo, volume and concentration per tube. Every print is recorded; a reprint needs a reason.
  */
 export async function printLabels(tx: Tx, actor: AuthzActor, input: unknown) {
-  const data = parseInput(z.object({ sequence_ids: z.array(z.string().uuid()).min(1).max(200), reason: z.string().trim().max(500).optional().nullable() }), input);
+  const data = parseInput(
+    z.object({
+      sequence_ids: z.array(z.string().uuid()).min(1).max(200),
+      reason: z.string().trim().max(500).optional().nullable(),
+      // preview: what the labels will look like, at any stage — nothing is recorded, values not measured yet stay empty
+      preview: z.boolean().default(false),
+    }),
+    input
+  );
   const rows = (
     await tx.query(
       `SELECT s.id, s.code, s.name, s.org_unit_id, s.status, s.normalized_sequence, s.base_count, s.mw::float AS mw, s.tm::float AS tm, s.scale_code, s.purification, s.format,
@@ -114,6 +122,21 @@ export async function printLabels(tx: Tx, actor: AuthzActor, input: unknown) {
   if (rows.length !== new Set(data.sequence_ids).size) throw notFound("trình tự");
   const labels = [];
   for (const r of rows) {
+    if (data.preview) {
+      await authorize(tx, actor, "oligo.view", r.org_unit_id);
+      const tubes = r.tube_count ?? 1;
+      for (let i = 1; i <= tubes; i++) {
+        labels.push({
+          sequence_id: r.id, code: r.code, name: r.name, order_code: r.order_code, customer: r.customer_label, sequence: r.normalized_sequence, bases: r.base_count,
+          mw: r.mw, tm: r.tm, scale: r.scale_label, purification: r.purification, format: r.format, modifications: r.modifications, tube: `${i}/${tubes}`,
+          od: r.od_total == null ? null : pyRound(r.od_total / tubes, 2), nmol: r.nmol == null ? null : pyRound(r.nmol / tubes, 1),
+          volume_ul: r.format === "LIQUID" && r.volume_ul ? pyRound(r.volume_ul / tubes, 1) : null, conc_um: r.format === "LIQUID" ? r.conc_um : null,
+          released: r.eff_status === "COMPLETED", date: vnToday(), preview: true,
+          printable: LABEL_STATUSES.includes(r.eff_status) && r.od_total != null, printed: r.printed,
+        });
+      }
+      continue;
+    }
     await authorize(tx, actor, "oligo.delivery.manage", r.org_unit_id);
     if (r.status === "POOLED" && r.od_total == null) throw invalid(`${r.code} nằm trong mẻ gộp: chia ống cho trình tự gộp trước khi in nhãn.`, undefined, "ALIQUOT_MISSING");
     if (!LABEL_STATUSES.includes(r.eff_status) || r.od_total == null) throw invalid(`${r.code}: chỉ in nhãn khi đã đo OD ở hậu tổng hợp.`);

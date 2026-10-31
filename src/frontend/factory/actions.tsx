@@ -25,28 +25,34 @@ export function ActionBar({
   version,
   actions,
   labels,
+  extraPayload,
   onDone,
 }: {
   endpoint: string;
   version: number;
   actions: AllowedAction[];
   labels: Record<string, string>;
+  extraPayload?: Record<string, unknown> | ((action: string) => Record<string, unknown> | undefined);
   onDone: () => void;
 }) {
   const [open, setOpen] = useState<AllowedAction | null>(null);
   const [reason, setReason] = useState("");
+  const [authMethod, setAuthMethod] = useState<"PIN" | "PASSWORD">("PIN");
   const [pin, setPin] = useState("");
   const run = useMutation({
-    mutationFn: (a: AllowedAction) =>
-      api(endpoint, {
+    mutationFn: (a: AllowedAction) => {
+      const payload = typeof extraPayload === "function" ? extraPayload(a.action) : extraPayload;
+      return api(endpoint, {
         method: "POST",
         json: {
           action: a.action,
           expectedVersion: version,
           reason: reason || undefined,
-          credential: a.signature ? { method: "PIN", secret: pin } : undefined,
+          payload,
+          credential: a.signature ? { method: authMethod, secret: pin } : undefined,
         },
-      }),
+      });
+    },
     onSuccess: () => {
       setOpen(null);
       setReason("");
@@ -101,8 +107,34 @@ export function ActionBar({
             </Field>
           )}
           {open.signature && (
-            <Field label="Mã PIN chữ ký *" hint="Đặt PIN tại Cấu hình Nhà Máy nếu chưa có">
-              <input className={inputClass} type="password" inputMode="numeric" autoComplete="off" value={pin} onChange={(e) => setPin(e.target.value)} required autoFocus={!open.reasonRequired} />
+            <Field
+              label={authMethod === "PIN" ? "Mã PIN chữ ký điện tử cá nhân *" : "Mật khẩu đăng nhập *"}
+              hint="Chọn ký bằng Mã PIN cá nhân hoặc Mật khẩu đăng nhập (Chuẩn 21 CFR Part 11)"
+            >
+              <div className="flex gap-1.5">
+                <select
+                  className={`${inputClass} w-28`}
+                  value={authMethod}
+                  onChange={(e) => {
+                    const m = e.target.value as "PIN" | "PASSWORD";
+                    setAuthMethod(m);
+                    setPin("");
+                  }}
+                >
+                  <option value="PIN">Mã PIN</option>
+                  <option value="PASSWORD">Mật khẩu</option>
+                </select>
+                <input
+                  className={inputClass}
+                  type="password"
+                  inputMode={authMethod === "PIN" ? "numeric" : "text"}
+                  autoComplete="off"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value)}
+                  required
+                  autoFocus={!open.reasonRequired}
+                />
+              </div>
             </Field>
           )}
           <div className="flex gap-2">

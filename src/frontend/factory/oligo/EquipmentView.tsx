@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Table } from "../ui";
@@ -13,9 +13,14 @@ interface Rule { role: string; name: string; display_name: string | null; is_vis
 const BASIS: Record<string, string> = { PER_CYCLE: "mỗi chu kỳ", PER_COUPLING: "mỗi lần ghép base", PER_MOD: "mỗi modification" };
 const ASSET_STATUS: Record<string, string> = { IN_SERVICE: "Đang dùng", UNDER_MAINTENANCE: "Bảo trì", OUT_OF_CALIBRATION: "Hết hiệu chuẩn", RETIRED: "Ngừng" };
 
-function NewSynthesizer() {
+function NewSynthesizer({ onClose }: { onClose?: () => void }) {
   const qc = useQueryClient();
   const units = useOligoUnits("asset.manage");
+  const oligoUnits = useMemo(() => {
+    const list = units.data ?? [];
+    const oligoOnly = list.filter((u: any) => u.module_key === "OLIGO");
+    return oligoOnly.length > 0 ? oligoOnly : list;
+  }, [units.data]);
   const scales = useScales();
   const [f, setF] = useState({ owner_org_unit_id: "", name: "", model: "", serial_no: "", next_calibration_due: "", column_positions: "8", scales: [] as string[] });
   const create = useMutation({
@@ -26,7 +31,7 @@ function NewSynthesizer() {
         json: {
           asset_type: "SYNTHESIZER",
           name: f.name,
-          owner_org_unit_id: f.owner_org_unit_id || units.data?.[0]?.id,
+          owner_org_unit_id: f.owner_org_unit_id || oligoUnits[0]?.id,
           model: f.model || null,
           serial_no: f.serial_no || null,
           next_calibration_due: f.next_calibration_due || null,
@@ -36,22 +41,26 @@ function NewSynthesizer() {
     onSuccess: () => {
       setF({ ...f, name: "", model: "", serial_no: "" });
       qc.invalidateQueries({ queryKey: ["factory", "assets"] });
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-batch-candidates"] });
+      onClose?.();
     },
   });
-  if (!units.data?.length) return null;
   return (
-    <form className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end mb-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
-      {units.data.length > 1 && (
-        <Field label="Phòng">
-          <select className={inputClass} value={f.owner_org_unit_id} onChange={(e) => setF({ ...f, owner_org_unit_id: e.target.value })} required>
-            <option value="">Chọn</option>
-            {units.data.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+    <form className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end mb-4 p-3.5 rounded-xl bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
+      <div className="sm:col-span-3 lg:col-span-6 flex items-center justify-between">
+        <div className="text-xs font-bold text-sky-800 dark:text-sky-300">➕ Khai báo Máy tổng hợp Oligo mới (dạng cột CPG)</div>
+        {onClose && <Button type="button" variant="ghost" onClick={onClose}>Đóng</Button>}
+      </div>
+      {oligoUnits.length > 1 && (
+        <Field label="Phòng quản lý">
+          <select className={inputClass} value={f.owner_org_unit_id || oligoUnits[0]?.id || ""} onChange={(e) => setF({ ...f, owner_org_unit_id: e.target.value })} required>
+            {oligoUnits.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
         </Field>
       )}
-      <Field label="Tên máy *"><input className={inputClass} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
-      <Field label="Model"><input className={inputClass} value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} /></Field>
-      <Field label="Số serial"><input className={inputClass} value={f.serial_no} onChange={(e) => setF({ ...f, serial_no: e.target.value })} /></Field>
+      <Field label="Tên máy tổng hợp *"><input className={inputClass} placeholder="VD: MerMade 12 Column" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
+      <Field label="Model"><input className={inputClass} placeholder="VD: MerMade-12" value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} /></Field>
+      <Field label="Số serial"><input className={inputClass} placeholder="VD: SN-MM12-01" value={f.serial_no} onChange={(e) => setF({ ...f, serial_no: e.target.value })} /></Field>
       <Field label="Số vị trí cột *"><input className={inputClass} type="number" min="1" max="384" value={f.column_positions} onChange={(e) => setF({ ...f, column_positions: e.target.value })} required /></Field>
       <Field label="Hạn hiệu chuẩn"><input className={inputClass} type="date" value={f.next_calibration_due} onChange={(e) => setF({ ...f, next_calibration_due: e.target.value })} /></Field>
       <div className="sm:col-span-3 lg:col-span-5 flex flex-wrap gap-3 text-xs">
@@ -63,8 +72,81 @@ function NewSynthesizer() {
           </label>
         ))}
       </div>
-      <Button type="submit" disabled={create.isPending}>+ Thêm máy</Button>
+      <Button type="submit" disabled={create.isPending}>+ Lưu máy mới</Button>
       <div className="sm:col-span-3 lg:col-span-6"><ErrorNote error={create.error} /></div>
+    </form>
+  );
+}
+
+function EditSynthesizerPanel({ asset, onClose }: { asset: Asset; onClose: () => void }) {
+  const qc = useQueryClient();
+  const scales = useScales();
+  const [f, setF] = useState({
+    name: asset.name,
+    model: asset.model ?? "",
+    serial_no: asset.serial_no ?? "",
+    status: asset.status,
+    next_calibration_due: asset.next_calibration_due ? asset.next_calibration_due.slice(0, 10) : "",
+    column_positions: String(asset.column_positions ?? 8),
+    scales: asset.supported_scales ?? [],
+    reason: "",
+  });
+  const save = useMutation({
+    mutationFn: () =>
+      api(`/api/factory/assets/${asset.id}`, {
+        method: "PATCH",
+        json: {
+          name: f.name,
+          model: f.model || null,
+          serial_no: f.serial_no || null,
+          status: f.status,
+          next_calibration_due: f.next_calibration_due || null,
+          synthesizer: {
+            column_positions: Number(f.column_positions),
+            supported_scales: f.scales,
+          },
+          reason: f.reason || "Cập nhật thông số cài đặt máy tổng hợp",
+        },
+      }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "assets"] });
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-batch-candidates"] });
+      onClose();
+    },
+  });
+  return (
+    <form className="flex flex-col gap-3 mb-4 p-3.5 rounded-xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800" onSubmit={(e) => { e.preventDefault(); save.mutate(); }}>
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-bold text-amber-900 dark:text-amber-300">⚙ Cài đặt máy tổng hợp: {asset.code} · {asset.name}</div>
+        <Button type="button" variant="ghost" onClick={onClose}>Đóng</Button>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end">
+        <Field label="Tên máy *"><input className={inputClass} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
+        <Field label="Model"><input className={inputClass} value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} /></Field>
+        <Field label="Số serial"><input className={inputClass} value={f.serial_no} onChange={(e) => setF({ ...f, serial_no: e.target.value })} /></Field>
+        <Field label="Số vị trí cột *"><input className={inputClass} type="number" min="1" max="384" value={f.column_positions} onChange={(e) => setF({ ...f, column_positions: e.target.value })} required /></Field>
+        <Field label="Hạn hiệu chuẩn"><input className={inputClass} type="date" value={f.next_calibration_due} onChange={(e) => setF({ ...f, next_calibration_due: e.target.value })} /></Field>
+        <Field label="Trạng thái">
+          <select className={inputClass} value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
+            {Object.entries(ASSET_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div className="flex flex-wrap gap-3 text-xs items-center">
+        <span className="text-slate-500">Thang tổng hợp hỗ trợ (bỏ trống = mọi thang):</span>
+        {scales.data?.map((s) => (
+          <label key={s.code} className="flex items-center gap-1">
+            <input type="checkbox" checked={f.scales.includes(s.code)} onChange={(e) => setF({ ...f, scales: e.target.checked ? [...f.scales, s.code] : f.scales.filter((x) => x !== s.code) })} />
+            {s.label}
+          </label>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <input className={`${inputClass} w-72`} placeholder="Ghi chú / lý do cập nhật cấu hình máy" value={f.reason} onChange={(e) => setF({ ...f, reason: e.target.value })} />
+        <Button type="submit" disabled={save.isPending}>Lưu cài đặt máy</Button>
+        <Button type="button" variant="ghost" onClick={onClose}>Hủy</Button>
+      </div>
+      <ErrorNote error={save.error} />
     </form>
   );
 }
@@ -206,8 +288,13 @@ function AmiditeRow({ m, label, canManage }: { m: Mod; label: string | undefined
 }
 
 /** Synthesizers of the Oligo department and the consumption rules (OligoFlow model) that size reservations. */
-export function EquipmentView({ canManageAssets, canManageRules, canManageCatalog, canOperate }: { canManageAssets: boolean; canManageRules: boolean; canManageCatalog: boolean; canOperate: boolean }) {
+export function EquipmentView({
+  canManageAssets, canManageRules, canManageCatalog, canOperate, section = "all",
+}: { canManageAssets: boolean; canManageRules: boolean; canManageCatalog: boolean; canOperate: boolean; section?: "all" | "machines" | "rules" }) {
   const [portsOf, setPortsOf] = useState<string | null>(null);
+  const [editingSynth, setEditingSynth] = useState<Asset | null>(null);
+  const [showAddSynth, setShowAddSynth] = useState(false);
+  const [showAddRule, setShowAddRule] = useState(false);
   const mods = useQuery({ queryKey: ["factory", "oligo-catalog"], queryFn: () => api<Mod[]>("/api/factory/oligo/modifications") });
   const modItems = useQuery({
     queryKey: ["factory", "items-by-id", mods.data?.map((m) => m.amidite_item_id).filter(Boolean).join(",")],
@@ -223,31 +310,73 @@ export function EquipmentView({ canManageAssets, canManageRules, canManageCatalo
   return (
     <div className="flex flex-col gap-3">
       {portsOf && <SynthPortsPanel key={portsOf} synthId={portsOf} canConfigure={canManageAssets} canOperate={canOperate} onClose={() => setPortsOf(null)} />}
-      <Card title="Máy tổng hợp">
-        {canManageAssets && <NewSynthesizer />}
+      {section !== "rules" && (
+      <Card
+        title="Máy tổng hợp Oligo (dạng cột CPG)"
+        actions={
+          canManageAssets && !showAddSynth && (
+            <Button onClick={() => { setShowAddSynth(true); setEditingSynth(null); }}>
+              + Khai báo Máy tổng hợp mới
+            </Button>
+          )
+        }
+      >
+        {canManageAssets && showAddSynth && (
+          <NewSynthesizer onClose={() => setShowAddSynth(false)} />
+        )}
+        {canManageAssets && editingSynth && (
+          <EditSynthesizerPanel key={editingSynth.id} asset={editingSynth} onClose={() => setEditingSynth(null)} />
+        )}
         <ErrorNote error={assets.error} />
         {assets.data?.length === 0 && <Empty>Chưa khai báo máy tổng hợp.</Empty>}
         {assets.data && assets.data.length > 0 && (
-          <Table head={["Mã", "Tên", "Phòng", "Model / serial", "Số cột", "Thang", "Hạn hiệu chuẩn", "Trạng thái", ""]}>
+          <Table head={["Mã máy", "Tên máy tổng hợp", "Phòng", "Model / Serial", "Số cột CPG", "Thang hỗ trợ", "Hạn hiệu chuẩn", "Trạng thái", "Thao tác"]}>
             {assets.data.map((a) => (
               <tr key={a.id}>
-                <td className="py-1.5 pr-3 font-mono">{a.code}</td>
-                <td className="py-1.5 pr-3">{a.name}</td>
+                <td className="py-1.5 pr-3 font-mono font-bold text-xs">{a.code}</td>
+                <td className="py-1.5 pr-3 font-medium">{a.name}</td>
                 <td className="py-1.5 pr-3 text-xs">{a.owner_name}</td>
                 <td className="py-1.5 pr-3 text-xs">{[a.model, a.serial_no].filter(Boolean).join(" / ") || "—"}</td>
-                <td className="py-1.5 pr-3 text-right">{a.column_positions}</td>
+                <td className="py-1.5 pr-3 text-right font-mono font-bold">{a.column_positions} cột</td>
                 <td className="py-1.5 pr-3 text-xs">{a.supported_scales?.length ? a.supported_scales.join(", ") : "Mọi thang"}</td>
                 <td className="py-1.5 pr-3 text-xs">{fmtDate(a.next_calibration_due)}</td>
-                <td className="py-1.5 pr-3 text-xs">{ASSET_STATUS[a.status] ?? a.status}</td>
-                <td className="py-1.5 pr-3 text-right"><Button variant="ghost" onClick={() => setPortsOf(a.id)}>Cổng hóa chất</Button></td>
+                <td className="py-1.5 pr-3 text-xs">
+                  <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${a.status === "IN_SERVICE" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300" : "bg-amber-100 text-amber-800"}`}>
+                    {ASSET_STATUS[a.status] ?? a.status}
+                  </span>
+                </td>
+                <td className="py-1.5 pr-3 text-right whitespace-nowrap">
+                  <div className="inline-flex items-center gap-1">
+                    {canManageAssets && (
+                      <Button variant="ghost" onClick={() => { setEditingSynth(a); setShowAddSynth(false); }}>
+                        ⚙ Cài đặt máy
+                      </Button>
+                    )}
+                    <Button variant="ghost" onClick={() => setPortsOf(a.id)}>
+                      🧪 Cổng hóa chất
+                    </Button>
+                  </div>
+                </td>
               </tr>
             ))}
           </Table>
         )}
       </Card>
-      <Card title="Định mức hóa chất tổng hợp">
+      )}
+      {section !== "machines" && (
+      <>
+      <Card
+        title="Định mức hóa chất tổng hợp"
+        actions={
+          canManageRules ? (
+            <Button variant="ghost" onClick={() => setShowAddRule((v) => !v)}>
+              {showAddRule ? "Đóng form" : "+ Thêm vai trò định mức"}
+            </Button>
+          ) : null
+        }
+      >
         <p className="text-[11px] text-slate-500 mb-2">Dùng để giữ chỗ khi lập mẻ; lượng thực tế nhập khi kết thúc mẻ. Mỗi vai trò phải gắn một mã hàng trong kho NVL. Amidite của modification gắn ở bảng dưới. Máy có cổng hóa chất thì lấy từ chai đang lắp trên cổng.</p>
-        {canManageRules && <NewRule />}
+        {canManageRules && showAddRule && <NewRule />}
         <ErrorNote error={rules.error} />
         {rules.data && (
           <Table head={["Vai trò", "Tên hiển thị", "Định mức", "Mã hàng kho", ""]}>
@@ -264,6 +393,8 @@ export function EquipmentView({ canManageAssets, canManageRules, canManageCatalo
           </Table>
         )}
       </Card>
+      </>
+      )}
     </div>
   );
 }

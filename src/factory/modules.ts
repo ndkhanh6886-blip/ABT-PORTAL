@@ -4,3 +4,5 @@ import "./permissions";
 import "./qms/lotQuality";
 import "./qms/ncr";
 import "./intake/gateway";
+import "./kit/ordersEbr";
+import "./device/assembly";

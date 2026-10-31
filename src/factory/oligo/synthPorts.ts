@@ -59,6 +59,19 @@ async function checkLotForRole(tx: Tx, synth: any, role: string, lotId: string) 
   if (lot.item_id !== itemId) throw invalid(`Lô ${lot.code} không phải mã hàng của vai trò ${role}.`, undefined, "WRONG_ITEM");
   if (lot.status !== "RELEASED") throw invalid(`Lô ${lot.code} chưa được giải phóng (QC).`, undefined, "LOT_NOT_RELEASED");
   if (lot.expiry_date && lot.expiry_date < vnToday()) throw invalid(`Lô ${lot.code} đã hết hạn.`, undefined, "LOT_EXPIRED");
+  const prep = (
+    await tx.query(
+      "SELECT code, incubation_until, incubated_at FROM prep.preparation WHERE lot_id = $1 ORDER BY id DESC LIMIT 1",
+      [lotId]
+    )
+  ).rows[0];
+  if (prep && prep.incubation_until && !prep.incubated_at && String(prep.incubation_until).slice(0, 10) >= vnToday()) {
+    throw invalid(
+      `Lô hóa chất pha chế ${lot.code} (mẻ ${prep.code}) đang trong thời gian ủ (Incubation đến ${String(prep.incubation_until).slice(0, 10)}), chưa xác nhận hoàn tất ủ nên chưa được lắp lên cổng máy.`,
+      undefined,
+      "INCUBATION_INCOMPLETE"
+    );
+  }
   const free = (await findCandidates(tx, itemId, await warehousesOf(tx, synth.owner_org_unit_id))).filter((c) => c.lot_id === lotId);
   if (!free.length) throw invalid(`Lô ${lot.code} không còn tồn khả dụng trong kho của phòng.`, undefined, "INSUFFICIENT_STOCK");
   return { lot, itemId };

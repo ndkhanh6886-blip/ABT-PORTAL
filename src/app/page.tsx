@@ -18,13 +18,17 @@ import { SearchableSelectEnhancer } from "@/frontend/components/SearchableSelect
 import { DataSyncGate } from "@/frontend/components/DataSyncGate";
 import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal";
 import { FactoryProvider } from "@/frontend/factory/FactoryProvider";
-import { BUSINESS_TABS, BusinessTabs, SETTINGS_TABS, SettingsTabs } from "@/frontend/components/GroupTabs";
+import { BUSINESS_TABS, BusinessTabs, TECHNICAL_TABS, TechnicalTabs, SETTINGS_TABS, SettingsTabs } from "@/frontend/components/GroupTabs";
 import { FactoryWarehouseModule } from "@/frontend/factory/warehouse/FactoryWarehouseModule";
 import { FactorySettingsModule } from "@/frontend/factory/settings/FactorySettingsModule";
 import { FactoryPurchaseModule } from "@/frontend/factory/purchase/FactoryPurchaseModule";
 import { FactoryOrdersModule } from "@/frontend/factory/orders/FactoryOrdersModule";
 import { FactoryOligoModule } from "@/frontend/factory/oligo/FactoryOligoModule";
 import { FactoryQaModule } from "@/frontend/factory/qa/FactoryQaModule";
+import { FactoryRdModule } from "@/frontend/factory/rd/FactoryRdModule";
+import FactoryDeviceModule from "@/frontend/factory/device/FactoryDeviceModule";
+import FactoryKitModule from "@/frontend/factory/kit/FactoryKitModule";
+import FactoryAnalyticsModule from "@/frontend/factory/analytics/FactoryAnalyticsModule";
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState<MainTab>("workspace");
@@ -124,6 +128,7 @@ export default function Home() {
       <main className="flex-1 w-full px-2 sm:px-4 lg:px-6 py-3.5 sm:py-4 pb-24 lg:pb-5">
         <DataSyncGate key={user.username || user.id}>
         {BUSINESS_TABS.includes(activeTab) && <BusinessTabs active={activeTab} onChange={setActiveTab} />}
+        {TECHNICAL_TABS.includes(activeTab) && <TechnicalTabs active={activeTab} onChange={setActiveTab} />}
         {SETTINGS_TABS.includes(activeTab) && <SettingsTabs active={activeTab} onChange={setActiveTab} />}
         {activeTab === "workspace" && <UnifiedWorkspace />}
         {activeTab === "sales" && can("sales.view") && <SalesFullABT />}
@@ -138,8 +143,12 @@ export default function Home() {
         {activeTab === "factory-settings" && <FactorySettingsModule />}
         {activeTab === "factory-orders" && <FactoryOrdersModule />}
         {activeTab === "factory-oligo" && <FactoryOligoModule />}
+        {activeTab === "factory-rd" && <FactoryRdModule />}
+        {activeTab === "factory-device" && <FactoryDeviceModule />}
+        {activeTab === "factory-kit" && <FactoryKitModule />}
         {activeTab === "factory-purchase" && <FactoryPurchaseModule />}
         {activeTab === "factory-qa" && <FactoryQaModule />}
+        {activeTab === "factory-analytics" && <FactoryAnalyticsModule />}
         </DataSyncGate>
       </main>
 

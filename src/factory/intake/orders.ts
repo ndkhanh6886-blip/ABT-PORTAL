@@ -127,7 +127,10 @@ export async function listOrders(tx: Tx, actor: AuthzActor, status?: string) {
   return (
     await tx.query(
       `SELECT o.id, o.code, o.kd_po_code, o.kd_so_code, o.ship_mode, o.requested_date, o.committed_date, o.due_date_change_count, o.status, o.created_at,
-              u.name AS org_unit_name, (SELECT count(*)::int FROM intake.internal_order_line l WHERE l.order_id = o.id) AS line_count
+              u.id AS org_unit_id, u.code AS org_unit_code, u.name AS org_unit_name, u.module_key,
+              (SELECT count(*)::int FROM intake.internal_order_line l WHERE l.order_id = o.id) AS line_count,
+              (SELECT string_agg(COALESCE(l.kd_item_code, '') || ' (' || l.qty::float || ' ' || COALESCE(l.kd_unit, 'ĐV') || ')', ', ' ORDER BY l.line_no)
+                 FROM intake.internal_order_line l WHERE l.order_id = o.id) AS items_summary
          FROM intake.internal_order o JOIN core.org_unit u ON u.id = o.org_unit_id
         WHERE ($1::uuid[] IS NULL OR o.org_unit_id = ANY($1::uuid[])) AND ($2::text IS NULL OR o.status = $2)
         ORDER BY o.created_at DESC LIMIT 300`,
@@ -137,14 +140,48 @@ export async function listOrders(tx: Tx, actor: AuthzActor, status?: string) {
 }
 
 export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
-  const order = (await tx.query("SELECT o.*, u.name AS org_unit_name FROM intake.internal_order o JOIN core.org_unit u ON u.id = o.org_unit_id WHERE o.id = $1", [id])).rows[0];
+  const order = (
+    await tx.query(
+      "SELECT o.*, u.code AS org_unit_code, u.name AS org_unit_name, u.module_key FROM intake.internal_order o JOIN core.org_unit u ON u.id = o.org_unit_id WHERE o.id = $1",
+      [id]
+    )
+  ).rows[0];
   if (!order) throw notFound("đơn nội bộ");
   const units = await visibleUnits(tx, actor);
   if (units !== "ALL" && !units.includes(order.org_unit_id)) throw notFound("đơn nội bộ");
   const lines = (
     await tx.query(
       `SELECT l.id, l.line_no, l.kd_item_code, l.kd_item_name, l.kd_unit, l.item_id, i.code AS item_code, i.name AS item_name, i.base_uom, i.kd_unit_factor::text AS kd_unit_factor,
-              l.qty::text AS qty, l.qty_delivered::text AS qty_delivered, l.transfer_price::text AS transfer_price
+              l.qty::text AS qty, l.qty_delivered::text AS qty_delivered, l.transfer_price::text AS transfer_price,
+              COALESCE((
+                SELECT sum(b.qty_on_hand - b.qty_reserved)::float
+                  FROM inv.stock_balance b
+                  JOIN master.location loc ON loc.id = b.location_id
+                  LEFT JOIN inv.lot lot ON lot.id = b.lot_id
+                 WHERE b.item_id = l.item_id
+                   AND loc.is_quarantine = false
+                   AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
+                   AND (b.qty_on_hand - b.qty_reserved) > 0
+              ), 0) AS available_fg_qty,
+              ARRAY(
+                SELECT kpo.code || ' [' || kpo.status || ' · Lô: ' || COALESCE(kl.code, 'N/A') || ']'
+                  FROM kit.production_order kpo
+                  LEFT JOIN inv.lot kl ON kl.id = kpo.lot_id
+                 WHERE kpo.internal_order_line_id = l.id
+                 ORDER BY kpo.created_at DESC
+              ) AS kit_order_lots,
+              ARRAY(
+                SELECT oo.code || ' [' || oo.status || ' · ' || (SELECT count(*)::int FROM oligo.oligo_sequence os WHERE os.order_id = oo.id) || ' chuỗi]'
+                  FROM oligo.oligo_order oo
+                 WHERE oo.internal_order_id = l.order_id
+                 ORDER BY oo.created_at DESC
+              ) AS oligo_order_codes,
+              ARRAY(
+                SELECT dpo.code || ' [' || dpo.status || ' · S/N: ' || COALESCE((SELECT string_agg(du.serial_no, ', ' ORDER BY du.serial_no) FROM device.device_unit du WHERE du.order_id = dpo.id), 'N/A') || ']'
+                  FROM device.device_order dpo
+                 WHERE dpo.internal_order_line_id = l.id
+                 ORDER BY dpo.created_at DESC
+              ) AS device_order_serials
          FROM intake.internal_order_line l LEFT JOIN master.item i ON i.id = l.item_id WHERE l.order_id = $1 ORDER BY l.line_no`,
       [id]
     )

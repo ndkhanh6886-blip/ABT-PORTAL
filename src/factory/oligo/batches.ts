@@ -38,7 +38,7 @@ export interface Batch {
 const DEMAND = "SYNTHESIS_BATCH" as const;
 
 async function warehousesOf(tx: Tx, orgUnitId: string): Promise<string[]> {
-  return (await tx.query("SELECT id FROM master.warehouse WHERE owner_org_unit_id = $1 AND status = 'ACTIVE'", [orgUnitId])).rows.map((r) => r.id);
+  return (await tx.query("SELECT id FROM master.warehouse WHERE (owner_org_unit_id = $1 OR owner_org_unit_id IS NULL) AND status = 'ACTIVE'", [orgUnitId])).rows.map((r) => r.id);
 }
 
 /** Moves the batch's sequences and re-derives the status of every order they serve (pool members included). */
@@ -83,7 +83,8 @@ async function adjustToActual(tx: Tx, actor: AuthzActor, batch: Batch, reagents:
   const uses = (await tx.query("SELECT id, item_id, est_qty_base::float AS est FROM oligo.synthesis_reagent_use WHERE batch_id = $1", [batch.id])).rows;
   const warehouses = await warehousesOf(tx, batch.org_unit_id);
   for (const u of uses) {
-    const actual = reagents.find((r) => r.item_id === u.item_id)!.actual_qty_base;
+    const matched = reagents.find((r) => r.item_id === u.item_id);
+    const actual = matched ? matched.actual_qty_base : u.est;
     await tx.query("UPDATE oligo.synthesis_reagent_use SET actual_qty_base = $2 WHERE id = $1", [u.id, actual]);
     const diff = Math.round((actual - u.est) * 1e6) / 1e6;
     if (diff === 0) continue;
@@ -113,6 +114,7 @@ async function adjustToActual(tx: Tx, actor: AuthzActor, batch: Batch, reagents:
           [batch.id, u.item_id]
         )
       ).rows[0];
+      if (!src) continue;
       const doc = await createStockDocument(
         tx,
         actor,
@@ -229,8 +231,93 @@ const planSchema = z.object({
   program_name: z.string().trim().max(200).optional().nullable(),
   planned_start: z.string().datetime({ offset: true }).optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
+  allow_adjacent_contamination: z.boolean().optional().default(false),
   positions: z.array(z.object({ sequence_id: z.string().uuid(), column_lot_id: z.string().uuid("chọn lô cột CPG") })).min(1, "chọn ít nhất một trình tự"),
 });
+
+function cleanBasesOnly(normalized: string): string {
+  return normalized.replace(/\[[^\]]+\]/g, "").replace(/[^ACGTUacgtu]/g, "").toUpperCase().replace(/U/g, "T");
+}
+
+function revCompBases(bases: string): string {
+  const map: Record<string, string> = { A: "T", T: "A", C: "G", G: "C" };
+  return bases
+    .split("")
+    .reverse()
+    .map((b) => map[b] ?? b)
+    .join("");
+}
+
+function sharesHomology(seqA: string, seqB: string, minK = 12): boolean {
+  const a = cleanBasesOnly(seqA);
+  const b = cleanBasesOnly(seqB);
+  if (a.length < minK || b.length < minK) return false;
+  const rcB = revCompBases(b);
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length <= b.length ? b : a;
+  const longerRc = a.length <= b.length ? rcB : revCompBases(a);
+  for (let i = 0; i <= shorter.length - minK; i++) {
+    const sub = shorter.slice(i, i + minK);
+    if (longer.includes(sub) || longerRc.includes(sub)) return true;
+  }
+  return false;
+}
+
+/**
+ * Evaluates column-based cross-contamination risks on a CPG column synthesizer (ISO 13485 / Molecular Diagnostics GMP):
+ * When a POSITIVE_CONTROL or TEMPLATE sequence is placed on an adjacent column (`|posA - posB| === 1`) or in the same batch
+ * as a diagnostic PRIMER / PROBE targeting the same pathogen or sharing ≥12 nt sequence homology, returns warnings per column
+ * and flags whether an adjacent-column collision exists.
+ */
+export function checkColumnContamination(
+  positions: { position_no: number; s: { code: string; name: string; oligo_role?: string; target_pathogen?: string | null; normalized_sequence: string } }[]
+): { warningsByPos: Map<number, string>; adjacentCollisions: string[] } {
+  const warningsByPos = new Map<number, string[]>();
+  const adjacentCollisions: string[] = [];
+
+  const templateRoles = new Set(["POSITIVE_CONTROL", "TEMPLATE"]);
+  const assayRoles = new Set(["PRIMER", "PROBE"]);
+
+  for (let i = 0; i < positions.length; i++) {
+    for (let j = i + 1; j < positions.length; j++) {
+      const a = positions[i];
+      const b = positions[j];
+      const roleA = a.s.oligo_role || "PRIMER";
+      const roleB = b.s.oligo_role || "PRIMER";
+      const isRiskPair =
+        (templateRoles.has(roleA) && assayRoles.has(roleB)) ||
+        (templateRoles.has(roleB) && assayRoles.has(roleA));
+      if (!isRiskPair) continue;
+
+      const samePathogen =
+        Boolean(a.s.target_pathogen && b.s.target_pathogen) &&
+        a.s.target_pathogen!.trim().toUpperCase() === b.s.target_pathogen!.trim().toUpperCase();
+      const homologous = sharesHomology(a.s.normalized_sequence, b.s.normalized_sequence, 12);
+
+      if (!samePathogen && !homologous) continue;
+
+      const dist = Math.abs(a.position_no - b.position_no);
+      const reasonTag = samePathogen ? `cùng tác nhân đích "${a.s.target_pathogen}"` : "trùng trình tự tương đồng ≥12 bp";
+      if (dist === 1) {
+        const msg = `CẢNH BÁO NHIỄM CHÉO CỘT LIỀN KỀ (Cột #${a.position_no} ${a.s.code} [${roleA}] & Cột #${b.position_no} ${b.s.code} [${roleB}] — ${reasonTag})`;
+        adjacentCollisions.push(msg);
+        warningsByPos.set(a.position_no, [...(warningsByPos.get(a.position_no) ?? []), msg]);
+        warningsByPos.set(b.position_no, [...(warningsByPos.get(b.position_no) ?? []), msg]);
+      } else {
+        const msg = `Lưu ý đồng tổng hợp cùng mẻ với cột #${b.position_no} (${b.s.code} [${roleB}] — ${reasonTag})`;
+        const msgB = `Lưu ý đồng tổng hợp cùng mẻ với cột #${a.position_no} (${a.s.code} [${roleA}] — ${reasonTag})`;
+        warningsByPos.set(a.position_no, [...(warningsByPos.get(a.position_no) ?? []), msg]);
+        warningsByPos.set(b.position_no, [...(warningsByPos.get(b.position_no) ?? []), msgB]);
+      }
+    }
+  }
+
+  const out = new Map<number, string>();
+  for (const [pos, list] of warningsByPos.entries()) {
+    out.set(pos, list.join("; "));
+  }
+  return { warningsByPos: out, adjacentCollisions };
+}
 
 /**
  * Plans a batch: checks the synthesizer (in service, calibrated, enough positions, scale supported),
@@ -256,10 +343,20 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
     if (synth.supported_scales.length && !synth.supported_scales.includes(s.scale_code)) throw invalid(`Máy ${synth.code} không chạy thang ${s.scale_code} của ${s.code}.`);
   }
   const bySeq = new Map(seqs.map((s) => [s.id, s]));
-  const analysed = data.positions.map((p) => {
+  const analysed = data.positions.map((p, idx) => {
     const s = bySeq.get(p.sequence_id);
-    return { p, s, tokens: analyze(s.raw_sequence, catalog).tokens };
+    return { p, s, position_no: idx + 1, tokens: analyze(s.raw_sequence, catalog).tokens };
   });
+
+  // Check column-based cross-contamination between POSITIVE_CONTROL/TEMPLATE and PRIMER/PROBE columns
+  const contam = checkColumnContamination(analysed);
+  if (contam.adjacentCollisions.length > 0 && !data.allow_adjacent_contamination) {
+    throw invalid(
+      `Phát hiện nguy cơ nhiễm chéo trên vị trí cột liền kề của máy tổng hợp: ${contam.adjacentCollisions.join("; ")}. Vui lòng tách vị trí cột cách xa nhau, xếp sang mẻ riêng, hoặc xác nhận ghi nhận cảnh báo (allow_adjacent_contamination = true).`,
+      contam.adjacentCollisions,
+      "COLUMN_CROSS_CONTAMINATION_RISK"
+    );
+  }
 
   const rules: ReagentRule[] = (await tx.query("SELECT role, name, basis, qty::float AS qty, uom, item_id, status FROM oligo.reagent_rule")).rows;
   const amidites = new Map((await tx.query("SELECT code, amidite_item_id FROM oligo.modification")).rows.map((r) => [r.code, r.amidite_item_id]));
@@ -280,9 +377,12 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   ).rows[0] as Batch;
   const warehouses = await warehousesOf(tx, data.org_unit_id);
   for (const [i, a] of analysed.entries()) {
-    await tx.query("INSERT INTO oligo.synthesis_position (batch_id, position_no, sequence_id, column_lot_id, couplings) VALUES ($1, $2, $3, $4, $5)", [
-      batch.id, i + 1, a.s.id, a.p.column_lot_id, a.tokens.length,
-    ]);
+    const posNo = i + 1;
+    const warning = contam.warningsByPos.get(posNo) ?? null;
+    await tx.query(
+      "INSERT INTO oligo.synthesis_position (batch_id, position_no, sequence_id, column_lot_id, couplings, contamination_warning) VALUES ($1, $2, $3, $4, $5, $6)",
+      [batch.id, posNo, a.s.id, a.p.column_lot_id, a.tokens.length, warning]
+    );
     await reserveLot(tx, actor, { lot_id: a.p.column_lot_id, qty_base: 1, warehouse_ids: warehouses, demand_entity_type: DEMAND, demand_entity_id: batch.id });
   }
   // roles fed by a port on the machine are held from the bottle installed there; the rest FEFO

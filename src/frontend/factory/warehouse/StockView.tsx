@@ -25,8 +25,14 @@ interface StockRow {
   incubation_until: string | null;
 }
 
-export function StockView({ warehouses }: { warehouses: { id: string; code: string; name: string }[] }) {
-  const [warehouseId, setWarehouseId] = useState("");
+export function StockView({
+  warehouses,
+  initialWarehouseId = "",
+}: {
+  warehouses: { id: string; code: string; name: string; owner_name?: string; owner_module_key?: string }[];
+  initialWarehouseId?: string;
+}) {
+  const [warehouseId, setWarehouseId] = useState(initialWarehouseId);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -49,7 +55,53 @@ export function StockView({ warehouses }: { warehouses: { id: string; code: stri
   return (
     <>
     {lotId && <LotPanel key={lotId} lotId={lotId} onClose={() => setLotId(null)} />}
-    <Card title="Tồn kho theo lô và vị trí">
+    <Card title="Tồn kho theo lô và vị trí (Kho Tổng & Kho Nhánh Phòng Ban)">
+      {warehouses.length > 1 && (
+        <div className="flex flex-wrap items-center gap-1.5 mb-3">
+          <button
+            type="button"
+            onClick={() => reset(() => setWarehouseId(""))}
+            className={`px-3 py-1 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+              warehouseId === ""
+                ? "bg-sky-700 text-white border-sky-700"
+                : "bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+            }`}
+          >
+            Tất cả kho ({warehouses.length})
+          </button>
+          {warehouses.map((w) => {
+            const shortLabel =
+              w.code === "KHO-TONG"
+                ? "KHO-TONG · Kho Trung Tâm"
+                : w.code === "KHO-KIT"
+                  ? "KHO-KIT · Kho SX Kit"
+                  : w.code === "KHO-OLIGO"
+                    ? "KHO-OLIGO · Kho Oligo"
+                    : w.code === "KHO-DEVICE"
+                      ? "KHO-DEVICE · Kho Thiết Bị"
+                      : w.code === "KHO-RD"
+                        ? "KHO-RD · Kho R&D"
+                        : w.code === "KHO-QA"
+                          ? "KHO-QA · Kho QA/QC"
+                          : `${w.code} · ${w.name}`;
+            return (
+              <button
+                key={w.id}
+                type="button"
+                title={`${w.code} — ${w.name}${w.owner_name ? ` (${w.owner_name})` : ""}`}
+                onClick={() => reset(() => setWarehouseId(w.id))}
+                className={`px-2.5 py-1 rounded-xl text-xs font-bold border transition-colors cursor-pointer whitespace-nowrap ${
+                  warehouseId === w.id
+                    ? "bg-sky-700 text-white border-sky-700"
+                    : "bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                }`}
+              >
+                {shortLabel}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="grid gap-2 sm:grid-cols-3 mb-3">
         <select className={inputClass} value={warehouseId} onChange={(e) => reset(() => setWarehouseId(e.target.value))} aria-label="Kho">
           <option value="">Tất cả kho được xem</option>

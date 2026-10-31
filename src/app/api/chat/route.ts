@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, withTransaction, HttpError, httpErrorStatus } from "@/backend/db/db";
 import { getAuthorizedUser, unauthorizedResponse, setAuditActor } from "@/backend/services/authz";
+import { getFactoryPool } from "@/factory/core/db";
 
 /**
  * Identity of the chat user comes from the server session. The browser used to send `user` /
@@ -119,6 +120,42 @@ const DEFAULT_DEPARTMENT_CHANNELS = [
     name: "cung-ung-procurement",
     department: "Cung Ứng",
     description: "Kênh phòng Mua hàng & Cung ứng"
+  },
+  {
+    channel_code: "rd",
+    name: "nghien-cuu-rd",
+    department: "Nghiên Cứu R&D",
+    description: "Kênh chuyên môn Phòng Nghiên cứu & Phát triển (Đề tài R&D, DHF, thiết kế mồi/probe & thẩm định)"
+  },
+  {
+    channel_code: "kit",
+    name: "san-xuat-kit",
+    department: "Sản Xuất Kit",
+    description: "Kênh điều độ Phòng Sản xuất Kit Chẩn đoán (Lệnh sản xuất eBR, pha chế MasterMix, chia chuẩn .D.IC)"
+  },
+  {
+    channel_code: "oligo",
+    name: "tong-hop-oligo",
+    department: "Tổng Hợp Oligo",
+    description: "Kênh điều độ Phòng Tổng hợp Oligo (Mẻ tổng hợp cột CPG, tinh sạch HPLC/PAGE & đo QC OD)"
+  },
+  {
+    channel_code: "device",
+    name: "ky-thuat-thiet-bi",
+    department: "Kỹ Thuật – Thiết Bị",
+    description: "Kênh Phòng Kỹ thuật – Thiết bị (Hồ sơ DMR, lắp ráp DHR máy EZ32, chạy Burn-in & bảo hành RMA)"
+  },
+  {
+    channel_code: "qa",
+    name: "qa-qc-iso13485",
+    department: "QA/QC",
+    description: "Kênh Phòng Đảm bảo & Kiểm soát Chất lượng ISO 13485 (Giải phóng lô, cấp COA, kiểm soát NCR/CAPA)"
+  },
+  {
+    channel_code: "legal",
+    name: "phap-che-thau",
+    department: "Pháp Chế",
+    description: "Kênh Phòng Pháp chế & Hồ sơ Thầu Y tế (Số lưu hành IVD Bộ Y Tế, thẩm định hợp đồng & hồ sơ thầu)"
   }
 ];
 
@@ -134,7 +171,7 @@ async function ensureChatTables() {
   };
   try {
 
-    // Ensure all 5 standard department channels exist in chat_channels and have correct type/privacy
+    // Ensure all standard department channels exist in chat_channels and have correct type/privacy
     for (const ch of DEFAULT_DEPARTMENT_CHANNELS) {
       await query(
         `INSERT INTO chat_channels (channel_code, name, channel_type, department, description, is_private, created_by, members)
@@ -148,7 +185,7 @@ async function ensureChatTables() {
     await query(`
       UPDATE chat_channels
       SET channel_type = 'CHANNEL', is_private = FALSE
-      WHERE channel_code IN ('general', 'sales', 'application', 'warehouse', 'procurement')
+      WHERE channel_code IN ('general', 'sales', 'application', 'warehouse', 'procurement', 'rd', 'kit', 'oligo', 'device', 'qa', 'legal')
         AND (channel_type IS DISTINCT FROM 'CHANNEL' OR is_private IS DISTINCT FROM FALSE)
     `).catch(logFail("kênh phòng ban"));
 
@@ -356,11 +393,39 @@ export async function GET(req: NextRequest) {
         };
       });
 
+      let factoryWorkItems: any[] = [];
+      try {
+        const fPool = getFactoryPool();
+        const fwRes = await fPool.query(`
+          SELECT 'KIT_ORDER' AS type, k.code, ('Lệnh SX Kit: ' || COALESCE(i.name, k.code) || ' (' || k.status || ')') AS title, 'Sản Xuất Kit' AS department, 'factory-kit' AS target_tab
+            FROM kit.production_order k LEFT JOIN master.item i ON i.id = k.kit_item_id ORDER BY k.created_at DESC LIMIT 15
+          UNION ALL
+          SELECT 'OLIGO_BATCH' AS type, b.code, ('Mẻ tổng hợp Oligo: ' || b.code || ' (' || b.status || ')') AS title, 'Tổng Hợp Oligo' AS department, 'factory-oligo' AS target_tab
+            FROM oligo.synth_batch b ORDER BY b.created_at DESC LIMIT 15
+          UNION ALL
+          SELECT 'DEVICE_ORDER' AS type, d.code, ('Lệnh lắp ráp Thiết bị: ' || COALESCE(m.name, d.code) || ' (' || d.status || ')') AS title, 'Kỹ Thuật – Thiết Bị' AS department, 'factory-device' AS target_tab
+            FROM device.device_order d LEFT JOIN device.device_model m ON m.id = d.model_id ORDER BY d.created_at DESC LIMIT 15
+          UNION ALL
+          SELECT 'RD_PROJECT' AS type, r.code, ('Đề tài R&D: ' || r.name || ' (' || r.status || ')') AS title, 'Nghiên Cứu R&D' AS department, 'factory-rd' AS target_tab
+            FROM rd.project r ORDER BY r.created_at DESC LIMIT 15
+          UNION ALL
+          SELECT 'QA_NCR' AS type, n.code, ('Báo cáo sự cố NCR: ' || n.title || ' (' || n.status || ')') AS title, 'QA/QC' AS department, 'factory-qa' AS target_tab
+            FROM qms.ncr n ORDER BY n.created_at DESC LIMIT 15
+          UNION ALL
+          SELECT 'INTAKE_ORDER' AS type, o.code, ('Đơn đặt hàng nội bộ: ' || o.code || ' (' || o.status || ')') AS title, 'Đơn Nội Bộ' AS department, 'factory-orders' AS target_tab
+            FROM intake.order_request o ORDER BY o.created_at DESC LIMIT 15
+        `);
+        factoryWorkItems = fwRes.rows || [];
+      } catch (e) {
+        // Bỏ qua nếu bảng nhà máy chưa sẵn sàng
+      }
+
       return NextResponse.json({
         channels: formattedChannels,
         personnel: personnelRes.rows || [],
         tasks: tasksRes.rows || [],
-        workflows: workflowsRes.rows || []
+        workflows: workflowsRes.rows || [],
+        factoryWorkItems,
       });
     }
 

@@ -69,6 +69,10 @@ function SpecEditor({ base, mode, onClose }: { base?: SpecDetail; mode: "new" | 
     queryFn: () => api<{ rows: { id: string; code: string; name: string }[] }>(`/api/factory/master/items?page_size=50&q=${encodeURIComponent(q)}`),
     enabled: mode === "new" && NEEDS_ITEM.includes(head.applies_to),
   });
+  const qaOps = useQuery({
+    queryKey: ["factory", "qa-ops"],
+    queryFn: () => api<{ methods: { code: string; name: string }[] }>("/api/factory/qms/ops"),
+  });
   const save = useMutation({
     mutationFn: () => {
       const body = {
@@ -120,7 +124,15 @@ function SpecEditor({ base, mode, onClose }: { base?: SpecDetail; mode: "new" | 
           {params.map((p, i) => (
             <div key={i} className="grid gap-2 grid-cols-2 lg:grid-cols-8 items-end p-2 rounded-xl border border-slate-200 dark:border-slate-800">
               <Field label={`Chỉ tiêu ${i + 1} *`}><input className={inputClass} value={p.name} onChange={(e) => setP(i, { name: e.target.value })} required /></Field>
-              <Field label="Phương pháp"><input className={inputClass} value={p.method} onChange={(e) => setP(i, { method: e.target.value })} /></Field>
+              <Field label="Phương pháp (SOP QC)">
+                <input
+                  className={inputClass}
+                  list="qc-methods-datalist"
+                  placeholder="Chọn hoặc nhập mã PP..."
+                  value={p.method}
+                  onChange={(e) => setP(i, { method: e.target.value })}
+                />
+              </Field>
               <Field label="Kiểu">
                 <select className={inputClass} value={p.value_type} onChange={(e) => setP(i, { value_type: e.target.value as Param["value_type"] })}>
                   <option value="NUMERIC">Số</option>
@@ -157,6 +169,11 @@ function SpecEditor({ base, mode, onClose }: { base?: SpecDetail; mode: "new" | 
             </div>
           ))}
           <div><Button type="button" variant="ghost" onClick={() => setParams([...params, blankParam()])}>+ Thêm chỉ tiêu</Button></div>
+          <datalist id="qc-methods-datalist">
+            {(qaOps.data?.methods ?? []).map((m) => (
+              <option key={m.code} value={`${m.code} (${m.name})`} />
+            ))}
+          </datalist>
         </div>
         <ErrorNote error={save.error} />
         <div className="flex justify-end gap-2">

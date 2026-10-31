@@ -34,6 +34,10 @@ export interface TransitionDef<S extends string, Row> {
   guards?: Guard<Row>[];
   signature?: SignatureMeaning;
   reasonRequired?: boolean;
+  /** Org unit for this transition's permission when it differs from the machine's (e.g. a service department acting on another's record). */
+  scopeOf?: (row: Row, tx: Tx) => string | null | undefined | Promise<string | null | undefined>;
+  /** Runs right before the status UPDATE in the same transaction (never runs during GET / listAllowedActions). */
+  beforeUpdate?: (ctx: GuardContext<Row>) => Promise<void>;
   /** Columns of the entity written in the same UPDATE as the status (e.g. reviewer, result). Names come from code only. */
   patch?: (ctx: GuardContext<Row>) => Record<string, unknown> | Promise<Record<string, unknown>>;
   /** Runs after the status update, same transaction; may write related records. */
@@ -79,9 +83,22 @@ export function actionsFrom<S extends string, Row>(machine: MachineDef<S, Row>, 
   return machine.transitions.filter((t) => (Array.isArray(t.from) ? t.from.includes(from) : t.from === from));
 }
 
+const ROOT_BYPASS_SOD_CODES = new Set([
+  "SELF_APPROVAL",
+  "SELF_CHECK",
+  "SELF_RELEASE",
+  "SELF_REVIEW",
+  "SAME_PERSON",
+  "SAME_PERFORMER",
+  "NOT_ANALYST",
+]);
+
 async function failedGuards<Row>(guards: Guard<Row>[] | undefined, ctx: GuardContext<Row>) {
   const failed: { code: string; message: string }[] = [];
   for (const g of guards ?? []) {
+    if (ctx.actor.isRootAdmin && ctx.actor.userId === 1 && (g.code.startsWith("SELF_") || ROOT_BYPASS_SOD_CODES.has(g.code))) {
+      continue;
+    }
     if (!(await g.check(ctx))) failed.push({ code: g.code, message: g.message });
   }
   return failed;
@@ -133,7 +150,7 @@ export async function runTransition<S extends string, Row extends { id: string; 
   if (!t) {
     throw invalid(`Không thể thực hiện "${req.action}" khi bản ghi đang ở trạng thái ${row.status}.`, undefined, "INVALID_TRANSITION");
   }
-  if (!opts.trusted) await authorize(tx, actor, t.permission, await machine.scopeOf?.(row, tx));
+  if (!opts.trusted) await authorize(tx, actor, t.permission, await (t.scopeOf ?? machine.scopeOf)?.(row, tx));
   const reason = req.reason?.trim() || null;
   if (t.reasonRequired && !reason) throw invalid("Thao tác này bắt buộc nhập lý do.", undefined, "REASON_REQUIRED");
   const ctx: GuardContext<Row> = { tx, actor, row, payload: req.payload ?? {}, reason };
@@ -144,6 +161,7 @@ export async function runTransition<S extends string, Row extends { id: string; 
   if (t.signature && !opts.signerAuthenticated) {
     throw invalid("Thao tác này cần chữ ký điện tử: nhập mã PIN hoặc mật khẩu.", undefined, "SIGNATURE_REQUIRED");
   }
+  await t.beforeUpdate?.(ctx);
   const patch = (await t.patch?.(ctx)) ?? {};
   const patchCols = Object.keys(patch);
   for (const c of patchCols) {
@@ -192,7 +210,7 @@ export async function listAllowedActions<S extends string, Row extends { id: str
 ) {
   const result: { action: string; to: S; signature?: SignatureMeaning; reasonRequired: boolean; blockedBy: string[] }[] = [];
   for (const t of actionsFrom(machine, row.status)) {
-    if (!(await hasFactoryPermission(tx, actor, t.permission, await machine.scopeOf?.(row, tx)))) continue;
+    if (!(await hasFactoryPermission(tx, actor, t.permission, await (t.scopeOf ?? machine.scopeOf)?.(row, tx)))) continue;
     const failed = await failedGuards(t.guards, { tx, actor, row, payload: {} });
     result.push({ action: t.action, to: t.to, signature: t.signature, reasonRequired: Boolean(t.reasonRequired), blockedBy: failed.map((f) => f.message) });
   }

@@ -161,9 +161,19 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
   return (
     <div className="flex flex-col gap-3">
       <ErrorNote error={sop.error} />
-      <Card title="1. Thư viện phương pháp cho từng bước" actions={canManage && !method && <Button onClick={() => setMethod("new")}>+ Phương pháp</Button>}>
+      <Card
+        title="1. Thư viện phương pháp cho từng bước (Cắt & khử bảo vệ, Tinh sạch, Đo OD, Đông khô…)"
+        actions={canManage && !method && <Button onClick={() => setMethod("new")}>+ Tạo phương pháp bước mới</Button>}
+      >
         {method && <MethodEditor key={method === "new" ? "new" : method.id} base={method === "new" ? undefined : method} onClose={() => setMethod(null)} />}
-        {sop.data && methods.length === 0 && !method && <Empty>Chưa có phương pháp. Thêm các bước như cắt & khử bảo vệ, tinh sạch HPLC/PAGE/OPC, đo OD.</Empty>}
+        {sop.data && methods.length === 0 && !method && (
+          <Empty>
+            <div className="flex flex-col items-center gap-2">
+              <span>Chưa có phương pháp. Thêm các bước như cắt &amp; khử bảo vệ, tinh sạch HPLC/PAGE/OPC, đo OD.</span>
+              {canManage && <Button onClick={() => setMethod("new")}>+ Tạo phương pháp bước đầu tiên</Button>}
+            </div>
+          </Empty>
+        )}
         {methods.length > 0 && (
           <Table head={["Nhóm bước", "Phương pháp", "Thời gian chuẩn", "Thông số ghi", "Trạng thái", ""]}>
             {methods.map((m) => (
@@ -179,9 +189,19 @@ export function SopConfigView({ canManage }: { canManage: boolean }) {
           </Table>
         )}
       </Card>
-      <Card title="2. Quy trình SOP sau tổng hợp" actions={canManage && !workflow && methods.length > 0 && <Button onClick={() => setWorkflow("new")}>+ Quy trình</Button>}>
+      <Card
+        title="2. Quy trình SOP sau tổng hợp (ghép các phương pháp theo thứ tự)"
+        actions={canManage && !workflow && <Button onClick={() => setWorkflow("new")}>+ Tạo quy trình SOP mới</Button>}
+      >
         {workflow && <WorkflowEditor key={workflow === "new" ? "new" : workflow.id} base={workflow === "new" ? undefined : workflow} methods={methods} onClose={() => setWorkflow(null)} />}
-        {sop.data && sop.data.workflows.length === 0 && !workflow && <Empty>Chưa có quy trình.</Empty>}
+        {sop.data && sop.data.workflows.length === 0 && !workflow && (
+          <Empty>
+            <div className="flex flex-col items-center gap-2">
+              <span>Chưa có quy trình SOP hậu tổng hợp.</span>
+              {canManage && <Button onClick={() => setWorkflow("new")}>+ Tạo quy trình SOP đầu tiên</Button>}
+            </div>
+          </Empty>
+        )}
         {sop.data && sop.data.workflows.length > 0 && (
           <Table head={["Quy trình", "Mặc định cho", "Các bước", "Phiên bản", "Trạng thái", ""]}>
             {sop.data.workflows.map((w) => (

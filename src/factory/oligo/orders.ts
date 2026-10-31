@@ -14,6 +14,28 @@ registerPermissions([{ code: "oligo.order.manage", description: "Lập đơn Oli
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 export const PURIFICATIONS = ["DESALT", "OPC", "HPLC", "PAGE"] as const;
 export const FORMATS = ["LYOPHILIZED", "LIQUID"] as const;
+export const OLIGO_ROLES = ["PRIMER", "PROBE", "POSITIVE_CONTROL", "TEMPLATE", "BLOCKER", "OTHER"] as const;
+export type OligoRole = (typeof OLIGO_ROLES)[number];
+
+export function inferOligoRole(name: string, a: ReturnType<typeof analyze>, explicitRole?: string | null): OligoRole {
+  if (explicitRole && (OLIGO_ROLES as readonly string[]).includes(explicitRole.toUpperCase())) {
+    return explicitRole.toUpperCase() as OligoRole;
+  }
+  const n = name.toUpperCase();
+  if (/(POS[_\s-]*CTRL|POSITIVE[_\s-]*CONTROL|CHUNG[_\s-]*DUONG|CHỨNG[_\s-]*DƯƠNG|\bPC\b)/.test(n)) {
+    return "POSITIVE_CONTROL";
+  }
+  if (/(TEMPLATE|AMPLICON|TARGET[_\s-]*STD|PLASMID)/.test(n) || a.length >= 60) {
+    return "TEMPLATE";
+  }
+  if (a.product_type === "PROBE" || /(\bPROBE\b|\bPRB\b|TAQMAN)/.test(n)) {
+    return "PROBE";
+  }
+  if (/(\bBLOCKER\b|\bPNA\b)/.test(n)) {
+    return "BLOCKER";
+  }
+  return "PRIMER";
+}
 
 async function oligoUnit(tx: Tx, orgUnitId: string) {
   const u = (await tx.query("SELECT id FROM core.org_unit WHERE id = $1 AND module_key = 'OLIGO' AND status = 'ACTIVE'", [orgUnitId])).rows[0];
@@ -58,6 +80,8 @@ const linesSchema = z.object({
     scale_code: z.string().min(1, "chọn thang tổng hợp mặc định"),
     purification: z.enum(PURIFICATIONS),
     format: z.enum(FORMATS),
+    oligo_role: z.enum(OLIGO_ROLES).optional(),
+    target_pathogen: z.string().trim().max(150).optional().nullable(),
   }),
 });
 
@@ -68,6 +92,8 @@ interface ParsedLine {
   scale_code: string;
   purification: string;
   format: string;
+  oligo_role?: OligoRole;
+  target_pathogen?: string | null;
 }
 
 /**
@@ -89,7 +115,7 @@ async function parseLines(tx: Tx, text: string, defaults: z.infer<typeof linesSc
     const l = rawLine.trim();
     if (!l) return;
     const cols = l.split(/\t|;/).map((c) => c.trim());
-    const [name, raw, scale, purification, format] = cols.length === 1 ? ["", cols[0]] : cols;
+    const [name, raw, scale, purification, format, roleCol, pathogenCol] = cols.length === 1 ? ["", cols[0]] : cols;
     const line = i + 1;
     const sc = scale ? scales.get(scale.toUpperCase().replace(/\s+/g, "")) : defaults.scale_code;
     if (!sc) return void errors.push({ line, message: `Thang "${scale}" không có trong cấu hình (thang ngoài bảng không tự đoán).` });
@@ -100,7 +126,10 @@ async function parseLines(tx: Tx, text: string, defaults: z.infer<typeof linesSc
     if (!(FORMATS as readonly string[]).includes(foNorm)) return void errors.push({ line, message: `Định dạng "${format}" không hợp lệ (LYOPHILIZED / LIQUID).` });
     try {
       const a = analyze(raw ?? "", catalog);
-      out.push({ line, name: name || `Oligo ${line}`, raw: raw!, scale_code: sc, purification: pu, format: foNorm, a });
+      const seqName = name || `Oligo ${line}`;
+      const oligo_role = inferOligoRole(seqName, a, roleCol || defaults.oligo_role);
+      const target_pathogen = (pathogenCol || defaults.target_pathogen || "").trim() || null;
+      out.push({ line, name: seqName, raw: raw!, scale_code: sc, purification: pu, format: foNorm, oligo_role, target_pathogen, a });
     } catch (e) {
       if (e instanceof SequenceError) errors.push({ line, message: e.message });
       else throw e;
@@ -129,20 +158,23 @@ export async function insertSequence(
     scale_code: string;
     purification: string;
     format: string;
+    oligo_role?: OligoRole | string | null;
+    target_pathogen?: string | null;
     parent_sequence_id?: string | null;
     relation?: string | null;
   }
 ) {
   const code = await nextNumber(tx, "OLIGO_SEQUENCE");
   const a = fields.a;
+  const role = inferOligoRole(fields.name, a, fields.oligo_role);
   return (
     await tx.query(
       `INSERT INTO oligo.oligo_sequence (code, order_id, org_unit_id, line_no, name, raw_sequence, normalized_sequence, base_count, molecule_type, product_type,
-         scale_code, purification, format, mw, ext_coeff_260, tm, nmol_per_od, ug_per_od, gc_percent, modifications, warnings, parent_sequence_id, relation, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $24) RETURNING *`,
+         oligo_role, target_pathogen, scale_code, purification, format, mw, ext_coeff_260, tm, nmol_per_od, ug_per_od, gc_percent, modifications, warnings, parent_sequence_id, relation, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26) RETURNING *`,
       [
         code, fields.order_id, fields.org_unit_id, fields.line_no, fields.name, fields.raw, a.normalized, a.length, a.molecule_type, productTypeOf(a),
-        fields.scale_code, fields.purification, fields.format, a.mw, a.ext_coeff_260, a.tm, a.nmol_per_od, a.ug_per_od, a.gc_percent, a.modifications,
+        role, fields.target_pathogen ?? null, fields.scale_code, fields.purification, fields.format, a.mw, a.ext_coeff_260, a.tm, a.nmol_per_od, a.ug_per_od, a.gc_percent, a.modifications,
         JSON.stringify(a.warnings), fields.parent_sequence_id ?? null, fields.relation ?? null, actor.userId,
       ]
     )
@@ -160,7 +192,21 @@ export async function addSequences(tx: Tx, actor: AuthzActor, orderId: string, i
   let lineNo = Number((await tx.query("SELECT coalesce(max(line_no), 0) AS n FROM oligo.oligo_sequence WHERE order_id = $1", [orderId])).rows[0].n);
   const created = [];
   for (const l of lines) {
-    created.push(await insertSequence(tx, actor, { order_id: orderId, org_unit_id: order.org_unit_id, line_no: ++lineNo, name: l.name, raw: l.raw, a: l.a, scale_code: l.scale_code, purification: l.purification, format: l.format }));
+    created.push(
+      await insertSequence(tx, actor, {
+        order_id: orderId,
+        org_unit_id: order.org_unit_id,
+        line_no: ++lineNo,
+        name: l.name,
+        raw: l.raw,
+        a: l.a,
+        scale_code: l.scale_code,
+        purification: l.purification,
+        format: l.format,
+        oligo_role: l.oligo_role,
+        target_pathogen: l.target_pathogen,
+      })
+    );
   }
   await writeAudit(tx, actor, { entityType: "oligo_order", entityId: orderId, action: "add_sequences", changes: { sequences: [null, created.length] } });
   return { added: created.length };
@@ -234,7 +280,9 @@ export async function listOligoOrders(tx: Tx, actor: AuthzActor, status?: string
   return (
     await tx.query(
       `SELECT o.id, o.code, o.customer_label, o.due_date, o.due_date_change_count, o.status, o.created_at, io.kd_po_code,
-              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_count
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'COMPLETED') AS ready_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'DELIVERED') AS delivered_count
          FROM oligo.oligo_order o LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
         WHERE ($1::uuid[] IS NULL OR o.org_unit_id = ANY($1::uuid[])) AND ($2::text IS NULL OR o.status = $2)
         ORDER BY o.created_at DESC LIMIT 300`,
@@ -255,7 +303,8 @@ export async function getOligoOrder(tx: Tx, actor: AuthzActor, id: string) {
   if (units !== "ALL" && !units.includes(order.org_unit_id)) throw notFound("đơn Oligo");
   const sequences = (
     await tx.query(
-      `SELECT s.id, s.code, s.line_no, s.name, s.raw_sequence, s.normalized_sequence, s.base_count, s.molecule_type, s.product_type, s.scale_code, s.purification,
+      `SELECT s.id, s.code, s.line_no, s.name, s.raw_sequence, s.normalized_sequence, s.base_count, s.molecule_type, s.product_type,
+              s.oligo_role, s.target_pathogen, s.scale_code, s.purification,
               s.format, s.mw::float AS mw, s.ext_coeff_260::float AS ext_coeff_260, s.tm::float AS tm, s.nmol_per_od::float AS nmol_per_od, s.ug_per_od::float AS ug_per_od,
               s.gc_percent::float AS gc_percent, s.modifications, s.warnings, s.status, s.parent_sequence_id, s.relation, s.pool_id, s.version,
               m.code AS pool_master_code

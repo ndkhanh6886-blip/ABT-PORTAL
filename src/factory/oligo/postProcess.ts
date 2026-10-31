@@ -40,13 +40,13 @@ const move = async (tx: Tx, actor: AuthzActor, seq: { id: string; version: numbe
 };
 
 /** A new post-processing record; it follows (a frozen copy of) the SOP workflow of the purification when one is configured. */
-export async function openRecord(tx: Tx, actor: AuthzActor, f: { sequence_id: string; batch_id: string | null; purification: string; format: string; notes?: string }) {
+export async function openRecord(tx: Tx, actor: AuthzActor, f: { sequence_id: string; batch_id: string | null; purification: string; format: string; scale_code?: string; mfg_date?: string | null; notes?: string }) {
   const wf = await workflowFor(tx, f.purification);
   return (
     await tx.query(
-      `INSERT INTO oligo.post_process (sequence_id, batch_id, purification, format, notes, workflow_id, workflow_revision, workflow_steps, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9) RETURNING *`,
-      [f.sequence_id, f.batch_id, f.purification, f.format, f.notes ?? null, wf?.id ?? null, wf?.revision ?? null, wf ? JSON.stringify(wf.steps) : null, actor.userId]
+      `INSERT INTO oligo.post_process (sequence_id, batch_id, purification, format, synthesis_scale_code, mfg_date, notes, workflow_id, workflow_revision, workflow_steps, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11) RETURNING *`,
+      [f.sequence_id, f.batch_id, f.purification, f.format, f.scale_code ?? null, f.mfg_date ?? null, f.notes ?? null, wf?.id ?? null, wf?.revision ?? null, wf ? JSON.stringify(wf.steps) : null, actor.userId]
     )
   ).rows[0];
 }
@@ -55,11 +55,36 @@ export async function openRecord(tx: Tx, actor: AuthzActor, f: { sequence_id: st
 export async function startPostProcess(tx: Tx, actor: AuthzActor, seqId: string) {
   const s = await lockSequence(tx, seqId);
   await move(tx, actor, s, "start_post");
-  const batch = (await tx.query("SELECT batch_id FROM oligo.synthesis_position WHERE sequence_id = $1 AND result = 'OK' ORDER BY batch_id DESC LIMIT 1", [seqId])).rows[0];
-  const rec = await openRecord(tx, actor, { sequence_id: seqId, batch_id: batch?.batch_id ?? null, purification: s.purification, format: s.format });
+  const batch = (
+    await tx.query(
+      `SELECT p.batch_id, b.started_at::date::text AS batch_mfg_date
+         FROM oligo.synthesis_position p
+         LEFT JOIN oligo.synthesis_batch b ON b.id = p.batch_id
+        WHERE p.sequence_id = $1 AND p.result = 'OK'
+        ORDER BY p.batch_id DESC LIMIT 1`,
+      [seqId]
+    )
+  ).rows[0];
+  const rec = await openRecord(tx, actor, {
+    sequence_id: seqId,
+    batch_id: batch?.batch_id ?? null,
+    purification: s.purification,
+    format: s.format,
+    scale_code: s.scale_code,
+    mfg_date: batch?.batch_mfg_date ?? new Date().toISOString().slice(0, 10),
+  });
   await writeAudit(tx, actor, { entityType: "oligo_post_process", entityId: rec.id, action: "create", changes: { sequence: [null, s.code] } });
   return rec;
 }
+
+const tubeDetailSchema = z.object({
+  tube_no: z.coerce.number().int().positive(),
+  label: z.string().trim().max(100).optional(),
+  od: z.coerce.number().min(0),
+  nmol: z.coerce.number().min(0),
+  ug: z.coerce.number().min(0),
+  vol_100um_ul: z.coerce.number().min(0),
+});
 
 const saveSchema = z.object({
   version: z.number().int().min(0),
@@ -72,10 +97,13 @@ const saveSchema = z.object({
   stock_volume_ul: z.coerce.number().positive().max(1_000_000).nullable().optional(),
   target_conc_um: z.coerce.number().positive().max(100000).nullable().optional(),
   tube_count: z.coerce.number().int().min(1).max(100).optional(),
+  synthesis_scale_code: z.string().trim().max(30).nullable().optional(),
+  mfg_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+  tubes_detail: z.array(tubeDetailSchema).max(100).optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
 });
-const EDITABLE = ["cleavage_done", "deprotection_done", "purification_done", "a260", "dilution_factor", "path_cm", "stock_volume_ul", "target_conc_um", "tube_count", "notes"] as const;
-const DERIVED = ["od_total", "nmol", "ug", "resuspend_volume_ul", "od_per_tube"] as const;
+const EDITABLE = ["cleavage_done", "deprotection_done", "purification_done", "a260", "dilution_factor", "path_cm", "stock_volume_ul", "target_conc_um", "tube_count", "synthesis_scale_code", "mfg_date", "notes"] as const;
+const DERIVED = ["od_total", "nmol", "ug", "resuspend_volume_ul", "od_per_tube", "tubes_detail"] as const;
 
 /** Saves steps and measurements while the sequence is in post-processing; OD, nmol, µg and volumes are always computed here. */
 export async function savePostProcess(tx: Tx, actor: AuthzActor, seqId: string, input: unknown) {
@@ -87,6 +115,7 @@ export async function savePostProcess(tx: Tx, actor: AuthzActor, seqId: string, 
   if (cur.version !== data.version) throw conflict("Hồ sơ hậu tổng hợp vừa được người khác sửa. Tải lại rồi nhập lại.", "STALE_VERSION");
   const next: Record<string, any> = {};
   for (const k of EDITABLE) next[k] = data[k] === undefined ? cur[k] : data[k];
+  if (!next.synthesis_scale_code) next.synthesis_scale_code = s.scale_code;
   // with an SOP the steps are confirmed one by one (logStep), not ticked here
   if (cur.workflow_steps) for (const k of ["cleavage_done", "deprotection_done", "purification_done"] as const) next[k] = cur[k];
   for (const k of ["a260", "dilution_factor", "path_cm", "stock_volume_ul", "target_conc_um"]) if (next[k] != null) next[k] = Number(next[k]);
@@ -96,9 +125,40 @@ export async function savePostProcess(tx: Tx, actor: AuthzActor, seqId: string, 
     ? quantify({ nmol_per_od: Number(s.nmol_per_od), ug_per_od: Number(s.ug_per_od) }, { ...next, target_conc_um: next.target_conc_um } as any)
     : { od_total: null, nmol: null, ug: null, resuspend_volume_ul: null, od_per_tube: null };
   Object.assign(next, q);
+
+  const tc = Math.max(Number(next.tube_count || 1), 1);
+  if (data.tubes_detail && data.tubes_detail.length === tc) {
+    next.tubes_detail = JSON.stringify(
+      data.tubes_detail.map((t, idx) => ({
+        tube_no: idx + 1,
+        label: t.label || `Ống ${idx + 1}/${tc}`,
+        od: pyRound(t.od, 3),
+        nmol: pyRound(t.od * Number(s.nmol_per_od), 2),
+        ug: pyRound(t.od * Number(s.ug_per_od), 2),
+        vol_100um_ul: pyRound(t.od * Number(s.nmol_per_od) * 10, 1),
+      }))
+    );
+  } else if (measured && q.od_total != null) {
+    const perOd = pyRound(q.od_total / tc, 3);
+    const perNmol = pyRound(perOd * Number(s.nmol_per_od), 2);
+    const perUg = pyRound(perOd * Number(s.ug_per_od), 2);
+    next.tubes_detail = JSON.stringify(
+      Array.from({ length: tc }, (_, idx) => ({
+        tube_no: idx + 1,
+        label: `Ống ${idx + 1}/${tc}`,
+        od: perOd,
+        nmol: perNmol,
+        ug: perUg,
+        vol_100um_ul: pyRound(perNmol * 10, 1),
+      }))
+    );
+  } else {
+    next.tubes_detail = JSON.stringify(cur.tubes_detail ?? []);
+  }
+
   const cols = [...EDITABLE, ...DERIVED];
   await tx.query(
-    `UPDATE oligo.post_process SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(", ")}, version = version + 1, updated_at = now(), updated_by = $${cols.length + 2} WHERE id = $1`,
+    `UPDATE oligo.post_process SET ${cols.map((c, i) => (c === "tubes_detail" ? `${c} = $${i + 2}::jsonb` : `${c} = $${i + 2}`)).join(", ")}, version = version + 1, updated_at = now(), updated_by = $${cols.length + 2} WHERE id = $1`,
     [cur.id, ...cols.map((c) => next[c]), actor.userId]
   );
   const changes: Record<string, [unknown, unknown]> = {};

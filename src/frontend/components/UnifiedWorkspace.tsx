@@ -78,10 +78,18 @@ import {
   canonStaffName,
   sameStaffName,
 } from "@/backend/services/workspaceTasks";
+import { WorkPlansView } from "@/frontend/factory/rd/WorkPlansView";
+import { PlannerView } from "@/frontend/factory/oligo/PlannerView";
+import { useFactoryMe } from "@/frontend/factory/api";
 
 // Configuration for Departments
 const DEPARTMENT_ICONS: Record<string, any> = {
   "Ban Giám Đốc": Award,
+  "Nghiên Cứu R&D": FlaskConical,
+  "Sản Xuất Kit": Package,
+  "Tổng Hợp Oligo": FlaskConical,
+  "Kỹ Thuật – Thiết Bị": Activity,
+  "QA/QC": ShieldCheck,
   "Kế Toán": DollarSign,
   "Sales Admin": Briefcase,
   "PM": Briefcase,
@@ -138,6 +146,99 @@ export interface ThematicTypeDefinition {
 }
 
 export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]> = {
+  "Nghiên Cứu R&D": [
+    {
+      id: "rd_stage_gate_dhf",
+      name: "Nghiên cứu Thiết kế & Thẩm định Kit / Thiết bị (ISO 13485 §7.3)",
+      icon: "🧬",
+      codePrefix: "RD-DHF",
+      description: "Lộ trình Stage-Gate từ Design Input, Design Output, Verification, Validation đến Chuyển giao sản xuất và hồ sơ DHF.",
+      sampleObjectives: "Hoàn thành thẩm định độ nhạy phân tích (LoD ≤ 10 copies/rxn) và độ lặp lại CV < 3% cho Kit Multiplex Real-time PCR.",
+      defaultStages: [
+        { name: "Xác lập yêu cầu đầu vào (Design Input) & Phân tích rủi ro FMEA (ISO 14971)", estimatedDays: 3 },
+        { name: "Tối ưu công thức mồi/dò, đệm phản ứng & Ghi chép Sổ thí nghiệm (ELN)", estimatedDays: 5 },
+        { name: "Kiểm chứng hiệu năng phân tích (Design Verification: LoD, Độ đặc hiệu, Độ ổn định)", estimatedDays: 5 },
+        { name: "Thẩm định trên mẫu lâm sàng (Design Validation) & Phê duyệt chuyển giao sản xuất", estimatedDays: 4 }
+      ]
+    },
+    {
+      id: "rd_iec62304_sw",
+      name: "Phát triển & Kiểm thử Phần mềm Chẩn đoán / Firmware (IEC 62304)",
+      icon: "💻",
+      codePrefix: "RD-SW",
+      description: "Phát triển thuật toán phân tích tín hiệu chẩn đoán / Firmware thiết bị kèm ma trận truy vết SRS – Test Case và kiểm soát SOUP.",
+      sampleObjectives: "Phát hành phiên bản phần mềm phân tích Ct tự động đạt 100% ca kiểm thử SRS và 0 lỗi Critical/High.",
+      defaultStages: [
+        { name: "Đặc tả yêu cầu phần mềm (SRS) & Phân loại an toàn (Class A/B/C)", estimatedDays: 2 },
+        { name: "Lập trình thuật toán, tích hợp thư viện SOUP & Kiểm thử đơn vị", estimatedDays: 4 },
+        { name: "Thực thi ma trận kiểm thử hệ thống (Traceability Matrix) & Rà soát lỗi", estimatedDays: 3 },
+        { name: "Ký duyệt phát hành (Release) & Liên kết vào hồ sơ kỹ thuật DMR", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "Sản Xuất Kit": [
+    {
+      id: "kit_gmp_campaign",
+      name: "Chiến dịch Sản xuất Lô Kit GMP & Hồ sơ Lô điện tử (eBR)",
+      icon: "🧪",
+      codePrefix: "KIT-GMP",
+      description: "Kế hoạch pha chế bán thành phẩm, chia lẻ, đóng gói hộp Kit theo BOM/Routing chuẩn GMP và cân đối hiệu suất thu hồi.",
+      sampleObjectives: "Sản xuất và hoàn thiện hồ sơ lô eBR cho 500 bộ Kit Real-time PCR đạt hiệu suất thu hồi 98% – 100%.",
+      defaultStages: [
+        { name: "Kiểm tra dọn dây chuyền (Line Clearance) & Giữ chỗ lô nguyên vật liệu FEFO", estimatedDays: 1 },
+        { name: "Pha chế Master Mix / Chứng dương trong phòng sạch & Ghi thông số IPC", estimatedDays: 2 },
+        { name: "Chiết rót, dán nhãn ống/hộp, lấy mẫu QC & mẫu lưu (Retain Sample)", estimatedDays: 2 },
+        { name: "Đối chiếu cân bằng nguyên liệu (Reconciliation) & Trình QA/QC phê duyệt xuất xưởng", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "Tổng Hợp Oligo": [
+    {
+      id: "oligo_column_synth",
+      name: "Chiến dịch Tổng hợp Oligo trên Cột CPG & Tinh sạch HPLC/PAGE",
+      icon: "🧬",
+      codePrefix: "OLG-SYN",
+      description: "Xếp mẻ tổng hợp trên cột CPG (kiểm soát chống nhiễm chéo cột liền kề), cắt khử bảo vệ, tinh sạch và đo OD260.",
+      sampleObjectives: "Tổng hợp và tinh sạch HPLC 120 trình tự Probe/Primer đạt độ tinh khiết ≥ 95%, giao đúng hạn cam kết.",
+      defaultStages: [
+        { name: "Phân tích trình tự, kiểm tra chống nhiễm chéo cột liền kề & Xếp mẻ máy tổng hợp", estimatedDays: 1 },
+        { name: "Chạy tổng hợp trên cột CPG, cắt khỏi cột & Khử bảo vệ (Cleavage & Deprotection)", estimatedDays: 1 },
+        { name: "Tinh sạch (Desalt / OPC / HPLC / PAGE), đo OD260, tính nmol/µg & Đông khô", estimatedDays: 2 },
+        { name: "Kiểm định QC, in nhãn ống và lập phiếu bàn giao Kinh doanh / Nội bộ", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "Kỹ Thuật – Thiết Bị": [
+    {
+      id: "dev_dhr_assembly",
+      name: "Lắp ráp Thiết bị 4 Trạm (DHR) & Kiểm định Xuất xưởng (FQC)",
+      icon: "⚙️",
+      codePrefix: "DEV-DHR",
+      description: "Lắp ráp cơ khí, điện tử, nạp Firmware IEC 62304, chạy già hóa (Burn-in) và hiệu chuẩn xuất xưởng.",
+      sampleObjectives: "Hoàn thành lắp ráp và hiệu chuẩn lô 10 máy tách chiết / nhiệt luân chuyển kèm hồ sơ DHR đầy đủ.",
+      defaultStages: [
+        { name: "Soạn linh kiện theo DMR/BOM & Lắp ráp Trạm 1–2 (Cơ khí & Bo mạch điện tử)", estimatedDays: 2 },
+        { name: "Trạm 3: Nạp Firmware đã phát hành, tích hợp cảm biến & Hiệu chuẩn nhiệt/quang", estimatedDays: 2 },
+        { name: "Trạm 4: Chạy thử tải liên tục (Burn-in test) & Kiểm tra an toàn điện", estimatedDays: 2 },
+        { name: "Nghiệm thu FQC, sinh số Serial vào kho Biệt trữ & Chờ QA duyệt xuất xưởng", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "QA/QC": [
+    {
+      id: "qa_iso_audit_release",
+      name: "Thẩm định Chất lượng Lô (Lot Release), CAPA & Kiểm soát Tài liệu ISO",
+      icon: "🛡️",
+      codePrefix: "QMS-REL",
+      description: "Kiểm nghiệm IQC/IPQC/FQC, rà soát hồ sơ lô DHR/eBR, phê duyệt xuất xưởng từ kho Biệt trữ và xử lý NCR/CAPA.",
+      sampleObjectives: "Hoàn thành kiểm định QC trong vòng 24h cho các lô Kit/Oligo/Thiết bị và rà soát 100% đào tạo SOP hiệu lực.",
+      defaultStages: [
+        { name: "Lấy mẫu và thực hiện phép thử QC theo bộ tiêu chuẩn kỹ thuật (QC Spec)", estimatedDays: 2 },
+        { name: "Thẩm tra độc lập kết quả QC, đối chiếu chữ ký điện tử & Hồ sơ lô eBR/DHR", estimatedDays: 1 },
+        { name: "Quyết định phê duyệt xuất xưởng (Release) hoặc Mở phiếu NCR / CAPA nếu lệch chuẩn", estimatedDays: 1 }
+      ]
+    }
+  ],
   "Application": [
     {
       id: "app_kit_validation",
@@ -483,6 +584,81 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
       { step_index: 1, title: "Hiệu chỉnh điều khoản & Phản hồi cho Sales", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Bản hợp đồng hoàn chỉnh (redline track changes) đạt chuẩn pháp lý" },
       { step_index: 2, title: "Trình Ban Giám Đốc phê duyệt ký kết chính thức", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Hợp đồng kinh tế có chữ ký số / con dấu pháp nhân công ty" }
     ]
+  },
+  {
+    id: "SALES_TO_FACTORY_KIT_OLIGO",
+    code: "SALES_TO_FACTORY_KIT_OLIGO",
+    name: "Kinh Doanh ──► Sản Xuất Kit / Tổng Hợp Oligo: Đặt sản xuất theo đơn khách hàng",
+    sourceDept: "Kinh Doanh",
+    targetDept: "Sản Xuất Kit",
+    icon: "FlaskConical",
+    description: "Chuyển yêu cầu đặt hàng nội bộ từ Kinh Doanh sang Phòng Sản Xuất Kit (lô thường / chia sẵn .D.IC / Kit Demo) hoặc Phòng Tổng Hợp Oligo.",
+    sla_days: 5,
+    steps: [
+      { step_index: 0, title: "Tiếp nhận Đơn đặt hàng nội bộ & Nổ định mức BOM / Kiểm tra tồn kho NVL", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 12, deliverables: "Xác nhận lệnh sản xuất Kit / mẻ tổng hợp Oligo và cam kết ngày giao (Committed Date)" },
+      { step_index: 1, title: "Thực hiện sản xuất lô eBR / Tổng hợp CPG & Kiểm nghiệm QC nội bộ", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 72, deliverables: "Hồ sơ lô điện tử eBR hoàn chỉnh, kết quả đo OD/HPLC hoặc chạy qPCR đạt chuẩn" },
+      { step_index: 2, title: "QA/QC cấp COA xuất xưởng & Bàn giao thành phẩm về Kho / Kinh Doanh", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Chứng nhận phân tích xuất xưởng (COA) và Phiếu xuất giao hàng" }
+    ]
+  },
+  {
+    id: "RD_TO_KIT_TECH_TRANSFER",
+    code: "RD_TO_KIT_TECH_TRANSFER",
+    name: "Nghiên Cứu R&D ──► Sản Xuất Kit & QA/QC: Chuyển giao công nghệ (Design Transfer)",
+    sourceDept: "Nghiên Cứu R&D",
+    targetDept: "Sản Xuất Kit",
+    icon: "Layers",
+    description: "Bàn giao công thức gốc, định mức BOM, quy trình pha chế SOP và tiêu chuẩn QC từ đề tài R&D sang Phòng Sản Xuất Kit để sản xuất lô thẩm định.",
+    sla_days: 7,
+    steps: [
+      { step_index: 0, title: "Rà soát Hồ sơ Lịch sử Thiết kế (DHF) & Phê duyệt công thức chuyển giao", dept: "Nghiên Cứu R&D", assignee_name: "", sla_hours: 24, deliverables: "Biên bản chuyển giao công nghệ, dự thảo BOM & quy trình Routing GMP" },
+      { step_index: 1, title: "Sản xuất 03 lô thẩm định liên tiếp (Validation Batches) trên dây chuyền", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 96, deliverables: "Hồ sơ lô điện tử eBR của 03 lô thẩm định đạt độ lặp lại CV < 3%" },
+      { step_index: 2, title: "QA/QC thẩm định kết quả & Ban hành BOM / SOP EFFECTIVE chính thức", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Quyết định phê duyệt đưa sản phẩm vào sản xuất thương mại chuẩn ISO 13485" }
+    ]
+  },
+  {
+    id: "FACTORY_TO_QA_LOT_RELEASE",
+    code: "FACTORY_TO_QA_LOT_RELEASE",
+    name: "Sản Xuất (Kit/Oligo/Thiết Bị) ──► QA/QC: Thẩm định Hồ sơ Lô & Giải phóng Lô (COA)",
+    sourceDept: "Sản Xuất Kit",
+    targetDept: "QA/QC",
+    icon: "ShieldCheck",
+    description: "Trình hồ sơ lô điện tử (eBR / DHR / QC OD-HPLC) và mẫu kiểm nghiệm sang Phòng QA/QC để kiểm định OQC, cấp COA và giải phóng lô khỏi khu Biệt trữ.",
+    sla_days: 2,
+    steps: [
+      { step_index: 0, title: "Tiếp nhận mẫu kiểm nghiệm & Đối soát hồ sơ lô eBR / DHR", dept: "QA/QC", assignee_name: "", sla_hours: 12, deliverables: "Phiếu lấy mẫu kiểm nghiệm OQC và kiểm tra cân bằng nguyên liệu" },
+      { step_index: 1, title: "Thực hiện phép thử QC (pH, độ nhạy Ct qPCR / độ tinh khiết HPLC / FQC máy)", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Biên bản kết quả kiểm nghiệm QC đạt tất cả chỉ tiêu kỹ thuật" },
+      { step_index: 2, title: "Ký số 21 CFR Part 11 giải phóng lô (RELEASED) & Phát hành COA chính thức", dept: "QA/QC", assignee_name: "", sla_hours: 12, deliverables: "Chứng nhận xuất xưởng COA và mở khóa tồn kho thương mại" }
+    ]
+  },
+  {
+    id: "RD_QA_TO_LEGAL_IVD",
+    code: "RD_QA_TO_LEGAL_IVD",
+    name: "R&D & QA/QC ──► Pháp Chế: Bàn giao Hồ sơ CSDT Đăng ký Lưu hành IVD & Hồ sơ Thầu",
+    sourceDept: "Nghiên Cứu R&D",
+    targetDept: "Pháp Chế",
+    icon: "FileText",
+    description: "Tập hợp Hồ sơ Thiết kế (DHF), Hồ sơ Thiết bị Gốc (DMR), Báo cáo Độ ổn định (Stability) và COA chuẩn ISO 13485 bàn giao cho Pháp chế nộp Bộ Y Tế / Đấu thầu.",
+    sla_days: 5,
+    steps: [
+      { step_index: 0, title: "Trích xuất báo cáo thẩm định hiệu năng (LoD, Độ đặc hiệu, Độ ổn định) từ R&D", dept: "Nghiên Cứu R&D", assignee_name: "", sla_hours: 24, deliverables: "Trọn bộ tài liệu kỹ thuật DHF/DMR và kết quả nghiên cứu độ ổn định" },
+      { step_index: 1, title: "QA/QC bổ sung Chứng nhận ISO 13485, COA 03 lô liên tiếp & Quy trình SOP", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Hồ sơ chất lượng lô sản xuất và chứng chỉ quản lý chất lượng" },
+      { step_index: 2, title: "Pháp chế thẩm tra pháp lý, hoàn thiện hồ sơ CSDT & Nộp cổng dịch vụ công BYT", dept: "Pháp Chế", assignee_name: "", sla_hours: 72, deliverables: "Phiếu tiếp nhận hồ sơ công bố / đăng ký số lưu hành Bộ Y Tế hoặc Hồ sơ dự thầu" }
+    ]
+  },
+  {
+    id: "SALES_APP_TO_DEVICE_SERVICE",
+    code: "SALES_APP_TO_DEVICE_SERVICE",
+    name: "Kinh Doanh / App ──► Kỹ Thuật – Thiết Bị: Lắp đặt, Hiệu chuẩn & Bảo hành Máy (RMA)",
+    sourceDept: "Kinh Doanh",
+    targetDept: "Kỹ Thuật – Thiết Bị",
+    icon: "Wrench",
+    description: "Yêu cầu Phòng Kỹ Thuật – Thiết Bị xuất máy tách chiết tự động (EZ32), lắp đặt tận bệnh viện, hiệu chuẩn định kỳ hoặc xử lý sự cố bảo hành RMA.",
+    sla_days: 3,
+    steps: [
+      { step_index: 0, title: "Tiếp nhận yêu cầu & Kiểm tra hồ sơ máy theo số Serial (DHR)", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 8, deliverables: "Phiếu tiếp nhận ca dịch vụ (Service Ticket) và chuẩn bị linh kiện / máy" },
+      { step_index: 1, title: "Kỹ sư thực hiện lắp đặt / hiệu chuẩn / sửa chữa & Cập nhật Firmware", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 48, deliverables: "Biên bản kiểm tra an toàn điện, hiệu chuẩn nhiệt độ & chạy thử nghiệm" },
+      { step_index: 2, title: "Nghiệm thu bàn giao với Khoa Xét nghiệm & Đóng hồ sơ bảo hành", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 16, deliverables: "Biên bản nghiệm thu có chữ ký xác nhận của khách hàng" }
+    ]
   }
 ];
 
@@ -729,14 +905,17 @@ export const DEFAULT_PRODUCTS_LIST: any[] = [];
 
 export const ALL_DEPARTMENTS_OPTIONS = [
   { value: "Kinh Doanh", label: "Kinh Doanh" },
+  { value: "Nghiên Cứu R&D", label: "Nghiên Cứu R&D (Khối Kỹ Thuật)" },
+  { value: "Sản Xuất Kit", label: "Sản Xuất Kit (Khối Kỹ Thuật)" },
+  { value: "Tổng Hợp Oligo", label: "Tổng Hợp Oligo (Khối Kỹ Thuật)" },
+  { value: "Kỹ Thuật – Thiết Bị", label: "Kỹ Thuật – Thiết Bị (Khối Kỹ Thuật)" },
+  { value: "QA/QC", label: "Đảm Bảo Chất Lượng QA/QC (ISO 13485)" },
   { value: "Application", label: "Application (Kỹ Thuật & Ứng Dụng)" },
   { value: "Kho & Vận Hành", label: "Kho & Vận Hành" },
   { value: "Cung Ứng", label: "Mua Hàng & Cung Ứng" },
   { value: "Pháp Chế", label: "Pháp Chế & Hợp Đồng Thầu" },
   { value: "Kế Toán", label: "Kế Toán - Tài Chính" },
   { value: "Ban Giám Đốc", label: "Ban Giám Đốc (BOD)" },
-  { value: "Kỹ Thuật", label: "Kỹ Thuật Thiết Bị" },
-  { value: "QA / QC", label: "Đảm Bảo Chất Lượng QA/QC" },
   { value: "Marketing", label: "Tiếp Thị & Marketing" },
   { value: "Hành Chính Nhân Sự", label: "Hành Chính Nhân Sự" }
 ];
@@ -1398,7 +1577,8 @@ export const UnifiedWorkspace: React.FC = () => {
 
   const [activeSubTab, setActiveSubTab] = useState<"tasks" | "workflows" | "planner" | "daily" | "announcements" | "analytics">("tasks");
   const [selectedDept, setSelectedDept] = useState<string>("all");
-  const [plannerView, setPlannerView] = useState<"calendar" | "lab_projects" | "sales_targets">("calendar");
+  const factoryMe = useFactoryMe();
+  const [plannerView, setPlannerView] = useState<"calendar" | "lab_projects" | "sales_targets" | "work_plans" | "shift_board">("calendar");
   const [loading, setLoading] = useState(true);
 
   // State cho Tab Thông Báo & Quyết Định Nội Bộ (Enterprise Announcements & Decisions)
@@ -1477,6 +1657,26 @@ export const UnifiedWorkspace: React.FC = () => {
   const [customerList, setCustomerList] = useState<any[]>([]);
   const [supplierList, setSupplierList] = useState<any[]>([]);
   const [productList, setProductList] = useState<any[]>(DEFAULT_PRODUCTS_LIST);
+  const [factoryPulse, setFactoryPulse] = useState<{
+    rd_projects?: number;
+    kit_orders?: number;
+    oligo_batches?: number;
+    device_orders?: number;
+    open_ncrs?: number;
+    quarantine_lots?: number;
+    intake_orders?: number;
+    open_prs?: number;
+    active_lots?: number;
+  } | null>(null);
+
+  useEffect(() => {
+    fetch("/api/factory/legal-bridge")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.pulse) setFactoryPulse(d.pulse);
+      })
+      .catch(() => {});
+  }, []);
 
   // Task Filters & Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -5959,6 +6159,59 @@ export const UnifiedWorkspace: React.FC = () => {
           </button>
         </div>
 
+        {/* Dải Điều Độ Liên Thông Khối Kỹ Thuật & Nhà Máy (8 Phân Hệ MES/QMS) */}
+        <div className="mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-extrabold text-[11px] border border-indigo-200/70 dark:border-indigo-800/60">
+              🏭 Liên thông Khối Kỹ Thuật:
+            </span>
+            {[
+              { tab: "factory-rd", label: "🔬 R&D (DHF)", count: factoryPulse?.rd_projects },
+              { tab: "factory-kit", label: "🧬 SX Kit (eBR)", count: factoryPulse?.kit_orders },
+              { tab: "factory-oligo", label: "🧪 Tổng hợp Oligo", count: factoryPulse?.oligo_batches },
+              { tab: "factory-device", label: "⚙️ Thiết bị (DMR/DHR)", count: factoryPulse?.device_orders },
+              {
+                tab: "factory-qa",
+                label: "🛡️ QA/QC & COA",
+                count: (factoryPulse?.quarantine_lots ?? 0) + (factoryPulse?.open_ncrs ?? 0),
+              },
+              { tab: "factory-orders", label: "📋 Đơn Nội Bộ", count: factoryPulse?.intake_orders },
+              { tab: "factory-purchase", label: "🛒 Cung Ứng PR", count: factoryPulse?.open_prs },
+              { tab: "factory-warehouse", label: "📦 Kho Nhà Máy", count: factoryPulse?.active_lots },
+            ].map((item) => (
+              <button
+                key={item.tab}
+                type="button"
+                onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: item.tab } }))}
+                className="px-2.5 py-1 rounded-lg bg-slate-50 hover:bg-indigo-50 dark:bg-slate-800/80 dark:hover:bg-indigo-950/50 text-slate-700 dark:text-slate-200 hover:text-indigo-700 dark:hover:text-indigo-300 border border-slate-200/80 dark:border-slate-700 text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+              >
+                <span>{item.label}</span>
+                {typeof item.count === "number" && (
+                  <span className="px-1.5 py-0.2 rounded-full bg-indigo-100 dark:bg-indigo-900/70 text-indigo-700 dark:text-indigo-300 text-[10px] font-extrabold">
+                    {item.count}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "legal" } }))}
+              className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/70 dark:border-amber-800/50 text-[11px] font-bold cursor-pointer"
+            >
+              ⚖️ Pháp Chế IVD ↗
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "chat" } }))}
+              className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/50 text-[11px] font-bold cursor-pointer"
+            >
+              💬 Chat Nội Bộ ↗
+            </button>
+          </div>
+        </div>
+
         {/* Dải cảnh báo Văn bản / Quyết định mới chưa xác nhận đọc */}
         {unacknowledgedAnnouncementsForMe.length > 0 && activeSubTab !== "announcements" && (
           <div className="mt-3 pt-3 border-t border-rose-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs bg-rose-50/70 dark:bg-rose-950/30 px-3 py-2 rounded-xl border border-rose-200/80 dark:border-rose-900/60">
@@ -7332,12 +7585,52 @@ ${wf.description || ""}`}
                 <Target className="w-3.5 h-3.5" />
                 <span>🎯 Mục Tiêu Kinh Doanh ({filteredSalesTargets.length})</span>
               </button>
+
+              <button
+                onClick={() => setPlannerView("work_plans")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  plannerView === "work_plans"
+                    ? "bg-sky-700 text-white shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <ListChecks className="w-3.5 h-3.5" />
+                <span>📝 Kế Hoạch Tuần &amp; KPI Chuyên Môn</span>
+              </button>
+
+              <button
+                onClick={() => setPlannerView("shift_board")}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                  plannerView === "shift_board"
+                    ? "bg-emerald-700 text-white shadow-xs"
+                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>⏱️ Phân Công Ca / Điều Độ Lab &amp; Xưởng</span>
+              </button>
             </div>
 
             <span className="text-[11px] text-slate-400 hidden sm:inline font-medium">
               Hiển thị phân bổ theo ngữ cảnh chuyên môn
             </span>
           </div>
+
+          {/* Sub-view: Weekly Work Plans & KPI by Department */}
+          {plannerView === "work_plans" && (
+            <WorkPlansView
+              canSubmit={true}
+              departmentHint={selectedDept}
+            />
+          )}
+
+          {/* Sub-view: Daily Shift / Lab & Factory Dispatch Board by Department */}
+          {plannerView === "shift_board" && (
+            <PlannerView
+              myUserId={factoryMe.data?.profile.user_id ?? null}
+              departmentHint={selectedDept}
+            />
+          )}
 
           {/* Sub-view 1: Master Weekly Calendar */}
           {plannerView === "calendar" && (

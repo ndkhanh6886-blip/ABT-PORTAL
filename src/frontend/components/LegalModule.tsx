@@ -333,10 +333,38 @@ export const LegalModule: React.FC = () => {
     });
   }, [tenders, tenderStatusFilter, tenderSearchQuery]);
 
-  // Synchronize legal data with PostgreSQL backend via /api/storage
+  const [factoryBridge, setFactoryBridge] = useState<{
+    products: any[];
+    dhf_projects: any[];
+    dmr_revisions: any[];
+    coas: any[];
+    controlled_docs: any[];
+  }>({
+    products: [],
+    dhf_projects: [],
+    dmr_revisions: [],
+    coas: [],
+    controlled_docs: [],
+  });
+
+  // Synchronize legal data with PostgreSQL backend via /api/storage & /api/factory/legal-bridge
   useEffect(() => {
     const fetchLegalData = async () => {
       try {
+        try {
+          const fbRes = await fetch("/api/factory/legal-bridge");
+          if (fbRes.ok) {
+            const fbData = await fbRes.json();
+            setFactoryBridge({
+              products: fbData.products || [],
+              dhf_projects: fbData.dhf_projects || [],
+              dmr_revisions: fbData.dmr_revisions || [],
+              coas: fbData.coas || [],
+              controlled_docs: fbData.controlled_docs || [],
+            });
+          }
+        } catch {}
+
         const [contractsRes, licensesRes, docsRes, tendersRes] = await Promise.all([
           fetch("/api/storage?key=legal_contracts"),
           fetch("/api/storage?key=legal_licenses"),
@@ -1073,6 +1101,51 @@ export const LegalModule: React.FC = () => {
           <ShieldCheck className="w-4 h-4" />
           <span>Quy Chuẩn Tuân Thủ &amp; Biểu Mẫu Chuẩn</span>
         </button>
+      </div>
+
+      {/* 🔗 LIVE FACTORY TECHNICAL & QUALITY BRIDGE (ISO 13485 • DHF/DMR • COA • SOP) */}
+      <div className="bg-gradient-to-r from-emerald-950/90 via-teal-950/90 to-slate-900 rounded-2xl border border-emerald-800/60 p-4 text-white shadow-sm">
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wide text-emerald-300">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              <span>Liên Thông Hồ Sơ Kỹ Thuật &amp; Chất Lượng Nhà Máy (ISO 13485 • DHF/DMR • COA)</span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-0.5">
+              Dữ liệu thời gian thực từ Khối Kỹ Thuật phục vụ đăng ký Số lưu hành Bộ Y Tế, thẩm định Hợp đồng và chuẩn bị Hồ sơ Đấu thầu Y tế.
+            </p>
+          </div>
+          <div className="flex items-center flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "factory-rd" } }))}
+              className="px-3 py-1.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/30 text-sky-200 text-[11px] font-bold cursor-pointer transition-colors"
+            >
+              🧬 Đề tài &amp; Hồ sơ DHF R&D ({factoryBridge.dhf_projects.length}) ↗
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "factory-kit" } }))}
+              className="px-3 py-1.5 rounded-xl bg-emerald-500/15 hover:bg-emerald-500/25 border border-emerald-400/30 text-emerald-200 text-[11px] font-bold cursor-pointer transition-colors"
+            >
+              🧪 Sản phẩm Kit &amp; COA ({factoryBridge.products.length} SP • {factoryBridge.coas.length} COA) ↗
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "factory-device" } }))}
+              className="px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/30 text-amber-200 text-[11px] font-bold cursor-pointer transition-colors"
+            >
+              ⚙️ Hồ sơ Thiết bị DMR ({factoryBridge.dmr_revisions.length}) ↗
+            </button>
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "factory-qa" } }))}
+              className="px-3 py-1.5 rounded-xl bg-teal-500/15 hover:bg-teal-500/25 border border-teal-400/30 text-teal-200 text-[11px] font-bold cursor-pointer transition-colors"
+            >
+              🛡️ Tài liệu SOP ISO 13485 ({factoryBridge.controlled_docs.length}) ↗
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* TAB 1: CONTRACTS */}
@@ -2339,9 +2412,47 @@ export const LegalModule: React.FC = () => {
 
             {/* Checklist Pre-selection */}
             <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
-              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
-                Tiêu Chí Pháp Lý Bắt Buộc (Luật Đấu Thầu 22/2023):
-              </label>
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                  Tiêu Chí Pháp Lý Bắt Buộc (Luật Đấu Thầu 22/2023):
+                </label>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {factoryBridge.coas.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const c = factoryBridge.coas[0];
+                        setNewTenderForm(prev => ({
+                          ...prev,
+                          checklist: { ...prev.checklist, iso13485: true, gdpGspColdChain: true },
+                          notes: `${prev.notes ? prev.notes + "\n" : ""}[Đính kèm COA Nhà máy] ${c.code} (Lô ${c.lot_code} — ${c.item_name})`,
+                        }));
+                        showToast("success", `Đã trích xuất & đính kèm COA ${c.code} từ Phòng QA/QC!`);
+                      }}
+                      className="px-2 py-0.5 rounded-lg bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 text-[10px] font-bold cursor-pointer"
+                    >
+                      + Đính kèm COA xuất xưởng ({factoryBridge.coas[0].code})
+                    </button>
+                  )}
+                  {factoryBridge.controlled_docs.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const doc = factoryBridge.controlled_docs[0];
+                        setNewTenderForm(prev => ({
+                          ...prev,
+                          checklist: { ...prev.checklist, circulationLicense: true, iso13485: true },
+                          notes: `${prev.notes ? prev.notes + "\n" : ""}[Hồ sơ QMS ISO 13485] ${doc.code} v${doc.doc_version}: ${doc.title}`,
+                        }));
+                        showToast("success", `Đã liên kết tài liệu ISO 13485 (${doc.code}) từ Khối Kỹ Thuật!`);
+                      }}
+                      className="px-2 py-0.5 rounded-lg bg-teal-100 hover:bg-teal-200 dark:bg-teal-950 text-teal-700 dark:text-teal-300 text-[10px] font-bold cursor-pointer"
+                    >
+                      + Gắn Hồ sơ ISO 13485 ({factoryBridge.controlled_docs[0].code})
+                    </button>
+                  )}
+                </div>
+              </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
                 {[
                   { key: "circulationLicense", label: "1. Giấy phép lưu hành Bộ Y Tế" },
@@ -2583,6 +2694,39 @@ export const LegalModule: React.FC = () => {
           size="2xl"
         >
           <form onSubmit={handleCreateLicense} className="space-y-4">
+            {factoryBridge.products.length > 0 && (
+              <div className="p-2.5 rounded-xl bg-teal-50/70 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-teal-800 dark:text-teal-300">
+                  🏭 Chọn nhanh Sản phẩm Kit / Thiết bị từ Danh mục Nhà máy ABT:
+                </span>
+                <select
+                  defaultValue=""
+                  onChange={(e) => {
+                    const code = e.target.value;
+                    if (!code) return;
+                    const prod = factoryBridge.products.find((p: any) => p.code === code);
+                    if (prod) {
+                      setNewLicenseForm(prev => ({
+                        ...prev,
+                        productName: `${prod.name} (${prod.code})`,
+                        deviceClass: prod.item_type === "DEVICE" ? "Loại B" : "Loại C",
+                        manufacturer: "Công ty TNHH Giải pháp Y sinh ABT (Nhà máy ISO 13485)",
+                        origin: "Việt Nam",
+                        notes: `Liên kết mã sản phẩm nhà máy: ${prod.code} (${prod.item_type}) — Bảo quản: ${prod.storage_temp || "Tiêu chuẩn"}`,
+                      }));
+                    }
+                  }}
+                  className="px-2.5 py-1.5 rounded-lg bg-white dark:bg-slate-900 border border-teal-300 dark:border-teal-700 text-xs text-slate-900 dark:text-white font-semibold"
+                >
+                  <option value="">-- Chọn Kit / Máy từ Khối Kỹ Thuật --</option>
+                  {factoryBridge.products.map((p: any) => (
+                    <option key={p.id} value={p.code}>
+                      [{p.item_type}] {p.code} — {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">

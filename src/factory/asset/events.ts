@@ -5,9 +5,11 @@ import { authorize, hasFactoryPermission, type AuthzActor } from "../core/authz"
 import { addDays, vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { readAttachment, saveAttachment } from "../core/files";
+import { notifyUsers, usersWithPermission } from "../core/notifications";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, type GuardContext } from "../core/stateMachine";
+import { ensureDepartmentEquipmentSeed } from "./service";
 
 type EventStatus = "PLANNED" | "DONE" | "CANCELLED";
 export interface AssetEvent {
@@ -31,6 +33,12 @@ const doneSchema = z.object({
 });
 
 const ownerOf = async (tx: Tx, assetId: string) => (await tx.query("SELECT owner_org_unit_id FROM asset.asset WHERE id = $1", [assetId])).rows[0]?.owner_org_unit_id;
+// Phòng Kỹ thuật – Thiết bị services the instruments of every department
+const techUnitOf = async (tx: Tx) => (await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-DEVICE' LIMIT 1")).rows[0]?.id ?? null;
+async function isTechDept(tx: Tx, actor: AuthzActor) {
+  const unit = await techUnitOf(tx);
+  return Boolean(unit) && hasFactoryPermission(tx, actor, "device.view", unit);
+}
 
 /** What a completed event does to the instrument: calibration sets the due date or takes it out; repair brings it back. */
 async function applyToAsset(tx: Tx, actor: AuthzActor, ev: AssetEvent & Record<string, any>) {
@@ -100,6 +108,36 @@ export const assetEventMachine = defineMachine<EventStatus, AssetEvent>({
       effects: ({ tx, actor, updated }) => applyToAsset(tx, actor, updated as any),
     },
     {
+      // done by Phòng Kỹ thuật – Thiết bị on any department's instrument
+      action: "tech_complete",
+      from: "PLANNED",
+      to: "DONE",
+      permission: "device.view",
+      scopeOf: (_row, tx) => techUnitOf(tx),
+      guards: [resultGuard],
+      patch: completePatch,
+      effects: async ({ tx, actor, updated }) => {
+        await applyToAsset(tx, actor, updated as any);
+        const a = (
+          await tx.query(
+            "SELECT a.code, a.name, a.owner_org_unit_id, o.name AS owner_name FROM asset.asset a JOIN core.org_unit o ON o.id = a.owner_org_unit_id WHERE a.id = $1",
+            [updated.asset_id]
+          )
+        ).rows[0];
+        if (a) {
+          const deptUsers = await usersWithPermission(tx, "asset.view", a.owner_org_unit_id);
+          await notifyUsers(tx, deptUsers, {
+            type: "ASSET_EVENT_DONE",
+            title: `Đã hoàn tất bảo trì / hiệu chuẩn: ${a.code} (${a.name})`,
+            body: `Phòng Kỹ thuật – Thiết bị đã hoàn thành phiếu ${updated.code}. Thiết bị đã sẵn sàng vận hành.`,
+            entityType: "asset_event",
+            entityId: updated.id,
+            sourceKey: `asset_event_done_${updated.id}`,
+          });
+        }
+      },
+    },
+    {
       action: "cancel",
       from: "PLANNED",
       to: "CANCELLED",
@@ -123,16 +161,22 @@ const planSchema = z.object({
 
 export async function planEvent(tx: Tx, actor: AuthzActor, input: unknown) {
   const d = parseInput(planSchema, input);
-  const a = (await tx.query("SELECT * FROM asset.asset WHERE id = $1 FOR UPDATE", [d.asset_id])).rows[0];
+  const a = (
+    await tx.query(
+      "SELECT a.*, o.code AS owner_code, o.name AS owner_name FROM asset.asset a JOIN core.org_unit o ON o.id = a.owner_org_unit_id WHERE a.id = $1 FOR UPDATE OF a",
+      [d.asset_id]
+    )
+  ).rows[0];
   if (!a) throw notFound("thiết bị");
-  // anyone operating the instrument may report a breakdown or plan routine care; calibration / repair plans need asset.manage
-  await authorize(tx, actor, ["CLEANING", "MAINTENANCE"].includes(d.kind) || d.out_of_service ? "asset.operate" : "asset.manage", a.owner_org_unit_id);
+  // whoever operates the instrument may report a breakdown or propose care of any kind (completion stays signed / with the tech department)
+  if (!(await isTechDept(tx, actor))) await authorize(tx, actor, "asset.operate", a.owner_org_unit_id);
   if (a.status === "RETIRED") throw invalid("Thiết bị đã ngừng sử dụng.");
   const code = await nextNumber(tx, "ASSET_EVENT");
+  const assignee = d.assignee?.trim() || "Phòng Kỹ thuật – Thiết bị";
   const ev = (
     await tx.query(
       `INSERT INTO asset.event (code, asset_id, kind, planned_date, assignee, description, out_of_service, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING *`,
-      [code, d.asset_id, d.kind, d.planned_date, d.assignee ?? null, d.description ?? null, d.out_of_service, actor.userId]
+      [code, d.asset_id, d.kind, d.planned_date, assignee, d.description ?? null, d.out_of_service, actor.userId]
     )
   ).rows[0];
   if (d.out_of_service && a.status !== "UNDER_MAINTENANCE") {
@@ -140,32 +184,74 @@ export async function planEvent(tx: Tx, actor: AuthzActor, input: unknown) {
     await writeAudit(tx, actor, { entityType: "asset", entityId: a.id, action: "out_of_service", changes: { status: [a.status, "UNDER_MAINTENANCE"] }, reason: `Phiếu ${code}: ${d.description ?? ""}`.trim() });
   }
   await writeAudit(tx, actor, { entityType: "asset_event", entityId: ev.id, action: "plan", changes: { code: [null, code], kind: [null, d.kind], planned_date: [null, d.planned_date] } });
+
+  // Notify Engineering & Technology (`P-DEVICE`) immediately
+  const techDept = (await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-DEVICE' LIMIT 1")).rows[0];
+  const techUsers = await usersWithPermission(tx, "device.view", techDept?.id ?? null);
+  const kindLabel: Record<string, string> = {
+    MAINTENANCE: "Bảo trì định kỳ",
+    CALIBRATION: "Hiệu chuẩn",
+    REPAIR: "Sửa chữa / Báo hỏng",
+    CLEANING: "Vệ sinh",
+    QUALIFICATION: "Thẩm định IQ/OQ/PQ",
+  };
+  await notifyUsers(tx, techUsers, {
+    type: "ASSET_EVENT_REQUEST",
+    title: `[${a.owner_name}] Đề xuất ${kindLabel[d.kind] ?? d.kind}: ${a.code} — ${a.name}`,
+    body: `${d.out_of_service ? "🚨 NGỪNG MÁY KHẨN CẤP · " : ""}Ngày dự kiến: ${d.planned_date} · Nội dung: ${d.description ?? "Yêu cầu Phòng Kỹ thuật – Thiết bị kiểm tra xử lý"}`,
+    entityType: "asset_event",
+    entityId: ev.id,
+    link: "/?tab=factory-device",
+    sourceKey: `asset_event_plan_${ev.id}`,
+  });
+
   return ev;
 }
 
-const listSchema = z.object({ status: z.enum(["PLANNED", "DONE", "CANCELLED"]).optional(), asset_id: z.string().uuid().optional() });
+const listSchema = z.object({
+  status: z.enum(["PLANNED", "DONE", "CANCELLED"]).optional(),
+  asset_id: z.string().uuid().optional(),
+  dept: z.string().trim().optional(),
+});
 
-/** Events of the instruments the user may see, plus instruments whose calibration falls due within 30 days. */
+/** Events of the instruments across departments, plus instruments whose calibration falls due within 30 days. */
 export async function listEvents(tx: Tx, actor: AuthzActor, query: unknown) {
+  await ensureDepartmentEquipmentSeed(tx);
   const q = parseInput(listSchema, query);
   const rows = (
     await tx.query(
-      `SELECT e.*, e.cost_vnd::float AS cost_vnd, a.code AS asset_code, a.name AS asset_name, a.asset_type, a.owner_org_unit_id,
+      `SELECT e.*, e.cost_vnd::float AS cost_vnd,
+              a.code AS asset_code, a.name AS asset_name, a.asset_type, a.model AS asset_model, a.serial_no AS asset_serial,
+              a.status AS asset_status, a.owner_org_unit_id,
+              o.code AS owner_code, o.name AS owner_name,
               (SELECT count(*)::int FROM core.attachment f WHERE f.entity_type = 'asset_event' AND f.entity_id = e.id::text AND f.voided_at IS NULL) AS files
-         FROM asset.event e JOIN asset.asset a ON a.id = e.asset_id
-        WHERE ($1::text IS NULL OR e.status = $1) AND ($2::uuid IS NULL OR e.asset_id = $2)
-        ORDER BY CASE e.status WHEN 'PLANNED' THEN 0 ELSE 1 END, e.planned_date DESC LIMIT 300`,
-      [q.status ?? null, q.asset_id ?? null]
+         FROM asset.event e
+         JOIN asset.asset a ON a.id = e.asset_id
+         JOIN core.org_unit o ON o.id = a.owner_org_unit_id
+        WHERE ($1::text IS NULL OR e.status = $1)
+          AND ($2::uuid IS NULL OR e.asset_id = $2)
+          AND ($3::text IS NULL OR o.code = $3)
+        ORDER BY CASE e.status WHEN 'PLANNED' THEN 0 ELSE 1 END, e.planned_date ASC, e.created_at DESC LIMIT 300`,
+      [q.status ?? null, q.asset_id ?? null, q.dept ?? null]
     )
   ).rows;
   const visible = [];
-  for (const r of rows) if (await canSee(tx, actor, r.owner_org_unit_id)) visible.push({ ...r, actions: await listAllowedActions(tx, assetEventMachine, actor, r) });
+  for (const r of rows) {
+    if (await canSee(tx, actor, r.owner_org_unit_id)) visible.push({ ...r, actions: await listAllowedActions(tx, assetEventMachine, actor, r) });
+  }
   const due = (
     await tx.query(
-      `SELECT a.id, a.code, a.name, a.asset_type, a.next_calibration_due, a.status, a.owner_org_unit_id,
-              EXISTS (SELECT 1 FROM asset.event e WHERE e.asset_id = a.id AND e.kind = 'CALIBRATION' AND e.status = 'PLANNED') AS planned
-         FROM asset.asset a WHERE a.status <> 'RETIRED' AND a.next_calibration_due IS NOT NULL AND a.next_calibration_due <= $1::date ORDER BY a.next_calibration_due`,
-      [addDays(vnToday(), 30)]
+      `SELECT a.id, a.code, a.name, a.asset_type, a.model, a.serial_no, a.next_calibration_due, a.status, a.owner_org_unit_id,
+              o.code AS owner_code, o.name AS owner_name,
+              EXISTS (SELECT 1 FROM asset.event e WHERE e.asset_id = a.id AND e.kind IN ('CALIBRATION', 'MAINTENANCE') AND e.status = 'PLANNED') AS planned
+         FROM asset.asset a
+         JOIN core.org_unit o ON o.id = a.owner_org_unit_id
+        WHERE a.status <> 'RETIRED'
+          AND ($2::text IS NULL OR o.code = $2)
+          AND a.next_calibration_due IS NOT NULL
+          AND a.next_calibration_due <= $1::date
+        ORDER BY a.next_calibration_due`,
+      [addDays(vnToday(), 30), q.dept ?? null]
     )
   ).rows;
   const dueVisible = [];
@@ -174,7 +260,7 @@ export async function listEvents(tx: Tx, actor: AuthzActor, query: unknown) {
 }
 
 async function canSee(tx: Tx, actor: AuthzActor, unit: string) {
-  return (await hasFactoryPermission(tx, actor, "asset.view", unit)) || (await hasFactoryPermission(tx, actor, "asset.operate", unit));
+  return (await hasFactoryPermission(tx, actor, "asset.view", unit)) || isTechDept(tx, actor);
 }
 
 async function eventFor(tx: Tx, actor: AuthzActor, id: string, permission: string) {

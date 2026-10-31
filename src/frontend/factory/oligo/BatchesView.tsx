@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, fmtDate } from "../api";
-import { Card, Empty, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
+import { Button, Card, Empty, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
 import { BatchPanel } from "./BatchPanel";
 import { BatchPlanForm } from "./BatchPlanForm";
 import { ConsumptionReports } from "./ConsumptionReports";
@@ -13,6 +13,7 @@ interface Row { id: string; code: string; status: string; program_name: string |
 
 export function BatchesView({ canManage, canApplyRules }: { canManage: boolean; canApplyRules: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [showPlan, setShowPlan] = useState(false);
   const [status, setStatus] = useState("");
   const list = useQuery({ queryKey: ["factory", "oligo-batches", status], queryFn: () => api<Row[]>(`/api/factory/oligo/batches${status ? `?status=${status}` : ""}`) });
   return (
@@ -21,13 +22,27 @@ export function BatchesView({ canManage, canApplyRules }: { canManage: boolean; 
       <Card
         title="Mẻ tổng hợp"
         actions={
-          <select className={`${inputClass} w-44`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
-            <option value="">Mọi trạng thái</option>
-            {Object.entries(BATCH_STATUS).map(([k, [, v]]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            {canManage && (
+              <Button onClick={() => setShowPlan((v) => !v)}>
+                {showPlan ? "Đóng lập mẻ" : "+ Lập mẻ tổng hợp"}
+              </Button>
+            )}
+            <select className={`${inputClass} w-44`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
+              <option value="">Mọi trạng thái</option>
+              {Object.entries(BATCH_STATUS).map(([k, [, v]]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
         }
       >
-        {canManage && <BatchPlanForm onCreated={setSelected} />}
+        {canManage && showPlan && (
+          <BatchPlanForm
+            onCreated={(id) => {
+              setShowPlan(false);
+              setSelected(id);
+            }}
+          />
+        )}
         <ErrorNote error={list.error} />
         {list.data?.length === 0 && <Empty>Chưa có mẻ tổng hợp.</Empty>}
         {list.data && list.data.length > 0 && (

@@ -106,10 +106,12 @@ function PlasmidsView({ canManage }: { canManage: boolean }) {
   const qc = useQueryClient();
   const list = useQuery({ queryKey: ["factory", "oligo-plasmids"], queryFn: () => api<Plasmid[]>("/api/factory/oligo/plasmids") });
   const [f, setF] = useState({ name: "", length_bp: "", notes: "" });
+  const [showAdd, setShowAdd] = useState(false);
   const add = useMutation({
     mutationFn: () => api("/api/factory/oligo/plasmids", { method: "POST", json: { name: f.name, length_bp: Number(f.length_bp), notes: f.notes || null } }),
     onSuccess: () => {
       setF({ name: "", length_bp: "", notes: "" });
+      setShowAdd(false);
       qc.invalidateQueries({ queryKey: ["factory", "oligo-plasmids"] });
     },
   });
@@ -120,11 +122,18 @@ function PlasmidsView({ canManage }: { canManage: boolean }) {
   return (
     <div className="flex flex-col gap-3">
       {canManage && (
-        <form className="flex flex-wrap gap-2 items-end" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
+        <div className="flex justify-end">
+          <Button variant="ghost" onClick={() => setShowAdd((v) => !v)}>
+            {showAdd ? "Đóng form" : "+ Thêm plasmid"}
+          </Button>
+        </div>
+      )}
+      {canManage && showAdd && (
+        <form className="flex flex-wrap gap-2 items-end p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
           <Field label="Tên plasmid *"><input className={inputClass} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>
           <Field label="Chiều dài (bp) *"><input className={`${inputClass} w-28`} type="number" min="1" value={f.length_bp} onChange={(e) => setF({ ...f, length_bp: e.target.value })} required /></Field>
           <Field label="Ghi chú"><input className={inputClass} value={f.notes} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
-          <Button type="submit" disabled={add.isPending}>+ Thêm plasmid</Button>
+          <Button type="submit" disabled={add.isPending}>Lưu plasmid</Button>
         </form>
       )}
       <ErrorNote error={list.error ?? add.error ?? toggle.error} />
@@ -164,6 +173,13 @@ export function AnalysisView({ canManageOrders, canManageCatalog }: { canManageO
     mutationFn: ({ r, plasmid_id }: { r: Row; plasmid_id: string | null }) => api(`/api/factory/oligo/sequences/${r.id}/plasmid`, { method: "PUT", json: { plasmid_id, version: r.version } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["factory", "oligo-analysis"] }),
   });
+  const unsplitMut = useMutation({
+    mutationFn: (seqId: string) => api(`/api/factory/oligo/sequences/${seqId}/fragments`, { method: "DELETE", idempotent: true }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-analysis"] });
+      qc.invalidateQueries({ queryKey: ["factory", "oligo-order"] });
+    },
+  });
   const tabs: [Kind, string][] = [["PRIMER", "Primer"], ["PROBE", "Probe đánh dấu"], ["AMPLICON", "Amplicon"], ["PLASMID", "Cấu hình plasmid"]];
   const params = (r: Row) => (
     <>
@@ -192,7 +208,7 @@ export function AnalysisView({ canManageOrders, canManageCatalog }: { canManageO
         </div>
         {kind === "PLASMID" ? <PlasmidsView canManage={canManageCatalog} /> : (
           <>
-            <ErrorNote error={list.error ?? setPlasmid.error} />
+            <ErrorNote error={list.error ?? setPlasmid.error ?? unsplitMut.error} />
             {list.data?.rows.length === 0 && <Empty>Không có trình tự.</Empty>}
             {list.data && list.data.rows.length > 0 && (
               <Table
@@ -218,13 +234,26 @@ export function AnalysisView({ canManageOrders, canManageCatalog }: { canManageO
                         <td className="py-1.5 pr-3">
                           {canManageOrders && ["PENDING", "SPLIT"].includes(r.status) ? (
                             <select className={`${inputClass} w-40`} value={r.plasmid_id ?? ""} onChange={(e) => setPlasmid.mutate({ r, plasmid_id: e.target.value || null })} aria-label="Plasmid">
-                              <option value="">Mạch thẳng</option>
+                              <option value="">Mạch thẳng (Linear)</option>
                               {plasmids.data?.filter((p) => p.status === "ACTIVE" || p.id === r.plasmid_id).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                             </select>
-                          ) : <span className="text-xs">{r.plasmid_name ?? "Mạch thẳng"}</span>}
+                          ) : <span className="text-xs">{r.plasmid_name ?? "Mạch thẳng (Linear)"}</span>}
                         </td>
                         <td className="py-1.5 pr-3 text-xs whitespace-nowrap">
-                          {r.fragment_count > 0 ? `${r.fragment_count} mảnh` : canManageOrders && r.status === "PENDING" && !r.relation ? <Button variant="ghost" onClick={() => setWizard(r)}>Phân mảnh</Button> : "—"}
+                          {r.fragment_count > 0 ? (
+                            <div className="flex items-center gap-1.5">
+                              <span className="font-semibold text-sky-700">{r.fragment_count} mảnh</span>
+                              {canManageOrders && r.status === "SPLIT" && (
+                                <Button variant="ghost" onClick={() => unsplitMut.mutate(r.id)} disabled={unsplitMut.isPending}>
+                                  Hoàn tác tách
+                                </Button>
+                              )}
+                            </div>
+                          ) : canManageOrders && r.status === "PENDING" && !r.relation ? (
+                            <Button variant="ghost" onClick={() => setWizard(r)}>Phân mảnh</Button>
+                          ) : (
+                            "—"
+                          )}
                         </td>
                       </>
                     ) : params(r)}

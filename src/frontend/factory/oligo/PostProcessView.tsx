@@ -16,6 +16,8 @@ interface Row {
 }
 interface Rec {
   id: string; version: number; status: string; purification: string; format: string;
+  synthesis_scale_code?: string | null; mfg_date?: string | null;
+  tubes_detail?: { tube_no: number; label: string; od: number; nmol: number; ug: number; vol_100um_ul: number }[];
   cleavage_done: boolean; deprotection_done: boolean; purification_done: boolean;
   a260: string | null; dilution_factor: string; path_cm: string; stock_volume_ul: string | null; target_conc_um: string | null; tube_count: number; notes: string | null;
   od_total: string | null; nmol: string | null; ug: string | null; resuspend_volume_ul: string | null; od_per_tube: string | null;
@@ -41,9 +43,12 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
     setF({
       cleavage_done: rec.cleavage_done, deprotection_done: rec.deprotection_done, purification_done: rec.purification_done,
       a260: num(rec.a260), dilution_factor: num(rec.dilution_factor), path_cm: num(rec.path_cm), stock_volume_ul: num(rec.stock_volume_ul),
-      target_conc_um: num(rec.target_conc_um), tube_count: String(rec.tube_count), notes: rec.notes ?? "",
+      target_conc_um: num(rec.target_conc_um), tube_count: String(rec.tube_count),
+      synthesis_scale_code: rec.synthesis_scale_code ?? d.data?.sequence?.scale_code ?? "200NMOL",
+      mfg_date: rec.mfg_date ? String(rec.mfg_date).slice(0, 10) : new Date().toISOString().slice(0, 10),
+      notes: rec.notes ?? "",
     });
-  }, [rec]);
+  }, [rec, d.data?.sequence?.scale_code]);
   const refresh = () => refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   const act = useMutation({ mutationFn: (fn: () => Promise<unknown>) => fn(), onSuccess: refresh });
   const opt = (v: string) => (v === "" ? null : Number(v.replace(",", ".")));
@@ -54,7 +59,10 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
         version: rec!.version,
         cleavage_done: f.cleavage_done, deprotection_done: f.deprotection_done, purification_done: f.purification_done,
         a260: opt(f.a260), dilution_factor: opt(f.dilution_factor) ?? 1, path_cm: opt(f.path_cm) ?? 1, stock_volume_ul: opt(f.stock_volume_ul),
-        target_conc_um: rec!.format === "LIQUID" ? opt(f.target_conc_um) : null, tube_count: Number(f.tube_count || 1), notes: f.notes || null,
+        target_conc_um: rec!.format === "LIQUID" ? opt(f.target_conc_um) : null, tube_count: Number(f.tube_count || 1),
+        synthesis_scale_code: f.synthesis_scale_code || null,
+        mfg_date: f.mfg_date || null,
+        notes: f.notes || null,
       },
     });
   const s = d.data?.sequence;
@@ -98,22 +106,54 @@ function PostPanel({ id, canManage, canLabel, onClose }: { id: string; canManage
                   <span className="text-xs text-slate-500">Dạng giao: {FORMAT[rec.format as keyof typeof FORMAT]} · Chưa có quy trình SOP cho kiểu tinh sạch này: dùng các bước cơ bản.</span>
                 </div>
               )}
-              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end">
+              <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-8 items-end">
                 {input("a260", "A260 đo được")}
                 {input("dilution_factor", "Hệ số pha loãng")}
                 {input("path_cm", "Chiều dài cuvet (cm)")}
                 {input("stock_volume_ul", "Thể tích dung dịch gốc (µL)")}
                 {rec.format === "LIQUID" && input("target_conc_um", "Nồng độ hoàn nguyên (µM)")}
                 {input("tube_count", "Số ống chia")}
+                <Field label="Scale cột chạy máy">
+                  <select className={inputClass} disabled={!editable} value={f.synthesis_scale_code ?? ""} onChange={(e) => setF({ ...f, synthesis_scale_code: e.target.value })}>
+                    <option value="25NMOL">25 nmol</option>
+                    <option value="50NMOL">50 nmol</option>
+                    <option value="200NMOL">200 nmol</option>
+                    <option value="1UMOL">1 µmol</option>
+                    <option value="10UMOL">10 µmol</option>
+                  </select>
+                </Field>
+                <Field label="Ngày MFG (Theo mẻ chạy)">
+                  <input type="date" className={inputClass} disabled={!editable} value={f.mfg_date ?? ""} onChange={(e) => setF({ ...f, mfg_date: e.target.value })} />
+                </Field>
               </div>
               <Field label="Ghi chú"><input className={inputClass} disabled={!editable} value={f.notes ?? ""} onChange={(e) => setF({ ...f, notes: e.target.value })} /></Field>
-              <div className="grid gap-2 sm:grid-cols-5 text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
+              <div className="grid gap-2 sm:grid-cols-6 text-xs p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800">
                 <div><span className="text-slate-500">Tổng OD: </span><b>{fmtQty(rec.od_total)}</b></div>
                 <div><span className="text-slate-500">nmol: </span><b>{fmtQty(rec.nmol)}</b></div>
                 <div><span className="text-slate-500">µg: </span><b>{fmtQty(rec.ug)}</b></div>
                 <div><span className="text-slate-500">OD / ống: </span><b>{fmtQty(rec.od_per_tube)}</b></div>
+                <div><span className="text-slate-500">Thể tích pha 100 µM: </span><b className="text-sky-700">{rec.nmol ? `${fmtQty(Number(rec.nmol) * 10)} µL` : "—"}</b></div>
                 {rec.format === "LIQUID" && <div><span className="text-slate-500">Thể tích hoàn nguyên: </span><b>{fmtQty(rec.resuspend_volume_ul)} µL</b></div>}
               </div>
+              {Array.isArray(rec.tubes_detail) && rec.tubes_detail.length > 0 && (
+                <div className="space-y-1">
+                  <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Bảng chia ống thành phẩm ({rec.tubes_detail.length} ống · Ngày MFG: {fmtDate(rec.mfg_date)})
+                  </div>
+                  <Table head={["Ống số", "Nhãn ống", "OD / ống", "nmol / ống", "µg / ống", "Thể tích pha 100 µM (µL)"]}>
+                    {rec.tubes_detail.map((tb) => (
+                      <tr key={tb.tube_no}>
+                        <td className="py-1 pr-3 text-xs font-mono">#{tb.tube_no}</td>
+                        <td className="py-1 pr-3 text-xs font-semibold">{tb.label}</td>
+                        <td className="py-1 pr-3 text-xs font-mono">{fmtQty(tb.od)}</td>
+                        <td className="py-1 pr-3 text-xs font-mono">{fmtQty(tb.nmol)}</td>
+                        <td className="py-1 pr-3 text-xs font-mono">{fmtQty(tb.ug)}</td>
+                        <td className="py-1 pr-3 text-xs font-mono font-bold text-sky-700">{fmtQty(tb.vol_100um_ul)} µL</td>
+                      </tr>
+                    ))}
+                  </Table>
+                </div>
+              )}
               <p className="text-[11px] text-slate-500">Tổng OD = A260 × hệ số pha loãng × thể tích (mL) / chiều dài cuvet; nmol, µg tính theo nmol/OD, µg/OD của trình tự; thể tích hoàn nguyên = nmol / µM × 1000. Máy chủ tính khi lưu.</p>
               {editable && (
                 <div className="flex gap-2">

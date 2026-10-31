@@ -5,6 +5,8 @@ import { hashPassword, verifyPassword, generateTemporaryPassword } from "@/backe
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { setImportedLoginName } from "@/backend/services/accountImport";
+import { ensureFactoryRolesAndSyncAllUsers, syncSinglePortalUserToFactory } from "@/factory/orgSync";
+import { getFactoryPool } from "@/factory/core/db";
 
 // Mật khẩu khởi tạo cho tài khoản mới (được băm scrypt khi lưu; người dùng nên đổi ngay sau lần đăng nhập đầu)
 /** Tài khoản vừa tạo kèm mật khẩu tạm (chỉ trả về một lần cho Quản trị viên để giao cho nhân viên). */
@@ -62,6 +64,14 @@ async function syncPersonnelToUsers(): Promise<InitialCredential[]> {
           CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%head%' THEN 'procurement_lead' ELSE 'procurement_specialist' END
         WHEN p.department = 'Quản Lý Chất Lượng' OR p.department = 'QA/QC' OR p.department = 'QA / QC' OR LOWER(p.department) LIKE '%chất lượng%' THEN 
           CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%manager%' THEN 'qa_qc_lead' ELSE 'qa_qc' END
+        WHEN LOWER(p.department) LIKE '%r&d%' OR LOWER(p.department) LIKE '%nghiên cứu%' THEN
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' OR LOWER(p.position) LIKE '%lead%' THEN 'rd_head' ELSE 'rd_staff' END
+        WHEN LOWER(p.department) LIKE '%sản xuất kit%' OR LOWER(p.department) LIKE '%sx kit%' THEN
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%quản đốc%' OR LOWER(p.position) LIKE '%head%' THEN 'kit_head' ELSE 'kit_staff' END
+        WHEN LOWER(p.department) LIKE '%oligo%' THEN
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' OR LOWER(p.position) LIKE '%lead%' THEN 'oligo_head' ELSE 'oligo_staff' END
+        WHEN LOWER(p.department) LIKE '%thiết bị%' THEN
+          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' OR LOWER(p.position) LIKE '%lead%' THEN 'device_head' ELSE 'device_staff' END
         WHEN p.department LIKE '%Ứng Dụng%' OR p.department LIKE '%Application%' OR p.department LIKE '%Kỹ Thuật%' THEN 
           CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'app_head' ELSE 'app_rep' END
         WHEN p.department = 'Kinh Doanh' OR p.department = 'Marketing' THEN 
@@ -87,6 +97,7 @@ async function syncPersonnelToUsers(): Promise<InitialCredential[]> {
   for (const r of res.rows) {
     if (r.inserted) created.push(await assignTemporaryPassword(r.username, r.full_name));
   }
+  await ensureFactoryRolesAndSyncAllUsers().catch((e) => console.warn("Factory sync warning:", e?.message));
   return created;
 }
 
@@ -101,6 +112,7 @@ export async function GET(req: NextRequest) {
 
     if (action === "overview") {
       await ensurePersonnelTable();
+      await ensureFactoryRolesAndSyncAllUsers().catch((e) => console.warn("Factory org sync warning:", e?.message));
 
       let personnelRows: any[] = [];
       let usersRows: any[] = [];
@@ -124,6 +136,40 @@ export async function GET(req: NextRequest) {
         } catch (e2: any) {
           console.error("Failed to query users fallback:", e2.message);
         }
+      }
+
+      // Gắn thông tin Đơn vị Nhà máy & Vai trò Nhà máy (Khối Kỹ thuật) vào danh sách tài khoản
+      try {
+        const fPool = getFactoryPool();
+        const fProfiles = (
+          await fPool.query(
+            `SELECT up.user_id, up.org_unit_id, o.code AS org_code, o.name AS org_name, (up.pin_hash IS NOT NULL) AS has_pin
+               FROM core.user_profile up
+               LEFT JOIN core.org_unit o ON o.id = up.org_unit_id`
+          )
+        ).rows;
+        const fGrants = (
+          await fPool.query(
+            `SELECT ur.user_id, r.code AS role_code, r.name AS role_name
+               FROM core.user_role ur
+               JOIN core.role r ON r.id = ur.role_id
+              WHERE ur.revoked_at IS NULL`
+          )
+        ).rows;
+        const profMap = new Map(fProfiles.map((p: any) => [Number(p.user_id), p]));
+        usersRows = (usersRows || []).map((u: any) => {
+          const fp = profMap.get(Number(u.id));
+          const roles = fGrants.filter((g: any) => Number(g.user_id) === Number(u.id)).map((g: any) => g.role_code);
+          return {
+            ...u,
+            factory_org_code: fp?.org_code || null,
+            factory_org_name: fp?.org_name || null,
+            has_factory_pin: Boolean(fp?.has_pin),
+            factory_roles: roles,
+          };
+        });
+      } catch (e: any) {
+        // Bỏ qua nếu schema nhà máy chưa khởi tạo
       }
 
       // Chuẩn hóa permissions luôn là object an toàn
@@ -207,6 +253,7 @@ export async function POST(req: NextRequest) {
               OR username = REPLACE(REPLACE($6, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))`,
           [cleanName, department, cleanEmail, role, (status !== "INACTIVE"), employee_code || ""]
         );
+        await syncSinglePortalUserToFactory({ username: employee_code || "", department, position, role }).catch(() => {});
         await logAudit("UPDATE", "PERSONNEL", `Cập nhật nhân sự & tài khoản chat ${cleanName} (${employee_code})`);
       } else {
         const requestedCode = String(employee_code || "").trim();
@@ -231,6 +278,7 @@ export async function POST(req: NextRequest) {
           [code, unusablePasswordHash(), cleanName, role, department, cleanEmail]
         );
         const credential = ins.rows.length > 0 ? await assignTemporaryPassword(code, cleanName) : null;
+        await syncSinglePortalUserToFactory({ username: code, department, position, role }).catch(() => {});
         await logAudit("CREATE", "PERSONNEL", `Thêm mới nhân sự & tài khoản chat ${cleanName} (${code})`);
         return NextResponse.json({ success: true, initial_credentials: credential ? [credential] : [] });
       }
@@ -419,6 +467,7 @@ export async function POST(req: NextRequest) {
             [cleanEmail, username]
           );
         }
+        await syncSinglePortalUserToFactory({ userId: Number(id), username, department, role }).catch(() => {});
         await logAudit("UPDATE", "USER", `Cập nhật tài khoản ${username || id}`);
       } else {
         // Mật khẩu Quản trị viên nhập hoặc mật khẩu tạm ngẫu nhiên; luôn phải đổi ở lần đăng nhập đầu
@@ -428,6 +477,7 @@ export async function POST(req: NextRequest) {
            VALUES ($1, $2, $3, $4, $5, $6, $7, true)`,
           [username, hashPassword(initialPassword), full_name, role, department, email, is_active !== false]
         );
+        await syncSinglePortalUserToFactory({ username, department, role }).catch(() => {});
         await logAudit("CREATE", "USER", `Tạo tài khoản mới ${username}`);
         return NextResponse.json({
           success: true,

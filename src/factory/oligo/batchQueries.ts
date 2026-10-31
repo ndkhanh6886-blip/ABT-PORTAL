@@ -97,7 +97,8 @@ export async function getBatch(tx: Tx, actor: AuthzActor, id: string) {
   if (units !== "ALL" && !units.includes(b.org_unit_id)) throw notFound("mẻ tổng hợp");
   const positions = (
     await tx.query(
-      `SELECT p.position_no, p.couplings, p.coupling_efficiency_pct::float AS coupling_efficiency_pct, p.result, s.id AS sequence_id, s.code AS sequence_code, s.name,
+      `SELECT p.position_no, p.couplings, p.coupling_efficiency_pct::float AS coupling_efficiency_pct, p.result, p.contamination_warning,
+              s.id AS sequence_id, s.code AS sequence_code, s.name, s.oligo_role, s.target_pathogen,
               s.normalized_sequence, s.scale_code, s.status AS sequence_status, l.code AS column_lot_code
          FROM oligo.synthesis_position p JOIN oligo.oligo_sequence s ON s.id = p.sequence_id JOIN inv.lot l ON l.id = p.column_lot_id
         WHERE p.batch_id = $1 ORDER BY p.position_no`,
@@ -145,7 +146,8 @@ export async function batchCandidates(tx: Tx, actor: AuthzActor, orgUnitId: stri
   await authorize(tx, actor, "oligo.batch.manage", orgUnitId);
   const sequences = (
     await tx.query(
-      `SELECT s.id, s.code, s.name, s.normalized_sequence, s.base_count, s.scale_code, s.purification, s.relation, o.code AS order_code, o.due_date
+      `SELECT s.id, s.code, s.name, s.normalized_sequence, s.base_count, s.scale_code, s.purification, s.relation,
+              s.oligo_role, s.target_pathogen, o.code AS order_code, o.due_date
          FROM oligo.oligo_sequence s LEFT JOIN oligo.oligo_order o ON o.id = s.order_id
         WHERE s.org_unit_id = $1 AND s.status = 'PENDING'
         ORDER BY o.due_date NULLS LAST, s.code LIMIT 500`,
@@ -164,7 +166,7 @@ export async function batchCandidates(tx: Tx, actor: AuthzActor, orgUnitId: stri
       `SELECT l.id, l.code, l.expiry_date, i.code AS item_code, i.name AS item_name, sum(b.qty_on_hand - b.qty_reserved)::float AS available
          FROM inv.stock_balance b JOIN inv.lot l ON l.id = b.lot_id JOIN master.item i ON i.id = b.item_id
          JOIN master.location loc ON loc.id = b.location_id JOIN master.warehouse w ON w.id = loc.warehouse_id
-        WHERE w.owner_org_unit_id = $1 AND w.status = 'ACTIVE' AND NOT loc.is_quarantine AND i.item_type = 'CONSUMABLE'
+        WHERE (w.owner_org_unit_id = $1 OR w.owner_org_unit_id IS NULL) AND w.status = 'ACTIVE' AND NOT loc.is_quarantine AND i.item_type = 'CONSUMABLE'
           AND l.status = 'RELEASED' AND (l.expiry_date IS NULL OR l.expiry_date >= current_date)
         GROUP BY l.id, i.id HAVING sum(b.qty_on_hand - b.qty_reserved) >= 1 ORDER BY i.code, l.expiry_date NULLS LAST`,
       [orgUnitId]

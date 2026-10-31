@@ -11,8 +11,8 @@ export function parseInput<T extends z.ZodTypeAny>(schema: T, data: unknown): z.
   throw new FactoryError(400, "VALIDATION", `Dữ liệu chưa hợp lệ: ${fields.map((f) => `${f.field || "dữ liệu"} — ${f.message}`).join("; ")}`, fields);
 }
 
-const IDENT = /^[a-z_]+\.[a-z_]+$/;
-const COLUMN = /^[a-z_]+$/;
+const IDENT = /^[a-z_]+\.[a-z0-9_]+$/;
+const COLUMN = /^[a-z_][a-z0-9_]*$/;
 
 /**
  * Inserts a business record and audits it as "create" with every given field.

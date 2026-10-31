@@ -95,7 +95,15 @@ const ROLE_LABELS: Record<string, { label: string; color: string; desc: string }
   legal_head: { label: "Trưởng Bộ Phận Pháp Chế", color: "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700", desc: "Thẩm định & phê duyệt pháp lý hợp đồng, kiểm soát hồ sơ lưu hành IVD & đấu thầu" },
   legal: { label: "Chuyên Viên Pháp Chế & Tuân Thủ", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, chuẩn bị hồ sơ lưu hành IVD và kiểm soát tuân thủ y tế" },
   "Legal Specialist": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" },
-  "Chuyên Viên Pháp Chế": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" }
+  "Chuyên Viên Pháp Chế": { label: "Chuyên Viên Pháp Chế", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Soạn thảo hợp đồng, thẩm định pháp lý và kiểm soát rủi ro" },
+  rd_head: { label: "Trưởng Phòng Nghiên Cứu R&D", color: "bg-sky-100 dark:bg-sky-950/60 text-sky-800 dark:text-sky-300 border-sky-300 dark:border-sky-700", desc: "Quản lý đề tài R&D, hồ sơ thiết kế DHF, phê duyệt công thức & chuyển giao công nghệ sản xuất" },
+  rd_staff: { label: "Chuyên Viên Nghiên Cứu R&D", color: "bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-400 border-sky-200 dark:border-sky-800", desc: "Thực hiện thí nghiệm sinh học phân tử, ghi nhật ký ELN, pha chế mẫu thử & thẩm định hiệu năng" },
+  kit_head: { label: "Trưởng Phòng / Quản Đốc Sản Xuất Kit", color: "bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border-emerald-300 dark:border-emerald-700", desc: "Quản lý định mức BOM, phát hành lệnh sản xuất Kit, phê duyệt hồ sơ lô eBR & chuyển kho thành phẩm" },
+  kit_staff: { label: "Kỹ Thuật Viên Sản Xuất Kit (GMP)", color: "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800", desc: "Pha chế MasterMix, chiết rót bán thành phẩm, đóng gói Kit hoàn chỉnh & ghi nhận hồ sơ lô eBR" },
+  oligo_head: { label: "Trưởng Phòng Tổng Hợp Oligo", color: "bg-violet-100 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 border-violet-300 dark:border-violet-700", desc: "Tiếp nhận đơn Oligo, lập mẻ tổng hợp cột CPG, phê duyệt QC OD/HPLC/PAGE & xuất giao hàng" },
+  oligo_staff: { label: "Kỹ Thuật Viên Tổng Hợp Oligo & HPLC", color: "bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800", desc: "Vận hành máy tổng hợp CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE/OPC, đo OD & chia lọ" },
+  device_head: { label: "Trưởng Phòng Kỹ Thuật – Thiết Bị", color: "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700", desc: "Quản lý dòng máy xét nghiệm, hồ sơ DMR, phát hành lệnh lắp ráp DHR, nghiệm thu FQC & bảo hành RMA" },
+  device_staff: { label: "Kỹ Sư Cơ Điện Tử / Lắp Ráp DHR & FSE", color: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Lắp ráp cơ khí CNC, mạch điện tử PCB, nạp Firmware, chạy già hóa Burn-in & bảo hành thiết bị" }
 };
 
 export const DEPARTMENT_POSITIONS: Record<string, {
@@ -232,6 +240,54 @@ export const DEPARTMENT_POSITIONS: Record<string, {
       { title: "Chuyên Viên Tuyển Dụng & Đào Tạo", defaultRole: "admin", level: "Specialist", desc: "Tìm kiếm ứng viên ngành sinh học/xét nghiệm y tế, tổ chức chương trình đào tạo hội nhập cho nhân viên mới" },
       { title: "Chuyên Viên C&B & Pháp Chế Lao Động", defaultRole: "admin", level: "Specialist", desc: "Soạn thảo hợp đồng lao động, chấm công, tính lương thưởng KPI, bảo hiểm xã hội và tuân thủ pháp luật" }
     ]
+  },
+  "Nghiên Cứu R&D": {
+    name: "Phòng Nghiên Cứu & Phát Triển (R&D - P-RD)",
+    code: "P-RD",
+    desc: "Nghiên cứu phát triển bộ Kit IVD chẩn đoán phân tử, thiết kế mồi/probe, thẩm định độ nhạy/độ đặc hiệu, theo dõi độ ổn định & lập hồ sơ DHF",
+    badgeColor: "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/50 dark:text-sky-400 dark:border-sky-800",
+    borderTheme: "border-sky-500",
+    positions: [
+      { title: "Trưởng Phòng R&D", defaultRole: "rd_head", level: "Manager", desc: "Chỉ đạo đề tài nghiên cứu, phê duyệt hồ sơ thiết kế DHF, công thức gốc và chuyển giao công nghệ sang Sản xuất Kit" },
+      { title: "Chuyên Viên R&D Sinh Học Phân Tử", defaultRole: "rd_staff", level: "Specialist", desc: "Thiết kế mồi/probe qPCR, thực hiện thí nghiệm tối ưu hóa phản ứng, ghi nhật ký điện tử ELN và đánh giá độ ổn định" },
+      { title: "Kỹ Sư R&D Thiết Bị & Phần Mềm Y Sinh", defaultRole: "rd_staff", level: "Specialist", desc: "Nghiên cứu nguyên mẫu máy xét nghiệm tự động, thuật toán phân tích tín hiệu huỳnh quang và hồ sơ kỹ thuật" }
+    ]
+  },
+  "Sản Xuất Kit": {
+    name: "Phòng Sản Xuất Kit Chẩn Đoán (Kit Manufacturing - P-KIT)",
+    code: "P-KIT",
+    desc: "Sản xuất bộ Kit IVD & hóa chất tách chiết theo chuẩn ISO 13485 / GMP: quản lý định mức BOM, pha chế MasterMix, chia chuẩn .D.IC và hồ sơ lô điện tử eBR",
+    badgeColor: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800",
+    borderTheme: "border-emerald-500",
+    positions: [
+      { title: "Trưởng Phòng / Quản Đốc Sản Xuất Kit", defaultRole: "kit_head", level: "Manager", desc: "Quản lý định mức BOM, phát hành lệnh sản xuất Kit (Thường / Chia sẵn .D.IC / Demo), ký duyệt hồ sơ lô eBR" },
+      { title: "Tổ Trưởng Pha Chế & Chiết Rót Phòng Sạch", defaultRole: "kit_staff", level: "Specialist", desc: "Giám sát điều kiện phòng sạch, cân đong pha chế bán thành phẩm, kiểm soát chênh lệch hao hụt và lấy mẫu lưu QC" },
+      { title: "Kỹ Thuật Viên Sản Xuất & Đóng Gói Kit GMP", defaultRole: "kit_staff", level: "Staff", desc: "Thực hiện chiết rót, dán nhãn UDI/QR, đóng gói hộp Kit hoàn chỉnh và ghi nhận thông số công đoạn eBR" }
+    ]
+  },
+  "Tổng Hợp Oligo": {
+    name: "Phòng Tổng Hợp Oligo & Tinh Sạch (Oligo Synthesis - P-OLIGO)",
+    code: "P-OLIGO",
+    desc: "Tổng hợp mồi (Primer) và mẫu dò huỳnh quang (Probe) trên hệ thống cột CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE/OPC và đo kiểm OD",
+    badgeColor: "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/50 dark:text-violet-400 dark:border-violet-800",
+    borderTheme: "border-violet-500",
+    positions: [
+      { title: "Trưởng Phòng Tổng Hợp Oligo", defaultRole: "oligo_head", level: "Manager", desc: "Điều phối đơn hàng Oligo, phê duyệt mẻ tổng hợp cột CPG, thẩm định kết quả OD/HPLC/PAGE và duyệt xuất giao" },
+      { title: "Kỹ Thuật Viên Vận Hành Máy Tổng Hợp CPG", defaultRole: "oligo_staff", level: "Specialist", desc: "Khai báo chai hóa chất Amidite/Activator, gán cột CPG vào giàn tổng hợp, theo dõi chu kỳ coupling & trityl" },
+      { title: "Kỹ Thuật Viên Tinh Sạch HPLC / PAGE & QC OD", defaultRole: "oligo_staff", level: "Specialist", desc: "Thực hiện cắt khử bảo vệ, tinh sạch sắc ký HPLC/PAGE, đo quang phổ OD260, cô quay chân không & chia lọ" }
+    ]
+  },
+  "Kỹ Thuật – Thiết Bị": {
+    name: "Phòng Kỹ Thuật – Công Nghệ Thiết Bị (Device Engineering - P-DEVICE)",
+    code: "P-DEVICE",
+    desc: "Thiết kế chế tạo máy tách chiết tự động (EZ32), máy lắc nhiệt, đèn đọc quang học; quản lý hồ sơ thiết bị gốc DMR, lắp ráp DHR, chạy già hóa Burn-in & bảo hành RMA",
+    badgeColor: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800",
+    borderTheme: "border-amber-500",
+    positions: [
+      { title: "Trưởng Phòng Kỹ Thuật – Thiết Bị", defaultRole: "device_head", level: "Manager", desc: "Quản lý danh mục dòng máy, phê duyệt bản phát hành DMR, lệnh lắp ráp DHR, nghiệm thu FQC và cấp phát máy Demo/RMA" },
+      { title: "Kỹ Sư Cơ Điện Tử & Firmware Thiết Bị Y Sinh", defaultRole: "device_staff", level: "Specialist", desc: "Thiết kế bản vẽ gia công CNC, mạch PCB, lập trình Firmware điều khiển nhiệt/từ tính và hiệu chuẩn thiết bị" },
+      { title: "Kỹ Thuật Viên Lắp Ráp DHR & Bảo Hành RMA", defaultRole: "device_staff", level: "Staff", desc: "Lắp ráp trạm cơ khí/điện tử, chạy già hóa Burn-in 48h, kiểm tra an toàn điện FQC và sửa chữa bảo hành" }
+    ]
   }
 };
 
@@ -239,17 +295,22 @@ export const DEPARTMENT_POSITIONS: Record<string, {
 DEPARTMENT_POSITIONS["Application"] = DEPARTMENT_POSITIONS["Kỹ Thuật & Ứng Dụng"];
 DEPARTMENT_POSITIONS["Cung Ứng"] = DEPARTMENT_POSITIONS["Mua Hàng & Cung Ứng"];
 DEPARTMENT_POSITIONS["Pháp chế"] = DEPARTMENT_POSITIONS["Pháp Chế"];
+DEPARTMENT_POSITIONS["QA/QC"] = DEPARTMENT_POSITIONS["QA / QC"];
 
 export const PRIMARY_DEPT_KEYS = [
   "Ban Giám Đốc",
   "Kinh Doanh",
+  "Nghiên Cứu R&D",
+  "Sản Xuất Kit",
+  "Tổng Hợp Oligo",
+  "Kỹ Thuật – Thiết Bị",
+  "QA / QC",
   "Kỹ Thuật & Ứng Dụng",
   "Mua Hàng & Cung Ứng",
   "Kho Vận",
   "Kế Toán",
   "Pháp Chế",
   "Marketing",
-  "QA / QC",
   "Hành Chính Nhân Sự"
 ];
 
@@ -258,6 +319,19 @@ export const matchDepartment = (dept1?: string, dept2?: string): boolean => {
   const d1 = dept1.toLowerCase().trim();
   const d2 = dept2.toLowerCase().trim();
   if (d1 === d2) return true;
+
+  // Khối Kỹ thuật Nhà máy (kiểm tra chuyên biệt trước để không lẫn với Kỹ Thuật & Ứng Dụng)
+  const isRd = (s: string) => s.includes("r&d") || s.includes("nghiên cứu");
+  if (isRd(d1) || isRd(d2)) return isRd(d1) && isRd(d2);
+
+  const isKit = (s: string) => s.includes("sản xuất kit") || s.includes("sx kit") || s === "p-kit";
+  if (isKit(d1) || isKit(d2)) return isKit(d1) && isKit(d2);
+
+  const isOligo = (s: string) => s.includes("oligo") || s === "p-oligo";
+  if (isOligo(d1) || isOligo(d2)) return isOligo(d1) && isOligo(d2);
+
+  const isDevice = (s: string) => s.includes("thiết bị") || s === "p-device";
+  if (isDevice(d1) || isDevice(d2)) return isDevice(d1) && isDevice(d2);
 
   // Application / Kỹ Thuật & Ứng Dụng / App
   const isApp = (s: string) => s.includes("ứng dụng") || s.includes("kỹ thuật") || s.includes("application") || s === "app";
@@ -478,11 +552,11 @@ const PERMISSION_MATRIX = [
 ];
 
 export interface SettingsModuleProps {
-  initialSubTab?: "personnel" | "users" | "departments" | "audit" | "notifications" | "finance";
+  initialSubTab?: "personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory";
 }
 
 export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab }) => {
-  const [subTab, setSubTab] = useState<"personnel" | "users" | "departments" | "audit" | "notifications" | "finance">(() => {
+  const [subTab, setSubTab] = useState<"personnel" | "users" | "departments" | "audit" | "notifications" | "finance" | "factory">(() => {
     if (initialSubTab) return initialSubTab;
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("settings_target_subtab");
@@ -1901,7 +1975,18 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
                         {/* Department */}
                         <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300 font-medium">
-                          {u.department}
+                          <div>{u.department}</div>
+                          {u.factory_org_code && (
+                            <button
+                              type="button"
+                              onClick={() => setSubTab("factory")}
+                              className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 dark:bg-teal-950/60 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800 text-[10px] font-mono font-bold hover:bg-teal-100 cursor-pointer"
+                              title={`Đơn vị Khối Kỹ thuật / Nhà máy: ${u.factory_org_name || u.factory_org_code} — Bấm để mở Phân quyền Nhà máy`}
+                            >
+                              <span>🏭 {u.factory_org_code}</span>
+                              {u.has_factory_pin && <span className="text-emerald-600 dark:text-emerald-400">• PIN✓</span>}
+                            </button>
+                          )}
                         </td>
 
                         {/* Role */}
@@ -1913,6 +1998,16 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                             >
                               {roleInfo.label}
                             </span>
+                            {Array.isArray(u.factory_roles) && u.factory_roles.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSubTab("factory")}
+                                className="px-1.5 py-0.5 rounded-md text-[9px] font-mono font-bold bg-violet-100 dark:bg-violet-950/70 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 hover:bg-violet-200 cursor-pointer"
+                                title="Vai trò chuyên môn tại Khối Kỹ thuật / Nhà máy (21 CFR Part 11)"
+                              >
+                                {u.factory_roles.join(", ")}
+                              </button>
+                            )}
                             {u.permissions && Object.keys(u.permissions).length > 0 && (
                               <span
                                 className="px-1.5 py-0.5 rounded-md text-[9px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"

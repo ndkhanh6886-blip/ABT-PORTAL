@@ -218,7 +218,19 @@ export const getSenderPalette = (name: string) => {
   return SENDER_PALETTES[idx];
 };
 
-const STANDARD_DEPT_CHANNEL_ORDER = ["general", "sales", "application", "warehouse", "procurement"];
+const STANDARD_DEPT_CHANNEL_ORDER = [
+  "general",
+  "sales",
+  "rd",
+  "kit",
+  "oligo",
+  "device",
+  "qa",
+  "application",
+  "warehouse",
+  "procurement",
+  "legal",
+];
 
 export const EnterpriseChatModule: React.FC = () => {
   const { user } = useAuth();
@@ -278,6 +290,7 @@ export const EnterpriseChatModule: React.FC = () => {
   });
   const [tasksList, setTasksList] = useState<any[]>([]);
   const [workflowsList, setWorkflowsList] = useState<any[]>([]);
+  const [factoryWorkList, setFactoryWorkList] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [messagesLoading, setMessagesLoading] = useState(false);
 
@@ -580,6 +593,7 @@ export const EnterpriseChatModule: React.FC = () => {
         }
         setTasksList(data.tasks || []);
         setWorkflowsList(data.workflows || []);
+        setFactoryWorkList(data.factoryWorkItems || []);
 
         // Record initial last message times
         data.channels.forEach((c: ChatChannel) => {
@@ -1628,6 +1642,16 @@ export const EnterpriseChatModule: React.FC = () => {
     if (isBod(s1) && isBod(s2)) return true;
     const isLegal = (s: string) => s.includes("pháp chế") || s.includes("legal");
     if (isLegal(s1) && isLegal(s2)) return true;
+    const isRd = (s: string) => s.includes("r&d") || s.includes("nghiên cứu");
+    if (isRd(s1) || isRd(s2)) return isRd(s1) && isRd(s2);
+    const isKit = (s: string) => s.includes("sản xuất kit") || s.includes("sx kit");
+    if (isKit(s1) || isKit(s2)) return isKit(s1) && isKit(s2);
+    const isOligo = (s: string) => s.includes("oligo");
+    if (isOligo(s1) || isOligo(s2)) return isOligo(s1) && isOligo(s2);
+    const isDevice = (s: string) => s.includes("thiết bị");
+    if (isDevice(s1) || isDevice(s2)) return isDevice(s1) && isDevice(s2);
+    const isQa = (s: string) => s.includes("qa") || s.includes("qc") || s.includes("chất lượng");
+    if (isQa(s1) || isQa(s2)) return isQa(s1) && isQa(s2);
     return s1.includes(s2) || s2.includes(s1);
   };
 
@@ -2525,10 +2549,34 @@ export const EnterpriseChatModule: React.FC = () => {
 
                       {/* Related Work Badge */}
                       {msg.related_work && (
-                        <div className="mt-1 inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 text-[11px] font-bold text-indigo-700 dark:text-indigo-300">
-                          <Briefcase className="w-3 h-3" />
-                          <span>{msg.related_work.type === "TASK" ? "Công việc" : "Quy trình"}: {msg.related_work.code} - {msg.related_work.title}</span>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const rw = msg.related_work as any;
+                            const targetTab =
+                              rw.target_tab ||
+                              (rw.type === "KIT_ORDER" ? "factory-kit" :
+                               rw.type === "OLIGO_BATCH" ? "factory-oligo" :
+                               rw.type === "DEVICE_ORDER" ? "factory-device" :
+                               rw.type === "RD_PROJECT" ? "factory-rd" :
+                               rw.type === "QA_NCR" ? "factory-qa" :
+                               rw.type === "INTAKE_ORDER" ? "factory-orders" :
+                               rw.type === "LEGAL" ? "legal" : "workspace");
+                            window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: targetTab } }));
+                          }}
+                          className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/60 dark:hover:bg-indigo-900/70 border border-indigo-200 dark:border-indigo-800 text-[11px] font-bold text-indigo-700 dark:text-indigo-300 transition-colors cursor-pointer"
+                          title="Bấm để mở trực tiếp phân hệ xử lý hồ sơ / lệnh sản xuất này"
+                        >
+                          <Briefcase className="w-3 h-3 shrink-0" />
+                          <span>
+                            {msg.related_work.type === "TASK"
+                              ? "Công việc"
+                              : msg.related_work.type === "WORKFLOW"
+                              ? "Quy trình"
+                              : "Hồ sơ Kỹ thuật"}
+                            : {msg.related_work.code} — {msg.related_work.title} ↗
+                          </span>
+                        </button>
                       )}
 
                       {/* Attachments */}
@@ -2784,6 +2832,108 @@ export const EnterpriseChatModule: React.FC = () => {
                           {em}
                         </button>
                       ))}
+                    </div>
+
+                    {/* Link Work / Factory Order Picker */}
+                    <div className="relative ml-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsWorkLinkDropdownOpen(prev => !prev)}
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border transition-colors cursor-pointer ${
+                          selectedRelatedWork
+                            ? "bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700"
+                            : "text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        }`}
+                        title="Đính kèm Lệnh sản xuất Khối Kỹ thuật, Công việc hoặc Quy trình phối hợp vào tin nhắn"
+                      >
+                        <Briefcase className="w-3 h-3 text-indigo-500" />
+                        <span>
+                          {selectedRelatedWork ? `${selectedRelatedWork.code}` : "🔗 Gắn Lệnh SX / Hồ sơ"}
+                        </span>
+                      </button>
+                      {selectedRelatedWork && (
+                        <button
+                          type="button"
+                          onClick={() => setSelectedRelatedWork(null)}
+                          className="ml-1 text-[10px] text-rose-500 hover:underline font-bold cursor-pointer"
+                          title="Bỏ đính kèm hồ sơ"
+                        >
+                          ✕
+                        </button>
+                      )}
+                      {isWorkLinkDropdownOpen && (
+                        <div className="absolute bottom-9 left-0 z-50 w-80 max-h-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-2 space-y-1 text-left">
+                          <div className="px-2 py-1 text-[10px] font-black uppercase text-teal-600 dark:text-teal-400 border-b border-slate-100 dark:border-slate-800">
+                            🏭 Hồ sơ &amp; Lệnh Sản Xuất Khối Kỹ Thuật ({factoryWorkList.length})
+                          </div>
+                          {factoryWorkList.map((fw: any, idx: number) => (
+                            <button
+                              key={`fw-${idx}`}
+                              type="button"
+                              onClick={() => {
+                                setSelectedRelatedWork({
+                                  type: fw.type,
+                                  code: fw.code,
+                                  title: fw.title,
+                                  target_tab: fw.target_tab,
+                                });
+                                setIsWorkLinkDropdownOpen(false);
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-teal-50 dark:hover:bg-teal-950/50 text-xs flex flex-col gap-0.5 cursor-pointer"
+                            >
+                              <span className="font-mono font-bold text-teal-700 dark:text-teal-300 text-[11px]">
+                                [{fw.department}] {fw.code}
+                              </span>
+                              <span className="text-[11px] text-slate-600 dark:text-slate-300 truncate">{fw.title}</span>
+                            </button>
+                          ))}
+                          <div className="px-2 py-1 text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 border-b border-slate-100 dark:border-slate-800 pt-2">
+                            📋 Công Việc &amp; Quy Trình Điều Hành ({tasksList.length + workflowsList.length})
+                          </div>
+                          {tasksList.slice(0, 10).map((t: any) => (
+                            <button
+                              key={`task-${t.id}`}
+                              type="button"
+                              onClick={() => {
+                                setSelectedRelatedWork({
+                                  type: "TASK",
+                                  code: t.task_code,
+                                  title: t.title,
+                                  target_tab: "workspace",
+                                });
+                                setIsWorkLinkDropdownOpen(false);
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-indigo-50 dark:hover:bg-indigo-950/50 text-xs flex flex-col gap-0.5 cursor-pointer"
+                            >
+                              <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 text-[11px]">
+                                [Công việc] {t.task_code}
+                              </span>
+                              <span className="text-[11px] text-slate-600 dark:text-slate-300 truncate">{t.title}</span>
+                            </button>
+                          ))}
+                          {workflowsList.slice(0, 10).map((w: any) => (
+                            <button
+                              key={`wf-${w.id}`}
+                              type="button"
+                              onClick={() => {
+                                setSelectedRelatedWork({
+                                  type: "WORKFLOW",
+                                  code: w.workflow_code,
+                                  title: w.title,
+                                  target_tab: "workspace",
+                                });
+                                setIsWorkLinkDropdownOpen(false);
+                              }}
+                              className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-purple-50 dark:hover:bg-purple-950/50 text-xs flex flex-col gap-0.5 cursor-pointer"
+                            >
+                              <span className="font-mono font-bold text-purple-600 dark:text-purple-400 text-[11px]">
+                                [Quy trình] {w.workflow_code}
+                              </span>
+                              <span className="text-[11px] text-slate-600 dark:text-slate-300 truncate">{w.title}</span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 

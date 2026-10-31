@@ -41,7 +41,14 @@ describe("equipment maintenance, calibration and repair", () => {
     expect((await status(hplc.id)).status).toBe("IN_SERVICE");
     expect((await db().query("SELECT 1 FROM core.e_signature WHERE entity_type = 'asset_event' AND entity_id = $1 AND meaning = 'PERFORMED'", [repair.id])).rowCount).toBe(1);
 
-    await expect(withTransaction((tx) => planEvent(tx, tech, { asset_id: hplc.id, kind: "CALIBRATION", planned_date: today }))).rejects.toThrow(/quyền/);
+    // the operator may only propose a calibration; someone outside the department may not even do that
+    const outsider = await createUser("Phòng khác");
+    await grant(outsider, ["asset.view", "asset.operate"], await createOrgUnit("KIT"));
+    await expect(withTransaction((tx) => planEvent(tx, outsider, { asset_id: hplc.id, kind: "CALIBRATION", planned_date: today }))).rejects.toThrow(/quyền/);
+    const proposed = await withTransaction((tx) => planEvent(tx, tech, { asset_id: hplc.id, kind: "CALIBRATION", planned_date: today }));
+    expect((await withTransaction((tx) => listEvents(tx, tech, {}))).events.find((e: any) => e.id === proposed.id).actions.map((a: any) => a.action)).not.toContain("complete_signed");
+    await act(mgr, proposed.id, "cancel", { reason: "Gộp vào phiếu hiệu chuẩn của phụ trách" });
+    expect((await withTransaction((tx) => listEvents(tx, outsider, {}))).events.some((e: any) => e.asset_id === hplc.id)).toBe(false);
     const cal1 = await withTransaction((tx) => planEvent(tx, mgr, { asset_id: hplc.id, kind: "CALIBRATION", planned_date: today }));
     await expect(act(mgr, cal1.id, "complete_signed", { payload: { done_date: today, performed_by: "Quatest 3", result: "Sai số đầu dò" }, credential: { method: "PIN", secret: PIN } })).rejects.toMatchObject({ code: "GUARD_FAILED" });
     await act(mgr, cal1.id, "complete_signed", { payload: { done_date: today, performed_by: "Quatest 3", result: "Sai số đầu dò vượt", passed: false }, credential: { method: "PIN", secret: PIN } });

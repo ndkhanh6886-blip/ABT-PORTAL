@@ -81,15 +81,22 @@ export function IncidentsView({ canReport, presetCode }: { canReport: boolean; p
   const [status, setStatus] = useState("ACTIVE");
   const [q, setQ] = useState("");
   const [open, setOpen] = useState<string | null>(null);
+  const [showReport, setShowReport] = useState(Boolean(presetCode));
   const list = useQuery({ queryKey: ["factory", "deviations", status, q], queryFn: () => api<Dev[]>(`/api/factory/qms/deviations?status=${status}&q=${encodeURIComponent(q)}`) });
   const refresh = () => {
+    setShowReport(false);
     ["deviations", "ncrs", "ncr"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   };
   return (
     <Card
       title="Sự cố chất lượng & CAPA"
       actions={
-        <div className="flex gap-1">
+        <div className="flex flex-wrap items-center gap-1.5">
+          {canReport && (
+            <Button onClick={() => setShowReport((v) => !v)}>
+              {showReport ? "Đóng form báo sự cố" : "+ Báo cáo sự cố"}
+            </Button>
+          )}
           <input className={`${inputClass} w-48`} placeholder="Tìm mã, tiêu đề…" value={q} onChange={(e) => setQ(e.target.value)} />
           <select className={`${inputClass} w-40`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
             <option value="ACTIVE">Chưa đóng</option>
@@ -98,7 +105,7 @@ export function IncidentsView({ canReport, presetCode }: { canReport: boolean; p
         </div>
       }
     >
-      {canReport && <ReportForm onDone={refresh} presetCode={presetCode} />}
+      {canReport && showReport && <ReportForm onDone={refresh} presetCode={presetCode} />}
       <ErrorNote error={list.error} />
       {list.data?.length === 0 && <Empty>Không có sự cố.</Empty>}
       {list.data && list.data.length > 0 && (

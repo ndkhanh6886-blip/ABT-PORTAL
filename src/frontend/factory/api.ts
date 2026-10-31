@@ -11,8 +11,13 @@ export class ApiError extends Error {
 
 export async function api<T>(path: string, init: RequestInit & { json?: unknown; idempotent?: boolean } = {}): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
-  if (init.json !== undefined) headers["Content-Type"] = "application/json";
-  if (init.idempotent) headers["Idempotency-Key"] = crypto.randomUUID();
+  const method = (init.method ?? "GET").toUpperCase();
+  if (init.json !== undefined || (typeof init.body === "string" && !headers["Content-Type"])) {
+    headers["Content-Type"] = "application/json";
+  }
+  if ((init.idempotent || ["POST", "PUT", "PATCH"].includes(method)) && !headers["Idempotency-Key"]) {
+    headers["Idempotency-Key"] = crypto.randomUUID();
+  }
   const res = await fetch(path, {
     ...init,
     headers,
@@ -48,3 +53,22 @@ export const fmtQty = (v: string | number | null | undefined) => (v == null || v
 
 /** YYYY-MM-DD → dd/mm/yyyy (calendar dates carry no time zone). */
 export const fmtDate = (v: string | null | undefined) => (v ? v.slice(0, 10).split("-").reverse().join("/") : "—");
+
+/** Ngày hiện tại theo múi giờ Việt Nam (Asia/Ho_Chi_Minh) dạng YYYY-MM-DD, tránh lệch ngày từ 00:00–07:00 sáng so với UTC. */
+export const vnToday = (): string =>
+  new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh" }).format(new Date());
+
+/** Chuẩn hóa chuỗi chống XSS khi chèn vào cửa sổ in HTML (`win.document.write`). */
+export const escHtml = (v: unknown): string =>
+  String(v ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+export const fmtDateTime = (v: string | null | undefined) =>
+  v ? new Date(v).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—";
+
+const vndFmt = new Intl.NumberFormat("vi-VN", { style: "currency", currency: "VND", maximumFractionDigits: 0 });
+export const fmtVnd = (v: string | number | null | undefined) => (v == null || v === "" ? "—" : vndFmt.format(Number(v)));

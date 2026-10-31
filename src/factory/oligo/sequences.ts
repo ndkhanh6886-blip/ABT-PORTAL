@@ -7,7 +7,7 @@ import { parseInput } from "../core/records";
 import { defineMachine, runTransition } from "../core/stateMachine";
 import { analyze, SequenceError } from "./analyzer";
 import { loadCatalog } from "./catalog";
-import { FORMATS, insertSequence, productTypeOf, PURIFICATIONS, recomputeOrderStatus, visibleOligoUnits } from "./orders";
+import { FORMATS, inferOligoRole, insertSequence, OLIGO_ROLES, productTypeOf, PURIFICATIONS, recomputeOrderStatus, visibleOligoUnits } from "./orders";
 
 export type SeqStatus =
   | "PENDING" | "SPLIT" | "POOLED" | "QUEUED" | "SYNTHESIZING" | "SYNTHESIZED" | "POST_PROCESSING" | "QC" | "COMPLETED" | "DELIVERED" | "FAILED" | "CANCELLED";
@@ -78,6 +78,8 @@ const editSchema = z.object({
   scale_code: z.string().optional(),
   purification: z.enum(PURIFICATIONS).optional(),
   format: z.enum(FORMATS).optional(),
+  oligo_role: z.enum(OLIGO_ROLES).optional(),
+  target_pathogen: z.string().trim().max(150).optional().nullable(),
   reason: z.string().trim().max(500).optional().nullable(),
 });
 
@@ -100,20 +102,23 @@ export async function editSequence(tx: Tx, actor: AuthzActor, id: string, input:
     if (e instanceof SequenceError) throw invalid(e.message);
     throw e;
   }
+  const nextName = data.name ?? cur.name;
   const next = {
-    name: data.name ?? cur.name,
+    name: nextName,
     raw_sequence: raw,
     normalized_sequence: a.normalized,
     scale_code: data.scale_code ?? cur.scale_code,
     purification: data.purification ?? cur.purification,
     format: data.format ?? cur.format,
+    oligo_role: data.oligo_role ?? cur.oligo_role ?? inferOligoRole(nextName, a),
+    target_pathogen: data.target_pathogen === undefined ? cur.target_pathogen : data.target_pathogen,
   };
   await tx.query(
     `UPDATE oligo.oligo_sequence SET name = $2, raw_sequence = $3, normalized_sequence = $4, base_count = $5, molecule_type = $6, product_type = $7,
             scale_code = $8, purification = $9, format = $10, mw = $11, ext_coeff_260 = $12, tm = $13, nmol_per_od = $14, ug_per_od = $15, gc_percent = $16,
-            modifications = $17, warnings = $18, version = version + 1, updated_at = now(), updated_by = $19 WHERE id = $1`,
+            modifications = $17, warnings = $18, oligo_role = $20, target_pathogen = $21, version = version + 1, updated_at = now(), updated_by = $19 WHERE id = $1`,
     [id, next.name, raw, a.normalized, a.length, a.molecule_type, productTypeOf(a), next.scale_code, next.purification, next.format, a.mw, a.ext_coeff_260, a.tm,
-     a.nmol_per_od, a.ug_per_od, a.gc_percent, a.modifications, JSON.stringify(a.warnings), actor.userId]
+     a.nmol_per_od, a.ug_per_od, a.gc_percent, a.modifications, JSON.stringify(a.warnings), actor.userId, next.oligo_role, next.target_pathogen]
   );
   const changes: Record<string, [unknown, unknown]> = {};
   for (const k of Object.keys(next) as (keyof typeof next)[]) if (cur[k] !== next[k]) changes[k] = [cur[k], next[k]];

@@ -132,7 +132,9 @@ async function applyPosting(tx: Tx, actor: AuthzActor, doc: StockDocument, opts:
       COUNT_ADJUST: hasFrom !== hasTo,
     }[doc.doc_type];
     if (!dirOk && !opts.reversal) throw directionError(doc.doc_type, n);
-    if ((hasFrom && l.from_wh !== doc.warehouse_id) || (hasTo && l.to_wh !== doc.warehouse_id)) {
+    const isInterWhTransfer =
+      doc.doc_type === "TRANSFER" && ["INTER_WAREHOUSE", "DEPT_SUPPLY", "REPLENISHMENT"].includes(doc.reason_code);
+    if ((hasFrom && l.from_wh !== doc.warehouse_id) || (hasTo && !isInterWhTransfer && l.to_wh !== doc.warehouse_id)) {
       throw invalid(`Dòng ${n}: vị trí không thuộc kho của phiếu. Chuyển giữa hai kho cần yêu cầu chuyển kho được duyệt.`);
     }
     if (l.tracking !== "NONE" && !l.lot_id) throw invalid(`Dòng ${n}: vật tư ${l.item_code} quản lý theo lô/serial, phải chọn lô.`);

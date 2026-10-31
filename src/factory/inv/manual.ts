@@ -14,7 +14,7 @@ import { listAllowedActions } from "../core/stateMachine";
  */
 export const MANUAL_REASONS = {
   ISSUE: ["PRODUCTION", "RND", "QC_SAMPLE", "SCRAP", "RETURN_TO_SUPPLIER", "OTHER"],
-  TRANSFER: ["PUTAWAY", "RELOCATE"],
+  TRANSFER: ["PUTAWAY", "RELOCATE", "DEPT_SUPPLY", "INTER_WAREHOUSE", "REPLENISHMENT"],
   ADJUSTMENT: ["COUNT_DIFF", "DAMAGE", "OTHER"],
 } as const;
 /** Reasons that must be explained in the notes. */
@@ -99,12 +99,15 @@ export async function getDocumentDetail(tx: Tx, actor: AuthzActor, id: string) {
   if (!(await viewableWarehouses(tx, actor)).some((w) => w.id === doc.warehouse_id)) throw forbidden("Bạn không có quyền xem kho này.");
   const lines = (
     await tx.query(
-      `SELECT l.line_no, i.code AS item_code, i.name AS item_name, lot.code AS lot_code, fl.code AS from_code, tl.code AS to_code,
+      `SELECT l.line_no, i.code AS item_code, i.name AS item_name, lot.code AS lot_code,
+              CASE WHEN fw.id IS NOT NULL AND fw.id <> $2 THEN fw.code || ' · ' || fl.code ELSE fl.code END AS from_code,
+              CASE WHEN tw.id IS NOT NULL AND tw.id <> $2 THEN tw.code || ' · ' || tl.code ELSE tl.code END AS to_code,
               l.qty::text AS qty, l.uom, l.qty_base::text AS qty_base, i.base_uom
          FROM inv.stock_document_line l JOIN master.item i ON i.id = l.item_id LEFT JOIN inv.lot lot ON lot.id = l.lot_id
-         LEFT JOIN master.location fl ON fl.id = l.from_location_id LEFT JOIN master.location tl ON tl.id = l.to_location_id
+         LEFT JOIN master.location fl ON fl.id = l.from_location_id LEFT JOIN master.warehouse fw ON fw.id = fl.warehouse_id
+         LEFT JOIN master.location tl ON tl.id = l.to_location_id LEFT JOIN master.warehouse tw ON tw.id = tl.warehouse_id
         WHERE l.document_id = $1 ORDER BY l.line_no`,
-      [id]
+      [id, doc.warehouse_id]
     )
   ).rows;
   return { ...doc, lines, actions: await listAllowedActions(tx, stockDocumentMachine, actor, doc) };

@@ -130,26 +130,36 @@ export function AssetEventsView({ canPlan }: { canPlan: boolean }) {
   const qc = useQueryClient();
   const [status, setStatus] = useState("PLANNED");
   const [open, setOpen] = useState<string | null>(null);
+  const [showPlan, setShowPlan] = useState(false);
   const [preset, setPreset] = useState<{ asset_id: string; kind: string } | undefined>();
   const data = useQuery({ queryKey: ["factory", "asset-events", status], queryFn: () => api<{ events: Ev[]; calibration_due: Due[] }>(`/api/factory/assets/events${status ? `?status=${status}` : ""}`) });
   const assets = useQuery({ queryKey: ["factory", "assets", "all"], queryFn: () => api<AssetOpt[]>("/api/factory/assets") });
   const refresh = () => {
     setOpen(null);
+    setShowPlan(false);
+    setPreset(undefined);
     ["asset-events", "assets", "asset-slots", "oligo-batch-candidates"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   };
   return (
     <Card
       title="Kế hoạch bảo trì, hiệu chuẩn & sửa chữa"
       actions={
-        <select className={`${inputClass} w-40`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
-          <option value="PLANNED">Đang kế hoạch</option>
-          <option value="DONE">Đã thực hiện</option>
-          <option value="CANCELLED">Đã hủy</option>
-          <option value="">Tất cả</option>
-        </select>
+        <div className="flex items-center gap-2">
+          {canPlan && (
+            <Button onClick={() => setShowPlan((v) => !v)}>
+              {showPlan || preset ? "Đóng form lập phiếu" : "+ Lập phiếu bảo trì / hiệu chuẩn"}
+            </Button>
+          )}
+          <select className={`${inputClass} w-40`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
+            <option value="PLANNED">Đang kế hoạch</option>
+            <option value="DONE">Đã thực hiện</option>
+            <option value="CANCELLED">Đã hủy</option>
+            <option value="">Tất cả</option>
+          </select>
+        </div>
       }
     >
-      {canPlan && assets.data && <PlanForm key={preset ? `${preset.asset_id}-${preset.kind}` : "new"} assets={assets.data} preset={preset} onDone={refresh} />}
+      {canPlan && assets.data && (showPlan || preset) && <PlanForm key={preset ? `${preset.asset_id}-${preset.kind}` : "new"} assets={assets.data} preset={preset} onDone={refresh} />}
       <ErrorNote error={data.error} />
       {data.data && data.data.calibration_due.length > 0 && (
         <div className="mb-3 p-3 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 text-xs flex flex-col gap-1">

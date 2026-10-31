@@ -4,15 +4,16 @@ import { api, ApiError } from "../api";
 
 export interface TubeLabel {
   code: string; name: string; order_code: string | null; customer: string | null; sequence: string; bases: number; mw: number; tm: number;
-  scale: string; purification: string; format: string; modifications: string[]; tube: string; od: number; nmol: number;
+  scale: string; purification: string; format: string; modifications: string[]; tube: string;
   volume_ul: number | null; conc_um: number | null; released: boolean; date: string;
+  sequence_id: string; od: number | null; nmol: number | null; preview?: boolean; printable?: boolean; printed?: boolean;
 }
 
 const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const vnDate = (d: string) => d.split("-").reverse().join("/");
 
 /** One 50 × 30 mm label per page (thermal label printer); a tube not yet released by QC is marked as such. */
-function labelHtml(labels: TubeLabel[]) {
+export function labelHtml(labels: TubeLabel[], autoPrint = true) {
   const body = labels
     .map(
       (l) => `<section>
@@ -20,10 +21,10 @@ function labelHtml(labels: TubeLabel[]) {
   <div class="name">${esc(l.name)}</div>
   <div class="seq">5'-${esc(l.sequence.length > 60 ? `${l.sequence.slice(0, 57)}…` : l.sequence)}-3'</div>
   <div>${esc(l.bases)} nt · MW ${esc(l.mw)} · Tm ${esc(l.tm)}°C</div>
-  <div>${esc(l.od)} OD · ${esc(l.nmol)} nmol${l.volume_ul ? ` · ${esc(l.volume_ul)} µL @ ${esc(l.conc_um)} µM` : ""}</div>
+  <div>${l.od == null ? "— OD (chưa đo)" : `${esc(l.od)} OD · ${esc(l.nmol)} nmol`}${l.volume_ul ? ` · ${esc(l.volume_ul)} µL @ ${esc(l.conc_um)} µM` : ""}</div>
   <div>${esc(l.scale)} · ${esc(l.purification)}${l.order_code ? ` · ${esc(l.order_code)}` : ""}</div>
   <div class="foot"><span>${esc(l.customer ?? "")}</span><span>${esc(vnDate(l.date))}</span></div>
-  ${l.released ? "" : '<div class="hold">CHƯA XUẤT XƯỞNG</div>'}
+  ${l.preview ? '<div class="hold">XEM TRƯỚC</div>' : l.released ? "" : '<div class="hold">CHƯA XUẤT XƯỞNG</div>'}
 </section>`
     )
     .join("");
@@ -38,7 +39,7 @@ section { width: 50mm; height: 30mm; padding: 1.5mm 2mm; page-break-after: alway
 .foot { display: flex; justify-content: space-between; position: absolute; left: 2mm; right: 2mm; bottom: 1.2mm }
 .hold { position: absolute; right: 2mm; top: 5mm; border: 0.3mm solid #000; padding: 0 1mm; font-weight: bold; font-size: 6pt }
 @media screen { body { background: #ddd; padding: 8px } section { background: #fff; margin: 0 0 8px; box-shadow: 0 0 2px #888 } }
-</style></head><body>${body}<script>window.onload = () => { window.focus(); window.print() }</script></body></html>`;
+</style></head><body>${body}${autoPrint ? "<script>window.onload = () => { window.focus(); window.print() }</script>" : ""}</body></html>`;
 }
 
 /** Asks the server for the label data (which records the print), then prints it from a hidden frame (no pop-up). */
@@ -65,4 +66,9 @@ export async function printWithReprint(sequenceIds: string[]) {
     if (!reason) return 0;
     return printTubeLabels(sequenceIds, reason);
   }
+}
+
+/** Label preview (nothing recorded): what the tubes of these sequences will carry, at any stage of production. */
+export async function previewTubeLabels(sequenceIds: string[]) {
+  return api<TubeLabel[]>("/api/factory/oligo/labels", { method: "POST", json: { sequence_ids: sequenceIds, preview: true } });
 }

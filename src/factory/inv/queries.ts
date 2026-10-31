@@ -8,7 +8,7 @@ import { parseInput } from "../core/records";
 export async function viewableWarehouses(tx: Tx, actor: AuthzActor) {
   const all = (
     await tx.query(
-      `SELECT w.id, w.code, w.name, w.purpose, w.access_mode, w.owner_org_unit_id, o.name AS owner_name
+      `SELECT w.id, w.code, w.name, w.purpose, w.access_mode, w.owner_org_unit_id, o.name AS owner_name, o.module_key AS owner_module_key
          FROM master.warehouse w JOIN core.org_unit o ON o.id = w.owner_org_unit_id
         WHERE w.status = 'ACTIVE' ORDER BY w.code`
     )

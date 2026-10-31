@@ -174,36 +174,47 @@ export function RequestsView() {
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [status, setStatus] = useState("");
+  const [deptFilter, setDeptFilter] = useState("");
   const list = useQuery({
     queryKey: ["factory", "prs", status],
     queryFn: () => api<{ id: string; code: string; status: string; org_unit_name: string; warehouse_code: string; requester_name: string; needed_by: string | null; est_total: string; line_count: number; reason: string }[]>(`/api/factory/purchase/requests${status ? `?status=${status}` : ""}`),
   });
+  const departments = Array.from(new Set((list.data ?? []).map((r) => r.org_unit_name).filter(Boolean)));
+  const filteredRows = (list.data ?? []).filter((r) => !deptFilter || r.org_unit_name === deptFilter);
+
   return (
     <div className="flex flex-col gap-3">
       {creating && <NewRequestForm onDone={() => setCreating(false)} />}
       {selected && <RequestDetail key={selected} id={selected} onClose={() => setSelected(null)} />}
       <Card
-        title="Đề nghị mua NVL"
+        title="Đề nghị mua NVL tập trung (R&D · Sản xuất Kit · Oligo · Kỹ thuật Thiết bị · QA/QC)"
         actions={
-          <>
+          <div className="flex flex-wrap items-center gap-2">
+            {departments.length > 1 && (
+              <select className={`${inputClass} w-52`} value={deptFilter} onChange={(e) => setDeptFilter(e.target.value)} aria-label="Phòng ban">
+                <option value="">Tất cả phòng ban ({list.data?.length ?? 0})</option>
+                {departments.map((d) => <option key={d} value={d}>{d}</option>)}
+              </select>
+            )}
             <select className={`${inputClass} w-48`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
               <option value="">Mọi trạng thái</option>
               {Object.entries(PR_STATUS).map(([k, [, v]]) => <option key={k} value={k}>{v}</option>)}
             </select>
             {!creating && <Button onClick={() => setCreating(true)}>+ Đề nghị mua</Button>}
-          </>
+          </div>
         }
       >
         <ErrorNote error={list.error} />
-        {list.data?.length === 0 && <Empty>Chưa có đề nghị mua.</Empty>}
-        {list.data && list.data.length > 0 && (
-          <Table head={["Mã", "Phòng", "Kho nhận", "Người lập", "Cần trước", "Ước tính", "Dòng", "Trạng thái"]}>
-            {list.data.map((r) => (
+        {filteredRows.length === 0 && <Empty>Chưa có đề nghị mua phù hợp bộ lọc.</Empty>}
+        {filteredRows.length > 0 && (
+          <Table head={["Mã", "Phòng đề xuất", "Kho nhánh nhận", "Người lập", "Mục đích / Lý do", "Cần trước", "Ước tính", "Dòng", "Trạng thái"]}>
+            {filteredRows.map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
                 <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
-                <td className="py-2 pr-3">{r.org_unit_name}</td>
-                <td className="py-2 pr-3">{r.warehouse_code}</td>
+                <td className="py-2 pr-3 font-semibold">{r.org_unit_name}</td>
+                <td className="py-2 pr-3 font-mono">{r.warehouse_code}</td>
                 <td className="py-2 pr-3">{r.requester_name}</td>
+                <td className="py-2 pr-3 text-xs text-slate-600 dark:text-slate-300 max-w-64 truncate">{r.reason}</td>
                 <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(r.needed_by)}</td>
                 <td className="py-2 pr-3 text-right whitespace-nowrap">{fmtQty(r.est_total)} đ</td>
                 <td className="py-2 pr-3">{r.line_count}</td>

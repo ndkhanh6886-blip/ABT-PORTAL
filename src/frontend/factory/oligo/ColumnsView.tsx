@@ -36,11 +36,13 @@ export function ColumnsView({ canManage }: { canManage: boolean }) {
   const assets = useQuery({ queryKey: ["factory", "assets", "all"], queryFn: () => api<{ id: string; code: string; name: string; asset_type: string }[]>("/api/factory/assets") });
   const [f, setF] = useState({ code: "", name: "", asset_id: "", price_vnd: "", design_runs: "" });
   const [open, setOpen] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
   const refresh = () => qc.invalidateQueries({ queryKey: ["factory", "lc-columns"] });
   const add = useMutation({
     mutationFn: () => api("/api/factory/assets/columns", { method: "POST", json: { ...f, asset_id: f.asset_id || null, price_vnd: Number(f.price_vnd), design_runs: Number(f.design_runs) } }),
     onSuccess: () => {
       setF({ code: "", name: "", asset_id: "", price_vnd: "", design_runs: "" });
+      setShowAdd(false);
       refresh();
     },
   });
@@ -53,8 +55,17 @@ export function ColumnsView({ canManage }: { canManage: boolean }) {
     onSuccess: refresh,
   });
   return (
-    <Card title="Cột sắc ký: khấu hao & sử dụng">
-      {canManage && (
+    <Card
+      title="Cột sắc ký: khấu hao & sử dụng"
+      actions={
+        canManage ? (
+          <Button onClick={() => setShowAdd((v) => !v)}>
+            {showAdd ? "Đóng form" : "+ Thêm cột sắc ký"}
+          </Button>
+        ) : null
+      }
+    >
+      {canManage && showAdd && (
         <form className="grid gap-3 sm:grid-cols-3 lg:grid-cols-6 items-end mb-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); add.mutate(); }}>
           <Field label="Mã / serial *"><input className={inputClass} value={f.code} onChange={(e) => setF({ ...f, code: e.target.value })} required /></Field>
           <Field label="Tên cột *"><input className={inputClass} value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required /></Field>

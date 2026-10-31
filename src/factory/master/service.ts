@@ -29,20 +29,25 @@ export interface Item {
   version: number;
 }
 
-async function assertUom(tx: Tx, code: string) {
-  const r = await tx.query("SELECT 1 FROM master.uom WHERE code = $1 AND status = 'ACTIVE'", [code]);
+async function assertUom(tx: Tx, code: string): Promise<string> {
+  const r = await tx.query(
+    "SELECT code FROM master.uom WHERE lower(code) = lower($1) AND status = 'ACTIVE' ORDER BY (code = $1) DESC LIMIT 1",
+    [code]
+  );
   if (!r.rowCount) throw invalid(`Đơn vị tính "${code}" không có trong danh mục.`);
+  return r.rows[0].code as string;
 }
 
 export async function createItem(tx: Tx, actor: AuthzActor, input: unknown): Promise<Item> {
   await authorize(tx, actor, "master.item.manage");
   const data = parseInput(createItemSchema, input);
-  await assertUom(tx, data.base_uom);
-  if (data.tracking === "SERIAL" && data.base_uom !== "pcs") throw invalid("Vật tư quản lý theo serial phải có đơn vị gốc là 'pcs' (cái).");
+  const canonicalUom = await assertUom(tx, data.base_uom);
+  if (data.tracking === "SERIAL" && canonicalUom.toLowerCase() !== "pcs")
+    throw invalid("Vật tư quản lý theo serial phải có đơn vị gốc là 'pcs' (cái).");
   const code = data.code ?? (await nextNumber(tx, "ITEM"));
   const dup = await tx.query("SELECT 1 FROM master.item WHERE code = $1", [code]);
   if (dup.rowCount) throw conflict(`Mã vật tư ${code} đã tồn tại.`, "DUPLICATE_CODE");
-  return insertRecord<Item>(tx, actor, "master.item", "item", { ...data, code });
+  return insertRecord<Item>(tx, actor, "master.item", "item", { ...data, base_uom: canonicalUom, code });
 }
 
 export async function updateItem(tx: Tx, actor: AuthzActor, id: string, input: unknown): Promise<Item> {
@@ -114,17 +119,18 @@ export async function setConversion(tx: Tx, actor: AuthzActor, input: unknown) {
  * direction of a declared conversion is used too. Unknown pairs are refused, never guessed.
  */
 export async function toBaseQty(tx: Tx, item: Pick<Item, "id" | "base_uom" | "code">, qty: number, uom: string): Promise<number> {
-  if (uom === item.base_uom) return qty;
+  if (uom === item.base_uom || uom.toLowerCase() === item.base_uom.toLowerCase()) return qty;
   const res = await tx.query(
     `SELECT from_uom, factor FROM master.uom_conversion
-      WHERE ((from_uom = $1 AND to_uom = $2) OR (from_uom = $2 AND to_uom = $1)) AND (item_id = $3 OR item_id IS NULL)
-      ORDER BY (item_id IS NULL), (from_uom = $1) DESC LIMIT 1`,
+      WHERE ((lower(from_uom) = lower($1) AND lower(to_uom) = lower($2)) OR (lower(from_uom) = lower($2) AND lower(to_uom) = lower($1)))
+        AND (item_id = $3 OR item_id IS NULL)
+      ORDER BY (item_id IS NULL), (lower(from_uom) = lower($1)) DESC LIMIT 1`,
     [uom, item.base_uom, item.id]
   );
   const conv = res.rows[0];
   if (!conv) throw invalid(`Chưa khai báo quy đổi từ ${uom} sang ${item.base_uom} cho vật tư ${item.code}.`, undefined, "NO_UOM_CONVERSION");
   const factor = Number(conv.factor);
-  return conv.from_uom === uom ? qty * factor : qty / factor;
+  return conv.from_uom.toLowerCase() === uom.toLowerCase() ? qty * factor : qty / factor;
 }
 
 export async function createPartner(tx: Tx, actor: AuthzActor, input: unknown) {

@@ -70,6 +70,29 @@ export function LotPanel({ lotId, onClose }: { lotId: string; onClose: () => voi
           {l.status === "RELEASED" && me.data?.permissions.includes("inv.document.post") && l.balances.some((b) => b.is_quarantine) && (
             <PutAway lotId={l.id} warehouseId={l.balances.find((b) => b.is_quarantine)!.warehouse_id} onDone={refresh} />
           )}
+          <div className="rounded-xl border border-sky-200 dark:border-sky-900/60 bg-sky-50/40 dark:bg-sky-950/20 p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+            <div>
+              <b className="text-sky-900 dark:text-sky-300">❄️ Kiểm soát Chu kỳ Rã đông – Đông lạnh (Bio Freeze-Thaw Guard):</b>{" "}
+              <span className="font-mono font-bold">
+                {(l as any).freeze_thaw_count ?? 0} / {(l as any).max_freeze_thaw ?? 5} lần
+              </span>{" "}
+              <span className="text-slate-500">
+                (Tự động cảnh báo / khóa ON_HOLD nếu rã đông vượt ngưỡng cho phép của sinh phẩm)
+              </span>
+            </div>
+            <Button
+              variant="secondary"
+              onClick={async () => {
+                await api("/api/factory/analytics", {
+                  method: "POST",
+                  body: JSON.stringify({ op: "record_freeze_thaw", lot_id: l.id, increment: 1 }),
+                });
+                refresh();
+              }}
+            >
+              ❄️ +1 Ghi nhận Rã đông
+            </Button>
+          </div>
           <ActionBar endpoint={`/api/factory/inv/lots/${l.id}/actions`} version={l.version} actions={l.actions} labels={LOT_ACTION_LABEL} onDone={refresh} />
           <div>
             <h3 className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-1">Phiếu QC của lô</h3>

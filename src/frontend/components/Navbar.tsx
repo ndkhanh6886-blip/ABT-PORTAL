@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import React, { useState, useEffect } from "react";
 import { useTheme } from "@/frontend/contexts/ThemeContext";
@@ -7,32 +7,42 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { AccountSecurityModal } from "./AccountSecurityModal";
 import {
   Briefcase,
-  Package,
   FlaskConical,
-  ShoppingCart,
   Settings,
   Sun,
   Moon,
-  Database,
-  User,
   ShieldCheck,
   ChevronDown,
   LayoutDashboard,
-  Check,
   LogOut,
   MessageSquare,
   Scale,
   Smartphone,
   Menu,
   X,
-  Warehouse,
-  SlidersHorizontal,
-  PackageCheck,
-  ClipboardList
 } from "lucide-react";
 import { hasAny, useFactoryMe } from "@/frontend/factory/api";
 
-export type MainTab = "workspace" | "sales" | "warehouse" | "application" | "procurement" | "legal" | "chat" | "zalo" | "settings" | "factory-warehouse" | "factory-settings" | "factory-qa" | "factory-purchase" | "factory-orders" | "factory-oligo";
+export type MainTab =
+  | "workspace"
+  | "sales"
+  | "warehouse"
+  | "application"
+  | "procurement"
+  | "legal"
+  | "chat"
+  | "zalo"
+  | "settings"
+  | "factory-warehouse"
+  | "factory-settings"
+  | "factory-qa"
+  | "factory-purchase"
+  | "factory-orders"
+  | "factory-oligo"
+  | "factory-rd"
+  | "factory-device"
+  | "factory-kit"
+  | "factory-analytics";
 
 interface NavbarProps {
   activeTab: MainTab;
@@ -51,16 +61,38 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
   const factoryMe = useFactoryMe(Boolean(user));
   const canFactoryWarehouse = hasAny(factoryMe.data, ["inv", "master"]);
   const canFactorySettings = Boolean(factoryMe.data?.permissions.length);
-  // Khối Kinh doanh groups the four Kinh doanh modules; the Navbar shows one entry for them
+
+  // Khối Kinh Doanh groups the four Kinh doanh modules; the Navbar shows one entry for them
   const businessTabs = (["sales", "warehouse", "application", "procurement"] as const).filter((t) => can(`${t}.view`));
   const canBusiness = businessTabs.length > 0;
   const isBusinessTab = (businessTabs as readonly string[]).includes(activeTab);
   const firstBusinessTab: MainTab = isBusinessTab ? activeTab : businessTabs[0] ?? "sales";
-  const isSettingsTab = activeTab === "settings" || activeTab === "factory-settings";
-  const canFactoryOrders = hasAny(factoryMe.data, ["intake"]);
+
+  // Khối Kỹ Thuật groups all factory/R&D/production/QA/supply/warehouse modules into one Navbar entry
+  const canFactoryRd = hasAny(factoryMe.data, ["rd", "work.plan"]);
+  const canFactoryKit = hasAny(factoryMe.data, ["kit"]);
   const canFactoryOligo = hasAny(factoryMe.data, ["oligo"]);
-  const canFactoryPurchase = hasAny(factoryMe.data, ["purchase", "master.partner"]);
+  const canFactoryDevice = hasAny(factoryMe.data, ["device"]);
   const canFactoryQa = hasAny(factoryMe.data, ["qms.qc.view"]);
+  const canFactoryOrders = hasAny(factoryMe.data, ["intake"]);
+  const canFactoryPurchase = hasAny(factoryMe.data, ["purchase", "master.partner"]);
+
+  const technicalTabs = ([
+    canFactoryRd ? "factory-rd" : null,
+    canFactoryKit ? "factory-kit" : null,
+    canFactoryOligo ? "factory-oligo" : null,
+    canFactoryDevice ? "factory-device" : null,
+    canFactoryQa ? "factory-qa" : null,
+    canFactoryOrders ? "factory-orders" : null,
+    canFactoryPurchase ? "factory-purchase" : null,
+    canFactoryWarehouse ? "factory-warehouse" : null,
+    canFactorySettings ? "factory-analytics" : null,
+  ] as const).filter((t): t is NonNullable<typeof t> => t !== null);
+  const canTechnical = technicalTabs.length > 0;
+  const isTechnicalTab = (technicalTabs as readonly string[]).includes(activeTab);
+  const firstTechnicalTab: MainTab = isTechnicalTab ? activeTab : technicalTabs[0] ?? "factory-rd";
+
+  const isSettingsTab = activeTab === "settings" || activeTab === "factory-settings";
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -76,7 +108,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
     <>
       <header className="sticky top-0 z-40 w-full border-b transition-colors bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 shadow-xs">
         <div className="w-full px-3 sm:px-5 lg:px-6 h-14 flex items-center justify-between gap-2 sm:gap-3">
-          
           {/* Brand & Left Navigation */}
           <div className="flex items-center gap-3 lg:gap-4 min-w-0 flex-1">
             <div
@@ -96,7 +127,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                   </span>
                 </div>
                 <span className="text-[9px] font-semibold text-slate-400 dark:text-slate-500 tracking-wider uppercase block mt-0.5 whitespace-nowrap">
-                  Kinh Doanh &amp; Phân Phối
+                  Kinh Doanh &amp; Sản Xuất
                 </span>
               </div>
             </div>
@@ -129,73 +160,17 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 </button>
               )}
 
-              {canFactoryQa && (
+              {canTechnical && (
                 <button
-                  onClick={() => setActiveTab("factory-qa")}
+                  onClick={() => setActiveTab(firstTechnicalTab)}
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "factory-qa"
-                      ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
-                  <span>QA/QC</span>
-                </button>
-              )}
-
-              {canFactoryOligo && (
-                <button
-                  onClick={() => setActiveTab("factory-oligo")}
-                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "factory-oligo"
+                    isTechnicalTab
                       ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
                       : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
                   }`}
                 >
                   <FlaskConical className="w-3.5 h-3.5 shrink-0" />
-                  <span>Tổng Hợp Oligo</span>
-                </button>
-              )}
-
-              {canFactoryOrders && (
-                <button
-                  onClick={() => setActiveTab("factory-orders")}
-                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "factory-orders"
-                      ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <ClipboardList className="w-3.5 h-3.5 shrink-0" />
-                  <span>Đơn Nội Bộ</span>
-                </button>
-              )}
-
-              {canFactoryPurchase && (
-                <button
-                  onClick={() => setActiveTab("factory-purchase")}
-                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "factory-purchase"
-                      ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <PackageCheck className="w-3.5 h-3.5 shrink-0" />
-                  <span>Cung Ứng NVL</span>
-                </button>
-              )}
-
-              {canFactoryWarehouse && (
-                <button
-                  onClick={() => setActiveTab("factory-warehouse")}
-                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
-                    activeTab === "factory-warehouse"
-                      ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
-                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
-                  }`}
-                >
-                  <Warehouse className="w-3.5 h-3.5 shrink-0" />
-                  <span>Kho Nhà Máy</span>
+                  <span>Khối Kỹ Thuật</span>
                 </button>
               )}
 
@@ -266,7 +241,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
 
           {/* Right Status, Notification Bell, Mobile Menu Button & User Info */}
           <div className="flex items-center gap-1.5 sm:gap-2.5 shrink-0">
-            {/* Activity Notifications for relevant staff */}
             <NotificationDropdown />
 
             {/* Mobile / Tablet Quick Menu Trigger in Top Header */}
@@ -308,7 +282,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setIsUserMenuOpen(false)} />
                   <div className="absolute right-0 mt-2 w-72 sm:w-80 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 p-2 z-50 text-xs">
-                    {/* Current Logged In Info */}
                     <div className="px-3 py-2.5 border-b border-slate-100 dark:border-slate-800 mb-2 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
                       <div className="flex items-center justify-between gap-2">
                         <span className="font-bold text-slate-900 dark:text-white truncate">
@@ -321,7 +294,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                       <div className="text-[11px] text-slate-500 mt-0.5 truncate">{activeUser?.email || activeUser?.department}</div>
                     </div>
 
-                    {/* Actions */}
                     <div className="p-1 space-y-1">
                       {can("settings.view") && (
                         <button
@@ -380,11 +352,10 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
               )}
             </div>
           </div>
-
         </div>
       </header>
 
-      {/* Fixed Mobile Bottom Navigation Bar — Placed OUTSIDE <header> so backdrop-blur never traps fixed positioning */}
+      {/* Fixed Mobile Bottom Navigation Bar */}
       <nav
         aria-label="Mobile Navigation"
         className="lg:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 px-1.5 py-1 flex items-center justify-around shadow-2xl"
@@ -419,33 +390,46 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
           </button>
         )}
 
+        {canTechnical && (
+          <button
+            onClick={() => { setActiveTab(firstTechnicalTab); setIsMobileMoreOpen(false); }}
+            className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
+              isTechnicalTab && !isMobileMoreOpen
+                ? "text-sky-600 dark:text-sky-400 font-extrabold"
+                : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+            }`}
+          >
+            <div className={`p-1 rounded-xl transition-transform ${isTechnicalTab && !isMobileMoreOpen ? "bg-sky-50 dark:bg-sky-950/60 scale-105" : ""}`}>
+              <FlaskConical className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] mt-0.5 tracking-tight font-bold">Khối KT</span>
+          </button>
+        )}
+
         <button
           onClick={() => setIsMobileMoreOpen(prev => !prev)}
           className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
-            isMobileMoreOpen || ["factory-oligo", "factory-orders", "factory-purchase", "factory-qa", "factory-warehouse", "factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab)
+            isMobileMoreOpen || ["factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab)
               ? "text-orange-600 dark:text-orange-400 font-extrabold"
               : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
           }`}
         >
-          <div className={`p-1 rounded-xl transition-transform ${isMobileMoreOpen || ["factory-oligo", "factory-orders", "factory-purchase", "factory-qa", "factory-warehouse", "factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab) ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
+          <div className={`p-1 rounded-xl transition-transform ${isMobileMoreOpen || ["factory-settings", "legal", "chat", "zalo", "settings"].includes(activeTab) ? "bg-orange-50 dark:bg-orange-950/60 scale-105" : ""}`}>
             {isMobileMoreOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </div>
           <span className="text-[10px] mt-0.5 tracking-tight font-bold">Thêm</span>
         </button>
       </nav>
 
-      {/* Mobile Full Navigation Drawer / Bottom Sheet — Rendered outside <header> at z-[70] so it is never clipped */}
+      {/* Mobile Full Navigation Drawer / Bottom Sheet */}
       {isMobileMoreOpen && (
         <div className="lg:hidden fixed inset-0 z-[70] flex flex-col justify-end">
-          {/* Backdrop */}
-          <div 
+          <div
             className="fixed inset-0 bg-slate-950/65 backdrop-blur-xs transition-opacity"
             onClick={() => setIsMobileMoreOpen(false)}
           />
 
-          {/* Drawer Content */}
           <div className="relative z-10 bg-white dark:bg-slate-900 rounded-t-3xl border-t border-slate-200 dark:border-slate-800 shadow-2xl p-4 sm:p-5 pb-20 max-h-[85vh] overflow-y-auto">
-            {/* Grab Handle */}
             <div className="w-12 h-1.5 bg-slate-300 dark:bg-slate-700 rounded-full mx-auto mb-3" />
 
             <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-3.5">
@@ -463,7 +447,6 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
               </button>
             </div>
 
-            {/* Section 1: All Main Operational Modules */}
             <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-2">
               Phân hệ nghiệp vụ chính
             </div>
@@ -504,30 +487,11 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 </button>
               )}
 
-              {canFactoryQa && (
+              {canTechnical && (
                 <button
-                  onClick={() => { setActiveTab("factory-qa"); setIsMobileMoreOpen(false); }}
+                  onClick={() => { setActiveTab(firstTechnicalTab); setIsMobileMoreOpen(false); }}
                   className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "factory-qa"
-                      ? "bg-sky-50 dark:bg-sky-950/50 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 font-bold"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="p-2 rounded-xl bg-sky-100 dark:bg-sky-950/70 text-sky-700 dark:text-sky-400 shrink-0">
-                    <ShieldCheck className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">QA/QC</div>
-                    <div className="text-[10px] text-slate-400 truncate">Phiếu QC, tiêu chuẩn, NCR</div>
-                  </div>
-                </button>
-              )}
-
-              {canFactoryOligo && (
-                <button
-                  onClick={() => { setActiveTab("factory-oligo"); setIsMobileMoreOpen(false); }}
-                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "factory-oligo"
+                    isTechnicalTab
                       ? "bg-sky-50 dark:bg-sky-950/50 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 font-bold"
                       : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
                   }`}
@@ -536,65 +500,8 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                     <FlaskConical className="w-4 h-4" />
                   </div>
                   <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Tổng Hợp Oligo</div>
-                    <div className="text-[10px] text-slate-400 truncate">Thông số trình tự, modification</div>
-                  </div>
-                </button>
-              )}
-
-              {canFactoryOrders && (
-                <button
-                  onClick={() => { setActiveTab("factory-orders"); setIsMobileMoreOpen(false); }}
-                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "factory-orders"
-                      ? "bg-sky-50 dark:bg-sky-950/50 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 font-bold"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="p-2 rounded-xl bg-sky-100 dark:bg-sky-950/70 text-sky-700 dark:text-sky-400 shrink-0">
-                    <ClipboardList className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Đơn Nội Bộ</div>
-                    <div className="text-[10px] text-slate-400 truncate">PO Kinh doanh gửi nhà máy</div>
-                  </div>
-                </button>
-              )}
-
-              {canFactoryPurchase && (
-                <button
-                  onClick={() => { setActiveTab("factory-purchase"); setIsMobileMoreOpen(false); }}
-                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "factory-purchase"
-                      ? "bg-sky-50 dark:bg-sky-950/50 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 font-bold"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="p-2 rounded-xl bg-sky-100 dark:bg-sky-950/70 text-sky-700 dark:text-sky-400 shrink-0">
-                    <PackageCheck className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Cung Ứng NVL</div>
-                    <div className="text-[10px] text-slate-400 truncate">Đề nghị mua, đơn mua, nhận hàng</div>
-                  </div>
-                </button>
-              )}
-
-              {canFactoryWarehouse && (
-                <button
-                  onClick={() => { setActiveTab("factory-warehouse"); setIsMobileMoreOpen(false); }}
-                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
-                    activeTab === "factory-warehouse"
-                      ? "bg-sky-50 dark:bg-sky-950/50 border-sky-300 dark:border-sky-700 text-sky-700 dark:text-sky-300 font-bold"
-                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="p-2 rounded-xl bg-sky-100 dark:bg-sky-950/70 text-sky-700 dark:text-sky-400 shrink-0">
-                    <Warehouse className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold leading-tight truncate">Kho Nhà Máy</div>
-                    <div className="text-[10px] text-slate-400 truncate">NVL, lô &amp; tồn kho nhà máy</div>
+                    <div className="text-xs font-bold leading-tight truncate">Khối Kỹ Thuật</div>
+                    <div className="text-[10px] text-slate-400 truncate">R&amp;D, SX Kit, Oligo, Thiết bị, QA/QC, Kho</div>
                   </div>
                 </button>
               )}

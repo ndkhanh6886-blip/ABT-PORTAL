@@ -8,7 +8,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
   if (await hasFactoryPermission(tx, actor, "master.warehouse.manage")) {
     return (
       await tx.query(
-        `SELECT w.id, w.code, w.name, w.purpose, w.access_mode, w.owner_org_unit_id, w.status, o.name AS owner_name
+        `SELECT w.id, w.code, w.name, w.purpose, w.access_mode, w.owner_org_unit_id, w.status, o.name AS owner_name, o.module_key AS owner_module_key
            FROM master.warehouse w JOIN core.org_unit o ON o.id = w.owner_org_unit_id ORDER BY w.code`
       )
     ).rows;

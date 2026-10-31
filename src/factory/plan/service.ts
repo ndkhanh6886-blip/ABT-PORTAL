@@ -160,6 +160,21 @@ async function backlog(tx: Tx, unit: string) {
   for (const e of (await tx.query("SELECT e.id, e.code, e.kind, e.planned_date, a.code AS asset FROM asset.event e JOIN asset.asset a ON a.id = e.asset_id WHERE a.owner_org_unit_id = $1 AND e.status = 'PLANNED' ORDER BY e.planned_date", [unit])).rows) {
     items.push({ kind: "EQUIPMENT", title: `${e.kind === "CALIBRATION" ? "Hiệu chuẩn" : e.kind === "REPAIR" ? "Sửa chữa" : e.kind === "CLEANING" ? "Vệ sinh" : "Bảo trì"} ${e.asset}`, detail: `Phiếu ${e.code} · ngày ${e.planned_date}`, ref_type: "ASSET_EVENT", ref_id: e.id });
   }
+  // Kit production orders (RELEASED / IN_PROGRESS)
+  for (const ko of (await tx.query("SELECT ko.id, ko.code, ko.status, it.name AS product_name, ko.planned_qty::float AS qty FROM kit.production_order ko JOIN master.item it ON it.id = ko.product_item_id WHERE ko.org_unit_id = $1 AND ko.status IN ('RELEASED', 'IN_PROGRESS') ORDER BY ko.created_at", [unit])).rows) {
+    items.push({ kind: "PREPARATION", title: `Sản xuất Kit ${ko.code}`, detail: `${ko.product_name} · SL ${ko.qty} (${ko.status})`, ref_type: "KIT_ORDER", ref_id: ko.id });
+  }
+  // Device assembly DHR orders & service tickets
+  for (const ao of (await tx.query("SELECT ao.id, ao.code, ao.qty, ao.status, m.name AS model_name FROM device.device_order ao JOIN device.model_revision mr ON mr.id = ao.model_revision_id JOIN device.device_model m ON m.id = ao.model_id WHERE ao.org_unit_id = $1 AND ao.status IN ('APPROVED', 'IN_PRODUCTION') ORDER BY ao.created_at", [unit])).rows) {
+    items.push({ kind: "EQUIPMENT", title: `Lắp ráp DHR ${ao.code}`, detail: `${ao.model_name} · SL ${ao.qty}`, ref_type: "DEVICE_ASSEMBLY", ref_id: ao.id });
+  }
+  for (const st of (await tx.query("SELECT st.id, st.code, st.symptom AS issue_summary, st.ticket_type AS priority FROM device.service_ticket st WHERE st.org_unit_id = $1 AND st.status IN ('OPEN', 'DIAGNOSING', 'IN_REPAIR') ORDER BY st.created_at", [unit])).rows) {
+    items.push({ kind: "EQUIPMENT", title: `Xử lý phiếu kỹ thuật ${st.code}`, detail: `${st.issue_summary} (${st.priority})`, ref_type: "SERVICE_TICKET", ref_id: st.id });
+  }
+  // R&D active experiments
+  for (const ex of (await tx.query("SELECT e.id, e.code, e.title, p.code AS proj_code FROM rd.experiment e JOIN rd.project p ON p.id = e.project_id WHERE p.owner_org_unit_id = $1 AND e.status IN ('DRAFT', 'IN_PROGRESS') ORDER BY e.created_at DESC LIMIT 15", [unit])).rows) {
+    items.push({ kind: "OTHER", title: `Thí nghiệm ELN ${ex.code}`, detail: `Dự án ${ex.proj_code} · ${ex.title}`, ref_type: "RD_EXPERIMENT", ref_id: ex.id });
+  }
   return items.filter((i) => !linked.has(`${i.ref_type}:${i.ref_id}`));
 }
 

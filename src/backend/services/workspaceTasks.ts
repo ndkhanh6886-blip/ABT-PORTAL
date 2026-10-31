@@ -3,15 +3,20 @@
  * phòng ban, phân loại, trạng thái, đối tượng liên quan và quyền sửa / xóa.
  */
 
-/** 10 phòng ban của ABT dùng khi tạo công việc (id giữ nguyên giá trị cũ để dữ liệu cũ vẫn khớp) */
+/** Phòng ban của ABT dùng khi tạo công việc & điều hành chuyên môn (id giữ nguyên giá trị cũ để dữ liệu cũ vẫn khớp) */
 export const WORKSPACE_TASK_DEPARTMENTS: { id: string; label: string }[] = [
   { id: "Ban Giám Đốc", label: "Ban Giám Đốc" },
-  { id: "Kế Toán", label: "Kế Toán" },
+  { id: "Nghiên Cứu R&D", label: "Nghiên Cứu & Phát Triển (R&D)" },
+  { id: "Sản Xuất Kit", label: "Sản Xuất Kit Sinh Học Phân Tử" },
+  { id: "Tổng Hợp Oligo", label: "Tổng Hợp & Tinh Sạch Oligo" },
+  { id: "Kỹ Thuật – Thiết Bị", label: "Kỹ Thuật – Công Nghệ Thiết Bị" },
+  { id: "QA/QC", label: "Đảm Bảo & Kiểm Soát Chất Lượng (QA/QC)" },
+  { id: "Application", label: "App (Kỹ Thuật & Ứng Dụng)" },
+  { id: "Kinh Doanh", label: "Kinh Doanh" },
   { id: "Sales Admin", label: "Sales Admin" },
   { id: "PM", label: "PM" },
-  { id: "Application", label: "App (Kỹ Thuật & Ứng Dụng)" },
   { id: "Cung Ứng", label: "Mua Hàng & Cung Ứng" },
-  { id: "Kinh Doanh", label: "Kinh Doanh" },
+  { id: "Kế Toán", label: "Kế Toán" },
   { id: "Lab", label: "Lab" },
   { id: "Marketing", label: "Marketing" },
   { id: "Pháp Chế", label: "Pháp Chế" },
@@ -25,6 +30,11 @@ export function normalizeWorkspaceDept(raw: any): string {
   const l = s.toLowerCase();
   // các phòng riêng phải xét trước các nhóm rộng (Sales Admin trước Kinh Doanh, Lab trước Application)
   if (l.includes("sales admin")) return "Sales Admin";
+  if (l.includes("r&d") || l.includes("nghiên cứu")) return "Nghiên Cứu R&D";
+  if (l.includes("sản xuất kit") || l.includes("kit")) return "Sản Xuất Kit";
+  if (l.includes("oligo")) return "Tổng Hợp Oligo";
+  if (l.includes("thiết bị") || l.includes("công nghệ")) return "Kỹ Thuật – Thiết Bị";
+  if (l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "QA/QC";
   if (l === "pm" || l.includes("product manager") || l.includes("quản lý sản phẩm")) return "PM";
   if (l.includes("marketing")) return "Marketing";
   if (l === "lab" || /(^|[\s(])lab($|[\s)])/.test(l) || l.includes("phòng lab")) return "Lab";
@@ -32,7 +42,7 @@ export function normalizeWorkspaceDept(raw: any): string {
   if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
   if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
   if (l.includes("kinh doanh") || l.includes("sales")) return "Kinh Doanh";
-  if (l.includes("pháp chế") || l.includes("legal") || l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "Pháp Chế";
+  if (l.includes("pháp chế") || l.includes("legal")) return "Pháp Chế";
   if (l.includes("kế toán") || l.includes("tài chính") || l.includes("accounting")) return "Kế Toán";
   if (l.includes("giám đốc") || l.includes("bod")) return "Ban Giám Đốc";
   return s;
@@ -51,9 +61,9 @@ export function isSameWorkspaceDept(a: any, b: any): boolean {
  * kiểu cũ / mới ("Thùy" - "Thuỳ", "Hòa" - "Hoà"), có khoảng trắng thừa.
  */
 export function canonStaffName(name: any): string {
-  let s = String(name || "").normalize("NFC").toLowerCase().replace(/[\s ​]+/g, " ").trim();
+  let s = String(name || "").normalize("NFC").toLowerCase().replace(/[\s \u200b]+/g, " ").trim();
   // đặt dấu kiểu mới (dấu trên chữ thứ hai của oa, oe, uy) -> kiểu cũ, để hai cách gõ trùng nhau
-  s = s.normalize("NFD").replace(/([ou])([̣̀́̉̃])([aey])/g, "$1$3$2").normalize("NFC");
+  s = s.normalize("NFD").replace(/([ou])([\u0300\u0301\u0303\u0309\u0323])([aey])/g, "$1$3$2").normalize("NFC");
   return s;
 }
 

@@ -20,7 +20,14 @@ interface Board {
 }
 interface Draft { id?: string; version?: number; kind: string; title: string; assignee_id: string; work_date: string; start_time: string; end_time: string; notes: string; ref_type?: string; ref_id?: string }
 
-const KIND: Record<string, string> = { SYNTHESIS: "Tổng hợp", POST_PROCESS: "Sau tổng hợp", QC: "Đánh giá chất lượng", PREPARATION: "Pha chế", EQUIPMENT: "Thiết bị", OTHER: "Khác" };
+const KIND: Record<string, string> = {
+  SYNTHESIS: "Tổng hợp Oligo",
+  POST_PROCESS: "Hậu tổng hợp / Tinh sạch",
+  QC: "Kiểm định QC / QA",
+  PREPARATION: "Pha chế / Sản xuất Kit",
+  EQUIPMENT: "Thiết bị / Lắp ráp DHR",
+  OTHER: "Nghiên cứu R&D / Khác",
+};
 const SLOTS: [string, string, string][] = [["Sáng", "08:00", "12:00"], ["Chiều", "13:00", "17:00"], ["Cả ngày", "08:00", "17:00"], ["Tăng ca tối", "17:00", "20:00"]];
 const STATUS_STYLE: Record<string, string> = {
   TODO: "border-slate-300 dark:border-slate-700",
@@ -93,11 +100,26 @@ function TaskChip({ t, canManage, canMove, onEdit, onStatus }: { t: Task; canMan
 }
 
 /** "Kế hoạch & khối lượng công việc" (as OligoFlow): who does what and when, regular and overtime hours, the backlog. */
-export function PlannerView({ myUserId }: { myUserId: number | null }) {
+export function PlannerView({ myUserId, departmentHint }: { myUserId: number | null; departmentHint?: string }) {
   const qc = useQueryClient();
   const units = useOligoUnits("plan.view");
   const [unitId, setUnitId] = useState("");
   const unit = unitId || units.data?.[0]?.id || "";
+
+  React.useEffect(() => {
+    if (!departmentHint || departmentHint === "all" || !units.data?.length) return;
+    const h = departmentHint.toLowerCase();
+    const matched = (units.data as Array<{ id: string; code: string; name: string; module_key?: string }>).find((u) => {
+      const n = `${u.code} ${u.name} ${u.module_key ?? ""}`.toLowerCase();
+      if (h.includes("r&d") || h.includes("nghiên cứu")) return u.module_key === "RD" || n.includes("r&d") || n.includes("nghiên cứu");
+      if (h.includes("kit")) return u.module_key === "KIT" || n.includes("kit");
+      if (h.includes("oligo")) return u.module_key === "OLIGO" || n.includes("oligo");
+      if (h.includes("thiết bị") || h.includes("kỹ thuật")) return u.module_key === "DEVICE" || n.includes("thiết bị");
+      if (h.includes("qa") || h.includes("qc") || h.includes("pháp chế")) return u.module_key === "QMS" || n.includes("qa") || n.includes("qc");
+      return n.includes(h);
+    });
+    if (matched) setUnitId(matched.id);
+  }, [departmentHint, units.data]);
   const [date, setDate] = useState(today());
   const [draft, setDraft] = useState<Draft | null>(null);
   const board = useQuery({ queryKey: ["factory", "plan", unit, date], enabled: !!unit, queryFn: () => api<Board>(`/api/factory/plan?org_unit_id=${unit}&date=${date}`) });

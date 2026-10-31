@@ -51,36 +51,90 @@ function NewOrder({ onCreated }: { onCreated: (id: string) => void }) {
   );
 }
 
-export function OligoOrdersView({ canManage }: { canManage: boolean }) {
+export function OligoOrdersView({ canManage, canDeliver = false }: { canManage: boolean; canDeliver?: boolean }) {
   const [selected, setSelected] = useState<string | null>(null);
+  const [showNewOrder, setShowNewOrder] = useState(false);
   const [status, setStatus] = useState("");
+  const [onlyReady, setOnlyReady] = useState(false);
   const list = useQuery({
     queryKey: ["factory", "oligo-orders", status],
-    queryFn: () => api<{ id: string; code: string; customer_label: string | null; due_date: string | null; due_date_change_count: number; status: string; kd_po_code: string | null; sequence_count: number }[]>(`/api/factory/oligo/orders${status ? `?status=${status}` : ""}`),
+    queryFn: () =>
+      api<
+        {
+          id: string;
+          code: string;
+          customer_label: string | null;
+          due_date: string | null;
+          due_date_change_count: number;
+          status: string;
+          kd_po_code: string | null;
+          sequence_count: number;
+          ready_count?: number;
+          delivered_count?: number;
+        }[]
+      >(`/api/factory/oligo/orders${status ? `?status=${status}` : ""}`),
   });
+  const rows = (list.data ?? []).filter((o) => !onlyReady || (o.ready_count ?? 0) > 0);
+  const readyOrderCount = (list.data ?? []).filter((o) => (o.ready_count ?? 0) > 0).length;
+
   return (
     <div className="flex flex-col gap-3">
-      {selected && <OligoOrderPanel key={selected} id={selected} onClose={() => setSelected(null)} />}
+      {selected && <OligoOrderPanel key={selected} id={selected} canDeliver={canDeliver} onClose={() => setSelected(null)} />}
       <Card
-        title="Đơn Oligo"
+        title="Đơn Oligo (Tích hợp In nhãn ống & Giao hàng)"
         actions={
-          <select className={`${inputClass} w-44`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
-            <option value="">Mọi trạng thái</option>
-            {Object.entries(ORDER_STATUS).map(([k, [, v]]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+          <div className="flex flex-wrap items-center gap-2">
+            {canManage && (
+              <Button onClick={() => setShowNewOrder((v) => !v)}>
+                {showNewOrder ? "Đóng form tạo đơn" : "+ Tạo đơn Oligo"}
+              </Button>
+            )}
+            <button
+              type="button"
+              onClick={() => setOnlyReady(!onlyReady)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-colors cursor-pointer ${
+                onlyReady
+                  ? "bg-emerald-600 text-white border-emerald-600"
+                  : "bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
+              }`}
+            >
+              Chờ in nhãn &amp; giao hàng ({readyOrderCount})
+            </button>
+            <select className={`${inputClass} w-44`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
+              <option value="">Mọi trạng thái</option>
+              {Object.entries(ORDER_STATUS).map(([k, [, v]]) => <option key={k} value={k}>{v}</option>)}
+            </select>
+          </div>
         }
       >
-        {canManage && <NewOrder onCreated={setSelected} />}
+        {canManage && showNewOrder && (
+          <NewOrder
+            onCreated={(id) => {
+              setShowNewOrder(false);
+              setSelected(id);
+            }}
+          />
+        )}
         <ErrorNote error={list.error} />
-        {list.data?.length === 0 && <Empty>Chưa có đơn Oligo.</Empty>}
-        {list.data && list.data.length > 0 && (
-          <Table head={["Mã", "Khách / yêu cầu", "PO Kinh doanh", "Số trình tự", "Hạn giao", "Trạng thái"]}>
-            {list.data.map((o) => (
+        {rows.length === 0 && <Empty>{onlyReady ? "Không có đơn nào đang có trình tự đạt QC chờ in nhãn / giao hàng." : "Chưa có đơn Oligo."}</Empty>}
+        {rows.length > 0 && (
+          <Table head={["Mã", "Khách / yêu cầu", "PO Kinh doanh", "Số trình tự", "Chờ giao (QC đạt)", "Đã giao / tổng", "Hạn giao", "Trạng thái"]}>
+            {rows.map((o) => (
               <tr key={o.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(o.id)}>
                 <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{o.code}</td>
                 <td className="py-2 pr-3">{o.customer_label ?? "—"}</td>
                 <td className="py-2 pr-3 font-mono">{o.kd_po_code ?? "—"}</td>
                 <td className="py-2 pr-3 text-right">{o.sequence_count}</td>
+                <td className="py-2 pr-3 text-right">
+                  {(o.ready_count ?? 0) > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-bold text-xs">
+                      {o.ready_count} trình tự
+                    </span>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td className="py-2 pr-3 text-right font-mono text-xs">{o.delivered_count ?? 0}/{o.sequence_count}</td>
                 <td className="py-2 pr-3 whitespace-nowrap">{fmtDate(o.due_date)}{o.due_date_change_count > 0 && ` (dời ${o.due_date_change_count})`}</td>
                 <td className="py-2 pr-3"><StatusBadge status={ORDER_STATUS[o.status][0]} label={ORDER_STATUS[o.status][1]} /></td>
               </tr>

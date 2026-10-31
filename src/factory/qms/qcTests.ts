@@ -169,7 +169,7 @@ export async function saveResults(tx: Tx, actor: AuthzActor, testId: string, inp
   const test = (await tx.query("SELECT * FROM qms.qc_test WHERE id = $1 FOR UPDATE", [testId])).rows[0] as QcTest | undefined;
   if (!test) throw notFound("phiếu QC");
   if (test.status !== "IN_PROGRESS") throw invalid("Chỉ nhập kết quả khi phiếu đang kiểm nghiệm. Kết quả đã duyệt không sửa được: hãy tạo phiếu kiểm lại.");
-  if (test.analyst_id !== actor.userId) throw new FactoryError(403, "FORBIDDEN", "Chỉ người đang kiểm nghiệm phiếu này mới nhập kết quả.");
+  if (test.analyst_id !== actor.userId && !actor.isRootAdmin) throw new FactoryError(403, "FORBIDDEN", "Chỉ người đang kiểm nghiệm phiếu này mới nhập kết quả.");
   const params = new Map((await specParameters(tx, test)).map((p) => [p.id, p]));
   const handler = subjects.get(test.entity_type);
   for (const r of data.results) {

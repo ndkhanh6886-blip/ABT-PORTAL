@@ -15,3 +15,6 @@ import "./asset/service";
 import "./asset/slots";
 import "./prep/service";
 import "./plan/service";
+import "./rd/permissions";
+import "./device/permissions";
+import "./kit/permissions";

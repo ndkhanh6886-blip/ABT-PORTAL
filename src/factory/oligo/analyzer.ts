@@ -86,12 +86,59 @@ export function pyRound(x: number, digits: number): number {
 
 const ORIENTATION = /^(?:5|3)(?:'|PRIME|-?END)?$/i;
 
+const CUSTOMER_MOD_ALIASES: Record<string, string> = {
+  "56-FAM": "FAM",
+  "6-FAM": "FAM",
+  "5FAM": "FAM",
+  "5-FAM": "FAM",
+  "5HEX": "HEX",
+  "5-HEX": "HEX",
+  "5VIC": "VIC",
+  "5-VIC": "VIC",
+  "5ROX": "ROX",
+  "5-ROX": "ROX",
+  "5TEXRD-XN": "ROX",
+  "TEXRD": "ROX",
+  "TEXASRED": "ROX",
+  "5CY5": "CY5",
+  "5-CY5": "CY5",
+  "5CY3": "CY3",
+  "5-CY3": "CY3",
+  "3BHQ_1": "BHQ1",
+  "3BHQ1": "BHQ1",
+  "BHQ-1": "BHQ1",
+  "BHQ_1": "BHQ1",
+  "3BHQ_2": "BHQ2",
+  "3BHQ2": "BHQ2",
+  "BHQ-2": "BHQ2",
+  "BHQ_2": "BHQ2",
+  "3BHQ_3": "BHQ3",
+  "3BHQ3": "BHQ3",
+  "BHQ-3": "BHQ3",
+  "MGBNFQ": "MGB",
+  "MGB-NFQ": "MGB",
+  "3MGBEC": "MGB",
+  "5BIOSG": "BIOTIN",
+  "BIOTIN-TEG": "BIOTIN",
+  "5PHOS": "PO4",
+  "3PHOS": "PO4",
+  "PHOS": "PO4",
+  "5MEDC": "5MC",
+  "I5MEDC": "5MC",
+};
+
 class Catalog {
   readonly byKey = new Map<string, CatalogEntry>();
   constructor(readonly entries: CatalogEntry[]) {
     for (const e of entries) {
       this.byKey.set(e.code.toUpperCase(), e);
       for (const a of e.aliases) this.byKey.set(a.toUpperCase(), e);
+    }
+    for (const [alias, targetCode] of Object.entries(CUSTOMER_MOD_ALIASES)) {
+      if (!this.byKey.has(alias)) {
+        const target = this.byKey.get(targetCode);
+        if (target) this.byKey.set(alias, target);
+      }
     }
   }
   base(letter: string) {
@@ -108,9 +155,18 @@ export function tokenize(input: string, catalog: CatalogEntry[]): Token[] {
     .replace(/[‘’′`´]/g, "'")
     .replace(/[–—]/g, "-")
     .trim()
-    // orientation marks written around the sequence: 5'- … -3'
-    .replace(/^[([]?5'[)\]]?\s*-?\s*/, "")
-    .replace(/\s*-?\s*[([]?3'[)\]]?$/, "");
+    // orientation marks written around or inside the sequence: 5'- … -3'-BHQ1
+    .replace(/^[([]?5'[)\]]?\s*-?\s*/i, "")
+    .replace(/\s*-?\s*[([]?3'[)\]]?$/i, "")
+    .replace(/-\s*[([]?(?:5|3)'[)\]]?\s*-/gi, "-")
+    .replace(/\b(?:5|3)'\s*-\s*/gi, "")
+    .replace(/\s*-\s*(?:5|3)'\b/gi, "");
+  for (const [alias, targetCode] of Object.entries(CUSTOMER_MOD_ALIASES)) {
+    if (alias.includes("-")) {
+      const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      s = s.replace(new RegExp(`(?<![A-Za-z0-9])${escaped}(?![A-Za-z0-9])`, "gi"), targetCode);
+    }
+  }
   const tokens: Token[] = [];
   const modToken = (raw: string) => {
     const key = raw.trim();

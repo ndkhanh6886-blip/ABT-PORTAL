@@ -19,7 +19,7 @@ interface Batch {
   synthesizer_name: string;
   started_at: string | null;
   finished_at: string | null;
-  positions: { position_no: number; couplings: number; coupling_efficiency_pct: number | null; result: string | null; sequence_code: string; name: string; normalized_sequence: string; scale_code: string; sequence_status: string; column_lot_code: string }[];
+  positions: { position_no: number; couplings: number; coupling_efficiency_pct: number | null; result: string | null; contamination_warning?: string | null; oligo_role?: string; target_pathogen?: string | null; sequence_code: string; name: string; normalized_sequence: string; scale_code: string; sequence_status: string; column_lot_code: string }[];
   reagents: { item_id: string; role: string; est_qty_base: number; actual_qty_base: number | null; item_code: string; item_name: string; base_uom: string }[];
   column_positions: number | null;
   lots: BatchLot[];
@@ -184,16 +184,24 @@ export function BatchPanel({ id, onClose }: { id: string; onClose: () => void })
           </div>
           {finishing && <FinishForm batch={d} onDone={refresh} />}
           {d.status === "RUNNING" && canFinish && <SwapBottle batch={d} onDone={refresh} />}
-          <Table head={["Vị trí", "Trình tự", "Thang", "Lô cột", "Số lần ghép", "Hiệu suất", "Kết quả", "Trạng thái trình tự"]}>
+          <Table head={["Cột #", "Trình tự", "Vai trò", "Thang", "Lô cột CPG", "Số lần ghép", "Hiệu suất", "Kết quả / Cảnh báo nhiễm chéo cột", "Trạng thái trình tự"]}>
             {d.positions.map((p) => (
               <tr key={p.position_no}>
-                <td className="py-1.5 pr-3">{p.position_no}</td>
+                <td className="py-1.5 pr-3 font-mono font-bold">Cột {p.position_no}</td>
                 <td className="py-1.5 pr-3 font-mono text-xs" title={p.normalized_sequence}>{p.sequence_code} <span className="font-sans text-slate-500">{p.name}</span></td>
+                <td className="py-1.5 pr-3 text-xs font-mono">{p.oligo_role || "PRIMER"}</td>
                 <td className="py-1.5 pr-3 text-xs">{p.scale_code}</td>
                 <td className="py-1.5 pr-3 font-mono text-xs">{p.column_lot_code}</td>
                 <td className="py-1.5 pr-3 text-right">{p.couplings}</td>
                 <td className="py-1.5 pr-3 text-right">{p.coupling_efficiency_pct == null ? "—" : `${p.coupling_efficiency_pct}%`}</td>
-                <td className="py-1.5 pr-3 text-xs">{p.result === "OK" ? "Đạt" : p.result === "FAILED" ? "Không đạt" : "—"}</td>
+                <td className="py-1.5 pr-3 text-xs">
+                  <div>{p.result === "OK" ? "Đạt" : p.result === "FAILED" ? "Không đạt" : "—"}</div>
+                  {p.contamination_warning && (
+                    <div className="mt-0.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 text-[11px] font-medium">
+                      ⚠ {p.contamination_warning}
+                    </div>
+                  )}
+                </td>
                 <td className="py-1.5 pr-3"><StatusBadge status={SEQ_STATUS[p.sequence_status][0]} label={SEQ_STATUS[p.sequence_status][1]} /></td>
               </tr>
             ))}

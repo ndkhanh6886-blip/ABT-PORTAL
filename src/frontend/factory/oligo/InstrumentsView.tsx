@@ -175,12 +175,22 @@ function SlotsPanel({ assetId, canConfigure, canOperate, onClose }: { assetId: s
 export function InstrumentsView({ canManage, canOperate }: { canManage: boolean; canOperate: boolean }) {
   const assets = useQuery({ queryKey: ["factory", "assets", "all"], queryFn: () => api<Asset[]>("/api/factory/assets") });
   const [open, setOpen] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
   const list = assets.data?.filter((a) => a.asset_type !== "SYNTHESIZER") ?? [];
   return (
     <div className="flex flex-col gap-3">
       {open && <SlotsPanel key={open} assetId={open} canConfigure={canManage} canOperate={canOperate} onClose={() => setOpen(null)} />}
-      <Card title="Thiết bị khác (HPLC, máy đo quang …)">
-        {canManage && <NewInstrument />}
+      <Card
+        title="Thiết bị khác (HPLC, máy đo quang …)"
+        actions={
+          canManage ? (
+            <Button onClick={() => setShowAdd((v) => !v)}>
+              {showAdd ? "Đóng form" : "+ Thêm thiết bị"}
+            </Button>
+          ) : null
+        }
+      >
+        {canManage && showAdd && <NewInstrument />}
         <ErrorNote error={assets.error} />
         {assets.data && list.length === 0 && <Empty>Chưa khai báo thiết bị.</Empty>}
         {list.length > 0 && (
