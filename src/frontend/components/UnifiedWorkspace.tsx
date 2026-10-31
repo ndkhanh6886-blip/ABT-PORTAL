@@ -81,6 +81,7 @@ import {
 import { WorkPlansView } from "@/frontend/factory/rd/WorkPlansView";
 import { PlannerView } from "@/frontend/factory/oligo/PlannerView";
 import { useFactoryMe } from "@/frontend/factory/api";
+import { EnterpriseApprovalsCenter } from "@/frontend/components/EnterpriseApprovalsCenter";
 
 // Configuration for Departments
 const DEPARTMENT_ICONS: Record<string, any> = {
@@ -1575,9 +1576,21 @@ export const UnifiedWorkspace: React.FC = () => {
   const rolePerspective = isDirector ? "director" : isManager ? "manager" : "staff";
   const managerDept = userDept && userDept !== "Ban Giám Đốc" ? userDept : "Application";
 
-  const [activeSubTab, setActiveSubTab] = useState<"tasks" | "workflows" | "planner" | "daily" | "announcements" | "analytics">("tasks");
+  const [activeSubTab, setActiveSubTab] = useState<"tasks" | "approvals" | "workflows" | "planner" | "daily" | "announcements" | "analytics">("tasks");
+  const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
   const [selectedDept, setSelectedDept] = useState<string>("all");
   const factoryMe = useFactoryMe();
+
+  useEffect(() => {
+    fetch("/api/approvals", { credentials: "include" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (data?.stats && typeof data.stats.pendingMyAction === "number") {
+          setPendingApprovalsCount(data.stats.pendingMyAction);
+        }
+      })
+      .catch(() => {});
+  }, [currentStaffName]);
   const [plannerView, setPlannerView] = useState<"calendar" | "lab_projects" | "sales_targets" | "work_plans" | "shift_board">("calendar");
   const [loading, setLoading] = useState(true);
 
@@ -1657,26 +1670,6 @@ export const UnifiedWorkspace: React.FC = () => {
   const [customerList, setCustomerList] = useState<any[]>([]);
   const [supplierList, setSupplierList] = useState<any[]>([]);
   const [productList, setProductList] = useState<any[]>(DEFAULT_PRODUCTS_LIST);
-  const [factoryPulse, setFactoryPulse] = useState<{
-    rd_projects?: number;
-    kit_orders?: number;
-    oligo_batches?: number;
-    device_orders?: number;
-    open_ncrs?: number;
-    quarantine_lots?: number;
-    intake_orders?: number;
-    open_prs?: number;
-    active_lots?: number;
-  } | null>(null);
-
-  useEffect(() => {
-    fetch("/api/factory/legal-bridge")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d?.pulse) setFactoryPulse(d.pulse);
-      })
-      .catch(() => {});
-  }, []);
 
   // Task Filters & Search
   const [searchQuery, setSearchQuery] = useState("");
@@ -6072,6 +6065,31 @@ export const UnifiedWorkspace: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveSubTab("approvals")}
+            title="Trung tâm Đề xuất & Phê duyệt Đa cấp (Tờ trình, Mua sắm, Tạm ứng, Chiết khấu, Chủ trương...)"
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+              activeSubTab === "approvals"
+                ? "bg-emerald-600 text-white shadow-sm shadow-emerald-600/25"
+                : "text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-slate-800 hover:text-emerald-700 dark:hover:text-white"
+            }`}
+          >
+            <ShieldCheck className="w-4 h-4" />
+            <span>Đề Xuất &amp; Phê Duyệt</span>
+            {pendingApprovalsCount > 0 && (
+              <span
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
+                  activeSubTab === "approvals"
+                    ? "bg-white text-emerald-700"
+                    : "bg-amber-500 text-white animate-pulse"
+                }`}
+                title={`${pendingApprovalsCount} đề xuất đang chờ bạn phê duyệt`}
+              >
+                {pendingApprovalsCount} chờ duyệt
+              </span>
+            )}
+          </button>
+
+          <button
             onClick={() => setActiveSubTab("workflows")}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeSubTab === "workflows"
@@ -6159,59 +6177,6 @@ export const UnifiedWorkspace: React.FC = () => {
           </button>
         </div>
 
-        {/* Dải Điều Độ Liên Thông Khối Kỹ Thuật & Nhà Máy (8 Phân Hệ MES/QMS) */}
-        <div className="mt-2.5 pt-2.5 border-t border-slate-100 dark:border-slate-800/80 flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="px-2 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-extrabold text-[11px] border border-indigo-200/70 dark:border-indigo-800/60">
-              🏭 Liên thông Khối Kỹ Thuật:
-            </span>
-            {[
-              { tab: "factory-rd", label: "🔬 R&D (DHF)", count: factoryPulse?.rd_projects },
-              { tab: "factory-kit", label: "🧬 SX Kit (eBR)", count: factoryPulse?.kit_orders },
-              { tab: "factory-oligo", label: "🧪 Tổng hợp Oligo", count: factoryPulse?.oligo_batches },
-              { tab: "factory-device", label: "⚙️ Thiết bị (DMR/DHR)", count: factoryPulse?.device_orders },
-              {
-                tab: "factory-qa",
-                label: "🛡️ QA/QC & COA",
-                count: (factoryPulse?.quarantine_lots ?? 0) + (factoryPulse?.open_ncrs ?? 0),
-              },
-              { tab: "factory-orders", label: "📋 Đơn Nội Bộ", count: factoryPulse?.intake_orders },
-              { tab: "factory-purchase", label: "🛒 Cung Ứng PR", count: factoryPulse?.open_prs },
-              { tab: "factory-warehouse", label: "📦 Kho Nhà Máy", count: factoryPulse?.active_lots },
-            ].map((item) => (
-              <button
-                key={item.tab}
-                type="button"
-                onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: item.tab } }))}
-                className="px-2.5 py-1 rounded-lg bg-slate-50 hover:bg-indigo-50 dark:bg-slate-800/80 dark:hover:bg-indigo-950/50 text-slate-700 dark:text-slate-200 hover:text-indigo-700 dark:hover:text-indigo-300 border border-slate-200/80 dark:border-slate-700 text-[11px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
-              >
-                <span>{item.label}</span>
-                {typeof item.count === "number" && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-indigo-100 dark:bg-indigo-900/70 text-indigo-700 dark:text-indigo-300 text-[10px] font-extrabold">
-                    {item.count}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "legal" } }))}
-              className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border border-amber-200/70 dark:border-amber-800/50 text-[11px] font-bold cursor-pointer"
-            >
-              ⚖️ Pháp Chế IVD ↗
-            </button>
-            <button
-              type="button"
-              onClick={() => window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab: "chat" } }))}
-              className="px-2.5 py-1 rounded-lg bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200/70 dark:border-emerald-800/50 text-[11px] font-bold cursor-pointer"
-            >
-              💬 Chat Nội Bộ ↗
-            </button>
-          </div>
-        </div>
-
         {/* Dải cảnh báo Văn bản / Quyết định mới chưa xác nhận đọc */}
         {unacknowledgedAnnouncementsForMe.length > 0 && activeSubTab !== "announcements" && (
           <div className="mt-3 pt-3 border-t border-rose-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs bg-rose-50/70 dark:bg-rose-950/30 px-3 py-2 rounded-xl border border-rose-200/80 dark:border-rose-900/60">
@@ -6290,6 +6255,7 @@ export const UnifiedWorkspace: React.FC = () => {
       </div>
 
       {/* ==================== LEVEL 2: UNIFIED FILTER & ACTION BAR ==================== */}
+      {activeSubTab !== "approvals" && (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
         {/* Left: Department Dropdown + Search + Status */}
         <div className="flex flex-wrap items-center gap-2.5 flex-1">
@@ -6582,8 +6548,17 @@ export const UnifiedWorkspace: React.FC = () => {
           )}
         </div>
       </div>
+      )}
 
       {/* ==================== LEVEL 3: TAB CONTENTS ==================== */}
+
+      {/* TAB ĐỀ XUẤT & PHÊ DUYỆT (ENTERPRISE E-APPROVAL CENTER) */}
+      {activeSubTab === "approvals" && (
+        <EnterpriseApprovalsCenter
+          selectedDeptFilter={selectedDept}
+          onPendingCountChange={setPendingApprovalsCount}
+        />
+      )}
 
       {/* TAB 1: BẢNG CÔNG VIỆC (TASKS & KANBAN) */}
       {activeSubTab === "tasks" && (
