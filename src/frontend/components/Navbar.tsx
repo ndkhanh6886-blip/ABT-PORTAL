@@ -7,6 +7,7 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { AccountSecurityModal } from "./AccountSecurityModal";
 import {
   Briefcase,
+  ClipboardList,
   FlaskConical,
   Settings,
   Sun,
@@ -42,7 +43,8 @@ export type MainTab =
   | "factory-rd"
   | "factory-device"
   | "factory-kit"
-  | "factory-analytics";
+  | "factory-analytics"
+  | "factory-import";
 
 interface NavbarProps {
   activeTab: MainTab;
@@ -83,14 +85,15 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
     canFactoryOligo ? "factory-oligo" : null,
     canFactoryDevice ? "factory-device" : null,
     canFactoryQa ? "factory-qa" : null,
-    canFactoryOrders ? "factory-orders" : null,
     canFactoryPurchase ? "factory-purchase" : null,
     canFactoryWarehouse ? "factory-warehouse" : null,
-    canFactorySettings ? "factory-analytics" : null,
+    canFactoryQa ? "factory-analytics" : null,
+    canFactorySettings ? "factory-import" : null,
   ] as const).filter((t): t is NonNullable<typeof t> => t !== null);
   const canTechnical = technicalTabs.length > 0;
   const isTechnicalTab = (technicalTabs as readonly string[]).includes(activeTab);
   const firstTechnicalTab: MainTab = isTechnicalTab ? activeTab : technicalTabs[0] ?? "factory-rd";
+  const canInternalOrders = can("sales.view") || canFactoryOrders || canTechnical;
 
   const isSettingsTab = activeTab === "settings" || activeTab === "factory-settings";
 
@@ -132,10 +135,17 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
               </div>
             </div>
 
-            {/* Desktop Primary Navigation Tabs */}
+            {/* Desktop Primary Navigation Tabs (Hỗ trợ Ctrl+Click / Chuột phải -> Mở trong tab mới) */}
             <nav className="hidden lg:flex items-center gap-1 pl-3 border-l border-slate-200 dark:border-slate-800 overflow-x-auto no-scrollbar min-w-0 flex-1 py-1">
-              <button
-                onClick={() => setActiveTab("workspace")}
+              <a
+                href="/?tab=workspace"
+                onClick={(e) => {
+                  if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                    e.preventDefault();
+                    setActiveTab("workspace");
+                  }
+                }}
+                title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                 className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                   activeTab === "workspace"
                     ? "bg-indigo-600 text-white shadow-xs shadow-indigo-500/20"
@@ -144,11 +154,18 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
               >
                 <LayoutDashboard className="w-3.5 h-3.5 shrink-0" />
                 <span>Điều Hành</span>
-              </button>
+              </a>
 
               {canBusiness && (
-                <button
-                  onClick={() => setActiveTab(firstBusinessTab)}
+                <a
+                  href={`/?tab=${firstBusinessTab}`}
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                      e.preventDefault();
+                      setActiveTab(firstBusinessTab);
+                    }
+                  }}
+                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới để mở song song nhiều tab"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     isBusinessTab
                       ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
@@ -157,12 +174,40 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 >
                   <Briefcase className="w-3.5 h-3.5 shrink-0" />
                   <span>Khối Kinh Doanh</span>
-                </button>
+                </a>
+              )}
+
+              {canInternalOrders && (
+                <a
+                  href="/?tab=factory-orders"
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                      e.preventDefault();
+                      setActiveTab("factory-orders");
+                    }
+                  }}
+                  title="Đơn Nội Bộ: Theo dõi đơn đặt hàng từ Kinh Doanh chuyển sang Sản xuất (Kit / Oligo / Thiết bị) và tiến độ giao hàng (Ctrl + Click để mở tab mới)"
+                  className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
+                    activeTab === "factory-orders"
+                      ? "bg-teal-600 text-white shadow-xs shadow-teal-500/20"
+                      : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-white"
+                  }`}
+                >
+                  <ClipboardList className="w-3.5 h-3.5 shrink-0" />
+                  <span>Đơn Nội Bộ</span>
+                </a>
               )}
 
               {canTechnical && (
-                <button
-                  onClick={() => setActiveTab(firstTechnicalTab)}
+                <a
+                  href={`/?tab=${firstTechnicalTab}`}
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                      e.preventDefault();
+                      setActiveTab(firstTechnicalTab);
+                    }
+                  }}
+                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     isTechnicalTab
                       ? "bg-sky-700 text-white shadow-xs shadow-sky-500/20"
@@ -171,12 +216,19 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 >
                   <FlaskConical className="w-3.5 h-3.5 shrink-0" />
                   <span>Khối Kỹ Thuật</span>
-                </button>
+                </a>
               )}
 
               {can("legal.view") && (
-                <button
-                  onClick={() => setActiveTab("legal")}
+                <a
+                  href="/?tab=legal"
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                      e.preventDefault();
+                      setActiveTab("legal");
+                    }
+                  }}
+                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     activeTab === "legal"
                       ? "bg-emerald-600 text-white shadow-xs shadow-emerald-500/20"
@@ -185,12 +237,19 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 >
                   <Scale className="w-3.5 h-3.5 shrink-0" />
                   <span>Pháp Chế</span>
-                </button>
+                </a>
               )}
 
               {can("chat.view") && (
-                <button
-                  onClick={() => setActiveTab("chat")}
+                <a
+                  href="/?tab=chat"
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                      e.preventDefault();
+                      setActiveTab("chat");
+                    }
+                  }}
+                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all relative whitespace-nowrap shrink-0 cursor-pointer ${
                     activeTab === "chat"
                       ? "bg-indigo-600 text-white shadow-xs shadow-indigo-500/20"
@@ -206,12 +265,19 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                   ) : (
                     <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse shrink-0" />
                   )}
-                </button>
+                </a>
               )}
 
               {can("zalo.view") && (
-                <button
-                  onClick={() => setActiveTab("zalo")}
+                <a
+                  href="/?tab=zalo"
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                      e.preventDefault();
+                      setActiveTab("zalo");
+                    }
+                  }}
+                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all relative whitespace-nowrap shrink-0 cursor-pointer ${
                     activeTab === "zalo"
                       ? "bg-blue-600 text-white shadow-xs shadow-blue-500/20"
@@ -220,12 +286,19 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 >
                   <Smartphone className="w-3.5 h-3.5 text-blue-400 shrink-0" />
                   <span>Zalo OA</span>
-                </button>
+                </a>
               )}
 
               {(can("settings.view") || canFactorySettings) && (
-                <button
-                  onClick={() => setActiveTab(can("settings.view") ? "settings" : "factory-settings")}
+                <a
+                  href={`/?tab=${can("settings.view") ? "settings" : "factory-settings"}`}
+                  onClick={(e) => {
+                    if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                      e.preventDefault();
+                      setActiveTab(can("settings.view") ? "settings" : "factory-settings");
+                    }
+                  }}
+                  title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
                   className={`flex items-center gap-1.5 px-2.5 xl:px-3 py-1.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap shrink-0 cursor-pointer ${
                     isSettingsTab
                       ? "bg-orange-600 text-white shadow-xs shadow-orange-500/20"
@@ -234,7 +307,7 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                 >
                   <Settings className="w-3.5 h-3.5 shrink-0" />
                   <span>Cấu Hình</span>
-                </button>
+                </a>
               )}
             </nav>
           </div>
@@ -390,6 +463,22 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
           </button>
         )}
 
+        {canInternalOrders && (
+          <button
+            onClick={() => { setActiveTab("factory-orders"); setIsMobileMoreOpen(false); }}
+            className={`flex flex-col items-center justify-center py-1 px-2.5 rounded-2xl transition-all cursor-pointer ${
+              activeTab === "factory-orders" && !isMobileMoreOpen
+                ? "text-teal-600 dark:text-teal-400 font-extrabold"
+                : "text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+            }`}
+          >
+            <div className={`p-1 rounded-xl transition-transform ${activeTab === "factory-orders" && !isMobileMoreOpen ? "bg-teal-50 dark:bg-teal-950/60 scale-105" : ""}`}>
+              <ClipboardList className="w-5 h-5" />
+            </div>
+            <span className="text-[10px] mt-0.5 tracking-tight font-bold">Đơn Nội Bộ</span>
+          </button>
+        )}
+
         {canTechnical && (
           <button
             onClick={() => { setActiveTab(firstTechnicalTab); setIsMobileMoreOpen(false); }}
@@ -483,6 +572,25 @@ export const Navbar: React.FC<NavbarProps> = ({ activeTab, setActiveTab, current
                   <div className="min-w-0">
                     <div className="text-xs font-bold leading-tight truncate">Khối Kinh Doanh</div>
                     <div className="text-[10px] text-slate-400 truncate">Kinh doanh, Kho, Application, Cung ứng</div>
+                  </div>
+                </button>
+              )}
+
+              {canInternalOrders && (
+                <button
+                  onClick={() => { setActiveTab("factory-orders"); setIsMobileMoreOpen(false); }}
+                  className={`p-2.5 rounded-2xl flex items-center gap-2.5 border text-left transition-all cursor-pointer ${
+                    activeTab === "factory-orders"
+                      ? "bg-teal-50 dark:bg-teal-950/50 border-teal-300 dark:border-teal-700 text-teal-700 dark:text-teal-300 font-bold"
+                      : "bg-slate-50 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700/60 text-slate-700 dark:text-slate-300"
+                  }`}
+                >
+                  <div className="p-2 rounded-xl bg-teal-100 dark:bg-teal-950/70 text-teal-600 dark:text-teal-400 shrink-0">
+                    <ClipboardList className="w-4 h-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold leading-tight truncate">Đơn Nội Bộ</div>
+                    <div className="text-[10px] text-slate-400 truncate">Theo dõi đơn KD chuyển Sản xuất</div>
                   </div>
                 </button>
               )}

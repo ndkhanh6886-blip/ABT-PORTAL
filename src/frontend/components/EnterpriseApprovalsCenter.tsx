@@ -503,6 +503,241 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
     }
   };
 
+  // =========================================================================
+  // TRÌNH THIẾT KẾ MẪU TỜ TRÌNH & LUỒNG PHÊ DUYỆT ĐỘNG (NO-CODE TEMPLATE BUILDER)
+  // =========================================================================
+  const [isTemplateDesignerOpen, setIsTemplateDesignerOpen] = useState(false);
+  const [isEditingExistingTemplate, setIsEditingExistingTemplate] = useState(false);
+  const [tplForm, setTplForm] = useState<{
+    code: string;
+    name: string;
+    category: string;
+    description: string;
+    sla_hours: string;
+    bod_threshold_amount: string;
+    has_line_items: boolean;
+    fields_schema: Array<{
+      key: string;
+      label: string;
+      type: "text" | "textarea" | "select" | "date" | "number";
+      required: boolean;
+      placeholder?: string;
+      optionsText?: string;
+    }>;
+    default_stages: Array<{
+      stage_no: number;
+      stage_name: string;
+      dept: string;
+      conditional_on_threshold: boolean;
+    }>;
+  }>({
+    code: "",
+    name: "",
+    category: "GENERAL",
+    description: "",
+    sla_hours: "24",
+    bod_threshold_amount: "15000000",
+    has_line_items: false,
+    fields_schema: [
+      {
+        key: "noi_dung_chinh",
+        label: "Nội dung / Mục đích đề xuất",
+        type: "text",
+        required: true,
+        placeholder: "Nhập nội dung chính...",
+      },
+    ],
+    default_stages: [
+      {
+        stage_no: 1,
+        stage_name: "Trưởng bộ phận xem xét & xác nhận nhu cầu",
+        dept: "REQUESTER_DEPT",
+        conditional_on_threshold: false,
+      },
+      {
+        stage_no: 2,
+        stage_name: "Ban Giám Đốc phê duyệt",
+        dept: "Ban Giám Đốc",
+        conditional_on_threshold: false,
+      },
+    ],
+  });
+
+  const openNewTemplateDesigner = () => {
+    setIsEditingExistingTemplate(false);
+    setTplForm({
+      code: `TPL_${Date.now().toString().slice(-4)}`,
+      name: "",
+      category: "GENERAL",
+      description: "",
+      sla_hours: "24",
+      bod_threshold_amount: "15000000",
+      has_line_items: true,
+      fields_schema: [
+        {
+          key: "muc_dich_su_dung",
+          label: "Mục đích / Phạm vi áp dụng",
+          type: "text",
+          required: true,
+          placeholder: "Nhập mục đích cụ thể...",
+        },
+        {
+          key: "ngay_can_hoan_thanh",
+          label: "Ngày cần áp dụng / hoàn thành",
+          type: "date",
+          required: true,
+        },
+      ],
+      default_stages: [
+        {
+          stage_no: 1,
+          stage_name: "Trưởng bộ phận trực tiếp xác nhận",
+          dept: "REQUESTER_DEPT",
+          conditional_on_threshold: false,
+        },
+        {
+          stage_no: 2,
+          stage_name: "Phòng chuyên môn thẩm định (Kế toán / Cung ứng / QA)",
+          dept: "Kế Toán",
+          conditional_on_threshold: false,
+        },
+        {
+          stage_no: 3,
+          stage_name: "Ban Giám Đốc phê duyệt chủ trương",
+          dept: "Ban Giám Đốc",
+          conditional_on_threshold: true,
+        },
+      ],
+    });
+    setIsTemplateDesignerOpen(true);
+  };
+
+  const openEditTemplateDesigner = (tpl: any, isClone = false) => {
+    setIsEditingExistingTemplate(!isClone);
+    const existingFields = Array.isArray(tpl.fields_schema) ? tpl.fields_schema : [];
+    const existingStages = Array.isArray(tpl.default_stages) ? tpl.default_stages : [];
+    setTplForm({
+      code: isClone ? `${tpl.code}_COPY` : tpl.code,
+      name: isClone ? `${tpl.name} (Bản sao)` : tpl.name,
+      category: tpl.category || "GENERAL",
+      description: tpl.description || "",
+      sla_hours: String(tpl.sla_hours ?? 24),
+      bod_threshold_amount: tpl.bod_threshold_amount != null ? String(tpl.bod_threshold_amount) : "",
+      has_line_items: Boolean(tpl.has_line_items),
+      fields_schema: existingFields.map((f: any, idx: number) => ({
+        key: f.key || `field_${idx + 1}`,
+        label: f.label || "",
+        type: f.type || "text",
+        required: Boolean(f.required),
+        placeholder: f.placeholder || "",
+        optionsText: Array.isArray(f.options) ? f.options.join(", ") : "",
+      })),
+      default_stages: existingStages.map((s: any, idx: number) => ({
+        stage_no: idx + 1,
+        stage_name: s.stage_name || `Phê duyệt Cấp ${idx + 1}`,
+        dept: s.dept || "REQUESTER_DEPT",
+        conditional_on_threshold: Boolean(s.conditional_on_threshold),
+      })),
+    });
+    setIsTemplateDesignerOpen(true);
+  };
+
+  const handleSaveDesignedTemplate = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!tplForm.name.trim() || !tplForm.code.trim()) {
+      showToast("Vui lòng nhập Mã mẫu và Tên mẫu phê duyệt!", "warning");
+      return;
+    }
+    if (tplForm.default_stages.length === 0) {
+      showToast("Vui lòng thiết lập ít nhất 1 cấp phê duyệt!", "warning");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      const cleanedFields = tplForm.fields_schema
+        .filter((f) => f.label.trim() !== "")
+        .map((f, idx) => {
+          const slugKey =
+            f.key.trim() ||
+            f.label
+              .toLowerCase()
+              .normalize("NFD")
+              .replace(/[\u0300-\u036f]/g, "")
+              .replace(/[^a-z0-9]+/g, "_")
+              .replace(/^_|_$/g, "") ||
+            `field_${idx + 1}`;
+          return {
+            key: slugKey,
+            label: f.label.trim(),
+            type: f.type,
+            required: f.required,
+            placeholder: f.placeholder?.trim() || undefined,
+            options:
+              f.type === "select"
+                ? (f.optionsText || "")
+                    .split(",")
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                : undefined,
+          };
+        });
+
+      const res = await fetch("/api/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          action: "save_template",
+          code: tplForm.code.trim().toUpperCase(),
+          name: tplForm.name.trim(),
+          category: tplForm.category,
+          description: tplForm.description.trim(),
+          sla_hours: Number(tplForm.sla_hours || 24),
+          bod_threshold_amount:
+            tplForm.bod_threshold_amount === "" ? null : Number(tplForm.bod_threshold_amount),
+          has_line_items: tplForm.has_line_items,
+          fields_schema: cleanedFields,
+          default_stages: tplForm.default_stages,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể lưu mẫu phê duyệt");
+      showToast(
+        isEditingExistingTemplate
+          ? `Đã cập nhật mẫu phê duyệt "${tplForm.name}"!`
+          : `Đã tạo mẫu phê duyệt mới "${tplForm.name}"!`,
+        "success"
+      );
+      setIsTemplateDesignerOpen(false);
+      await loadData();
+    } catch (err: any) {
+      showToast(err?.message || "Lỗi khi lưu mẫu phê duyệt", "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (tpl: any) => {
+    if (!window.confirm(`Bạn có chắc muốn ẩn mẫu "${tpl.name}" khỏi danh sách tạo mới?`)) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ action: "delete_template", code: tpl.code }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Không thể xóa mẫu");
+      showToast(`Đã ẩn mẫu "${tpl.name}"`, "success");
+      await loadData();
+    } catch (err: any) {
+      showToast(err?.message || "Lỗi khi ẩn mẫu", "error");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   /** In Phiếu Đề Xuất & Phê Duyệt Điện Tử chuẩn ISO / Doanh nghiệp (bọc escHtml chống XSS) */
   const handlePrintRequest = (reqItem: any) => {
     const w = window.open("", "_blank", "width=960,height=780");
@@ -674,21 +909,12 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
-              onClick={() => setInboxTab("TEMPLATES")}
-              title="Xem danh mục 8 mẫu tờ trình chuẩn và cấu hình ngưỡng hạn mức trình Ban Giám Đốc"
-              className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer"
-            >
-              <Sliders className="w-3.5 h-3.5 text-indigo-500" />
-              <span>Mẫu Đề Xuất &amp; Ma Trận Hạn Mức ({templates.length})</span>
-            </button>
-            <button
-              type="button"
               onClick={() => openCreateModal()}
               title="Lập tờ trình đề xuất mới theo biểu mẫu động chuẩn hóa"
               className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm shadow-indigo-500/20 transition-all cursor-pointer"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Tạo Đề Xuất / Tờ Trình Mới</span>
+              <span>📝 Lập Đề Xuất / Tờ Trình</span>
             </button>
           </div>
         </div>
@@ -806,7 +1032,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
               },
               {
                 id: "TEMPLATES" as const,
-                label: "⚙️ Mẫu & Ma trận Hạn mức",
+                label: `📂 Danh mục Mẫu & Luồng duyệt (${templates.length})`,
               },
             ].map((t) => (
               <button
@@ -853,122 +1079,148 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
       </div>
 
       {/* =====================================================================
-          2. CHẾ ĐỘ XEM DANH MỤC MẪU & CẤU HÌNH HẠN MỨC PHÊ DUYỆT (TEMPLATES)
+          2. CHẾ ĐỘ XEM DANH SÁCH MẪU & MA TRẬN HẠN MỨC PHÊ DUYỆT (TEMPLATES LIST)
          ===================================================================== */}
       {inboxTab === "TEMPLATES" ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-          {templates.map((tpl) => {
-            const cat = CATEGORY_META[tpl.category] || CATEGORY_META.GENERAL;
-            const stages: any[] = Array.isArray(tpl.default_stages) ? tpl.default_stages : [];
-            const edit = configEdits[tpl.code] ?? {
-              sla_hours: String(tpl.sla_hours ?? 24),
-              bod_threshold_amount:
-                tpl.bod_threshold_amount != null ? String(tpl.bod_threshold_amount) : "",
-            };
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
+          {/* Header thanh tiêu đề Danh sách Mẫu & Nút Tạo Mẫu Mới */}
+          <div className="px-4 py-3 bg-slate-50/80 dark:bg-slate-950/60 border-b border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div>
+              <div className="text-xs font-extrabold text-slate-900 dark:text-white flex items-center gap-2">
+                <span>📋 Danh Sách Mẫu Tờ Trình &amp; Quy Trình Phê Duyệt Chuẩn Hóa</span>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300">
+                  {templates.length} mẫu đang hoạt động
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Nhấp trực tiếp vào bất kỳ dòng mẫu nào để <b>Xem chi tiết cấu trúc câu hỏi, luồng các cấp duyệt hoặc Chỉnh sửa hạn mức</b>.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={openNewTemplateDesigner}
+              title="Tạo một mẫu tờ trình phê duyệt mới với các trường thông tin và các cấp duyệt tùy chỉnh"
+              className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs shrink-0 cursor-pointer flex items-center gap-1.5"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Thiết Kế Mẫu Phê Duyệt Mới</span>
+            </button>
+          </div>
 
-            return (
-              <div
-                key={tpl.code}
-                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 shadow-xs flex flex-col justify-between gap-3"
-              >
-                <div className="space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <span
-                        className={`inline-block px-2 py-0.5 rounded-md text-[10px] font-bold border ${cat.badgeCls}`}
-                      >
-                        {cat.label}
-                      </span>
-                      <h3 className="text-sm font-extrabold text-slate-900 dark:text-white mt-1">
+          {/* Header Cột Bảng Danh Sách (Desktop) */}
+          <div className="hidden lg:grid lg:grid-cols-12 gap-3 px-4 py-2 bg-slate-100/70 dark:bg-slate-900 border-b border-slate-200/80 dark:border-slate-800 text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">
+            <div className="col-span-4">Tên Mẫu Đề Xuất &amp; Nhóm Nghiệp Vụ</div>
+            <div className="col-span-4">Luồng Định Tuyến Phê Duyệt Tự Động</div>
+            <div className="col-span-2">Cam Kết SLA &amp; Hạn Mức BGĐ</div>
+            <div className="col-span-2 text-right">Thao Tác</div>
+          </div>
+
+          {/* Danh sách từng dòng mẫu phê duyệt */}
+          <div className="divide-y divide-slate-100 dark:divide-slate-800">
+            {templates
+              .filter((tpl) => {
+                if (categoryFilter !== "ALL" && tpl.category !== categoryFilter) return false;
+                if (debouncedQ.trim()) {
+                  const q = debouncedQ.toLowerCase();
+                  return (
+                    String(tpl.name || "").toLowerCase().includes(q) ||
+                    String(tpl.code || "").toLowerCase().includes(q) ||
+                    String(tpl.description || "").toLowerCase().includes(q)
+                  );
+                }
+                return true;
+              })
+              .map((tpl) => {
+                const cat = CATEGORY_META[tpl.category] || CATEGORY_META.GENERAL;
+                const stages: any[] = Array.isArray(tpl.default_stages) ? tpl.default_stages : [];
+                const fieldsCount = Array.isArray(tpl.fields_schema) ? tpl.fields_schema.length : 0;
+                const thresholdVal = Number(tpl.bod_threshold_amount || 0);
+
+                return (
+                  <div
+                    key={tpl.code}
+                    onClick={() => openEditTemplateDesigner(tpl, false)}
+                    title="Nhấp vào dòng này để xem chi tiết hoặc chỉnh sửa cấu trúc mẫu & luồng phê duyệt"
+                    className="px-4 py-3 hover:bg-indigo-50/40 dark:hover:bg-slate-800/60 transition-colors cursor-pointer grid grid-cols-1 lg:grid-cols-12 gap-3 items-center text-xs"
+                  >
+                    {/* Cột 1 (4 cols): Tên mẫu, Nhóm, Mã & Cấu trúc trường */}
+                    <div className="lg:col-span-4 space-y-1 min-w-0">
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold border ${cat.badgeCls}`}>
+                          {cat.label}
+                        </span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-800 text-slate-500">
+                          {tpl.code}
+                        </span>
+                        <span className="text-[10px] font-semibold text-slate-500">
+                          • {fieldsCount} trường nhập {tpl.has_line_items ? "+ Bảng kê" : ""}
+                        </span>
+                      </div>
+                      <div className="text-sm font-extrabold text-slate-900 dark:text-white truncate group-hover:text-indigo-600">
                         {tpl.name}
-                      </h3>
+                      </div>
+                      <div className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-1">
+                        {tpl.description}
+                      </div>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => openCreateModal(tpl.code)}
-                      className="px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shrink-0 cursor-pointer"
-                    >
-                      + Lập tờ trình này
-                    </button>
-                  </div>
 
-                  <p className="text-xs text-slate-600 dark:text-slate-400">{tpl.description}</p>
-
-                  {/* Sơ đồ các cấp phê duyệt chuẩn */}
-                  <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200/80 dark:border-slate-800 space-y-1.5">
-                    <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                      Luồng định tuyến phê duyệt tự động ({stages.length} cấp):
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                    {/* Cột 2 (4 cols): Chuỗi các cấp phê duyệt */}
+                    <div className="lg:col-span-4 flex flex-wrap items-center gap-1">
                       {stages.map((st, idx) => (
                         <React.Fragment key={st.stage_no}>
-                          <span className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 font-semibold text-slate-800 dark:text-slate-200">
-                            <b>Cấp {st.stage_no}</b> ({st.dept === "REQUESTER_DEPT" ? "Trưởng bộ phận" : st.dept}):{" "}
-                            {st.stage_name}
+                          <span
+                            title={`Cấp ${st.stage_no}: ${st.stage_name}`}
+                            className="px-2 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200/80 dark:border-slate-700 text-[11px] font-semibold text-slate-700 dark:text-slate-200"
+                          >
+                            <b className="text-indigo-600 dark:text-indigo-400">Cấp {st.stage_no}:</b>{" "}
+                            {st.dept === "REQUESTER_DEPT" ? "Trưởng bộ phận" : st.dept}
                           </span>
                           {idx < stages.length - 1 && (
-                            <ArrowRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                            <span className="text-slate-300 dark:text-slate-600 text-[10px]">➔</span>
                           )}
                         </React.Fragment>
                       ))}
                     </div>
-                  </div>
-                </div>
 
-                {/* Cấu hình Ngưỡng trình BGD & SLA */}
-                <div className="pt-2.5 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-end justify-between gap-2 text-xs">
-                  <div className="flex flex-wrap items-center gap-3">
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500">
-                        SLA cam kết xử lý (Giờ):
-                      </label>
-                      <input
-                        type="number"
-                        disabled={!currentUser?.is_director}
-                        value={edit.sla_hours}
-                        onChange={(e) =>
-                          setConfigEdits((prev) => ({
-                            ...prev,
-                            [tpl.code]: { ...edit, sla_hours: e.target.value },
-                          }))
-                        }
-                        className="mt-0.5 w-24 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-mono font-bold text-xs"
-                      />
+                    {/* Cột 3 (2 cols): SLA & Ngưỡng trình BGĐ */}
+                    <div className="lg:col-span-2 space-y-0.5 text-[11px]">
+                      <div className="text-slate-600 dark:text-slate-300">
+                        SLA xử lý: <b className="font-mono text-slate-900 dark:text-white">{tpl.sla_hours} giờ</b>
+                      </div>
+                      <div className="text-slate-500 dark:text-slate-400">
+                        Trình BGĐ:{" "}
+                        <b className="font-mono text-emerald-700 dark:text-emerald-400">
+                          {thresholdVal > 0 ? `Từ ${fmtMoney(thresholdVal)}` : "Luôn trình BGĐ"}
+                        </b>
+                      </div>
                     </div>
-                    <div>
-                      <label className="block text-[10px] font-bold text-slate-500">
-                        Ngưỡng bắt buộc trình BGD (VNĐ — 0 = Luôn trình BGD):
-                      </label>
-                      <input
-                        type="number"
-                        disabled={!currentUser?.is_director}
-                        placeholder="0 = Luôn qua BGD"
-                        value={edit.bod_threshold_amount}
-                        onChange={(e) =>
-                          setConfigEdits((prev) => ({
-                            ...prev,
-                            [tpl.code]: { ...edit, bod_threshold_amount: e.target.value },
-                          }))
-                        }
-                        className="mt-0.5 w-44 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-mono font-bold text-xs"
-                      />
-                    </div>
-                  </div>
 
-                  {currentUser?.is_director && (
-                    <button
-                      type="button"
-                      disabled={submitting}
-                      onClick={() => handleSaveTemplateConfig(tpl)}
-                      className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer"
+                    {/* Cột 4 (2 cols): Nút thao tác nhanh */}
+                    <div
+                      className="lg:col-span-2 flex items-center lg:justify-end gap-1.5"
+                      onClick={(e) => e.stopPropagation()}
                     >
-                      💾 Lưu cấu hình mẫu
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
+                      <button
+                        type="button"
+                        onClick={() => openEditTemplateDesigner(tpl, false)}
+                        title="Xem chi tiết cấu trúc câu hỏi và chỉnh sửa luồng phê duyệt của mẫu này"
+                        className="px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 font-bold text-[11px] cursor-pointer"
+                      >
+                        ✏️ Chi tiết / Sửa
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => openCreateModal(tpl.code)}
+                        title="Mở biểu mẫu để lập tờ trình đề xuất mới theo mẫu này"
+                        className="px-2.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] cursor-pointer shrink-0"
+                      >
+                        + Lập tờ trình
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
         </div>
       ) : (
         /* =====================================================================
@@ -1989,6 +2241,487 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* =====================================================================
+          6. MODAL TRÌNH THIẾT KẾ MẪU TỜ TRÌNH & LUỒNG PHÊ DUYỆT ĐỘNG (NO-CODE BUILDER)
+         ===================================================================== */}
+      <Modal
+        isOpen={isTemplateDesignerOpen}
+        onClose={() => setIsTemplateDesignerOpen(false)}
+        title={
+          isEditingExistingTemplate
+            ? `🛠️ Chỉnh Sửa Thiết Kế Mẫu Phê Duyệt (${tplForm.code})`
+            : "🛠️ Thiết Kế Mẫu Tờ Trình & Luồng Phê Duyệt Đa Cấp Mới"
+        }
+        size="4xl"
+      >
+        <form onSubmit={handleSaveDesignedTemplate} className="space-y-4 text-xs">
+          {/* Phần 1: Thông tin cơ bản & Hạn mức */}
+          <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/50 space-y-3">
+            <div className="font-extrabold text-slate-900 dark:text-white">
+              1. Thông tin định danh Mẫu Tờ Trình &amp; Hạn mức Định tuyến Tự động
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+              <div className="sm:col-span-6">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Tên mẫu tờ trình / đề xuất *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={tplForm.name}
+                  onChange={(e) => setTplForm((p) => ({ ...p, name: e.target.value }))}
+                  placeholder="VD: Tờ trình Xuất mẫu Kit Demo / Thử nghiệm Lâm sàng"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold"
+                />
+              </div>
+              <div className="sm:col-span-3">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Mã mẫu (Viết liền) *
+                </label>
+                <input
+                  type="text"
+                  required
+                  disabled={isEditingExistingTemplate}
+                  value={tplForm.code}
+                  onChange={(e) =>
+                    setTplForm((p) => ({
+                      ...p,
+                      code: e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"),
+                    }))
+                  }
+                  placeholder="VD: SALES_DEMO_KIT"
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold disabled:opacity-60"
+                />
+              </div>
+              <div className="sm:col-span-3">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Nhóm nghiệp vụ *
+                </label>
+                <select
+                  value={tplForm.category}
+                  onChange={(e) => setTplForm((p) => ({ ...p, category: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold"
+                >
+                  {Object.entries(CATEGORY_META).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="sm:col-span-12">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Mô tả hướng dẫn khi nhân viên chọn mẫu này
+                </label>
+                <input
+                  type="text"
+                  value={tplForm.description}
+                  onChange={(e) => setTplForm((p) => ({ ...p, description: e.target.value }))}
+                  placeholder="Giải thích ngắn gọn khi nào cần dùng mẫu tờ trình này và cần đính kèm chứng từ gì..."
+                  className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                />
+              </div>
+
+              <div className="sm:col-span-3">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Cam kết xử lý SLA (Giờ)
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  value={tplForm.sla_hours}
+                  onChange={(e) => setTplForm((p) => ({ ...p, sla_hours: e.target.value }))}
+                  className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold"
+                />
+              </div>
+              <div className="sm:col-span-5">
+                <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Hạn mức bắt buộc trình Ban Giám Đốc (VNĐ — 0 = Luôn trình)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  value={tplForm.bod_threshold_amount}
+                  onChange={(e) => setTplForm((p) => ({ ...p, bod_threshold_amount: e.target.value }))}
+                  placeholder="0 = Mọi tờ trình đều trình qua Ban Giám Đốc"
+                  className="w-full px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 font-mono font-bold"
+                />
+              </div>
+              <div className="sm:col-span-4 flex items-end pb-1">
+                <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-800 dark:text-slate-200 select-none">
+                  <input
+                    type="checkbox"
+                    checked={tplForm.has_line_items}
+                    onChange={(e) => setTplForm((p) => ({ ...p, has_line_items: e.target.checked }))}
+                    className="w-4 h-4 rounded text-indigo-600"
+                  />
+                  <span>Có Bảng kê chi tiết hạng mục (SL × Đơn giá)</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          {/* Phần 2: Thiết kế các Trường thông tin động (Dynamic Fields Schema) */}
+          <div className="p-3.5 rounded-xl border border-indigo-200/80 dark:border-slate-800 bg-indigo-50/30 dark:bg-slate-900/50 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-extrabold text-indigo-950 dark:text-indigo-300">
+                  2. Thiết kế Các Trường Thông Tin Cần Điền ({tplForm.fields_schema.length} trường)
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Các câu hỏi / ô nhập liệu sẽ tự động hiển thị khi nhân viên lập tờ trình theo mẫu này.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setTplForm((p) => ({
+                    ...p,
+                    fields_schema: [
+                      ...p.fields_schema,
+                      {
+                        key: `truong_${p.fields_schema.length + 1}`,
+                        label: "",
+                        type: "text",
+                        required: true,
+                        placeholder: "",
+                        optionsText: "",
+                      },
+                    ],
+                  }))
+                }
+                className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs cursor-pointer"
+              >
+                + Thêm trường thông tin
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {tplForm.fields_schema.map((field, idx) => (
+                <div
+                  key={idx}
+                  className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center"
+                >
+                  <div className="sm:col-span-4">
+                    <label className="block text-[10px] font-bold text-slate-400">
+                      Tên câu hỏi / Trường thông tin #{idx + 1} *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={field.label}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTplForm((p) => {
+                          const next = [...p.fields_schema];
+                          next[idx] = { ...next[idx], label: val };
+                          return { ...p, fields_schema: next };
+                        });
+                      }}
+                      placeholder="VD: Lý do xin vượt hạn mức / Số hợp đồng..."
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
+                    />
+                  </div>
+                  <div className="sm:col-span-3">
+                    <label className="block text-[10px] font-bold text-slate-400">Kiểu dữ liệu</label>
+                    <select
+                      value={field.type}
+                      onChange={(e) => {
+                        const val = e.target.value as any;
+                        setTplForm((p) => {
+                          const next = [...p.fields_schema];
+                          next[idx] = { ...next[idx], type: val };
+                          return { ...p, fields_schema: next };
+                        });
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
+                    >
+                      <option value="text">Chữ ngắn (1 dòng)</option>
+                      <option value="textarea">Đoạn văn giải trình (Nhiều dòng)</option>
+                      <option value="select">Danh sách chọn (Dropdown)</option>
+                      <option value="date">Ngày tháng (Date)</option>
+                      <option value="number">Con số / Định lượng</option>
+                    </select>
+                  </div>
+                  <div className="sm:col-span-3">
+                    {field.type === "select" ? (
+                      <>
+                        <label className="block text-[10px] font-bold text-indigo-600">
+                          Các lựa chọn (Cách nhau dấu phẩy) *
+                        </label>
+                        <input
+                          type="text"
+                          value={field.optionsText || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setTplForm((p) => {
+                              const next = [...p.fields_schema];
+                              next[idx] = { ...next[idx], optionsText: val };
+                              return { ...p, fields_schema: next };
+                            });
+                          }}
+                          placeholder="VD: Chuyển khoản, Tiền mặt, Công nợ"
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/40 dark:bg-slate-950"
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <label className="block text-[10px] font-bold text-slate-400">
+                          Gợi ý nhập (Placeholder)
+                        </label>
+                        <input
+                          type="text"
+                          value={field.placeholder || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setTplForm((p) => {
+                              const next = [...p.fields_schema];
+                              next[idx] = { ...next[idx], placeholder: val };
+                              return { ...p, fields_schema: next };
+                            });
+                          }}
+                          placeholder="Gợi ý mờ trong ô nhập..."
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950"
+                        />
+                      </>
+                    )}
+                  </div>
+                  <div className="sm:col-span-2 flex items-center justify-between pt-3">
+                    <label className="flex items-center gap-1 cursor-pointer font-bold text-slate-700 dark:text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={field.required}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setTplForm((p) => {
+                            const next = [...p.fields_schema];
+                            next[idx] = { ...next[idx], required: checked };
+                            return { ...p, fields_schema: next };
+                          });
+                        }}
+                      />
+                      <span>Bắt buộc</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setTplForm((p) => ({
+                          ...p,
+                          fields_schema: p.fields_schema.filter((_, i) => i !== idx),
+                        }))
+                      }
+                      title="Xóa trường thông tin này"
+                      className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Phần 3: Thiết kế Chuỗi Cấp Phê Duyệt Đa Cấp (Workflow Stages Builder) */}
+          <div className="p-3.5 rounded-xl border border-emerald-200/80 dark:border-emerald-900/50 bg-emerald-50/30 dark:bg-emerald-950/20 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-extrabold text-emerald-950 dark:text-emerald-300">
+                  3. Thiết kế Luồng Định Tuyến Phê Duyệt Đa Cấp ({tplForm.default_stages.length} cấp)
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Tờ trình sẽ đi tuần tự qua từng cấp từ Cấp 1 ➔ Cấp 2 ➔ Cấp 3. Hệ thống tự động lấy Trưởng phòng tương ứng của bộ phận đó.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() =>
+                  setTplForm((p) => ({
+                    ...p,
+                    default_stages: [
+                      ...p.default_stages,
+                      {
+                        stage_no: p.default_stages.length + 1,
+                        stage_name: `Thẩm định & Phê duyệt Cấp ${p.default_stages.length + 1}`,
+                        dept: "Ban Giám Đốc",
+                        conditional_on_threshold: false,
+                      },
+                    ],
+                  }))
+                }
+                className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs cursor-pointer"
+              >
+                + Thêm cấp phê duyệt
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              {tplForm.default_stages.map((st, idx) => (
+                <div
+                  key={idx}
+                  className="p-2.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-12 gap-2 items-center"
+                >
+                  <div className="sm:col-span-1 font-extrabold text-emerald-700 dark:text-emerald-400 text-center">
+                    Cấp {idx + 1}
+                  </div>
+                  <div className="sm:col-span-4">
+                    <label className="block text-[10px] font-bold text-slate-400">
+                      Bộ phận / Cấp có thẩm quyền duyệt *
+                    </label>
+                    <select
+                      value={st.dept}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTplForm((p) => {
+                          const next = [...p.default_stages];
+                          next[idx] = { ...next[idx], dept: val };
+                          return { ...p, default_stages: next };
+                        });
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-bold"
+                    >
+                      <option value="REQUESTER_DEPT">Trưởng bộ phận của Người trình (Tự động)</option>
+                      <option value="Nghiên Cứu R&D">Phòng Nghiên Cứu R&amp;D</option>
+                      <option value="Sản Xuất Kit">Phòng Sản Xuất Kit</option>
+                      <option value="Tổng Hợp Oligo">Phòng Tổng Hợp Oligo</option>
+                      <option value="Kỹ Thuật – Thiết Bị">Phòng Kỹ Thuật – Thiết Bị</option>
+                      <option value="QA/QC">Phòng QA/QC (Thẩm định chất lượng &amp; ISO)</option>
+                      <option value="Application">Phòng Application (Kỹ thuật &amp; Ứng dụng Lab)</option>
+                      <option value="Kinh Doanh">Phòng Kinh Doanh</option>
+                      <option value="Sales Admin">Bộ phận Sales Admin</option>
+                      <option value="PM">Bộ phận PM (Quản lý Sản phẩm)</option>
+                      <option value="Marketing">Bộ phận Marketing</option>
+                      <option value="Kho & Vận Hành">Bộ phận Kho &amp; Vận Hành</option>
+                      <option value="Cung Ứng">Phòng Cung Ứng (Thẩm định giá &amp; nhà cung cấp)</option>
+                      <option value="Kế Toán">Phòng Kế Toán (Kiểm soát ngân sách / chứng từ)</option>
+                      <option value="Pháp Chế">Bộ phận Pháp Chế (Thẩm định hợp đồng &amp; pháp lý)</option>
+                      <option value="Hành Chính Nhân Sự">Phòng Hành Chính Nhân Sự</option>
+                      <option value="Ban Giám Đốc">Ban Giám Đốc (Phê duyệt cuối)</option>
+                    </select>
+                  </div>
+                  <div className="sm:col-span-4">
+                    <label className="block text-[10px] font-bold text-slate-400">
+                      Nội dung / Trách nhiệm thẩm định tại bước này *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={st.stage_name}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setTplForm((p) => {
+                          const next = [...p.default_stages];
+                          next[idx] = { ...next[idx], stage_name: val };
+                          return { ...p, default_stages: next };
+                        });
+                      }}
+                      placeholder="VD: Kế toán kiểm tra hóa đơn & hạn mức ngân sách"
+                      className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 font-semibold"
+                    />
+                  </div>
+                  <div className="sm:col-span-3 flex items-center justify-between pt-3">
+                    <label
+                      className="flex items-center gap-1 cursor-pointer text-[11px] font-bold text-slate-700 dark:text-slate-300"
+                      title="Nếu bật, bước này chỉ kích hoạt khi tổng tiền đề xuất >= Hạn mức trình BGĐ; nếu dưới hạn mức sẽ tự động miễn qua"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={st.conditional_on_threshold}
+                        onChange={(e) => {
+                          const checked = e.target.checked;
+                          setTplForm((p) => {
+                            const next = [...p.default_stages];
+                            next[idx] = { ...next[idx], conditional_on_threshold: checked };
+                            return { ...p, default_stages: next };
+                          });
+                        }}
+                      />
+                      <span>Theo hạn mức tiền</span>
+                    </label>
+                    {tplForm.default_stages.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setTplForm((p) => ({
+                            ...p,
+                            default_stages: p.default_stages
+                              .filter((_, i) => i !== idx)
+                              .map((item, i) => ({ ...item, stage_no: i + 1 })),
+                          }))
+                        }
+                        title="Xóa cấp phê duyệt này"
+                        className="p-1 text-slate-400 hover:text-rose-600 cursor-pointer"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-2">
+              {isEditingExistingTemplate && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingExistingTemplate(false);
+                      setTplForm((p) => ({
+                        ...p,
+                        code: `${p.code}_COPY`,
+                        name: `${p.name} (Bản sao)`,
+                      }));
+                      showToast("Đã chuyển sang chế độ Nhân bản mẫu mới — hãy đặt Mã mẫu mới rồi bấm Lưu!", "info");
+                    }}
+                    title="Tạo một bản sao từ mẫu này để tùy biến thành mẫu mới"
+                    className="px-3.5 py-2 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 font-bold cursor-pointer"
+                  >
+                    📋 Nhân bản thành mẫu mới
+                  </button>
+                  {currentUser?.is_director && (
+                    <button
+                      type="button"
+                      disabled={submitting}
+                      onClick={() => {
+                        setIsTemplateDesignerOpen(false);
+                        handleDeleteTemplate({ code: tplForm.code, name: tplForm.name });
+                      }}
+                      title="Ẩn mẫu phê duyệt này khỏi danh sách"
+                      className="px-3.5 py-2 rounded-xl border border-rose-200 dark:border-rose-900/60 text-rose-600 dark:text-rose-400 hover:bg-rose-50 font-bold cursor-pointer"
+                    >
+                      🗑️ Ẩn mẫu này
+                    </button>
+                  )}
+                </>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setIsTemplateDesignerOpen(false)}
+                className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-700 font-bold text-slate-600 dark:text-slate-400 cursor-pointer"
+              >
+                Đóng
+              </button>
+              <button
+                type="submit"
+                disabled={submitting}
+                className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold shadow-sm cursor-pointer"
+              >
+                {submitting
+                  ? "Đang lưu mẫu..."
+                  : isEditingExistingTemplate
+                    ? "💾 Lưu Cập Nhật Mẫu Phê Duyệt"
+                    : "✨ Tạo & Kích Hoạt Mẫu Phê Duyệt Này"}
+              </button>
+            </div>
+          </div>
+        </form>
       </Modal>
     </div>
   );

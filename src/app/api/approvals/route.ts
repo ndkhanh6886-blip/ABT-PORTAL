@@ -563,14 +563,7 @@ async function ensureApprovalTables() {
       `INSERT INTO portal_approval_templates
          (code, name, category, icon, description, sla_hours, bod_threshold_amount, has_line_items, fields_schema, default_stages, is_active)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, TRUE)
-       ON CONFLICT (code) DO UPDATE SET
-         name = EXCLUDED.name,
-         category = EXCLUDED.category,
-         icon = EXCLUDED.icon,
-         description = EXCLUDED.description,
-         fields_schema = EXCLUDED.fields_schema,
-         default_stages = EXCLUDED.default_stages,
-         has_line_items = EXCLUDED.has_line_items`,
+       ON CONFLICT (code) DO NOTHING`,
       [
         tpl.code,
         tpl.name,
@@ -1553,6 +1546,95 @@ export async function POST(req: NextRequest) {
         if (!upd.rows[0]) throw new HttpError(404, "Không tìm thấy mẫu đề xuất.");
         await logAudit("UPDATE_APPROVAL_TEMPLATE", "APPROVALS", `Cập nhật cấu hình mẫu ${code}: SLA=${slaHours}h, Ngưỡng BGD=${bodThreshold}`);
         return NextResponse.json({ ok: true, template: upd.rows[0] });
+      }
+
+      // =========================================================================
+      // 4. TẠO MỚI HOẶC CẬP NHẬT TOÀN DIỆN MẪU TỜ TRÌNH & LUỒNG DUYỆT (TEMPLATE BUILDER)
+      // =========================================================================
+      if (action === "save_template") {
+        if (!isDeptManager(me) && !isDirectorOrAdmin(me)) {
+          throw new HttpError(403, "Chỉ cấp Quản lý / Trưởng bộ phận hoặc Ban Giám Đốc mới được phép thiết kế mẫu phê duyệt.");
+        }
+        const rawCode = String(body.code || "")
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9_]/g, "_");
+        const name = String(body.name || "").trim();
+        if (!rawCode || !name) {
+          throw new HttpError(400, "Vui lòng nhập đầy đủ Mã mẫu và Tên mẫu tờ trình phê duyệt.");
+        }
+        const category = String(body.category || "GENERAL").trim().toUpperCase();
+        const icon = String(body.icon || "FileText").trim();
+        const description = String(body.description || "").trim();
+        const slaHours = Math.max(1, Number(body.sla_hours || 24));
+        const bodThreshold =
+          body.bod_threshold_amount === null || body.bod_threshold_amount === "" || body.bod_threshold_amount === undefined
+            ? null
+            : Math.max(0, Number(body.bod_threshold_amount));
+        const hasLineItems = Boolean(body.has_line_items);
+        const fieldsSchema = Array.isArray(body.fields_schema) ? body.fields_schema : [];
+        const rawStages = Array.isArray(body.default_stages) ? body.default_stages : [];
+        if (rawStages.length === 0) {
+          throw new HttpError(400, "Mẫu phê duyệt phải có ít nhất 1 cấp phê duyệt.");
+        }
+        const normalizedStages = rawStages.map((s: any, idx: number) => ({
+          stage_no: idx + 1,
+          stage_name: String(s.stage_name || `Phê duyệt Cấp ${idx + 1}`).trim(),
+          role_type:
+            s.dept === "REQUESTER_DEPT"
+              ? "DEPT_HEAD"
+              : s.dept === "Ban Giám Đốc"
+                ? "BOD"
+                : String(s.role_type || "SPECIALIST_DEPT"),
+          dept: String(s.dept || "REQUESTER_DEPT").trim(),
+          conditional_on_threshold: Boolean(s.conditional_on_threshold),
+        }));
+
+        const saved = await client.query(
+          `INSERT INTO portal_approval_templates
+             (code, name, category, icon, description, sla_hours, bod_threshold_amount, has_line_items, fields_schema, default_stages, is_active, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, TRUE, CURRENT_TIMESTAMP)
+           ON CONFLICT (code) DO UPDATE SET
+             name = EXCLUDED.name,
+             category = EXCLUDED.category,
+             icon = EXCLUDED.icon,
+             description = EXCLUDED.description,
+             sla_hours = EXCLUDED.sla_hours,
+             bod_threshold_amount = EXCLUDED.bod_threshold_amount,
+             has_line_items = EXCLUDED.has_line_items,
+             fields_schema = EXCLUDED.fields_schema,
+             default_stages = EXCLUDED.default_stages,
+             is_active = TRUE,
+             updated_at = CURRENT_TIMESTAMP
+           RETURNING *`,
+          [
+            rawCode,
+            name,
+            category,
+            icon,
+            description,
+            slaHours,
+            bodThreshold,
+            hasLineItems,
+            JSON.stringify(fieldsSchema),
+            JSON.stringify(normalizedStages),
+          ]
+        );
+        await logAudit("SAVE_APPROVAL_TEMPLATE", "APPROVALS", `Lưu thiết kế mẫu phê duyệt ${rawCode}: ${name}`);
+        return NextResponse.json({ ok: true, template: saved.rows[0] });
+      }
+
+      if (action === "delete_template") {
+        if (!isDirectorOrAdmin(me)) {
+          throw new HttpError(403, "Chỉ Ban Giám Đốc hoặc Quản trị viên mới được phép xóa/ẩn mẫu phê duyệt.");
+        }
+        const code = String(body.code || "").trim();
+        await client.query(
+          `UPDATE portal_approval_templates SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP WHERE code = $1`,
+          [code]
+        );
+        await logAudit("DELETE_APPROVAL_TEMPLATE", "APPROVALS", `Ẩn mẫu phê duyệt ${code}`);
+        return NextResponse.json({ ok: true });
       }
 
       throw new HttpError(400, `Hành động không hợp lệ: "${action}"`);

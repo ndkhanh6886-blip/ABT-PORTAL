@@ -9,6 +9,8 @@ import { stripCostFields } from "@/backend/services/costVisibility";
 import { canApproveSalesOrders } from "@/backend/services/approvalGuard";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 import { mergeCatalogFields } from "@/backend/services/catalogStore";
+import { withTransaction as withFactoryTx } from "@/factory/core/db";
+import { syncKdOrderOrPoToInternalOrder } from "@/factory/intake/orderDispatchOps";
 
 const DEFAULT_CREDIT_LIMIT = 100000000;
 const DEFAULT_CREDIT_TERM_DAYS = 30;
@@ -64,55 +66,108 @@ async function firstDeliveryDates(orderCodes: string[]): Promise<Map<string, Dat
 
 /**
  * Open (unpaid, not cancelled) orders of a customer, optionally excluding one order, each with
- * `due_start`: the date the payment term starts = the (first) delivery date. Orders not delivered
- * yet have no due_start and can never be overdue (they still count towards the credit limit).
+ * `due_start`: the date the payment term starts = the (first) delivery date, and
+ * `delivered_amount`: giá trị hàng đã giao thành công theo Phiếu giao hàng (sales_delivery_slips).
+ * Công nợ chỉ phát sinh theo Phiếu giao hàng đã giao thành công (không tính SO chưa giao).
  */
 async function openOrdersOfCustomer(cust: any, excludeOrderId: number | null = null) {
   const res = await query(
-    `SELECT id, order_code, order_date, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status, delivery_status, invoice_date, delivered_at FROM sales_orders
+    `SELECT id, order_code, order_date, items, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status, delivery_status, invoice_date, delivered_at FROM sales_orders
       WHERE (customer_id = $1 OR (customer_id IS NULL AND customer_name = $2))
         AND COALESCE(payment_status, 'UNPAID') <> 'PAID'
         AND UPPER(COALESCE(delivery_status, '')) <> 'CANCELLED'
+        AND UPPER(COALESCE(applied_price_policy, '')) <> 'STOCK'
         AND ($3::int IS NULL OR id <> $3::int)`,
     [cust.id, cust.name, excludeOrderId]
   );
-  const deliveries = await firstDeliveryDates(res.rows.map((r: any) => r.order_code).filter(Boolean));
+  const orderCodes = res.rows.map((r: any) => r.order_code).filter(Boolean);
+  const deliveries = await firstDeliveryDates(orderCodes);
+
+  const slipsByOrder = new Map<string, any[]>();
+  if (orderCodes.length > 0) {
+    let slipRows: any[] = [];
+    try {
+      slipRows = (await query("SELECT order_code, items, status, extra_data FROM sales_delivery_slips WHERE order_code = ANY($1::text[])", [orderCodes])).rows;
+    } catch {
+      slipRows = (await query("SELECT order_code, items, status FROM sales_delivery_slips WHERE order_code = ANY($1::text[])", [orderCodes])).rows;
+    }
+    for (const sl of slipRows) {
+      const k = String(sl.order_code || "");
+      if (!k) continue;
+      if (!slipsByOrder.has(k)) slipsByOrder.set(k, []);
+      slipsByOrder.get(k)!.push(sl);
+    }
+  }
+
   return res.rows.map((r: any) => {
     let dueStart: Date | null = deliveries.get(r.order_code) || null;
-    // Delivered through the order status only (no slip with a date): update_delivery_status stores the delivery date in invoice_date
     if (!dueStart && r.delivered_at) dueStart = parseLooseDate(r.delivered_at);
-    // Older rows: update_delivery_status used to store the delivery date in invoice_date
     if (!dueStart && String(r.delivery_status || "").toUpperCase() === "DELIVERED") {
       dueStart = parseLooseDate(r.invoice_date) || parseLooseDate(r.order_date);
     }
-    return { ...r, due_start: dueStart };
+
+    const ordItems = parseJsonArray(r.items).filter((it: any) => it?.status !== "CANCELLED");
+    const itemCode = (it: any) => String(it?.productCode || it?.product_code || "").trim();
+    const unitPriceOf = (code: string) => {
+      const found = ordItems.find((x: any) => itemCode(x) === code);
+      return Number(found?.unitPrice ?? found?.price ?? found?.unit_price) || 0;
+    };
+
+    let deliveredAmt = 0;
+    let anyDeliveredSlip = false;
+    for (const sl of slipsByOrder.get(String(r.order_code)) || []) {
+      let ex: any = sl.extra_data;
+      if (typeof ex === "string") { try { ex = JSON.parse(ex || "{}"); } catch { ex = {}; } }
+      ex = ex && typeof ex === "object" ? ex : {};
+      const st = String(ex.deliveryStatus || sl.status || "").toUpperCase();
+      if (st === "CANCELLED") continue;
+      const isDel = ex.isDelivered === true || ex.isDelivered === "true" || st === "DELIVERED" || st === "FULLY_DELIVERED";
+      if (!isDel) continue;
+      anyDeliveredSlip = true;
+      deliveredAmt += parseJsonArray(sl.items).reduce((s: number, it: any) => {
+        if (it?.isGift || it?.is_gift) return s;
+        const qty = Number(it?.quantity ?? it?.qtyDeliverNow ?? it?.qty) || 0;
+        const price = Number(it?.unitPrice ?? it?.price ?? it?.unit_price) || unitPriceOf(itemCode(it));
+        return s + qty * price;
+      }, 0);
+    }
+    const ordTotal = parseFloat(r.total_amount) || 0;
+    if (!anyDeliveredSlip && String(r.delivery_status || "").toUpperCase() === "DELIVERED") {
+      deliveredAmt = ordTotal;
+    }
+    deliveredAmt = Math.min(Math.round(deliveredAmt), ordTotal || Math.round(deliveredAmt));
+
+    return { ...r, due_start: dueStart, delivered_amount: deliveredAmt };
   });
 }
 
 /** Days past the payment term for an open order (0 when not delivered or still within term). */
 function overdueDays(order: any, termDays: number): number {
   if (!order.due_start) return 0;
+  if ((parseFloat(order.delivered_amount) || 0) - (parseFloat(order.amount_paid) || 0) <= 0) return 0;
   const days = Math.floor((Date.now() - new Date(order.due_start).getTime()) / (1000 * 3600 * 24));
   return days > termDays ? days - termDays : 0;
 }
 
-/** Credit check for an order of `orderTotal` (Requirement 10 & 11). */
-async function evaluateCredit(cust: any, orderTotal: number, excludeOrderId: number | null) {
+/** Credit check for an order: Công nợ tính theo Phiếu giao hàng đã giao thành công (không tính theo SO chưa giao). */
+async function evaluateCredit(cust: any, _orderTotal: number, excludeOrderId: number | null) {
   const { limit, termDays } = customerCreditTerms(cust);
   const openOrders = await openOrdersOfCustomer(cust, excludeOrderId);
-  const currentDebt = openOrders.reduce((sum: number, o: any) => sum + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.amount_paid) || 0)), 0);
-  const newTotalDebt = currentDebt + (Number(orderTotal) || 0);
+  const currentDebt = openOrders.reduce(
+    (sum: number, o: any) => sum + Math.max(0, (parseFloat(o.delivered_amount) || 0) - (parseFloat(o.amount_paid) || 0)),
+    0
+  );
   let blocked = false;
   let reason = "";
-  if (newTotalDebt > limit) {
+  if (currentDebt > limit) {
     blocked = true;
-    reason = `Vượt hạn mức công nợ: Tổng nợ mới (${newTotalDebt.toLocaleString('vi-VN')} đ) vượt trần ${limit.toLocaleString('vi-VN')} đ`;
+    reason = `Vượt hạn mức công nợ (tính theo Phiếu giao hàng đã giao): Dư nợ đã giao (${currentDebt.toLocaleString('vi-VN')} đ) vượt trần ${limit.toLocaleString('vi-VN')} đ`;
   }
   for (const uo of openOrders) {
     const late = overdueDays(uo, termDays);
     if (late > 0) {
       blocked = true;
-      reason = (reason ? reason + " • " : "") + `Đơn ${uo.order_code} đã quá hạn thanh toán ${late} ngày kể từ ngày giao (Hạn: ${termDays} ngày)`;
+      reason = (reason ? reason + " • " : "") + `Đơn ${uo.order_code} có phiếu giao hàng quá hạn thanh toán ${late} ngày kể từ ngày giao (Hạn: ${termDays} ngày)`;
       break;
     }
   }
@@ -267,6 +322,8 @@ function parseSqlDate(d: any): string {
   return todayVN();
 }
 
+let customerTaxAddressColumnEnsured = false;
+let orderInvoiceNotesColumnEnsured = false;
 const QUOTATION_EXTRA_KEYS = [
   "contactPerson", "contactPhone", "contactEmail", "contactPosition",
   "salesRepId", "salesRepPhone", "salesRepEmail",
@@ -584,14 +641,17 @@ export async function GET(req: NextRequest) {
       const cust = custRes.rows[0];
       const { limit, termDays } = customerCreditTerms(cust);
 
-      // Unpaid, not cancelled orders
+      // Unpaid, not cancelled orders (công nợ tính theo Phiếu giao hàng đã giao thành công)
       const unpaidOrders = { rows: await openOrdersOfCustomer(cust) };
 
       const currentDebt = unpaidOrders.rows.reduce(
-        (sum: number, o: any) => sum + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.amount_paid) || 0)),
+        (sum: number, o: any) => sum + Math.max(0, (parseFloat(o.delivered_amount) || 0) - (parseFloat(o.amount_paid) || 0)),
         0
       );
-      const now = new Date();
+      const pendingOrderAmount = unpaidOrders.rows.reduce(
+        (sum: number, o: any) => sum + Math.max(0, (parseFloat(o.total_amount) || 0) - (parseFloat(o.delivered_amount) || 0)),
+        0
+      );
       let isBlocked = false;
       let blockedReasons: string[] = [];
       let maxOverdueDays = 0;
@@ -607,8 +667,9 @@ export async function GET(req: NextRequest) {
             order_date: uo.order_date,
             delivered_at: uo.due_start,
             total_amount: uo.total_amount,
+            delivered_amount: uo.delivered_amount || 0,
             amount_paid: uo.amount_paid || 0,
-            remaining_amount: Math.max(0, (parseFloat(uo.total_amount) || 0) - (parseFloat(uo.amount_paid) || 0)),
+            remaining_amount: Math.max(0, (parseFloat(uo.delivered_amount) || 0) - (parseFloat(uo.amount_paid) || 0)),
             overdue_days: overdue
           });
         }
@@ -616,7 +677,7 @@ export async function GET(req: NextRequest) {
 
       if (currentDebt > limit) {
         isBlocked = true;
-        blockedReasons.push(`Tổng nợ hiện tại (${currentDebt.toLocaleString('vi-VN')} đ) đã vượt hạn mức cho phép (${limit.toLocaleString('vi-VN')} đ)`);
+        blockedReasons.push(`Tổng nợ theo phiếu giao hàng (${currentDebt.toLocaleString('vi-VN')} đ) đã vượt hạn mức cho phép (${limit.toLocaleString('vi-VN')} đ)`);
       }
 
       if (overdueOrders.length > 0) {
@@ -629,6 +690,7 @@ export async function GET(req: NextRequest) {
         credit_limit: limit,
         credit_term_days: termDays,
         current_debt: currentDebt,
+        pending_order_amount: pendingOrderAmount,
         is_blocked: isBlocked,
         blocked_reasons: blockedReasons,
         overdue_orders: overdueOrders,
@@ -1101,13 +1163,23 @@ export async function POST(req: NextRequest) {
       const cType = customer_type || "END_USER";
       const sPriceList = Array.isArray(special_price_list) ? JSON.stringify(special_price_list) : "[]";
 
-      // Địa chỉ thuế (xuất hóa đơn) - cột bổ sung, tự tạo nếu chưa có
+      // Địa chỉ thuế (xuất hóa đơn) & Địa chỉ giao/nhận hàng (delivery_address) - cột bổ sung, tự tạo nếu chưa có
       const saveTaxAddress = async (custId: number | null | undefined) => {
-        if (!custId || body.tax_address === undefined) return;
+        if (!custId) return;
         try {
-          await query("UPDATE sales_customers SET tax_address = $1 WHERE id = $2", [body.tax_address || null, custId]);
+          if (!customerTaxAddressColumnEnsured) {
+            await query("ALTER TABLE sales_customers ADD COLUMN IF NOT EXISTS tax_address TEXT");
+            await query("ALTER TABLE sales_customers ADD COLUMN IF NOT EXISTS delivery_address TEXT");
+            customerTaxAddressColumnEnsured = true;
+          }
+          if (body.tax_address !== undefined) {
+            await query("UPDATE sales_customers SET tax_address = $1 WHERE id = $2", [body.tax_address || null, custId]);
+          }
+          if (body.delivery_address !== undefined || body.deliveryAddress !== undefined) {
+            await query("UPDATE sales_customers SET delivery_address = $1 WHERE id = $2", [(body.delivery_address ?? body.deliveryAddress) || null, custId]);
+          }
         } catch (err) {
-          console.error("Failed to save sales_customers.tax_address:", err);
+          console.error("Failed to save sales_customers.tax_address/delivery_address:", err);
         }
       };
 
@@ -1346,6 +1418,18 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "order") {
+      if (!orderInvoiceNotesColumnEnsured) {
+        try {
+          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS invoice_notes TEXT");
+          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS contact_person TEXT");
+          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS contact_phone TEXT");
+          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS delivery_address TEXT");
+          await query("ALTER TABLE sales_orders ADD COLUMN IF NOT EXISTS quote_code TEXT");
+          orderInvoiceNotesColumnEnsured = true;
+        } catch (err) {
+          console.error("Failed to ensure sales_orders extra columns:", err);
+        }
+      }
       const { id, order_code, customer_id, customer_name, sales_rep_name, order_date, items, total_amount } = body;
       const has = (k: string) => Object.prototype.hasOwnProperty.call(body, k) && body[k] !== undefined;
 
@@ -1444,6 +1528,18 @@ export async function POST(req: NextRequest) {
         for (const col of ["vat_company_name", "vat_tax_code", "vat_address", "vat_email", "shipping_method", "tracking_code"]) {
           if (has(col)) set(col, body[col] || null);
         }
+        if (has("contact_person") || has("contactPerson") || has("customerContact")) {
+          set("contact_person", body.contact_person ?? body.contactPerson ?? body.customerContact ?? null);
+        }
+        if (has("contact_phone") || has("contactPhone") || has("customerPhone")) {
+          set("contact_phone", body.contact_phone ?? body.contactPhone ?? body.customerPhone ?? null);
+        }
+        if (has("delivery_address") || has("deliveryAddress") || has("customerAddress")) {
+          set("delivery_address", body.delivery_address ?? body.deliveryAddress ?? body.customerAddress ?? null);
+        }
+        if (has("quote_code") || has("quoteId")) {
+          set("quote_code", body.quote_code ?? body.quoteId ?? null);
+        }
         if (has("pr_code") || has("prCode")) set("pr_code", body.pr_code || body.prCode || null);
         if (has("procure_status") || has("procureStatus")) set("procure_status", body.procure_status || body.procureStatus || null);
         if (has("procure_order_code") || has("procureOrderCode")) set("procure_order_code", body.procure_order_code || body.procureOrderCode || null);
@@ -1506,6 +1602,23 @@ export async function POST(req: NextRequest) {
           }
         }
         await logAudit("UPDATE", "SALES_ORDER", `Cập nhật đơn hàng ${existing.order_code} cho ${customer_name || existing.customer_name}${approvalReset ? " [ĐÃ DUYỆT -> CHỜ DUYỆT LẠI]" : ""}`);
+        if (!isCreditBlocked && Array.isArray(itemsArr) && itemsArr.length > 0) {
+          try {
+            const poRef = body.procure_order_code || body.procureOrderCode || body.pr_code || body.prCode || `PO-KD-${existing.order_code}`;
+            await withFactoryTx((tx) =>
+              syncKdOrderOrPoToInternalOrder(tx, {
+                kd_po_code: String(poRef),
+                kd_so_code: existing.order_code,
+                customer_name: customer_name || existing.customer_name,
+                requested_date: order_date || existing.order_date,
+                notes: body.order_notes || body.notes || `Đơn hàng Kinh doanh ${existing.order_code}`,
+                items: itemsArr,
+              })
+            );
+          } catch (syncErr: any) {
+            console.error("[AUTO_SYNC_SO_TO_INTERNAL_ORDER_ERR]:", syncErr?.message || syncErr);
+          }
+        }
         return NextResponse.json({
           success: true,
           approval_reset: approvalReset,
@@ -1552,8 +1665,9 @@ export async function POST(req: NextRequest) {
           delivery_status, payment_status, invoice_status, notes,
           is_credit_blocked, credit_block_reason, has_zero_price_items, price_approval_status, applied_price_policy,
           vat_requested, vat_company_name, vat_tax_code, vat_address, vat_email, shipping_method, tracking_code, invoiced_delivery_slips,
-          pr_code, procure_status, procure_order_code, fulfillment_source, sales_rep_id, order_notes, invoice_notes
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31)
+          pr_code, procure_status, procure_order_code, fulfillment_source, sales_rep_id, order_notes, invoice_notes,
+          contact_person, contact_phone, delivery_address, quote_code
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35)
         RETURNING id`,
         [
           code, resolvedCustomerId, customer_name, sales_rep_name, order_date || todayVN(),
@@ -1566,7 +1680,11 @@ export async function POST(req: NextRequest) {
           body.pr_code || body.prCode || null, body.procure_status || body.procureStatus || null, body.procure_order_code || body.procureOrderCode || null, body.fulfillment_source || body.fulfillmentSource || null,
           body.sales_rep_id ? String(body.sales_rep_id) : null,
           body.order_notes ? String(body.order_notes).slice(0, 2000) : null,
-          (body.invoice_notes ?? body.invoiceNotes) ? String(body.invoice_notes ?? body.invoiceNotes).slice(0, 2000) : null
+          (body.invoice_notes ?? body.invoiceNotes) ? String(body.invoice_notes ?? body.invoiceNotes).slice(0, 2000) : null,
+          (body.contact_person ?? body.contactPerson ?? body.customerContact) || null,
+          (body.contact_phone ?? body.contactPhone ?? body.customerPhone) || null,
+          (body.delivery_address ?? body.deliveryAddress ?? body.customerAddress) || null,
+          (body.quote_code ?? body.quoteId) || null
         ]
       );
       let ins;
@@ -1579,6 +1697,23 @@ export async function POST(req: NextRequest) {
         ins = await insertOrder();
       }
       await logAudit("CREATE", "SALES_ORDER", `Tạo mới đơn hàng thương mại ${code} (${computedTotal} đ)${isCreditBlocked ? " [BỊ KHÓA DO VI PHẠM CÔNG NỢ]" : ""}`);
+      if (!isCreditBlocked && Array.isArray(itemsArr) && itemsArr.length > 0) {
+        try {
+          const poRef = body.procure_order_code || body.procureOrderCode || body.pr_code || body.prCode || `PO-KD-${code}`;
+          await withFactoryTx((tx) =>
+            syncKdOrderOrPoToInternalOrder(tx, {
+              kd_po_code: String(poRef),
+              kd_so_code: code,
+              customer_name: customer_name || "Khách hàng Kinh doanh",
+              requested_date: order_date || todayVN(),
+              notes: body.order_notes || body.notes || `Tự động chuyển từ Đơn hàng Kinh doanh ${code}`,
+              items: itemsArr,
+            })
+          );
+        } catch (syncErr: any) {
+          console.error("[AUTO_SYNC_NEW_SO_TO_INTERNAL_ORDER_ERR]:", syncErr?.message || syncErr);
+        }
+      }
       return NextResponse.json({
         success: true,
         id: ins.rows[0]?.id,

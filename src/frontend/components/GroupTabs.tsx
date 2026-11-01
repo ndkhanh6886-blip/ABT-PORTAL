@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Cpu,
   Factory,
+  FileSpreadsheet,
   FlaskConical,
   Microscope,
   Package,
@@ -48,16 +49,23 @@ function SectionTabs({
     <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1.5">
       <span className="hidden sm:block px-2 text-[11px] font-extrabold uppercase tracking-wider text-slate-400 whitespace-nowrap">{title}</span>
       {visible.map((i) => (
-        <button
+        <a
           key={i.tab}
-          onClick={() => onChange(i.tab)}
+          href={`/?tab=${i.tab}`}
+          onClick={(e) => {
+            if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+              e.preventDefault();
+              onChange(i.tab);
+            }
+          }}
+          title="Giữ Ctrl + Click hoặc Chuột phải -> Mở trong tab mới"
           className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold whitespace-nowrap cursor-pointer transition-colors ${
             active === i.tab ? activeClass : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
           <i.icon className="w-3.5 h-3.5" />
           {i.label}
-        </button>
+        </a>
       ))}
     </div>
   );
@@ -70,10 +78,10 @@ export const TECHNICAL_TABS: MainTab[] = [
   "factory-oligo",
   "factory-device",
   "factory-qa",
-  "factory-orders",
   "factory-purchase",
   "factory-warehouse",
   "factory-analytics",
+  "factory-import",
 ];
 export const SETTINGS_TABS: MainTab[] = ["settings", "factory-settings"];
 
@@ -95,7 +103,7 @@ export function BusinessTabs({ active, onChange }: { active: MainTab; onChange: 
   );
 }
 
-/** "Khối Kỹ Thuật": R&D, Sản xuất Kit, Tổng hợp Oligo, Kỹ thuật – Thiết bị, QA/QC, Đơn nội bộ, Cung ứng NVL, Kho nhà máy. */
+/** "Khối Kỹ Thuật": R&D, Sản xuất Kit, Tổng hợp Oligo, Kỹ thuật – Thiết bị, QA/QC, Cung ứng NVL, Kho nhà máy. */
 export function TechnicalTabs({ active, onChange }: { active: MainTab; onChange: (t: MainTab) => void }) {
   const me = useFactoryMe();
   return (
@@ -111,10 +119,10 @@ export function TechnicalTabs({ active, onChange }: { active: MainTab; onChange:
         { tab: "factory-oligo", label: "Tổng Hợp Oligo", icon: FlaskConical, show: hasAny(me.data, ["oligo"]) },
         { tab: "factory-device", label: "Kỹ Thuật – Thiết Bị", icon: Cpu, show: hasAny(me.data, ["device"]) },
         { tab: "factory-qa", label: "QA/QC", icon: ShieldCheck, show: hasAny(me.data, ["qms.qc.view"]) },
-        { tab: "factory-orders", label: "Đơn Nội Bộ", icon: ClipboardList, show: hasAny(me.data, ["intake"]) },
         { tab: "factory-purchase", label: "Cung Ứng NVL", icon: PackageCheck, show: hasAny(me.data, ["purchase", "master.partner"]) },
         { tab: "factory-warehouse", label: "Kho Nhà Máy", icon: Warehouse, show: hasAny(me.data, ["inv", "master"]) },
         { tab: "factory-analytics", label: "Phân Tích & Dự Báo", icon: BarChart3, show: Boolean(me.data?.permissions.length) },
+        { tab: "factory-import", label: "Nhập Liệu Excel", icon: FileSpreadsheet, show: Boolean(me.data?.permissions.length) },
       ]}
     />
   );

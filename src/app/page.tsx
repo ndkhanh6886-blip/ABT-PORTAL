@@ -29,15 +29,50 @@ import { FactoryRdModule } from "@/frontend/factory/rd/FactoryRdModule";
 import FactoryDeviceModule from "@/frontend/factory/device/FactoryDeviceModule";
 import FactoryKitModule from "@/frontend/factory/kit/FactoryKitModule";
 import FactoryAnalyticsModule from "@/frontend/factory/analytics/FactoryAnalyticsModule";
+import FactoryExcelImportModule from "@/frontend/factory/import/FactoryExcelImportModule";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<MainTab>("workspace");
+  const [activeTab, setActiveTab] = useState<MainTab>(() => {
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search).get("tab");
+      const validTabs: MainTab[] = [
+        "workspace", "sales", "warehouse", "application", "procurement", "legal", "chat", "zalo", "settings",
+        "factory-warehouse", "factory-settings", "factory-qa", "factory-purchase", "factory-orders",
+        "factory-oligo", "factory-rd", "factory-device", "factory-kit", "factory-analytics", "factory-import"
+      ];
+      if (p && validTabs.includes(p as MainTab)) return p as MainTab;
+    }
+    return "workspace";
+  });
   const { user, loading, can } = useAuth();
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     setMounted(true);
+    if (typeof window !== "undefined") {
+      const p = new URLSearchParams(window.location.search).get("tab");
+      const validTabs: MainTab[] = [
+        "workspace", "sales", "warehouse", "application", "procurement", "legal", "chat", "zalo", "settings",
+        "factory-warehouse", "factory-settings", "factory-qa", "factory-purchase", "factory-orders",
+        "factory-oligo", "factory-rd", "factory-device", "factory-kit", "factory-analytics", "factory-import"
+      ];
+      if (p && validTabs.includes(p as MainTab)) {
+        setActiveTab(p as MainTab);
+      }
+    }
   }, []);
+
+  // Đồng bộ URL query ?tab=... khi chuyển phân hệ để hỗ trợ mở nhiều tab trình duyệt độc lập
+  useEffect(() => {
+    if (!mounted || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const prevTab = url.searchParams.get("tab");
+    url.searchParams.set("tab", activeTab);
+    if (prevTab && prevTab !== activeTab && activeTab !== "sales") {
+      url.searchParams.delete("sub");
+    }
+    window.history.replaceState({}, "", url.toString());
+  }, [activeTab, mounted]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -149,6 +184,7 @@ export default function Home() {
         {activeTab === "factory-purchase" && <FactoryPurchaseModule />}
         {activeTab === "factory-qa" && <FactoryQaModule />}
         {activeTab === "factory-analytics" && <FactoryAnalyticsModule />}
+        {activeTab === "factory-import" && <FactoryExcelImportModule />}
         </DataSyncGate>
       </main>
 

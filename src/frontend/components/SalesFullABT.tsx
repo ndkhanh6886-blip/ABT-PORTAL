@@ -1143,14 +1143,42 @@ export function SalesFullABT() {
     }, [user]);
 
     // Tab states: Customers, Deals Pipeline, Hospital Bidding, Quotations, Contracts, Orders, Targets, Products, Invoices
-    const [activeTab, setActiveTab] = useState<"customers" | "deals_pipeline" | "tenders" | "quotations" | "contracts" | "orders" | "delivery_slips" | "targets" | "products" | "app_requests" | "invoices" | "debts" | "lookup" | "tasks" | "planner" | "daily" | "evaluation">("deals_pipeline");
+    const [activeTab, setActiveTabState] = useState<"customers" | "deals_pipeline" | "tenders" | "quotations" | "contracts" | "orders" | "delivery_slips" | "targets" | "products" | "app_requests" | "invoices" | "debts" | "lookup" | "tasks" | "planner" | "daily" | "evaluation">(() => {
+        if (typeof window !== "undefined") {
+            const params = new URLSearchParams(window.location.search);
+            const urlSub = params.get("sub");
+            const validTabs = ["customers", "deals_pipeline", "tenders", "quotations", "contracts", "orders", "delivery_slips", "targets", "products", "app_requests", "invoices", "debts", "lookup", "tasks", "planner", "daily", "evaluation"];
+            if (urlSub && validTabs.includes(urlSub)) {
+                return urlSub as any;
+            }
+        }
+        return "deals_pipeline";
+    });
 
-    // Listen for cross-module notification navigation
+    const setActiveTab = (nextTab: "customers" | "deals_pipeline" | "tenders" | "quotations" | "contracts" | "orders" | "delivery_slips" | "targets" | "products" | "app_requests" | "invoices" | "debts" | "lookup" | "tasks" | "planner" | "daily" | "evaluation") => {
+        setActiveTabState(nextTab);
+        if (typeof window !== "undefined") {
+            try {
+                const url = new URL(window.location.href);
+                url.searchParams.set("tab", "sales");
+                url.searchParams.set("sub", nextTab);
+                window.history.replaceState({}, "", url.toString());
+            } catch {}
+        }
+    };
+
+    // Listen for cross-module notification navigation & browser back/forward
     useEffect(() => {
+        const validTabs = ["customers", "deals_pipeline", "tenders", "tasks", "planner", "daily", "quotations", "contracts", "orders", "delivery_slips", "targets", "products", "app_requests", "invoices", "debts", "lookup", "evaluation"];
+        const params = new URLSearchParams(window.location.search);
+        const urlSub = params.get("sub");
+        if (urlSub && validTabs.includes(urlSub)) {
+            setActiveTabState(urlSub as any);
+        }
+
         const handleNav = (e: any) => {
             if (e.detail && (e.detail.tab === "sales" || !e.detail.tab)) {
                 if (e.detail.subTab) {
-                    const validTabs = ["customers", "deals_pipeline", "tenders", "tasks", "planner", "daily", "quotations", "contracts", "orders", "delivery_slips", "targets", "products", "app_requests", "invoices", "evaluation"];
                     let targetSubTab = e.detail.subTab;
                     if (targetSubTab === "plans") targetSubTab = "planner";
                     if (validTabs.includes(targetSubTab)) {
@@ -1159,8 +1187,19 @@ export function SalesFullABT() {
                 }
             }
         };
+        const handlePopState = () => {
+            const p = new URLSearchParams(window.location.search);
+            const sub = p.get("sub");
+            if (sub && validTabs.includes(sub)) {
+                setActiveTabState(sub as any);
+            }
+        };
         window.addEventListener("tbr-navigate" as any, handleNav);
-        return () => window.removeEventListener("tbr-navigate" as any, handleNav);
+        window.addEventListener("popstate", handlePopState);
+        return () => {
+            window.removeEventListener("tbr-navigate" as any, handleNav);
+            window.removeEventListener("popstate", handlePopState);
+        };
     }, []);
 
     // Sales Data States
@@ -1867,11 +1906,45 @@ export function SalesFullABT() {
         const delivered = o?.status === "Delivered" || String(o?.delivery_status || "").toUpperCase() === "DELIVERED";
         return delivered ? parseLooseDate(o?.invoiceDate || o?.invoice_date || o?.date || o?.order_date) : null;
     };
-    const isOrderOpenDebt = (o: any): boolean =>
-        o?.status !== "CANCELLED" && o?.status !== "Rejected" &&
-        String(o?.payment_status || o?.paymentStatus || "").toUpperCase() !== "PAID" &&
-        String(o?.delivery_status || "").toUpperCase() !== "CANCELLED";
+    // Tính giá trị công nợ thực tế của đơn hàng theo các Phiếu giao hàng ĐÃ GIAO THÀNH CÔNG trừ số tiền đã thanh toán
+    const getOrderDeliveredDebtAmount = (o: any): number => {
+        if (!o || o?.status === "CANCELLED" || o?.status === "Rejected") return 0;
+        if (String(o?.payment_status || o?.paymentStatus || "").toUpperCase() === "PAID") return 0;
+        if (String(o?.delivery_status || "").toUpperCase() === "CANCELLED") return 0;
+        const code = String(o?.order_code || o?.id || "").trim();
+        const oItems: any[] = Array.isArray(o?.items) ? o.items : [];
+        let deliveredVal = 0;
+        let hasSlip = false;
+        (deliverySlips || []).forEach((s: any) => {
+            const sameOrder = (code && String(s.orderCode || s.order_code || "").trim() === code) ||
+                (o?.id && String(s.orderId || s.order_id || "").trim() === String(o.id).trim());
+            const cancelled = String(s.deliveryStatus || s.status || "").toUpperCase() === "CANCELLED";
+            if (!sameOrder || cancelled) return;
+            hasSlip = true;
+            const isDeliveredSlip = s.isDelivered === true || String(s.deliveryStatus || s.status || "").toUpperCase() === "DELIVERED";
+            if (!isDeliveredSlip) return;
+            const sItems: any[] = Array.isArray(s.items) ? s.items : [];
+            const slipAmt = sItems.reduce((sum: number, it: any) => {
+                if (it?.isGift || it?.is_gift) return sum;
+                const pCode = String(it?.productCode || it?.product_code || it?.code || "").trim();
+                const matchedOi = oItems.find((x: any) => String(x?.productCode || x?.product_code || x?.code || "").trim() === pCode && !x?.isGift);
+                const price = Number(it?.unitPrice ?? it?.unit_price ?? it?.price ?? matchedOi?.unitPrice ?? matchedOi?.unit_price ?? matchedOi?.price ?? 0) || 0;
+                return sum + (Number(it?.quantity) || 0) * price;
+            }, 0);
+            deliveredVal += Math.round(slipAmt);
+        });
+        if (!hasSlip) {
+            const isOrdDelivered = o?.status === "Delivered" || String(o?.delivery_status || "").toUpperCase() === "DELIVERED";
+            if (isOrdDelivered) {
+                deliveredVal = Number(o?.totalAmount ?? o?.total_amount ?? 0) || 0;
+            }
+        }
+        const paidAmt = Number(o?.amount_paid ?? o?.amountPaid ?? 0) || 0;
+        return Math.max(0, deliveredVal - paidAmt);
+    };
+    const isOrderOpenDebt = (o: any): boolean => getOrderDeliveredDebtAmount(o) > 0;
     const getOverdueDays = (o: any, termDays: number): number => {
+        if (getOrderDeliveredDebtAmount(o) <= 0) return 0;
         const start = getDebtStartDate(o);
         if (!start) return 0;
         const days = Math.floor((Date.now() - start.getTime()) / (1000 * 3600 * 24));
@@ -4069,6 +4142,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [custEmail, setCustEmail] = useState("");
     const [custAddress, setCustAddress] = useState("");
     const [custTaxAddress, setCustTaxAddress] = useState("");
+    const [custDeliveryAddress, setCustDeliveryAddress] = useState("");
     const [custRegion, setCustRegion] = useState("");
     const [custProvince, setCustProvince] = useState("");
     const [selectedCustomerRegionFilter, setSelectedCustomerRegionFilter] = useState("all");
@@ -4082,6 +4156,28 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [custClassification, setCustClassification] = useState("");
     const [custIndustry, setCustIndustry] = useState("");
     const [selectedCustomerIndustryFilter, setSelectedCustomerIndustryFilter] = useState("all");
+    const [selectedCustomerTypeFilter, setSelectedCustomerTypeFilter] = useState("all");
+
+    // Bộ lọc thời gian cho Báo giá (Ngày / Tháng / Khoảng thời gian tùy chọn)
+    const [filterQuoteDateMode, setFilterQuoteDateMode] = useState<"all" | "day" | "month" | "range">("all");
+    const [filterQuoteSingleDate, setFilterQuoteSingleDate] = useState("");
+    const [filterQuoteMonth, setFilterQuoteMonth] = useState("");
+    const [filterQuoteDateFrom, setFilterQuoteDateFrom] = useState("");
+    const [filterQuoteDateTo, setFilterQuoteDateTo] = useState("");
+
+    // Bộ lọc cho Đơn hàng SO (Nhân viên Sale, Khách hàng, Ngày / Tháng / Khoảng thời gian tùy chọn)
+    const [filterOrderRep, setFilterOrderRep] = useState("all");
+    const [filterOrderCustomer, setFilterOrderCustomer] = useState("all");
+    const [filterOrderDateMode, setFilterOrderDateMode] = useState<"all" | "day" | "month" | "range">("all");
+    const [filterOrderSingleDate, setFilterOrderSingleDate] = useState("");
+    const [filterOrderMonth, setFilterOrderMonth] = useState("");
+    const [filterOrderDateFrom, setFilterOrderDateFrom] = useState("");
+    const [filterOrderDateTo, setFilterOrderDateTo] = useState("");
+
+    // Thông tin Người liên hệ & Địa chỉ giao/nhận hàng trên Đơn hàng SO
+    const [factoryOrderContactPerson, setFactoryOrderContactPerson] = useState("");
+    const [factoryOrderContactPhone, setFactoryOrderContactPhone] = useState("");
+    const [factoryOrderDeliveryAddress, setFactoryOrderDeliveryAddress] = useState("");
     const [industryGroups, setIndustryGroups] = useState<any[]>(() => {
         if (typeof window !== "undefined") {
             const saved = localStorage.getItem("sales_customer_industry_groups");
@@ -4228,6 +4324,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (Array.isArray(d.factoryOrderItems)) setFactoryOrderItems(d.factoryOrderItems);
         setIsStockOrder(!!d.isStockOrder);
     });
+
+    const resetFactoryOrderInvoiceAndExtraStates = () => {
+        setFactoryOrderNotes("");
+        setInvoiceNotes("");
+        setVatRequested(false);
+        setVatCompanyName("");
+        setVatTaxCode("");
+        setVatAddress("");
+        setVatEmail("");
+        setShippingMethod("Xe lạnh chuyên dụng ABT (-20°C đến 8°C)");
+        setTrackingCode("");
+        setFactoryOrderContactPerson("");
+        setFactoryOrderContactPhone("");
+        setFactoryOrderDeliveryAddress("");
+        factoryOrderDraft.dismiss();
+    };
 
     // Phase 3: Cancel Order Item & RMA Return Workflow (Yêu cầu 15)
     const [isCancelItemModalOpen, setIsCancelItemModalOpen] = useState(false);
@@ -5783,6 +5895,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             email: validEmail,
             address: custAddress.trim() || null,
             tax_address: custTaxAddress.trim() || null,
+            delivery_address: custDeliveryAddress.trim() || custAddress.trim() || null,
             region: custRegion.trim() || null,
             province: custProvince.trim() || null,
             sales_rep_id: assignedRepId,
@@ -6073,6 +6186,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setCustEmail(c.email || "");
         setCustAddress(c.address || "");
         setCustTaxAddress(c.tax_address || "");
+        setCustDeliveryAddress(c.delivery_address || c.address || "");
         setCustRegion(c.region || "");
         setCustProvince(c.province || "");
         setCustSalesRepId(c.sales_rep_id || c.salesRepId || getCustomerAssignedRep(c));
@@ -6106,6 +6220,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setCustEmail("");
         setCustAddress("");
         setCustTaxAddress("");
+        setCustDeliveryAddress("");
         setCustRegion("");
         setCustProvince("");
         // Mặc định NVKD phụ trách = người đang tạo khách hàng
@@ -6968,6 +7083,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return false;
     };
 
+    const toIsoDatePart = (raw: any): string => {
+        const s = String(raw || "").trim();
+        if (!s) return "";
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+        const d = parseLooseDate(s);
+        if (d) {
+            const yyyy = d.getFullYear();
+            const mm = String(d.getMonth() + 1).padStart(2, "0");
+            const dd = String(d.getDate()).padStart(2, "0");
+            return `${yyyy}-${mm}-${dd}`;
+        }
+        return "";
+    };
+
     // Memoized filtered lists for Quotations and Contracts (Respecting TDZ)
     const filteredQuotationsList = useMemo(() => {
         return quotations.filter(q => {
@@ -7001,6 +7132,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 if (!String(q.id || q.quotation_code || "").toLowerCase().includes(codeQuery)) return false;
             }
 
+            // Filter by Date / Month / Custom Date Range
+            if (filterQuoteDateMode !== "all") {
+                const qIso = toIsoDatePart(q.date || q.created_at || q.createdAt);
+                if (!qIso) return false;
+                if (filterQuoteDateMode === "day" && filterQuoteSingleDate) {
+                    if (qIso !== filterQuoteSingleDate) return false;
+                } else if (filterQuoteDateMode === "month" && filterQuoteMonth) {
+                    if (!qIso.startsWith(filterQuoteMonth)) return false;
+                } else if (filterQuoteDateMode === "range") {
+                    if (filterQuoteDateFrom && qIso < filterQuoteDateFrom) return false;
+                    if (filterQuoteDateTo && qIso > filterQuoteDateTo) return false;
+                }
+            }
+
             // Shared search query
             if (searchQuoteContractQuery.trim()) {
                 const query = searchQuoteContractQuery.trim().toLowerCase();
@@ -7016,7 +7161,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
             return true;
         });
-    }, [quotations, canViewAllQuotationsAndContracts, loggedInStaff, user, salesPersonnel, selectedAssigneeFilter, filterQuoteRep, filterQuoteCustomer, filterQuoteCode, searchQuoteContractQuery]);
+    }, [quotations, canViewAllQuotationsAndContracts, loggedInStaff, user, salesPersonnel, selectedAssigneeFilter, filterQuoteRep, filterQuoteCustomer, filterQuoteCode, filterQuoteDateMode, filterQuoteSingleDate, filterQuoteMonth, filterQuoteDateFrom, filterQuoteDateTo, searchQuoteContractQuery]);
 
     const filteredContractsList = useMemo(() => {
         return contracts.filter(c => {
@@ -7968,6 +8113,223 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         total: fin.total,
         vatAmount: fin.vatAmount
     });
+
+    // Xuất / In Bảng kê xuất hóa đơn Oligo (Hỗ trợ cả phần Tổng hợp theo Mã hàng HĐ và Chi tiết từng dòng trình tự)
+    const handlePrintSalesOligoInvoiceStatement = (params: {
+        orderCode: string;
+        customerName: string;
+        taxCode?: string;
+        address?: string;
+        email?: string;
+        invoiceNotes?: string;
+        invoiceNo?: string;
+        invoiceDate?: string;
+        items: Array<{
+            code: string;
+            name: string;
+            specification?: string;
+            unit: string;
+            qty: number;
+            price: number;
+            vatRate: number;
+            needsInvoice?: boolean;
+        }>;
+    }) => {
+        const invItems = params.items.filter(it => it.needsInvoice !== false && it.code);
+        if (invItems.length === 0) {
+            showToast("Chưa có mặt hàng nào được chọn để xuất Bảng kê hóa đơn!", "warning");
+            return;
+        }
+        const esc = (v: unknown) =>
+            String(v ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+
+        // Gộp nhóm theo Mã hàng hóa đơn + Đơn giá + VAT (Phần I: Bảng tổng hợp mã chuẩn để Kế toán nhập phần mềm HĐĐT)
+        const groupedMap = new Map<string, { code: string; name: string; unit: string; qty: number; price: number; vatRate: number; lineTotal: number; lineBeforeVat: number }>();
+        invItems.forEach(it => {
+            const key = `${it.code}::${it.price}::${it.vatRate}`;
+            const lineTotal = Math.round((Number(it.qty) || 0) * (Number(it.price) || 0));
+            const lineBeforeVat = it.vatRate > 0 ? Math.round(lineTotal / (1 + it.vatRate / 100)) : lineTotal;
+            const existing = groupedMap.get(key);
+            if (existing) {
+                existing.qty += Number(it.qty) || 0;
+                existing.lineTotal += lineTotal;
+                existing.lineBeforeVat += lineBeforeVat;
+            } else {
+                groupedMap.set(key, {
+                    code: it.code,
+                    name: it.name,
+                    unit: it.unit || "ĐV",
+                    qty: Number(it.qty) || 0,
+                    price: Number(it.price) || 0,
+                    vatRate: Number(it.vatRate) || 8,
+                    lineTotal,
+                    lineBeforeVat
+                });
+            }
+        });
+        const groupedRows = Array.from(groupedMap.values());
+        const totalWithVat = invItems.reduce((acc, it) => acc + Math.round((Number(it.qty) || 0) * (Number(it.price) || 0)), 0);
+        const totalBeforeVat = invItems.reduce((acc, it) => {
+            const lt = Math.round((Number(it.qty) || 0) * (Number(it.price) || 0));
+            return acc + (it.vatRate > 0 ? Math.round(lt / (1 + it.vatRate / 100)) : lt);
+        }, 0);
+        const totalVat = totalWithVat - totalBeforeVat;
+
+        const html = `<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Bảng kê xuất hóa đơn - ${esc(params.orderCode)}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    body { font-family: "Segoe UI", Arial, sans-serif; color: #0f172a; font-size: 12px; line-height: 1.45; margin: 0; padding: 16px; }
+    .toolbar { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 12px; }
+    .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #0284c7; background: #0284c7; color: #fff; font-weight: 700; cursor: pointer; font-size: 12px; }
+    .Header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 12px; }
+    h1 { font-size: 16px; margin: 0 0 4px 0; text-transform: uppercase; color: #0f172a; }
+    h2 { font-size: 13px; margin: 14px 0 6px 0; text-transform: uppercase; color: #0369a1; border-left: 4px solid #0284c7; padding-left: 8px; }
+    .meta-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 14px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+    th, td { border: 1px solid #cbd5e1; padding: 5px 7px; text-align: left; vertical-align: top; }
+    th { background: #f1f5f9; font-weight: 700; font-size: 11px; text-transform: uppercase; }
+    .num { text-align: right; font-family: Consolas, monospace; }
+    .mono { font-family: Consolas, monospace; word-break: break-all; }
+    .total-row td { font-weight: 700; background: #f8fafc; }
+    .grand-row td { font-weight: 800; background: #ecfdf5; color: #065f46; font-size: 13px; }
+    .sig-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; text-align: center; }
+    @media print { .toolbar { display: none; } body { padding: 0; } }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="btn" onclick="window.print()">🖨️ In Bảng Kê Hóa Đơn (A4 / PDF)</button>
+  </div>
+  <div class="Header">
+    <div>
+      <div style="font-weight:800;font-size:13px;color:#0369a1;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOLAB)</div>
+      <div style="font-size:11px;color:#475569;">Phòng Kinh Doanh &amp; Kế Toán — Bảng kê xuất hóa đơn điện tử GTGT</div>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-weight:800;font-family:Consolas,monospace;font-size:13px;">Đơn hàng: ${esc(params.orderCode)}</div>
+      <div style="font-size:11px;color:#475569;">Ngày lập: ${esc(params.invoiceDate || new Date().toLocaleDateString("vi-VN"))}</div>
+    </div>
+  </div>
+
+  <div style="text-align:center;margin-bottom:12px;">
+    <h1>PHIẾU YÊU CẦU &amp; BẢNG KÊ XUẤT HÓA ĐƠN GTGT (OLIGO &amp; SINH PHẨM)</h1>
+    ${params.invoiceNo ? `<div style="font-size:12px;color:#059669;font-weight:700;">Đính kèm Hóa đơn GTGT số: ${esc(params.invoiceNo)}</div>` : ""}
+  </div>
+
+  <div class="meta-grid">
+    <div><b>Đơn vị nhận hóa đơn:</b> ${esc(params.customerName || "—")}</div>
+    <div><b>Mã số thuế (MST):</b> <span class="mono"><b>${esc(params.taxCode || "—")}</b></span></div>
+    <div style="grid-column: span 2;"><b>Địa chỉ đăng ký thuế:</b> ${esc(params.address || "—")}</div>
+    <div><b>Email nhận HĐĐT:</b> ${esc(params.email || "—")}</div>
+    <div><b>Tổng số dòng kê khai:</b> <b>${invItems.length}</b> dòng (${groupedRows.length} nhóm mã HĐ)</div>
+    <div style="grid-column: span 2;"><b>Ghi chú xuất hóa đơn:</b> ${esc(params.invoiceNotes || "Xuất hóa đơn theo bảng kê chi tiết đính kèm")}</div>
+  </div>
+
+  <h2>Phần I. Bảng Tổng Hợp Theo Mã Hàng Chuẩn Xuất Hóa Đơn Điện Tử (Dành cho Kế toán)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:34px;text-align:center;">STT</th>
+        <th style="width:110px;">Mã Hàng HĐ</th>
+        <th>Tên Hàng Hóa / Dịch Vụ Trên Hóa Đơn</th>
+        <th style="width:52px;text-align:center;">ĐVT</th>
+        <th style="width:65px;" class="num">Tổng SL</th>
+        <th style="width:95px;" class="num">Đơn giá (gồm VAT)</th>
+        <th style="width:45px;text-align:center;">VAT</th>
+        <th style="width:110px;" class="num">Thành tiền (gồm VAT)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${groupedRows.map((g, i) => `<tr>
+        <td style="text-align:center;">${i + 1}</td>
+        <td class="mono"><b>${esc(g.code)}</b></td>
+        <td>${esc(g.name)}</td>
+        <td style="text-align:center;">${esc(g.unit)}</td>
+        <td class="num">${g.qty.toLocaleString("vi-VN")}</td>
+        <td class="num">${g.price.toLocaleString("vi-VN")}</td>
+        <td style="text-align:center;">${g.vatRate}%</td>
+        <td class="num"><b>${g.lineTotal.toLocaleString("vi-VN")}</b></td>
+      </tr>`).join("")}
+      <tr class="total-row">
+        <td colspan="7" style="text-align:right;">Cộng tiền hàng (Trước thuế GTGT):</td>
+        <td class="num">${totalBeforeVat.toLocaleString("vi-VN")} đ</td>
+      </tr>
+      <tr class="total-row">
+        <td colspan="7" style="text-align:right;">Tổng tiền thuế GTGT (VAT):</td>
+        <td class="num">${totalVat.toLocaleString("vi-VN")} đ</td>
+      </tr>
+      <tr class="grand-row">
+        <td colspan="7" style="text-align:right;">TỔNG CỘNG THANH TOÁN (ĐÃ GỒM VAT):</td>
+        <td class="num">${totalWithVat.toLocaleString("vi-VN")} VNĐ</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Phần II. Bảng Kê Chi Tiết Từng Trình Tự Oligo / Cấu Hình Đính Kèm Hóa Đơn (${invItems.length} dòng)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:32px;text-align:center;">#</th>
+        <th style="width:95px;">Mã Hàng</th>
+        <th style="width:170px;">Tên Hàng Hóa / Dịch Vụ</th>
+        <th>Quy Cách / Trình Tự Chi Tiết (5' → 3' · Scale · Mod · Tinh Sạch)</th>
+        <th style="width:48px;text-align:center;">ĐVT</th>
+        <th style="width:55px;" class="num">SL</th>
+        <th style="width:85px;" class="num">Đơn giá</th>
+        <th style="width:100px;" class="num">Thành tiền</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${invItems.map((it, idx) => {
+          const lt = Math.round((Number(it.qty) || 0) * (Number(it.price) || 0));
+          return `<tr>
+            <td style="text-align:center;">${idx + 1}</td>
+            <td class="mono"><b>${esc(it.code)}</b></td>
+            <td>${esc(it.name)}</td>
+            <td class="mono" style="font-size:11px;">${esc(it.specification || "—")}</td>
+            <td style="text-align:center;">${esc(it.unit)}</td>
+            <td class="num">${Number(it.qty).toLocaleString("vi-VN")}</td>
+            <td class="num">${Number(it.price).toLocaleString("vi-VN")}</td>
+            <td class="num"><b>${lt.toLocaleString("vi-VN")}</b></td>
+          </tr>`;
+      }).join("")}
+    </tbody>
+  </table>
+
+  <div class="sig-grid">
+    <div>
+      <b>NHÂN VIÊN KINH DOANH</b>
+      <div style="font-size:10px;color:#64748b;margin-bottom:48px;">(Ký, ghi rõ họ tên)</div>
+    </div>
+    <div>
+      <b>PHÒNG TỔNG HỢP OLIGO / LAB</b>
+      <div style="font-size:10px;color:#64748b;margin-bottom:48px;">(Ký, ghi rõ họ tên)</div>
+    </div>
+    <div>
+      <b>KẾ TOÁN XUẤT HÓA ĐƠN</b>
+      <div style="font-size:10px;color:#64748b;margin-bottom:48px;">(Ký, ghi rõ số HĐ &amp; ngày xuất)</div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+        const w = window.open("", "_blank", "width=980,height=820");
+        if (!w) {
+            showToast("Trình duyệt đã chặn Pop-up! Vui lòng cho phép mở cửa sổ để in Bảng kê hóa đơn.", "warning");
+            return;
+        }
+        w.document.open();
+        w.document.write(html);
+        w.document.close();
+    };
 
     const renderOligoBuilderPanel = (target: "QUOTE" | "ORDER") => {
         if (openOligoBuilderTarget !== target) return null;
@@ -10194,7 +10556,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         // DẠNG 1: HỢP ĐỒNG KINH TẾ (THEO BÁO GIÁ HOẶC TRỌN GÓI 100%)
         // Kế thừa khách hàng và sao chép nguyên 100% danh mục theo hợp đồng
         const custName = contract.customerName || contract.partyBName || "";
-        setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+        setEditingFactoryOrderId(null);
+        resetFactoryOrderInvoiceAndExtraStates();
         setFactoryOrderCustomerName(custName);
         const custExists = customers.some(c => c.name === custName) || salesNvkdCustomers.some(c => c.name === custName);
         setFactoryCustomerSelectMode(custExists ? "select" : "custom");
@@ -10220,7 +10583,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         });
         setFactoryOrderItems(mappedItems.length > 0 ? mappedItems : [{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
         setProductSearchQueries({});
-        setInvoiceNotes("");
         setIsFactoryOrderModalOpen(true);
         setActiveTab("orders");
         showToast(`Đã lấy nguyên 100% danh mục hàng hóa từ Hợp đồng ${contract.id} sang Đơn đặt hàng mới!`, "info");
@@ -10249,7 +10611,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             };
         });
 
-        setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
+        setEditingFactoryOrderId(null);
+        resetFactoryOrderInvoiceAndExtraStates();
         const finalCust = principleCallOffCustomerName || selectedPrincipleContract.customerName || selectedPrincipleContract.partyBName || "";
         setFactoryOrderCustomerName(finalCust);
         const custExists = customers.some(c => c.name === finalCust) || salesNvkdCustomers.some(c => c.name === finalCust);
@@ -10267,7 +10630,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
 
     const handleInitFactoryOrderFromQuotation = (quote: any) => {
-        // Kiểm tra điều kiện duyệt & giới hạn tạo SO
+        // Kiểm tra điều kiện duyệt báo giá có 0đ / hàng tặng
         const quoteHasZeroPrice = quote.hasZeroPriceItems || (quote.items && quote.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0));
         const quoteNeedsApproval = Boolean(quoteHasZeroPrice || quote.requiresApproval || quote.priceApprovalStatus);
         const isPendingApproval = quoteNeedsApproval && quote.priceApprovalStatus !== "APPROVED";
@@ -10289,15 +10652,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return true;
         });
 
-        if (quoteNeedsApproval && linkedOrders.length >= 1) {
-            showToast(`Báo giá duyệt đặc biệt ${quote.id} chỉ được phép tạo SO 1 lần duy nhất! Đã có đơn hàng ${linkedOrders[0].id}.`, "warning");
-            return;
-        }
-
-        setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
+        setEditingFactoryOrderId(null);
+        resetFactoryOrderInvoiceAndExtraStates();
+        setIsStockOrder(false);
         setFactoryOrderCustomerName(quote.customerName || "");
-        const custExists = customers.some(c => c.name === quote.customerName) || salesNvkdCustomers.some(c => c.name === quote.customerName);
+        const matchedCust = customers.find(c => c.name === quote.customerName || (quote.customer_code && c.customer_code === quote.customer_code)) ||
+                            salesNvkdCustomers.find(c => c.name === quote.customerName);
+        const custExists = Boolean(matchedCust);
         setFactoryCustomerSelectMode(custExists ? "select" : "custom");
+        if (matchedCust) {
+            const contactsList = Array.isArray(matchedCust.contacts) ? matchedCust.contacts : [];
+            const primaryContact = contactsList.find((ct: any) => ct.is_primary) || contactsList[0];
+            setFactoryOrderContactPerson(quote.contactPerson || primaryContact?.name || matchedCust.contact_person || "");
+            setFactoryOrderContactPhone(quote.contactPhone || primaryContact?.phone || matchedCust.phone || "");
+            setFactoryOrderDeliveryAddress(matchedCust.delivery_address || matchedCust.address || "");
+        }
         setFactoryOrderContractId("");
         setFactoryOrderQuoteId(quote.id);
         setFactoryOrderNotes(String(quote.noteTerms || "").trim());
@@ -10306,7 +10675,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const quoteTaxRate = quote.taxRate ?? quote.tax_rate;
         const mappedItems = (quote.items || []).map((it: any) => {
             const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
-            const price = Number(it.price !== undefined ? it.price : (it.unitPrice !== undefined ? it.unitPrice : (prod?.price || 0))) || 0;
+            const isGift = Boolean(it.isGift || it.is_gift);
+            const price = isGift ? 0 : (Number(it.price !== undefined ? it.price : (it.unitPrice !== undefined ? it.unitPrice : (prod?.price || 0))) || 0);
             const qty = Number(it.quantity) || 1;
             const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? it.taxRate ?? it.tax_rate ?? quoteTaxRate ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
             const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : 8;
@@ -10315,9 +10685,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 productName: it.productName || prod?.name || it.productCode,
                 unit: it.unit || prod?.unit || "Hộp",
                 specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
-                notes: it.notes || "",
+                notes: it.notes || (isGift ? "Hàng tặng theo chính sách" : ""),
                 quantity: qty,
                 unitPrice: price,
+                isGift,
                 vatRate,
                 vat: vatRate,
                 needsInvoice: it.needsInvoice !== false
@@ -10329,7 +10700,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         
         setIsFactoryOrderModalOpen(true);
         setActiveTab("orders");
-        showToast(`⚡ Đã chuyển sang Tạo SO trực tiếp từ Báo giá ${quote.id} (Không cần hợp đồng)!`, "success");
+        showToast(linkedOrders.length > 0
+            ? `⚡ Đã khởi tạo SO đợt ${linkedOrders.length + 1} từ Báo giá ${quote.id}!`
+            : `⚡ Đã chuyển sang Tạo SO trực tiếp từ Báo giá ${quote.id} (Không cần hợp đồng)!`, "success");
     };
 
     const handlePrintQuotation = (quote: any) => {
@@ -10462,8 +10835,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const hasConfig = validConfigs.length > 0;
                 const itemImage = it.imageUrl || (prod as any)?.imageUrl || "";
                 const itQty = Number(it.quantity !== undefined ? it.quantity : (it.qty !== undefined ? it.qty : 1)) || 0;
-                const itPrice = Number(it.price !== undefined ? it.price : (it.unitPrice !== undefined ? it.unitPrice : (it.unit_price !== undefined ? it.unit_price : 0))) || 0;
-                const itTotal = Number(it.total !== undefined ? it.total : (it.amount !== undefined ? it.amount : itQty * itPrice)) || (itQty * itPrice);
+                const isGiftItem = Boolean(it.isGift || it.is_gift);
+                const itPrice = isGiftItem ? 0 : (Number(it.price !== undefined ? it.price : (it.unitPrice !== undefined ? it.unitPrice : (it.unit_price !== undefined ? it.unit_price : 0))) || 0);
+                const itTotal = isGiftItem ? 0 : (Number(it.total !== undefined ? it.total : (it.amount !== undefined ? it.amount : itQty * itPrice)) || (itQty * itPrice));
+                const giftBadgeHtml = (isGiftItem || itPrice === 0)
+                    ? `<span style="display: inline-block; font-size: 10px; font-weight: bold; background: #fef3c7; color: #b45309; border: 1px solid #f59e0b; padding: 1px 5px; border-radius: 3px; margin-left: 6px;">🎁 Hàng tặng / FOC</span>`
+                    : '';
 
                 let rowHtml = `
                     <tr>
@@ -10473,8 +10850,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div style="display: flex; align-items: center; gap: 8px;">
                                 ${itemImage ? `<img src="${itemImage}" alt="thumb" style="width: 30px; height: 30px; object-fit: contain; border-radius: 4px; border: 1px solid #cbd5e1; background: #fff; flex-shrink: 0;" />` : ''}
                                 <div>
-                                    <strong>${itName}</strong>${vatBadgeHtml}
-                                    ${hasConfig ? `<div style="font-size: 10px; color: #0369a1; font-weight: bold; margin-top: 2px;">(Hệ thống trọn gói kèm ${validConfigs.length} hạng mục cấu hình)</div>` : ''}
+                                    <strong>${itName}</strong>${giftBadgeHtml}${vatBadgeHtml}
+                                    ${hasConfig ? `<div style="font-size: 10px; color: #4338ca; font-weight: bold; margin-top: 2px;">(Hệ thống trọn gói kèm ${validConfigs.length} hạng mục cấu hình)</div>` : ''}
                                 </div>
                             </div>
                         </td>
@@ -11792,15 +12169,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setEditingFactoryOrderId(req.id);
         setFactoryOrderNotes(String(req.orderNotes || req.order_notes || ""));
         setInvoiceNotes(String(req.invoiceNotes || req.invoice_notes || ""));
-        setVatRequested(Boolean(req.vat_requested || req.vatRequested));
-        setVatCompanyName(String(req.vat_company_name || req.vatCompanyName || ""));
-        setVatTaxCode(String(req.vat_tax_code || req.vatTaxCode || ""));
-        setVatAddress(String(req.vat_address || req.vatAddress || ""));
-        setVatEmail(String(req.vat_email || req.vatEmail || ""));
+        const isVatReq = Boolean(req.vat_requested || req.vatRequested);
+        setVatRequested(isVatReq);
+        setVatCompanyName(isVatReq ? String(req.vat_company_name || req.vatCompanyName || "") : "");
+        setVatTaxCode(isVatReq ? String(req.vat_tax_code || req.vatTaxCode || "") : "");
+        setVatAddress(isVatReq ? String(req.vat_address || req.vatAddress || "") : "");
+        setVatEmail(isVatReq ? String(req.vat_email || req.vatEmail || "") : "");
+        setShippingMethod(String(req.shipping_method || req.shippingMethod || "Xe lạnh chuyên dụng ABT (-20°C đến 8°C)"));
+        setTrackingCode(String(req.tracking_code || req.trackingCode || ""));
         setFactoryOrderCustomerName(req.customerName || "");
         setFactoryOrderContractId(req.contractId || "");
-        setFactoryOrderQuoteId(req.quoteId || "");
+        setFactoryOrderQuoteId(req.quoteId || req.quote_code || "");
         setFactoryOrderPlanId(req.linkedPlanId || "");
+        const matchedEditCust = customers.find(c => c.name === req.customerName || (req.customerCode && c.customer_code === req.customerCode)) ||
+                                salesNvkdCustomers.find(c => c.name === req.customerName);
+        const editContacts = Array.isArray(matchedEditCust?.contacts) ? matchedEditCust.contacts : [];
+        const editPrimary = editContacts.find((ct: any) => ct.is_primary) || editContacts[0];
+        setFactoryOrderContactPerson(String(req.contactPerson || req.contact_person || req.customerContact || editPrimary?.name || matchedEditCust?.contact_person || ""));
+        setFactoryOrderContactPhone(String(req.contactPhone || req.contact_phone || req.customerPhone || editPrimary?.phone || matchedEditCust?.phone || ""));
+        setFactoryOrderDeliveryAddress(String(req.deliveryAddress || req.delivery_address || req.customerAddress || matchedEditCust?.delivery_address || matchedEditCust?.address || ""));
         
         let formattedDate = "";
         if (req.requestedDeliveryDate) {
@@ -11821,7 +12208,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const mappedItems = (req.items || []).map((it: any) => {
             const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
-            const unitPrice = it.unitPrice !== undefined ? it.unitPrice : (it.price !== undefined ? it.price : (prod?.price || 0));
+            const isGift = Boolean(it.isGift || it.is_gift);
+            const unitPrice = isGift ? 0 : (it.unitPrice !== undefined ? it.unitPrice : (it.price !== undefined ? it.price : (prod?.price || 0)));
             const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
             const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : undefined;
             return {
@@ -11831,6 +12219,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 notes: it.notes || "",
                 quantity: it.quantity || 1,
                 unitPrice: unitPrice,
+                isGift,
                 ...(vatRate !== undefined ? { vatRate, vat: vatRate } : {}),
                 targetAllocations: it.targetAllocations || it.target_allocations || [],
                 needsInvoice: it.needsInvoice !== false
@@ -11846,6 +12235,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const handleCopyFactoryOrder = (req: any) => {
         handleEditFactoryOrder(req);
         setEditingFactoryOrderId(null);
+        resetFactoryOrderInvoiceAndExtraStates();
         setFactoryOrderQuoteId("");
         setFactoryOrderContractId("");
         setFactoryOrderPlanId("");
@@ -12052,9 +12442,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 ? linkedQuoteObj.items[itemIdx]
                 : linkedQuoteObj?.items?.find((qi: any) => (qi.productCode || qi.product_code || qi.code) === item.productCode);
             const isComm = commercialProducts.some(p => p.code === item.productCode);
+            const isGift = Boolean(item.isGift || item.is_gift);
             const qty = Number(item.quantity) || 1;
-            const unitPrice = Number(item.unitPrice !== undefined ? item.unitPrice : (prod?.price || 0));
-            const totalPrice = qty * unitPrice;
+            const unitPrice = isGift ? 0 : Number(item.unitPrice !== undefined ? item.unitPrice : (prod?.price || 0));
+            const totalPrice = isGift ? 0 : qty * unitPrice;
             const rawVat = item.vatRate ?? item.vat_rate ?? item.vat ?? quoteItem?.vatRate ?? quoteItem?.vat_rate ?? quoteItem?.vat ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
             const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : 8;
             const customSpec = item.specification !== undefined && String(item.specification).trim() !== ""
@@ -12062,7 +12453,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 : (quoteItem?.specification || prod?.specification || "");
             const customNotes = item.notes !== undefined && String(item.notes).trim() !== ""
                 ? String(item.notes).trim()
-                : (quoteItem?.notes || "");
+                : (quoteItem?.notes || (isGift ? "Hàng tặng theo chính sách" : ""));
             return {
                 productCode: item.productCode,
                 productName: item.productName || prod?.name || item.productCode,
@@ -12070,6 +12461,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 quantity: qty,
                 unitPrice: unitPrice,
                 totalPrice: totalPrice,
+                isGift,
                 vatRate,
                 vat: vatRate,
                 sourceType: isComm ? "COMMERCIAL" : "MANUFACTURED",
@@ -12096,8 +12488,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         );
         const realCustomerCode = matchedCust?.customer_code || matchedCust?.code || (isStockOrder ? "STOCK" : "KH-01");
         const realCustomerName = matchedCust?.name || factoryOrderCustomerName.trim() || (isStockOrder ? defaultStockCustomer : "Khách hàng");
+        const resolvedContactPerson = factoryOrderContactPerson.trim() || matchedCust?.contact_person || "";
+        const resolvedContactPhone = factoryOrderContactPhone.trim() || matchedCust?.phone || "";
+        const resolvedDeliveryAddress = factoryOrderDeliveryAddress.trim() || matchedCust?.delivery_address || matchedCust?.address || "";
 
-        // Kiểm tra ràng buộc tạo SO từ Báo giá
+        // Kiểm tra ràng buộc tạo SO từ Báo giá (chỉ chặn khi báo giá 0đ chưa được BGĐ duyệt; cho phép tạo nhiều SO định kỳ từ 1 báo giá đã duyệt)
         if (factoryOrderQuoteId) {
             const targetQuote = quotations.find(q => String(q.id).trim().toLowerCase() === String(factoryOrderQuoteId).trim().toLowerCase());
             if (targetQuote) {
@@ -12108,25 +12503,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     showToast(`Báo giá ${targetQuote.id} đang chờ Ban Giám Đốc phê duyệt, chưa thể tạo đơn hàng SO!`, "warning");
                     return;
                 }
-                const existingLinked = factoryOrders.filter(fo => 
-                    fo.id !== editingFactoryOrderId && (
-                        (fo.quoteId && String(fo.quoteId).trim().toLowerCase() === String(targetQuote.id).trim().toLowerCase()) ||
-                        (fo.quote_code && String(fo.quote_code).trim().toLowerCase() === String(targetQuote.id).trim().toLowerCase())
-                    ) && (
-                        !fo.customerName || !targetQuote.customerName ||
-                        fo.customerName.trim().toLowerCase() === targetQuote.customerName.trim().toLowerCase() ||
-                        fo.customerName.trim().toLowerCase().includes(targetQuote.customerName.trim().toLowerCase()) ||
-                        targetQuote.customerName.trim().toLowerCase().includes(fo.customerName.trim().toLowerCase())
-                    )
-                );
-                if (quoteNeedsAppr && existingLinked.length >= 1) {
-                    showToast(`Báo giá duyệt đặc biệt ${targetQuote.id} chỉ được phép tạo SO 1 lần duy nhất! Đã có đơn hàng ${existingLinked[0].id}.`, "warning");
-                    return;
-                }
             }
         }
 
-        // 1. Credit Control Evaluation (Requirement 10 & 11) - Miễn kiểm tra nợ nếu là SO Stock
+        // 1. Credit Control Evaluation - Tính công nợ theo các Phiếu giao hàng ĐÃ GIAO THÀNH CÔNG trừ tiền đã thanh toán
         let isCreditBlocked = false;
         let creditBlockReason = "";
 
@@ -12140,12 +12520,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     (o.customerName && factoryOrderCustomerName && o.customerName.trim().toLowerCase() === factoryOrderCustomerName.trim().toLowerCase());
                 return (matchesCode || matchesName) && isOrderOpenDebt(o);
             });
-            const currentCustDebt = unpaidForCust.reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
-            const projectedDebt = currentCustDebt + totalAmount;
+            const currentCustDebt = unpaidForCust.reduce((s, o) => s + getOrderDeliveredDebtAmount(o), 0);
 
-            if (projectedDebt > creditLimit) {
+            if (currentCustDebt > creditLimit) {
                 isCreditBlocked = true;
-                creditBlockReason = `Vượt hạn mức nợ: Nợ mới (${projectedDebt.toLocaleString('vi-VN')} đ) vượt trần ${creditLimit.toLocaleString('vi-VN')} đ`;
+                creditBlockReason = `Vượt hạn mức nợ đã giao: Công nợ phiếu đã giao (${currentCustDebt.toLocaleString('vi-VN')} đ) vượt trần ${creditLimit.toLocaleString('vi-VN')} đ`;
             }
 
             for (const uo of unpaidForCust) {
@@ -12179,6 +12558,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         ...order,
                         customerName: realCustomerName,
                         customerCode: realCustomerCode,
+                        contactPerson: resolvedContactPerson,
+                        contactPhone: resolvedContactPhone,
+                        deliveryAddress: resolvedDeliveryAddress,
+                        customerContact: resolvedContactPerson,
+                        customerPhone: resolvedContactPhone,
+                        customerAddress: resolvedDeliveryAddress,
                         requestedDeliveryDate: factoryOrderDeliveryDate || order.requestedDeliveryDate,
                         items: items,
                         totalAmount: totalAmount,
@@ -12189,6 +12574,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         status: editStatus,
                         contractId: isStockOrder ? undefined : (factoryOrderContractId || undefined),
                         quoteId: factoryOrderQuoteId || undefined,
+                        quote_code: factoryOrderQuoteId || undefined,
                         linkedPlanId: isStockOrder ? undefined : (factoryOrderPlanId || undefined),
                         isStockOrder: Boolean(isStockOrder),
                         orderCategory: isStockOrder ? "STOCK" : "COMMERCIAL",
@@ -12201,10 +12587,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         invoiceNotes: invoiceNotes.trim(),
                         invoice_notes: invoiceNotes.trim(),
                         vat_requested: vatRequested,
-                        vat_company_name: vatCompanyName,
-                        vat_tax_code: vatTaxCode,
-                        vat_address: vatAddress,
-                        vat_email: vatEmail
+                        vat_company_name: vatRequested ? vatCompanyName : "",
+                        vat_tax_code: vatRequested ? vatTaxCode : "",
+                        vat_address: vatRequested ? vatAddress : "",
+                        vat_email: vatRequested ? vatEmail : "",
+                        shipping_method: shippingMethod,
+                        tracking_code: trackingCode
                     };
                 }
                 return order;
@@ -12220,6 +12608,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     is_update: true,
                     customer_id: matchedCust?.id,
                     customer_name: realCustomerName,
+                    contact_person: resolvedContactPerson,
+                    contact_phone: resolvedContactPhone,
+                    delivery_address: resolvedDeliveryAddress,
+                    quote_code: factoryOrderQuoteId || null,
                     sales_rep_name: repName,
                     sales_rep_id: repId,
                     items: items,
@@ -12229,10 +12621,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     order_notes: factoryOrderNotes.trim(),
                     invoice_notes: invoiceNotes.trim(),
                     vat_requested: vatRequested,
-                    vat_company_name: vatCompanyName,
-                    vat_tax_code: vatTaxCode,
-                    vat_address: vatAddress,
-                    vat_email: vatEmail,
+                    vat_company_name: vatRequested ? vatCompanyName : "",
+                    vat_tax_code: vatRequested ? vatTaxCode : "",
+                    vat_address: vatRequested ? vatAddress : "",
+                    vat_email: vatRequested ? vatEmail : "",
+                    shipping_method: shippingMethod,
+                    tracking_code: trackingCode,
                     applied_price_policy: isStockOrder ? "STOCK" : (matchedCust?.customer_type === "DEALER" ? "DEALER" : "STANDARD"),
                     is_stock_order: isStockOrder
                 })
@@ -12264,7 +12658,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             });
 
             setIsFactoryOrderModalOpen(false);
-            setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
+            setEditingFactoryOrderId(null);
+            resetFactoryOrderInvoiceAndExtraStates();
             setIsStockOrder(false);
             setExpandedAllocIndex(null);
             setFactoryOrderCustomerName("");
@@ -12320,9 +12715,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             order_code: generatedCode,
             linkedSalesOrderId: generatedCode,
             date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+            order_date: todayVN(),
             customerId: matchedCust?.id || "",
             customerName: realCustomerName,
             customerCode: realCustomerCode,
+            contactPerson: resolvedContactPerson,
+            contactPhone: resolvedContactPhone,
+            deliveryAddress: resolvedDeliveryAddress,
+            customerContact: resolvedContactPerson,
+            customerPhone: resolvedContactPhone,
+            customerAddress: resolvedDeliveryAddress,
             requestedDeliveryDate: factoryOrderDeliveryDate || new Date(Date.now() + 7*24*60*60*1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             estimatedDeliveryDate: undefined,
             items: items,
@@ -12342,6 +12744,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             salesRepName: repName,
             contractId: isStockOrder ? undefined : (factoryOrderContractId || undefined),
             quoteId: factoryOrderQuoteId || undefined,
+            quote_code: factoryOrderQuoteId || undefined,
             linkedPlanId: isStockOrder ? undefined : (factoryOrderPlanId || undefined),
             isStockOrder: Boolean(isStockOrder),
             orderCategory: isStockOrder ? "STOCK" : "COMMERCIAL",
@@ -12354,10 +12757,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             invoiceNotes: invoiceNotes.trim(),
             invoice_notes: invoiceNotes.trim(),
             vat_requested: vatRequested,
-            vat_company_name: vatCompanyName,
-            vat_tax_code: vatTaxCode,
-            vat_address: vatAddress,
-            vat_email: vatEmail,
+            vat_company_name: vatRequested ? vatCompanyName : "",
+            vat_tax_code: vatRequested ? vatTaxCode : "",
+            vat_address: vatRequested ? vatAddress : "",
+            vat_email: vatRequested ? vatEmail : "",
             shipping_method: shippingMethod,
             tracking_code: trackingCode
         };
@@ -12372,6 +12775,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 customer_id: matchedCust?.id,
                 customer_code: realCustomerCode || matchedCust?.customer_code,
                 customer_name: realCustomerName,
+                contact_person: resolvedContactPerson,
+                contact_phone: resolvedContactPhone,
+                delivery_address: resolvedDeliveryAddress,
+                quote_code: factoryOrderQuoteId || null,
                 sales_rep_name: repName,
                 sales_rep_id: repId,
                 order_date: todayVN(),
@@ -12385,10 +12792,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 invoice_notes: invoiceNotes.trim(),
                 applied_price_policy: isStockOrder ? "STOCK" : (matchedCust?.customer_type === "DEALER" ? "DEALER" : "STANDARD"),
                 vat_requested: vatRequested,
-                vat_company_name: vatCompanyName,
-                vat_tax_code: vatTaxCode,
-                vat_address: vatAddress,
-                vat_email: vatEmail,
+                vat_company_name: vatRequested ? vatCompanyName : "",
+                vat_tax_code: vatRequested ? vatTaxCode : "",
+                vat_address: vatRequested ? vatAddress : "",
+                vat_email: vatRequested ? vatEmail : "",
                 shipping_method: shippingMethod,
                 tracking_code: trackingCode,
                 is_stock_order: isStockOrder
@@ -12448,7 +12855,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast(`Đã tạo yêu cầu đặt hàng ${newRequest.id} thành công! Đơn tự động được duyệt.`, "success");
         }
         setIsFactoryOrderModalOpen(false);
-        setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
+        setEditingFactoryOrderId(null);
+        resetFactoryOrderInvoiceAndExtraStates();
         setIsStockOrder(false);
         setExpandedAllocIndex(null);
         setFactoryOrderCustomerName("");
@@ -13915,10 +14323,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const fo = resolveFactoryOrder(ord);
         if (ord && ord.order_id !== undefined) {
             const cName = ord.customerName || ord.customer_name || fo?.customerName || "";
-            return { ...ord, customerName: cName, customer_name: ord.customer_name || cName, raw_order: fo || ord.raw_order };
+            const dAddr = ord.deliveryAddress || ord.delivery_address || fo?.deliveryAddress || fo?.delivery_address || ord.customerAddress || fo?.customerAddress || "";
+            const cContact = ord.contactPerson || ord.contact_person || fo?.contactPerson || fo?.contact_person || ord.customerContact || fo?.customerContact || "";
+            const cPhone = ord.contactPhone || ord.contact_phone || fo?.contactPhone || fo?.contact_phone || ord.customerPhone || fo?.customerPhone || "";
+            return {
+                ...ord,
+                customerName: cName,
+                customer_name: ord.customer_name || cName,
+                customerAddress: dAddr,
+                deliveryAddress: dAddr,
+                customerContact: cContact,
+                customerPhone: cPhone,
+                raw_order: fo || ord.raw_order
+            };
         }
         const src = fo || ord || {};
         const cName = src.customerName || src.customer_name || "";
+        const dAddr = src.deliveryAddress || src.delivery_address || src.customerAddress || "";
+        const cContact = src.contactPerson || src.contact_person || src.customerContact || "";
+        const cPhone = src.contactPhone || src.contact_phone || src.customerPhone || "";
         return {
             ...src,
             order_id: src.id,
@@ -13927,6 +14350,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             customerName: cName,
             customer_name: cName,
             customerId: src.customerId || src.customer_id || "",
+            customerAddress: dAddr,
+            deliveryAddress: dAddr,
+            customerContact: cContact,
+            customerPhone: cPhone,
             items: src.items || [],
             total_amount: src.totalAmount || src.total_amount || 0,
             raw_order: src
@@ -13987,7 +14414,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         sourceItems.forEach((it: any) => {
             const code = getItemCode(it);
             if (!code) return;
-            const specKey = `${code}__${String(it.specification || "").trim().toLowerCase()}`;
+            const isGiftItem = Boolean(it.isGift || it.is_gift || Number(it.unitPrice ?? it.price ?? 0) === 0);
+            const specKey = `${code}__${String(it.specification || "").trim().toLowerCase()}__${isGiftItem ? "gift" : "paid"}`;
             if (seen.has(specKey)) return;
             seen.add(specKey);
             const prod = allSalesProducts.find(p => p.code === code);
@@ -14118,8 +14546,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (targetContacts.length === 0) {
             fetchCustomers();
         }
-        const initialName = editSlip?.customerContact || editSlip?.receiverName || "";
-        const initialPhone = editSlip?.customerPhone || editSlip?.receiverPhone || "";
+        const initialName = editSlip?.customerContact || editSlip?.receiverName || target.contactPerson || target.contact_person || target.customerContact || "";
+        const initialPhone = editSlip?.customerPhone || editSlip?.receiverPhone || target.contactPhone || target.contact_phone || target.customerPhone || "";
         if (initialName) {
             setDeliveryReceiverName(initialName);
             setDeliveryReceiverPhone(initialPhone);
@@ -14359,11 +14787,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 orderId: String(deliveryTargetOrder.order_id),
                 orderCode: deliveryTargetOrder.order_code,
                 customerName: pxCustName,
-                customerAddress: deliveryTargetOrder.customerAddress || custRec?.address || "",
-                customerPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.customerPhone || custRec?.phone || "",
-                customerContact: deliveryReceiverName.trim() || deliveryTargetOrder.customerContact || custRec?.contact_person || custRec?.contact_name || "",
-                receiverName: deliveryReceiverName.trim() || deliveryTargetOrder.customerContact || custRec?.contact_person || custRec?.contact_name || "",
-                receiverPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.customerPhone || custRec?.phone || "",
+                customerAddress: deliveryTargetOrder.deliveryAddress || deliveryTargetOrder.delivery_address || custRec?.delivery_address || deliveryTargetOrder.customerAddress || custRec?.address || "",
+                customerPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.contactPhone || deliveryTargetOrder.customerPhone || custRec?.phone || "",
+                customerContact: deliveryReceiverName.trim() || deliveryTargetOrder.contactPerson || deliveryTargetOrder.customerContact || custRec?.contact_person || custRec?.contact_name || "",
+                receiverName: deliveryReceiverName.trim() || deliveryTargetOrder.contactPerson || deliveryTargetOrder.customerContact || custRec?.contact_person || custRec?.contact_name || "",
+                receiverPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.contactPhone || deliveryTargetOrder.customerPhone || custRec?.phone || "",
                 deliveryDate: deliveryDate ? new Date(deliveryDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : now.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
                 timeliness: deliveryTimeliness,
                 notes: deliveryNotes,
@@ -15313,11 +15741,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             orderId: String(deliveryTargetOrder.order_id),
             orderCode: deliveryTargetOrder.order_code,
             customerName: deliveryTargetOrder.customerName || selectedCustomer?.name || "Khách hàng",
-            customerAddress: deliveryTargetOrder.customerAddress || selectedCustomer?.address || "",
-            customerPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.customerPhone || selectedCustomer?.phone || "",
-            customerContact: deliveryReceiverName.trim() || deliveryTargetOrder.customerContact || selectedCustomer?.contact_person || "",
-            receiverName: deliveryReceiverName.trim() || deliveryTargetOrder.customerContact || selectedCustomer?.contact_person || "",
-            receiverPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.customerPhone || selectedCustomer?.phone || "",
+            customerAddress: deliveryTargetOrder.deliveryAddress || deliveryTargetOrder.delivery_address || (selectedCustomer as any)?.delivery_address || deliveryTargetOrder.customerAddress || selectedCustomer?.address || "",
+            customerPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.contactPhone || deliveryTargetOrder.customerPhone || selectedCustomer?.phone || "",
+            customerContact: deliveryReceiverName.trim() || deliveryTargetOrder.contactPerson || deliveryTargetOrder.customerContact || selectedCustomer?.contact_person || "",
+            receiverName: deliveryReceiverName.trim() || deliveryTargetOrder.contactPerson || deliveryTargetOrder.customerContact || selectedCustomer?.contact_person || "",
+            receiverPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.contactPhone || deliveryTargetOrder.customerPhone || selectedCustomer?.phone || "",
             deliveryDate: deliveryDate ? new Date(deliveryDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : now.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             timeliness: deliveryTimeliness,
             notes: deliveryNotes,
@@ -15915,33 +16343,55 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             const repId = getCustomerAssignedRep(c);
 
+            // Kiểm tra xem NVKD có từng lên đơn hàng SO cho khách hàng này hay không
+            const hasOrderByRep = (targetRepId?: string, targetRepName?: string) => {
+                if (!targetRepId && !targetRepName) return false;
+                return factoryOrders.some(fo => {
+                    const custMatch = (fo.customerId && String(fo.customerId) === String(c.id)) ||
+                        (fo.customerCode && c.customer_code && String(fo.customerCode).trim().toLowerCase() === String(c.customer_code).trim().toLowerCase()) ||
+                        (fo.customerName && c.name && String(fo.customerName).trim().toLowerCase() === String(c.name).trim().toLowerCase());
+                    if (!custMatch) return false;
+                    const matchId = targetRepId && (fo.salesRepId === targetRepId || fo.sales_rep_id === targetRepId);
+                    const matchName = targetRepName && fo.salesRepName && String(fo.salesRepName).toLowerCase().includes(targetRepName.toLowerCase());
+                    return Boolean(matchId || matchName);
+                });
+            };
+
             // Access control / Rep Filter:
             if (!canManageAllOrders) {
-                // Nhân viên xem khách hàng của mình, hoặc khách hàng chung/chưa phân công
+                // Nhân viên xem khách hàng của mình, hoặc khách hàng mình từng lên SO, hoặc khách hàng chung/chưa phân công
                 const isMyCustomer = (repId && (repId === userRepId || repId === loggedInStaff?.employee_code)) ||
                     (c.sales_rep_name && loggedInStaff?.full_name && c.sales_rep_name.trim().toLowerCase() === loggedInStaff.full_name.trim().toLowerCase()) ||
+                    hasOrderByRep(userRepId, loggedInStaff?.full_name) ||
                     (!repId && !c.sales_rep_name);
                 if (!isMyCustomer) {
                     return false;
                 }
-            } else {
-                // Quản lý / Admin / Kho Vận / Phối hợp liên phòng ban có thể lọc theo NVKD hoặc xem toàn bộ
-                if (selectedWholesaleRepFilter === "my" && !isWarehouseStaff && !isCrossDepartmentViewer) {
-                    const isMyCustomer = (repId && (repId === userRepId || repId === loggedInStaff?.employee_code)) ||
-                        (c.sales_rep_name && loggedInStaff?.full_name && c.sales_rep_name.trim().toLowerCase() === loggedInStaff.full_name.trim().toLowerCase());
-                    if (!isMyCustomer) {
-                        return false;
-                    }
-                } else if (selectedWholesaleRepFilter !== "all" && selectedWholesaleRepFilter !== "my") {
-                    const matchedRepObj = salesPersonnel.find(p => p.employee_id === selectedWholesaleRepFilter || p.employee_code === selectedWholesaleRepFilter);
-                    const repTargetName = matchedRepObj?.full_name?.toLowerCase();
-                    const matchesThisRep = repId === selectedWholesaleRepFilter || 
-                        (repTargetName && c.sales_rep_name && c.sales_rep_name.toLowerCase().includes(repTargetName)) ||
-                        (c.sales_rep_name && c.sales_rep_name.toLowerCase().includes(selectedWholesaleRepFilter.toLowerCase()));
-                    if (!matchesThisRep) {
-                        return false;
-                    }
+            }
+
+            if (selectedWholesaleRepFilter === "my" && !isWarehouseStaff && !isCrossDepartmentViewer) {
+                const isMyCustomer = (repId && (repId === userRepId || repId === loggedInStaff?.employee_code)) ||
+                    (c.sales_rep_name && loggedInStaff?.full_name && c.sales_rep_name.trim().toLowerCase() === loggedInStaff.full_name.trim().toLowerCase()) ||
+                    hasOrderByRep(userRepId, loggedInStaff?.full_name);
+                if (!isMyCustomer) {
+                    return false;
                 }
+            } else if (selectedWholesaleRepFilter !== "all" && selectedWholesaleRepFilter !== "my") {
+                const matchedRepObj = salesPersonnel.find(p => p.employee_id === selectedWholesaleRepFilter || p.employee_code === selectedWholesaleRepFilter);
+                const repTargetName = matchedRepObj?.full_name?.toLowerCase();
+                const matchesThisRep = repId === selectedWholesaleRepFilter || 
+                    (repTargetName && c.sales_rep_name && c.sales_rep_name.toLowerCase().includes(repTargetName)) ||
+                    (c.sales_rep_name && c.sales_rep_name.toLowerCase().includes(selectedWholesaleRepFilter.toLowerCase())) ||
+                    hasOrderByRep(selectedWholesaleRepFilter, matchedRepObj?.full_name);
+                if (!matchesThisRep) {
+                    return false;
+                }
+            }
+
+            // Customer Type filter (Nhóm khách hàng: Bệnh viện / Đại lý / VIP)
+            if (selectedCustomerTypeFilter !== "all") {
+                const cType = String(c.customer_type || "END_USER").toUpperCase();
+                if (cType !== selectedCustomerTypeFilter) return false;
             }
 
             // Region filter (Bắc, Trung, Nam)
@@ -16049,12 +16499,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             return true;
         });
-    }, [customers, searchCustomerQuery, canManageAllOrders, isWarehouseStaff, isCrossDepartmentViewer, loggedInStaff?.employee_id, selectedWholesaleRepFilter, salesPersonnel, customerOrderStatusFilter, factoryOrders, deliverySlips, customerHistory, selectedCustomerRegionFilter, selectedCustomerProvinceFilter, selectedCustomerIndustryFilter, industryGroups]);
+    }, [customers, searchCustomerQuery, canManageAllOrders, isWarehouseStaff, isCrossDepartmentViewer, loggedInStaff?.employee_id, selectedWholesaleRepFilter, selectedCustomerTypeFilter, salesPersonnel, customerOrderStatusFilter, factoryOrders, deliverySlips, customerHistory, selectedCustomerRegionFilter, selectedCustomerProvinceFilter, selectedCustomerIndustryFilter, industryGroups]);
 
     // Customer Pagination
     useEffect(() => {
         setCustomerPage(1);
-    }, [searchCustomerQuery, selectedCustomerRegionFilter, selectedCustomerProvinceFilter, selectedCustomerIndustryFilter, customerOrderStatusFilter, selectedWholesaleRepFilter]);
+    }, [searchCustomerQuery, selectedCustomerRegionFilter, selectedCustomerProvinceFilter, selectedCustomerIndustryFilter, selectedCustomerTypeFilter, customerOrderStatusFilter, selectedWholesaleRepFilter]);
 
     const customerTotalPages = useMemo(() => {
         if (customerPageSize === "all") return 1;
@@ -16231,142 +16681,59 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     )}
                 </div>
 
-                {/* Tier 2: Full-width Standardized Sub-Tab Navigation Bar */}
+                {/* Tier 2: Full-width Standardized Sub-Tab Navigation Bar (Hỗ trợ Ctrl+Click / Chuột phải -> Mở trong Tab mới) */}
                 <div className="pt-2.5 border-t border-slate-800/80">
                     <div className="flex flex-wrap items-center bg-slate-950/70 p-1 rounded-xl border border-slate-800/80 gap-1">
-                        <button
-                            onClick={() => setActiveTab("customers")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer",
-                                activeTab === "customers" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <Users className="w-3.5 h-3.5 shrink-0" />
-                            <span>Khách hàng</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("deals_pipeline")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all relative whitespace-nowrap cursor-pointer",
-                                activeTab === "deals_pipeline" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <TrendingUp className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                            <span>Phễu cơ hội</span>
-                            <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-amber-500/20 text-amber-300 font-extrabold border border-amber-500/30">Mới</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("tenders")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all relative whitespace-nowrap cursor-pointer",
-                                activeTab === "tenders" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <Building2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-                            <span>Đấu thầu</span>
-                            <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-blue-500/20 text-blue-300 font-extrabold border border-blue-500/30">Mới</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("quotations")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer",
-                                activeTab === "quotations" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <FileText className="w-3.5 h-3.5 shrink-0" />
-                            <span>Báo giá</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("contracts")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer",
-                                activeTab === "contracts" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <FileCheck className="w-3.5 h-3.5 shrink-0" />
-                            <span>Hợp đồng</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("orders")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all relative whitespace-nowrap cursor-pointer",
-                                activeTab === "orders" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <Briefcase className="w-3.5 h-3.5 shrink-0" />
-                            <span>Đơn hàng</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("delivery_slips")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all relative whitespace-nowrap cursor-pointer",
-                                activeTab === "delivery_slips" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <Truck className="w-3.5 h-3.5 shrink-0" />
-                            <span>Phiếu giao hàng</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("targets")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer",
-                                activeTab === "targets" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <TrendingUp className="w-3.5 h-3.5 shrink-0" />
-                            <span>Chỉ tiêu KPI</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("products")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer",
-                                activeTab === "products" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <Package className="w-3.5 h-3.5 shrink-0" />
-                            <span>Danh mục sản phẩm</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("invoices")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all relative whitespace-nowrap cursor-pointer",
-                                activeTab === "invoices" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <Receipt className="w-3.5 h-3.5 shrink-0" />
-                            <span>Quản lý Hóa đơn</span>
-                            {(() => {
-                                const pendingCount = allDeliveredOrders.filter(o => o.invoiceStatus === "PENDING_INVOICE" || (!o.invoiceNo && o.invoiceStatus !== "NO_INVOICE")).length;
-                                if (pendingCount === 0) return null;
-                                return (
-                                    <span className="ml-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-mono font-bold text-[10px] rounded-full">
-                                        {pendingCount}
-                                    </span>
-                                );
-                            })()}
-                        </button>
-                        {canViewCustomerDebt && (
-                            <button
-                                onClick={() => setActiveTab("debts")}
-                                className={cn(
-                                    "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer",
-                                    activeTab === "debts" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                                )}
-                            >
-                                <Wallet className="w-3.5 h-3.5 shrink-0" />
-                                <span>Công nợ KH</span>
-                            </button>
-                        )}
-                        <button
-                            onClick={() => setActiveTab("lookup")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all whitespace-nowrap cursor-pointer",
-                                activeTab === "lookup" ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
-                            )}
-                        >
-                            <Search className="w-3.5 h-3.5 shrink-0" />
-                            <span>Tra cứu dòng hàng</span>
-                        </button>
+                        {([
+                            { id: "customers", label: "Khách hàng", icon: Users },
+                            { id: "deals_pipeline", label: "Phễu cơ hội", icon: TrendingUp, iconClass: "text-amber-400", badge: "Mới", badgeClass: "bg-amber-500/20 text-amber-300 border-amber-500/30" },
+                            { id: "tenders", label: "Đấu thầu", icon: Building2, iconClass: "text-blue-400", badge: "Mới", badgeClass: "bg-blue-500/20 text-blue-300 border-blue-500/30" },
+                            { id: "quotations", label: "Báo giá", icon: FileText },
+                            { id: "contracts", label: "Hợp đồng", icon: FileCheck },
+                            { id: "orders", label: "Đơn hàng", icon: Briefcase },
+                            { id: "delivery_slips", label: "Phiếu giao hàng", icon: Truck },
+                            { id: "targets", label: "Chỉ tiêu KPI", icon: TrendingUp },
+                            { id: "products", label: "Danh mục sản phẩm", icon: Package },
+                            { id: "invoices", label: "Quản lý Hóa đơn", icon: Receipt, showPendingInvoices: true },
+                            ...(canViewCustomerDebt ? [{ id: "debts", label: "Công nợ KH", icon: Wallet }] : []),
+                            { id: "lookup", label: "Tra cứu dòng hàng", icon: Search }
+                        ] as any[]).map((sub) => {
+                            const SubIcon = sub.icon;
+                            return (
+                                <a
+                                    key={sub.id}
+                                    href={`/?tab=sales&sub=${sub.id}`}
+                                    onClick={(e) => {
+                                        if (!e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+                                            e.preventDefault();
+                                            setActiveTab(sub.id as any);
+                                        }
+                                    }}
+                                    title={`${sub.label} (Ctrl+Click hoặc Chuột phải để mở trong Tab trình duyệt mới)`}
+                                    className={cn(
+                                        "flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg transition-all relative whitespace-nowrap cursor-pointer no-underline",
+                                        activeTab === sub.id ? "bg-indigo-600 text-white shadow-sm" : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/60"
+                                    )}
+                                >
+                                    <SubIcon className={cn("w-3.5 h-3.5 shrink-0", sub.iconClass)} />
+                                    <span>{sub.label}</span>
+                                    {sub.badge && (
+                                        <span className={cn("px-1.5 py-0.2 rounded-full text-[9px] font-extrabold border", sub.badgeClass)}>
+                                            {sub.badge}
+                                        </span>
+                                    )}
+                                    {sub.showPendingInvoices && (() => {
+                                        const pendingCount = allDeliveredOrders.filter(o => o.invoiceStatus === "PENDING_INVOICE" || (!o.invoiceNo && o.invoiceStatus !== "NO_INVOICE")).length;
+                                        if (pendingCount === 0) return null;
+                                        return (
+                                            <span className="ml-1 px-1.5 py-0.2 bg-amber-500 text-slate-950 font-mono font-bold text-[10px] rounded-full">
+                                                {pendingCount}
+                                            </span>
+                                        );
+                                    })()}
+                                </a>
+                            );
+                        })}
                     </div>
                 </div>
             </div>
@@ -17856,53 +18223,82 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                         </div>
 
-                        {/* Filter by Industry Group (Phân loại theo Nhóm Ngành Hàng) */}
-                        <div className="mb-3 bg-slate-950/60 p-2 rounded-lg border border-slate-850">
-                            <div className="flex items-center justify-between mb-1">
-                                <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
-                                    <Tag className="w-3 h-3 text-indigo-400" />
-                                    <span>Phân nhóm ngành hàng:</span>
-                                </label>
-                                <div className="flex items-center gap-2">
-                                    {selectedCustomerIndustryFilter !== "all" && (
-                                        <button 
-                                            type="button" 
-                                            onClick={() => setSelectedCustomerIndustryFilter("all")}
+                        {/* Filter by Customer Type (Nhóm khách hàng) & Industry Group (Phân loại theo Nhóm Ngành Hàng) */}
+                        <div className="mb-3 bg-slate-950/60 p-2 rounded-lg border border-slate-850 space-y-2">
+                            <div>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                        <Building2 className="w-3 h-3 text-emerald-400" />
+                                        <span>Nhóm khách hàng (Phân loại):</span>
+                                    </label>
+                                    {selectedCustomerTypeFilter !== "all" && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedCustomerTypeFilter("all")}
                                             className="text-[8px] text-orange-400 hover:underline cursor-pointer"
                                         >
                                             Đặt lại
                                         </button>
                                     )}
-                                    <button
-                                        type="button"
-                                        onClick={() => openAddIndustryModal()}
-                                        className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold underline cursor-pointer"
-                                        title="Tạo mới hoặc quản lý danh sách phân nhóm ngành hàng"
-                                    >
-                                        ⚙️ Quản lý
-                                    </button>
                                 </div>
+                                <select
+                                    value={selectedCustomerTypeFilter}
+                                    onChange={(e) => setSelectedCustomerTypeFilter(e.target.value)}
+                                    className="w-full bg-slate-900 border border-slate-800 rounded-md px-2 py-1 text-xs text-white outline-none font-semibold focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                >
+                                    <option value="all">-- Tất cả nhóm khách hàng --</option>
+                                    <option value="END_USER">🏥 Khách lẻ / Bệnh viện (End-User)</option>
+                                    <option value="DEALER">🏢 Đại lý / Công ty thương mại (Dealer)</option>
+                                    <option value="VIP">⭐ Khách hàng VIP / Chiến lược</option>
+                                </select>
                             </div>
-                            <select
-                                value={selectedCustomerIndustryFilter}
-                                onChange={(e) => setSelectedCustomerIndustryFilter(e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-800 rounded-md px-2 py-1 text-xs text-white outline-none font-semibold focus:ring-1 focus:ring-indigo-500 cursor-pointer"
-                            >
-                                <option value="all">-- Tất cả nhóm ngành ({customers.length} khách) --</option>
-                                {industryGroups.map(g => {
-                                    const count = customers.filter(c => c.industry === g.name || (!c.industry && c.classification === g.name)).length;
-                                    return (
-                                        <option key={g.id} value={g.name}>
-                                            {g.badge} {g.name} ({count})
+                            <div>
+                                <div className="flex items-center justify-between mb-1">
+                                    <label className="text-[9px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                        <Tag className="w-3 h-3 text-indigo-400" />
+                                        <span>Phân nhóm ngành hàng:</span>
+                                    </label>
+                                    <div className="flex items-center gap-2">
+                                        {selectedCustomerIndustryFilter !== "all" && (
+                                            <button 
+                                                type="button" 
+                                                onClick={() => setSelectedCustomerIndustryFilter("all")}
+                                                className="text-[8px] text-orange-400 hover:underline cursor-pointer"
+                                            >
+                                                Đặt lại
+                                            </button>
+                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => openAddIndustryModal()}
+                                            className="text-[9px] text-indigo-400 hover:text-indigo-300 font-bold underline cursor-pointer"
+                                            title="Tạo mới hoặc quản lý danh sách phân nhóm ngành hàng"
+                                        >
+                                            ⚙️ Quản lý
+                                        </button>
+                                    </div>
+                                </div>
+                                <select
+                                    value={selectedCustomerIndustryFilter}
+                                    onChange={(e) => setSelectedCustomerIndustryFilter(e.target.value)}
+                                    className="w-full bg-slate-900 border border-slate-800 rounded-md px-2 py-1 text-xs text-white outline-none font-semibold focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                                >
+                                    <option value="all">-- Tất cả nhóm ngành ({customers.length} khách) --</option>
+                                    {industryGroups.map(g => {
+                                        const count = customers.filter(c => c.industry === g.name || (!c.industry && c.classification === g.name)).length;
+                                        return (
+                                            <option key={g.id} value={g.name}>
+                                                {g.badge} {g.name} ({count})
+                                            </option>
+                                        );
+                                    })}
+                                    {customers.filter(c => (!c.industry && !c.classification) || (!industryGroups.some(g => g.name === c.industry) && !industryGroups.some(g => g.name === c.classification))).length > 0 && (
+                                        <option value="__unassigned__">
+                                            ❓ Chưa phân nhóm ({customers.filter(c => (!c.industry && !c.classification) || (!industryGroups.some(g => g.name === c.industry) && !industryGroups.some(g => g.name === c.classification))).length})
                                         </option>
-                                    );
-                                })}
-                                {customers.filter(c => (!c.industry && !c.classification) || (!industryGroups.some(g => g.name === c.industry) && !industryGroups.some(g => g.name === c.classification))).length > 0 && (
-                                    <option value="__unassigned__">
-                                        ❓ Chưa phân nhóm ({customers.filter(c => (!c.industry && !c.classification) || (!industryGroups.some(g => g.name === c.industry) && !industryGroups.some(g => g.name === c.classification))).length})
-                                    </option>
-                                )}
-                            </select>
+                                    )}
+                                </select>
+                            </div>
                         </div>
 
                         {/* Filter by Region & Province (Phân loại theo Khu vực Bắc, Trung, Nam & Tỉnh thành) */}
@@ -17957,29 +18353,38 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                         </div>
 
-                        {/* Filter by Sales Rep / Scope for Manager/Admin/Warehouse */}
-                        {canManageAllOrders && (
-                            <div className="mb-3 bg-slate-950/60 p-2 rounded-lg border border-slate-850">
-                                <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">
-                                    Lọc theo NVKD phụ trách:
+                        {/* Filter by Sales Rep / NVKD lên SO */}
+                        <div className="mb-3 bg-slate-950/60 p-2 rounded-lg border border-slate-850">
+                            <div className="flex items-center justify-between mb-1">
+                                <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                                    Lọc theo NVKD lên SO / Phụ trách:
                                 </label>
-                                <select
-                                    value={selectedWholesaleRepFilter}
-                                    onChange={(e) => setSelectedWholesaleRepFilter(e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-800 rounded-md px-2 py-1.5 text-xs text-white outline-none font-semibold focus:ring-1 focus:ring-indigo-500"
-                                >
-                                    <option value="all">-- Tất cả khách hàng ({customers.length} đối tác) --</option>
-                                    {!isWarehouseStaff && !isCrossDepartmentViewer && (
-                                        <option value="my">👤 Khách hàng của tôi ({loggedInStaff?.full_name || "Cán bộ kinh doanh"})</option>
-                                    )}
-                                    {salesPersonnel.map(p => (
-                                        <option key={p.employee_id} value={p.employee_id}>
-                                            👤 {p.full_name} ({p.employee_id})
-                                        </option>
-                                    ))}
-                                </select>
+                                {selectedWholesaleRepFilter !== "all" && (
+                                    <button
+                                        type="button"
+                                        onClick={() => setSelectedWholesaleRepFilter("all")}
+                                        className="text-[8px] text-orange-400 hover:underline cursor-pointer"
+                                    >
+                                        Đặt lại
+                                    </button>
+                                )}
                             </div>
-                        )}
+                            <select
+                                value={selectedWholesaleRepFilter}
+                                onChange={(e) => setSelectedWholesaleRepFilter(e.target.value)}
+                                className="w-full bg-slate-900 border border-slate-800 rounded-md px-2 py-1.5 text-xs text-white outline-none font-semibold focus:ring-1 focus:ring-indigo-500 cursor-pointer"
+                            >
+                                <option value="all">-- Tất cả NVKD ({customers.length} đối tác) --</option>
+                                {!isWarehouseStaff && !isCrossDepartmentViewer && (
+                                    <option value="my">👤 Khách hàng của tôi ({loggedInStaff?.full_name || "Cán bộ kinh doanh"})</option>
+                                )}
+                                {salesPersonnel.map(p => (
+                                    <option key={p.employee_id} value={p.employee_id}>
+                                        👤 {p.full_name} ({p.employee_id})
+                                    </option>
+                                ))}
+                            </select>
+                        </div>
 
                         {/* Quick Filter Pills for Order Status */}
                         <div className="flex items-center gap-1.5 mb-2.5 overflow-x-auto pb-1">
@@ -18485,8 +18890,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                             <div className="flex items-start gap-2 text-xs">
                                                                 <MapPin className="w-4 h-4 text-slate-500 mt-0.5" />
-                                                                <span className="text-slate-400 w-20">Địa chỉ giao:</span>
+                                                                <span className="text-slate-400 w-20">Đ/c kinh doanh:</span>
                                                                 <span className="text-slate-200 font-medium leading-relaxed flex-1 text-white">{selectedCustomer.address || "-"}</span>
+                                                            </div>
+
+                                                            <div className="flex items-start gap-2 text-xs">
+                                                                <Truck className="w-4 h-4 text-emerald-400 mt-0.5 shrink-0" />
+                                                                <span className="text-slate-400 w-20">Đ/c giao nhận:</span>
+                                                                <span className="text-emerald-300 font-bold leading-relaxed flex-1">
+                                                                    {(selectedCustomer as any).delivery_address || selectedCustomer.address || "-"}
+                                                                    {(selectedCustomer as any).delivery_address && (selectedCustomer as any).delivery_address !== selectedCustomer.address && (
+                                                                        <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-mono">
+                                                                            Ưu tiên trên Phiếu giao
+                                                                        </span>
+                                                                    )}
+                                                                </span>
                                                             </div>
 
                                                             <div className="flex items-center gap-2 text-xs">
@@ -19616,23 +20034,32 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     })()}
 
                     {/* FILTER BAR: QUOTATIONS (FULL WIDTH) */}
-                    <div className="bg-slate-900/30 p-4 rounded-xl border border-slate-850 space-y-2">
-                        <div className="flex items-center justify-between">
+                    <div className="bg-slate-900/30 p-4 rounded-xl border border-slate-850 space-y-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 font-mono flex items-center gap-1.5">
                                 <FileText className="w-3.5 h-3.5" />
-                                Bộ lọc Báo Giá
+                                Bộ lọc Báo Giá (Mã, NVKD, Khách hàng, Thời gian)
                             </span>
-                            {(filterQuoteCode || filterQuoteRep !== "all" || filterQuoteCustomer !== "all") && (
+                            {(filterQuoteCode || filterQuoteRep !== "all" || filterQuoteCustomer !== "all" || filterQuoteDateMode !== "all") && (
                                 <button
                                     type="button"
-                                    onClick={() => { setFilterQuoteCode(""); setFilterQuoteRep("all"); setFilterQuoteCustomer("all"); }}
+                                    onClick={() => {
+                                        setFilterQuoteCode("");
+                                        setFilterQuoteRep("all");
+                                        setFilterQuoteCustomer("all");
+                                        setFilterQuoteDateMode("all");
+                                        setFilterQuoteSingleDate("");
+                                        setFilterQuoteMonth("");
+                                        setFilterQuoteDateFrom("");
+                                        setFilterQuoteDateTo("");
+                                    }}
                                     className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
                                 >
                                     ✕ Xóa lọc báo giá
                                 </button>
                             )}
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                             <div className="relative">
                                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5 pointer-events-none" />
                                 <input
@@ -19671,7 +20098,60 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     ))}
                                 </select>
                             </div>
+                            <div>
+                                <select
+                                    value={filterQuoteDateMode}
+                                    onChange={(e) => setFilterQuoteDateMode(e.target.value as any)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 font-bold outline-none focus:border-indigo-500 cursor-pointer"
+                                >
+                                    <option value="all">📅 Thời gian: Tất cả</option>
+                                    <option value="day">📅 Lọc theo ngày cụ thể</option>
+                                    <option value="month">🗓️ Lọc theo tháng</option>
+                                    <option value="range">⏳ Khoảng thời gian (Từ ngày - Đến ngày)</option>
+                                </select>
+                            </div>
                         </div>
+                        {filterQuoteDateMode !== "all" && (
+                            <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-slate-800/60">
+                                {filterQuoteDateMode === "day" && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[11px] text-slate-400 font-semibold">Chọn ngày:</span>
+                                        <DateInputVN
+                                            value={filterQuoteSingleDate}
+                                            onChange={(e) => setFilterQuoteSingleDate(e.target.value)}
+                                            className="bg-slate-950 border border-slate-750 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                                        />
+                                    </div>
+                                )}
+                                {filterQuoteDateMode === "month" && (
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[11px] text-slate-400 font-semibold">Chọn tháng:</span>
+                                        <input
+                                            type="month"
+                                            value={filterQuoteMonth}
+                                            onChange={(e) => setFilterQuoteMonth(e.target.value)}
+                                            className="bg-slate-950 border border-slate-750 rounded-lg px-2.5 py-1 text-xs text-white font-mono outline-none focus:border-indigo-500"
+                                        />
+                                    </div>
+                                )}
+                                {filterQuoteDateMode === "range" && (
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <span className="text-[11px] text-slate-400 font-semibold">Từ ngày:</span>
+                                        <DateInputVN
+                                            value={filterQuoteDateFrom}
+                                            onChange={(e) => setFilterQuoteDateFrom(e.target.value)}
+                                            className="bg-slate-950 border border-slate-750 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                                        />
+                                        <span className="text-[11px] text-slate-400 font-semibold">Đến ngày:</span>
+                                        <DateInputVN
+                                            value={filterQuoteDateTo}
+                                            onChange={(e) => setFilterQuoteDateTo(e.target.value)}
+                                            className="bg-slate-950 border border-slate-750 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
 
                     {/* QUOTATIONS VIEW: LIST OR DISCOUNTS */}
@@ -19775,7 +20255,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             }
                                             return true;
                                         });
-                                        const isQuoteOrderLocked = quoteNeedsApproval && quoteLinkedOrders.length >= 1;
+                                        // Cho phép 1 Báo giá tạo nhiều đơn hàng SO định kỳ (không khóa sau 1 lần)
+                                        const isQuoteOrderLocked = false;
                                         return (
                                             <div
                                                 key={quote.id}
@@ -20383,7 +20864,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         }
                                                                         return true;
                                                                     });
-                                                                    const qIsLocked = qNeedsAppr && qLinkedOrders.length >= 1;
+                                                                    const qIsLocked = false;
 
                                                                     if (qPending) {
                                                                         return <span className="text-[10px] text-amber-500/80 italic font-mono px-2 py-1">Chờ duyệt BGĐ</span>;
@@ -21246,10 +21727,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <h2 className="text-sm font-bold text-slate-300 font-mono tracking-wider">PURCHASE & FULFILLMENT PIPELINE (ĐIỀU PHỐI ĐẶT HÀNG & CUNG ỨNG)</h2>
                             <p className="text-[10px] text-slate-500 mt-0.5">Nhân viên kinh doanh gửi yêu cầu. Điều phối duyệt, gom đơn và Tạo đơn đặt hàng NCC / Đối tác hoặc phát lệnh cung ứng.</p>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
                             <button
                                 onClick={() => { 
-                                    setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+                                    setEditingFactoryOrderId(null);
+                                    resetFactoryOrderInvoiceAndExtraStates();
                                     setIsStockOrder(false);
                                     setExpandedAllocIndex(null);
                                     setFactoryOrderCustomerName("");
@@ -21268,7 +21750,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </button>
                             <button
                                 onClick={() => { 
-                                    setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+                                    setEditingFactoryOrderId(null);
+                                    resetFactoryOrderInvoiceAndExtraStates();
                                     setIsStockOrder(true);
                                     setExpandedAllocIndex(null);
                                     setFactoryOrderCustomerName(defaultStockCustomer);
@@ -21285,6 +21768,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             >
                                 <Package className="w-3.5 h-3.5 stroke-[2.5]" />
                                 <span>Tạo SO Stock (Gối Đầu)</span>
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setRmaListOrderCode("");
+                                    setIsRmaListModalOpen(true);
+                                }}
+                                className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition-all shadow-md shadow-amber-950/30 cursor-pointer"
+                                title="Quản lý danh sách Đơn Hàng Trả Bán (RMA) hoặc chọn đơn hàng bên dưới để lập phiếu trả hàng bán"
+                            >
+                                <RotateCw className="w-3.5 h-3.5 stroke-[2.5]" />
+                                <span>↩ Đơn Hàng Trả Bán / RMA ({rmaList.length})</span>
                             </button>
                             {canManageAllOrders && selectedFactoryOrdersForCombine.length > 0 && (
                                 <button
@@ -21326,6 +21821,119 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </button>
                                 )}
                             </div>
+                        </div>
+
+                        {/* BỘ LỌC ĐƠN HÀNG (SO): NHÂN VIÊN SALE, KHÁCH HÀNG, THỜI GIAN */}
+                        <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-850 space-y-2.5">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 font-mono flex items-center gap-1.5">
+                                    <Briefcase className="w-3.5 h-3.5" />
+                                    Bộ lọc Đơn hàng SO (Nhân viên Sale, Khách hàng, Ngày đặt hàng)
+                                </span>
+                                {(filterOrderRep !== "all" || filterOrderCustomer !== "all" || filterOrderDateMode !== "all" || searchFactoryOrderQuery) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setFilterOrderRep("all");
+                                            setFilterOrderCustomer("all");
+                                            setFilterOrderDateMode("all");
+                                            setFilterOrderSingleDate("");
+                                            setFilterOrderMonth("");
+                                            setFilterOrderDateFrom("");
+                                            setFilterOrderDateTo("");
+                                            setSearchFactoryOrderQuery("");
+                                        }}
+                                        className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
+                                    >
+                                        ✕ Đặt lại bộ lọc đơn hàng
+                                    </button>
+                                )}
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div>
+                                    <select
+                                        value={filterOrderRep}
+                                        onChange={(e) => setFilterOrderRep(e.target.value)}
+                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500 font-medium cursor-pointer"
+                                    >
+                                        <option value="all">👤 Nhân viên Sale: Tất cả</option>
+                                        {salesPersonnel.map(p => (
+                                            <option key={p.employee_id} value={p.employee_id}>
+                                                👤 {p.full_name} ({p.employee_id})
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <select
+                                        value={filterOrderCustomer}
+                                        onChange={(e) => setFilterOrderCustomer(e.target.value)}
+                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-white outline-none focus:border-indigo-500 font-medium cursor-pointer"
+                                    >
+                                        <option value="all">🏢 Khách hàng: Tất cả</option>
+                                        {Array.from(new Set(factoryOrders.map(o => (o.customerName || "").trim()).filter(Boolean)))
+                                            .sort((a, b) => a.localeCompare(b, "vi"))
+                                            .map(custName => (
+                                                <option key={custName} value={custName}>
+                                                    {custName}
+                                                </option>
+                                            ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <select
+                                        value={filterOrderDateMode}
+                                        onChange={(e) => setFilterOrderDateMode(e.target.value as any)}
+                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-indigo-300 font-bold outline-none focus:border-indigo-500 cursor-pointer"
+                                    >
+                                        <option value="all">📅 Ngày đặt hàng: Tất cả</option>
+                                        <option value="day">📅 Lọc theo ngày cụ thể</option>
+                                        <option value="month">🗓️ Lọc theo tháng</option>
+                                        <option value="range">⏳ Khoảng thời gian (Từ ngày - Đến ngày)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            {filterOrderDateMode !== "all" && (
+                                <div className="flex flex-wrap items-center gap-3 pt-1.5 border-t border-slate-800/60">
+                                    {filterOrderDateMode === "day" && (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[11px] text-slate-400 font-semibold">Chọn ngày đặt:</span>
+                                            <DateInputVN
+                                                value={filterOrderSingleDate}
+                                                onChange={(e) => setFilterOrderSingleDate(e.target.value)}
+                                                className="bg-slate-900 border border-slate-750 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                                            />
+                                        </div>
+                                    )}
+                                    {filterOrderDateMode === "month" && (
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[11px] text-slate-400 font-semibold">Chọn tháng:</span>
+                                            <input
+                                                type="month"
+                                                value={filterOrderMonth}
+                                                onChange={(e) => setFilterOrderMonth(e.target.value)}
+                                                className="bg-slate-900 border border-slate-750 rounded-lg px-2.5 py-1 text-xs text-white font-mono outline-none focus:border-indigo-500"
+                                            />
+                                        </div>
+                                    )}
+                                    {filterOrderDateMode === "range" && (
+                                        <div className="flex flex-wrap items-center gap-2">
+                                            <span className="text-[11px] text-slate-400 font-semibold">Từ ngày:</span>
+                                            <DateInputVN
+                                                value={filterOrderDateFrom}
+                                                onChange={(e) => setFilterOrderDateFrom(e.target.value)}
+                                                className="bg-slate-900 border border-slate-750 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                                            />
+                                            <span className="text-[11px] text-slate-400 font-semibold">Đến ngày:</span>
+                                            <DateInputVN
+                                                value={filterOrderDateTo}
+                                                onChange={(e) => setFilterOrderDateTo(e.target.value)}
+                                                className="bg-slate-900 border border-slate-750 rounded-lg px-2.5 py-1 text-xs text-white font-mono"
+                                            />
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         {/* Active Selection Action Bar */}
@@ -21380,6 +21988,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     const matchesAssignee = (selectedAssigneeFilter === "all" || req.salesRepId === selectedAssigneeFilter);
                                     if (!matchesAccess || !matchesAssignee) return false;
 
+                                    if (filterOrderRep !== "all") {
+                                        const repObj = salesPersonnel.find(p => p.employee_id === filterOrderRep || p.employee_code === filterOrderRep);
+                                        const repName = repObj?.full_name?.toLowerCase();
+                                        const matchId = req.salesRepId === filterOrderRep || (req as any).sales_rep_id === filterOrderRep;
+                                        const matchName = repName && req.salesRepName && String(req.salesRepName).toLowerCase().includes(repName);
+                                        if (!matchId && !matchName) return false;
+                                    }
+
+                                    if (filterOrderCustomer !== "all") {
+                                        if ((req.customerName || "").trim() !== filterOrderCustomer.trim()) return false;
+                                    }
+
+                                    if (filterOrderDateMode !== "all") {
+                                        const rawDate = String((req as any).order_date || req.date || (req as any).created_at || "").trim();
+                                        let oIso = "";
+                                        if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) oIso = rawDate.slice(0, 10);
+                                        else {
+                                            const m = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+                                            if (m) oIso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+                                        }
+                                        if (filterOrderDateMode === "day" && filterOrderSingleDate) {
+                                            if (oIso !== filterOrderSingleDate) return false;
+                                        } else if (filterOrderDateMode === "month" && filterOrderMonth) {
+                                            if (!oIso.startsWith(filterOrderMonth)) return false;
+                                        } else if (filterOrderDateMode === "range") {
+                                            if (filterOrderDateFrom && (!oIso || oIso < filterOrderDateFrom)) return false;
+                                            if (filterOrderDateTo && (!oIso || oIso > filterOrderDateTo)) return false;
+                                        }
+                                    }
+
                                     if (searchFactoryOrderQuery) {
                                         const query = searchFactoryOrderQuery.toLowerCase();
                                         const idMatch = (req.id || "").toLowerCase().includes(query);
@@ -21424,6 +22062,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     </th>
                                                 )}
                                                 <th className="p-3">Mã đơn hàng (SO)</th>
+                                                <th className="p-3">Ngày đặt hàng</th>
                                                 <th className="p-3">Mặt hàng & Nguồn gốc</th>
                                                 <th className="p-3">Giao mong muốn</th>
                                                 <th className="p-3">Giao dự kiến</th>
@@ -21436,7 +22075,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <tbody>
                                             {filteredOrders.length === 0 ? (
                                                 <tr>
-                                                    <td colSpan={canManageAllOrders ? 9 : 8} className="p-6 text-center text-slate-500 italic">
+                                                    <td colSpan={canManageAllOrders ? 10 : 9} className="p-6 text-center text-slate-500 italic">
                                                         Chưa có yêu cầu đặt hàng nào.
                                                     </td>
                                                 </tr>
@@ -21543,7 +22182,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 "border-t-2 border-slate-750/90 transition-colors",
                                                                 isSelected ? "bg-indigo-950/40" : "bg-gradient-to-r from-slate-900/95 via-slate-850/90 to-slate-900/95"
                                                             )}>
-                                                                <td colSpan={canManageAllOrders ? 9 : 8} className="px-4 py-2 border-b border-slate-800/60">
+                                                                <td colSpan={canManageAllOrders ? 10 : 9} className="px-4 py-2 border-b border-slate-800/60">
                                                                     <div className="flex items-center justify-between gap-3 flex-wrap">
                                                                         <div className="flex items-center gap-2.5 flex-wrap min-w-0">
                                                                             <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider shrink-0 flex items-center gap-1.5">
@@ -21616,6 +22255,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             </span>
                                                                         )}
                                                                     </div>
+                                                                </td>
+                                                                <td className="p-3 font-mono text-slate-300 whitespace-nowrap">
+                                                                    {(() => {
+                                                                        const rawD = (req as any).order_date || req.date || (req as any).created_at || "";
+                                                                        if (!rawD) return "—";
+                                                                        if (/^\d{4}-\d{2}-\d{2}/.test(String(rawD))) {
+                                                                            const [y, m, d] = String(rawD).slice(0, 10).split("-");
+                                                                            return `${d}/${m}/${y}`;
+                                                                        }
+                                                                        return String(rawD);
+                                                                    })()}
                                                                 </td>
                                                             <td className="p-3">
                                                                 <button
@@ -22002,6 +22652,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <Copy className="w-3 h-3" /> Copy
                                                                         </button>
                                                                     )}
+                                                                    {!isStockOrder && !isCancelledOrder && (
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => handleOpenCreateRmaModal(req)}
+                                                                            className="bg-amber-950/70 hover:bg-amber-900/90 text-amber-300 border border-amber-600/50 text-[10px] px-2 py-1 rounded font-bold cursor-pointer transition-colors flex items-center gap-1 shadow-sm"
+                                                                            title="Tạo Đơn Hàng Trả Bán (RMA) cho đơn hàng này"
+                                                                        >
+                                                                            ↩ Trả hàng
+                                                                        </button>
+                                                                    )}
                                                                     {/* 3. Nút Sửa, Nút Hủy đơn & Nút Xóa */}
                                                                     {!isCancelledOrder && canUserAct && canEditOrDelete && (
                                                                         <button
@@ -22188,7 +22848,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <React.Fragment>
                                                                     {isProgressExpanded && (
                                                                         <tr className="bg-slate-950/25">
-                                                                            <td colSpan={canManageAllOrders ? 9 : 8} className="px-4 pb-2.5 pt-0 border-b border-slate-800/60">
+                                                                            <td colSpan={canManageAllOrders ? 10 : 9} className="px-4 pb-2.5 pt-0 border-b border-slate-800/60">
                                                                                 <div className="mt-1.5 rounded-lg border border-cyan-800/40 bg-cyan-950/20 p-2.5 text-[11px] font-mono space-y-1.5">
                                                                                     <div className="flex items-center justify-between gap-3 flex-wrap">
                                                                                         <div className="flex items-center gap-2 flex-wrap">
@@ -22296,7 +22956,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                                     {slipList && (
                                                                         <tr className="bg-slate-950/20">
-                                                                            <td colSpan={canManageAllOrders ? 9 : 8} className="px-4 pb-2 pt-0 border-b border-slate-800/60">{slipList}</td>
+                                                                            <td colSpan={canManageAllOrders ? 10 : 9} className="px-4 pb-2 pt-0 border-b border-slate-800/60">{slipList}</td>
                                                                         </tr>
                                                                     )}
                                                                 </React.Fragment>
@@ -24046,7 +24706,44 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <span>Mặt Hàng Trong Phiếu Giao & Chọn Xuất Hóa Đơn</span>
                                         <span className="text-sky-400 font-mono font-bold">({selectedCodesCount}/{slipItems.length} mã đã chọn)</span>
                                     </label>
-                                    <div className="flex items-center gap-1.5">
+                                    <div className="flex flex-wrap items-center gap-1.5">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                const cust = customers.find((c: any) => c.name === ord.customer_name) as any;
+                                                const tax = ord.customer_tax_code || cust?.tax_code || cust?.taxCode || "";
+                                                const addr = ord.customer_tax_address || cust?.tax_address || cust?.taxAddress || ord.customer_address || cust?.address || "";
+                                                const email = ord.customer_email || cust?.email || "";
+                                                const mappedItems = slipItems.map((it: any, idx: number) => {
+                                                    const d = getItemDetails(it, idx);
+                                                    return {
+                                                        code: d.code,
+                                                        name: d.name,
+                                                        specification: d.specification,
+                                                        unit: d.unit,
+                                                        qty: d.qty,
+                                                        price: d.price,
+                                                        vatRate: d.vatRate,
+                                                        needsInvoice: !!partialInvSelectedItems[d.itemKey]
+                                                    };
+                                                });
+                                                handlePrintSalesOligoInvoiceStatement({
+                                                    orderCode: `${ord.order_code} (${sl.id})`,
+                                                    customerName: ord.customer_name || "",
+                                                    taxCode: tax,
+                                                    address: addr,
+                                                    email,
+                                                    invoiceNotes: ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes || "",
+                                                    invoiceNo: partialInvNo,
+                                                    invoiceDate: partialInvDate,
+                                                    items: mappedItems
+                                                });
+                                            }}
+                                            className="px-2.5 py-1 text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-500/60 rounded cursor-pointer transition-colors flex items-center gap-1"
+                                            title="In Bảng kê xuất hóa đơn VAT & Phụ lục trình tự Oligo chuẩn A4 cho các mã đã chọn"
+                                        >
+                                            <span>🖨️ In Bảng Kê Xuất HĐ (A4)</span>
+                                        </button>
                                         <button
                                             type="button"
                                             onClick={handleSelectBySale}
@@ -24837,11 +25534,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 value={quoteCustomerId}
                                 onChange={(e) => {
                                     const newCustId = e.target.value;
+                                    const prevCustId = quoteCustomerId;
                                     setQuoteCustomerId(newCustId);
                                     // Tự chọn người liên hệ chính của khách hàng mới chọn
                                     const contacts = getQuoteCustomerContacts(newCustId);
                                     const primary = contacts.find(ct => ct.is_primary) || contacts[0];
                                     setQuoteContactName(primary?.name || "");
+                                    // Khi lập báo giá mới hoặc nhân bản báo giá sang khách hàng khác, đặt lại ghi chú về mặc định chuẩn để không mang ghi chú riêng của khách cũ
+                                    if (!editingQuoteId && prevCustId && prevCustId !== newCustId) {
+                                        setQuoteNoteTerms(defaultQuoteNoteTerms);
+                                    }
                                 }}
                                 required
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-indigo-500"
@@ -25501,6 +26203,40 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 </div>
 
                                                 <div className="flex items-center gap-3">
+                                                    <label className="inline-flex items-center gap-1.5 cursor-pointer bg-pink-950/60 hover:bg-pink-900/70 px-2.5 py-1 rounded-md border border-pink-600/50 transition-colors" title="Tích chọn nếu dòng này là hàng tặng theo chính sách (Mua 10 tặng 1, Tube chạy tặng kèm...) — Đơn giá tự động về 0đ">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={Boolean((item as any).isGift || (Number(item.price) === 0 && item.productCode))}
+                                                            onChange={(e) => {
+                                                                const checked = e.target.checked;
+                                                                if (checked) {
+                                                                    updateQuoteItemAt(index, {
+                                                                        isGift: true,
+                                                                        price: 0,
+                                                                        priceBeforeVat: 0,
+                                                                        totalBeforeVat: 0,
+                                                                        discountRate: 0,
+                                                                        discountAmount: 0,
+                                                                        total: 0,
+                                                                        vatAmount: 0,
+                                                                        notes: item.notes && !item.notes.includes("Hàng có sẵn") && !item.notes.includes("Hàng đặt") ? item.notes : "🎁 Hàng tặng theo chính sách (0đ)"
+                                                                    } as any);
+                                                                } else {
+                                                                    const prod = allSalesProducts.find(prod => prod.code === item.productCode) || biolabProducts.find(prod => prod.code === item.productCode);
+                                                                    const restoredPrice = prod ? (prod[quotePriceTier] || prod.price || 0) : 0;
+                                                                    updateQuoteItemAt(index, {
+                                                                        isGift: false,
+                                                                        price: restoredPrice,
+                                                                        notes: item.notes === "🎁 Hàng tặng theo chính sách (0đ)" ? "" : item.notes
+                                                                    } as any);
+                                                                }
+                                                            }}
+                                                            className="w-3.5 h-3.5 rounded accent-pink-500 cursor-pointer"
+                                                        />
+                                                        <span className="text-[11px] font-bold text-pink-300">
+                                                            🎁 Hàng tặng (0đ)
+                                                        </span>
+                                                    </label>
                                                     {configList.length > 0 && (
                                                         <>
                                                             <button
@@ -25796,12 +26532,38 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         discountRate: 0,
                                         discountAmount: 0,
                                         total: 0,
-                                        vatAmount: 0
-                                    }]);
+                                        vatAmount: 0,
+                                        isGift: false
+                                    } as any]);
                                 }}
                                 className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
                             >
                                 + Thêm Sản Phẩm
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setQuoteItems(prev => [...prev, { 
+                                        productCode: "", 
+                                        specification: "",
+                                        manufacturer: "",
+                                        notes: "🎁 Hàng tặng theo chính sách (0đ)",
+                                        quantity: 1, 
+                                        price: 0,
+                                        vatRate: 0,
+                                        priceBeforeVat: 0,
+                                        totalBeforeVat: 0,
+                                        discountRate: 0,
+                                        discountAmount: 0,
+                                        total: 0,
+                                        vatAmount: 0,
+                                        isGift: true
+                                    } as any]);
+                                }}
+                                className="text-xs bg-pink-950/80 hover:bg-pink-900 border border-pink-600/60 text-pink-200 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                                title="Thêm nhanh 1 dòng Hàng tặng / Khuyến mãi (Đơn giá 0đ) theo chính sách bán hàng"
+                            >
+                                <span>🎁 + Thêm Hàng Tặng (0đ)</span>
                             </button>
                             <button
                                 type="button"
@@ -27219,7 +27981,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             <Modal isOpen={isFactoryOrderModalOpen} onClose={() => {
                 setIsFactoryOrderModalOpen(false);
-                setEditingFactoryOrderId(null); setFactoryOrderNotes("");
+                setEditingFactoryOrderId(null);
+                resetFactoryOrderInvoiceAndExtraStates();
                 setFactoryOrderContractId("");
                 setFactoryOrderQuoteId("");
                 setFactoryOrderPlanId("");
@@ -27245,6 +28008,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         if (isStockOrder) {
                                             setIsStockOrder(false);
                                             setFactoryOrderCustomerName("");
+                                            resetFactoryOrderInvoiceAndExtraStates();
                                         }
                                     }}
                                     className={cn(
@@ -27265,6 +28029,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             setFactoryOrderContractId("");
                                             setFactoryOrderQuoteId("");
                                             setFactoryOrderPlanId("");
+                                            resetFactoryOrderInvoiceAndExtraStates();
                                         }
                                     }}
                                     className={cn(
@@ -27317,7 +28082,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     value={factoryOrderCustomerName}
                                     onChange={(e) => {
                                         const val = e.target.value;
+                                        const prevCust = factoryOrderCustomerName;
                                         setFactoryOrderCustomerName(val);
+
+                                        // Khi đổi sang khách hàng khác, xóa thông tin xuất hóa đơn VAT & ghi chú HĐ của khách trước đó, đồng thời nạp Người liên hệ & Địa chỉ giao/nhận
+                                        if (prevCust !== val) {
+                                            setInvoiceNotes("");
+                                            setVatRequested(false);
+                                            setVatCompanyName("");
+                                            setVatTaxCode("");
+                                            setVatAddress("");
+                                            setVatEmail("");
+                                            const matchedC = customers.find(c => c.name === val) || salesNvkdCustomers.find(c => c.name === val);
+                                            const cContacts = Array.isArray((matchedC as any)?.contacts) ? (matchedC as any).contacts : [];
+                                            const primContact = cContacts.find((ct: any) => ct.is_primary) || cContacts[0];
+                                            setFactoryOrderContactPerson(primContact?.name || matchedC?.contact_person || "");
+                                            setFactoryOrderContactPhone(primContact?.phone || matchedC?.phone || "");
+                                            setFactoryOrderDeliveryAddress((matchedC as any)?.delivery_address || matchedC?.address || "");
+                                        }
 
                                         // Chốt chặn logic an toàn: Tránh "râu ông nọ cắm cằm bà kia"
                                         if (factoryOrderContractId || factoryOrderQuoteId) {
@@ -27328,7 +28110,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             if (!matchesContract && !matchesQuote) {
                                                 setFactoryOrderContractId("");
                                                 setFactoryOrderQuoteId("");
-                                                showToast("Đã tự động gỡ liên kết Hợp đồng/Báo giá cũ do bạn đã đổi sang khách hàng khác.", "info");
+                                                setFactoryOrderNotes("");
+                                                showToast("Đã tự động gỡ liên kết Hợp đồng/Báo giá và ghi chú cũ do bạn đã đổi sang khách hàng khác.", "info");
                                             }
                                         }
                                     }}
@@ -27372,6 +28155,79 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             />
                         </div>
                     </div>
+
+                    {/* ── Người liên hệ nhận hàng & Địa chỉ giao/nhận hàng (Ưu tiên hiển thị trên Phiếu giao hàng) ── */}
+                    {!isStockOrder && (
+                        <div className="p-3 rounded-xl bg-slate-900/60 border border-slate-800 space-y-2.5">
+                            <div className="flex items-center justify-between flex-wrap gap-2">
+                                <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 font-mono flex items-center gap-1.5">
+                                    <User className="w-3.5 h-3.5" />
+                                    Người liên hệ nhận hàng & Địa chỉ giao nhận (Ưu tiên hiển thị trên Phiếu giao hàng)
+                                </span>
+                                {(() => {
+                                    const matchedCust = customers.find(c => c.name === factoryOrderCustomerName);
+                                    const custContacts = Array.isArray(matchedCust?.contacts) ? matchedCust.contacts.filter((ct: any) => ct && ct.name) : [];
+                                    if (custContacts.length === 0) return null;
+                                    return (
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="text-[10px] text-slate-400">Chọn nhanh từ danh bạ KH:</span>
+                                            <select
+                                                value=""
+                                                onChange={(e) => {
+                                                    const idx = Number(e.target.value);
+                                                    const chosen = custContacts[idx];
+                                                    if (chosen) {
+                                                        setFactoryOrderContactPerson(chosen.name || "");
+                                                        setFactoryOrderContactPhone(chosen.phone || "");
+                                                    }
+                                                }}
+                                                className="bg-slate-950 border border-indigo-700/70 rounded px-2 py-1 text-[11px] text-indigo-300 font-semibold outline-none cursor-pointer"
+                                            >
+                                                <option value="">-- Đổi người liên hệ ({custContacts.length}) --</option>
+                                                {custContacts.map((ct: any, idx: number) => (
+                                                    <option key={idx} value={idx}>
+                                                        👤 {ct.name} {ct.position ? `(${ct.position})` : ""} {ct.phone ? `- ${ct.phone}` : ""}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    );
+                                })()}
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Người liên hệ nhận hàng</label>
+                                    <input
+                                        type="text"
+                                        value={factoryOrderContactPerson}
+                                        onChange={(e) => setFactoryOrderContactPerson(e.target.value)}
+                                        placeholder="Tên người liên hệ / nhận hàng..."
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white font-semibold focus:border-indigo-500 outline-none"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">SĐT người liên hệ</label>
+                                    <input
+                                        type="text"
+                                        value={factoryOrderContactPhone}
+                                        onChange={(e) => setFactoryOrderContactPhone(e.target.value)}
+                                        placeholder="Số điện thoại liên hệ giao hàng..."
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-emerald-300 font-mono font-semibold focus:border-indigo-500 outline-none"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-emerald-400 mb-1">Địa chỉ giao/nhận hàng (In trên Phiếu giao)</label>
+                                    <input
+                                        type="text"
+                                        value={factoryOrderDeliveryAddress}
+                                        onChange={(e) => setFactoryOrderDeliveryAddress(e.target.value)}
+                                        placeholder="Địa chỉ giao/nhận hàng thực tế..."
+                                        className="w-full bg-slate-950 border border-emerald-700/60 rounded-lg px-3 py-1.5 text-xs text-emerald-200 font-medium focus:border-emerald-400 outline-none"
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    )}
                     <div>
                         <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
                             Ghi chú đơn hàng {factoryOrderQuoteId ? <span className="normal-case font-normal text-slate-500">(lấy từ ghi chú báo giá {factoryOrderQuoteId})</span> : null}
@@ -27415,16 +28271,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             (o.customerCode === matchedCust.customer_code || o.customerName === matchedCust.name || (o.customerName && o.customerName.trim().toLowerCase() === factoryOrderCustomerName.trim().toLowerCase())) &&
                             isOrderOpenDebt(o)
                         );
-                        const curDebt = custOrders.reduce((s, o) => s + (Number(o.totalAmount) || 0), 0);
+                        // Chỉ tính công nợ thực tế theo giá trị Phiếu giao hàng đã giao thành công trừ đã thanh toán (không cộng đơn SO chưa giao)
+                        const curDebt = custOrders.reduce((s, o) => s + getOrderDeliveredDebtAmount(o), 0);
                         const orderTotal = factoryOrderItems.reduce((acc, it) => acc + (Number(it.quantity) || 0) * (Number(it.unitPrice) || 0), 0);
-                        const projDebt = curDebt + orderTotal;
-                        const isOverLimit = projDebt > cLimit;
+                        const projDebt = curDebt;
+                        const isOverLimit = curDebt > cLimit;
                         
                         const overdueList: any[] = [];
                         for (const uo of custOrders) {
                             const late = getOverdueDays(uo, cTerm);
                             if (late > 0) {
-                                overdueList.push({ id: uo.id || uo.order_code, overdueDays: late, amount: uo.totalAmount });
+                                overdueList.push({ id: uo.id || uo.order_code, overdueDays: late, amount: getOrderDeliveredDebtAmount(uo) });
                             }
                         }
                         const hasOverdue = overdueList.length > 0;
@@ -27443,8 +28300,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] mb-2">
                                     <div>Hạn mức: <strong className="text-white">{cLimit.toLocaleString("vi-VN")} đ</strong></div>
                                     <div>Hạn thanh toán: <strong className="text-white">{cTerm} ngày</strong></div>
-                                    <div>Nợ hiện tại: <strong className={curDebt > 0 ? "text-amber-300" : "text-white"}>{curDebt.toLocaleString("vi-VN")} đ</strong></div>
-                                    <div>Dự kiến sau đơn: <strong className={isOverLimit ? "text-rose-400 font-bold" : "text-emerald-300"}>{projDebt.toLocaleString("vi-VN")} đ</strong></div>
+                                    <div>Nợ thực tế (Phiếu đã giao): <strong className={curDebt > 0 ? "text-amber-300" : "text-white"}>{curDebt.toLocaleString("vi-VN")} đ</strong></div>
+                                    <div>Giá trị đơn đang lập: <strong className="text-indigo-300">{orderTotal.toLocaleString("vi-VN")} đ</strong></div>
                                 </div>
                                 {willBeBlocked && (
                                     <div className="text-[10px] space-y-1 text-rose-300 bg-rose-950/70 p-2.5 rounded border border-rose-800/80">
@@ -27567,7 +28424,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="overflow-y-auto">
                                         <div
                                             className="px-3 py-2 text-xs text-slate-400 hover:bg-slate-800 cursor-pointer"
-                                            onClick={() => { setFactoryOrderQuoteId(""); setQuoteSearchQuery(""); setQuoteDropdownOpen(false); }}
+                                            onClick={() => {
+                                                setFactoryOrderQuoteId("");
+                                                setQuoteSearchQuery("");
+                                                setQuoteDropdownOpen(false);
+                                                if (!editingFactoryOrderId) {
+                                                    setFactoryOrderNotes("");
+                                                    setInvoiceNotes("");
+                                                }
+                                            }}
                                         >— Không liên kết báo giá —</div>
                                         {quotations
                                             .filter(q => {
@@ -27593,7 +28458,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     }
                                                     return true;
                                                 });
-                                                const qIsLocked = qNeedsAppr && qLinkedOrders.length >= 1;
+                                                const qIsLocked = false;
 
                                                 return (
                                                     <div
@@ -27608,16 +28473,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 showToast(`Báo giá ${q.id} đang chờ Ban Giám Đốc phê duyệt giá, chưa thể liên kết tạo SO!`, "warning");
                                                                 return;
                                                             }
-                                                            if (qIsLocked) {
-                                                                showToast(`Báo giá duyệt đặc biệt ${q.id} chỉ được phép tạo SO 1 lần duy nhất! Đã có đơn hàng ${qLinkedOrders[0].id}.`, "warning");
-                                                                return;
-                                                            }
                                                             setFactoryOrderQuoteId(String(q.id));
                                                             setQuoteSearchQuery("");
                                                             setQuoteDropdownOpen(false);
-                                                            // ── Tạo SO trực tiếp từ Báo giá ──
-                                                            // Auto-fill customer name nếu là đơn thương mại
-                                                            if (!isStockOrder && q.customerName) setFactoryOrderCustomerName(q.customerName);
+                                                            // ── Tạo SO trực tiếp từ Báo giá: đặt lại thông tin xuất hóa đơn & ghi chú theo báo giá mới ──
+                                                            if (!editingFactoryOrderId) {
+                                                                setInvoiceNotes("");
+                                                                setVatRequested(false);
+                                                                setVatCompanyName("");
+                                                                setVatTaxCode("");
+                                                                setVatAddress("");
+                                                                setVatEmail("");
+                                                                setFactoryOrderNotes(String(q.noteTerms || "").trim());
+                                                            }
+                                                            // Auto-fill customer name & người liên hệ & địa chỉ giao nhận nếu là đơn thương mại
+                                                            if (!isStockOrder && q.customerName) {
+                                                                setFactoryOrderCustomerName(q.customerName);
+                                                                const matchedC = customers.find(c => c.name === q.customerName) || salesNvkdCustomers.find(c => c.name === q.customerName);
+                                                                const cContacts = Array.isArray((matchedC as any)?.contacts) ? (matchedC as any).contacts : [];
+                                                                const primContact = cContacts.find((ct: any) => ct.is_primary) || cContacts[0];
+                                                                setFactoryOrderContactPerson(q.receiverName || primContact?.name || matchedC?.contact_person || "");
+                                                                setFactoryOrderContactPhone(q.receiverPhone || primContact?.phone || matchedC?.phone || "");
+                                                                setFactoryOrderDeliveryAddress((matchedC as any)?.delivery_address || q.customerAddress || matchedC?.address || "");
+                                                            }
                                                             // Auto-fill SO items from quotation items
                                                             if (q.items && q.items.length > 0) {
                                                                 const qTaxRate = q.taxRate ?? q.tax_rate;
@@ -27626,15 +28504,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     const prod = allSalesProducts.find(p => p.code === code) || biolabProducts.find(p => p.code === code);
                                                                     const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? it.taxRate ?? it.tax_rate ?? qTaxRate ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
                                                                     const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : 8;
+                                                                    const uPr = Number(it.price || it.unitPrice || it.unit_price) || 0;
                                                                     return {
                                                                         productCode: code,
                                                                         productName: it.productName || prod?.name || code,
                                                                         specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
                                                                         notes: it.notes || "",
                                                                         quantity: Number(it.quantity) || 1,
-                                                                        unitPrice: Number(it.price || it.unitPrice || it.unit_price) || 0,
+                                                                        unitPrice: uPr,
                                                                         vatRate,
                                                                         vat: vatRate,
+                                                                        isGift: Boolean(it.isGift || uPr === 0),
                                                                         needsInvoice: it.needsInvoice !== false
                                                                     };
                                                                 }).filter((it: any) => it.productCode);
@@ -27674,7 +28554,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                             )}
                             {factoryOrderQuoteId && (
-                                <button type="button" onClick={() => setFactoryOrderQuoteId("")} className="absolute right-7 top-7 text-slate-500 hover:text-red-400 text-xs">✕</button>
+                                <button type="button" onClick={() => {
+                                    setFactoryOrderQuoteId("");
+                                    if (!editingFactoryOrderId) {
+                                        setFactoryOrderNotes("");
+                                        setInvoiceNotes("");
+                                    }
+                                }} className="absolute right-7 top-7 text-slate-500 hover:text-red-400 text-xs">✕</button>
                             )}
                         </div>
 
@@ -27847,8 +28733,31 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             title={item.specification || currentProd?.specification || "Nhập quy cách hoặc trình tự Primer/Probe riêng cho dòng này"}
                                             className="w-40 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-slate-200 font-medium focus:border-indigo-500 focus:outline-none"
                                         />
-                                        {/* Checkbox Xuất HĐ VAT (Mặc định luôn tick) */}
-                                        <div className="w-20 flex items-center justify-center">
+                                        {/* Checkbox Hàng Tặng (0đ) & Xuất HĐ VAT */}
+                                        <div className="flex items-center gap-1.5">
+                                            {!isStockOrder && (
+                                                <label className="inline-flex items-center gap-1 cursor-pointer bg-pink-950/60 hover:bg-pink-900/70 px-2 py-1.5 rounded-lg border border-pink-700/60 transition-colors" title="Tích chọn nếu mặt hàng này là Hàng tặng theo chính sách (Mua 10 tặng 1, Tube tặng kèm...) — Đơn giá 0đ">
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={Boolean((item as any).isGift || (Number(uPrice) === 0 && item.productCode))}
+                                                        onChange={(e) => {
+                                                            const checked = e.target.checked;
+                                                            setFactoryOrderItems(prev => prev.map((it, i) => {
+                                                                if (i !== index) return it;
+                                                                if (checked) {
+                                                                    return { ...it, isGift: true, unitPrice: 0, notes: (it as any).notes || "🎁 Hàng tặng theo chính sách (0đ)" };
+                                                                }
+                                                                const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
+                                                                return { ...it, isGift: false, unitPrice: prod?.price || 0 };
+                                                            }));
+                                                        }}
+                                                        className="w-3.5 h-3.5 rounded accent-pink-500 cursor-pointer"
+                                                    />
+                                                    <span className={cn("text-[10px] font-bold font-mono", ((item as any).isGift || (Number(uPrice) === 0 && item.productCode)) ? "text-pink-300" : "text-slate-400")}>
+                                                        🎁 Tặng
+                                                    </span>
+                                                </label>
+                                            )}
                                             <label className="inline-flex items-center gap-1 cursor-pointer bg-slate-950 px-2 py-1.5 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors" title={item.needsInvoice !== false ? "Có xuất hóa đơn đỏ (VAT)" : "Không xuất hóa đơn đỏ"}>
                                                 <input
                                                     type="checkbox"
@@ -28079,12 +28988,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <button
                                     type="button"
                                     onClick={() => {
-                                        setFactoryOrderItems(prev => [...prev, { productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
+                                        setFactoryOrderItems(prev => [...prev, { productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true, isGift: false } as any]);
                                     }}
                                     className="text-xs text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1 cursor-pointer"
                                 >
                                     + Thêm Mặt Hàng Khác
                                 </button>
+                                {!isStockOrder && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setFactoryOrderItems(prev => [...prev, { productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true, isGift: true, notes: "🎁 Hàng tặng theo chính sách (0đ)" } as any]);
+                                        }}
+                                        className="text-xs bg-pink-950/80 hover:bg-pink-900 border border-pink-600/60 text-pink-200 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                                        title="Thêm nhanh 1 dòng Hàng tặng / Khuyến mãi (Đơn giá 0đ) theo chính sách bán hàng"
+                                    >
+                                        <span>🎁 + Thêm Hàng Tặng (0đ)</span>
+                                    </button>
+                                )}
                                 <button
                                     type="button"
                                     onClick={() => handleOpenOligoBuilder("ORDER")}
@@ -28093,6 +29014,40 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 >
                                     <span>🧬 + Thêm trình tự Oligo (Tách 4 mã / Gộp 1 dòng)</span>
                                 </button>
+                                {factoryOrderItems.some(it => it.productCode) && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const matchedCust = customers.find(c => c.name === factoryOrderCustomerName);
+                                            const matchedOrder = editingFactoryOrderId ? factoryOrders.find(o => o.id === editingFactoryOrderId) : null;
+                                            handlePrintSalesOligoInvoiceStatement({
+                                                orderCode: matchedOrder?.order_code || "SO-DU-THAO",
+                                                customerName: vatCompanyName || factoryOrderCustomerName || "Khách hàng",
+                                                taxCode: vatTaxCode || matchedCust?.tax_code || "",
+                                                address: vatAddress || matchedCust?.address || "",
+                                                email: vatEmail || matchedCust?.email || "",
+                                                invoiceNotes: invoiceNotes || "",
+                                                items: factoryOrderItems.map(it => {
+                                                    const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
+                                                    return {
+                                                        code: it.productCode || "",
+                                                        name: it.productName || prod?.name || it.productCode || "",
+                                                        specification: it.specification || prod?.specification || "",
+                                                        unit: it.unit || prod?.unit || "ĐV",
+                                                        qty: Number(it.quantity) || 1,
+                                                        price: Number(it.unitPrice ?? prod?.price) || 0,
+                                                        vatRate: Number(it.vatRate ?? it.vat ?? 8),
+                                                        needsInvoice: it.needsInvoice !== false
+                                                    };
+                                                })
+                                            });
+                                        }}
+                                        className="text-xs bg-sky-950/80 hover:bg-sky-900 border border-sky-600/60 text-sky-300 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
+                                        title="Xem trước & In Bảng kê yêu cầu xuất hóa đơn VAT (Tổng hợp theo mã chuẩn + Chi tiết từng dòng trình tự Oligo)"
+                                    >
+                                        <span>🖨️ Xem & In Bảng Kê Xuất Hóa Đơn Oligo (A4)</span>
+                                    </button>
+                                )}
                             </div>
                         </div>
                         {renderOligoBuilderPanel("ORDER")}
@@ -28139,12 +29094,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     onChange={(e) => {
                                         const checked = e.target.checked;
                                         setVatRequested(checked);
-                                        if (checked && !vatCompanyName) {
-                                            const matchedCust = customers.find(c => c.name === factoryOrderCustomerName);
+                                        if (checked) {
+                                            const matchedCust = customers.find(c => c.name === factoryOrderCustomerName) || salesNvkdCustomers.find(c => c.name === factoryOrderCustomerName);
                                             setVatCompanyName(factoryOrderCustomerName || "");
-                                            setVatTaxCode(matchedCust?.tax_code || "");
-                                            setVatAddress(matchedCust?.address || "");
+                                            setVatTaxCode(matchedCust?.tax_code || (matchedCust as any)?.taxCode || "");
+                                            setVatAddress((matchedCust as any)?.tax_address || (matchedCust as any)?.taxAddress || matchedCust?.address || "");
                                             setVatEmail(matchedCust?.email || "");
+                                        } else {
+                                            setVatCompanyName("");
+                                            setVatTaxCode("");
+                                            setVatAddress("");
+                                            setVatEmail("");
                                         }
                                     }}
                                     className="w-4 h-4 rounded text-indigo-600 bg-slate-950 border-slate-700 cursor-pointer"
@@ -28245,13 +29205,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             type="button"
                             onClick={() => {
                                 setIsFactoryOrderModalOpen(false);
-                                setEditingFactoryOrderId(null); setFactoryOrderNotes(""); setInvoiceNotes("");
+                                setEditingFactoryOrderId(null);
+                                resetFactoryOrderInvoiceAndExtraStates();
                                 setFactoryOrderContractId("");
                                 setFactoryOrderQuoteId("");
                                 setFactoryOrderPlanId("");
                                 setFactoryOrderCustomerName("");
                                 setIsStockOrder(false);
                                 setExpandedAllocIndex(null);
+                                setFactoryOrderFulfillmentSource("AUTO");
                                 setFactoryOrderItems([{ productCode: "", quantity: 1, unitPrice: 0, targetAllocations: [], needsInvoice: true }]);
                                 setProductSearchQueries({});
                             }}
@@ -34561,7 +35523,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa chỉ thuế (xuất hóa đơn)</label>
                                 <input
@@ -34573,13 +35535,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 />
                             </div>
                             <div>
-                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa chỉ giao hàng</label>
+                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa chỉ kinh doanh / Trụ sở</label>
                                 <input
                                     type="text"
                                     value={custAddress}
                                     onChange={(e) => setCustAddress(e.target.value)}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs outline-none text-white"
-                                    placeholder="Địa chỉ giao hàng chi tiết..."
+                                    placeholder="Địa chỉ trụ sở / kinh doanh..."
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold uppercase tracking-wider text-emerald-400 mb-1">
+                                    🚚 Địa chỉ giao/nhận hàng (Ưu tiên trên Phiếu giao)
+                                </label>
+                                <input
+                                    type="text"
+                                    value={custDeliveryAddress}
+                                    onChange={(e) => setCustDeliveryAddress(e.target.value)}
+                                    className="w-full bg-slate-950 border border-emerald-700/70 rounded-lg px-3 py-2 text-xs outline-none text-emerald-200 font-medium focus:border-emerald-400"
+                                    placeholder="Nhập nếu khác địa chỉ kinh doanh/thuế (Kho nhận, Khoa xét nghiệm...)"
                                 />
                             </div>
                         </div>

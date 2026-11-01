@@ -95,16 +95,17 @@ const DEPARTMENT_ICONS: Record<string, any> = {
   "Sales Admin": Briefcase,
   "PM": Briefcase,
   "Application": FlaskConical,
+  "Kho & Vận Hành": Package,
   "Cung Ứng": ShoppingCart,
   "Kinh Doanh": Briefcase,
   "Lab": FlaskConical,
   "Marketing": Briefcase,
   "Pháp Chế": ShieldCheck,
+  "Hành Chính Nhân Sự": Users,
 };
 export const DEPARTMENTS = [
   { id: "all", name: "Toàn công ty", icon: Building2 },
   ...WORKSPACE_TASK_DEPARTMENTS.map(d => ({ id: d.id, name: d.label, icon: DEPARTMENT_ICONS[d.id] || Building2 })),
-  { id: "Kho & Vận Hành", name: "Kho & Vận Hành", icon: Package },
 ];
 
 export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
@@ -505,8 +506,264 @@ export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]>
         { name: "Tham gia đàm phán hợp đồng trực tiếp cùng các bên & Ký duyệt pháp lý", estimatedDays: 2 }
       ]
     }
+  ],
+  "Ban Giám Đốc": [
+    {
+      id: "bgd_strategy_okr",
+      name: "Hoạch định Chiến lược Quý / Năm & Đánh giá Mục tiêu Trọng điểm (OKR/KPI)",
+      icon: "🏛️",
+      codePrefix: "BGD-STR",
+      description: "Xây dựng mục tiêu chiến lược toàn công ty, phân bổ ngân sách R&D – Sản xuất – Kinh doanh và rà soát KPI liên phòng ban.",
+      sampleObjectives: "Hoàn thành khung kế hoạch chiến lược, giao chỉ tiêu KPI/OKR cho 100% khối/phòng ban và phê duyệt ngân sách trọng điểm.",
+      defaultStages: [
+        { name: "Tổng hợp báo cáo kết quả hoạt động từ Khối Kỹ thuật, Kinh doanh & Tài chính", estimatedDays: 2 },
+        { name: "Họp Hội đồng Ban Giám Đốc hoạch định mục tiêu tăng trưởng & danh mục dự án ưu tiên", estimatedDays: 2 },
+        { name: "Phê duyệt hạn mức ngân sách, định biên nhân sự & chỉ tiêu KPI các phòng ban", estimatedDays: 2 },
+        { name: "Ban hành Nghị quyết / Quyết định triển khai và tổ chức lễ giao chỉ tiêu toàn công ty", estimatedDays: 1 }
+      ]
+    },
+    {
+      id: "bgd_investment_audit",
+      name: "Thẩm định Dự án Đầu tư Dây chuyền / Hợp tác Chuyển giao Công nghệ",
+      icon: "🚀",
+      codePrefix: "BGD-INV",
+      description: "Đánh giá hiệu quả đầu tư (ROI), năng lực đối tác OEM/chuyển giao công nghệ và phê duyệt chủ trương đầu tư lớn.",
+      sampleObjectives: "Thẩm định toàn diện tính khả thi kỹ thuật, pháp lý và tài chính của dự án trước khi ký kết hợp đồng đầu tư.",
+      defaultStages: [
+        { name: "Tiếp nhận hồ sơ đề xuất chủ trương đầu tư từ R&D / Nhà máy / PM", estimatedDays: 2 },
+        { name: "Thẩm định phương án tài chính (ROI, dòng tiền) cùng Kế Toán & Pháp Chế", estimatedDays: 3 },
+        { name: "Đàm phán cấp cao với đối tác chiến lược / nhà cung cấp công nghệ", estimatedDays: 3 },
+        { name: "Ký quyết định phê duyệt đầu tư & thành lập Ban dự án triển khai", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "Kế Toán": [
+    {
+      id: "acc_costing_audit",
+      name: "Quyết toán Giá thành Sản xuất Lô (COGS) & Đối soát Công nợ Dự án/Thầu",
+      icon: "💰",
+      codePrefix: "ACC-COG",
+      description: "Tập hợp chi phí nguyên vật liệu, nhân công, khấu hao máy móc theo từng Lệnh sản xuất (WO) và đối soát công nợ hợp đồng thầu.",
+      sampleObjectives: "Tính đúng, tính đủ giá thành thực tế từng lô Kit/Oligo/Thiết bị (chênh lệch định mức < 3%) và thu hồi công nợ đúng hạn.",
+      defaultStages: [
+        { name: "Tập hợp phiếu xuất kho NVL, định mức BOM và hao hụt thực tế từ Nhà máy/Kho", estimatedDays: 2 },
+        { name: "Phân bổ chi phí nhân công trực tiếp, khấu hao thiết bị & chi phí QC theo lô", estimatedDays: 2 },
+        { name: "Đối chiếu hóa đơn GTGT, biên bản nghiệm thu bàn giao & lịch thanh toán của khách hàng", estimatedDays: 2 },
+        { name: "Lập báo cáo phân tích lãi gộp (Gross Margin) & trình Ban Giám Đốc phê duyệt", estimatedDays: 1 }
+      ]
+    },
+    {
+      id: "acc_budget_tax",
+      name: "Lập Kế hoạch Ngân sách Dòng tiền & Kiểm toán Báo cáo Tài chính / Thuế",
+      icon: "📊",
+      codePrefix: "ACC-FIN",
+      description: "Cân đối dòng tiền thanh toán nhà cung cấp quốc tế/nội địa, kiểm soát hạn mức chi phí các phòng ban và chuẩn bị hồ sơ thuế.",
+      sampleObjectives: "Đảm bảo 100% hồ sơ chứng từ hợp lệ, tối ưu dòng tiền thanh toán PO và hoàn thành báo cáo tài chính đúng hạn.",
+      defaultStages: [
+        { name: "Rà soát kế hoạch thu từ Kinh Doanh và lịch thanh toán PO từ Cung Ứng", estimatedDays: 2 },
+        { name: "Kiểm tra tính hợp lệ của bộ chứng từ thanh toán, tạm ứng & hoàn ứng nội bộ", estimatedDays: 3 },
+        { name: "Cân đối hạn mức tín dụng, ngoại tệ thanh toán nhập khẩu & dự phòng quỹ", estimatedDays: 2 },
+        { name: "Chốt sổ kế toán kỳ, lập tờ khai thuế & báo cáo dòng tiền trình BGĐ", estimatedDays: 2 }
+      ]
+    }
+  ],
+  "Sales Admin": [
+    {
+      id: "sa_contract_po_coord",
+      name: "Chuẩn hóa Hồ sơ Hợp đồng, Điều phối Đơn hàng (SO/PO) & Theo dõi Giao nhận",
+      icon: "📑",
+      codePrefix: "SAD-ORD",
+      description: "Kiểm tra điều khoản thương mại, phát hành đơn hàng nội bộ sang Nhà máy/Kho vận và theo dõi tiến độ giao hàng đến nghiệm thu.",
+      sampleObjectives: "Xử lý 100% đơn hàng trong vòng 4 giờ làm việc, đồng bộ chính xác chứng từ COA/CO/CQ và hóa đơn kèm hàng.",
+      defaultStages: [
+        { name: "Tiếp nhận PO khách hàng/hợp đồng thầu, kiểm tra giá, chiết khấu & hạn mức công nợ", estimatedDays: 1 },
+        { name: "Phát hành Lệnh đặt hàng nội bộ sang Sản xuất / Kho vận & giữ hàng tồn kho (FEFO)", estimatedDays: 1 },
+        { name: "Tập hợp bộ chứng từ giao hàng (Phiếu xuất kho, Biên bản bàn giao, COA, Hóa đơn)", estimatedDays: 1 },
+        { name: "Xác nhận khách hàng nhận hàng thành công & bàn giao hồ sơ thanh toán cho Kế Toán", estimatedDays: 1 }
+      ]
+    },
+    {
+      id: "sa_tender_docs",
+      name: "Tổng hợp Hồ sơ Năng lực & Hành chính Thầu Y tế",
+      icon: "🗂️",
+      codePrefix: "SAD-TND",
+      description: "Chuẩn bị hồ sơ hành chính, bảo lãnh dự thầu, hợp đồng tương tự và biểu mẫu giá phục vụ đấu thầu bệnh viện/CDC.",
+      sampleObjectives: "Hoàn thiện bộ hồ sơ hành chính & thương mại chuẩn xác 100% trước thời điểm đóng thầu tối thiểu 48 giờ.",
+      defaultStages: [
+        { name: "Rà soát yêu cầu hành chính trong HSMT & lập checklist tài liệu cần chuẩn bị", estimatedDays: 1 },
+        { name: "Liên hệ ngân hàng làm Bảo lãnh dự thầu & sao y công chứng hợp đồng tương tự", estimatedDays: 2 },
+        { name: "Phối hợp PM/Pháp Chế ghép bộ hồ sơ kỹ thuật – pháp lý – biểu giá hoàn chỉnh", estimatedDays: 2 },
+        { name: "Kiểm tra chéo lần cuối, đóng dấu niêm phong / ký số E-GP & lưu trữ hồ sơ thầu", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "PM": [
+    {
+      id: "pm_product_launch",
+      name: "Chiến dịch Ra mắt Sản phẩm Mới (New Product Launch) & Đào tạo Giải pháp",
+      icon: "🎯",
+      codePrefix: "PM-LNC",
+      description: "Xây dựng định vị sản phẩm, bộ tài liệu kỹ thuật – thương mại (Brochure, So sánh cấu hình, Bảng giá) và huấn luyện đội ngũ Sales.",
+      sampleObjectives: "Hoàn thiện 100% bộ công cụ bán hàng (Sales Kit), tổ chức đào tạo sản phẩm và đạt mục tiêu doanh số giai đoạn ra mắt.",
+      defaultStages: [
+        { name: "Phối hợp R&D / Hãng phân tích USP sản phẩm, cấu hình kỹ thuật & đối thủ cạnh tranh", estimatedDays: 3 },
+        { name: "Xây dựng bảng giá chiến lược, gói giải pháp (Máy + Hóa chất) & tờ rơi kỹ thuật", estimatedDays: 3 },
+        { name: "Tổ chức buổi đào tạo chuyên sâu (Product Training) cho Kinh Doanh & Application", estimatedDays: 2 },
+        { name: "Triển khai chương trình dùng thử / hội thảo giới thiệu tại các bệnh viện trọng điểm", estimatedDays: 5 }
+      ]
+    },
+    {
+      id: "pm_spec_forecast",
+      name: "Xây dựng Cấu hình Kỹ thuật Thầu (Spec-in) & Dự báo Nhu cầu Đặt hàng (Forecast)",
+      icon: "📈",
+      codePrefix: "PM-FCST",
+      description: "Tư vấn cấu hình kỹ thuật chuyên sâu cho chủ đầu tư và lập dự báo nhu cầu sản xuất/nhập khẩu theo quý.",
+      sampleObjectives: "Đảm bảo cấu hình kỹ thuật tối ưu cho khách hàng và độ chính xác Forecast đạt trên 85% để tránh đứt hàng.",
+      defaultStages: [
+        { name: "Khảo sát nhu cầu xét nghiệm thực tế tại các khoa Vi sinh / Sinh học phân tử", estimatedDays: 2 },
+        { name: "Soạn thảo bảng thông số kỹ thuật tiêu chuẩn & bảng đối chiếu tính năng tương đương", estimatedDays: 2 },
+        { name: "Tổng hợp pipeline dự án từ Sales để lập bảng Forecast sản xuất/nhập hàng Quý", estimatedDays: 2 },
+        { name: "Họp S&OP cùng Sản xuất, Kho vận & Cung ứng để chốt kế hoạch tồn kho an toàn", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "Marketing": [
+    {
+      id: "mkt_conference_event",
+      name: "Tổ chức Hội nghị Khoa học Y tế, Triển lãm Chuyên ngành & Webinar",
+      icon: "📣",
+      codePrefix: "MKT-EVT",
+      description: "Lập kế hoạch truyền thông, thiết kế gian hàng triển lãm, chuẩn bị ấn phẩm học thuật và thu thập khách hàng tiềm năng (Leads).",
+      sampleObjectives: "Tổ chức thành công sự kiện/hội nghị, thu thập tối thiểu 50+ khách hàng tiềm năng chất lượng và nâng cao nhận diện thương hiệu ABT.",
+      defaultStages: [
+        { name: "Lên ý tưởng chủ đề, danh sách khách mời (Bác sĩ/Trưởng khoa Lab) & dự toán ngân sách", estimatedDays: 3 },
+        { name: "Thiết kế bộ nhận diện sự kiện, Standee, Brochure, quà tặng & bài báo cáo khoa học", estimatedDays: 4 },
+        { name: "Phối hợp PM & Application chuẩn bị máy demo, mẫu vật trưng bày tại sự kiện", estimatedDays: 2 },
+        { name: "Tổ chức sự kiện, truyền thông đa kênh & bàn giao danh sách Leads cho Kinh Doanh", estimatedDays: 2 }
+      ]
+    },
+    {
+      id: "mkt_brand_catalog",
+      name: "Sản xuất Ấn phẩm Kỹ thuật, Video Hướng dẫn & Chuẩn hóa Digital Marketing",
+      icon: "🎨",
+      codePrefix: "MKT-CNT",
+      description: "Thiết kế Catalogue sản phẩm, quay dựng video hướng dẫn sử dụng Kit/Máy tại Lab và tối ưu nội dung Website/Fanpage.",
+      sampleObjectives: "Xuất bản bộ Catalogue/Video chuẩn nhận diện thương hiệu, hỗ trợ trực tiếp cho công tác chào hàng và đào tạo khách hàng.",
+      defaultStages: [
+        { name: "Thu thập thông tin kỹ thuật chuẩn xác từ R&D, PM và Application", estimatedDays: 2 },
+        { name: "Biên tập nội dung, thiết kế đồ họa 2D/3D hoặc quay dựng thực tế tại phòng Lab", estimatedDays: 4 },
+        { name: "Hiệu đính chuyên môn cùng QA/QC & Pháp Chế (đảm bảo tuân thủ quảng cáo TTBYT)", estimatedDays: 2 },
+        { name: "In ấn / xuất bản lên hệ thống học liệu số và phân phối cho toàn khối Kinh Doanh", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "Hành Chính Nhân Sự": [
+    {
+      id: "hr_recruitment_onboarding",
+      name: "Chiến dịch Tuyển dụng Nhân sự Chuyên môn Cao & Hội nhập (Onboarding)",
+      icon: "👥",
+      codePrefix: "HR-REC",
+      description: "Tuyển dụng kỹ sư R&D, chuyên viên Application, QA/QC, nhân viên Kinh doanh và tổ chức đào tạo hội nhập văn hóa – quy trình công ty.",
+      sampleObjectives: "Tuyển dụng đủ 100% định biên nhân sự đúng hạn và đảm bảo nhân sự mới nắm vững quy trình ISO/ERP sau thời gian thử việc.",
+      defaultStages: [
+        { name: "Tiếp nhận yêu cầu tuyển dụng từ Trưởng bộ phận, mô tả công việc (JD) & đăng tuyển", estimatedDays: 3 },
+        { name: "Sàng lọc hồ sơ CV, tổ chức phỏng vấn vòng Nhân sự & vòng Chuyên môn", estimatedDays: 5 },
+        { name: "Thỏa thuận đãi ngộ (Offer), tiếp nhận hồ sơ nhân sự & cấp phát tài khoản/trang thiết bị", estimatedDays: 2 },
+        { name: "Tổ chức đào tạo hội nhập, nội quy an toàn sinh học & đánh giá nghiệm thu thử việc", estimatedDays: 3 }
+      ]
+    },
+    {
+      id: "hr_training_kpi_culture",
+      name: "Đánh giá Năng lực Nhân sự (KPI/Đào tạo Nội bộ) & Hoạt động Văn hóa Doanh nghiệp",
+      icon: "🏆",
+      codePrefix: "HR-TRN",
+      description: "Tổ chức kỳ đánh giá hiệu suất định kỳ, chương trình đào tạo nâng cao nghiệp vụ ISO 13485 và sự kiện gắn kết nội bộ.",
+      sampleObjectives: "Hoàn thành đánh giá KPI công bằng, minh bạch cho 100% CBNV và thực hiện đầy đủ kế hoạch đào tạo năm theo chuẩn ISO.",
+      defaultStages: [
+        { name: "Khảo sát nhu cầu đào tạo từ các phòng ban & ban hành biểu mẫu đánh giá KPI kỳ", estimatedDays: 2 },
+        { name: "Phối hợp các Trưởng bộ phận tổ chức đào tạo nội bộ / đánh giá hiệu suất cá nhân", estimatedDays: 4 },
+        { name: "Tổng hợp kết quả xếp loại, đề xuất khen thưởng, điều chỉnh lương hoặc lộ trình thăng tiến", estimatedDays: 2 },
+        { name: "Trình Ban Giám Đốc phê duyệt & lưu hồ sơ năng lực nhân sự theo chuẩn ISO 13485", estimatedDays: 1 }
+      ]
+    }
+  ],
+  "Lab": [
+    {
+      id: "lab_biosafety_calibration",
+      name: "Kiểm soát An toàn Sinh học Phòng Lab & Hiệu chuẩn Thiết bị Định kỳ",
+      icon: "🧪",
+      codePrefix: "LAB-CAL",
+      description: "Thực hiện khử nhiễm UV/hóa chất, kiểm tra chéo nhiễm ngoại chuẩn (Carry-over) và hiệu chuẩn Micropipette, máy Real-time PCR.",
+      sampleObjectives: "Đảm bảo môi trường phòng Lab vô trùng, không nhiễm chéo amplicon và 100% thiết bị đo lường có tem hiệu chuẩn còn hạn.",
+      defaultStages: [
+        { name: "Kiểm tra nhật ký nhiệt độ/độ ẩm, áp suất phòng sạch & hạn hiệu chuẩn thiết bị Lab", estimatedDays: 1 },
+        { name: "Thực hiện vệ sinh khử nhiễm bề mặt, tủ an toàn sinh học & chạy mẫu kiểm tra nhiễm nền (NTC)", estimatedDays: 2 },
+        { name: "Hiệu chuẩn nội bộ Micropipette, máy ly tâm, khối nhiệt & phối hợp đơn vị kiểm định ngoài", estimatedDays: 2 },
+        { name: "Cập nhật hồ sơ quản lý phòng Lab, dán tem trạng thái & nghiệm thu cùng QA/QC", estimatedDays: 1 }
+      ]
+    },
+    {
+      id: "lab_sample_testing",
+      name: "Tiếp nhận, Lưu trữ Mẫu đối chứng (Biobank) & Chạy Thử nghiệm Chuyên sâu",
+      icon: "🔬",
+      codePrefix: "LAB-TST",
+      description: "Quản lý ngân hàng mẫu chuẩn/mẫu lâm sàng ở tủ âm sâu (-80°C) và thực hiện các mẻ chạy thử nghiệm đối chiếu theo yêu cầu.",
+      sampleObjectives: "Mã hóa truy xuất 100% mẫu lưu trữ theo vị trí khay/hộp và trả kết quả phân tích đúng thời hạn cam kết.",
+      defaultStages: [
+        { name: "Tiếp nhận mẫu, kiểm tra điều kiện bảo quản lạnh & mã hóa định danh vào sổ Biobank", estimatedDays: 1 },
+        { name: "Tách chiết DNA/RNA và chuẩn bị dải pha loãng mẫu chuẩn nội kiểm", estimatedDays: 1 },
+        { name: "Thực hiện phản ứng khuếch đại Real-time PCR / điện di và phân tích dữ liệu Ct", estimatedDays: 2 },
+        { name: "Xuất báo cáo kết quả thử nghiệm và lưu trữ mẫu dư tại tủ -80°C theo quy định", estimatedDays: 1 }
+      ]
+    }
   ]
 };
+
+export function getThematicTypesForDept(dept: string): ThematicTypeDefinition[] {
+  const normalized = normalizeWorkspaceDept(dept) || dept;
+  if (DEPARTMENT_THEMATIC_TYPES[dept] && DEPARTMENT_THEMATIC_TYPES[dept].length > 0) {
+    return DEPARTMENT_THEMATIC_TYPES[dept];
+  }
+  if (DEPARTMENT_THEMATIC_TYPES[normalized] && DEPARTMENT_THEMATIC_TYPES[normalized].length > 0) {
+    return DEPARTMENT_THEMATIC_TYPES[normalized];
+  }
+  const cleanCode = (normalized || "PRJ")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]/g, "")
+    .slice(0, 3)
+    .toUpperCase() || "PRJ";
+  return [
+    {
+      id: `custom_${cleanCode.toLowerCase()}_plan`,
+      name: `Kế hoạch Chuyên đề Trọng tâm Phòng ${dept || "Chuyên môn"}`,
+      icon: "🎯",
+      codePrefix: `${cleanCode}-KH`,
+      description: `Thiết lập mục tiêu, phân công nhân sự và theo dõi các giai đoạn triển khai chuyên đề của phòng ${dept}.`,
+      sampleObjectives: `Hoàn thành 100% các hạng mục công việc trọng tâm của phòng ${dept} đúng tiến độ và tiêu chuẩn chất lượng.`,
+      defaultStages: [
+        { name: "Khảo sát hiện trạng, xác định mục tiêu & lập đề cương chi tiết", estimatedDays: 2 },
+        { name: "Phân công nhân sự, chuẩn bị nguồn lực & triển khai thực hiện giai đoạn 1", estimatedDays: 5 },
+        { name: "Kiểm tra, đánh giá kết quả giữa kỳ & hiệu chỉnh phương án", estimatedDays: 3 },
+        { name: "Nghiệm thu tổng kết chuyên đề & báo cáo Ban Giám Đốc", estimatedDays: 2 }
+      ]
+    },
+    {
+      id: `custom_${cleanCode.toLowerCase()}_sop`,
+      name: `Chuẩn hóa Quy trình Nghiệp vụ (SOP) & Cải tiến Chất lượng Phòng ${dept || "Chuyên môn"}`,
+      icon: "📋",
+      codePrefix: `${cleanCode}-SOP`,
+      description: `Rà soát, xây dựng mới hoặc cải tiến quy trình phối hợp và biểu mẫu nghiệp vụ tại phòng ${dept}.`,
+      sampleObjectives: `Chuẩn hóa 100% quy trình thao tác chuẩn (SOP), rút ngắn thời gian xử lý công việc và giảm thiểu sai sót vận hành.`,
+      defaultStages: [
+        { name: "Rà soát các điểm nghẽn trong quy trình vận hành hiện tại của bộ phận", estimatedDays: 2 },
+        { name: "Biên soạn dự thảo quy trình SOP mới và bộ biểu mẫu kiểm soát đi kèm", estimatedDays: 3 },
+        { name: "Lấy ý kiến các phòng ban liên quan, chạy thử nghiệm & đào tạo nhân sự", estimatedDays: 3 },
+        { name: "Trình phê duyệt ban hành chính thức và đưa vào áp dụng", estimatedDays: 1 }
+      ]
+    }
+  ];
+}
 
 export const PREDEFINED_APP_PROJECTS: any[] = [];
 
@@ -5181,7 +5438,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const openCreateThematicModal = (deptOverride?: string) => {
     setEditingThematicId(null);
     const targetDept = deptOverride || (rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Application" : selectedDept));
-    const availableTypes = DEPARTMENT_THEMATIC_TYPES[targetDept] || DEPARTMENT_THEMATIC_TYPES["Application"] || [];
+    const availableTypes = getThematicTypesForDept(targetDept);
     const firstType = availableTypes[0];
     const prefix = firstType?.codePrefix || "PRJ";
     const existingCount = labProjects.filter((p: any) => p.dept === targetDept).length + 1;
@@ -5241,7 +5498,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Handle Changing Department inside Modal
   const handleThematicDeptChange = (newDept: string) => {
-    const availableTypes = DEPARTMENT_THEMATIC_TYPES[newDept] || DEPARTMENT_THEMATIC_TYPES["Application"] || [];
+    const availableTypes = getThematicTypesForDept(newDept);
     const firstType = availableTypes[0];
     const prefix = firstType?.codePrefix || "PRJ";
     const existingCount = labProjects.filter((p: any) => p.dept === newDept).length + 1;
@@ -7998,7 +8255,7 @@ ${wf.description || ""}`}
                 const currentDept = rolePerspective === "manager" ? managerDept : selectedDept;
                 const relevantTypes = currentDept === "all" 
                   ? Object.values(DEPARTMENT_THEMATIC_TYPES).flat()
-                  : (DEPARTMENT_THEMATIC_TYPES[currentDept] || []);
+                  : getThematicTypesForDept(currentDept);
 
                 if (relevantTypes.length === 0) return null;
 
@@ -8075,19 +8332,25 @@ ${wf.description || ""}`}
                     const totalStages = stages.length;
                     const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
                     
-                    const isApp = prj.dept === "Application";
-                    const isSales = prj.dept === "Kinh Doanh";
+                    const isApp = prj.dept === "Application" || prj.dept === "Lab";
+                    const isTechFactory = ["Nghiên Cứu R&D", "Sản Xuất Kit", "Tổng Hợp Oligo", "Kỹ Thuật – Thiết Bị", "QA/QC"].includes(prj.dept);
+                    const isSales = ["Kinh Doanh", "Sales Admin", "PM", "Marketing"].includes(prj.dept);
                     const isWh = prj.dept === "Kho & Vận Hành";
                     const isProc = prj.dept === "Cung Ứng";
+                    const isFinAdmin = ["Kế Toán", "Pháp Chế", "Hành Chính Nhân Sự", "Ban Giám Đốc"].includes(prj.dept);
 
                     const badgeColor = isApp
                       ? "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border-purple-200 dark:border-purple-800"
+                      : isTechFactory
+                      ? "bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800"
                       : isSales
                       ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-800"
                       : isWh
                       ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
                       : isProc
                       ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-800"
+                      : isFinAdmin
+                      ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200 dark:border-rose-800"
                       : "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800";
 
                     return (
@@ -9343,16 +9606,7 @@ ${wf.description || ""}`}
             {/* Department Breakdown Grid - Synchronized 100% with analyticsData.deptScorecards */}
             <div className={`grid grid-cols-1 gap-3 ${analyticsData.deptScorecards.length > 4 ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
               {analyticsData.deptScorecards.map((ds) => {
-                const Icon =
-                  ds.dept === "Kinh Doanh"
-                    ? Briefcase
-                    : ds.dept === "Application"
-                    ? FlaskConical
-                    : ds.dept === "Kho & Vận Hành"
-                    ? Package
-                    : ds.dept === "Cung Ứng"
-                    ? ShoppingCart
-                    : Building2;
+                const Icon = DEPARTMENT_ICONS[ds.dept] || Building2;
 
                 return (
                   <div key={ds.dept} className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-xl p-3.5 space-y-2.5">
@@ -12742,7 +12996,10 @@ ${wf.description || ""}`}
               : scheduleForm.title;
             const firstWithLoc = selectedObjs.find(o => o.location);
             const firstDept = selectedObjs[0]?.dept;
-            const validCategories = ["Application", "Kinh Doanh", "Kho & Vận Hành", "Cung Ứng", "Họp & Giao Ban"];
+            const validCategories = [
+              "Họp & Giao Ban",
+              ...WORKSPACE_TASK_DEPARTMENTS.map(d => d.id),
+            ];
             const matchedCat = firstDept && validCategories.includes(firstDept) ? firstDept : scheduleForm.category;
 
             setScheduleForm({
@@ -12925,10 +13182,29 @@ ${wf.description || ""}`}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
                     >
                       <option value="Họp & Giao Ban">🎥 Họp &amp; Giao Ban: Họp nội bộ / Họp liên phòng / Họp Ban Giám Đốc</option>
-                      <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Trực Lab</option>
-                      <option value="Kinh Doanh">💼 Kinh Doanh: Đàm phán KH / Chăm sóc bệnh viện / Triển khai thầu</option>
-                      <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành: Soạn xuất hàng lớn / Nhập kho container / Kiểm kê</option>
-                      <option value="Cung Ứng">🛒 Cung Ứng: Làm việc NCC / Thủ tục hải quan</option>
+                      <optgroup label="── Khối Kỹ Thuật, R&D & Nhà Máy ──">
+                        <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu R&amp;D: Thực nghiệm / Stage-Gate / Thẩm định DHF</option>
+                        <option value="Sản Xuất Kit">🧪 Sản Xuất Kit: Pha chế lô / Chia liều / Đóng gói EBR</option>
+                        <option value="Tổng Hợp Oligo">🔬 Tổng Hợp Oligo: Chạy máy tổng hợp / Tinh sạch HPLC/PAGE</option>
+                        <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Thiết Bị: Lắp ráp máy / Hiệu chuẩn / Bảo trì</option>
+                        <option value="QA/QC">🛡️ QA/QC: Kiểm nghiệm IQC/IPQC/OQC / Thẩm định COA &amp; ISO</option>
+                        <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Hỗ trợ Lab</option>
+                        <option value="Lab">🧫 Phòng Lab: Trực Lab / Quản lý mẫu Biobank &amp; An toàn sinh học</option>
+                      </optgroup>
+                      <optgroup label="── Khối Kinh Doanh, Dự Án & Thị Trường ──">
+                        <option value="Kinh Doanh">💼 Kinh Doanh: Đàm phán KH / Chăm sóc bệnh viện / Triển khai thầu</option>
+                        <option value="Sales Admin">📑 Sales Admin: Điều phối đơn hàng SO/PO / Hồ sơ thầu hành chính</option>
+                        <option value="PM">🎯 PM (Quản lý Sản phẩm): Đào tạo giải pháp / Spec-in cấu hình thầu</option>
+                        <option value="Marketing">📣 Marketing: Hội nghị khoa học / Sự kiện / Ấn phẩm kỹ thuật</option>
+                      </optgroup>
+                      <optgroup label="── Khối Cung Ứng, Kho Vận & Quản Trị ──">
+                        <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành: Soạn xuất hàng lớn / Nhập kho container / Kiểm kê</option>
+                        <option value="Cung Ứng">🛒 Cung Ứng: Làm việc NCC / Đặt hàng PO / Thủ tục hải quan</option>
+                        <option value="Kế Toán">💰 Kế Toán: Đối soát công nợ / Thanh toán / Quyết toán giá thành</option>
+                        <option value="Pháp Chế">⚖️ Pháp Chế: Lưu hành BYT / Rà soát hợp đồng / Hồ sơ pháp lý</option>
+                        <option value="Hành Chính Nhân Sự">👥 Hành Chính Nhân Sự: Tuyển dụng / Đào tạo nội bộ / Hành chính</option>
+                        <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc: Công tác điều hành / Làm việc đối tác chiến lược</option>
+                      </optgroup>
                     </select>
                   </div>
                 </div>
@@ -13732,23 +14008,35 @@ ${wf.description || ""}`}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Phòng ban áp dụng *</label>
-              {rolePerspective === "manager" ? (
-                <div className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-bold text-slate-800 dark:text-slate-200">
-                  {managerDept}
-                </div>
-              ) : (
-                <select
-                  value={labProjectForm.dept}
-                  onChange={(e) => handleThematicDeptChange(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold cursor-pointer"
-                >
-                  <option value="Application">🔬 Application (Kỹ thuật &amp; Lab)</option>
+              <select
+                value={labProjectForm.dept}
+                onChange={(e) => handleThematicDeptChange(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold cursor-pointer"
+              >
+                <optgroup label="── Khối Kỹ Thuật, R&D & Nhà Máy ──">
+                  <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu R&amp;D (R&amp;D Lab)</option>
+                  <option value="Sản Xuất Kit">🧪 Sản Xuất Kit (Kit Manufacturing)</option>
+                  <option value="Tổng Hợp Oligo">🔬 Tổng Hợp Oligo (Oligo Synthesis)</option>
+                  <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Thiết Bị (Engineering)</option>
+                  <option value="QA/QC">🛡️ QA/QC (Đảm bảo &amp; Kiểm soát Chất lượng)</option>
+                  <option value="Application">🔬 Application (Kỹ thuật &amp; Ứng dụng Lab)</option>
+                  <option value="Lab">🧫 Phòng Lab (Quản lý Lab &amp; Biobank)</option>
+                </optgroup>
+                <optgroup label="── Khối Kinh Doanh, Dự Án & Thị Trường ──">
                   <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
-                  <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành</option>
-                  <option value="Cung Ứng">🛒 Cung Ứng (Procurement)</option>
-                  <option value="Pháp Chế">⚖️ Pháp Chế (Legal)</option>
-                </select>
-              )}
+                  <option value="Sales Admin">📑 Sales Admin (Điều phối Đơn hàng &amp; Thầu)</option>
+                  <option value="PM">🎯 PM (Quản lý Sản phẩm &amp; Giải pháp)</option>
+                  <option value="Marketing">📣 Marketing (Truyền thông &amp; Sự kiện)</option>
+                </optgroup>
+                <optgroup label="── Khối Cung Ứng, Kho Vận & Quản Trị ──">
+                  <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành (Warehouse &amp; Logistics)</option>
+                  <option value="Cung Ứng">🛒 Cung Ứng (Procurement &amp; Xuất nhập khẩu)</option>
+                  <option value="Kế Toán">💰 Kế Toán &amp; Tài Chính (Accounting &amp; Finance)</option>
+                  <option value="Pháp Chế">⚖️ Pháp Chế (Legal &amp; Regulatory Affairs)</option>
+                  <option value="Hành Chính Nhân Sự">👥 Hành Chính Nhân Sự (HR &amp; Admin)</option>
+                  <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc (Executive Board)</option>
+                </optgroup>
+              </select>
             </div>
 
             <div>
@@ -13791,7 +14079,7 @@ ${wf.description || ""}`}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {(DEPARTMENT_THEMATIC_TYPES[labProjectForm.dept] || DEPARTMENT_THEMATIC_TYPES["Application"] || []).map((typeDef) => {
+              {getThematicTypesForDept(labProjectForm.dept).map((typeDef) => {
                 const isSelected = labProjectForm.typeId === typeDef.id;
                 return (
                   <div
