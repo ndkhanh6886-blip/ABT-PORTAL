@@ -1951,6 +1951,54 @@ export function SalesFullABT() {
         return days > termDays ? days - termDays : 0;
     };
 
+    // Tự động gỡ khóa công nợ cho các đơn hàng cũ bị khóa theo công thức cũ (tính tổng SO chưa giao)
+    // khi khách hàng thực tế chưa có phiếu giao hàng nào vượt hạn mức hoặc quá hạn thanh toán.
+    useEffect(() => {
+        if (!isSalesDataLoaded || !Array.isArray(factoryOrders) || factoryOrders.length === 0) return;
+        const hasBlocked = factoryOrders.some(o => Boolean(o?.isCreditBlocked));
+        if (!hasBlocked) return;
+
+        let changed = false;
+        const nextOrders = factoryOrders.map(o => {
+            if (!o?.isCreditBlocked) return o;
+            const cName = String(o.customerName || o.customer_name || "").trim().toLowerCase();
+            const cCode = String(o.customerCode || o.customer_code || "").trim().toLowerCase();
+            const matchedCust = customers.find(c =>
+                (cCode && String(c.customer_code || "").trim().toLowerCase() === cCode) ||
+                (cName && String(c.name || "").trim().toLowerCase() === cName)
+            );
+            const creditLimit = matchedCust?.credit_limit !== undefined ? Number(matchedCust.credit_limit) : 100000000;
+            const creditTermDays = matchedCust?.credit_term_days !== undefined ? Number(matchedCust.credit_term_days) : 30;
+
+            const custOrders = factoryOrders.filter(uo => {
+                const uName = String(uo.customerName || uo.customer_name || "").trim().toLowerCase();
+                const uCode = String(uo.customerCode || uo.customer_code || "").trim().toLowerCase();
+                return (cCode && uCode === cCode) || (cName && uName === cName);
+            });
+            const currentCustDebt = custOrders.reduce((s, uo) => s + getOrderDeliveredDebtAmount(uo), 0);
+            const hasOverdue = custOrders.some(uo => getOverdueDays(uo, creditTermDays) > 0);
+
+            if (currentCustDebt <= creditLimit && !hasOverdue) {
+                changed = true;
+                const hasZero = Boolean(o.hasZeroPriceItems || (Array.isArray(o.items) && o.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
+                const needsPriceAppr = hasZero && o.priceApprovalStatus !== "APPROVED";
+                return {
+                    ...o,
+                    isCreditBlocked: false,
+                    is_credit_blocked: false,
+                    creditBlockReason: "",
+                    credit_block_reason: "",
+                    status: (!needsPriceAppr && o.status === "Pending") ? "Approved" : o.status
+                };
+            }
+            return o;
+        });
+
+        if (changed) {
+            setFactoryOrders(nextOrders);
+        }
+    }, [factoryOrders, deliverySlips, customers, isSalesDataLoaded]);
+
     useEffect(() => {
         if (!isSalesDataLoaded) return;
         if (typeof window !== "undefined") {
@@ -2149,7 +2197,7 @@ export function SalesFullABT() {
                                 merged.status = "Cancelled";
                             } else if (raw.approval_status === "REJECTED") {
                                 merged.status = "Rejected";
-                            } else if (raw.approval_status === "APPROVED" && merged.status === "Pending") {
+                            } else if ((raw.approval_status === "APPROVED" || (!raw.is_credit_blocked && raw.price_approval_status !== "PENDING_APPROVAL")) && merged.status === "Pending") {
                                 merged.status = "Approved";
                             } else if (raw.approval_status !== "APPROVED" && merged.status === "Approved" &&
                                 (raw.is_credit_blocked || raw.price_approval_status === "PENDING_APPROVAL" ||

@@ -606,6 +606,50 @@ export async function GET(req: NextRequest) {
 
       const enrichedCustomers = await enrichCustomerRowsWithContacts(customers.rows);
 
+      // Tự động gỡ khóa công nợ (is_credit_blocked) cho các đơn hàng cũ bị khóa theo công thức cũ (tính tổng SO chưa giao)
+      // nếu thực tế khách hàng chưa có phiếu giao hàng nào vượt hạn mức hoặc quá hạn thanh toán.
+      const blockedOrderRows = orders.rows.filter((r: any) => Boolean(r.is_credit_blocked) && String(r.approval_status || "").toUpperCase() !== "APPROVED");
+      if (blockedOrderRows.length > 0) {
+        try {
+          const custByIdMap = new Map<number, any>();
+          const custByNameMap = new Map<string, any>();
+          for (const c of customers.rows) {
+            if (c.id) custByIdMap.set(Number(c.id), c);
+            if (c.name) custByNameMap.set(String(c.name).trim().toLowerCase(), c);
+          }
+          const creditCache = new Map<string, { blocked: boolean; reason: string }>();
+          const toUnblockIds: number[] = [];
+
+          for (const ord of blockedOrderRows) {
+            const matchedC = (ord.customer_id && custByIdMap.get(Number(ord.customer_id))) ||
+                             (ord.customer_name && custByNameMap.get(String(ord.customer_name).trim().toLowerCase())) ||
+                             { id: ord.customer_id || null, name: ord.customer_name || "", credit_limit: DEFAULT_CREDIT_LIMIT, credit_term_days: DEFAULT_CREDIT_TERM_DAYS };
+            const cacheKey = `${matchedC.id || 0}:${String(matchedC.name || "").trim().toLowerCase()}`;
+            let evalRes = creditCache.get(cacheKey);
+            if (!evalRes) {
+              evalRes = await evaluateCredit(matchedC, 0, null);
+              creditCache.set(cacheKey, evalRes);
+            }
+            if (!evalRes.blocked) {
+              ord.is_credit_blocked = false;
+              ord.credit_block_reason = "";
+              if (ord.id && !isNaN(Number(ord.id))) {
+                toUnblockIds.push(Number(ord.id));
+              }
+            }
+          }
+
+          if (toUnblockIds.length > 0) {
+            await query(
+              "UPDATE sales_orders SET is_credit_blocked = FALSE, credit_block_reason = '' WHERE id = ANY($1::int[])",
+              [toUnblockIds]
+            );
+          }
+        } catch (err) {
+          console.error("Failed to auto-reconcile stale credit blocks:", err);
+        }
+      }
+
       return NextResponse.json({
         slip_payments: slipPayments,
         customers: enrichedCustomers,
@@ -1578,13 +1622,24 @@ export async function POST(req: NextRequest) {
           set("approved_at", null);
           set("approval_note", `Cần duyệt lại: đơn được sửa sau khi đã duyệt (trước đó duyệt bởi ${existing.approved_by || "?"})`);
         }
-        if (!isStockOrder && matchedCustomer && (newTotal > (Number(existing.total_amount) || 0) + 0.5 || customerChanged)) {
-          const credit = await evaluateCredit(matchedCustomer, newTotal, existing.id);
+        if (!isStockOrder) {
+          const custForCredit = matchedCustomer || {
+            id: resolvedCustomerId ?? existing.customer_id ?? null,
+            name: customer_name || existing.customer_name || "",
+            credit_limit: DEFAULT_CREDIT_LIMIT,
+            credit_term_days: DEFAULT_CREDIT_TERM_DAYS
+          };
+          const credit = await evaluateCredit(custForCredit, newTotal, existing.id);
           if (credit.blocked) {
             isCreditBlocked = true;
             creditBlockReason = credit.reason;
             set("is_credit_blocked", true);
             set("credit_block_reason", credit.reason);
+          } else if (existing.is_credit_blocked) {
+            isCreditBlocked = false;
+            creditBlockReason = "";
+            set("is_credit_blocked", false);
+            set("credit_block_reason", "");
           }
         }
 
@@ -1639,14 +1694,16 @@ export async function POST(req: NextRequest) {
       }
       let isCreditBlocked = false;
       let creditBlockReason = "";
-      if (!isStockOrder && matchedCustomer) {
-        const credit = await evaluateCredit(matchedCustomer, computedTotal, null);
+      if (!isStockOrder) {
+        const custForCredit = matchedCustomer || {
+          id: resolvedCustomerId,
+          name: customer_name || "",
+          credit_limit: DEFAULT_CREDIT_LIMIT,
+          credit_term_days: DEFAULT_CREDIT_TERM_DAYS
+        };
+        const credit = await evaluateCredit(custForCredit, computedTotal, null);
         isCreditBlocked = credit.blocked;
         creditBlockReason = credit.reason;
-      } else if (!isStockOrder) {
-        // Không xác định được hồ sơ khách hàng -> không kiểm tra được công nợ: chuyển Kế toán duyệt thay vì bỏ qua
-        isCreditBlocked = true;
-        creditBlockReason = `Chưa xác định được hồ sơ khách hàng "${customer_name || ""}" trong CSDL nên chưa kiểm tra được hạn mức công nợ. Cần Kế toán xác nhận.`;
       }
       const priceApprovalStatus = (!isStockOrder && hasZeroPrice) ? "PENDING_APPROVAL" : "APPROVED";
 
