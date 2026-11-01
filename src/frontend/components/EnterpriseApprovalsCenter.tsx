@@ -31,6 +31,7 @@ import {
   Building2,
 } from "lucide-react";
 import { Modal } from "@/frontend/components/Modal";
+import { Pager, usePaged } from "@/frontend/components/Pager";
 import { AttachmentPicker, AttachmentList } from "@/frontend/components/AttachmentPicker";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { escHtml, useDebouncedValue, vnToday } from "@/frontend/factory/api";
@@ -885,6 +886,8 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
     });
   }, [requests, selectedDeptFilter, inboxTab]);
 
+  const requestsPage = usePaged(filteredRequests, 20);
+
   return (
     <div className="space-y-4">
       {/* =====================================================================
@@ -1253,7 +1256,7 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
             </div>
           ) : (
             <div className="divide-y divide-slate-100 dark:divide-slate-800">
-              {filteredRequests.map((r) => {
+              {requestsPage.items.map((r) => {
                 const cat = CATEGORY_META[r.category] || CATEGORY_META.GENERAL;
                 const st = STATUS_META[r.status] || STATUS_META.PENDING;
                 const pri = PRIORITY_META[r.priority] || PRIORITY_META.NORMAL;
@@ -1394,6 +1397,11 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                   </div>
                 );
               })}
+            </div>
+          )}
+          {!loading && filteredRequests.length > 0 && (
+            <div className="px-4 py-2 border-t border-slate-100 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/40">
+              <Pager p={requestsPage} unit="tờ trình / đề xuất" />
             </div>
           )}
         </div>

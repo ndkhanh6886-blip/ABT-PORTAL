@@ -2980,6 +2980,9 @@ export const WarehouseModule: React.FC = () => {
     });
   }, [reservations, selectedRepFilter]);
 
+  const transactionsPage = usePaged(transactions, 20);
+  const reservationsPage = usePaged(filteredReservations, 20);
+
   // Summary calculations for Excel Inbound
   const excelSummary = useMemo(() => {
     const valid = excelInboundRows.filter((r) => r.isValid);
@@ -4377,7 +4380,7 @@ export const WarehouseModule: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                {transactions.map((tx) => {
+                {transactionsPage.items.map((tx) => {
                   const isInbound = tx.transaction_type === "INBOUND";
                   const itemsList = Array.isArray(tx.items) ? tx.items : [];
                   return (
@@ -4445,6 +4448,7 @@ export const WarehouseModule: React.FC = () => {
                 })}
               </tbody>
             </table>
+            <Pager p={transactionsPage} unit="chứng từ xuất nhập kho" />
           </div>
         </div>
       )}
@@ -4605,7 +4609,7 @@ export const WarehouseModule: React.FC = () => {
                       </td>
                     </tr>
                   ) : (
-                    filteredReservations.map((r) => {
+                    reservationsPage.items.map((r) => {
                       const today = todayVN();
                       const isOverdue = r.status === "ACTIVE" && r.hold_until_date && r.hold_until_date.slice(0, 10) < today;
                       let daysRemaining = 0;
@@ -4714,6 +4718,7 @@ export const WarehouseModule: React.FC = () => {
                   )}
                 </tbody>
               </table>
+              <Pager p={reservationsPage} unit="phiếu giữ chỗ" />
             </div>
           </div>
         </div>

@@ -5,6 +5,7 @@ import { Download, RefreshCw, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { todayVN } from "@/backend/services/dates";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
+import { Pager, usePaged } from "@/frontend/components/Pager";
 
 /**
  * Tra cứu chi tiết hàng hóa của nhiều chứng từ trên cùng một trang (mỗi dòng hàng một dòng):
@@ -64,6 +65,7 @@ export function LineItemLookup({ sources = ["so", "po", "receipt", "px"] }: { so
   const src = SOURCES.find((s) => s.id === source)!;
   const showMoney = source === "so" || (source === "po" && meta.showCost);
   const totals = useMemo(() => rows.reduce((t, r) => ({ qty: t.qty + (Number(r.quantity) || 0), total: t.total + (Number(r.total) || 0) }), { qty: 0, total: 0 }), [rows]);
+  const rowsPage = usePaged(rows, 50, `${source}|${from}|${to}|${q}|${partner}`);
 
   const exportExcel = () => {
     const data = rows.map((r) => ({
@@ -151,7 +153,7 @@ export function LineItemLookup({ sources = ["so", "po", "receipt", "px"] }: { so
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {rows.length === 0 ? (
               <tr><td colSpan={13} className="p-6 text-center text-slate-400">{loading ? "Đang tải..." : "Không có dòng hàng nào trong khoảng đã chọn."}</td></tr>
-            ) : rows.map((r, i) => (
+            ) : rowsPage.items.map((r, i) => (
               <tr key={`${r.doc_code}-${i}`} className="hover:bg-slate-50 dark:hover:bg-slate-900/50">
                 <td className="p-2 font-mono font-bold text-indigo-600 dark:text-indigo-300 whitespace-nowrap">{r.doc_code}</td>
                 <td className="p-2 font-mono whitespace-nowrap">{dmy(r.doc_date)}</td>
@@ -172,6 +174,7 @@ export function LineItemLookup({ sources = ["so", "po", "receipt", "px"] }: { so
             ))}
           </tbody>
         </table>
+        <Pager p={rowsPage} unit="dòng hàng" />
       </div>
     </div>
   );

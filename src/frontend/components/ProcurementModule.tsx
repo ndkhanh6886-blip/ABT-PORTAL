@@ -56,6 +56,7 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
+import { Pager, usePaged } from "@/frontend/components/Pager";
 
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
@@ -3226,6 +3227,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     });
   }, [orders, payableFilter, payableSupplier, payableFrom, payableTo, payableSearch]);
 
+  const ordersPage = usePaged(filteredOrders, 20);
+  const prsPage = usePaged(filteredPRs, 20);
+  const suppliersPage = usePaged(filteredSuppliers, 20);
+  const payablesPage = usePaged(filteredPayables, 20);
+
   return (
     <div className="space-y-6">
       {/* 1. TOP HEADER & KPI METRIC CARDS */}
@@ -3638,7 +3644,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     </td>
                   </tr>
                 ) : (
-                  filteredOrders.map((po, idx) => {
+                  ordersPage.items.map((po, idx) => {
                     const totalAmt = parseFloat(po.total_amount) || 0;
                     const paidAmt = parseFloat(po.amount_paid) || 0;
                     const remainingAmt = Math.max(0, totalAmt - paidAmt);
@@ -3994,7 +4000,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               {activePaymentDropdownId === po.id && (
                                 <div
                                   className={`absolute z-[100] left-1/2 -translate-x-1/2 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
-                                    idx >= 1 && idx >= filteredOrders.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
+                                    idx >= 1 && idx >= ordersPage.items.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
                                   }`}
                                 >
                                   <div className="px-3 py-1.5 font-bold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
@@ -4058,7 +4064,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               {activeStatusDropdownId === po.id && (
                                 <div
                                   className={`absolute z-[100] left-1/2 -translate-x-1/2 w-60 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
-                                    idx >= 1 && idx >= filteredOrders.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
+                                    idx >= 1 && idx >= ordersPage.items.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
                                   }`}
                                 >
                                   <div className="px-3 py-1.5 font-bold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
@@ -4171,6 +4177,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               </tbody>
             </table>
           </div>
+          <Pager p={ordersPage} unit="đơn đặt mua (PO)" />
         </div>
       )}
 
@@ -4308,7 +4315,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     </td>
                   </tr>
                 ) : (
-                  filteredPRs.map((pr) => {
+                  prsPage.items.map((pr) => {
                     const summary = getPRPOSummary(pr);
                     return (
                       <tr key={pr.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
@@ -4655,6 +4662,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 )}
               </tbody>
             </table>
+            <Pager p={prsPage} unit="đề xuất mua hàng (PR)" />
           </div>
         </div>
       )}
@@ -4756,7 +4764,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {filteredSuppliers.map((s) => (
+                {suppliersPage.items.map((s) => (
                   <tr key={s.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
                     <td className="py-3.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">{s.supplier_code}</td>
                     <td className="py-3.5 px-4">
@@ -4839,6 +4847,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 ))}
               </tbody>
             </table>
+            <Pager p={suppliersPage} unit="nhà cung cấp" />
           </div>
         </div>
       )}
@@ -4961,7 +4970,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 {filteredPayables.length === 0 && (
                   <tr><td colSpan={10} className="py-8 text-center text-slate-400">Không có PO nào phù hợp bộ lọc.</td></tr>
                 )}
-                {filteredPayables.map((po) => {
+                {payablesPage.items.map((po) => {
                   const total = parseFloat(po.total_amount) || 0;
                   const paid = parseFloat(po.amount_paid) || 0;
                   const remaining = Math.max(0, total - paid);
@@ -5045,6 +5054,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 })}
               </tbody>
             </table>
+            <Pager p={payablesPage} unit="đơn công nợ PO" />
           </div>
         </div>
       )}

@@ -82,6 +82,7 @@ import { WorkPlansView } from "@/frontend/factory/rd/WorkPlansView";
 import { PlannerView } from "@/frontend/factory/oligo/PlannerView";
 import { useFactoryMe } from "@/frontend/factory/api";
 import { EnterpriseApprovalsCenter } from "@/frontend/components/EnterpriseApprovalsCenter";
+import { Pager, usePaged } from "@/frontend/components/Pager";
 
 // Configuration for Departments
 const DEPARTMENT_ICONS: Record<string, any> = {
@@ -6272,6 +6273,10 @@ export const UnifiedWorkspace: React.FC = () => {
     setIsTaskModalOpen(true);
   };
 
+  const tasksPage = usePaged(filteredTasks, 20);
+  const workflowsPage = usePaged(listWorkflows, 20);
+  const dailyLogsPage = usePaged(filteredDailyLogs, 20);
+
   return (
     <div className="space-y-4 w-full pb-12">
       {/* ==================== LEVEL 1: MASTER HEADER & FEATURE TABS ==================== */}
@@ -7008,7 +7013,7 @@ export const UnifiedWorkspace: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {filteredTasks.map((t) => (
+                  {tasksPage.items.map((t) => (
                     <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
                       <td className="py-3 px-4 font-mono font-bold text-slate-500">{t.task_code}</td>
                       <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
@@ -7076,6 +7081,9 @@ export const UnifiedWorkspace: React.FC = () => {
                   )}
                 </tbody>
               </table>
+              <div className="px-4">
+                <Pager p={tasksPage} unit="công việc" />
+              </div>
             </div>
           )}
         </div>
@@ -7339,7 +7347,7 @@ ${wf.description || ""}`}
 
             {/* Danh sách các Card Quy Trình / Công Việc tách biệt rõ ràng */}
             <div className="p-4 space-y-4 bg-slate-100/70 dark:bg-slate-950/60">
-              {listWorkflows.map((wf, wfIdx) => {
+              {workflowsPage.items.map((wf, wfIdx) => {
                 const wfSteps = Array.isArray(wf.steps) ? wf.steps : [];
                 const currentIdx = typeof wf.current_step_index === "number" ? wf.current_step_index : 0;
                 const hasSteps = wfSteps.length > 0;
@@ -7771,6 +7779,9 @@ ${wf.description || ""}`}
                   Chưa có phiếu phối hợp nào đang hoạt động
                 </div>
               )}
+              <div className="bg-white dark:bg-slate-900 rounded-xl px-4">
+                <Pager p={workflowsPage} unit="phiếu phối hợp" />
+              </div>
             </div>
           </div>
         </div>
@@ -9160,7 +9171,7 @@ ${wf.description || ""}`}
                 </div>
 
                 <div className="space-y-4 max-h-[850px] overflow-y-auto pr-1">
-                  {filteredDailyLogs.map((log) => {
+                  {dailyLogsPage.items.map((log) => {
                     const parsedItems = Array.isArray(log.plan_items) ? log.plan_items : [];
                     const currentFeedbackState = feedbackInput[log.id] || {};
 
@@ -9436,6 +9447,7 @@ ${wf.description || ""}`}
                     </div>
                   )}
                 </div>
+                <Pager p={dailyLogsPage} unit="báo cáo nhật ký" />
               </div>
             </div>
           </div>

@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Download, RefreshCw, Search } from "lucide-react";
 import * as XLSX from "xlsx";
 import { todayVN } from "@/backend/services/dates";
+import { Pager, usePaged } from "@/frontend/components/Pager";
 
 /**
  * Công nợ phải thu theo khách hàng (Kế toán / Quản trị).
@@ -109,6 +110,8 @@ export function CustomerDebtView({
     });
   }, [rows, q, filter]);
 
+  const debtPage = usePaged(visible, 20, `${filter}|${q}`);
+
   const totals = useMemo(() => visible.reduce((t, c) => ({
     delivered: t.delivered + c.delivered,
     paid: t.paid + c.paid,
@@ -207,7 +210,7 @@ export function CustomerDebtView({
           <tbody className="divide-y divide-slate-800">
             {visible.length === 0 ? (
               <tr><td colSpan={10} className="p-6 text-center text-slate-500">{loading ? "Đang tải..." : "Không có khách hàng nào phù hợp."}</td></tr>
-            ) : visible.map((c) => {
+            ) : debtPage.items.map((c) => {
               const key = `${c.customer_id || ""}|${c.customer_name}`;
               const open = Boolean(expanded[key]);
               const overLimit = c.credit_limit > 0 && c.outstanding > c.credit_limit;
@@ -318,6 +321,7 @@ export function CustomerDebtView({
             })}
           </tbody>
         </table>
+        <Pager p={debtPage} unit="khách hàng" />
       </div>
     </div>
   );

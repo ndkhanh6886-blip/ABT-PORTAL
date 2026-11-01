@@ -82,7 +82,7 @@ import { CustomerDebtView } from "@/frontend/components/CustomerDebtView";
 import { LineItemLookup } from "@/frontend/components/LineItemLookup";
 import { CustomerActivityTimeline } from "@/frontend/components/CustomerActivityTimeline";
 import { useFormDraft, DraftBanner } from "@/frontend/utils/useFormDraft";
-import { useDebouncedValue } from "@/frontend/components/Pager";
+import { Pager, buildPaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
 // Ô chọn sản phẩm: chỉ vẽ 60 kết quả đầu (danh mục hàng nghìn mã vẽ hết sẽ làm khung chọn đứng hình).
 const PICKER_LIMIT = 60;
@@ -2404,6 +2404,14 @@ export function SalesFullABT() {
     const [customerOrderStatusFilter, setCustomerOrderStatusFilter] = useState<"all" | "pending_orders" | "pending_invoices" | "no_orders">("all");
     const [customerPage, setCustomerPage] = useState<number>(1);
     const [customerPageSize, setCustomerPageSize] = useState<number | "all">(20);
+    const [quotePage, setQuotePage] = useState<number>(1);
+    const [quotePageSize, setQuotePageSize] = useState<number>(20);
+    const [contractPage, setContractPage] = useState<number>(1);
+    const [contractPageSize, setContractPageSize] = useState<number>(20);
+    const [orderPage, setOrderPage] = useState<number>(1);
+    const [orderPageSize, setOrderPageSize] = useState<number>(20);
+    const [invoicePage, setInvoicePage] = useState<number>(1);
+    const [invoicePageSize, setInvoicePageSize] = useState<number>(20);
     const [custContactSearch, setCustContactSearch] = useState("");
     const [custContactRoleFilter, setCustContactRoleFilter] = useState("all");
     const [isContactsSectionOpen, setIsContactsSectionOpen] = useState(false);
@@ -20275,11 +20283,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                             )}
 
-                            <div className="overflow-y-auto max-h-[60vh] space-y-3 pr-1">
+                            {(() => {
+                                const quotesPaged = buildPaged(filteredQuotationsList, quotePage, setQuotePage, quotePageSize, setQuotePageSize);
+                                return (
+                                    <>
+                            <div className="overflow-y-auto max-h-[68vh] space-y-3 pr-1">
                                 {filteredQuotationsList.length === 0 ? (
                                     <div className="text-center py-12 text-slate-500 italic text-xs">Chưa tìm thấy báo giá nào phù hợp với bộ lọc.</div>
                                 ) : (
-                                    filteredQuotationsList.map(quote => {
+                                    quotesPaged.items.map(quote => {
                                         const isExpanded = !!expandedQuoteIds[quote.id];
                                         const isSelected = selectedQuoteIdsForExport.includes(quote.id);
                                         const linkedContract = contracts.find(c => 
@@ -20775,6 +20787,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     })
                                 )}
                             </div>
+                            <Pager p={quotesPaged} unit="báo giá" />
+                                    </>
+                                );
+                            })()}
                         </div>
                     ) : (
                         /* DEDICATED DISCOUNT TRACKING TABLE */
@@ -20794,6 +20810,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </span>
                             </div>
 
+                            {(() => {
+                                const discountQuotesPaged = buildPaged(filteredQuotationsList, quotePage, setQuotePage, quotePageSize, setQuotePageSize);
+                                return (
                             <div className="overflow-x-auto">
                                 <table className="w-full text-left text-xs border-collapse">
                                     <thead>
@@ -20820,7 +20839,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 </td>
                                             </tr>
                                         ) : (
-                                            filteredQuotationsList.map((quote) => {
+                                            discountQuotesPaged.items.map((quote) => {
                                                 const gross = Number(quote.totalAmount) || 0;
                                                 const preVat = Number(quote.totalBeforeVat) || Math.round(gross / 1.08);
                                                 const vat = Number(quote.totalVat) || (gross - preVat);
@@ -20946,7 +20965,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         )}
                                     </tbody>
                                 </table>
+                                <Pager p={discountQuotesPaged} unit="báo giá" />
                             </div>
+                                );
+                            })()}
                         </div>
                     )}
                 </div>
@@ -21186,11 +21208,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                             )}
 
-                            <div className="overflow-y-auto max-h-[60vh] space-y-3 pr-1">
+                            {(() => {
+                                const contractsPaged = buildPaged(filteredContractsList, contractPage, setContractPage, contractPageSize, setContractPageSize);
+                                return (
+                                    <>
+                            <div className="overflow-y-auto max-h-[68vh] space-y-3 pr-1">
                                 {filteredContractsList.length === 0 ? (
                                     <div className="text-center py-12 text-slate-500 italic text-xs">Chưa tìm thấy hợp đồng nào phù hợp với bộ lọc.</div>
                                 ) : (
-                                    filteredContractsList.map(contract => {
+                                    contractsPaged.items.map(contract => {
                                         const isExpanded = !!expandedContractIds[contract.id];
                                         const isSelected = selectedContractIdsForExport.includes(contract.id);
                                         const contractIdStr = String(contract.id || contract.contract_code || "");
@@ -21763,6 +21789,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     })
                                 )}
                             </div>
+                            <Pager p={contractsPaged} unit="hợp đồng" />
+                                    </>
+                                );
+                            })()}
                         </div>
                     </div>
             )}
@@ -22088,7 +22118,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     return !isPendingBODApproval && !isPendingCreditApproval && req.status !== "Rejected";
                                 });
 
+                                const ordersPaged = buildPaged(filteredOrders, orderPage, setOrderPage, orderPageSize, setOrderPageSize);
+
                                 return (
+                                    <>
                                     <table className="w-full text-xs text-left text-slate-300 border-collapse">
                                         <thead>
                                             <tr className="border-b border-slate-800 text-slate-450 uppercase font-mono tracking-wider text-[10px]">
@@ -22128,7 +22161,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     </td>
                                                 </tr>
                                             ) : (
-                                                filteredOrders.map(req => {
+                                                ordersPaged.items.map(req => {
                                                     const isSelected = selectedFactoryOrdersForCombine.includes(req.id);
                                                     
                                                     // Approval checks for 0đ items (BGĐ) and Overdue Credit (Accounting)
@@ -23016,6 +23049,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             )}
                                         </tbody>
                                     </table>
+                                    <Pager p={ordersPaged} unit="đơn hàng SO" />
+                                    </>
                                 );
                             })()}
                         </div>
@@ -24155,6 +24190,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 );
                             }
 
+                            const invoicesPaged = buildPaged(filtered, invoicePage, setInvoicePage, invoicePageSize, setInvoicePageSize);
+                            const invoiceRowOffset = invoicesPaged.size <= 0 ? 0 : (invoicesPaged.page - 1) * invoicesPaged.size;
+
                             return (
                                 <div className="overflow-x-auto">
                                     <table className="w-full text-left text-xs border-collapse">
@@ -24172,7 +24210,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-800/40">
-                                            {filtered.map((ord, idx) => {
+                                            {invoicesPaged.items.map((ord, idx) => {
                                                 const isPending = ord.invoiceStatus === "PENDING_INVOICE" || (!ord.invoiceNo && ord.invoiceStatus !== "NO_INVOICE");
                                                 const isIssued = ord.invoiceStatus === "ISSUED" || (ord.invoiceNo && ord.invoiceStatus !== "NO_INVOICE");
                                                 const isNoInv = ord.invoiceStatus === "NO_INVOICE";
@@ -24181,7 +24219,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                 return (
                                                     <tr key={ord.order_code + idx} className="hover:bg-slate-950/40 transition-colors">
-                                                        <td className="p-3 text-center font-mono text-slate-500 text-[11px]">{idx + 1}</td>
+                                                        <td className="p-3 text-center font-mono text-slate-500 text-[11px]">{invoiceRowOffset + idx + 1}</td>
                                                         <td className="p-3 font-mono">
                                                             <div className="font-bold text-white text-xs flex items-center gap-1">
                                                                 <span>{ord.order_code}</span>
@@ -24504,6 +24542,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             })}
                                         </tbody>
                                     </table>
+                                    <Pager p={invoicesPaged} unit="đơn đã giao" />
                                 </div>
                             );
                         })()}

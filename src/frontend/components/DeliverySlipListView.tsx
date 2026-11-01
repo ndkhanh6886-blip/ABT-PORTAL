@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
+import { Pager, usePaged } from "@/frontend/components/Pager";
 
 type SlipStatus = "PENDING" | "DELIVERED" | "CANCELLED";
 
@@ -389,6 +390,10 @@ export function DeliverySlipListView({
     return expandedSOs[orderCode] !== false; // Mặc định mở sẵn để nhìn thấy ngay các đợt giao & SL còn lại
   };
 
+  const filterResetKey = `${from}|${to}|${status}|${payFilter}|${q}|${selectedSOCode}|${viewMode}`;
+  const soGroupsPage = usePaged(soGroups, 20, filterResetKey);
+  const rowsPage = usePaged(rows, 20, filterResetKey);
+
   const exportExcel = () => {
     const wb = XLSX.utils.book_new();
 
@@ -707,7 +712,7 @@ export function DeliverySlipListView({
               Không có đơn hàng SO / phiếu giao nào phù hợp với bộ lọc hiện tại.
             </div>
           ) : (
-            soGroups.map((group) => {
+            soGroupsPage.items.map((group) => {
               const expanded = isSOExpanded(group.orderCode);
               const totalNotYetDelivered = group.totalRemaining + group.totalPending;
               const canConfirm =
@@ -948,6 +953,7 @@ export function DeliverySlipListView({
               );
             })
           )}
+          <Pager p={soGroupsPage} unit="đơn SO" />
         </div>
       ) : (
         /* =====================================================================
@@ -984,7 +990,7 @@ export function DeliverySlipListView({
                   </td>
                 </tr>
               ) : (
-                rows.map(({ slip, date, status: st }) => {
+                rowsPage.items.map(({ slip, date, status: st }) => {
                   const items: any[] = slip.items || [];
                   const isFuture = st === "PENDING" && date > today;
                   const soGroup = soGroups.find(
@@ -1094,6 +1100,7 @@ export function DeliverySlipListView({
               )}
             </tbody>
           </table>
+          <Pager p={rowsPage} unit="phiếu giao" />
         </div>
       )}
     </div>
