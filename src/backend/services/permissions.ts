@@ -1195,8 +1195,8 @@ export function hasPermission(user: any, permissionKey: string): boolean {
     }
   }
 
-  // 5. Điều hành Zalo OA: Dành riêng cho BGĐ, Quản lý, Trưởng/Phó phòng hoặc tài khoản được cấp quyền
-  if (permissionKey === "zalo.view") {
+  // 5. Điều hành Zalo OA & Quản lý Quy trình Mẫu: Dành cho BGĐ, Quản lý, Trưởng/Phó phòng hoặc tài khoản được cấp quyền
+  if (permissionKey === "zalo.view" || permissionKey === "workspace.manage_templates") {
     if (
       role.includes("manager") || 
       role.includes("sales_head") || 
@@ -1208,7 +1208,7 @@ export function hasPermission(user: any, permissionKey: string): boolean {
     ) {
       return true;
     }
-    return false;
+    if (permissionKey === "zalo.view") return false;
   }
 
   // 6. Theo Preset vai trò chuẩn

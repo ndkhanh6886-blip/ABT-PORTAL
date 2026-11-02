@@ -1799,8 +1799,6 @@ export const UnifiedWorkspace: React.FC = () => {
     showToast(`Mất kết nối khi lưu dữ liệu (${label}). Thay đổi có thể chưa được lưu.`, "error");
   };
   const { user, can } = useAuth();
-  // Tạo / sửa / xóa quy trình mẫu: Quản trị viên hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
-  const canManageTemplates = Boolean(can && can("workspace.manage_templates"));
   const warnNoTemplatePermission = () =>
     showToast("Bạn chưa có quyền tạo / sửa quy trình mẫu. Nhờ Quản trị viên cấp quyền \"Quản lý quy trình phối hợp mẫu\" (Cấu hình → Phân quyền) hoặc gửi nội dung quy trình để Quản trị viên tạo.", "warning");
 
@@ -1821,6 +1819,9 @@ export const UnifiedWorkspace: React.FC = () => {
     if (isDirector) return false;
     return userRole.includes("head") || userRole.includes("lead") || userRole.includes("manager") || userRole.includes("trưởng phòng") || userRole.includes("phó phòng");
   }, [isDirector, userRole]);
+
+  // Tạo / sửa / xóa quy trình mẫu: Ban Giám Đốc, Trưởng/Phó phòng hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
+  const canManageTemplates = Boolean(isDirector || isManager || (can && can("workspace.manage_templates")));
 
   const isStaff = !isDirector && !isManager;
   /** Người đang đăng nhập theo quy tắc phân quyền công việc dùng chung với máy chủ */
@@ -3909,7 +3910,20 @@ export const UnifiedWorkspace: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        showToast("Đã khởi tạo quy trình liên phòng ban thành công!", "success");
+        const isEditingExistingWf = Boolean((wfForm as any).id);
+        showToast(
+          isEditingExistingWf
+            ? "✅ Đã lưu cập nhật quy trình & thời gian SLA thành công!"
+            : "Đã khởi tạo quy trình liên phòng ban thành công!",
+          "success"
+        );
+        if (isEditingExistingWf && selectedWorkflowDetail && selectedWorkflowDetail.id === (wfForm as any).id) {
+          setSelectedWorkflowDetail({
+            ...selectedWorkflowDetail,
+            ...payload,
+            steps: sanitizedSteps
+          });
+        }
         const allStepAssignees = Array.from(
           new Set(
             [
@@ -3923,24 +3937,26 @@ export const UnifiedWorkspace: React.FC = () => {
         const assigneeLabel = payload.assignee_name
           ? `Phụ trách: ${payload.assignee_name}.`
           : `Trạng thái: Chờ bộ phận ${payload.target_dept} phân công nhân sự.`;
-        const createdWfId = data.workflow?.id || data.id;
-        const createdWfCode = data.workflow?.workflow_code || data.workflow_code;
-        notifyActivity({
-          title: "Yêu cầu phối hợp liên phòng",
-          message: `${payload.requester_name} (${payload.requester_dept}) đã gửi yêu cầu phối hợp "${payload.title}" tới phòng ${payload.target_dept}. ${assigneeLabel}`,
-          type: "warning",
-          category: isSameWorkspaceDept(payload.target_dept, "Application") ? "application" : isSameWorkspaceDept(payload.target_dept, "Kho & Vận Hành") ? "warehouse" : "task",
-          sender: { name: payload.requester_name },
-          targetEmployeeNames: allStepAssignees,
-          targetDept: payload.target_dept,
-          workflowId: createdWfId,
-          workflowCode: createdWfCode,
-          link: { tab: "workspace", subTab: "workflows", itemId: String(createdWfCode || createdWfId || payload.title) }
-        });
+        const createdWfId = data.workflow?.id || data.id || (wfForm as any).id;
+        const createdWfCode = data.workflow?.workflow_code || data.workflow_code || (wfForm as any).workflow_code;
+        if (!isEditingExistingWf) {
+          notifyActivity({
+            title: "Yêu cầu phối hợp liên phòng",
+            message: `${payload.requester_name} (${payload.requester_dept}) đã gửi yêu cầu phối hợp "${payload.title}" tới phòng ${payload.target_dept}. ${assigneeLabel}`,
+            type: "warning",
+            category: isSameWorkspaceDept(payload.target_dept, "Application") ? "application" : isSameWorkspaceDept(payload.target_dept, "Kho & Vận Hành") ? "warehouse" : "task",
+            sender: { name: payload.requester_name },
+            targetEmployeeNames: allStepAssignees,
+            targetDept: payload.target_dept,
+            workflowId: createdWfId,
+            workflowCode: createdWfCode,
+            link: { tab: "workspace", subTab: "workflows", itemId: String(createdWfCode || createdWfId || payload.title) }
+          });
+        }
         setIsWorkflowModalOpen(false);
         fetchData();
       } else {
-        showToast(data.error || "Lỗi khi tạo quy trình", "error");
+        showToast(data.error || "Lỗi khi lưu quy trình", "error");
       }
     } catch (e) {
       showToast("Lỗi kết nối máy chủ", "error");
@@ -4076,7 +4092,24 @@ export const UnifiedWorkspace: React.FC = () => {
       if (data.success) {
         showToast("Đã lưu mẫu quy trình phối hợp thành công!", "success");
         setIsTemplateModalOpen(false);
-        setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
+        const mergedTemplates = mergeWithDefaultWorkflowTemplates(data.templates);
+        setWorkflowTemplates(mergedTemplates);
+        const savedCode = String(normalizedPayload.code || normalizedPayload.id || "");
+        if (savedCode && String(wfForm.workflow_type) === savedCode) {
+          const updatedSteps = reindexWorkflowSteps(
+            (normalizedPayload.steps || []).map((s: any, idx: number) => ({
+              ...s,
+              step_index: idx,
+              sla_hours: Number(s.sla_hours) || 24,
+              status: idx === 0 ? "IN_PROGRESS" : "PENDING"
+            }))
+          );
+          setWfForm((prev: any) => ({
+            ...prev,
+            due_date: toVNDateString(new Date(Date.now() + (Number(normalizedPayload.sla_days) || 3) * 86400000)),
+            steps: updatedSteps
+          }));
+        }
         fetchData();
       } else {
         showToast(data.error || "Lỗi khi lưu mẫu quy trình", "error");
@@ -4084,6 +4117,103 @@ export const UnifiedWorkspace: React.FC = () => {
     } catch (e: any) {
       showToast("Lỗi kết nối: " + e.message, "error");
     }
+  };
+
+  // Lưu trực tiếp các bước & thời gian SLA đang chỉnh sửa trong Modal Khởi Tạo Phiếu vào Mẫu Quy Trình
+  const handleSaveCurrentWfStepsToTemplate = async () => {
+    if (!canManageTemplates) {
+      warnNoTemplatePermission();
+      return;
+    }
+    const allTemplates = workflowTemplates.length > 0 ? workflowTemplates : DEFAULT_WORKFLOW_TEMPLATES;
+    const currentTmpl = allTemplates.find(
+      (w: any) => String(w.code || w.id) === String(wfForm.workflow_type)
+    );
+    const sanitizedSteps = reindexWorkflowSteps(wfForm.steps || []).map((s: any, idx: number) => {
+      const depts = Array.isArray(s.departments) && s.departments.length > 0
+        ? s.departments
+        : String(s.dept || wfForm.target_dept || "Application").split(",").map((d: string) => d.trim()).filter(Boolean);
+      const assignees = Array.isArray(s.assignees) && s.assignees.length > 0
+        ? s.assignees.map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean)
+        : String(s.assignee_name || "").split(",").map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean);
+      return {
+        step_index: idx,
+        title: s.title || `Bước ${idx + 1}`,
+        dept: depts.join(", "),
+        departments: depts,
+        assignee_name: assignees.join(", "),
+        assignees,
+        sla_hours: Math.max(1, Number(s.sla_hours) || 24),
+        deliverables: s.deliverables || "Biên bản xác nhận"
+      };
+    });
+    const totalHours = sanitizedSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
+    const computedSlaDays = Math.max(1, Math.ceil(totalHours / 24));
+    const payload = {
+      id: currentTmpl && typeof currentTmpl.id === "number" ? currentTmpl.id : null,
+      code: currentTmpl ? (currentTmpl.code || currentTmpl.id) : (wfForm.workflow_type || `WF-TMP-${Date.now().toString().slice(-4)}`),
+      name: currentTmpl?.name || wfForm.title?.replace(/^\[.*?\]\s*/, "") || "Quy trình phối hợp liên phòng ban",
+      source_dept: currentTmpl?.source_dept || currentTmpl?.sourceDept || wfForm.requester_dept || "Kinh Doanh",
+      target_dept: sanitizedSteps[0]?.dept || currentTmpl?.target_dept || currentTmpl?.targetDept || wfForm.target_dept || "Application",
+      icon: currentTmpl?.icon || "Layers",
+      description: currentTmpl?.description || wfForm.description || "",
+      sla_days: computedSlaDays,
+      steps: sanitizedSteps
+    };
+
+    try {
+      const res = await fetch("/api/workflows?action=template", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`✅ Đã lưu cập nhật (${sanitizedSteps.length} bước • Tổng SLA: ${totalHours}h / ${computedSlaDays} ngày) vào Mẫu Quy Trình!`, "success");
+        setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
+        fetchData();
+      } else {
+        showToast(data.error || "Không thể lưu cập nhật mẫu quy trình", "error");
+      }
+    } catch (e: any) {
+      showToast("Lỗi kết nối: " + e.message, "error");
+    }
+  };
+
+  // Mở Modal chỉnh sửa quy trình & SLA cho một phiếu phối hợp đã tạo
+  const handleEditWorkflowTicket = (wf: any) => {
+    const rawSteps = Array.isArray(wf.steps) && wf.steps.length > 0 ? wf.steps : [];
+    const stepsCopy = reindexWorkflowSteps(
+      rawSteps.map((s: any, idx: number) => ({
+        ...s,
+        step_index: idx,
+        title: s.title || `Bước ${idx + 1}`,
+        dept: s.dept || wf.target_dept || "Application",
+        assignee_name: cleanWorkspaceAssignee(s.assignee_name),
+        sla_hours: Number(s.sla_hours) || 24,
+        deliverables: s.deliverables || "",
+        status: s.status || (idx === (wf.current_step_index || 0) ? "IN_PROGRESS" : "PENDING")
+      }))
+    );
+    setWfForm({
+      ...(wf as any),
+      id: wf.id,
+      workflow_code: wf.workflow_code,
+      workflow_type: wf.workflow_type || "SALES_TO_APP",
+      title: wf.title || "",
+      priority: wf.priority || "HIGH",
+      requester_name: wf.requester_name || currentStaffName || "",
+      requester_dept: wf.requester_dept || userDept || "Kinh Doanh",
+      assignee_name: wf.assignee_name || "",
+      target_dept: wf.target_dept || "Application",
+      customer_name: wf.customer_name || "",
+      product_info: wf.product_info || "",
+      due_date: wf.due_date ? String(wf.due_date).slice(0, 10) : toVNDateString(new Date(Date.now() + 3 * 86400000)),
+      description: wf.description || "",
+      attachments: Array.isArray(wf.attachments) ? wf.attachments : [],
+      steps: stepsCopy
+    } as any);
+    setIsWorkflowModalOpen(true);
   };
 
   const handleDeleteTemplate = async (templateId: number) => {
@@ -4136,6 +4266,8 @@ export const UnifiedWorkspace: React.FC = () => {
     );
 
     setWfForm({
+      id: undefined,
+      workflow_code: undefined,
       workflow_type: tmplCode,
       title: `[${tmpl.name}] Yêu cầu phối hợp mới`,
       priority: "HIGH",
@@ -4148,7 +4280,7 @@ export const UnifiedWorkspace: React.FC = () => {
       due_date: toVNDateString(new Date(Date.now() + (tmpl.sla_days || 5) * 86400000)),
       description: tmpl.description || "",
       steps: stepsCopy
-    });
+    } as any);
     setIsWorkflowModalOpen(true);
   };
 
@@ -7098,23 +7230,52 @@ export const UnifiedWorkspace: React.FC = () => {
             {!templatesExpanded && (workflowTemplates.length > 0 ? workflowTemplates : DEFAULT_WORKFLOW_TEMPLATES).map((wf: any) => {
               const Icon = getWorkflowIcon(wf.icon);
               const stepsCount = Array.isArray(wf.steps) ? wf.steps.length : 3;
+              const slaDays = wf.sla_days || 3;
               return (
-                <button
+                <div
                   key={wf.id || wf.code}
-                  type="button"
-                  onClick={() => handleInitiateFromTemplate(wf)}
-                  title={`${wf.name}
-${wf.source_dept || wf.sourceDept || ""} ➔ ${wf.target_dept || wf.targetDept || ""} · ${stepsCount} bước
-${wf.description || ""}`}
-                  className="inline-flex items-center gap-1.5 max-w-[260px] px-2.5 py-1 rounded-lg text-xs font-semibold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 border border-indigo-200/60 dark:border-indigo-800/60 transition-colors cursor-pointer"
+                  className="inline-flex items-center rounded-lg bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200/60 dark:border-indigo-800/60 overflow-hidden"
                 >
-                  <Icon className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">{wf.name}</span>
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handleInitiateFromTemplate(wf)}
+                    title={`${wf.name}\n${wf.source_dept || wf.sourceDept || ""} ➔ ${wf.target_dept || wf.targetDept || ""} · ${stepsCount} bước · SLA: ${slaDays} ngày\n${wf.description || ""}`}
+                    className="inline-flex items-center gap-1.5 max-w-[240px] px-2.5 py-1 text-xs font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 transition-colors cursor-pointer"
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    <span className="truncate">{wf.name}</span>
+                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 shrink-0">
+                      {slaDays}d
+                    </span>
+                  </button>
+                  {canManageTemplates && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleEditTemplate(wf);
+                      }}
+                      title="Chỉnh sửa mẫu quy trình & thời gian SLA"
+                      className="px-2 py-1 text-[11px] font-bold border-l border-indigo-200/70 dark:border-indigo-800/70 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200/70 dark:hover:bg-indigo-800/70 transition-colors cursor-pointer shrink-0"
+                    >
+                      ✏️ Sửa
+                    </button>
+                  )}
+                </div>
               );
             })}
             {templatesExpanded && <span className="text-[11px] text-slate-400">Chọn quy trình ở các thẻ bên dưới</span>}
             <div className="ml-auto flex items-center gap-1.5">
+              {canManageTemplates && (
+                <button
+                  type="button"
+                  onClick={handleOpenCreateTemplate}
+                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer flex items-center gap-1 shadow-2xs"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Tạo mẫu quy trình</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setTemplatesExpanded(v => { const n = !v; try { localStorage.setItem("ws_templates_expanded", n ? "1" : "0"); } catch {} return n; })}
@@ -7130,6 +7291,7 @@ ${wf.description || ""}`}
             {(workflowTemplates.length > 0 ? workflowTemplates : DEFAULT_WORKFLOW_TEMPLATES).map((wf: any) => {
               const Icon = getWorkflowIcon(wf.icon);
               const stepsCount = Array.isArray(wf.steps) ? wf.steps.length : 3;
+              const slaDays = wf.sla_days || 3;
               const isCustom = !["SALES_TO_APP", "SALES_TO_WAREHOUSE", "TO_PROCUREMENT", "APP_TO_WAREHOUSE", "SALES_TO_LEGAL"].includes(String(wf.code || wf.id).toUpperCase());
 
               return (
@@ -7138,20 +7300,20 @@ ${wf.description || ""}`}
                   className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-700 transition-all group relative"
                 >
                   {canManageTemplates && (
-                  <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="absolute top-2 right-2 flex items-center gap-1">
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); handleEditTemplate(wf); }}
-                      className="p-1 rounded text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800"
-                      title="Chỉnh sửa quy trình này"
+                      className="px-1.5 py-0.5 rounded text-[10px] font-bold text-indigo-600 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/60 hover:bg-indigo-100 dark:hover:bg-indigo-900 border border-indigo-200/70 dark:border-indigo-800 cursor-pointer"
+                      title="Chỉnh sửa mẫu quy trình & thời gian SLA"
                     >
-                      <FileText className="w-3.5 h-3.5" />
+                      ✏️ Sửa
                     </button>
                     {isCustom && typeof wf.id === "number" && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleDeleteTemplate(wf.id); }}
-                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800"
+                        className="p-1 rounded text-slate-400 hover:text-rose-600 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                         title="Xóa quy trình này"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -7165,16 +7327,19 @@ ${wf.description || ""}`}
                       <div className="w-7 h-7 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center shrink-0">
                         <Icon className="w-4 h-4" />
                       </div>
-                      <div className="flex-1 min-w-0 pr-4">
+                      <div className="flex-1 min-w-0 pr-12">
                         <span className="text-xs font-bold text-slate-900 dark:text-white leading-tight block truncate" title={wf.name}>
                           {wf.name}
                         </span>
-                        <div className="flex items-center gap-1.5 mt-0.5">
+                        <div className="flex items-center flex-wrap gap-1.5 mt-0.5">
                           <span className="text-[10px] font-semibold text-slate-400">
                             {wf.source_dept || wf.sourceDept} ➔ {wf.target_dept || wf.targetDept}
                           </span>
                           <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200/50">
                             {stepsCount} bước
+                          </span>
+                          <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200/50">
+                            ⏱ SLA: {slaDays} ngày
                           </span>
                         </div>
                       </div>
@@ -7183,14 +7348,26 @@ ${wf.description || ""}`}
                       {wf.description}
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => handleInitiateFromTemplate(wf)}
-                    className="w-full py-1.5 px-3 rounded-lg text-xs font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 transition-colors flex items-center justify-center gap-1"
-                  >
-                    <span>+ Phát lệnh phiếu này</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {canManageTemplates && (
+                      <button
+                        type="button"
+                        onClick={() => handleEditTemplate(wf)}
+                        className="py-1.5 px-2.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer shrink-0"
+                        title="Chỉnh sửa các bước & thời gian SLA của quy trình này"
+                      >
+                        ✏️ Sửa &amp; SLA
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleInitiateFromTemplate(wf)}
+                      className="flex-1 py-1.5 px-3 rounded-lg text-xs font-bold bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 transition-colors flex items-center justify-center gap-1 cursor-pointer"
+                    >
+                      <span>+ Phát lệnh</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
                 </div>
               );
             })}
@@ -7566,6 +7743,15 @@ ${wf.description || ""}`}
                               Xem / Sửa Hồ Sơ
                             </button>
                           )}
+
+                          <button
+                            type="button"
+                            onClick={() => handleEditWorkflowTicket(wf)}
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-indigo-200 dark:border-indigo-800 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 cursor-pointer"
+                            title="Chỉnh sửa các bước quy trình, thời gian SLA và hạn chót của phiếu này"
+                          >
+                            <span>✏️ Sửa quy trình / SLA</span>
+                          </button>
 
                           <button
                             onClick={() => {
@@ -11178,30 +11364,51 @@ ${wf.description || ""}`}
         </div>
       </Modal>
 
-      {/* ==================== MODAL 2: CREATE WORKFLOW ==================== */}
+      {/* ==================== MODAL 2: CREATE / EDIT WORKFLOW ==================== */}
       <Modal
         isOpen={isWorkflowModalOpen}
         onClose={() => setIsWorkflowModalOpen(false)}
-        title="KHỞI TẠO PHIẾU PHỐI HỢP LIÊN PHÒNG BAN"
+        title={(wfForm as any).id ? `CHỈNH SỬA QUY TRÌNH & THỜI GIAN SLA (${(wfForm as any).workflow_code || "PHIẾU PHỐI HỢP"})` : "KHỞI TẠO PHIẾU PHỐI HỢP LIÊN PHÒNG BAN"}
         size="6xl"
       >
         <form onSubmit={handleSaveWorkflow} className="space-y-4 p-2 text-xs">
           {/* Top Section: Template, Title & Priority */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
             <div className="md:col-span-8 space-y-1">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <label className="font-bold text-slate-700 dark:text-slate-300">Mẫu quy trình phối hợp chuẩn *</label>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsWorkflowModalOpen(false);
-                    handleOpenCreateTemplate();
-                  }}
-                  className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
-                >
-                  <Plus className="w-3 h-3" />
-                  <span>+ Thiết lập quy trình mẫu mới</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const allTemplates = workflowTemplates.length > 0 ? workflowTemplates : DEFAULT_WORKFLOW_TEMPLATES;
+                      const currentTmpl = allTemplates.find(
+                        (w: any) => String(w.code || w.id) === String(wfForm.workflow_type)
+                      ) || allTemplates[0];
+                      if (currentTmpl) {
+                        handleEditTemplate({
+                          ...currentTmpl,
+                          steps: wfForm.steps && wfForm.steps.length > 0 ? wfForm.steps : currentTmpl.steps
+                        });
+                      }
+                    }}
+                    className="px-2 py-0.5 rounded-lg text-[11px] font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 flex items-center gap-1 cursor-pointer"
+                    title="Mở cửa sổ chỉnh sửa chi tiết mẫu quy trình & thời gian SLA đang chọn"
+                  >
+                    <span>✏️ Chỉnh sửa mẫu quy trình &amp; SLA</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsWorkflowModalOpen(false);
+                      handleOpenCreateTemplate();
+                    }}
+                    className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>+ Thiết lập quy trình mẫu mới</span>
+                  </button>
+                </div>
               </div>
               <select
                 value={wfForm.workflow_type}
@@ -11358,36 +11565,66 @@ ${wf.description || ""}`}
                   <Layers className="w-4 h-4" />
                 </div>
                 <div>
-                  <span className="font-bold text-slate-900 dark:text-white text-xs block">
-                    Các bước thực hiện theo quy trình (Stage-Gate Pipeline):
-                  </span>
-                  <span className="text-[11px] text-slate-400">
-                    Hỗ trợ sắp xếp thứ tự (↑ / ↓), chèn bước bất kỳ (+ Chèn bước dưới) và chọn nhiều phòng ban / nhiều người cùng phối hợp trong 1 bước.
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-bold text-slate-900 dark:text-white text-xs">
+                      Các bước thực hiện theo quy trình (Stage-Gate Pipeline):
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-100 dark:bg-amber-950/80 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-800">
+                      ⏱ Tổng thời gian SLA:{" "}
+                      {(wfForm.steps || []).reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0)} giờ (~
+                      {Math.max(
+                        1,
+                        Math.ceil(
+                          (wfForm.steps || []).reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0) / 24
+                        )
+                      )}{" "}
+                      ngày)
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 block">
+                    Chỉnh sửa trực tiếp nội dung, phòng ban, nhân sự, <strong>Thời gian SLA (giờ)</strong> từng bước và bấm <strong>&quot;💾 Lưu lại vào Mẫu quy trình&quot;</strong> để lưu cố định.
                   </span>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => {
-                  const currentSteps = wfForm.steps || [];
-                  const newStep = {
-                    step_index: currentSteps.length,
-                    title: `Bước ${currentSteps.length + 1}: Bàn giao`,
-                    dept: "Application",
-                    departments: ["Application"],
-                    assignee_name: "",
-                    assignees: [],
-                    sla_hours: 24,
-                    deliverables: "Biên bản xác nhận",
-                    status: "PENDING"
-                  };
-                  setWfForm({ ...wfForm, steps: reindexWorkflowSteps([...currentSteps, newStep]) });
-                }}
-                className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5 transition-colors cursor-pointer"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>+ Thêm bước cuối</span>
-              </button>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  onClick={handleSaveCurrentWfStepsToTemplate}
+                  className="text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-xl shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                  title="Lưu cấu hình các bước và thời gian SLA hiện tại vào Mẫu quy trình chuẩn"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>💾 Lưu lại vào Mẫu quy trình</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const currentSteps = wfForm.steps || [];
+                    const newStep = {
+                      step_index: currentSteps.length,
+                      title: `Bước ${currentSteps.length + 1}: Bàn giao`,
+                      dept: "Application",
+                      departments: ["Application"],
+                      assignee_name: "",
+                      assignees: [],
+                      sla_hours: 24,
+                      deliverables: "Biên bản xác nhận",
+                      status: "PENDING"
+                    };
+                    const nextSteps = reindexWorkflowSteps([...currentSteps, newStep]);
+                    const totalHours = nextSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
+                    setWfForm({
+                      ...wfForm,
+                      due_date: toVNDateString(new Date(Date.now() + Math.max(1, Math.ceil(totalHours / 24)) * 86400000)),
+                      steps: nextSteps
+                    });
+                  }}
+                  className="text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 px-3 py-1.5 rounded-xl border border-indigo-200 dark:border-indigo-800 flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>+ Thêm bước cuối</span>
+                </button>
+              </div>
             </div>
 
             <div className="space-y-2.5">
@@ -11479,7 +11716,7 @@ ${wf.description || ""}`}
                         </div>
                       </div>
 
-                      <div className="md:col-span-4 space-y-1">
+                      <div className="md:col-span-3 space-y-1">
                         <label className="block text-[10px] font-bold text-slate-400">Nội dung công việc bước {idx + 1}</label>
                         <input
                           type="text"
@@ -11494,7 +11731,7 @@ ${wf.description || ""}`}
                       </div>
 
                       {/* Multi-Department Selector */}
-                      <div className="md:col-span-3 space-y-1.5">
+                      <div className="md:col-span-2 space-y-1.5">
                         <label className="block text-[10px] font-bold text-slate-400">
                           Phòng ban thực hiện ({stepDepts.length} phòng)
                         </label>
@@ -11564,6 +11801,40 @@ ${wf.description || ""}`}
                             ))}
                           </select>
                         </div>
+                      </div>
+
+                      {/* SLA Hours Input per Step */}
+                      <div className="md:col-span-2 space-y-1">
+                        <label className="block text-[10px] font-bold text-amber-600 dark:text-amber-400">
+                          ⏱ Thời gian SLA (giờ)
+                        </label>
+                        <div className="relative flex items-center">
+                          <input
+                            type="number"
+                            min={1}
+                            max={720}
+                            value={step.sla_hours ?? 24}
+                            onChange={(e) => {
+                              const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                              const cloned = [...(wfForm.steps || [])];
+                              cloned[idx] = { ...cloned[idx], sla_hours: val };
+                              const nextSteps = reindexWorkflowSteps(cloned);
+                              const totalHours = nextSteps.reduce((sum: number, s: any) => sum + (Number(s.sla_hours) || 24), 0);
+                              setWfForm({
+                                ...wfForm,
+                                due_date: toVNDateString(new Date(Date.now() + Math.max(1, Math.ceil(totalHours / 24)) * 86400000)),
+                                steps: nextSteps
+                              });
+                            }}
+                            className="w-full pl-2.5 pr-9 py-2 rounded-xl border border-amber-300 dark:border-amber-700/80 bg-amber-50/50 dark:bg-amber-950/30 text-slate-900 dark:text-white font-bold focus:ring-2 focus:ring-amber-500/30 outline-none"
+                          />
+                          <span className="absolute right-2.5 text-[10px] font-bold text-amber-600 dark:text-amber-400 pointer-events-none">
+                            giờ
+                          </span>
+                        </div>
+                        <span className="block text-[9px] text-slate-400">
+                          ~{((Number(step.sla_hours) || 24) / 24).toFixed(1).replace(/\.0$/, "")} ngày
+                        </span>
                       </div>
 
                       {/* Multi-Assignee Selector */}
@@ -11694,21 +11965,32 @@ ${wf.description || ""}`}
             />
           </div>
 
-          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
+          <div className="flex items-center justify-between flex-wrap gap-3 pt-4 border-t border-slate-200 dark:border-slate-800">
             <button
               type="button"
-              onClick={() => setIsWorkflowModalOpen(false)}
-              className="px-5 py-2.5 rounded-xl font-bold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+              onClick={handleSaveCurrentWfStepsToTemplate}
+              className="px-4 py-2.5 rounded-xl font-bold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800 transition-all cursor-pointer flex items-center gap-2"
+              title="Lưu các bước và thời gian SLA đang thiết lập vào Mẫu Quy Trình để dùng lâu dài"
             >
-              Hủy
+              <CheckCircle2 className="w-4 h-4" />
+              <span>💾 Lưu Cập Nhật Vào Mẫu Quy Trình</span>
             </button>
-            <button
-              type="submit"
-              className="px-6 py-2.5 rounded-xl font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition-all cursor-pointer flex items-center gap-2"
-            >
-              <Sparkles className="w-4 h-4" />
-              <span>Phát Lệnh Phối Hợp</span>
-            </button>
+            <div className="flex items-center gap-3 ml-auto">
+              <button
+                type="button"
+                onClick={() => setIsWorkflowModalOpen(false)}
+                className="px-5 py-2.5 rounded-xl font-bold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all cursor-pointer"
+              >
+                Hủy
+              </button>
+              <button
+                type="submit"
+                className="px-6 py-2.5 rounded-xl font-bold bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-600/30 transition-all cursor-pointer flex items-center gap-2"
+              >
+                <Sparkles className="w-4 h-4" />
+                <span>{(wfForm as any).id ? "💾 Lưu Thay Đổi Quy Trình & SLA" : "Phát Lệnh Phối Hợp"}</span>
+              </button>
+            </div>
           </div>
         </form>
       </Modal>
@@ -12325,19 +12607,31 @@ ${wf.description || ""}`}
                     <Layers className="w-4 h-4 text-indigo-600" />
                     <span>Tiến độ Stage-Gate ({selectedWorkflowDetail.steps.filter((s: any) => s.status === 'COMPLETED').length}/{selectedWorkflowDetail.steps.length} bước hoàn tất)</span>
                   </div>
-                  {selectedWorkflowDetail.status !== "COMPLETED" && (
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => {
                         setIsWorkflowDetailModalOpen(false);
-                        handleOpenAdvanceStep(selectedWorkflowDetail);
+                        handleEditWorkflowTicket(selectedWorkflowDetail);
                       }}
-                      className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1 shadow-xs transition-colors"
+                      className="px-2.5 py-1 rounded-lg text-xs font-bold border border-amber-300 dark:border-amber-800 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 flex items-center gap-1 transition-colors cursor-pointer"
                     >
-                      <CheckCircle2 className="w-3.5 h-3.5" />
-                      <span>Nghiệm Thu Bước &amp; Bàn Giao</span>
+                      <span>✏️ Chỉnh sửa quy trình &amp; SLA</span>
                     </button>
-                  )}
+                    {selectedWorkflowDetail.status !== "COMPLETED" && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsWorkflowDetailModalOpen(false);
+                          handleOpenAdvanceStep(selectedWorkflowDetail);
+                        }}
+                        className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1 shadow-xs transition-colors"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Nghiệm Thu Bước &amp; Bàn Giao</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
