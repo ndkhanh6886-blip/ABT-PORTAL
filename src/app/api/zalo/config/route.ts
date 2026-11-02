@@ -162,15 +162,17 @@ export async function POST(req: NextRequest) {
     if (action === "create_link_code") {
       const requested = String(body.employee_id || "").trim();
       let bindingRes;
-      if (requested && isAdminUser(me)) {
+      if (requested && (isAdminUser(me) || hasPermission(me, "zalo.view"))) {
         bindingRes = await query("SELECT id, employee_id, display_name FROM zalo_user_bindings WHERE employee_id = $1 LIMIT 1", [requested]);
       } else {
         bindingRes = await query(
           `SELECT id, employee_id, display_name FROM zalo_user_bindings
-            WHERE employee_id = $1 OR employee_id = REPLACE(REPLACE($1, 'ABT', 'NV-ABT-'), 'VIA', 'NV-VIA-')
-               OR REPLACE(REPLACE(employee_id, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA') = $1
+            WHERE employee_id = $1
+               OR employee_id = REPLACE(REPLACE(REPLACE($1, 'TBR', 'NV-TBR-'), 'VIA', 'NV-VIA-'), 'ABT', 'NV-ABT-')
+               OR REPLACE(REPLACE(REPLACE(employee_id, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA'), 'NV-ABT-', 'ABT') = $1
+               OR LOWER(TRIM(display_name)) = LOWER(TRIM($2))
             LIMIT 1`,
-          [me.username]
+          [me.username, me.full_name || ""]
         );
       }
       const binding = bindingRes.rows[0];
@@ -179,11 +181,11 @@ export async function POST(req: NextRequest) {
       }
       const code = `LK-${crypto.randomBytes(4).toString("hex").toUpperCase().slice(0, 6)}`;
       await query(
-        "UPDATE zalo_user_bindings SET link_code_hash = $1, link_code_expires = NOW() + INTERVAL '30 minutes', updated_at = CURRENT_TIMESTAMP WHERE id = $2",
+        "UPDATE zalo_user_bindings SET link_code_hash = $1, link_code_expires = NOW() + INTERVAL '24 hours', updated_at = CURRENT_TIMESTAMP WHERE id = $2",
         [crypto.createHash("sha256").update(code).digest("hex"), binding.id]
       );
       await logAudit("ZALO_LINK_CODE", "ZALO", `Tạo mã liên kết Zalo cho ${binding.display_name} (${binding.employee_id})`);
-      return NextResponse.json({ success: true, code, employee_id: binding.employee_id, display_name: binding.display_name, expires_in_minutes: 30 });
+      return NextResponse.json({ success: true, code, employee_id: binding.employee_id, display_name: binding.display_name, expires_in_minutes: 1440 });
     }
 
     if (!isAdminUser(me) && !hasPermission(me, "zalo.view")) return forbiddenResponse();

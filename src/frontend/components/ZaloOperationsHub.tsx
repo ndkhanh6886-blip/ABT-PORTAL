@@ -355,6 +355,40 @@ export const ZaloOperationsHub: React.FC = () => {
   };
 
   // Open Edit Modal
+  const [generatedLinkInfo, setGeneratedLinkInfo] = useState<{
+    code: string;
+    employee_id: string;
+    display_name: string;
+  } | null>(null);
+
+  const handleGenerateLinkCode = async (binding: ZaloBinding) => {
+    try {
+      const res = await fetch("/api/zalo/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "create_link_code",
+          employee_id: binding.employee_id
+        })
+      });
+      const data = await res.json();
+      if (data.success && data.code) {
+        setGeneratedLinkInfo({
+          code: data.code,
+          employee_id: data.employee_id || binding.employee_id,
+          display_name: data.display_name || binding.display_name
+        });
+        if (typeof navigator !== "undefined" && navigator.clipboard) {
+          navigator.clipboard.writeText(data.code).catch(() => {});
+        }
+      } else {
+        alert(data.error || "Không tạo được mã liên kết Zalo.");
+      }
+    } catch (e: any) {
+      alert("Lỗi kết nối khi tạo mã liên kết: " + e.message);
+    }
+  };
+
   const handleOpenEdit = (binding: ZaloBinding) => {
     setEditingBinding(binding);
     setEditPhone(binding.phone_number || "");
@@ -809,20 +843,57 @@ export const ZaloOperationsHub: React.FC = () => {
               </div>
             </div>
 
-            {/* Hướng dẫn Quét OA */}
+            {/* Hướng dẫn Quét OA & Liên Kết Mã LK-XXXXXX */}
             <div className="p-3.5 rounded-2xl bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/60 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3">
               <Clock className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
-              <div className="space-y-1 flex-1">
+              <div className="space-y-1.5 flex-1">
                 <div className="font-bold uppercase tracking-wide flex items-center justify-between">
-                  <span>Trạng thái "Chờ liên kết Zalo" &amp; "Để trống (Chờ quét OA)" là gì?</span>
+                  <span>Hướng Dẫn Liên Kết Tài Khoản Zalo Nhân Sự Với Zalo OA (2 Cách Nhanh Chóng)</span>
                 </div>
                 <p className="text-[11px] leading-relaxed text-amber-800 dark:text-amber-300">
-                  Nhân sự đã có Số điện thoại trong hồ sơ nhưng chưa từng tương tác với trang Zalo OA của công ty nên Zalo chưa cấp mã định danh bảo mật <strong>Zalo User ID</strong>.
+                  👉 <strong>Cách 1 (Dùng mã LK-XXXXXX):</strong> Bấm nút <strong className="text-indigo-700 dark:text-indigo-300">"🔑 Tạo Mã LK"</strong> ngay tại dòng nhân sự bên dưới (hoặc nhân sự tự bấm tại mục <em>Bảo mật tài khoản &gt; Tạo mã liên kết Zalo</em>), sau đó mở Zalo nhắn đúng mã <code className="bg-amber-100 dark:bg-amber-900/60 px-1.5 py-0.5 rounded font-mono font-bold">LK-XXXXXX</code> vào trang Zalo OA <strong>"Công ty TNHH Giải pháp Y sinh ABT"</strong>. Hệ thống sẽ tự động khớp nối và phản hồi xác nhận ngay lập tức!
                   <br />
-                  👉 <strong>Cách quét OA (Kích hoạt kết nối):</strong> Nhân sự dùng điện thoại mở Zalo &gt; Tìm kiếm Zalo OA <strong>"Công ty TNHH Giải pháp Y sinh ABT"</strong> (hoặc quét mã QR OA) &gt; Bấm <strong>Quan tâm</strong> &gt; Nhắn 1 tin nhắn bất kỳ (Ví dụ: <code className="bg-amber-100 dark:bg-amber-900/60 px-1 rounded font-mono">menu</code> hoặc <code className="bg-amber-100 dark:bg-amber-900/60 px-1 rounded font-mono">xin chao</code>). Hệ thống sẽ tự động bắt lấy Zalo User ID và chuyển sang trạng thái <strong className="text-emerald-700 dark:text-emerald-400">"Đã kết nối"</strong> (Xanh lá).
+                  👉 <strong>Cách 2 (Gán trực tiếp từ Nhật ký):</strong> Nhân sự nhắn bất kỳ tin nhắn nào vào Zalo OA, sau đó Quản trị viên mở tab <strong>"Nhật Ký Tin Nhắn"</strong> và bấm nút <strong className="text-emerald-700 dark:text-emerald-400">"+ Gán Zalo ID"</strong> để chọn nhân sự tương ứng.
+                  <br />
+                  ⚠️ <em>Lưu ý trên Cổng Zalo Developer (developers.zalo.me &gt; Webhook):</em> Đảm bảo đã dán Webhook URL <code className="bg-amber-100 dark:bg-amber-900/60 px-1 rounded font-mono">{webhookPublicUrl}</code> và <strong>BẬT (ON)</strong> các nút sự kiện <code className="font-mono font-bold">user_send_text</code>, <code className="font-mono font-bold">user_send_image</code>, <code className="font-mono font-bold">follow</code>.
                 </p>
               </div>
             </div>
+
+            {generatedLinkInfo && (
+              <div className="p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border-2 border-emerald-400 dark:border-emerald-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-xs font-black text-emerald-900 dark:text-emerald-200 uppercase flex items-center gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <span>Đã tạo &amp; sao chép mã liên kết Zalo (Hiệu lực 24 giờ):</span>
+                  </div>
+                  <div className="text-xs text-emerald-800 dark:text-emerald-300">
+                    Nhân sự: <strong>{generatedLinkInfo.display_name}</strong> ({generatedLinkInfo.employee_id}) — Gửi mã <strong className="font-mono text-sm bg-white dark:bg-slate-900 px-2.5 py-0.5 rounded border border-emerald-400 text-emerald-700 dark:text-emerald-300">{generatedLinkInfo.code}</strong> vào khung chat Zalo OA của công ty để kích hoạt kết nối ngay!
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (typeof navigator !== "undefined" && navigator.clipboard) {
+                        navigator.clipboard.writeText(generatedLinkInfo.code);
+                        alert(`Đã sao chép mã: ${generatedLinkInfo.code}`);
+                      }
+                    }}
+                    className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer"
+                  >
+                    Sao chép mã {generatedLinkInfo.code}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setGeneratedLinkInfo(null)}
+                    className="p-1.5 rounded-xl bg-white dark:bg-slate-800 text-slate-500 hover:text-slate-700 border border-slate-200 dark:border-slate-700 cursor-pointer"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
 
             {/* Table */}
             <div className="overflow-x-auto">
@@ -928,15 +999,25 @@ export const ZaloOperationsHub: React.FC = () => {
                       </td>
 
                       <td className="py-3 px-3 text-right">
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEdit(b)}
-                          className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 dark:bg-slate-800 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-300 text-slate-700 dark:text-slate-300 text-[11px] font-bold transition-all cursor-pointer inline-flex items-center gap-1"
-                          title="Bấm để bổ sung SĐT hoặc Zalo ID cho nhân sự"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                          <span>Cập nhật</span>
-                        </button>
+                        <div className="inline-flex items-center gap-1.5 justify-end">
+                          <button
+                            type="button"
+                            onClick={() => handleGenerateLinkCode(b)}
+                            className="px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 dark:text-amber-300 dark:border-amber-800 text-[11px] font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                            title="Tạo mã liên kết LK-XXXXXX (24h) để nhân sự nhắn vào Zalo OA"
+                          >
+                            <span>🔑 Tạo Mã LK</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEdit(b)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 dark:bg-slate-800 dark:hover:bg-indigo-950/60 dark:hover:text-indigo-300 text-slate-700 dark:text-slate-300 text-[11px] font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                            title="Bấm để bổ sung SĐT hoặc Zalo ID cho nhân sự"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                            <span>Cập nhật</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

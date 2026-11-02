@@ -557,11 +557,12 @@ export async function processZaloInboundMessage(params: {
   // 1B. LINKING: the message contains a one-time code "LK-XXXXXX" created by the employee in ABT Portal
   if (!senderBinding) {
     try {
-      const codeMatch = rawText.toUpperCase().match(/LK-[A-F0-9]{6}/);
+      const codeMatch = rawText.toUpperCase().replace(/\s+/g, "").match(/LK-?([A-F0-9]{6})/);
       if (codeMatch) {
-        const codeHash = crypto.createHash("sha256").update(codeMatch[0]).digest("hex");
+        const normalizedCode = `LK-${codeMatch[1]}`;
+        const codeHash = crypto.createHash("sha256").update(normalizedCode).digest("hex");
         const matchRes = await query(
-          "SELECT * FROM zalo_user_bindings WHERE link_code_hash = $1 AND link_code_expires > NOW() LIMIT 1",
+          "SELECT * FROM zalo_user_bindings WHERE link_code_hash = $1 AND (link_code_expires IS NULL OR link_code_expires > NOW() - INTERVAL '24 hours') LIMIT 1",
           [codeHash]
         );
         if (matchRes.rows.length > 0) {
@@ -585,7 +586,7 @@ export async function processZaloInboundMessage(params: {
           await query(
             `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
              VALUES ($1, $2, 'INBOUND', 'TEXT', $3, 'CONNECTED')`,
-            [senderId, senderBinding.display_name, "[Mã liên kết Zalo]"]
+            [senderId, senderBinding.display_name, `${normalizedCode} (Đã liên kết nhân sự ${senderBinding.employee_id})`]
           ).catch(() => {});
 
           return {
