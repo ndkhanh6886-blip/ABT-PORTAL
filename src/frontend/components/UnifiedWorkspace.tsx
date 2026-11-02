@@ -6497,13 +6497,13 @@ export const UnifiedWorkspace: React.FC = () => {
                       notification: notif
                     });
                   }}
-                  className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-orange-50/80 dark:bg-slate-800/80 hover:bg-orange-100/80 dark:hover:bg-slate-800 border border-orange-200/80 dark:border-slate-700 cursor-pointer shrink-0 max-w-xs sm:max-w-md transition-colors"
+                  className="group flex items-center gap-2 px-2.5 py-1 rounded-xl bg-orange-50/80 dark:bg-slate-800/80 hover:bg-orange-100/80 dark:hover:bg-slate-800 border border-orange-200/80 dark:border-slate-700 cursor-pointer shrink-0 max-w-md sm:max-w-xl hover:max-w-none transition-all"
                   title={`${notif.title}: ${notif.message}`}
                 >
-                  <span className="font-bold text-slate-800 dark:text-slate-200 truncate text-[11px]">
+                  <span className="font-bold text-slate-800 dark:text-slate-200 truncate group-hover:whitespace-normal text-[11px]">
                     {notif.title}:
                   </span>
-                  <span className="text-slate-600 dark:text-slate-400 truncate text-[11px] max-w-[180px]">
+                  <span className="text-slate-600 dark:text-slate-400 truncate group-hover:whitespace-normal text-[11px] max-w-[260px] group-hover:max-w-none">
                     {notif.message}
                   </span>
                   <span className="text-orange-600 dark:text-orange-400 font-bold text-[10px] shrink-0 hover:underline">

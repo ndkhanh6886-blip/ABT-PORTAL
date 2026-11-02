@@ -21,7 +21,9 @@ import {
     Clock,
     ArrowUpRight,
     Check,
-    Settings
+    Settings,
+    Maximize2,
+    Minimize2
 } from "lucide-react";
 import { useNotification, Notification, TBR_PERSONNEL } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
@@ -44,6 +46,7 @@ export const NotificationDropdown: React.FC = () => {
     } = useNotification();
 
     const [isOpen, setIsOpen] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(false);
     const [selectedCategory, setSelectedCategory] = useState<string>("all");
     const dropdownRef = useRef<HTMLDivElement>(null);
 
@@ -235,7 +238,13 @@ export const NotificationDropdown: React.FC = () => {
 
             {/* Dropdown Panel */}
             {isOpen && (
-                <div className="fixed sm:absolute right-2 sm:right-0 top-14 sm:top-full mt-2 w-[94vw] sm:w-[460px] max-w-[480px] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col transition-all duration-200">
+                <div
+                    className={`fixed sm:absolute right-2 sm:right-0 top-14 sm:top-full mt-2 w-[96vw] ${
+                        isExpanded
+                            ? "sm:w-[760px] lg:w-[880px]"
+                            : "sm:w-[600px] md:w-[680px]"
+                    } max-w-[96vw] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl z-50 overflow-hidden flex flex-col transition-all duration-200`}
+                >
                     
                     {/* Header */}
                     <div className="px-4 py-3.5 border-b border-slate-150 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/70 flex items-center justify-between gap-2">
@@ -272,6 +281,14 @@ export const NotificationDropdown: React.FC = () => {
                                     <span className="hidden sm:inline text-[11px]">Đọc hết</span>
                                 </button>
                             )}
+                            <button
+                                onClick={() => setIsExpanded((prev) => !prev)}
+                                className="hidden sm:flex p-1.5 text-slate-500 hover:text-orange-600 dark:hover:text-orange-400 hover:bg-slate-200/60 dark:hover:bg-slate-800 rounded-lg text-xs font-medium items-center gap-1 transition-colors cursor-pointer"
+                                title={isExpanded ? "Thu gọn khung thông báo" : "Mở rộng khung thông báo"}
+                            >
+                                {isExpanded ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
+                                <span className="text-[11px]">{isExpanded ? "Thu gọn" : "Mở rộng"}</span>
+                            </button>
                             {filteredNotifications.length > 0 && (
                                 <button
                                     onClick={clearAllNotifications}
@@ -382,7 +399,11 @@ export const NotificationDropdown: React.FC = () => {
                     </div>
 
                     {/* Notification Items List */}
-                    <div className="overflow-y-auto max-h-[380px] divide-y divide-slate-150 dark:divide-slate-800/60 p-1.5 space-y-1">
+                    <div
+                        className={`overflow-y-auto ${
+                            isExpanded ? "max-h-[75vh]" : "max-h-[65vh] sm:max-h-[520px]"
+                        } divide-y divide-slate-150 dark:divide-slate-800/60 p-2 space-y-1.5`}
+                    >
                         {displayList.length === 0 ? (
                             <div className="py-10 text-center px-4">
                                 <div className="w-10 h-10 mx-auto rounded-full bg-slate-150 dark:bg-slate-800 flex items-center justify-center text-slate-400 mb-2">
@@ -403,12 +424,19 @@ export const NotificationDropdown: React.FC = () => {
                                     ? (user?.email || user?.username || user?.name || "mine_viewer")
                                     : selectedEmployeeFilter;
                                 const isItemUnread = !(item.readBy || []).includes(readerId) && !(item.readBy || []).includes("current_viewer");
+                                const fullTooltip = [
+                                    item.title,
+                                    item.message,
+                                    item.sender?.name ? `Người thực hiện: ${item.sender.name}` : "",
+                                    item.targetEmployeeNames?.length ? `Liên quan: ${item.targetEmployeeNames.join(", ")}` : ""
+                                ].filter(Boolean).join("\n");
 
                                 return (
                                     <div
                                         key={item.id}
                                         onClick={() => handleItemClick(item)}
-                                        className={`p-3 rounded-xl transition-all cursor-pointer flex items-start gap-3 border ${
+                                        title={fullTooltip}
+                                        className={`group p-3.5 rounded-xl transition-all cursor-pointer flex items-start gap-3 border ${
                                             isItemUnread
                                                 ? "bg-orange-50/80 dark:bg-slate-800/90 hover:bg-orange-100/70 dark:hover:bg-slate-800 border-orange-300 dark:border-orange-500/40 border-l-4 border-l-orange-500 shadow-xs"
                                                 : "bg-white/60 dark:bg-slate-900/40 hover:bg-slate-100/80 dark:hover:bg-slate-800/70 border-slate-200/60 dark:border-slate-800/60 opacity-90 hover:opacity-100"
@@ -423,11 +451,11 @@ export const NotificationDropdown: React.FC = () => {
 
                                         {/* Content */}
                                         <div className="flex-1 min-w-0">
-                                            <div className="flex items-center justify-between gap-1 mb-0.5">
-                                                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                                            <div className="flex items-start justify-between gap-2 mb-1">
+                                                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 break-words leading-snug">
                                                     {item.title}
                                                 </h4>
-                                                <div className="flex items-center gap-1.5 shrink-0">
+                                                <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
                                                     <span className="text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-0.5 font-medium">
                                                         <Clock className="w-2.5 h-2.5" />
                                                         {formatRelativeTime(item.createdAt)}
@@ -438,7 +466,7 @@ export const NotificationDropdown: React.FC = () => {
                                                 </div>
                                             </div>
 
-                                            <p className="text-xs text-slate-700 dark:text-slate-300 line-clamp-2 leading-relaxed mb-2 font-normal">
+                                            <p className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-line break-words leading-relaxed mb-2.5 font-normal">
                                                 {item.message}
                                             </p>
 
