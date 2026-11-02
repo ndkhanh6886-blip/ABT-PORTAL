@@ -2536,13 +2536,18 @@ export function SalesFullABT() {
 
         const rawLots: any[] = [];
         const seenLotKeys = new Set<string>();
+        const productsWithPositiveLot = new Set<string>();
 
         (warehouseLots || []).forEach((l: any) => {
             const pCode = String(l.product_code || "").trim();
             const lotNo = String(l.lot_number || "").trim();
             if (!pCode || !lotNo) return;
+            const pLower = pCode.toLowerCase();
+            if ((Number(l.quantity_on_hand) || 0) > 0) {
+                productsWithPositiveLot.add(pLower);
+            }
             const loc = String(l.warehouse_location || "Kho Trung Tâm").trim();
-            const key = `${pCode.toLowerCase()}__${lotNo.toLowerCase()}__${loc.toLowerCase()}`;
+            const key = `${pLower}__${lotNo.toLowerCase()}__${loc.toLowerCase()}`;
             seenLotKeys.add(key);
             rawLots.push(l);
         });
@@ -2553,11 +2558,10 @@ export function SalesFullABT() {
             const lotNo = String(it.lot_number || it.earliest_lot || "").trim();
             const onHand = Number(it.quantity_on_hand) || 0;
             if (!pCode || !lotNo || onHand <= 0) return;
+            const pLower = pCode.toLowerCase();
             const loc = String(it.warehouse_location || "Kho Trung Tâm").trim();
-            const hasAnyLotForProduct = (warehouseLots || []).some(
-                (l: any) => String(l.product_code || "").trim().toLowerCase() === pCode.toLowerCase() && (Number(l.quantity_on_hand) || 0) > 0
-            );
-            const key = `${pCode.toLowerCase()}__${lotNo.toLowerCase()}__${loc.toLowerCase()}`;
+            const hasAnyLotForProduct = productsWithPositiveLot.has(pLower);
+            const key = `${pLower}__${lotNo.toLowerCase()}__${loc.toLowerCase()}`;
             if (!seenLotKeys.has(key) && !hasAnyLotForProduct) {
                 seenLotKeys.add(key);
                 rawLots.push({
@@ -2607,6 +2611,14 @@ export function SalesFullABT() {
             }
         });
 
+        const catalogByCodeLower = new Map<string, any>();
+        for (const p of (allSalesProducts || [])) {
+            if (p?.code) {
+                const cLower = String(p.code).trim().toLowerCase();
+                if (!catalogByCodeLower.has(cLower)) catalogByCodeLower.set(cLower, p);
+            }
+        }
+
         return rawLots
             .filter((l: any) => {
                 const onHand = Number(l.quantity_on_hand) || 0;
@@ -2639,9 +2651,7 @@ export function SalesFullABT() {
 
                 const expIso = normalizeLotExpiryIso(l.expiry_date || l.expiry_raw);
                 const availQty = Math.max(0, onHand - allocatedOnLot);
-                const prodCatalog = (allSalesProducts || []).find(
-                    (p: any) => String(p.code || "").trim().toLowerCase() === pCodeLower
-                );
+                const prodCatalog = catalogByCodeLower.get(pCodeLower);
 
                 return {
                     ...l,
@@ -4535,24 +4545,47 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const syncLiveInventory = () => {
             fetch("/api/inventory?action=lot_stock")
                 .then(res => res.json())
-                .then(d => { if (Array.isArray(d?.lots)) setWarehouseLots(d.lots); })
+                .then(d => {
+                    if (Array.isArray(d?.lots)) {
+                        setWarehouseLots(d.lots);
+                        const today = todayVN();
+                        const lotStock: Record<string, number> = {};
+                        d.lots.forEach((l: any) => {
+                            const rawCode = String(l.product_code || "").trim();
+                            const qty = Number(l.quantity_on_hand) || 0;
+                            if (!rawCode || qty <= 0 || l.is_quarantined) return;
+                            const expIso = normalizeLotExpiryIso(l.expiry_date || l.expiry_raw);
+                            if (expIso && expIso < today) return;
+                            lotStock[rawCode] = (lotStock[rawCode] || 0) + qty;
+                            const upper = rawCode.toUpperCase();
+                            if (upper !== rawCode) lotStock[upper] = (lotStock[upper] || 0) + qty;
+                        });
+                        if (Object.keys(lotStock).length > 0) {
+                            setStock13b(prev => ({ ...prev, ...lotStock }));
+                        }
+                    }
+                })
                 .catch(() => {});
             fetch("/api/inventory?action=overview")
                 .then(res => res.json())
                 .then(overview => {
                     if (overview.items && Array.isArray(overview.items)) {
                         setWarehouseInventoryItems(overview.items);
-                        try { localStorage.setItem("inventoryItems", JSON.stringify(overview.items)); } catch(e) {}
                         const liveStock: Record<string, number> = {};
                         overview.items.forEach((it: any) => {
-                            const code = it.product_code || it.code;
-                            if (code) {
-                                liveStock[code] = (liveStock[code] || 0) + (Number(it.quantity_on_hand) || 0);
+                            const rawCode = String(it.product_code || it.code || "").trim();
+                            if (rawCode) {
+                                const qty = Number(it.quantity_on_hand) || 0;
+                                liveStock[rawCode] = (liveStock[rawCode] || 0) + qty;
+                                const upper = rawCode.toUpperCase();
+                                if (upper !== rawCode) liveStock[upper] = (liveStock[upper] || 0) + qty;
                             }
                         });
                         setStock13b(prev => {
-                            const merged = { ...prev, ...liveStock };
-                            try { localStorage.setItem("sales_13b_general_stock", JSON.stringify(merged)); } catch(e) {}
+                            const merged = { ...prev };
+                            for (const [k, v] of Object.entries(liveStock)) {
+                                merged[k] = Math.max(Number(prev[k] || 0), v);
+                            }
                             return merged;
                         });
                     }
@@ -4561,12 +4594,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             fetchReservations();
         };
 
+        const handleStorage = (e: StorageEvent) => {
+            if (e.key === "inventory_updated") {
+                syncLiveInventory();
+            }
+        };
+
         syncLiveInventory();
         window.addEventListener("inventory_updated", syncLiveInventory);
-        window.addEventListener("storage", syncLiveInventory);
+        window.addEventListener("storage", handleStorage);
         return () => {
             window.removeEventListener("inventory_updated", syncLiveInventory);
-            window.removeEventListener("storage", syncLiveInventory);
+            window.removeEventListener("storage", handleStorage);
         };
     }, []);
 
@@ -14575,7 +14614,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         // Làm mới tức thì danh sách lô tồn kho khi mở modal lập phiếu giao
         fetch("/api/inventory?action=lot_stock")
             .then(res => res.json())
-            .then(d => { if (Array.isArray(d?.lots)) setWarehouseLots(d.lots); })
+            .then(d => {
+                if (Array.isArray(d?.lots)) {
+                    setWarehouseLots(d.lots);
+                    const today = todayVN();
+                    const lotStock: Record<string, number> = {};
+                    d.lots.forEach((l: any) => {
+                        const rawCode = String(l.product_code || "").trim();
+                        const qty = Number(l.quantity_on_hand) || 0;
+                        if (!rawCode || qty <= 0 || l.is_quarantined) return;
+                        const expIso = normalizeLotExpiryIso(l.expiry_date || l.expiry_raw);
+                        if (expIso && expIso < today) return;
+                        lotStock[rawCode] = (lotStock[rawCode] || 0) + qty;
+                        const upper = rawCode.toUpperCase();
+                        if (upper !== rawCode) lotStock[upper] = (lotStock[upper] || 0) + qty;
+                    });
+                    if (Object.keys(lotStock).length > 0) {
+                        setStock13b(prev => ({ ...prev, ...lotStock }));
+                    }
+                }
+            })
             .catch(() => {});
         fetch("/api/inventory?action=overview")
             .then(res => res.json())

@@ -79,9 +79,7 @@ export async function GET(req: NextRequest) {
                i.shelf_position
           FROM inventory_lots l
           LEFT JOIN products p ON p.code = l.product_code
-          LEFT JOIN LATERAL (
-            SELECT * FROM inventory_items i0 WHERE i0.product_code = l.product_code ORDER BY i0.id ASC LIMIT 1
-          ) i ON TRUE
+          LEFT JOIN inventory_items i ON i.product_code = l.product_code
           LEFT JOIN (
             SELECT product_code, LOWER(TRIM(lot_number)) AS norm_lot, SUM(COALESCE(quantity_reserved, 0)) AS lot_reserved
               FROM inventory_reservations
@@ -291,27 +289,78 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "overview") {
-      const [items, transactions, products, reservations, openPOs, recallsRes, componentsRes, personnelRes, customersRes] = await Promise.all([
+      await query(`
+        INSERT INTO inventory_items (product_code, product_name, lot_number, expiry_date, warehouse_location, shelf_position, storage_temp, quantity_on_hand, quantity_allocated)
+        SELECT p.code, p.name, '', '', 'Kho Trung Tâm', 'Kệ tiêu chuẩn', COALESCE(NULLIF(p.storage_condition, ''), '15-25°C'), 0, 0
+          FROM products p
+         WHERE p.code IS NOT NULL AND TRIM(p.code) <> ''
+           AND NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = p.code)
+        ON CONFLICT (product_code) DO NOTHING
+      `).catch(() => {});
+
+      await query(`
+        INSERT INTO inventory_items (product_code, product_name, lot_number, expiry_date, warehouse_location, shelf_position, storage_temp, quantity_on_hand, quantity_allocated)
+        SELECT l.product_code,
+               COALESCE(MAX(p.name), l.product_code),
+               COALESCE((ARRAY_AGG(l.lot_number ORDER BY ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC) FILTER (WHERE l.quantity_on_hand > 0))[1], ''),
+               COALESCE((ARRAY_AGG(l.expiry_date ORDER BY ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC) FILTER (WHERE l.quantity_on_hand > 0))[1], ''),
+               COALESCE(MAX(l.warehouse_location), 'Kho Trung Tâm'),
+               'Kệ tiêu chuẩn',
+               COALESCE(MAX(p.storage_condition), '15-25°C'),
+               COALESCE(SUM(GREATEST(l.quantity_on_hand, 0)), 0)::int,
+               0
+          FROM inventory_lots l
+          LEFT JOIN products p ON p.code = l.product_code
+         WHERE l.product_code IS NOT NULL AND TRIM(l.product_code) <> ''
+           AND NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = l.product_code)
+         GROUP BY l.product_code
+        ON CONFLICT (product_code) DO NOTHING
+      `).catch(() => {});
+
+      await query(`
+        WITH lot_totals AS (
+          SELECT product_code,
+                 COALESCE(SUM(GREATEST(quantity_on_hand, 0)), 0)::int AS total_qty,
+                 (ARRAY_AGG(lot_number ORDER BY ${LOT_EXPIRY_ISO_SQL("expiry_date")} ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS first_lot,
+                 (ARRAY_AGG(expiry_date ORDER BY ${LOT_EXPIRY_ISO_SQL("expiry_date")} ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS first_exp
+            FROM inventory_lots
+           GROUP BY product_code
+        )
+        UPDATE inventory_items i
+           SET quantity_on_hand = lt.total_qty,
+               lot_number = COALESCE(lt.first_lot, i.lot_number),
+               expiry_date = COALESCE(lt.first_exp, i.expiry_date)
+          FROM lot_totals lt
+         WHERE i.product_code = lt.product_code
+           AND (COALESCE(i.quantity_on_hand, 0) <> lt.total_qty
+                OR (COALESCE(i.lot_number, '') = '' AND lt.first_lot IS NOT NULL))
+      `).catch(() => {});
+
+      const [items, transactions, products, reservations, openPOs] = await Promise.all([
         query(`
-          SELECT i.*, p.category, p.unit, p.specification, p.standard_price, p.cost_price, p.min_stock_level, p.manufacturer, p.origin, p.storage_condition 
+          SELECT i.*, p.category, p.unit, p.specification, p.standard_price, p.cost_price, p.min_stock_level, p.manufacturer, p.origin, p.storage_condition
           FROM inventory_items i
-          -- nối theo mã (có chỉ mục), id chỉ dùng khi không khớp mã: "id OR mã" làm phép nối quét chéo hai bảng
-          LEFT JOIN LATERAL (
-            SELECT * FROM products p0
-             WHERE p0.code = i.product_code OR (i.product_id IS NOT NULL AND p0.id = i.product_id)
-             ORDER BY (p0.code = i.product_code) DESC
-             LIMIT 1
-          ) p ON TRUE
-          ORDER BY i.id ASC
+          LEFT JOIN products p ON p.code = i.product_code
+          ORDER BY (COALESCE(i.quantity_on_hand, 0) > 0) DESC, i.id ASC
         `),
-        query("SELECT * FROM inventory_transactions ORDER BY date DESC, id DESC LIMIT 100"),
         query(`
-          SELECT p.*, 
-            (SELECT count(*) FROM product_components pc WHERE pc.parent_product_code = p.code) as component_count
-          FROM products p 
-          ORDER BY 
-            (SELECT count(*) FROM product_components pc WHERE pc.parent_product_code = p.code) DESC,
-            CASE 
+          SELECT id, transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items,
+                 LEFT(COALESCE(notes, ''), 600) AS notes, created_at
+            FROM inventory_transactions
+           ORDER BY date DESC, id DESC
+           LIMIT 100
+        `),
+        query(`
+          SELECT p.*, COALESCE(pc.component_count, 0) AS component_count
+          FROM products p
+          LEFT JOIN (
+            SELECT parent_product_code, COUNT(*)::int AS component_count
+              FROM product_components
+             GROUP BY parent_product_code
+          ) pc ON pc.parent_product_code = p.code
+          ORDER BY
+            COALESCE(pc.component_count, 0) DESC,
+            CASE
               WHEN p.category ILIKE '%TÁCH CHIẾT%' THEN 1
               WHEN p.category ILIKE '%SHPT%' THEN 2
               WHEN p.category ILIKE '%PCR%' THEN 3
@@ -322,12 +371,15 @@ export async function GET(req: NextRequest) {
             END,
             p.name ASC
         `),
-        query("SELECT * FROM inventory_reservations ORDER BY id DESC"),
+        query("SELECT * FROM inventory_reservations ORDER BY id DESC LIMIT 500"),
         query("SELECT id, po_code, supplier_name, expected_delivery_date, status, items FROM procurement_orders WHERE status NOT IN ('COMPLETED', 'CANCELLED')"),
+      ]);
+
+      const [recallsRes, componentsRes, personnelRes, customersRes] = await Promise.all([
         query("SELECT * FROM lot_recalls ORDER BY id DESC"),
         query("SELECT * FROM product_components ORDER BY parent_product_code ASC, id ASC"),
         query("SELECT employee_code, full_name, department, position, email, phone FROM personnel WHERE status = 'ACTIVE' ORDER BY id ASC"),
-        query("SELECT id, customer_code, name, contact_person, phone, email, address, classification, region, province, contacts FROM sales_customers ORDER BY name ASC"),
+        query("SELECT id, customer_code, name, contact_person, phone, email, address, classification, region, province FROM sales_customers ORDER BY name ASC"),
       ]);
 
       // Calculate incoming PO quantities per product code (Req 7: ATP calculation)
@@ -1311,7 +1363,7 @@ export async function POST(req: NextRequest) {
               await c.query(
                 `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
                  VALUES ($1, 'INBOUND', $2, $3, $4, $5, $6, $7)`,
-                [docCode, doc.reference, doc.date, doc.performedBy, doc.warehouse, JSON.stringify(doc.items), doc.notes.join(" | ")]
+                [docCode, doc.reference, doc.date, doc.performedBy, doc.warehouse, JSON.stringify(doc.items), doc.notes.length > 10 ? `${doc.notes.slice(0, 10).join(" | ")} ... (+${doc.notes.length - 10} lô khác)` : doc.notes.join(" | ")]
               );
             }
             for (const entry of catalogEntries) {
@@ -1391,13 +1443,7 @@ export async function POST(req: NextRequest) {
         await syncCatalogSuppliersAndProducts();
         await logAudit("IMPORT_EXCEL", "SUPPLIERS", `Nạp thành công ${importedCount} nhà cung cấp từ Excel`);
       } else if (detectedType === "USERS_PERSONNEL") {
-        try {
-          await query("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key");
-          await query("DROP INDEX IF EXISTS users_email_key");
-        } catch (e: any) {
-          console.warn("Could not drop users_email_key:", e?.message);
-        }
-
+        // Giữ nguyên ràng buộc UNIQUE trên users.email để tránh nhân bản tài khoản trùng email
         for (const r of rows) {
           // Helper to get value matching keys flexibly
           const getVal = (candidates: string[]): string => {

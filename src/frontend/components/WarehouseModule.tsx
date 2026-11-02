@@ -368,15 +368,39 @@ export const WarehouseModule: React.FC = () => {
     return () => window.removeEventListener("tbr-navigate" as any, handleNav);
   }, []);
 
+  // O(1) lookup maps for 5,000+ products and BOM components to avoid O(N^2) main-thread freezes
+  const productByCodeMap = useMemo(() => {
+    const map = new Map<string, any>();
+    for (const p of products) {
+      if (!p?.code) continue;
+      const raw = String(p.code);
+      const norm = raw.trim().toLowerCase();
+      map.set(raw, p);
+      if (!map.has(norm)) map.set(norm, p);
+    }
+    return map;
+  }, [products]);
+
+  const componentsByParentMap = useMemo(() => {
+    const map = new Map<string, any[]>();
+    for (const c of productComponents) {
+      const parent = c?.parent_product_code;
+      if (!parent) continue;
+      const list = map.get(parent);
+      if (list) list.push(c);
+      else map.set(parent, [c]);
+    }
+    return map;
+  }, [productComponents]);
+
   // Enriched items with risk metadata & ATP metrics (Requirement 1 & 7)
   const enrichedItems = useMemo(() => {
     return items.map((item) => {
       // Dynamic properties read directly from real inventory item
       // Mã nhiều lô: hiện lô hết hạn sớm nhất (FEFO) thay cho lô ghi trên dòng tồn của mã
       const isoToVN = (v: string) => (/^\d{4}-\d{2}-\d{2}/.test(v) ? `${v.slice(8, 10)}.${v.slice(5, 7)}.${v.slice(0, 4)}` : v);
-      const matchedCatalogProd = products.find(
-        (p: any) => String(p.code || "").trim().toLowerCase() === String(item.product_code || item.code || "").trim().toLowerCase()
-      );
+      const rawItemCode = String(item.product_code || item.code || "");
+      const matchedCatalogProd = productByCodeMap.get(rawItemCode) || productByCodeMap.get(rawItemCode.trim().toLowerCase());
       let lot_number = item.earliest_lot || item.lot_number || "";
       let expiry_date = item.earliest_lot ? (item.earliest_expiry ? isoToVN(String(item.earliest_expiry)) : "") : (item.expiry_date || "");
       let storage_temp =
@@ -4416,13 +4440,25 @@ export const WarehouseModule: React.FC = () => {
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="space-y-1">
-                          {itemsList.map((it: any, idx: number) => (
+                          {itemsList.slice(0, 5).map((it: any, idx: number) => (
                             <div key={idx} className="text-[11px] text-slate-800 dark:text-slate-200">
                               • <strong>{it.product_code || it.productCode}</strong>: {it.product_name || it.name} (SL: <strong>{it.quantity}</strong> {it.unit || ""})
                               {it.lot_number && <span className="ml-1 text-slate-500 font-mono text-[10px]">[Lô: {it.lot_number}]</span>}
                               {it.expiry_date && <span className="ml-1 text-emerald-600 font-mono text-[10px]">[EXP: {it.expiry_date}]</span>}
                             </div>
                           ))}
+                          {itemsList.length > 5 && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedTxDetail(tx);
+                                setIsTxDetailModalOpen(true);
+                              }}
+                              className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline pt-0.5 cursor-pointer"
+                            >
+                              + và {itemsList.length - 5} mặt hàng khác (Bấm Chi Tiết để xem đầy đủ)
+                            </button>
+                          )}
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
@@ -5869,14 +5905,14 @@ export const WarehouseModule: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-bold text-white tracking-wide uppercase">
-                    TRUNG TÂM BIỂU MẪU EXCEL CHUẨN HÓA &amp; NHẬP LIỆU HÀNG LOẠT
+                    TRUNG TÂM BIỂU MẪU EXCEL CHUẨN HÓA &amp; NHẬP LIỆU HÀNG LOẠT (KHỐI KINH DOANH &amp; KHO VẬN)
                   </h2>
                   <span className="text-[10px] bg-teal-950 text-teal-300 border border-teal-700/60 px-2 py-0.5 rounded-full font-mono font-bold">
                     Standardized Excel Master
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 mt-1">
-                  Cung cấp 6 bộ biểu mẫu Excel chuẩn hóa cho Khách hàng, Sản phẩm &amp; Bảng giá, Nhập kho theo Lô, Đơn đặt hàng PO, Nhà cung cấp, và Tài khoản &amp; Nhân sự; hỗ trợ import trực tiếp vào cơ sở dữ liệu.
+                  Cung cấp 5 bộ biểu mẫu Excel chuẩn hóa cho Khách hàng CRM, Sản phẩm &amp; Bảng giá, Nhập kho theo Lô, Đơn đặt hàng PO, và Nhà cung cấp; hỗ trợ import trực tiếp vào cơ sở dữ liệu. (Chức năng nhập Tài khoản &amp; Nhân sự toàn công ty được quản lý tập trung tại mục Quản Trị Hệ Thống).
                 </p>
               </div>
             </div>
@@ -5996,29 +6032,6 @@ export const WarehouseModule: React.FC = () => {
               >
                 <Download className="w-4 h-4" />
                 <span>Tải Mẫu Nhà Cung Cấp (.xlsx)</span>
-              </button>
-            </div>
-
-            {/* Card 6: Tài Khoản & Nhân Sự Liên Kết */}
-            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between space-y-4 hover:border-rose-500/50 transition-colors">
-              <div className="space-y-2">
-                <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center">
-                  <UserCheck className="w-5 h-5" />
-                </div>
-                <h3 className="font-bold text-slate-900 dark:text-white text-sm">
-                  6. Tài Khoản &amp; Nhân Sự Liên Kết
-                </h3>
-                <p className="text-slate-500 text-xs leading-relaxed">
-                  Bao gồm: Mã NV, Họ tên, Tên đăng nhập, Mật khẩu khởi tạo, Phòng ban, Chức danh, Vai trò (Role), Email, SĐT.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleDownloadUserPersonnelTemplate}
-                className="w-full py-2.5 rounded-xl font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-              >
-                <Download className="w-4 h-4" />
-                <span>Tải Mẫu Tài Khoản &amp; Nhân Sự (.xlsx)</span>
               </button>
             </div>
           </div>
@@ -6335,7 +6348,7 @@ export const WarehouseModule: React.FC = () => {
                   }`}
                   title="Chỉ hiển thị các sản phẩm dạng Bộ / Kit có cấu trúc linh kiện phụ kèm theo"
                 >
-                  🧩 Bộ/Kit ({products.filter(p => productComponents.some(c => c.parent_product_code === p.code)).length})
+                  🧩 Bộ/Kit ({products.reduce((acc, p) => acc + (componentsByParentMap.has(p.code) ? 1 : 0), 0)})
                 </button>
                 <button
                   type="button"
@@ -6359,7 +6372,7 @@ export const WarehouseModule: React.FC = () => {
                   }`}
                   title="Các sản phẩm đơn chiếc (chưa khai báo BOM)"
                 >
-                  Đơn chiếc ({products.filter(p => !productComponents.some(c => c.parent_product_code === p.code)).length})
+                  Đơn chiếc ({products.reduce((acc, p) => acc + (!componentsByParentMap.has(p.code) ? 1 : 0), 0)})
                 </button>
               </div>
 
@@ -6378,7 +6391,7 @@ export const WarehouseModule: React.FC = () => {
               {/* List of Products */}
               <div className="space-y-1.5 max-h-[560px] overflow-y-auto pr-1">
                 {bomPage.items.map((p) => {
-                    const comps = productComponents.filter((c) => c.parent_product_code === p.code);
+                    const comps = componentsByParentMap.get(p.code) || [];
                     const isSelected = selectedBomParent === p.code;
 
                     return (
@@ -7732,7 +7745,7 @@ export const WarehouseModule: React.FC = () => {
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-semibold"
                   >
                     {products.map((p) => {
-                      const compCount = productComponents.filter((c) => c.parent_product_code === p.code).length;
+                      const compCount = (componentsByParentMap.get(p.code) || []).length;
                       return (
                         <option key={p.code} value={p.code}>
                           {p.code} - {p.name} {compCount > 0 ? `(🧩 Bộ gồm ${compCount} phụ kiện)` : ""}

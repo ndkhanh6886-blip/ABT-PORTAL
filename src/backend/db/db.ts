@@ -378,6 +378,9 @@ async function runIntegrityMigrations() {
         );
         ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0;
         CREATE INDEX IF NOT EXISTS idx_inventory_lots_fefo ON inventory_lots (product_code, expiry_date);
+        CREATE INDEX IF NOT EXISTS idx_product_components_parent ON product_components (parent_product_code);
+        CREATE INDEX IF NOT EXISTS idx_inventory_transactions_date_id ON inventory_transactions (date DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_inventory_reservations_status_prod ON inventory_reservations (status, product_code);
         -- Backfill: one lot per product that has stock but no lot rows yet (idempotent)
         INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, is_quarantined, quarantine_reason)
         SELECT i.product_code,
