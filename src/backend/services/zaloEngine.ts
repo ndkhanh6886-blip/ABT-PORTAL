@@ -2,9 +2,11 @@ import { query, withTransaction } from "@/backend/db/db";
 import { initZaloDatabase } from "@/backend/db/zaloDb";
 import crypto from "crypto";
 import { signedDocumentUrl } from "@/backend/services/documentLinks";
-import { todayVN } from "@/backend/services/dates";
-import { isAdminUser } from "@/backend/services/authz";
+import { todayVN, nowVNDateTime } from "@/backend/services/dates";
+import { isAdminUser, isAccountantUser } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
+import { sendZaloCustomerServiceMessage } from "@/backend/services/zaloTokenService";
+import { addStock, sortByProductCode } from "@/backend/services/inventoryLedger";
 
 export interface ZaloMessageResponse {
   recipientId: string;
@@ -17,33 +19,108 @@ export interface ZaloMessageResponse {
 
 const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://portal.abtvn.com";
 
-const QUOTE_CODE_REGEX = /BG-ABT-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
+const QUOTE_CODE_REGEX = /BG-(?:TBR|VIA|ABT)-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
+const SO_CODE_REGEX = /SO[0-9]{2}-[A-Za-z0-9-]+|SO-(?:TBR|VIA|ABT)?-?[A-Za-z0-9-]+/i;
+const PO_CODE_REGEX = /PO[0-9]{2}-[A-Za-z0-9-]+|PO-(?:TBR|VIA|ABT)?-?[A-Za-z0-9-]+/i;
+const RMA_CODE_REGEX = /RMA[0-9]{2}-[A-Za-z0-9-]+|RMA-(?:TBR|VIA|ABT)?-?[A-Za-z0-9-]+/i;
+const DX_CODE_REGEX = /DX(?:NP)?-[0-9]{4,6}-[0-9]{3,6}|DXNP-[A-Za-z0-9-]+/i;
+const PX_CODE_REGEX = /PX[0-9]{2}-[A-Za-z0-9-]+|PGH[0-9]{2}-[A-Za-z0-9-]+|PX-[A-Za-z0-9-]+/i;
 
-async function hasQuotationApprovalAuthority(senderBinding: any, senderId: string, directorZaloId: string): Promise<boolean> {
-  if (
+function fmtVnd(n: any): string {
+  return new Intl.NumberFormat("vi-VN").format(Math.round(Number(n) || 0));
+}
+
+function parseJsonSafeArray(v: any): any[] {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+function parseJsonSafeObj(v: any): Record<string, any> {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const parsed = JSON.parse(v);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return {};
+}
+
+async function resolvePortalUserForBinding(senderBinding: any): Promise<any | null> {
+  const empId = String(senderBinding?.employee_id || "").trim();
+  const displayName = String(senderBinding?.display_name || "").trim();
+  if (!empId && !displayName) return null;
+  try {
+    const uRes = await query(
+      `SELECT id, username, role, department, full_name, permissions FROM users
+        WHERE ($1 <> '' AND (
+                username = $1
+                OR username = REPLACE(REPLACE(REPLACE($1, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA'), 'NV-ABT-', 'ABT')
+              ))
+           OR ($2 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($2)))
+        ORDER BY id ASC LIMIT 1`,
+      [empId, displayName]
+    );
+    return uRes.rows[0] || null;
+  } catch {
+    return null;
+  }
+}
+
+function isDirectorBinding(senderBinding: any, senderId: string, directorZaloId: string): boolean {
+  return Boolean(
     senderBinding?.role === "DIRECTOR" ||
     senderBinding?.user_type === "DIRECTOR" ||
     senderBinding?.department === "Ban Giám Đốc" ||
     (directorZaloId && senderId === directorZaloId)
-  ) {
+  );
+}
+
+async function hasQuotationApprovalAuthority(
+  senderBinding: any,
+  senderId: string,
+  directorZaloId: string,
+  isZeroPriceQuote = false
+): Promise<boolean> {
+  if (isDirectorBinding(senderBinding, senderId, directorZaloId)) return true;
+  const u = await resolvePortalUserForBinding(senderBinding);
+  if (!u) return false;
+  if (isAdminUser(u)) return true;
+  if (isZeroPriceQuote && (hasPermission(u, "sales.approve_zero_price") || hasPermission(u, "sales.approve_quotes"))) {
     return true;
   }
-  const empId = String(senderBinding?.employee_id || "").trim();
-  if (!empId) return false;
-  try {
-    const uRes = await query(
-      `SELECT id, username, role, department, full_name, permissions FROM users
-        WHERE username = $1
-           OR username = REPLACE(REPLACE($1, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA')
-        LIMIT 1`,
-      [empId]
-    );
-    const u = uRes.rows[0];
-    if (!u) return false;
-    return isAdminUser(u) || hasPermission(u, "sales.approve_discount");
-  } catch {
-    return false;
+  return hasPermission(u, "sales.approve_quotes") || hasPermission(u, "sales.approve_discount");
+}
+
+async function hasSpecificApprovalAuthority(
+  senderBinding: any,
+  senderId: string,
+  directorZaloId: string,
+  perms: string[],
+  options?: { allowAccountant?: boolean; allowDeptHead?: boolean }
+): Promise<boolean> {
+  if (isDirectorBinding(senderBinding, senderId, directorZaloId)) return true;
+  if (options?.allowAccountant && (senderBinding?.role === "ACCOUNTANT" || senderBinding?.department === "Kế Toán")) {
+    return true;
   }
+  if (options?.allowDeptHead && (senderBinding?.role === "HEAD_OF_DEPT" || senderBinding?.user_type === "MANAGER")) {
+    return true;
+  }
+  const u = await resolvePortalUserForBinding(senderBinding);
+  if (!u) return false;
+  if (isAdminUser(u)) return true;
+  if (options?.allowAccountant && isAccountantUser(u)) return true;
+  return perms.some((p) => hasPermission(u, p as any));
 }
 
 async function resolveSingleQuotationCode(inputCode: string): Promise<{ exactCode?: string; candidates?: string[] }> {
@@ -60,6 +137,393 @@ async function resolveSingleQuotationCode(inputCode: string): Promise<{ exactCod
   return { candidates: res.rows.map((r: any) => r.quote_code) };
 }
 
+async function syncQuotationsToAppStorage() {
+  try {
+    const allQ = await query("SELECT * FROM sales_quotations ORDER BY id DESC");
+    const list = allQ.rows.map((r: any) => {
+      const extra = parseJsonSafeObj(r.extra_data);
+      const items = parseJsonSafeArray(r.items);
+      const hasZero = extra.hasZeroPriceItems !== undefined
+        ? Boolean(extra.hasZeroPriceItems)
+        : items.some((it: any) => Number(it?.unitPrice ?? it?.unit_price ?? it?.price ?? 0) === 0 || Boolean(it?.isFreeSample || it?.isGift));
+      return {
+        ...extra,
+        id: r.quote_code || String(r.id),
+        quote_code: r.quote_code,
+        customer_id: r.customer_id,
+        customer_name: r.customer_name,
+        customerName: r.customer_name,
+        sales_rep_name: r.sales_rep_name,
+        salesRepName: r.sales_rep_name,
+        date: r.date,
+        valid_until: r.valid_until,
+        validUntil: r.valid_until,
+        items,
+        subtotal: Number(r.subtotal || 0),
+        totalBeforeVat: Number(r.subtotal || 0),
+        discount_rate: Number(r.discount_rate || 0),
+        discountRate: Number(r.discount_rate || 0),
+        discount_amount: Number(r.discount_amount || 0),
+        totalDiscount: Number(r.discount_amount || 0),
+        tax_rate: Number(r.tax_rate || 8),
+        taxRate: Number(r.tax_rate || 8),
+        tax_amount: Number(r.tax_amount || 0),
+        totalVat: Number(r.tax_amount || 0),
+        total_amount: Number(r.total_amount || 0),
+        totalAmount: Number(r.total_amount || 0),
+        status: r.status,
+        terms: r.terms || "",
+        paymentTerms: r.terms || "",
+        hasZeroPriceItems: hasZero,
+        has_zero_price_items: hasZero,
+      };
+    });
+    await query(
+      `INSERT INTO app_storage (key, data, updated_at) VALUES ('sales_quotations', $1::jsonb, CURRENT_TIMESTAMP)
+       ON CONFLICT (key) DO UPDATE SET data = $1::jsonb, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
+      [JSON.stringify(list)]
+    );
+  } catch (e) {
+    console.warn("[ZaloEngine] syncQuotationsToAppStorage warning:", e);
+  }
+}
+
+export type ZaloProactiveEventType =
+  | "QUOTE_APPROVAL_NEEDED"
+  | "SO_APPROVAL_NEEDED"
+  | "PO_APPROVAL_NEEDED"
+  | "PROPOSAL_APPROVAL_NEEDED"
+  | "RMA_APPROVAL_NEEDED"
+  | "DELIVERY_DISPATCHED"
+  | "DELIVERY_COMPLETED_POD"
+  | "INVOICE_OR_PAYMENT_RECORDED"
+  | "CUSTOMER_DELIVERY_ZNS";
+
+/**
+ * Chủ động bắn thông báo đẩy (Outbound Push Notification) qua Zalo OA cho Ban Giám Đốc,
+ * Người được phân quyền duyệt, NVKD phụ trách hoặc Khách hàng (ZNS/OA) và lưu vết vào zalo_message_logs.
+ */
+export async function notifyZaloProactiveEvent(params: {
+  eventType: ZaloProactiveEventType;
+  code: string;
+  customerName?: string;
+  salesRepName?: string;
+  requesterName?: string;
+  targetApproverName?: string;
+  totalAmount?: number;
+  reasonOrNote?: string;
+  extraInfo?: string;
+}) {
+  try {
+    await initZaloDatabase();
+    const {
+      eventType,
+      code,
+      customerName = "",
+      salesRepName = "",
+      requesterName = "",
+      targetApproverName = "",
+      totalAmount = 0,
+      reasonOrNote = "",
+      extraInfo = ""
+    } = params;
+
+    let text = "";
+    let recipientFilterSql = `department = 'Ban Giám Đốc' OR role = 'DIRECTOR'`;
+    let recipientParams: any[] = [];
+    let targetLabel = "Ban Giám Đốc / Người duyệt";
+
+    if (eventType === "QUOTE_APPROVAL_NEEDED") {
+      text =
+        `🔔 [ZALO PUSH] BÁO GIÁ CẦN PHÊ DUYỆT [${code}]\n` +
+        `🏥 Khách hàng: ${customerName || "Khách hàng"}\n` +
+        `👤 NVKD lập: ${salesRepName || "Kinh doanh"}\n` +
+        `💰 Tổng giá trị: ${fmtVnd(totalAmount)} VNĐ\n` +
+        `📌 Lý do trình duyệt: ${reasonOrNote || "Chiết khấu vượt ngưỡng / Có mặt hàng 0 đồng"}\n\n` +
+        `👉 Nhắn "Duyệt ${code}" hoặc "Từ chối ${code} [Lý do]" để xử lý ngay trên Zalo!`;
+    } else if (eventType === "SO_APPROVAL_NEEDED") {
+      text =
+        `🔔 [ZALO PUSH] ĐƠN ĐẶT HÀNG (SO) CHỜ PHÊ DUYỆT [${code}]\n` +
+        `🏥 Khách hàng: ${customerName || "Khách hàng"}\n` +
+        `👤 NVKD phụ trách: ${salesRepName || "Kinh doanh"}\n` +
+        `💰 Giá trị đơn: ${fmtVnd(totalAmount)} VNĐ\n` +
+        `⚠️ Nội dung cần duyệt: ${reasonOrNote || "Duyệt đơn hàng / Hàng 0đ / Mở khóa công nợ"}\n\n` +
+        `👉 Nhắn "Duyệt ${code}" (hoặc "Duyệt 0đ ${code}" / "Duyệt nợ ${code}") để mở khóa ngay!`;
+    } else if (eventType === "PO_APPROVAL_NEEDED") {
+      text =
+        `🛒 [ZALO PUSH] ĐƠN MUA HÀNG (PO) CHỜ DUYỆT [${code}]\n` +
+        `🏢 Nhà cung cấp: ${customerName || "Nhà cung cấp"}\n` +
+        `👤 Người lập: ${requesterName || "Phòng Cung Ứng"}\n` +
+        `💰 Tổng tiền PO: ${fmtVnd(totalAmount)} VNĐ\n` +
+        (reasonOrNote ? `📝 Ghi chú: ${reasonOrNote}\n` : "") +
+        `\n👉 Nhắn "Duyệt ${code}" hoặc "Từ chối ${code} [Lý do]" để phê duyệt đơn mua hàng!`;
+    } else if (eventType === "PROPOSAL_APPROVAL_NEEDED") {
+      targetLabel = targetApproverName || "Cấp phê duyệt / Ban Giám Đốc";
+      text =
+        `📋 [ZALO PUSH] TỜ TRÌNH / ĐƠN NGHỈ PHÉP MỚI [${code}]\n` +
+        `👤 Người trình: ${requesterName || "Nhân viên"}\n` +
+        `📌 Nội dung: ${reasonOrNote || "Đề xuất nội bộ / Xin nghỉ phép"}\n` +
+        (totalAmount > 0 ? `💰 Giá trị đề xuất: ${fmtVnd(totalAmount)} VNĐ\n` : "") +
+        (extraInfo ? `ℹ️ Chi tiết: ${extraInfo}\n` : "") +
+        `\n👉 Nhắn "Duyệt ${code}" hoặc "Từ chối ${code} [Lý do]" để ký duyệt điện tử ngay!`;
+      if (targetApproverName) {
+        recipientFilterSql = `LOWER(TRIM(display_name)) = LOWER(TRIM($1)) OR department = 'Ban Giám Đốc' OR role = 'DIRECTOR'`;
+        recipientParams = [targetApproverName];
+      }
+    } else if (eventType === "RMA_APPROVAL_NEEDED") {
+      text =
+        `🔄 [ZALO PUSH] YÊU CẦU TRẢ HÀNG (RMA) CHỜ DUYỆT [${code}]\n` +
+        `🏥 Khách hàng: ${customerName || "Khách hàng"}\n` +
+        `💰 Giá trị hoàn/trả: ${fmtVnd(totalAmount)} VNĐ\n` +
+        `📌 Lý do trả hàng: ${reasonOrNote || "Khách hoàn trả hàng theo phiếu giao"}\n\n` +
+        `👉 Nhắn "Duyệt ${code}" hoặc "Từ chối ${code} [Lý do]" để xử lý nhập kho trả hàng!`;
+    } else if (eventType === "DELIVERY_DISPATCHED") {
+      targetLabel = salesRepName || "NVKD Phụ trách";
+      text =
+        `🚚 [ZALO PUSH - KHO ĐÃ XUẤT HÀNG ĐI GIAO] [${code}]\n` +
+        `🏥 Khách hàng: ${customerName || "Khách hàng"}\n` +
+        `👤 NVKD phụ trách: ${salesRepName || "Kinh doanh"}\n` +
+        (extraInfo ? `📦 Chi tiết: ${extraInfo}\n` : "") +
+        (reasonOrNote ? `📞 Người giao / Ghi chú: ${reasonOrNote}\n` : "") +
+        `\n👉 Khi giao xong tại viện, nhân viên giao nhận có thể gửi ảnh biên bản hoặc nhắn "Đã giao ${code}" vào Zalo OA để chốt POD!`;
+      if (salesRepName) {
+        recipientFilterSql = `LOWER(TRIM(display_name)) = LOWER(TRIM($1)) OR department = 'Kho Vận'`;
+        recipientParams = [salesRepName];
+      }
+    } else if (eventType === "DELIVERY_COMPLETED_POD") {
+      targetLabel = salesRepName || "NVKD & Kế toán";
+      text =
+        `✅ [ZALO PUSH - ĐÃ GIAO HÀNG THÀNH CÔNG & LƯU POD] [${code}]\n` +
+        `🏥 Khách hàng: ${customerName || "Khách hàng"}\n` +
+        `👤 NVKD phụ trách: ${salesRepName || "Kinh doanh"}\n` +
+        (reasonOrNote ? `📸 Ghi chú bàn giao (POD): ${reasonOrNote}\n` : "") +
+        `\n👉 Kế toán có thể tiến hành xuất Hóa đơn VAT và theo dõi công nợ theo phiếu giao ${code}.`;
+      if (salesRepName) {
+        recipientFilterSql = `LOWER(TRIM(display_name)) = LOWER(TRIM($1)) OR department = 'Kế Toán'`;
+        recipientParams = [salesRepName];
+      }
+    } else if (eventType === "INVOICE_OR_PAYMENT_RECORDED") {
+      targetLabel = salesRepName || "NVKD Phụ trách";
+      text =
+        `🧾 [ZALO PUSH - CẬP NHẬT HÓA ĐƠN / THANH TOÁN] [${code}]\n` +
+        `🏥 Khách hàng: ${customerName || "Khách hàng"}\n` +
+        `💰 Số tiền: ${fmtVnd(totalAmount)} VNĐ\n` +
+        `📌 Nội dung: ${reasonOrNote || "Kế toán đã cập nhật hóa đơn VAT / gạch nợ thanh toán"}\n` +
+        (extraInfo ? `ℹ️ ${extraInfo}\n` : "");
+      if (salesRepName) {
+        recipientFilterSql = `LOWER(TRIM(display_name)) = LOWER(TRIM($1))`;
+        recipientParams = [salesRepName];
+      }
+    } else if (eventType === "CUSTOMER_DELIVERY_ZNS") {
+      targetLabel = `Khách hàng: ${customerName || code}`;
+      text =
+        `🏥 [THÔNG BÁO GIAO HÀNG & CHỨNG TỪ LÔ/HSD - ZNS KHÁCH HÀNG]\n` +
+        `Kính gửi: ${customerName || "Quý Khách hàng / Khoa Dược"}\n` +
+        `Mã chứng từ: ${code}\n` +
+        (extraInfo ? `${extraInfo}\n` : "") +
+        (reasonOrNote ? `📞 Thông tin giao nhận: ${reasonOrNote}\n` : "") +
+        `\nCảm ơn Quý đơn vị đã tin tưởng hợp tác!`;
+    }
+
+    if (!text) return { sent: 0 };
+
+    // Tìm các nhân sự nhận thông báo đã liên kết Zalo User ID thật
+    let recipients: any[] = [];
+    if (eventType !== "CUSTOMER_DELIVERY_ZNS") {
+      const bindRes = await query(
+        `SELECT employee_id, display_name, zalo_user_id, phone_number
+           FROM zalo_user_bindings
+          WHERE (${recipientFilterSql})`,
+        recipientParams
+      ).catch(() => ({ rows: [] as any[] }));
+      recipients = bindRes.rows;
+    }
+
+    const connectedRecipients = recipients.filter(
+      (r: any) => r.zalo_user_id && !String(r.zalo_user_id).startsWith("zalo_test_") && !String(r.zalo_user_id).startsWith("portal_sim_")
+    );
+
+    if (connectedRecipients.length > 0) {
+      for (const r of connectedRecipients) {
+        await sendZaloCustomerServiceMessage({
+          recipientId: String(r.zalo_user_id),
+          text,
+          senderName: `Zalo Push ➔ ${r.display_name || targetLabel}`
+        }).catch(() => {});
+      }
+      return { sent: connectedRecipients.length };
+    } else {
+      // Lưu vào bảng zalo_message_logs để hiển thị đầy đủ trên Nhật Ký Tin Nhắn của Zalo Hub
+      const fallbackRecipient = recipients[0]?.display_name || targetLabel;
+      const fallbackZaloId = recipients[0]?.employee_id || "system_push_alert";
+      await query(
+        `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
+         VALUES ($1, $2, 'OUTBOUND', $3, $4, 'SENT')`,
+        [fallbackZaloId, `Zalo Push ➔ ${fallbackRecipient}`, eventType, text]
+      ).catch(() => {});
+      return { sent: 1 };
+    }
+  } catch (err) {
+    console.warn("[ZaloEngine] notifyZaloProactiveEvent warning:", err);
+    return { sent: 0 };
+  }
+}
+
+/**
+ * Tổng hợp toàn bộ các hồ sơ đang chờ phê duyệt trên hệ thống (Báo giá, Đơn SO, Tờ trình/Nghỉ phép, PO, RMA)
+ */
+export async function getPendingApprovalsSummaryForZalo(discountThreshold = 10.0) {
+  const [quotesRes, ordersRes, proposalsRes, posRes, rmasRes] = await Promise.all([
+    query(
+      `SELECT id, quote_code, customer_name, sales_rep_name, subtotal, discount_rate, discount_amount, total_amount, status, date, items, extra_data
+         FROM sales_quotations
+        WHERE status IN ('PENDING_DIRECTOR_APPROVAL', 'PENDING_APPROVAL')
+           OR (discount_rate >= $1 AND status NOT IN ('APPROVED', 'REJECTED'))
+        ORDER BY id DESC LIMIT 15`,
+      [discountThreshold]
+    ).catch(() => ({ rows: [] as any[] })),
+    query(
+      `SELECT id, order_code, customer_name, sales_rep_name, total_amount, order_date,
+              is_credit_blocked, credit_block_reason, has_zero_price_items, price_approval_status, approval_status
+         FROM sales_orders
+        WHERE COALESCE(delivery_status, '') <> 'CANCELLED'
+          AND COALESCE(applied_price_policy, '') <> 'STOCK'
+          AND (
+            is_credit_blocked = TRUE
+            OR price_approval_status = 'PENDING_APPROVAL'
+            OR COALESCE(approval_status, 'PENDING_APPROVAL') = 'PENDING_APPROVAL'
+          )
+        ORDER BY id DESC LIMIT 15`
+    ).catch(() => ({ rows: [] as any[] })),
+    query(
+      `SELECT id, request_code, template_code, template_name, title, requester_name, requester_dept, total_amount, status, current_stage_no, approval_stages, form_data, created_at
+         FROM portal_approval_requests
+        WHERE status IN ('PENDING', 'IN_REVIEW')
+        ORDER BY id DESC LIMIT 15`
+    ).catch(() => ({ rows: [] as any[] })),
+    query(
+      `SELECT id, po_code, supplier_name, total_amount, order_date, status, created_by, notes
+         FROM procurement_orders
+        WHERE UPPER(COALESCE(status, 'PENDING')) IN ('DRAFT', 'PENDING')
+        ORDER BY id DESC LIMIT 10`
+    ).catch(() => ({ rows: [] as any[] })),
+    query(
+      `SELECT id, rma_code, order_code, customer_name, total_amount, reason_category, status, restock_action
+         FROM rma_returns
+        WHERE status = 'PENDING_APPROVAL'
+        ORDER BY id DESC LIMIT 10`
+    ).catch(() => ({ rows: [] as any[] }))
+  ]);
+
+  return {
+    quotations: quotesRes.rows,
+    orders: ordersRes.rows,
+    proposals: proposalsRes.rows,
+    pos: posRes.rows,
+    rmas: rmasRes.rows,
+    totalCount:
+      quotesRes.rows.length +
+      ordersRes.rows.length +
+      proposalsRes.rows.length +
+      posRes.rows.length +
+      rmasRes.rows.length
+  };
+}
+
+/**
+ * Tạo nội dung Bản tin Điều hành Đầu ngày (Morning Digest 8:00 AM)
+ */
+export async function generateZaloMorningDigest(discountThreshold = 10.0): Promise<{
+  text: string;
+  buttons: Array<{ label: string; action: string; payload: string }>;
+}> {
+  const pending = await getPendingApprovalsSummaryForZalo(discountThreshold);
+
+  // 1. Lô hàng cận date (FEFO <= 90 ngày)
+  const expRes = await query(
+    `SELECT product_code, COALESCE(product_name, product_code) AS product_name, lot_number, expiry_date,
+            (COALESCE(quantity_on_hand, 0) - COALESCE(quantity_allocated, 0)) AS avail_qty
+       FROM inventory_items
+      WHERE expiry_date IS NOT NULL
+        AND expiry_date <= (CURRENT_DATE + INTERVAL '90 days')
+        AND COALESCE(quantity_on_hand, 0) > 0
+      ORDER BY expiry_date ASC LIMIT 5`
+  ).catch(() => ({ rows: [] as any[] }));
+
+  // 2. Mặt hàng chạm tồn kho tối thiểu
+  const lowStockRes = await query(
+    `SELECT p.code, p.name, p.min_stock_level, COALESCE(SUM(i.quantity_on_hand), 0) AS on_hand
+       FROM products p
+       LEFT JOIN inventory_items i ON i.product_code = p.code
+      WHERE COALESCE(p.min_stock_level, 0) > 0
+      GROUP BY p.code, p.name, p.min_stock_level
+     HAVING COALESCE(SUM(i.quantity_on_hand), 0) <= p.min_stock_level
+      ORDER BY (p.min_stock_level - COALESCE(SUM(i.quantity_on_hand), 0)) DESC LIMIT 5`
+  ).catch(() => ({ rows: [] as any[] }));
+
+  // 3. Phiếu giao hàng đang trên đường giao (B2)
+  const activeSlipsRes = await query(
+    `SELECT slip_code, order_code, customer_name, delivery_date
+       FROM sales_delivery_slips
+      WHERE UPPER(COALESCE(status, '')) IN ('SHIPPED', 'DISPATCHED', 'PENDING', 'PACKED')
+      ORDER BY id DESC LIMIT 5`
+  ).catch(() => ({ rows: [] as any[] }));
+
+  // 4. Tổng công nợ chưa thu của các đơn đã giao
+  const debtRes = await query(
+    `SELECT COUNT(*) AS order_count,
+            COALESCE(SUM(GREATEST(0, COALESCE(total_amount, 0) - COALESCE(amount_paid, 0))), 0) AS total_unpaid
+       FROM sales_orders
+      WHERE COALESCE(payment_status, 'UNPAID') <> 'PAID'
+        AND UPPER(COALESCE(delivery_status, '')) IN ('DELIVERED', 'PARTIALLY_DELIVERED')
+        AND UPPER(COALESCE(applied_price_policy, '')) <> 'STOCK'`
+  ).catch(() => ({ rows: [{ order_count: 0, total_unpaid: 0 }] }));
+
+  const debtRow = debtRes.rows[0] || { order_count: 0, total_unpaid: 0 };
+
+  const expLines = expRes.rows.length > 0
+    ? expRes.rows.map((r: any) => {
+        const dStr = r.expiry_date ? new Date(r.expiry_date).toLocaleDateString("vi-VN") : "—";
+        return `  • [${r.product_code}] Lô ${r.lot_number || "—"} (HSD: ${dStr}) — Tồn: ${r.avail_qty}`;
+      }).join("\n")
+    : "  • Không có lô hàng nào cận hạn (< 90 ngày).";
+
+  const lowStockLines = lowStockRes.rows.length > 0
+    ? lowStockRes.rows.map((r: any) => `  • [${r.code}] ${r.name}: Tồn ${r.on_hand}/${r.min_stock_level}`).join("\n")
+    : "  • Tất cả sản phẩm đều đảm bảo định mức tồn an toàn.";
+
+  const text =
+`☀️ BẢN TIN ĐIỀU HÀNH ĐẦU NGÀY (${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })})
+━━━━━━━━━━━━━━━━━━━━━━
+⏳ 1. HỒ SƠ CHỜ PHÊ DUYỆT (${pending.totalCount} hồ sơ):
+  • Báo giá chờ duyệt (CK cao / 0đ): ${pending.quotations.length} phiếu
+  • Đơn đặt hàng SO (Duyệt đơn / 0đ / Công nợ): ${pending.orders.length} đơn
+  • Tờ trình & Nghỉ phép (DX / DXNP): ${pending.proposals.length} phiếu
+  • Đơn mua hàng NCC (PO): ${pending.pos.length} đơn
+  • Phiếu trả hàng (RMA): ${pending.rmas.length} phiếu
+
+📦 2. CẢNH BÁO KHO & HẠN DÙNG (FEFO < 90 NGÀY):
+${expLines}
+
+⚠️ 3. CẢNH BÁO TỒN KHO TỐI THIỂU (${lowStockRes.rows.length} mã):
+${lowStockLines}
+
+🚚 4. TIẾN ĐỘ GIAO HÀNG & CÔNG NỢ:
+  • Phiếu giao hàng đang xử lý / đi giao: ${activeSlipsRes.rows.length} phiếu
+  • Công nợ đơn đã giao chờ thu: ${debtRow.order_count} đơn (${fmtVnd(debtRow.total_unpaid)} VNĐ)
+
+👉 Bấm các nút bên dưới hoặc gõ "Chờ duyệt", "Công nợ", "Tồn kho" để xử lý ngay trên Zalo!`;
+
+  return {
+    text,
+    buttons: [
+      { label: `⏳ Xem & Duyệt ${pending.totalCount} Hồ Sơ`, action: "quick_cmd", payload: "Chờ duyệt" },
+      { label: "💰 Tra Cứu Công Nợ Quá Hạn", action: "quick_cmd", payload: "Công nợ" },
+      { label: "📦 Kiểm Tra Tồn Kho FEFO", action: "quick_cmd", payload: "Tồn kho" }
+    ]
+  };
+}
+
 /**
  * Core Processing Engine for Inbound Zalo Messages
  */
@@ -69,16 +533,17 @@ export async function processZaloInboundMessage(params: {
   text: string;
   /** Portal simulator only (admin, server-side): act as this employee's binding */
   simulateEmployeeId?: string;
+  /** Optional media/file attachments from Zalo webhook (e.g. POD photo) */
+  attachments?: Array<{ type?: string; payload?: { url?: string; name?: string } }>;
+  eventName?: string;
 }): Promise<ZaloMessageResponse> {
   await initZaloDatabase();
 
-  const { senderId, senderName = "Người dùng Zalo", text } = params;
+  const { senderId, senderName = "Người dùng Zalo", text, attachments = [] } = params;
   const rawText = (text || "").trim();
   const lowerText = rawText.toLowerCase();
 
   // 1. Sender binding: ONLY by the Zalo user id that was linked with a one-time code from the portal.
-  // (Matching by phone number / employee code / name let anyone take over a colleague's or a director's
-  // binding just by typing their employee code, then approve quotations through the bot.)
   let senderBinding: any = null;
   try {
     const bindRes = params.simulateEmployeeId
@@ -101,7 +566,6 @@ export async function processZaloInboundMessage(params: {
         );
         if (matchRes.rows.length > 0) {
           senderBinding = matchRes.rows[0];
-          // One Zalo account <-> one employee: release this Zalo id from any other record first
           await query("UPDATE zalo_user_bindings SET zalo_user_id = NULL, connection_status = 'PENDING_ZALO' WHERE zalo_user_id = $1 AND id <> $2", [senderId, senderBinding.id]);
           await query(
             `UPDATE zalo_user_bindings
@@ -131,13 +595,14 @@ export async function processZaloInboundMessage(params: {
 `🎉 XÁC THỰC THÀNH CÔNG!
 Chào mừng ${senderBinding.display_name} [${senderBinding.employee_id}] (${senderBinding.department} - ${senderBinding.position || 'Nhân sự'})!
 
-✅ Tài khoản Zalo của bạn đã được LIÊN KẾT CHÍNH THỨC với Trung tâm Điều hành Công ty TNHH Giải pháp Y sinh ABT.
+✅ Tài khoản Zalo của bạn đã được LIÊN KẾT CHÍNH THỨC với Trung tâm Điều hành Zalo OA.
 
 Từ bây giờ, bạn có thể thực hiện trực tiếp trên Zalo:
-1. 📋 Soạn báo giá tự động: Gõ ví dụ "Báo giá BV Chợ Rẫy: 10 kit HBV, ck 5%"
-2. 📦 Tra cứu tồn kho FEFO: Gõ "Tồn kho KIT-HBV-100"
-3. 🔒 Giữ chỗ hàng hóa 48h: Gõ "Giữ chỗ 10 KIT-HBV-100 BV Bạch Mai"
-4. 📊 Nộp báo cáo nhanh Daily
+1. ⏳ Xem & Phê duyệt 1 chạm (Báo giá, Đơn 0đ, Công nợ, Nghỉ phép DXNP, PO, RMA): Gõ "Chờ duyệt"
+2. 📋 Soạn báo giá tự động: Gõ "Báo giá BV Chợ Rẫy: 10 kit HBV, ck 5%"
+3. 🚚 Tra cứu tiến độ đơn hàng & Gửi POD giao hàng: Gõ "Đơn hàng SO26-..." hoặc "Đã giao PX26-..."
+4. 💰 Tra cứu công nợ khách hàng: Gõ "Công nợ BV Chợ Rẫy"
+5. 📦 Tra cứu tồn kho FEFO & Giữ chỗ 48h: Gõ "Tồn kho ..." hoặc "Giữ chỗ ..."
 
 Gõ "menu" hoặc "help" bất kỳ lúc nào để xem danh sách lệnh hỗ trợ.`
           };
@@ -147,7 +612,6 @@ Gõ "menu" hoặc "help" bất kỳ lúc nào để xem danh sách lệnh hỗ t
       console.warn("Zalo link code error:", autoBindErr);
     }
 
-    // IF STILL NOT MATCHED: Log unlinked message and guide the user
     try {
       await query(
         `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
@@ -197,7 +661,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
   let config = {
     director_discount_threshold: 10.0,
     director_zalo_id: "zalo_dir_bld_01",
-    oa_name: "Công ty TNHH Giải pháp Y sinh ABT"
+    oa_name: "Công ty cổ phần Công nghệ TBR"
   };
   try {
     const cfgRes = await query("SELECT * FROM zalo_config LIMIT 1");
@@ -206,7 +670,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
         ...config,
         director_discount_threshold: parseFloat(cfgRes.rows[0].director_discount_threshold) || 10.0,
         director_zalo_id: cfgRes.rows[0].director_zalo_id || "zalo_dir_bld_01",
-        oa_name: cfgRes.rows[0].oa_name || "Công ty TNHH Giải pháp Y sinh ABT"
+        oa_name: cfgRes.rows[0].oa_name || "Công ty cổ phần Công nghệ TBR"
       };
     }
   } catch (err) {
@@ -218,21 +682,594 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
     await query(
       `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
        VALUES ($1, $2, 'INBOUND', 'TEXT', $3, 'CONNECTED')`,
-      [senderId, senderBinding?.display_name || senderName, rawText]
+      [senderId, senderBinding?.display_name || senderName, rawText || "[Đính kèm tệp/hình ảnh]"]
     );
   } catch (err) {}
 
   // ==============================================================
-  // INTENT 1: BAN GIÁM ĐỐC PHÊ DUYỆT BÁO GIÁ CHIẾT KHẤU LỚN
-  // Cú pháp: "Duyệt BG-ABT-XXXX" hoặc bấm nút phê duyệt
+  // INTENT 0A: TRA CỨU DANH SÁCH HỒ SƠ CHỜ DUYỆT (BÁO GIÁ, ĐƠN 0Đ, CÔNG NỢ, NGHỈ PHÉP DXNP, PO, RMA)
+  // Cú pháp: "Chờ duyệt", "Danh sách chờ duyệt", "Cần duyệt", "Pending"
   // ==============================================================
   if (
+    lowerText === "chờ duyệt" ||
+    lowerText === "cho duyet" ||
+    lowerText === "cần duyệt" ||
+    lowerText === "can duyet" ||
+    lowerText === "danh sách chờ duyệt" ||
+    lowerText === "danh sach cho duyet" ||
+    lowerText === "pending" ||
+    lowerText.startsWith("chờ duyệt ") ||
+    lowerText.startsWith("cho duyet ")
+  ) {
+    const pending = await getPendingApprovalsSummaryForZalo(config.director_discount_threshold);
+    if (pending.totalCount === 0) {
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: `✅ TẤT CẢ HỒ SƠ ĐÃ ĐƯỢC PHÊ DUYỆT!\n\nHiện tại không có Báo giá, Đơn hàng 0đ, Đơn khóa công nợ, Tờ trình / Nghỉ phép (DXNP), Đơn mua hàng (PO) hay Phiếu trả hàng (RMA) nào đang chờ duyệt.`
+      };
+    }
+
+    const lines: string[] = [
+      `⏳ TỔNG HỢP HỒ SƠ ĐANG CHỜ PHÊ DUYỆT (${pending.totalCount} hồ sơ):`,
+      `━━━━━━━━━━━━━━━━━━━━━━`
+    ];
+    const quickButtons: Array<{ label: string; action: string; payload: string }> = [];
+
+    if (pending.quotations.length > 0) {
+      lines.push(`\n📄 1. BÁO GIÁ CHỜ DUYỆT (${pending.quotations.length}):`);
+      for (const q of pending.quotations.slice(0, 4)) {
+        const items = parseJsonSafeArray(q.items);
+        const hasZero = items.some((it: any) => Number(it?.unitPrice ?? it?.unit_price ?? it?.price ?? 0) === 0);
+        const tag = hasZero ? "🎁 Có giá 0đ" : `CK ${q.discount_rate}%`;
+        lines.push(`  • [${q.quote_code}] ${q.customer_name} — ${fmtVnd(q.total_amount)} đ (${tag} • NVKD: ${q.sales_rep_name || "—"})`);
+        if (quickButtons.length < 5) {
+          quickButtons.push({ label: `✅ Duyệt ${q.quote_code} (${tag})`, action: "approve", payload: `Duyệt ${q.quote_code}` });
+        }
+      }
+    }
+
+    if (pending.orders.length > 0) {
+      lines.push(`\n🛍️ 2. ĐƠN ĐẶT HÀNG SO CHỜ DUYỆT (${pending.orders.length}):`);
+      for (const o of pending.orders.slice(0, 4)) {
+        const flags: string[] = [];
+        let cmd = `Duyệt ${o.order_code}`;
+        if (o.price_approval_status === "PENDING_APPROVAL") {
+          flags.push("🎁 Hàng 0đ/Tặng");
+          cmd = `Duyệt 0đ ${o.order_code}`;
+        }
+        if (o.is_credit_blocked) {
+          flags.push("🔒 Khóa công nợ");
+          if (cmd === `Duyệt ${o.order_code}`) cmd = `Duyệt nợ ${o.order_code}`;
+        }
+        if (flags.length === 0) flags.push("⏳ Chờ duyệt đơn");
+        lines.push(`  • [${o.order_code}] ${o.customer_name} — ${fmtVnd(o.total_amount)} đ (${flags.join(" + ")})`);
+        if (quickButtons.length < 5) {
+          quickButtons.push({ label: `✅ ${cmd}`, action: "approve", payload: cmd });
+        }
+      }
+    }
+
+    if (pending.proposals.length > 0) {
+      lines.push(`\n📋 3. TỜ TRÌNH & ĐƠN XIN NGHỈ PHÉP (${pending.proposals.length}):`);
+      for (const p of pending.proposals.slice(0, 4)) {
+        const isLeave = p.template_code === "HR_LEAVE" || String(p.title || "").toLowerCase().includes("nghỉ phép");
+        const icon = isLeave ? "🏖️ Nghỉ phép" : "📝 Tờ trình";
+        lines.push(`  • [${p.request_code}] ${icon}: ${p.title} (${p.requester_name} - ${p.requester_dept})`);
+        if (quickButtons.length < 5) {
+          quickButtons.push({ label: `✅ Duyệt ${p.request_code}`, action: "approve", payload: `Duyệt ${p.request_code}` });
+        }
+      }
+    }
+
+    if (pending.pos.length > 0) {
+      lines.push(`\n🛒 4. ĐƠN MUA HÀNG NCC - PO (${pending.pos.length}):`);
+      for (const po of pending.pos.slice(0, 3)) {
+        lines.push(`  • [${po.po_code}] ${po.supplier_name} — ${fmtVnd(po.total_amount)} đ`);
+        if (quickButtons.length < 5) {
+          quickButtons.push({ label: `✅ Duyệt ${po.po_code}`, action: "approve", payload: `Duyệt ${po.po_code}` });
+        }
+      }
+    }
+
+    if (pending.rmas.length > 0) {
+      lines.push(`\n🔄 5. PHIẾU TRẢ HÀNG RMA (${pending.rmas.length}):`);
+      for (const rma of pending.rmas.slice(0, 3)) {
+        lines.push(`  • [${rma.rma_code}] Đơn ${rma.order_code} (${rma.customer_name}) — ${fmtVnd(rma.total_amount)} đ`);
+        if (quickButtons.length < 5) {
+          quickButtons.push({ label: `✅ Duyệt ${rma.rma_code}`, action: "approve", payload: `Duyệt ${rma.rma_code}` });
+        }
+      }
+    }
+
+    lines.push(`\n💡 Cú pháp duyệt nhanh: "Duyệt [Mã phiếu]" hoặc "Từ chối [Mã phiếu] [Lý do]"`);
+
+    return {
+      recipientId: senderId,
+      messageType: "APPROVAL_REQUEST",
+      text: lines.join("\n"),
+      buttons: quickButtons
+    };
+  }
+
+  // ==============================================================
+  // INTENT 0B: BẢN TIN ĐIỀU HÀNH ĐẦU NGÀY (MORNING EXECUTIVE DIGEST)
+  // Cú pháp: "Bản tin sáng", "Tổng hợp đầu ngày", "Digest", "Báo cáo điều hành"
+  // ==============================================================
+  if (
+    lowerText.includes("bản tin sáng") ||
+    lowerText.includes("ban tin sang") ||
+    lowerText.includes("tổng hợp đầu ngày") ||
+    lowerText.includes("tong hop dau ngay") ||
+    lowerText === "digest" ||
+    lowerText.includes("báo cáo điều hành") ||
+    lowerText.includes("bao cao dieu hanh")
+  ) {
+    const digest = await generateZaloMorningDigest(config.director_discount_threshold);
+    return {
+      recipientId: senderId,
+      messageType: "CARD",
+      text: digest.text,
+      buttons: digest.buttons
+    };
+  }
+
+  // ==============================================================
+  // INTENT 1 & 2: TRUNG TÂM PHÊ DUYỆT & TỪ CHỐI 1 CHẠM ĐA NĂNG TRÊN ZALO
+  // Hỗ trợ: Báo giá (CK cao & 0đ), Đơn hàng SO (Duyệt đơn, Duyệt giá 0đ, Mở khóa công nợ),
+  //         Tờ trình & Nghỉ phép (DX / DXNP), Đơn mua hàng (PO), Phiếu trả hàng (RMA)
+  // ==============================================================
+  const isApproveCmd =
     lowerText.startsWith("duyệt ") ||
     lowerText.startsWith("duyet ") ||
     lowerText.startsWith("approve ") ||
+    lowerText.startsWith("mở khóa ") ||
+    lowerText.startsWith("mo khoa ") ||
     lowerText.includes("đồng ý duyệt") ||
-    lowerText.includes("dong y duyet")
-  ) {
+    lowerText.includes("dong y duyet");
+
+  const isRejectCmd =
+    lowerText.startsWith("từ chối ") ||
+    lowerText.startsWith("tu choi ") ||
+    lowerText.startsWith("reject ");
+
+  if (isApproveCmd || isRejectCmd) {
+    const approverDisplay = senderBinding?.display_name || senderName || "Ban Giám Đốc";
+    const rejectReason = isRejectCmd
+      ? rawText.replace(/^(?:từ\s*chối|tu\s*choi|reject)\s+[A-Za-z0-9_-]+\s*/i, "").trim() || "Chưa đạt yêu cầu phê duyệt"
+      : "";
+
+    // 1. KIỂM TRA NẾU LÀ ĐƠN ĐẶT HÀNG BÁN (SO...)
+    const soMatch = rawText.match(SO_CODE_REGEX);
+    if (soMatch) {
+      const soCode = soMatch[0].toUpperCase();
+      const ordRes = await query("SELECT * FROM sales_orders WHERE UPPER(order_code) = $1 LIMIT 1", [soCode]);
+      if (ordRes.rows.length === 0) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⚠️ Không tìm thấy đơn đặt hàng "${soCode}" trong cơ sở dữ liệu.`
+        };
+      }
+      const ord = ordRes.rows[0];
+      const wantsZeroPriceOnly = lowerText.includes("0đ") || lowerText.includes("0d") || lowerText.includes("0 đồng") || lowerText.includes("quà tặng");
+      const wantsCreditUnlock = lowerText.includes("nợ") || lowerText.includes("no ") || lowerText.includes("mở khóa") || lowerText.includes("mo khoa");
+
+      const canApproveZero = await hasSpecificApprovalAuthority(
+        senderBinding,
+        senderId,
+        config.director_zalo_id,
+        ["sales.approve_zero_price", "sales.approve_quotes", "sales.approve_discount", "sales.approve_orders"]
+      );
+      const canApproveCredit = await hasSpecificApprovalAuthority(
+        senderBinding,
+        senderId,
+        config.director_zalo_id,
+        ["sales.approve_credit", "sales.approve_orders"],
+        { allowAccountant: true }
+      );
+      const canApproveOrder = await hasSpecificApprovalAuthority(
+        senderBinding,
+        senderId,
+        config.director_zalo_id,
+        ["sales.approve_orders", "sales.approve_quotes", "sales.approve_zero_price"],
+        { allowDeptHead: true }
+      );
+
+      if (isRejectCmd) {
+        if (!canApproveOrder && !canApproveZero) {
+          return {
+            recipientId: senderId,
+            messageType: "TEXT",
+            text: `⛔ BẠN KHÔNG CÓ THẨM QUYỀN TỪ CHỐI ĐƠN HÀNG ${soCode}.`
+          };
+        }
+        await query(
+          `UPDATE sales_orders
+              SET approval_status = 'REJECTED',
+                  price_approval_status = CASE WHEN price_approval_status = 'PENDING_APPROVAL' THEN 'REJECTED' ELSE price_approval_status END,
+                  approved_by = $1,
+                  approved_at = CURRENT_TIMESTAMP,
+                  approval_note = $2
+            WHERE id = $3`,
+          [approverDisplay, `Từ chối qua Zalo: ${rejectReason}`, ord.id]
+        );
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `❌ ĐÃ TỪ CHỐI ĐƠN ĐẶT HÀNG [${ord.order_code}]\n🏥 Khách hàng: ${ord.customer_name}\n👤 Người từ chối: ${approverDisplay}\n📌 Lý do: ${rejectReason}`
+        };
+      }
+
+      // Xử lý DUYỆT SO (Duyệt 0đ, Mở khóa công nợ, hoặc Duyệt tổng thể)
+      const actionsDone: string[] = [];
+      let nextCreditBlocked = Boolean(ord.is_credit_blocked);
+      let nextPriceStatus = String(ord.price_approval_status || "APPROVED");
+      let nextApprovalStatus = String(ord.approval_status || "PENDING_APPROVAL");
+
+      if ((wantsCreditUnlock || (!wantsZeroPriceOnly && nextCreditBlocked)) && nextCreditBlocked) {
+        if (!canApproveCredit) {
+          return {
+            recipientId: senderId,
+            messageType: "TEXT",
+            text: `⛔ Đơn ${ord.order_code} đang bị KHÓA CÔNG NỢ (${ord.credit_block_reason || "Vượt hạn mức"}). Chỉ Kế toán, Ban Giám Đốc hoặc người có quyền duyệt công nợ mới được mở khóa.`
+          };
+        }
+        nextCreditBlocked = false;
+        actionsDone.push("🔓 Mở khóa công nợ");
+      }
+
+      if ((wantsZeroPriceOnly || (!wantsCreditUnlock && nextPriceStatus === "PENDING_APPROVAL")) && nextPriceStatus === "PENDING_APPROVAL") {
+        if (!canApproveZero) {
+          return {
+            recipientId: senderId,
+            messageType: "TEXT",
+            text: `⛔ Đơn ${ord.order_code} có mặt hàng GIÁ 0 ĐỒNG / QUÀ TẶNG. Chỉ Ban Giám Đốc hoặc nhân sự được cấp quyền "Phê Duyệt Báo Giá & Đơn Hàng 0 Đồng" mới được duyệt.`
+          };
+        }
+        nextPriceStatus = "APPROVED";
+        actionsDone.push("🎁 Duyệt giá 0 đồng / Hàng tặng");
+      }
+
+      if (!nextCreditBlocked && nextPriceStatus === "APPROVED") {
+        if (canApproveOrder || canApproveZero || canApproveCredit) {
+          nextApprovalStatus = "APPROVED";
+          actionsDone.push("✅ Phê duyệt đơn hàng SO");
+        }
+      }
+
+      if (actionsDone.length === 0) {
+        if (!canApproveOrder) {
+          return {
+            recipientId: senderId,
+            messageType: "TEXT",
+            text: `⛔ Bạn chưa được phân quyền phê duyệt đơn đặt hàng ${ord.order_code}.`
+          };
+        }
+        nextApprovalStatus = "APPROVED";
+        actionsDone.push("✅ Phê duyệt đơn hàng SO");
+      }
+
+      await query(
+        `UPDATE sales_orders
+            SET is_credit_blocked = $1,
+                credit_override_by = CASE WHEN $1 = FALSE AND is_credit_blocked = TRUE THEN $4 ELSE credit_override_by END,
+                credit_override_at = CASE WHEN $1 = FALSE AND is_credit_blocked = TRUE THEN CURRENT_TIMESTAMP ELSE credit_override_at END,
+                credit_override_reason = CASE WHEN $1 = FALSE AND is_credit_blocked = TRUE THEN 'Mở khóa công nợ qua Zalo OA' ELSE credit_override_reason END,
+                price_approval_status = $2,
+                price_approval_notes = CASE WHEN $2 = 'APPROVED' THEN 'Duyệt giá 0đ/quà tặng qua Zalo bởi ' || $4 ELSE price_approval_notes END,
+                approval_status = $3,
+                approved_by = $4,
+                approved_at = CURRENT_TIMESTAMP,
+                approval_note = 'Phê duyệt qua Zalo OA bởi ' || $4
+          WHERE id = $5`,
+        [nextCreditBlocked, nextPriceStatus, nextApprovalStatus, approverDisplay, ord.id]
+      );
+
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text:
+`✅ ĐÃ PHÊ DUYỆT ĐƠN ĐẶT HÀNG THÀNH CÔNG! [${ord.order_code}]
+━━━━━━━━━━━━━━━━━━━━━━
+🏥 Khách hàng: ${ord.customer_name}
+👤 NVKD phụ trách: ${ord.sales_rep_name || "—"}
+💰 Tổng giá trị: ${fmtVnd(ord.total_amount)} VNĐ
+⚡ Thao tác đã thực hiện: ${actionsDone.join(" • ")}
+✍ Người phê duyệt: ${approverDisplay}
+📅 Thời điểm: ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+
+👉 Trạng thái đơn hiện tại: [${nextApprovalStatus === "APPROVED" ? "ĐÃ DUYỆT - SẴN SÀNG XUẤT KHO" : "ĐÃ MỞ KHÓA 1 PHẦN"}].`
+      };
+    }
+
+    // 2. KIỂM TRA NẾU LÀ TỜ TRÌNH NỘI BỘ / ĐƠN XIN NGHỈ PHÉP (DX-... / DXNP...)
+    const dxMatch = rawText.match(DX_CODE_REGEX);
+    if (dxMatch) {
+      const dxCode = dxMatch[0].toUpperCase();
+      const reqRes = await query("SELECT * FROM portal_approval_requests WHERE UPPER(request_code) = $1 LIMIT 1", [dxCode]);
+      if (reqRes.rows.length === 0) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⚠️ Không tìm thấy Tờ trình / Đơn xin nghỉ phép có mã "${dxCode}".`
+        };
+      }
+      const row = reqRes.rows[0];
+      if (!["PENDING", "IN_REVIEW"].includes(row.status)) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `ℹ️ Tờ trình [${row.request_code}] đã ở trạng thái "${row.status}" trước đó.`
+        };
+      }
+
+      const canApproveDx = await hasSpecificApprovalAuthority(
+        senderBinding,
+        senderId,
+        config.director_zalo_id,
+        ["workspace.manage_templates", "sales.approve_orders", "procurement.approve_po"],
+        { allowDeptHead: true, allowAccountant: true }
+      );
+      if (!canApproveDx) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⛔ Bạn không có thẩm quyền phê duyệt Tờ trình / Đơn nghỉ phép [${row.request_code}].`
+        };
+      }
+
+      const stages: any[] = parseJsonSafeArray(row.approval_stages);
+      const logs: any[] = parseJsonSafeArray(row.comments_log);
+      const currentIdx = stages.findIndex((s: any) => Number(s.stage_no) === Number(row.current_stage_no));
+      const sig = crypto
+        .createHash("sha256")
+        .update(`${senderBinding?.employee_id || senderId}|${row.request_code}|ZALO|${Date.now()}`)
+        .digest("hex")
+        .slice(0, 12)
+        .toUpperCase();
+
+      if (isRejectCmd) {
+        if (currentIdx !== -1) {
+          stages[currentIdx] = {
+            ...stages[currentIdx],
+            status: "REJECTED",
+            acted_by: approverDisplay,
+            acted_at: nowVNDateTime(),
+            comment: rejectReason,
+            signature_hash: sig
+          };
+        }
+        logs.push({
+          id: `LOG-${Date.now()}`,
+          actor_name: approverDisplay,
+          actor_dept: senderBinding?.department || "Ban Giám Đốc",
+          action: "REJECT",
+          signature_hash: sig,
+          comment: `[Từ chối qua Zalo OA]: ${rejectReason}`,
+          created_at: nowVNDateTime()
+        });
+        await query(
+          `UPDATE portal_approval_requests
+              SET status = 'REJECTED', approval_stages = $2::jsonb, comments_log = $3::jsonb,
+                  completed_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1`,
+          [row.id, JSON.stringify(stages), JSON.stringify(logs)]
+        );
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `❌ ĐÃ TỪ CHỐI TỜ TRÌNH / ĐƠN NGHỈ PHÉP [${row.request_code}]\n📌 Tiêu đề: ${row.title}\n👤 Người đề xuất: ${row.requester_name}\n✍ Người từ chối: ${approverDisplay}\n📝 Lý do: ${rejectReason}`
+        };
+      }
+
+      // Phê duyệt tờ trình / đơn xin nghỉ phép qua Zalo
+      const isBoss = isDirectorBinding(senderBinding, senderId, config.director_zalo_id);
+      if (isBoss) {
+        // Ban Giám Đốc duyệt trên Zalo -> thông qua toàn bộ các bước còn lại ngay lập tức
+        for (let i = 0; i < stages.length; i++) {
+          if (stages[i].status === "PENDING" || stages[i].status === "WAITING") {
+            stages[i] = {
+              ...stages[i],
+              status: "APPROVED",
+              acted_by: approverDisplay,
+              acted_at: nowVNDateTime(),
+              comment: "Phê duyệt qua Zalo OA",
+              signature_hash: sig
+            };
+          }
+        }
+      } else if (currentIdx !== -1) {
+        stages[currentIdx] = {
+          ...stages[currentIdx],
+          status: "APPROVED",
+          acted_by: approverDisplay,
+          acted_at: nowVNDateTime(),
+          comment: "Phê duyệt qua Zalo OA",
+          signature_hash: sig
+        };
+      }
+
+      const nextIdx = stages.findIndex((s: any, idx: number) => idx > currentIdx && s.is_required !== false && s.status === "WAITING");
+      let nextStatus = "APPROVED";
+      let nextStageNo = row.current_stage_no;
+      if (!isBoss && nextIdx !== -1) {
+        stages[nextIdx] = { ...stages[nextIdx], status: "PENDING" };
+        nextStageNo = stages[nextIdx].stage_no;
+        nextStatus = "IN_REVIEW";
+      }
+
+      logs.push({
+        id: `LOG-${Date.now()}`,
+        actor_name: approverDisplay,
+        actor_dept: senderBinding?.department || "Ban Giám Đốc",
+        action: "APPROVE",
+        signature_hash: sig,
+        comment: `[Duyệt qua Zalo OA — Mã ký số ${sig}]: Đồng ý phê duyệt.`,
+        created_at: nowVNDateTime()
+      });
+
+      await query(
+        `UPDATE portal_approval_requests
+            SET status = $2,
+                current_stage_no = $3,
+                approval_stages = $4::jsonb,
+                comments_log = $5::jsonb,
+                completed_at = CASE WHEN $2 = 'APPROVED' THEN CURRENT_TIMESTAMP ELSE completed_at END,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1`,
+        [row.id, nextStatus, nextStageNo, JSON.stringify(stages), JSON.stringify(logs)]
+      );
+
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text:
+`✅ ĐÃ KÝ DUYỆT TỜ TRÌNH / ĐƠN NGHỈ PHÉP [${row.request_code}]
+━━━━━━━━━━━━━━━━━━━━━━
+📋 Biểu mẫu: ${row.template_name}
+📌 Tiêu đề: ${row.title}
+👤 Người trình: ${row.requester_name} (${row.requester_dept})
+${Number(row.total_amount) > 0 ? `💰 Giá trị: ${fmtVnd(row.total_amount)} VNĐ\n` : ""}🔐 Chữ ký số nội bộ: ${sig}
+✍ Người duyệt: ${approverDisplay}
+📊 Trạng thái mới: [${nextStatus === "APPROVED" ? "ĐÃ PHÊ DUYỆT HOÀN TẤT" : `CHUYỂN BƯỚC ${nextStageNo}`}]`
+      };
+    }
+
+    // 3. KIỂM TRA NẾU LÀ ĐƠN MUA HÀNG NHÀ CUNG CẤP (PO...)
+    const poMatch = rawText.match(PO_CODE_REGEX);
+    if (poMatch) {
+      const poCode = poMatch[0].toUpperCase();
+      const poRes = await query("SELECT * FROM procurement_orders WHERE UPPER(po_code) = $1 LIMIT 1", [poCode]);
+      if (poRes.rows.length === 0) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⚠️ Không tìm thấy Đơn đặt hàng mua ngoài (PO) có mã "${poCode}".`
+        };
+      }
+      const po = poRes.rows[0];
+      const canApprovePo = await hasSpecificApprovalAuthority(
+        senderBinding,
+        senderId,
+        config.director_zalo_id,
+        ["procurement.approve_po"]
+      );
+      if (!canApprovePo) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⛔ Bạn không có quyền phê duyệt Đơn đặt hàng nhà cung cấp (${po.po_code}).`
+        };
+      }
+      const nextPoStatus = isRejectCmd ? "CANCELLED" : "APPROVED";
+      const noteAppend = isRejectCmd
+        ? ` • [Từ chối qua Zalo bởi ${approverDisplay}: ${rejectReason}]`
+        : ` • [Đã duyệt PO qua Zalo bởi ${approverDisplay}]`;
+      await query(
+        `UPDATE procurement_orders
+            SET status = $1,
+                notes = COALESCE(notes, '') || $2,
+                version = COALESCE(version, 0) + 1
+          WHERE id = $3`,
+        [nextPoStatus, noteAppend, po.id]
+      );
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: isRejectCmd
+          ? `❌ ĐÃ TỪ CHỐI / HỦY ĐƠN MUA HÀNG [${po.po_code}]\n🏢 Nhà cung cấp: ${po.supplier_name}\n📌 Lý do: ${rejectReason}`
+          : `✅ ĐÃ PHÊ DUYỆT ĐƠN MUA HÀNG (PO) [${po.po_code}]\n🏢 Nhà cung cấp: ${po.supplier_name}\n💰 Tổng giá trị: ${fmtVnd(po.total_amount)} VNĐ\n✍ Người phê duyệt: ${approverDisplay}\n\n👉 Phòng Cung ứng có thể tiến hành gửi PO cho Nhà cung cấp và theo dõi lịch giao hàng.`
+      };
+    }
+
+    // 4. KIỂM TRA NẾU LÀ PHIẾU TRẢ HÀNG (RMA...)
+    const rmaMatch = rawText.match(RMA_CODE_REGEX);
+    if (rmaMatch) {
+      const rmaCode = rmaMatch[0].toUpperCase();
+      const rmaRes = await query("SELECT * FROM rma_returns WHERE UPPER(rma_code) = $1 LIMIT 1", [rmaCode]);
+      if (rmaRes.rows.length === 0) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⚠️ Không tìm thấy Phiếu trả hàng RMA có mã "${rmaCode}".`
+        };
+      }
+      const rma = rmaRes.rows[0];
+      if (rma.status !== "PENDING_APPROVAL") {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `ℹ️ Phiếu trả hàng [${rma.rma_code}] đã được xử lý trước đó (Trạng thái: ${rma.status}).`
+        };
+      }
+      const canApproveRma = await hasSpecificApprovalAuthority(
+        senderBinding,
+        senderId,
+        config.director_zalo_id,
+        ["sales.approve_orders", "warehouse.approve"],
+        { allowDeptHead: true }
+      );
+      if (!canApproveRma) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⛔ Bạn không có quyền phê duyệt Phiếu trả hàng RMA [${rma.rma_code}].`
+        };
+      }
+
+      if (isRejectCmd) {
+        await query(
+          `UPDATE rma_returns SET status = 'REJECTED', approved_by = $1, notes = COALESCE(notes, '') || $2 WHERE id = $3`,
+          [approverDisplay, ` • [Từ chối qua Zalo bởi ${approverDisplay}: ${rejectReason}]`, rma.id]
+        );
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `❌ ĐÃ TỪ CHỐI PHIẾU TRẢ HÀNG [${rma.rma_code}]\n🏥 Khách hàng: ${rma.customer_name}\n📌 Lý do: ${rejectReason}`
+        };
+      }
+
+      await withTransaction(async (c) => {
+        await c.query(
+          `UPDATE rma_returns SET status = 'APPROVED', approved_by = $1, notes = COALESCE(notes, '') || $2 WHERE id = $3`,
+          [approverDisplay, ` • [Duyệt qua Zalo OA bởi ${approverDisplay}]`, rma.id]
+        );
+        if ((rma.restock_action || "RESTOCK") === "RESTOCK") {
+          const items = parseJsonSafeArray(rma.items);
+          const validItems = sortByProductCode(
+            items.filter((it: any) => (it.product_code || it.productCode) && Number(it.quantity) > 0),
+            (it: any) => it.product_code || it.productCode
+          );
+          for (const it of validItems) {
+            await addStock(c, {
+              productCode: String(it.product_code || it.productCode).trim(),
+              productName: String(it.product_name || it.name || it.product_code).trim(),
+              qty: Number(it.quantity) || 0,
+              lotNumber: it.lot_number || it.lotNumber || null,
+              expiryDate: it.expiry_date || it.expiryDate || null,
+              location: "Kho Trung Tâm",
+              shelf: "Khu Nhập Trả RMA"
+            });
+          }
+        }
+        const rmaAmt = Number(rma.total_amount) || 0;
+        if (String(rma.refund_type || "CREDIT_OFFSET").toUpperCase() === "CREDIT_OFFSET" && rma.order_code && rmaAmt > 0) {
+          await c.query(
+            `UPDATE sales_orders SET total_amount = GREATEST(0, COALESCE(total_amount, 0) - $1) WHERE order_code = $2`,
+            [rmaAmt, rma.order_code]
+          );
+        }
+      });
+
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: `✅ ĐÃ DUYỆT PHIẾU TRẢ HÀNG RMA [${rma.rma_code}]\n🏥 Khách hàng: ${rma.customer_name} (Đơn gốc: ${rma.order_code})\n💰 Giá trị hoàn/giảm trừ: ${fmtVnd(rma.total_amount)} VNĐ\n✍ Người duyệt: ${approverDisplay}\n📦 Hệ thống đã tự động nhập trả tồn kho & cập nhật công nợ đơn hàng.`
+      };
+    }
+
+    // 5. MẶC ĐỊNH: XỬ LÝ DUYỆT / TỪ CHỐI BÁO GIÁ (BG-...: Chiết khấu cao hoặc Báo giá 0 đồng)
     const quoteCodeMatch = rawText.match(QUOTE_CODE_REGEX);
     const quoteCode = quoteCodeMatch ? quoteCodeMatch[0].toUpperCase() : null;
 
@@ -240,18 +1277,14 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
       return {
         recipientId: senderId,
         messageType: "TEXT",
-        text: "⚠️ Vui lòng chỉ định rõ mã báo giá cần phê duyệt. Ví dụ: 'Duyệt BG-ABT-2609-089'"
-      };
-    }
-
-    // Check Director / Manager permissions (including users table permissions)
-    const isDirectorOrManager = await hasQuotationApprovalAuthority(senderBinding, senderId, config.director_zalo_id);
-
-    if (!isDirectorOrManager) {
-      return {
-        recipientId: senderId,
-        messageType: "TEXT",
-        text: `⛔ BẠN KHÔNG CÓ THẨM QUYỀN DUYỆT: Quyền phê duyệt mức chiết khấu lớn thuộc thẩm quyền của Ban Giám Đốc (Ngưỡng quy định: ≥ ${config.director_discount_threshold}%).`
+        text:
+          "⚠️ Vui lòng ghi rõ mã hồ sơ cần duyệt hoặc từ chối.\n" +
+          "Ví dụ:\n" +
+          "• Báo giá (CK cao / 0đ): 'Duyệt BG-ABT-2609-089'\n" +
+          "• Đơn hàng 0đ / Công nợ: 'Duyệt 0đ SO26-...' hoặc 'Duyệt nợ SO26-...'\n" +
+          "• Nghỉ phép / Tờ trình: 'Duyệt DX-202611-0001'\n" +
+          "• Đơn mua hàng / Trả hàng: 'Duyệt PO26-...' hoặc 'Duyệt RMA26-...'\n" +
+          "👉 Hoặc gõ 'Chờ duyệt' để xem danh sách kèm nút bấm!"
       };
     }
 
@@ -262,7 +1295,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
           return {
             recipientId: senderId,
             messageType: "TEXT",
-            text: `⚠️ Có nhiều báo giá khớp một phần với "${quoteCode}":\n${resolved.candidates.map(c => `• ${c}`).join("\n")}\n\nVui lòng gõ chính xác đầy đủ mã báo giá cần duyệt.`
+            text: `⚠️ Có nhiều báo giá khớp một phần với "${quoteCode}":\n${resolved.candidates.map(c => `• ${c}`).join("\n")}\n\nVui lòng gõ chính xác đầy đủ mã báo giá.`
           };
         }
         return {
@@ -272,41 +1305,76 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
         };
       }
 
-      const updateRes = await query(
-        `UPDATE sales_quotations 
-         SET status = 'APPROVED' 
-         WHERE quote_code = $1
-         RETURNING *`,
-        [resolved.exactCode]
-      );
+      const qCheck = await query("SELECT * FROM sales_quotations WHERE quote_code = $1 LIMIT 1", [resolved.exactCode]);
+      const existingQuote = qCheck.rows[0];
+      const qItems = parseJsonSafeArray(existingQuote?.items);
+      const qExtra = parseJsonSafeObj(existingQuote?.extra_data);
+      const isZeroPriceQuote =
+        Boolean(qExtra.hasZeroPriceItems) ||
+        qItems.some((it: any) => Number(it?.unitPrice ?? it?.unit_price ?? it?.price ?? 0) === 0 || Boolean(it?.isFreeSample || it?.isGift));
 
-      if (updateRes.rows.length === 0) {
+      const hasAuth = await hasQuotationApprovalAuthority(senderBinding, senderId, config.director_zalo_id, isZeroPriceQuote);
+      if (!hasAuth) {
         return {
           recipientId: senderId,
           messageType: "TEXT",
-          text: `⚠️ Không tìm thấy báo giá có mã "${quoteCode}" trong cơ sở dữ liệu.`
+          text: isZeroPriceQuote
+            ? `⛔ BẠN KHÔNG CÓ THẨM QUYỀN: Báo giá ${resolved.exactCode} có mặt hàng giá 0 đồng, cần Ban Giám Đốc hoặc nhân sự có quyền "Phê Duyệt Báo Giá & Đơn Hàng 0 Đồng" phê duyệt.`
+            : `⛔ BẠN KHÔNG CÓ THẨM QUYỀN DUYỆT: Quyền phê duyệt mức chiết khấu lớn thuộc thẩm quyền của Ban Giám Đốc hoặc người được phân quyền duyệt báo giá (Ngưỡng quy định: ≥ ${config.director_discount_threshold}%).`
         };
       }
 
+      if (isRejectCmd) {
+        await query(`UPDATE sales_quotations SET status = 'REJECTED' WHERE quote_code = $1`, [resolved.exactCode]);
+        await syncQuotationsToAppStorage();
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `❌ ĐÃ TỪ CHỐI BÁO GIÁ ${resolved.exactCode} bởi ${approverDisplay}.\n📌 Lý do: ${rejectReason}\nHệ thống đã cập nhật trạng thái và thông báo cho NVKD phụ trách.`
+        };
+      }
+
+      const mergedExtra = {
+        ...qExtra,
+        approvedBy: approverDisplay,
+        approvedAt: new Date().toISOString(),
+        zeroPriceApproved: isZeroPriceQuote ? true : qExtra.zeroPriceApproved
+      };
+      const updateRes = await query(
+        `UPDATE sales_quotations 
+            SET status = 'APPROVED',
+                extra_data = COALESCE(extra_data, '{}'::jsonb) || $2::jsonb
+          WHERE quote_code = $1
+          RETURNING *`,
+        [resolved.exactCode, JSON.stringify(mergedExtra)]
+      );
+
+      await syncQuotationsToAppStorage();
+
       const q = updateRes.rows[0];
-      const totalFmt = new Intl.NumberFormat("vi-VN").format(parseFloat(q.total_amount || 0));
+      const totalFmt = fmtVnd(q.total_amount);
 
       const approvalNotice = 
-`✅ BAN GIÁM ĐỐC ĐÃ PHÊ DUYỆT BÁO GIÁ THÀNH CÔNG!
+`✅ ĐÃ PHÊ DUYỆT BÁO GIÁ THÀNH CÔNG!
 
 📋 Mã Báo Giá: ${q.quote_code}
 🏥 Khách Hàng: ${q.customer_name}
 👤 NVKD Phụ Trách: ${q.sales_rep_name || "Nhân viên kinh doanh"}
-💰 Tổng Tiền Duyệt: ${totalFmt} VNĐ (Đã trừ chiết khấu ${q.discount_rate}%)
+💰 Tổng Tiền Duyệt: ${totalFmt} VNĐ (${isZeroPriceQuote ? "Có mặt hàng 0đ/Hàng mẫu" : `Chiết khấu ${q.discount_rate}%`})
 📅 Thời Điểm Duyệt: ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
-✍ Người Phê Duyệt: ${senderBinding?.display_name || "Ban Giám Đốc"}
+✍ Người Phê Duyệt: ${approverDisplay}
 
-Trạng thái báo giá đã được cập nhật sang [ĐÃ PHÊ DUYỆT]. NVKD có thể gửi file PDF chính thức đến khách hàng.`;
+📎 Link tải PDF Báo giá chính thức:
+${signedDocumentUrl("quotation", q.quote_code)}`;
 
       return {
         recipientId: senderId,
-        messageType: "TEXT",
+        messageType: "CARD",
         text: approvalNotice,
+        buttons: [
+          { label: "📥 Xem & Tải PDF Báo Giá", action: "view_pdf", payload: signedDocumentUrl("quotation", q.quote_code) },
+          { label: "📜 Soạn Hợp Đồng", action: "create_contract", payload: `Hợp đồng ${q.quote_code}` }
+        ],
         quoteData: q
       };
     } catch (e: any) {
@@ -314,66 +1382,6 @@ Trạng thái báo giá đã được cập nhật sang [ĐÃ PHÊ DUYỆT]. NVK
         recipientId: senderId,
         messageType: "TEXT",
         text: `Lỗi khi cập nhật phê duyệt: ${e.message}`
-      };
-    }
-  }
-
-  // ==============================================================
-  // INTENT 2: BAN GIÁM ĐỐC TỪ CHỐI BÁO GIÁ CHIẾT KHẤU LỚN
-  // Cú pháp: "Từ chối BG-ABT-XXXX [Lý do]"
-  // ==============================================================
-  if (lowerText.startsWith("từ chối ") || lowerText.startsWith("tu choi ") || lowerText.startsWith("reject ")) {
-    const quoteCodeMatch = rawText.match(QUOTE_CODE_REGEX);
-    const quoteCode = quoteCodeMatch ? quoteCodeMatch[0].toUpperCase() : null;
-
-    if (!quoteCode) {
-      return {
-        recipientId: senderId,
-        messageType: "TEXT",
-        text: "⚠️ Vui lòng chỉ định mã báo giá cần từ chối. Ví dụ: 'Từ chối BG-ABT-2609-089 Chiết khấu quá cao'"
-      };
-    }
-
-    const isDirectorOrManager = await hasQuotationApprovalAuthority(senderBinding, senderId, config.director_zalo_id);
-    if (!isDirectorOrManager) {
-      return {
-        recipientId: senderId,
-        messageType: "TEXT",
-        text: `⛔ BẠN KHÔNG CÓ THẨM QUYỀN TỪ CHỐI BÁO GIÁ: Quyền phê duyệt / từ chối báo giá chiết khấu thuộc thẩm quyền của Ban Giám Đốc.`
-      };
-    }
-
-    try {
-      const resolved = await resolveSingleQuotationCode(quoteCode);
-      if (!resolved.exactCode) {
-        if (resolved.candidates && resolved.candidates.length > 1) {
-          return {
-            recipientId: senderId,
-            messageType: "TEXT",
-            text: `⚠️ Có nhiều báo giá khớp một phần với "${quoteCode}":\n${resolved.candidates.map(c => `• ${c}`).join("\n")}\n\nVui lòng gõ chính xác đầy đủ mã báo giá cần từ chối.`
-          };
-        }
-        return {
-          recipientId: senderId,
-          messageType: "TEXT",
-          text: `⚠️ Không tìm thấy báo giá có mã "${quoteCode}" trong cơ sở dữ liệu.`
-        };
-      }
-
-      await query(
-        `UPDATE sales_quotations SET status = 'REJECTED' WHERE quote_code = $1`,
-        [resolved.exactCode]
-      );
-      return {
-        recipientId: senderId,
-        messageType: "TEXT",
-        text: `❌ ĐÃ TỪ CHỐI BÁO GIÁ ${resolved.exactCode}: Hệ thống đã gửi thông báo đến NVKD phụ trách yêu cầu điều chỉnh lại mức chiết khấu.`
-      };
-    } catch (e: any) {
-      return {
-        recipientId: senderId,
-        messageType: "TEXT",
-        text: `Lỗi: ${e.message}`
       };
     }
   }
@@ -581,7 +1589,8 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
       deliveryTerms = deliveryTerms || "Trong vòng 07 ngày làm việc kể từ ngày hợp đồng có hiệu lực.";
       paymentTerms = paymentTerms || existingCust?.payment_terms || "Chuyển khoản trong vòng 30 ngày kể từ ngày nhận đủ hóa đơn GTGT và biên bản bàn giao.";
 
-      const brandPrefix = "ABT";
+      const brandPrefix = BASE_APP_URL.includes("via") ? "VIA" : "TBR";
+      const isTBR = brandPrefix === "TBR";
       const contractCode = `HD-${brandPrefix}-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
 
       const contractMeta = {
@@ -625,7 +1634,7 @@ HĐ ${q.quote_code}: Đại diện: Bác sĩ Nguyễn Văn A - Giám Đốc, ĐC
         typeof q.items === "string" ? q.items : JSON.stringify(q.items)
       ]);
 
-      const companyTitle = "Công ty TNHH Giải pháp Y sinh ABT";
+      const companyTitle = isTBR ? "CÔNG TY CỔ PHẦN CÔNG NGHỆ TBR" : "CÔNG TY TNHH XÉT NGHIỆM VIA";
       const contractPdfUrl = signedDocumentUrl("contract", contractCode);
 
       return {
@@ -754,9 +1763,9 @@ Thêm KH: Bệnh Viện Ung Bướu, 47 Nguyễn Huy Lượng Quận Bình Thạ
       const taxCode = isTaxCode ? phoneOrTax : null;
       const phone = !isTaxCode && phoneOrTax ? phoneOrTax : null;
 
-      const salesRepName = senderBinding?.display_name || senderName || "Nhân viên kinh doanh";
+      const salesRepName = senderBinding?.display_name || senderName || "Bùi Lê Phương Quân (NVKD)";
       const salesRepId = senderBinding?.employee_id || "KD-01";
-      const brandPrefix = "ABT";
+      const brandPrefix = BASE_APP_URL.includes("via") ? "VIA" : "TBR";
       const newCustomerCode = `KH-${brandPrefix}-${Date.now().toString().slice(-4)}`;
       const isHospital = /(?:bệnh\s*viện|viện|phòng\s*khám|trung\s*tâm|cdc)/i.test(cleanName);
       const classification = isHospital ? "Bệnh viện / Cơ sở Y tế" : "Khách hàng trực tiếp";
@@ -1045,7 +2054,7 @@ Soạn: "Báo giá ${suggestedName}: 2 bộ HI-612, ck 0%"`
             total: unitPrice * qty,
             amount: unitPrice * qty,
             specification: p.specification || "",
-            manufacturer: p.manufacturer || ""
+            manufacturer: p.manufacturer || "ABT"
           });
         }
       }
@@ -1082,7 +2091,7 @@ ${sampleSkus}
       const requiresDirectorApproval = discountRate >= config.director_discount_threshold;
       const quoteCode = `BG-ABT-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
       const status = requiresDirectorApproval ? "PENDING_DIRECTOR_APPROVAL" : "APPROVED";
-      const salesRepName = senderBinding?.display_name || senderName || "Nhân viên kinh doanh";
+      const salesRepName = senderBinding?.display_name || senderName || "Bùi Lê Phương Quân (NVKD)";
 
       // Insert into sales_quotations
       const vnToday = todayVN();
@@ -1489,43 +2498,534 @@ Dữ liệu đã tự động đồng bộ vào mục [Nhật Ký Daily] trên P
   }
 
   // ==============================================================
-  // INTENT DEFAULT: HƯỚNG DẪN SỬ DỤNG / MENU LỆNH NHANH
+  // INTENT 8: XÁC NHẬN GIAO HÀNG & ĐÍNH KÈM ẢNH BIÊN BẢN POD QUA ZALO
+  // Cú pháp: "Đã giao PX26-...", "POD PX26-... [ghi chú]", hoặc gửi ảnh kèm mã PX...
+  // ==============================================================
+  const pxMatchInText = rawText.match(PX_CODE_REGEX);
+  const hasMediaAttachment = Array.isArray(attachments) && attachments.length > 0;
+  const isPodCommand =
+    lowerText.startsWith("đã giao ") ||
+    lowerText.startsWith("da giao ") ||
+    lowerText.startsWith("pod ") ||
+    lowerText.startsWith("pod:") ||
+    lowerText.startsWith("giao xong ") ||
+    (hasMediaAttachment && Boolean(pxMatchInText));
+
+  if (isPodCommand) {
+    const slipCodeInput = pxMatchInText ? pxMatchInText[0].toUpperCase() : "";
+    if (!slipCodeInput) {
+      // Liệt kê các phiếu giao đang đi giao để nhân viên bấm chọn
+      const activeSlips = await query(
+        `SELECT slip_code, order_code, customer_name, status
+           FROM sales_delivery_slips
+          WHERE UPPER(COALESCE(status, '')) NOT IN ('CANCELLED', 'DELIVERED')
+          ORDER BY id DESC LIMIT 5`
+      ).catch(() => ({ rows: [] as any[] }));
+      const slipBtns = activeSlips.rows.map((s: any) => ({
+        label: `✅ Đã giao ${s.slip_code} (${s.customer_name})`,
+        action: "quick_cmd",
+        payload: `Đã giao ${s.slip_code}: Khoa Dược đã ký nhận đủ hàng & POD`
+      }));
+      return {
+        recipientId: senderId,
+        messageType: "CARD",
+        text:
+          `📸 XÁC NHẬN ĐÃ GIAO HÀNG & LƯU BIÊN BẢN (POD):\n\n` +
+          `Vui lòng cung cấp mã Phiếu giao hàng (dạng PX26-...) hoặc bấm chọn phiếu đang giao bên dưới:\n` +
+          `💡 Ví dụ: "Đã giao PX26-CR-0001: Khoa Dược đã ký nhận đủ hàng"`,
+        buttons: slipBtns
+      };
+    }
+
+    try {
+      const slipRes = await query(
+        `SELECT * FROM sales_delivery_slips WHERE UPPER(slip_code) = $1 OR slip_code ILIKE $2 ORDER BY id DESC LIMIT 1`,
+        [slipCodeInput, `%${slipCodeInput}%`]
+      );
+      if (slipRes.rows.length === 0) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⚠️ Không tìm thấy Phiếu giao hàng "${slipCodeInput}" trên hệ thống.`
+        };
+      }
+      const slip = slipRes.rows[0];
+      const extra = parseJsonSafeObj(slip.extra_data);
+      const podNote = rawText
+        .replace(/^(?:đã\s*giao|da\s*giao|pod|giao\s*xong)\s*[:\-]?\s*/i, "")
+        .replace(PX_CODE_REGEX, "")
+        .replace(/^[:\-\s]+/, "")
+        .trim() || `Xác nhận giao thành công qua Zalo bởi ${senderBinding?.display_name || senderName}`;
+
+      const prevPodFiles = Array.isArray(extra.podFiles) ? extra.podFiles : [];
+      const newMediaFiles = (attachments || [])
+        .filter((a: any) => a?.payload?.url)
+        .map((a: any, i: number) => ({
+          name: a.payload?.name || `POD_${slip.slip_code}_${Date.now()}_${i + 1}.jpg`,
+          url: a.payload?.url,
+          uploadedAt: new Date().toISOString(),
+          uploadedBy: senderBinding?.display_name || senderName
+        }));
+
+      const nextExtra = {
+        ...extra,
+        deliveryStatus: "DELIVERED",
+        isDelivered: true,
+        deliveredAt: todayVN(),
+        podConfirmedBy: senderBinding?.display_name || senderName,
+        podConfirmedAt: new Date().toISOString(),
+        podNotes: podNote,
+        podFiles: [...prevPodFiles, ...newMediaFiles]
+      };
+
+      await query(
+        `UPDATE sales_delivery_slips
+            SET status = 'DELIVERED',
+                extra_data = COALESCE(extra_data, '{}'::jsonb) || $1::jsonb,
+                notes = CASE WHEN notes IS NULL OR notes = '' THEN $2 ELSE notes || ' • [POD Zalo: ' || $2 || ']' END,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = $3`,
+        [JSON.stringify(nextExtra), podNote, slip.id]
+      );
+
+      // Cập nhật trạng thái giao hàng của đơn SO gốc
+      let salesRepName = "";
+      if (slip.order_code) {
+        const ordRes = await query("SELECT id, order_code, sales_rep_name, items FROM sales_orders WHERE order_code = $1 LIMIT 1", [slip.order_code]);
+        if (ordRes.rows[0]) {
+          salesRepName = ordRes.rows[0].sales_rep_name || "";
+          await query(
+            `UPDATE sales_orders
+                SET delivery_status = 'DELIVERED',
+                    delivered_at = COALESCE(delivered_at, CURRENT_DATE)
+              WHERE id = $1 AND UPPER(COALESCE(delivery_status, '')) NOT IN ('CANCELLED', 'DELIVERED')`,
+            [ordRes.rows[0].id]
+          );
+        }
+      }
+
+      // Thông báo chủ động cho NVKD & Kế toán
+      await notifyZaloProactiveEvent({
+        eventType: "DELIVERY_COMPLETED_POD",
+        code: slip.slip_code,
+        customerName: slip.customer_name,
+        salesRepName,
+        reasonOrNote: `${podNote} (Đơn gốc: ${slip.order_code || "—"})`
+      });
+
+      return {
+        recipientId: senderId,
+        messageType: "CARD",
+        text:
+`✅ ĐÃ CHỐT GIAO HÀNG THÀNH CÔNG (B3: ĐÃ GIAO & LƯU POD)!
+━━━━━━━━━━━━━━━━━━━━━━
+🚚 Mã Phiếu Giao: ${slip.slip_code}
+🛍️ Đơn Hàng Gốc: ${slip.order_code || "—"}
+🏥 Khách Hàng: ${slip.customer_name}
+👤 Người Xác Nhận: ${senderBinding?.display_name || senderName}
+📝 Ghi Chú POD: ${podNote}
+${newMediaFiles.length > 0 ? `📎 Ảnh POD đính kèm: ${newMediaFiles.length} ảnh\n` : ""}
+🔔 Hệ thống đã tự động chuyển trạng thái phiếu sang [✅ ĐÃ GIAO] và gửi thông báo Zalo cho NVKD ${salesRepName ? `(${salesRepName})` : ""} cùng bộ phận Kế toán!`,
+        buttons: [
+          { label: `📲 Gửi ZNS Báo Khách (${slip.slip_code})`, action: "quick_cmd", payload: `ZNS ${slip.slip_code}` },
+          { label: `📦 Xem Đơn ${slip.order_code || ""}`, action: "quick_cmd", payload: `Đơn hàng ${slip.order_code || slip.slip_code}` }
+        ]
+      };
+    } catch (e: any) {
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: `⚠️ Lỗi khi cập nhật POD phiếu giao hàng: ${e.message}`
+      };
+    }
+  }
+
+  // ==============================================================
+  // INTENT 9: GỬI THÔNG BÁO ZNS / OA CHO KHÁCH HÀNG B2B / BỆNH VIỆN
+  // Cú pháp: "Thông báo KH [Mã PX / Mã SO]" hoặc "ZNS [Mã PX / Mã SO]"
+  // ==============================================================
+  if (
+    lowerText.startsWith("zns ") ||
+    lowerText.startsWith("thông báo kh") ||
+    lowerText.startsWith("thong bao kh") ||
+    lowerText.startsWith("báo khách ") ||
+    lowerText.startsWith("bao khach ")
+  ) {
+    const pxMatch = rawText.match(PX_CODE_REGEX);
+    const soMatch = rawText.match(SO_CODE_REGEX);
+    const targetCode = (pxMatch?.[0] || soMatch?.[0] || "").toUpperCase();
+
+    if (!targetCode) {
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: `📲 GỬI THÔNG BÁO ZNS / ZALO OA CHO KHÁCH HÀNG:\nVui lòng nhập mã Phiếu giao hàng (PX...) hoặc mã Đơn hàng (SO...).\n💡 Ví dụ: "ZNS PX26-CR-0001" hoặc "Thông báo KH SO26-CR-1001"`
+      };
+    }
+
+    try {
+      let slip: any = null;
+      let order: any = null;
+      if (targetCode.startsWith("PX") || targetCode.startsWith("PGH")) {
+        const sRes = await query("SELECT * FROM sales_delivery_slips WHERE UPPER(slip_code) = $1 LIMIT 1", [targetCode]);
+        slip = sRes.rows[0];
+        if (slip?.order_code) {
+          const oRes = await query("SELECT * FROM sales_orders WHERE order_code = $1 LIMIT 1", [slip.order_code]);
+          order = oRes.rows[0];
+        }
+      } else {
+        const oRes = await query("SELECT * FROM sales_orders WHERE UPPER(order_code) = $1 LIMIT 1", [targetCode]);
+        order = oRes.rows[0];
+        if (order) {
+          const sRes = await query("SELECT * FROM sales_delivery_slips WHERE order_code = $1 ORDER BY id DESC LIMIT 1", [order.order_code]);
+          slip = sRes.rows[0];
+        }
+      }
+
+      if (!slip && !order) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `⚠️ Không tìm thấy chứng từ "${targetCode}" để tạo bản tin ZNS gửi khách hàng.`
+        };
+      }
+
+      const custName = slip?.customer_name || order?.customer_name || "Quý Bệnh viện / Đơn vị";
+      const custPhone = slip?.customer_phone || order?.contact_phone || "Đang cập nhật";
+      const items = parseJsonSafeArray(slip?.items || order?.items);
+      const itemLines = items.slice(0, 6).map((it: any, idx: number) => {
+        const code = it.productCode || it.product_code || it.code || "SKU";
+        const name = it.productName || it.product_name || it.name || code;
+        const qty = it.quantity ?? it.qtyDeliverNow ?? it.qty ?? 1;
+        const unit = it.unit || "Hộp";
+        const lot = it.lotNumber || it.lot_number ? ` | Lô: ${it.lotNumber || it.lot_number}` : "";
+        const exp = it.expiryDate || it.expiry_date ? ` | HSD: ${it.expiryDate || it.expiry_date}` : "";
+        return `  ${idx + 1}. [${code}] ${name}: ${qty} ${unit}${lot}${exp}`;
+      }).join("\n");
+
+      const dispatcherInfo = slip?.dispatcher_name
+        ? `${slip.dispatcher_name}${slip.dispatcher_phone ? ` (${slip.dispatcher_phone})` : ""}`
+        : "Bộ phận Giao nhận Kho Lạnh";
+
+      await notifyZaloProactiveEvent({
+        eventType: "CUSTOMER_DELIVERY_ZNS",
+        code: slip?.slip_code || order?.order_code || targetCode,
+        customerName: `${custName} (SĐT: ${custPhone})`,
+        extraInfo: `📦 Danh mục bàn giao:\n${itemLines}`,
+        reasonOrNote: `${dispatcherInfo}${order?.invoice_no ? ` • Hóa đơn VAT số: ${order.invoice_no}` : ""}`
+      });
+
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text:
+`📲 ĐÃ PHÁT THÔNG BÁO ZNS / OA TỚI KHÁCH HÀNG THÀNH CÔNG!
+━━━━━━━━━━━━━━━━━━━━━━
+🏥 Đơn vị nhận: ${custName}
+📞 SĐT nhận ZNS: ${custPhone}
+📄 Mã chứng từ: ${slip?.slip_code || order?.order_code}
+${order?.invoice_no ? `🧾 Số Hóa đơn VAT: ${order.invoice_no}\n` : ""}🚚 Nhân sự giao: ${dispatcherInfo}
+
+📦 Nội dung danh mục hàng & Số lô/HSD đã gửi:
+${itemLines}
+
+✅ Bản tin đã được lưu vết tại mục [Nhật Ký Tin Nhắn] trên Zalo Hub.`
+      };
+    } catch (e: any) {
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: `⚠️ Lỗi khi gửi ZNS khách hàng: ${e.message}`
+      };
+    }
+  }
+
+  // ==============================================================
+  // INTENT 10: TRA CỨU TIẾN ĐỘ ĐƠN HÀNG (SO) & PHIẾU GIAO HÀNG (PX)
+  // Cú pháp: "Đơn hàng [Mã SO / Tên KH]", "Tiến độ [Mã SO]", "Phiếu giao [Mã PX / Mã SO]"
+  // ==============================================================
+  const isOrderLookupIntent =
+    lowerText.startsWith("đơn hàng") ||
+    lowerText.startsWith("don hang") ||
+    lowerText.startsWith("tiến độ") ||
+    lowerText.startsWith("tien do") ||
+    lowerText.startsWith("phiếu giao") ||
+    lowerText.startsWith("phieu giao") ||
+    Boolean(rawText.match(/^SO[0-9]{2}-[A-Za-z0-9-]+$/i)) ||
+    Boolean(rawText.match(/^PX[0-9]{2}-[A-Za-z0-9-]+$/i));
+
+  if (isOrderLookupIntent) {
+    const qTerm = rawText
+      .replace(/^(?:tra\s*cứu|tra\s*cuu|kiểm\s*tra|kiem\s*tra|xem)?\s*(?:tiến\s*độ|tien\s*do|đơn\s*hàng|don\s*hang|phiếu\s*giao\s*hàng|phieu\s*giao\s*hang|phiếu\s*giao|phieu\s*giao)\s*[:\-]?\s*/i, "")
+      .trim();
+
+    try {
+      let ordersRes;
+      if (qTerm) {
+        ordersRes = await query(
+          `SELECT * FROM sales_orders
+            WHERE order_code ILIKE $1 OR customer_name ILIKE $1 OR COALESCE(quote_code, '') ILIKE $1
+            ORDER BY id DESC LIMIT 5`,
+          [`%${qTerm}%`]
+        );
+        // Nếu người dùng nhập mã Phiếu giao PX..., tìm đơn từ phiếu giao đó
+        if (ordersRes.rows.length === 0) {
+          const sFind = await query(
+            `SELECT order_code FROM sales_delivery_slips WHERE slip_code ILIKE $1 LIMIT 1`,
+            [`%${qTerm}%`]
+          );
+          if (sFind.rows[0]?.order_code) {
+            ordersRes = await query(`SELECT * FROM sales_orders WHERE order_code = $1 LIMIT 1`, [sFind.rows[0].order_code]);
+          }
+        }
+      } else {
+        ordersRes = await query(`SELECT * FROM sales_orders ORDER BY id DESC LIMIT 5`);
+      }
+
+      if (ordersRes.rows.length === 0) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `🔍 Không tìm thấy Đơn đặt hàng nào khớp với "${qTerm || "yêu cầu"}".\n💡 Ví dụ: "Đơn hàng BV Chợ Rẫy" hoặc "Tiến độ SO26-CR-1001"`
+        };
+      }
+
+      const orderCodes = ordersRes.rows.map((r: any) => r.order_code).filter(Boolean);
+      const [slipsRes, rmasRes] = await Promise.all([
+        query(`SELECT * FROM sales_delivery_slips WHERE order_code = ANY($1::text[]) ORDER BY id ASC`, [orderCodes]).catch(() => ({ rows: [] as any[] })),
+        query(`SELECT * FROM rma_returns WHERE order_code = ANY($1::text[]) ORDER BY id DESC`, [orderCodes]).catch(() => ({ rows: [] as any[] }))
+      ]);
+
+      const buttons: Array<{ label: string; action: string; payload: string }> = [];
+      const orderBlocks = ordersRes.rows.map((o: any, idx: number) => {
+        const oSlips = slipsRes.rows.filter((s: any) => s.order_code === o.order_code);
+        const oRmas = rmasRes.rows.filter((r: any) => r.order_code === o.order_code);
+        const paid = Number(o.amount_paid) || 0;
+        const total = Number(o.total_amount) || 0;
+        const remain = Math.max(0, total - paid);
+
+        const appStatus = o.is_credit_blocked
+          ? "🔒 Đang khóa công nợ"
+          : o.price_approval_status === "PENDING_APPROVAL"
+          ? "🎁 Chờ duyệt giá 0đ"
+          : o.approval_status === "APPROVED"
+          ? "✅ Đã duyệt"
+          : "⏳ Chờ duyệt đơn";
+
+        if ((o.is_credit_blocked || o.price_approval_status === "PENDING_APPROVAL" || o.approval_status !== "APPROVED") && buttons.length < 4) {
+          buttons.push({ label: `✅ Duyệt ${o.order_code}`, action: "approve", payload: `Duyệt ${o.order_code}` });
+        }
+
+        const slipLines = oSlips.length > 0
+          ? oSlips.map((s: any) => {
+              const ex = parseJsonSafeObj(s.extra_data);
+              const st = String(ex.deliveryStatus || s.status || "").toUpperCase();
+              const stepLabel =
+                st === "CANCELLED"
+                  ? "❌ Đã hủy"
+                  : ex.isDelivered || st === "DELIVERED"
+                  ? "✅ B3: Đã giao (Có POD)"
+                  : st === "SHIPPED" || st === "DISPATCHED"
+                  ? "🚚 B2: Kho đã xuất đi giao"
+                  : "📦 B1: Chờ kho xuất";
+              if (!ex.isDelivered && st !== "DELIVERED" && st !== "CANCELLED" && buttons.length < 4) {
+                buttons.push({ label: `📸 Chốt Đã giao ${s.slip_code}`, action: "quick_cmd", payload: `Đã giao ${s.slip_code}` });
+              }
+              return `     • ${s.slip_code}: ${stepLabel}${s.invoice_number ? ` (HĐ: ${s.invoice_number})` : ""}`;
+            }).join("\n")
+          : "     • Chưa lập phiếu giao hàng (PX)";
+
+        const rmaLine = oRmas.length > 0
+          ? `\n   🔄 Trả hàng RMA: ${oRmas.map((r: any) => `${r.rma_code} (${fmtVnd(r.total_amount)} đ - ${r.status})`).join(", ")}`
+          : "";
+
+        return (
+          `${idx + 1}. [${o.order_code}] ${o.customer_name}\n` +
+          `   • Duyệt đơn: ${appStatus} | NVKD: ${o.sales_rep_name || "—"}\n` +
+          `   • Giá trị: ${fmtVnd(total)} đ | Đã thu: ${fmtVnd(paid)} đ | Còn thu: ${fmtVnd(remain)} đ\n` +
+          `   • Hóa đơn VAT: ${o.invoice_no ? `Số ${o.invoice_no} (${o.invoice_status})` : "Chưa xuất HĐ"}\n` +
+          `   • Phiếu giao hàng (${oSlips.length} đợt):\n${slipLines}${rmaLine}`
+        );
+      }).join("\n\n");
+
+      return {
+        recipientId: senderId,
+        messageType: "CARD",
+        text: `🚚 KẾT QUẢ TRA CỨU TIẾN ĐỘ ĐƠN HÀNG & PHIẾU GIAO:\n━━━━━━━━━━━━━━━━━━━━━━\n${orderBlocks}`,
+        buttons
+      };
+    } catch (e: any) {
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: `⚠️ Lỗi khi tra cứu tiến độ đơn hàng: ${e.message}`
+      };
+    }
+  }
+
+  // ==============================================================
+  // INTENT 11: TRA CỨU CÔNG NỢ KHÁCH HÀNG & CẢNH BÁO QUÁ HẠN
+  // Cú pháp: "Công nợ [Tên KH]", "Check nợ [Tên KH]", "Dư nợ"
+  // ==============================================================
+  const isDebtLookupIntent =
+    lowerText === "công nợ" ||
+    lowerText === "cong no" ||
+    lowerText === "dư nợ" ||
+    lowerText === "du no" ||
+    lowerText.startsWith("công nợ ") ||
+    lowerText.startsWith("cong no ") ||
+    lowerText.startsWith("check nợ") ||
+    lowerText.startsWith("check no") ||
+    lowerText.startsWith("tra cứu công nợ") ||
+    lowerText.startsWith("tra cuu cong no") ||
+    lowerText.startsWith("dư nợ ") ||
+    lowerText.startsWith("du no ");
+
+  if (isDebtLookupIntent) {
+    const custQuery = rawText
+      .replace(/^(?:tra\s*cứu|tra\s*cuu|kiểm\s*tra|kiem\s*tra|check|xem)?\s*(?:công\s*nợ|cong\s*no|dư\s*nợ|du\s*no|nợ|no)\s*(?:khách\s*hàng|khach\s*hang|kh)?\s*[:\-]?\s*/i, "")
+      .trim();
+
+    try {
+      let custRows: any[] = [];
+      if (custQuery) {
+        const cRes = await query(
+          `SELECT id, customer_code, name, credit_limit, credit_term_days, assigned_rep
+             FROM sales_customers
+            WHERE name ILIKE $1 OR customer_code ILIKE $1 OR COALESCE(tax_code, '') ILIKE $1
+            ORDER BY id ASC LIMIT 5`,
+          [`%${custQuery}%`]
+        );
+        custRows = cRes.rows;
+      } else {
+        // Nếu không truyền tên KH: Lấy top 5 khách hàng đang có đơn chưa thanh toán lớn nhất
+        const topRes = await query(
+          `SELECT c.id, c.customer_code, c.name, c.credit_limit, c.credit_term_days, c.assigned_rep,
+                  SUM(GREATEST(0, COALESCE(o.total_amount, 0) - COALESCE(o.amount_paid, 0))) AS open_amt
+             FROM sales_orders o
+             LEFT JOIN sales_customers c ON (o.customer_id = c.id OR LOWER(TRIM(o.customer_name)) = LOWER(TRIM(c.name)))
+            WHERE COALESCE(o.payment_status, 'UNPAID') <> 'PAID'
+              AND UPPER(COALESCE(o.delivery_status, '')) <> 'CANCELLED'
+              AND UPPER(COALESCE(o.applied_price_policy, '')) <> 'STOCK'
+            GROUP BY c.id, c.customer_code, c.name, c.credit_limit, c.credit_term_days, c.assigned_rep, o.customer_name
+            ORDER BY open_amt DESC LIMIT 5`
+        );
+        custRows = topRes.rows.map((r: any) => ({
+          id: r.id,
+          customer_code: r.customer_code || "KH",
+          name: r.name || "Khách hàng",
+          credit_limit: r.credit_limit ?? 100000000,
+          credit_term_days: r.credit_term_days ?? 30,
+          assigned_rep: r.assigned_rep
+        }));
+      }
+
+      if (custRows.length === 0) {
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text: `💰 TRA CỨU CÔNG NỢ: Không tìm thấy khách hàng khớp với "${custQuery}".\n👉 Gõ "Công nợ" để xem danh sách các đơn vị đang có dư nợ cần thu.`
+        };
+      }
+
+      const blocks: string[] = [];
+      for (const c of custRows) {
+        const ordRes = await query(
+          `SELECT order_code, order_date, total_amount, COALESCE(amount_paid, 0) AS amount_paid,
+                  delivery_status, invoice_no, is_credit_blocked
+             FROM sales_orders
+            WHERE (customer_id = $1 OR LOWER(TRIM(customer_name)) = LOWER(TRIM($2)))
+              AND COALESCE(payment_status, 'UNPAID') <> 'PAID'
+              AND UPPER(COALESCE(delivery_status, '')) <> 'CANCELLED'
+              AND UPPER(COALESCE(applied_price_policy, '')) <> 'STOCK'
+            ORDER BY id DESC`,
+          [c.id || -1, c.name]
+        );
+
+        const limit = Number(c.credit_limit ?? 100000000);
+        const termDays = Number(c.credit_term_days ?? 30);
+        let deliveredDebt = 0;
+        let pendingOrderDebt = 0;
+
+        for (const o of ordRes.rows) {
+          const unpaid = Math.max(0, (Number(o.total_amount) || 0) - (Number(o.amount_paid) || 0));
+          if (["DELIVERED", "PARTIALLY_DELIVERED"].includes(String(o.delivery_status || "").toUpperCase())) {
+            deliveredDebt += unpaid;
+          } else {
+            pendingOrderDebt += unpaid;
+          }
+        }
+
+        const remainingCredit = Math.max(0, limit - deliveredDebt);
+        const isOverLimit = deliveredDebt > limit;
+
+        const openOrderSample = ordRes.rows.slice(0, 3).map((o: any) => {
+          const unpaid = Math.max(0, (Number(o.total_amount) || 0) - (Number(o.amount_paid) || 0));
+          return `     • ${o.order_code}: Còn phải thu ${fmtVnd(unpaid)} đ (${o.delivery_status === "DELIVERED" ? "Đã giao" : "Chưa giao hết"})`;
+        }).join("\n");
+
+        blocks.push(
+          `🏥 [${c.customer_code || "KH"}] ${c.name}\n` +
+          `   • Hạn mức tín dụng: ${fmtVnd(limit)} đ (${termDays} ngày)\n` +
+          `   • Dư nợ thực tế (Hàng đã giao): ${fmtVnd(deliveredDebt)} đ ${isOverLimit ? "⚠️ [VƯỢT HẠN MỨC]" : "✅ [TRONG HẠN MỨC]"}\n` +
+          `   • Giá trị đơn đang xử lý (Chưa giao): ${fmtVnd(pendingOrderDebt)} đ\n` +
+          `   • Hạn mức còn lại: ${fmtVnd(remainingCredit)} đ\n` +
+          (openOrderSample ? `   • Các đơn chưa tất toán (${ordRes.rows.length} đơn):\n${openOrderSample}` : `   • Không có công nợ tồn đọng.`)
+        );
+      }
+
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: `💰 BÁO CÁO ĐỐI CHIẾU CÔNG NỢ KHÁCH HÀNG:\n━━━━━━━━━━━━━━━━━━━━━━\n${blocks.join("\n\n")}`
+      };
+    } catch (e: any) {
+      return {
+        recipientId: senderId,
+        messageType: "TEXT",
+        text: `⚠️ Lỗi khi tra cứu công nợ: ${e.message}`
+      };
+    }
+  }
+
+  // ==============================================================
+  // INTENT DEFAULT: HƯỚNG DẪN SỬ DỤNG / MENU LỆNH NHANH ĐẦY ĐỦ
   // ==============================================================
   return {
     recipientId: senderId,
-    messageType: "TEXT",
-    text: `👋 XIN CHÀO! ĐÂY LÀ TRỢ LÝ ĐIỀU HÀNH DI ĐỘNG Công ty TNHH Giải pháp Y sinh ABT (ZALO BOT)
+    messageType: "CARD",
+    text: `👋 XIN CHÀO! ĐÂY LÀ TRỢ LÝ ĐIỀU HÀNH DI ĐỘNG ZALO OA 4.0
 
-Danh sách câu lệnh nhanh hỗ trợ nhân sự và quản lý:
+Danh sách các nghiệp vụ tự động hỗ trợ Nhân sự & Ban Giám Đốc:
 
-1. 🏢 Tra Cứu Khách Hàng:
-   Gõ: "Khách hàng BV Chợ Rẫy" hoặc "Check KH 0314892019"
-   (Nếu chưa có, bot sẽ hỏi và hướng dẫn nhập khách hàng mới ngay)
+1. ⏳ Xem & Phê Duyệt Hồ Sơ 1-Chạm (Báo giá, Đơn 0đ, Công nợ, Nghỉ phép DXNP, PO, RMA):
+   • Gõ: "Chờ duyệt" (Xem toàn bộ danh sách chờ duyệt kèm nút bấm)
+   • Gõ: "Duyệt BG-...", "Duyệt 0đ SO26-...", "Duyệt nợ SO26-...", "Duyệt DX-...", "Duyệt PO26-...", "Duyệt RMA26-..."
 
-2. ➕ Thêm Mới Khách Hàng:
-   Gõ: "Thêm KH: BV Ung Bướu, 47 Nguyễn Huy Lượng Bình Thạnh, 02838433021, BS Trưởng Khoa"
+2. ☀️ Bản Tin Điều Hành Đầu Ngày (Morning Digest):
+   • Gõ: "Bản tin sáng" hoặc "Digest" (Tổng hợp chờ duyệt, lô cận date FEFO, tồn tối thiểu, công nợ)
 
-3. 📄 Soạn Báo Giá Nhanh:
-   Gõ: "Báo giá BV Chợ Rẫy: 20 kit HBV, 2 máy tách chiết 32 mẫu, ck 12%"
-   (Nếu chiết khấu ≥ ${config.director_discount_threshold}%, hệ thống sẽ tự động chuyển tiếp Ban Giám Đốc duyệt)
+3. 🚚 Tra Cứu Tiến Độ Đơn Hàng (SO) & Chốt Giao Hàng (POD):
+   • Gõ: "Đơn hàng BV Chợ Rẫy" hoặc "Tiến độ SO26-..."
+   • Gõ: "Đã giao PX26-..." (hoặc gửi ảnh biên bản kèm mã PX... để lưu POD & báo NVKD)
 
-4. 📜 Soạn Hợp Đồng Từ Báo Giá:
-   Gõ: "Hợp đồng BG-ABT-2610-9017"
-   (Bot sẽ hướng dẫn cung cấp thông tin hoặc tạo hợp đồng gửi lại file PDF chính thức)
+4. 💰 Tra Cứu Công Nợ & Gửi Thông Báo ZNS Khách Hàng:
+   • Gõ: "Công nợ BV Chợ Rẫy" (Xem dư nợ đã giao, hạn mức còn lại)
+   • Gõ: "ZNS PX26-..." (Phát thông báo giao hàng kèm Lô/HSD cho Bệnh viện)
 
-5. 📦 Tra Cứu Tồn Kho & Hạn Dùng (FEFO):
-   Gõ: "Tồn kho KIT-HBV-100" hoặc "Tồn kho kit HPV"
+5. 📄 Soạn Báo Giá & Hợp Đồng Tự Động (Kèm File PDF):
+   • Gõ: "Báo giá BV Chợ Rẫy: 20 kit HBV, ck 12%"
+   • Gõ: "Hợp đồng BG-ABT-..."
 
-6. 🔒 Giữ Chỗ Tồn Kho Khẩn Cấp:
-   Gõ: "Giữ chỗ 20 KIT-HBV cho BV Chợ Rẫy"
-
-7. 📝 Nộp Báo Cáo Daily Nhanh:
-   Gõ: "Daily: Hôm nay demo xong tại BV Chợ Rẫy, mai qua BV Nhi Đồng"
-
-8. 📚 Tra Cứu Tài Liệu Y Tế & CO/CQ:
-   Gõ: "Tài liệu ABT-9600" hoặc "CO CQ kit HCV"
-
-9. ✍ Ban Giám Đốc Phê Duyệt:
-   Gõ: "Duyệt BG-ABT-XXXX" hoặc bấm nút phê duyệt trực tiếp.`
+6. 📦 Tra Cứu Tồn Kho FEFO, Giữ Chỗ 48h, Khách Hàng & Daily:
+   • Gõ: "Tồn kho KIT-HBV-100" | "Giữ chỗ 20 KIT-HBV cho BV Chợ Rẫy"
+   • Gõ: "Khách hàng BV Chợ Rẫy" | "Daily: Nội dung công việc ngày"`,
+    buttons: [
+      { label: "⏳ Danh Sách Chờ Duyệt", action: "quick_cmd", payload: "Chờ duyệt" },
+      { label: "☀️ Bản Tin Điều Hành Sáng", action: "quick_cmd", payload: "Bản tin sáng" },
+      { label: "🚚 Tiến Độ Đơn Hàng SO", action: "quick_cmd", payload: "Đơn hàng" },
+      { label: "💰 Báo Cáo Công Nợ KH", action: "quick_cmd", payload: "Công nợ" },
+      { label: "📦 Kiểm Tra Tồn Kho FEFO", action: "quick_cmd", payload: "Tồn kho" }
+    ]
   };
 }

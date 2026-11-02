@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit } from "@/backend/db/db";
 import crypto from "crypto";
 import { initZaloDatabase, syncPersonnelToZaloBindings, clearMockZaloData } from "@/backend/db/zaloDb";
-import { processZaloInboundMessage } from "@/backend/services/zaloEngine";
-import { renewZaloAccessToken, getValidZaloAccessToken } from "@/backend/services/zaloTokenService";
+import { processZaloInboundMessage, getPendingApprovalsSummaryForZalo, generateZaloMorningDigest } from "@/backend/services/zaloEngine";
+import { renewZaloAccessToken, getValidZaloAccessToken, sendZaloCustomerServiceMessage } from "@/backend/services/zaloTokenService";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -88,15 +88,10 @@ export async function GET(req: NextRequest) {
       const pendingCount = bindings.filter((b: any) => b.connection_status === "PENDING_ZALO").length;
       const noPhoneCount = bindings.filter((b: any) => b.connection_status === "NO_PHONE").length;
 
-      // 3. Pending Director Approvals (Quotations with large discount >= threshold)
+      // 3. Pending Approvals across all modules (Quotations, SO 0đ/Credit, Proposals/DXNP, PO, RMA)
       const threshold = parseFloat(config.director_discount_threshold) || 10.0;
-      const pendRes = await query(
-        `SELECT * FROM sales_quotations 
-         WHERE status = 'PENDING_DIRECTOR_APPROVAL' OR (discount_rate >= $1 AND status != 'APPROVED' AND status != 'REJECTED')
-         ORDER BY id DESC`,
-        [threshold]
-      );
-      const pendingApprovals = pendRes.rows;
+      const multiApprovals = await getPendingApprovalsSummaryForZalo(threshold);
+      const pendingApprovals = multiApprovals.quotations;
 
       // 4. Recent Message Logs
       const logsRes = await query("SELECT * FROM zalo_message_logs ORDER BY id DESC LIMIT 50");
@@ -113,6 +108,7 @@ export async function GET(req: NextRequest) {
             noPhoneCount
           },
           pendingApprovals,
+          multiApprovals,
           logs
         }),
         {
@@ -148,8 +144,17 @@ export async function POST(req: NextRequest) {
     if (ADMIN_ACTIONS.includes(action) && !isAdminUser(me)) {
       return forbiddenResponse("Chỉ Quản trị viên mới được thay đổi cấu hình / liên kết Zalo.");
     }
-    if (action === "director_action" && !isAdminUser(me) && !hasPermission(me, "sales.approve_discount")) {
-      return forbiddenResponse("Chỉ Ban Giám Đốc / người được phân quyền duyệt giá mới được duyệt báo giá.");
+    if (
+      action === "director_action" &&
+      !isAdminUser(me) &&
+      !hasPermission(me, "sales.approve_discount") &&
+      !hasPermission(me, "sales.approve_quotes") &&
+      !hasPermission(me, "sales.approve_zero_price") &&
+      !hasPermission(me, "sales.approve_orders") &&
+      !hasPermission(me, "sales.approve_credit") &&
+      !hasPermission(me, "procurement.approve_po")
+    ) {
+      return forbiddenResponse("Chỉ Ban Giám Đốc hoặc nhân sự được phân quyền phê duyệt mới thực hiện được thao tác này.");
     }
 
     // Mã liên kết Zalo dùng một lần (30 phút): mỗi nhân viên tự tạo cho chính mình, quản trị viên tạo hộ được.
@@ -239,9 +244,9 @@ export async function POST(req: NextRequest) {
             secret_key || "",
             access_token || "",
             refresh_token || "",
-            webhook_verify_token || "",
+            webhook_verify_token || "tbr_webhook_token_2026",
             director_discount_threshold || 10.00,
-            director_phone || "",
+            director_phone || "0916033652",
             director_zalo_id || ""
           ]
         );
@@ -288,29 +293,85 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, message: "Đã lưu định danh tài khoản Zalo!" });
     }
 
-    // 3. Director Approve or Reject Quotation directly from Portal
+    // 3. Director / Approver Approve or Reject any Pending Item (Quotation, SO 0đ/Credit, Proposal DXNP, PO, RMA) directly from Portal
     if (action === "director_action") {
-      const { quote_code, decision } = body;
+      const { quote_code, target_code, decision, command_override, reason } = body;
+      const code = String(target_code || quote_code || "").trim();
       const approver_name = me.full_name || me.username;
-      const newStatus = decision === "APPROVE" ? "APPROVED" : "REJECTED";
 
-      await query(
-        `UPDATE sales_quotations 
-         SET status = $1 
-         WHERE quote_code = $2`,
-        [newStatus, quote_code]
+      // Find a director binding or current user's binding for processZaloInboundMessage
+      const dirBindRes = await query(
+        `SELECT employee_id FROM zalo_user_bindings
+          WHERE employee_id = $1
+             OR LOWER(TRIM(display_name)) = LOWER(TRIM($2))
+             OR role = 'DIRECTOR'
+          ORDER BY CASE WHEN LOWER(TRIM(display_name)) = LOWER(TRIM($2)) THEN 0 ELSE 1 END, id ASC LIMIT 1`,
+        [me.username, approver_name]
       );
+      const simEmpId = dirBindRes.rows[0]?.employee_id || "NV-TBR-001";
 
-      // Log outbound message to notify Sales
+      const cmdText = command_override
+        ? String(command_override)
+        : decision === "APPROVE"
+        ? `Duyệt ${code}`
+        : `Từ chối ${code} ${reason || "Không đồng ý phê duyệt"}`;
+
+      const reply = await processZaloInboundMessage({
+        senderId: `portal_approver_${me.username}`,
+        senderName: approver_name,
+        text: cmdText,
+        simulateEmployeeId: simEmpId
+      });
+
+      // Log outbound message to notify requester/sales
       await query(
-        `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content)
-         VALUES ('system_oa', 'Zalo OA ABT', 'OUTBOUND', 'APPROVAL', $1)`,
-        [`${decision === "APPROVE" ? "✅ BAN GIÁM ĐỐC ĐÃ DUYỆT" : "❌ BAN GIÁM ĐỐC TỪ CHỐI"} Báo giá ${quote_code} bởi ${approver_name}.`]
+        `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
+         VALUES ('system_oa', 'Zalo OA Gateway', 'OUTBOUND', 'APPROVAL', $1, 'SENT')`,
+        [reply.text || `${decision === "APPROVE" ? "✅ ĐÃ DUYỆT" : "❌ TỪ CHỐI"} hồ sơ ${code} bởi ${approver_name}.`]
       );
 
       return NextResponse.json({
         success: true,
-        message: decision === "APPROVE" ? `Đã phê duyệt báo giá ${quote_code}!` : `Đã từ chối báo giá ${quote_code}!`
+        reply,
+        message: decision === "APPROVE" ? `✅ Đã phê duyệt ${code} thành công!` : `❌ Đã từ chối ${code}!`
+      });
+    }
+
+    // 3B. Send Morning Executive Digest (Bản tin Điều hành Đầu ngày)
+    if (action === "send_morning_digest") {
+      const cfgRes = await query("SELECT director_discount_threshold FROM zalo_config ORDER BY id ASC LIMIT 1");
+      const threshold = parseFloat(cfgRes.rows[0]?.director_discount_threshold) || 10.0;
+      const digest = await generateZaloMorningDigest(threshold);
+
+      const mgrRes = await query(
+        `SELECT display_name, zalo_user_id FROM zalo_user_bindings
+          WHERE role IN ('DIRECTOR', 'HEAD_OF_DEPT') OR department = 'Ban Giám Đốc'`
+      ).catch(() => ({ rows: [] as any[] }));
+
+      const connectedMgrs = mgrRes.rows.filter(
+        (r: any) => r.zalo_user_id && !String(r.zalo_user_id).startsWith("zalo_test_") && !String(r.zalo_user_id).startsWith("portal_sim_")
+      );
+
+      if (connectedMgrs.length > 0) {
+        for (const m of connectedMgrs) {
+          await sendZaloCustomerServiceMessage({
+            recipientId: String(m.zalo_user_id),
+            text: digest.text,
+            senderName: `Bản Tin Sáng ➔ ${m.display_name}`
+          }).catch(() => {});
+        }
+      } else {
+        await query(
+          `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
+           VALUES ('morning_digest_cron', 'Bản Tin Điều Hành Sáng (8:00 AM)', 'OUTBOUND', 'MORNING_DIGEST', $1, 'SENT')`,
+          [digest.text]
+        ).catch(() => {});
+      }
+
+      return NextResponse.json({
+        success: true,
+        digest,
+        message: "☀️ Đã phát Bản tin Điều hành Đầu ngày tới Ban Giám Đốc & các Trưởng bộ phận!"
       });
     }
 
@@ -376,7 +437,7 @@ export async function POST(req: NextRequest) {
 
     // 7. Test Chat Simulator
     if (action === "test_chat") {
-      const { senderName = me.full_name || me.username || "Nhân viên kinh doanh", text, employee_id } = body;
+      const { senderName = "Bùi Lê Phương Quân (NVKD)", text, employee_id } = body;
       const reply = await processZaloInboundMessage({
         senderId: `portal_sim_${me.username}`,
         senderName,

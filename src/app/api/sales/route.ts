@@ -11,6 +11,7 @@ import { todayVN, toVNDateString } from "@/backend/services/dates";
 import { mergeCatalogFields } from "@/backend/services/catalogStore";
 import { withTransaction as withFactoryTx } from "@/factory/core/db";
 import { syncKdOrderOrPoToInternalOrder } from "@/factory/intake/orderDispatchOps";
+import { notifyZaloProactiveEvent } from "@/backend/services/zaloEngine";
 
 const DEFAULT_CREDIT_LIMIT = 100000000;
 const DEFAULT_CREDIT_TERM_DAYS = 30;
@@ -1431,6 +1432,28 @@ export async function POST(req: NextRequest) {
       }
 
       await logAudit("SAVE", "DELIVERY_SLIP", `Lưu phiếu xuất kho ${finalCode} cho đơn ${oCode || oId}`);
+
+      // Tự động bắn thông báo Zalo OA khi Kho xuất hàng (B2) hoặc Giao thành công (B3)
+      const upperSlipSt = String(body.deliveryStatus || slipStatus || "").toUpperCase();
+      if (body.isDelivered === true || upperSlipSt === "DELIVERED" || upperSlipSt === "FULLY_DELIVERED") {
+        notifyZaloProactiveEvent({
+          eventType: "DELIVERY_COMPLETED_POD",
+          code: finalCode,
+          customerName: cName,
+          salesRepName: crName,
+          reasonOrNote: `Đã giao thành công đơn ${oCode || oId}${dName ? ` (Người giao: ${dName})` : ""}`
+        }).catch(() => {});
+      } else if (upperSlipSt === "SHIPPED" || upperSlipSt === "DISPATCHED") {
+        notifyZaloProactiveEvent({
+          eventType: "DELIVERY_DISPATCHED",
+          code: finalCode,
+          customerName: cName,
+          salesRepName: crName,
+          extraInfo: `Thuộc đơn đặt hàng: ${oCode || oId} (${itemsArr.length} mặt hàng)`,
+          reasonOrNote: dName ? `${dName}${dPhone ? ` (${dPhone})` : ""}` : "Kho đã xuất hàng đi giao"
+        }).catch(() => {});
+      }
+
       return NextResponse.json({ success: true, slip_code: finalCode });
     }
 
@@ -1754,6 +1777,19 @@ export async function POST(req: NextRequest) {
         ins = await insertOrder();
       }
       await logAudit("CREATE", "SALES_ORDER", `Tạo mới đơn hàng thương mại ${code} (${computedTotal} đ)${isCreditBlocked ? " [BỊ KHÓA DO VI PHẠM CÔNG NỢ]" : ""}`);
+      if (!isStockOrder && (isCreditBlocked || priceApprovalStatus === "PENDING_APPROVAL")) {
+        const reasons: string[] = [];
+        if (priceApprovalStatus === "PENDING_APPROVAL") reasons.push("Có mặt hàng giá 0 đồng / Quà tặng");
+        if (isCreditBlocked) reasons.push(creditBlockReason || "Khóa hạn mức công nợ");
+        notifyZaloProactiveEvent({
+          eventType: "SO_APPROVAL_NEEDED",
+          code,
+          customerName: customer_name,
+          salesRepName: sales_rep_name,
+          totalAmount: computedTotal,
+          reasonOrNote: reasons.join(" • ")
+        }).catch(() => {});
+      }
       if (!isCreditBlocked && Array.isArray(itemsArr) && itemsArr.length > 0) {
         try {
           const poRef = body.procure_order_code || body.procureOrderCode || body.pr_code || body.prCode || `PO-KD-${code}`;
@@ -2177,6 +2213,12 @@ export async function POST(req: NextRequest) {
       });
       if (!result.duplicate) {
         await logAudit("CUSTOMER_PAYMENT", "SALES_ORDER", `Thu ${amount.toLocaleString("vi-VN")} đ đơn ${result.ord.order_code} (${result.status})`, me.username, me.full_name);
+        notifyZaloProactiveEvent({
+          eventType: "INVOICE_OR_PAYMENT_RECORDED",
+          code: result.ord.order_code,
+          totalAmount: amount,
+          reasonOrNote: `Kế toán ghi nhận thu tiền khách hàng (${result.status === "PAID" ? "Đã thu đủ 100%" : "Thu 1 phần"}) bởi ${me.full_name || me.username}`
+        }).catch(() => {});
       }
       return NextResponse.json({ success: true, amount_paid: result.paid, payment_status: result.status, duplicate: result.duplicate });
     }
@@ -2423,6 +2465,18 @@ export async function POST(req: NextRequest) {
       }
 
       await logAudit("UPSERT", "SALES_QUOTE", `Lưu báo giá quan hệ ${finalCode}`);
+      if (status === "PENDING_APPROVAL" || status === "PENDING_DIRECTOR_APPROVAL" || extra.hasZeroPriceItems) {
+        notifyZaloProactiveEvent({
+          eventType: "QUOTE_APPROVAL_NEEDED",
+          code: finalCode,
+          customerName: custName,
+          salesRepName: repName,
+          totalAmount,
+          reasonOrNote: extra.hasZeroPriceItems
+            ? "Báo giá có mặt hàng 0 đồng / Hàng mẫu"
+            : `Chiết khấu ${discountRate}% cần phê duyệt`
+        }).catch(() => {});
+      }
 
       // Synchronize fresh list to app_storage for dual-write compatibility
       try {
@@ -2821,6 +2875,12 @@ export async function POST(req: NextRequest) {
         return { rmaCode, customer: ord.customer_name };
       });
       await logAudit("CREATE_RMA", "RMA", `Tạo yêu cầu trả hàng ${created.rmaCode} cho đơn ${code} (${created.customer})`);
+      notifyZaloProactiveEvent({
+        eventType: "RMA_APPROVAL_NEEDED",
+        code: created.rmaCode,
+        customerName: created.customer,
+        reasonOrNote: `Đơn gốc ${code} • Lý do: ${reason_category || "Khách hoàn trả hàng"}`
+      }).catch(() => {});
       return NextResponse.json({ success: true, rma_code: created.rmaCode });
     }
 

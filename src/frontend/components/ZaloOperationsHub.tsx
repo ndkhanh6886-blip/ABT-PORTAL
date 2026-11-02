@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { useAuth } from "@/frontend/contexts/AuthContext";
 import {
   MessageSquare,
   Send,
@@ -98,7 +97,6 @@ interface ZaloStats {
 }
 
 export const ZaloOperationsHub: React.FC = () => {
-  const { user } = useAuth();
   const [activeSubTab, setActiveSubTab] = useState<"approvals" | "chat_simulator" | "bindings" | "config" | "logs">("bindings");
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState<ZaloConfig>({
@@ -108,15 +106,24 @@ export const ZaloOperationsHub: React.FC = () => {
     secret_key: "",
     access_token: "",
     refresh_token: "",
-    webhook_verify_token: "",
+    webhook_verify_token: "tbr_webhook_token_2026",
     director_discount_threshold: 10,
-    director_phone: "",
+    director_phone: "0916033652",
     director_zalo_id: "",
     is_active: true
   });
   const [bindings, setBindings] = useState<ZaloBinding[]>([]);
   const [stats, setStats] = useState<ZaloStats>({ total: 0, connectedCount: 0, pendingCount: 0, noPhoneCount: 0 });
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
+  const [multiApprovals, setMultiApprovals] = useState<{
+    quotations: any[];
+    orders: any[];
+    proposals: any[];
+    pos: any[];
+    rmas: any[];
+    totalCount: number;
+  }>({ quotations: [], orders: [], proposals: [], pos: [], rmas: [], totalCount: 0 });
+  const [isSendingDigest, setIsSendingDigest] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
   const [copiedUrl, setCopiedUrl] = useState(false);
 
@@ -143,11 +150,11 @@ export const ZaloOperationsHub: React.FC = () => {
   const [isSavingBinding, setIsSavingBinding] = useState(false);
 
   // Chat Simulator State with Real Personnel Selection
-  const [selectedPersonnelCode, setSelectedPersonnelCode] = useState<string>("");
+  const [selectedPersonnelCode, setSelectedPersonnelCode] = useState<string>("NV-TBR-018");
   const [chatMessages, setChatMessages] = useState<Array<{ sender: "user" | "bot"; text: string; time: string; buttons?: any[] }>>([
     {
       sender: "bot",
-      text: "👋 Xin chào! Tôi là Trợ lý điều hành Zalo Công ty TNHH Giải pháp Y sinh ABT kết nối cơ sở dữ liệu thực tế. Bạn có thể soạn báo giá, tra cứu tồn kho, giữ chỗ hoặc nộp Daily tại đây!",
+      text: "👋 Xin chào! Tôi là Trợ lý điều hành Zalo Công ty cổ phần Công nghệ TBR kết nối cơ sở dữ liệu thực tế. Bạn có thể soạn báo giá, tra cứu tồn kho, giữ chỗ hoặc nộp Daily tại đây!",
       time: "Vừa xong"
     }
   ]);
@@ -181,6 +188,7 @@ export const ZaloOperationsHub: React.FC = () => {
         if (data.bindings) setBindings(data.bindings);
         if (data.stats) setStats(data.stats);
         if (data.pendingApprovals) setPendingApprovals(data.pendingApprovals);
+        if (data.multiApprovals) setMultiApprovals(data.multiApprovals);
         if (data.logs) setLogs(data.logs);
       }
     } catch (e) {
@@ -386,17 +394,19 @@ export const ZaloOperationsHub: React.FC = () => {
     }
   };
 
-  // Handle Director Approve/Reject
-  const handleDirectorDecision = async (quoteCode: string, decision: "APPROVE" | "REJECT") => {
+  // Handle Director / Approver Approve or Reject across all document types
+  const handleDirectorDecision = async (targetCode: string, decision: "APPROVE" | "REJECT", commandOverride?: string) => {
     try {
       const res = await fetch("/api/zalo/config", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "director_action",
-          quote_code: quoteCode,
+          quote_code: targetCode,
+          target_code: targetCode,
           decision,
-          approver_name: String(user?.full_name || user?.name || "Ban Giám Đốc")
+          command_override: commandOverride,
+          approver_name: "Ban Giám Đốc / Người duyệt"
         })
       });
       const data = await res.json();
@@ -404,10 +414,44 @@ export const ZaloOperationsHub: React.FC = () => {
         alert(data.message);
         fetchData();
       } else {
-        alert(data.error || "Lỗi xử lý");
+        alert(data.error || "Lỗi xử lý phê duyệt");
       }
     } catch (err) {
       alert("Lỗi kết nối máy chủ");
+    }
+  };
+
+  // Handle Broadcast Morning Executive Digest
+  const handleSendMorningDigest = async () => {
+    try {
+      setIsSendingDigest(true);
+      const res = await fetch("/api/zalo/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "send_morning_digest" })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert(data.message);
+        if (data.digest?.text) {
+          setChatMessages((prev) => [
+            ...prev,
+            {
+              sender: "bot",
+              text: data.digest.text,
+              buttons: data.digest.buttons,
+              time: new Date().toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit" })
+            }
+          ]);
+        }
+        fetchData();
+      } else {
+        alert(data.error || "Lỗi phát bản tin");
+      }
+    } catch (e) {
+      alert("Lỗi kết nối máy chủ");
+    } finally {
+      setIsSendingDigest(false);
     }
   };
 
@@ -535,6 +579,16 @@ export const ZaloOperationsHub: React.FC = () => {
           <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
             <button
               type="button"
+              onClick={handleSendMorningDigest}
+              disabled={isSendingDigest}
+              className="px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black flex items-center gap-1.5 transition-all cursor-pointer shadow-sm disabled:opacity-50"
+              title="Tổng hợp hồ sơ chờ duyệt, lô hàng cận date FEFO, tồn tối thiểu & công nợ gửi qua Zalo"
+            >
+              <Zap className={`w-4 h-4 ${isSendingDigest ? "animate-spin" : ""}`} />
+              <span>{isSendingDigest ? "Đang phát bản tin..." : "☀️ Phát Bản Tin Sáng"}</span>
+            </button>
+            <button
+              type="button"
               onClick={handleCopyWebhook}
               className="px-3.5 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 border border-blue-400/40 text-white text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
               title="Sao chép địa chỉ Webhook để cấu hình trên Zalo Developer"
@@ -578,7 +632,7 @@ export const ZaloOperationsHub: React.FC = () => {
             }`}
           >
             <ShieldCheck className="w-4 h-4 text-amber-600 dark:text-amber-500 shrink-0" />
-            <span>Duyệt Chiết Khấu ({pendingApprovals.length})</span>
+            <span>Trung Tâm Phê Duyệt ({multiApprovals.totalCount || pendingApprovals.length})</span>
           </button>
 
           <button
@@ -941,7 +995,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   type="text"
                   value={editPhone}
                   onChange={(e) => setEditPhone(e.target.value)}
-                  placeholder="Ví dụ: 09xxxxxxxx (để trống nếu chưa có)"
+                  placeholder="Ví dụ: 0916033652 (để trống nếu chưa có)"
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-indigo-500"
                 />
                 <p className="text-[10px] text-slate-400">
@@ -1007,119 +1061,411 @@ export const ZaloOperationsHub: React.FC = () => {
       )}
 
       {/* ========================================================================= */}
-      {/* SUB-TAB 2: DUYỆT CHIẾT KHẤU (BAN GIÁM ĐỐC) */}
+      {/* SUB-TAB 2: TRUNG TÂM PHÊ DUYỆT ĐA NĂNG QUA ZALO (BG, SO, ĐỀ XUẤT, PO, RMA) */}
       {/* ========================================================================= */}
       {activeSubTab === "approvals" && (
-        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+        <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 p-6 shadow-sm space-y-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
             <div>
               <h3 className="font-black text-slate-900 dark:text-white uppercase text-base flex items-center gap-2">
                 <ShieldCheck className="w-5 h-5 text-amber-500" />
-                <span>DANH SÁCH BÁO GIÁ CẦN BAN GIÁM ĐỐC DUYỆT CHIẾT KHẤU</span>
+                <span>TRUNG TÂM PHÊ DUYỆT ĐA NĂNG QUA ZALO OA 4.0 (1-CHẠM)</span>
               </h3>
-              <p className="text-xs text-slate-500">
-                Chính sách quản trị: Mọi báo giá có mức chiết khấu từ <strong>{config.director_discount_threshold}%</strong> trở lên đều phải có sự phê duyệt chính thức từ Ban Giám Đốc trước khi phát hành.
+              <p className="text-xs text-slate-500 mt-0.5">
+                Phê duyệt đồng bộ 2 chiều giữa Web ERP và Zalo OA: Báo giá CK cao (≥ <strong>{config.director_discount_threshold}%</strong>) / Giá 0đ, Đơn hàng SO (Giá 0đ &amp; Khóa công nợ), Đề xuất &amp; Xin nghỉ phép (DXNP), Đơn mua hàng PO và Phiếu trả hàng RMA.
               </p>
             </div>
 
-            <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-3 py-1 rounded-full border border-amber-200 dark:border-amber-900">
-              {pendingApprovals.length} yêu cầu đang chờ
-            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-xs font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/60 px-3 py-1 rounded-full border border-amber-200 dark:border-amber-900">
+                Tổng cộng: {multiApprovals.totalCount || pendingApprovals.length} hồ sơ chờ duyệt
+              </span>
+            </div>
           </div>
 
-          {pendingApprovals.length === 0 ? (
+          {/* 5 Summary Badges for Pending Queues */}
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="p-3.5 rounded-2xl border border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20">
+              <div className="text-[10px] font-black uppercase text-amber-700 dark:text-amber-400">1. Báo Giá (CK / 0đ)</div>
+              <div className="text-xl font-black text-amber-900 dark:text-white mt-0.5">{pendingApprovals.length}</div>
+              <div className="text-[10px] text-amber-700/80 dark:text-amber-300/70">Lệnh: Duyệt BG-...</div>
+            </div>
+            <div className="p-3.5 rounded-2xl border border-orange-200 dark:border-orange-900/60 bg-orange-50/50 dark:bg-orange-950/20">
+              <div className="text-[10px] font-black uppercase text-orange-700 dark:text-orange-400">2. Đơn Hàng SO (0đ / Nợ)</div>
+              <div className="text-xl font-black text-orange-900 dark:text-white mt-0.5">{multiApprovals.orders?.length || 0}</div>
+              <div className="text-[10px] text-orange-700/80 dark:text-orange-300/70">Lệnh: Duyệt 0đ / nợ SO...</div>
+            </div>
+            <div className="p-3.5 rounded-2xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/20">
+              <div className="text-[10px] font-black uppercase text-indigo-700 dark:text-indigo-400">3. Đề Xuất &amp; Nghỉ Phép</div>
+              <div className="text-xl font-black text-indigo-900 dark:text-white mt-0.5">{multiApprovals.proposals?.length || 0}</div>
+              <div className="text-[10px] text-indigo-700/80 dark:text-indigo-300/70">Lệnh: Duyệt DX-...</div>
+            </div>
+            <div className="p-3.5 rounded-2xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20">
+              <div className="text-[10px] font-black uppercase text-blue-700 dark:text-blue-400">4. Đơn Mua Hàng PO</div>
+              <div className="text-xl font-black text-blue-900 dark:text-white mt-0.5">{multiApprovals.pos?.length || 0}</div>
+              <div className="text-[10px] text-blue-700/80 dark:text-blue-300/70">Lệnh: Duyệt PO...</div>
+            </div>
+            <div className="p-3.5 rounded-2xl border border-purple-200 dark:border-purple-900/60 bg-purple-50/50 dark:bg-purple-950/20">
+              <div className="text-[10px] font-black uppercase text-purple-700 dark:text-purple-400">5. Trả Hàng RMA</div>
+              <div className="text-xl font-black text-purple-900 dark:text-white mt-0.5">{multiApprovals.rmas?.length || 0}</div>
+              <div className="text-[10px] text-purple-700/80 dark:text-purple-300/70">Lệnh: Duyệt RMA...</div>
+            </div>
+          </div>
+
+          {(multiApprovals.totalCount || pendingApprovals.length) === 0 ? (
             <div className="py-12 flex flex-col items-center justify-center text-center space-y-2">
               <CheckCircle2 className="w-12 h-12 text-emerald-500" />
               <div className="font-bold text-slate-800 dark:text-slate-200 text-sm">
-                Tất cả báo giá đã được xử lý xong!
+                Tất cả hồ sơ trên toàn hệ thống đã được phê duyệt xong!
               </div>
-              <div className="text-xs text-slate-400 max-w-sm">
-                Hiện không có báo giá nào vượt ngưỡng chiết khấu ({config.director_discount_threshold}%) đang chờ duyệt.
+              <div className="text-xs text-slate-400 max-w-md">
+                Hiện không có Báo giá, Đơn hàng SO, Tờ trình/Đơn nghỉ phép, Đơn mua hàng PO hay Phiếu trả hàng RMA nào đang chờ phê duyệt.
               </div>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4">
-              {pendingApprovals.map((q) => (
-                <div
-                  key={q.id}
-                  className="p-5 rounded-2xl border-2 border-amber-300 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
-                >
-                  <div className="space-y-1.5 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-black text-indigo-700 dark:text-indigo-400 text-sm">
-                        {q.quote_code}
-                      </span>
-                      <span className="px-2 py-0.5 text-[10px] font-black rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-400 border border-rose-300 dark:border-rose-800">
-                        Chiết khấu lớn: {q.discount_rate}%
-                      </span>
-                      <span className="text-[10px] text-slate-400">
-                        Ngày tạo: {new Date(q.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
-                      </span>
-                    </div>
+            <div className="space-y-6">
+              {/* 1. BÁO GIÁ CHỜ DUYỆT */}
+              {pendingApprovals.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-amber-800 dark:text-amber-400 flex items-center gap-2">
+                    <span>📄 1. BÁO GIÁ CHỜ DUYỆT CHIẾT KHẤU CAO / HÀNG 0 ĐỒNG ({pendingApprovals.length})</span>
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {pendingApprovals.map((q) => (
+                      <div
+                        key={q.id}
+                        className="p-4 rounded-2xl border-2 border-amber-300 dark:border-amber-900/60 bg-amber-50/40 dark:bg-amber-950/20 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-black text-indigo-700 dark:text-indigo-400 text-sm">
+                              {q.quote_code}
+                            </span>
+                            {Number(q.discount_rate || 0) > 0 && (
+                              <span className="px-2 py-0.5 text-[10px] font-black rounded-full bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-400 border border-rose-300 dark:border-rose-800">
+                                Chiết khấu: {q.discount_rate}%
+                              </span>
+                            )}
+                            <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                              Chờ duyệt Báo giá
+                            </span>
+                            <span className="text-[10px] text-slate-400">
+                              Ngày tạo: {new Date(q.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+                            </span>
+                          </div>
 
-                    <div className="font-bold text-slate-900 dark:text-white text-sm">
-                      {q.customer_name}
-                    </div>
+                          <div className="font-bold text-slate-900 dark:text-white text-sm">
+                            {q.customer_name}
+                          </div>
 
-                    <div className="text-xs text-slate-600 dark:text-slate-300">
-                      NVKD phụ trách: <strong>{q.sales_rep_name}</strong>
-                    </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-300">
+                            NVKD phụ trách: <strong>{q.sales_rep_name}</strong>
+                          </div>
 
-                    {/* Breakdown Numbers */}
-                    <div className="grid grid-cols-3 gap-2 pt-2 max-w-md text-xs">
-                      <div className="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
-                        <div className="text-[10px] text-slate-400">Tiền hàng:</div>
-                        <div className="font-bold text-slate-800 dark:text-slate-200">
-                          {new Intl.NumberFormat("vi-VN").format(parseFloat(q.subtotal as any || 0))} đ
+                          <div className="grid grid-cols-3 gap-2 pt-1.5 max-w-md text-xs">
+                            <div className="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                              <div className="text-[10px] text-slate-400">Tiền hàng:</div>
+                              <div className="font-bold text-slate-800 dark:text-slate-200">
+                                {new Intl.NumberFormat("vi-VN").format(parseFloat(q.subtotal as any || 0))} đ
+                              </div>
+                            </div>
+                            <div className="bg-rose-50 dark:bg-rose-950/40 p-2 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300">
+                              <div className="text-[10px] text-rose-400">Giảm trừ ({q.discount_rate}%):</div>
+                              <div className="font-bold">
+                                -{new Intl.NumberFormat("vi-VN").format(parseFloat(q.discount_amount as any || 0))} đ
+                              </div>
+                            </div>
+                            <div className="bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-xl border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300">
+                              <div className="text-[10px] text-emerald-500 font-bold">Thực thu (Gồm VAT):</div>
+                              <div className="font-black">
+                                {new Intl.NumberFormat("vi-VN").format(parseFloat(q.total_amount as any || 0))} đ
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="flex sm:flex-col items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(q.quote_code, "APPROVE")}
+                            className="w-full px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>Phê Duyệt Báo Giá</span>
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(q.quote_code, "REJECT")}
+                            className="w-full px-4 py-2 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 dark:bg-rose-950 dark:text-rose-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                          >
+                            <X className="w-4 h-4" />
+                            <span>Từ Chối</span>
+                          </button>
+
+                          <a
+                            href={`/api/zalo/quotation-pdf?code=${q.quote_code}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 mt-0.5"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            <span>Xem PDF Báo giá</span>
+                          </a>
                         </div>
                       </div>
-                      <div className="bg-rose-50 dark:bg-rose-950/40 p-2 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300">
-                        <div className="text-[10px] text-rose-400">Giảm trừ ({q.discount_rate}%):</div>
-                        <div className="font-bold">
-                          -{new Intl.NumberFormat("vi-VN").format(parseFloat(q.discount_amount as any || 0))} đ
-                        </div>
-                      </div>
-                      <div className="bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-xl border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300">
-                        <div className="text-[10px] text-emerald-500 font-bold">Thực thu (Gồm VAT):</div>
-                        <div className="font-black">
-                          {new Intl.NumberFormat("vi-VN").format(parseFloat(q.total_amount as any || 0))} đ
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Actions */}
-                  <div className="flex sm:flex-col items-center gap-2 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => handleDirectorDecision(q.quote_code, "APPROVE")}
-                      className="w-full px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
-                    >
-                      <Check className="w-4 h-4" />
-                      <span>Phê Duyệt Ngay</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleDirectorDecision(q.quote_code, "REJECT")}
-                      className="w-full px-4 py-2 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 dark:bg-rose-950 dark:text-rose-300 font-bold text-xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
-                    >
-                      <X className="w-4 h-4" />
-                      <span>Từ Chối Báo Giá</span>
-                    </button>
-
-                    <a
-                      href={`/api/zalo/quotation-pdf?code=${q.quote_code}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1 mt-1"
-                    >
-                      <FileText className="w-3.5 h-3.5" />
-                      <span>Xem chi tiết báo giá</span>
-                    </a>
+                    ))}
                   </div>
                 </div>
-              ))}
+              )}
+
+              {/* 2. ĐƠN ĐẶT HÀNG SO CHỜ DUYỆT (0 ĐỒNG / KHÓA CÔNG NỢ) */}
+              {multiApprovals.orders?.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-orange-800 dark:text-orange-400 flex items-center gap-2">
+                    <span>🛒 2. ĐƠN ĐẶT HÀNG SO CHỜ DUYỆT GIÁ 0Đ / MỞ KHÓA CÔNG NỢ ({multiApprovals.orders.length})</span>
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {multiApprovals.orders.map((o: any) => (
+                      <div
+                        key={o.id}
+                        className="p-4 rounded-2xl border-2 border-orange-300 dark:border-orange-900/60 bg-orange-50/40 dark:bg-orange-950/20 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-black text-indigo-700 dark:text-indigo-400 text-sm">
+                              {o.order_code}
+                            </span>
+                            {o.needsZeroApprove && (
+                              <span className="px-2.5 py-0.5 text-[10px] font-black rounded-full bg-amber-100 text-amber-900 border border-amber-300">
+                                🎁 Chờ duyệt giá 0đ / Hàng tặng ({o.zeroItemsCount} SP)
+                              </span>
+                            )}
+                            {o.needsCreditApprove && (
+                              <span className="px-2.5 py-0.5 text-[10px] font-black rounded-full bg-rose-100 text-rose-800 border border-rose-300">
+                                🔒 Chờ duyệt mở khóa công nợ
+                              </span>
+                            )}
+                          </div>
+                          <div className="font-bold text-slate-900 dark:text-white text-sm">
+                            {o.customer_name}
+                          </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap">
+                            <span>NVKD: <strong>{o.sales_rep_name || "Kinh doanh"}</strong></span>
+                            <span>Tổng giá trị đơn: <strong className="text-emerald-700 dark:text-emerald-400">{new Intl.NumberFormat("vi-VN").format(Number(o.total_amount || 0))} đ</strong></span>
+                          </div>
+                        </div>
+
+                        <div className="flex sm:flex-col items-center gap-2 shrink-0">
+                          {o.needsZeroApprove && (
+                            <button
+                              type="button"
+                              onClick={() => handleDirectorDecision(o.order_code, "APPROVE", `Duyệt 0đ ${o.order_code}`)}
+                              className="w-full px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                            >
+                              <Check className="w-4 h-4" />
+                              <span>Duyệt Giá 0đ</span>
+                            </button>
+                          )}
+                          {o.needsCreditApprove && (
+                            <button
+                              type="button"
+                              onClick={() => handleDirectorDecision(o.order_code, "APPROVE", `Duyệt nợ ${o.order_code}`)}
+                              className="w-full px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                            >
+                              <Check className="w-4 h-4" />
+                              <span>Duyệt Mở Khóa Nợ</span>
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(o.order_code, "APPROVE", `Duyệt ${o.order_code}`)}
+                            className="w-full px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>Duyệt Toàn Bộ SO</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(o.order_code, "REJECT", `Từ chối ${o.order_code}`)}
+                            className="w-full px-4 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Từ Chối Đơn</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 3. ĐỀ XUẤT NỘI BỘ & XIN NGHỈ PHÉP (DX / DXNP) */}
+              {multiApprovals.proposals?.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-indigo-800 dark:text-indigo-400 flex items-center gap-2">
+                    <span>📝 3. TỜ TRÌNH NỘI BỘ &amp; ĐƠN XIN NGHỈ PHÉP DXNP ({multiApprovals.proposals.length})</span>
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {multiApprovals.proposals.map((p: any) => (
+                      <div
+                        key={p.id}
+                        className="p-4 rounded-2xl border-2 border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-black text-indigo-700 dark:text-indigo-400 text-sm">
+                              {p.request_code}
+                            </span>
+                            <span className="px-2.5 py-0.5 text-[10px] font-black rounded-full bg-indigo-100 text-indigo-800 border border-indigo-300">
+                              {p.template_code === "DXNP" || String(p.title || "").toLowerCase().includes("nghỉ phép") ? "🏖️ Đơn Xin Nghỉ Phép" : "📋 Tờ Trình / Đề Xuất"}
+                            </span>
+                            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
+                              Bước hiện tại: <strong>{p.current_step || "Ban Giám Đốc"}</strong>
+                            </span>
+                          </div>
+                          <div className="font-bold text-slate-900 dark:text-white text-sm">
+                            {p.title}
+                          </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap">
+                            <span>Người trình: <strong>{p.requester}</strong> ({p.department})</span>
+                            {Number(p.amount || 0) > 0 && (
+                              <span>Ngân sách: <strong className="text-rose-600">{new Intl.NumberFormat("vi-VN").format(Number(p.amount))} đ</strong></span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex sm:flex-col items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(p.request_code, "APPROVE", `Duyệt ${p.request_code}`)}
+                            className="w-full px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>Ký Duyệt Đề Xuất</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(p.request_code, "REJECT", `Từ chối ${p.request_code}`)}
+                            className="w-full px-4 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Từ Chối</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 4. ĐƠN MUA HÀNG PO CHỜ DUYỆT */}
+              {multiApprovals.pos?.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-blue-800 dark:text-blue-400 flex items-center gap-2">
+                    <span>📦 4. ĐƠN MUA HÀNG NHÀ CUNG CẤP PO CHỜ DUYỆT ({multiApprovals.pos.length})</span>
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {multiApprovals.pos.map((po: any) => (
+                      <div
+                        key={po.id}
+                        className="p-4 rounded-2xl border-2 border-blue-200 dark:border-blue-900/60 bg-blue-50/40 dark:bg-blue-950/20 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-black text-blue-700 dark:text-blue-400 text-sm">
+                              {po.po_code}
+                            </span>
+                            <span className="px-2.5 py-0.5 text-[10px] font-black rounded-full bg-blue-100 text-blue-800 border border-blue-300">
+                              Chờ duyệt Mua hàng
+                            </span>
+                          </div>
+                          <div className="font-bold text-slate-900 dark:text-white text-sm">
+                            NCC: {po.supplier_name}
+                          </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap">
+                            <span>Tổng tiền PO: <strong className="text-emerald-700 dark:text-emerald-400">{new Intl.NumberFormat("vi-VN").format(Number(po.total_amount || 0))} đ</strong></span>
+                            {po.expected_date && <span>Dự kiến về: <strong>{po.expected_date}</strong></span>}
+                          </div>
+                        </div>
+
+                        <div className="flex sm:flex-col items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(po.po_code, "APPROVE", `Duyệt ${po.po_code}`)}
+                            className="w-full px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>Phê Duyệt PO</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(po.po_code, "REJECT", `Từ chối ${po.po_code}`)}
+                            className="w-full px-4 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Từ Chối PO</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 5. PHIẾU TRẢ HÀNG RMA CHỜ DUYỆT */}
+              {multiApprovals.rmas?.length > 0 && (
+                <div className="space-y-3">
+                  <h4 className="text-xs font-black uppercase tracking-wider text-purple-800 dark:text-purple-400 flex items-center gap-2">
+                    <span>🔄 5. PHIẾU NHẬN HÀNG TRẢ LẠI &amp; BÙ TRỪ CÔNG NỢ RMA ({multiApprovals.rmas.length})</span>
+                  </h4>
+                  <div className="grid grid-cols-1 gap-3.5">
+                    {multiApprovals.rmas.map((r: any) => (
+                      <div
+                        key={r.id}
+                        className="p-4 rounded-2xl border-2 border-purple-200 dark:border-purple-900/60 bg-purple-50/40 dark:bg-purple-950/20 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-4"
+                      >
+                        <div className="space-y-1.5 flex-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-mono font-black text-purple-700 dark:text-purple-400 text-sm">
+                              {r.return_code}
+                            </span>
+                            <span className="px-2.5 py-0.5 text-[10px] font-black rounded-full bg-purple-100 text-purple-800 border border-purple-300">
+                              Đơn gốc: {r.order_code || "—"}
+                            </span>
+                          </div>
+                          <div className="font-bold text-slate-900 dark:text-white text-sm">
+                            KH: {r.customer_name}
+                          </div>
+                          <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap">
+                            <span>Giá trị hoàn trả: <strong className="text-rose-600">{new Intl.NumberFormat("vi-VN").format(Number(r.refund_amount || 0))} đ</strong></span>
+                            <span>Lý do: <strong>{r.reason || "Đổi trả hàng"}</strong></span>
+                          </div>
+                        </div>
+
+                        <div className="flex sm:flex-col items-center gap-2 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(r.return_code, "APPROVE", `Duyệt ${r.return_code}`)}
+                            className="w-full px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm cursor-pointer"
+                          >
+                            <Check className="w-4 h-4" />
+                            <span>Duyệt RMA &amp; Nhập Kho</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDirectorDecision(r.return_code, "REJECT", `Từ chối ${r.return_code}`)}
+                            className="w-full px-4 py-1.5 rounded-xl bg-rose-100 hover:bg-rose-200 text-rose-700 font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                            <span>Từ Chối RMA</span>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1204,20 +1550,72 @@ export const ZaloOperationsHub: React.FC = () => {
               </div>
 
               {/* Preset Buttons */}
-              <div className="space-y-2">
+              <div className="space-y-2 max-h-[430px] overflow-y-auto pr-1">
                 <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Bấm kịch bản mẫu để chạy thử ngay:
+                  Bấm kịch bản mẫu Zalo OA 4.0 để chạy thử ngay:
                 </div>
 
                 <button
                   type="button"
                   disabled={isSendingChat}
-                  onClick={() => handleSendSimChat("Báo giá BV Bạch Mai: 20 kit HBV, 2 máy tách chiết 32 mẫu, ck 12%")}
-                  className="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
+                  onClick={() => handleSendSimChat("Chờ duyệt")}
+                  className="w-full text-left p-2.5 rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/70 dark:bg-amber-950/40 hover:bg-amber-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
                 >
-                  <div className="font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5 mb-1">
+                  <div className="font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5 mb-0.5">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>1. Soạn Báo Giá CK 12% (Kích hoạt phê duyệt BGĐ)</span>
+                    <span>1. Xem Tất Cả Hồ Sơ Chờ Duyệt (BG, SO 0đ/Nợ, DX, PO, RMA)</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">"Chờ duyệt" — Hiển thị danh sách kèm nút Duyệt 1-chạm</div>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Bản tin sáng")}
+                  className="w-full text-left p-2.5 rounded-xl border border-orange-200 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/30 hover:bg-orange-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
+                >
+                  <div className="font-bold text-orange-700 dark:text-orange-300 flex items-center gap-1.5 mb-0.5">
+                    <Zap className="w-3.5 h-3.5" />
+                    <span>2. Bản Tin Điều Hành Sáng (Executive Morning Digest)</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">"Bản tin sáng" — Tổng hợp Chờ duyệt, Cận date FEFO, Tồn thấp &amp; Công nợ</div>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Đơn hàng")}
+                  className="w-full text-left p-2.5 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
+                >
+                  <div className="font-bold text-blue-700 dark:text-blue-300 flex items-center gap-1.5 mb-0.5">
+                    <FileText className="w-3.5 h-3.5" />
+                    <span>3. Tra Cứu Tiến Độ Đơn Hàng SO &amp; Phiếu Giao PX</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">"Đơn hàng" hoặc "Đơn hàng SO26-..." — Tiến độ B1/B2/B3, Hóa đơn &amp; POD</div>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Công nợ")}
+                  className="w-full text-left p-2.5 rounded-xl border border-rose-200 dark:border-rose-800 bg-rose-50/50 dark:bg-rose-950/30 hover:bg-rose-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
+                >
+                  <div className="font-bold text-rose-700 dark:text-rose-300 flex items-center gap-1.5 mb-0.5">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>4. Kiểm Tra Công Nợ &amp; Hạn Mức Tín Dụng Khách Hàng</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500">"Công nợ" hoặc "Công nợ BV Bạch Mai" — Nợ thực tế đã giao &amp; Hạn mức</div>
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Báo giá BV Bạch Mai: 20 kit HBV, 2 máy tách chiết 32 mẫu, ck 12%")}
+                  className="w-full text-left p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
+                >
+                  <div className="font-bold text-amber-600 dark:text-amber-400 flex items-center gap-1.5 mb-0.5">
+                    <ShieldCheck className="w-3.5 h-3.5" />
+                    <span>5. Soạn Báo Giá CK 12% (Kích hoạt phê duyệt BGĐ)</span>
                   </div>
                   <div className="text-[11px] text-slate-500 line-clamp-1">
                     "Báo giá BV Bạch Mai: 20 kit HBV, 2 máy tách chiết 32 mẫu, ck 12%"
@@ -1227,27 +1625,12 @@ export const ZaloOperationsHub: React.FC = () => {
                 <button
                   type="button"
                   disabled={isSendingChat}
-                  onClick={() => handleSendSimChat("Báo giá BV Chợ Rẫy: 10 kit HBV, 1 máy tách chiết 32 mẫu, ck 5%")}
-                  className="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
-                >
-                  <div className="font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1.5 mb-1">
-                    <FileText className="w-3.5 h-3.5" />
-                    <span>2. Soạn Báo Giá CK 5% (Tự động duyệt &amp; sinh PDF)</span>
-                  </div>
-                  <div className="text-[11px] text-slate-500 line-clamp-1">
-                    "Báo giá BV Chợ Rẫy: 10 kit HBV, 1 máy tách chiết 32 mẫu, ck 5%"
-                  </div>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isSendingChat}
                   onClick={() => handleSendSimChat("Tồn kho KIT-HBV-100")}
-                  className="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
+                  className="w-full text-left p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
                 >
-                  <div className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 mb-1">
+                  <div className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5 mb-0.5">
                     <Package className="w-3.5 h-3.5" />
-                    <span>3. Tra Cứu Tồn Kho &amp; Hạn Dùng FEFO</span>
+                    <span>6. Tra Cứu Tồn Kho &amp; Hạn Dùng FEFO</span>
                   </div>
                   <div className="text-[11px] text-slate-500">"Tồn kho KIT-HBV-100"</div>
                 </button>
@@ -1256,11 +1639,11 @@ export const ZaloOperationsHub: React.FC = () => {
                   type="button"
                   disabled={isSendingChat}
                   onClick={() => handleSendSimChat("Giữ chỗ 20 KIT-HBV-100 cho BV Bạch Mai 48h")}
-                  className="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
+                  className="w-full text-left p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
                 >
-                  <div className="font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1.5 mb-1">
+                  <div className="font-bold text-purple-600 dark:text-purple-400 flex items-center gap-1.5 mb-0.5">
                     <Sliders className="w-3.5 h-3.5" />
-                    <span>4. Khóa Giữ Chỗ Tồn Kho 48h</span>
+                    <span>7. Khóa Giữ Chỗ Tồn Kho 48h</span>
                   </div>
                   <div className="text-[11px] text-slate-500 line-clamp-1">
                     "Giữ chỗ 20 KIT-HBV-100 cho BV Bạch Mai 48h"
@@ -1271,38 +1654,23 @@ export const ZaloOperationsHub: React.FC = () => {
                   type="button"
                   disabled={isSendingChat}
                   onClick={() => handleSendSimChat("Daily: Đã làm việc với BS Trưởng khoa BV Bạch Mai về gói xét nghiệm")}
-                  className="w-full text-left p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
+                  className="w-full text-left p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 hover:bg-slate-100 text-xs font-semibold text-slate-800 dark:text-slate-200 transition-all cursor-pointer"
                 >
-                  <div className="font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5 mb-1">
+                  <div className="font-bold text-indigo-600 dark:text-indigo-400 flex items-center gap-1.5 mb-0.5">
                     <Clock className="w-3.5 h-3.5" />
-                    <span>5. Nộp Báo Cáo Nhật Ký Ngày (Daily)</span>
+                    <span>8. Nộp Báo Cáo Nhật Ký Ngày (Daily)</span>
                   </div>
                   <div className="text-[11px] text-slate-500 line-clamp-1">
                     "Daily: Đã làm việc với BS Trưởng khoa BV Bạch Mai..."
                   </div>
                 </button>
-
-                {activeSimPersonnel?.role === "DIRECTOR" && (
-                  <button
-                    type="button"
-                    disabled={isSendingChat}
-                    onClick={() => handleSendSimChat("Duyệt BG-ABT-2609-0001")}
-                    className="w-full text-left p-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/40 hover:bg-emerald-100 text-xs font-semibold transition-all cursor-pointer"
-                  >
-                    <div className="font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 mb-1">
-                      <Check className="w-3.5 h-3.5" />
-                      <span>6. Ban Giám Đốc Phê Duyệt Lệnh (1-Chạm)</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500">"Duyệt [Mã Báo Giá]"</div>
-                  </button>
-                )}
               </div>
             </div>
           </div>
 
           {/* Cột phải: Khung điện thoại thông minh mô phỏng giao diện Zalo */}
           <div className="lg:col-span-7">
-            <div className="max-w-md mx-auto bg-slate-100 dark:bg-slate-950 rounded-[40px] border-4 border-slate-800 p-3 shadow-2xl overflow-hidden flex flex-col h-[650px]">
+            <div className="max-w-md mx-auto bg-slate-100 dark:bg-slate-950 rounded-[40px] border-4 border-slate-800 p-3 shadow-2xl overflow-hidden flex flex-col h-[680px]">
               {/* Zalo App Bar */}
               <div className="bg-blue-600 text-white px-4 py-3 rounded-t-[30px] flex items-center justify-between shadow-sm">
                 <div className="flex items-center gap-2.5">
@@ -1379,6 +1747,58 @@ export const ZaloOperationsHub: React.FC = () => {
                 )}
               </div>
 
+              {/* Zalo OA Quick Rich Menu Bar */}
+              <div className="px-2 py-1.5 bg-slate-200/80 dark:bg-slate-900 border-t border-slate-300 dark:border-slate-800 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Chờ duyệt")}
+                  className="px-2.5 py-1 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-[10px] whitespace-nowrap cursor-pointer shadow-2xs shrink-0"
+                >
+                  ⏳ Chờ duyệt ({multiApprovals.totalCount || pendingApprovals.length})
+                </button>
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Bản tin sáng")}
+                  className="px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 hover:bg-blue-50 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-[10px] whitespace-nowrap cursor-pointer shrink-0"
+                >
+                  ☀️ Bản tin sáng
+                </button>
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Đơn hàng")}
+                  className="px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 hover:bg-blue-50 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-[10px] whitespace-nowrap cursor-pointer shrink-0"
+                >
+                  🚚 Tiến độ SO
+                </button>
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Công nợ")}
+                  className="px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 hover:bg-blue-50 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-[10px] whitespace-nowrap cursor-pointer shrink-0"
+                >
+                  💰 Công nợ
+                </button>
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Tồn kho KIT")}
+                  className="px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 hover:bg-blue-50 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-[10px] whitespace-nowrap cursor-pointer shrink-0"
+                >
+                  📦 Check kho
+                </button>
+                <button
+                  type="button"
+                  disabled={isSendingChat}
+                  onClick={() => handleSendSimChat("Trợ giúp")}
+                  className="px-2.5 py-1 rounded-full bg-white dark:bg-slate-800 hover:bg-blue-50 text-slate-800 dark:text-slate-200 border border-slate-300 dark:border-slate-700 font-bold text-[10px] whitespace-nowrap cursor-pointer shrink-0"
+                >
+                  ❓ Cú pháp
+                </button>
+              </div>
+
               {/* Chat Input Bar */}
               <form
                 onSubmit={(e) => {
@@ -1391,7 +1811,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   type="text"
                   value={chatInput}
                   onChange={(e) => setChatInput(e.target.value)}
-                  placeholder={`Gõ tin nhắn gửi từ ${activeSimPersonnel?.display_name || "Nhân sự"}...`}
+                  placeholder={`Gõ lệnh Zalo (VD: Chờ duyệt, Duyệt SO..., Đã giao PX...)...`}
                   className="flex-1 px-3 py-2 text-xs rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-900 dark:text-white outline-none focus:ring-1 focus:ring-blue-500"
                 />
                 <button
@@ -1568,7 +1988,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   type="text"
                   value={config.director_phone}
                   onChange={(e) => setConfig({ ...config, director_phone: e.target.value })}
-                  placeholder="09xxxxxxxx"
+                  placeholder="0916033652"
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-mono text-slate-900 dark:text-white"
                 />
               </div>
@@ -1700,7 +2120,7 @@ export const ZaloOperationsHub: React.FC = () => {
                   <span>Thử nghiệm trong tab "Giả Lập Chat Zalo"</span>
                 </div>
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
-                  Chuyển sang tab <strong>Giả Lập Chat Zalo</strong> bên cạnh. Chọn 1 nhân sự đã liên kết SĐT (VD: NV-ABT-017) và gõ lệnh để kiểm tra cơ chế tự động tra kho, tính chiết khấu và kích hoạt duyệt của Ban Giám Đốc.
+                  Chuyển sang tab <strong>Giả Lập Chat Zalo</strong> bên cạnh. Chọn 1 nhân sự đã liên kết SĐT (VD: NV-TBR-018) và gõ lệnh để kiểm tra cơ chế tự động tra kho, tính chiết khấu và kích hoạt duyệt của Ban Giám Đốc.
                 </p>
               </div>
             </div>

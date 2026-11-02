@@ -107,6 +107,11 @@ export async function POST(req: NextRequest) {
     const senderId = body.sender?.id || body.user_id_by_app || body.senderId || "";
     const senderName = body.sender?.name || body.senderName || "Người dùng Zalo";
     let messageText = body.message?.text || body.text || "";
+    const attachments = Array.isArray(body.message?.attachments)
+      ? body.message.attachments
+      : Array.isArray(body.attachments)
+      ? body.attachments
+      : [];
 
     if (eventName === "follow" && !messageText) {
       messageText = "Đã quan tâm trang Zalo OA";
@@ -117,7 +122,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, note: "Test senders are not accepted on the public webhook" });
     }
 
-    if (!senderId || (!messageText.trim() && eventName !== "follow")) {
+    if (!senderId || (!messageText.trim() && attachments.length === 0 && eventName !== "follow")) {
       return NextResponse.json({ success: true, note: "Event without text ignored" });
     }
 
@@ -125,7 +130,9 @@ export async function POST(req: NextRequest) {
     const result = await processZaloInboundMessage({
       senderId,
       senderName,
-      text: messageText
+      text: messageText,
+      attachments,
+      eventName
     });
 
     // Send reply back to the user via Zalo Official Account OpenAPI v3 (Tự động làm mới Token nếu hết hạn)

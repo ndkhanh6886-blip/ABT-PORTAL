@@ -10,6 +10,7 @@ import {
 import { hasPermission } from "@/backend/services/permissions";
 import { todayVN, nowVNDateTime } from "@/backend/services/dates";
 import { sameStaffName, normalizeWorkspaceDept, isSameWorkspaceDept } from "@/backend/services/workspaceTasks";
+import { notifyZaloProactiveEvent } from "@/backend/services/zaloEngine";
 
 export interface ApprovalFieldDef {
   key: string;
@@ -1294,6 +1295,14 @@ export async function POST(req: NextRequest) {
         );
 
         await logAudit("CREATE_APPROVAL", "APPROVALS", `Tạo đề xuất ${requestCode} (${tpl.name}): ${title}`);
+        notifyZaloProactiveEvent({
+          eventType: "PROPOSAL_APPROVAL_NEEDED",
+          code: requestCode,
+          requesterName: `${me.full_name || me.username} (${requesterDept})`,
+          targetApproverName: firstActiveStage?.approver_name || "",
+          totalAmount,
+          reasonOrNote: `${tpl.name}: ${title}`
+        }).catch(() => {});
         return NextResponse.json({ ok: true, request: ins.rows[0] });
       }
 

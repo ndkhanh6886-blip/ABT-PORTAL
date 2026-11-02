@@ -4,6 +4,7 @@ import { getAuthorizedUser, isAdminUser, isAccountantUser, unauthorizedResponse,
 import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { todayVN, toVNDateString, nowVNDateTime } from "@/backend/services/dates";
+import { notifyZaloProactiveEvent } from "@/backend/services/zaloEngine";
 
 function canApprovePO(user: AuthorizedUser) {
   return isAdminUser(user) || hasPermission(user, "procurement.approve_po");
@@ -28,6 +29,8 @@ function canRecordSupplierPayment(user: AuthorizedUser) {
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
+import { withTransaction as withFactoryTx } from "@/factory/core/db";
+import { syncKdOrderOrPoToInternalOrder } from "@/factory/intake/orderDispatchOps";
 
 let supplierShortNameEnsured = false;
 async function ensureSupplierShortName() {
@@ -1037,6 +1040,16 @@ export async function POST(req: NextRequest) {
 
       if (orderResult.isNew) {
         await logAudit("CREATE", "PROCUREMENT", `Lập đơn đặt mua hàng mới ${orderResult.po_code} cho NCC ${supplier_name || 'Hãng'}`);
+        if (String(orderResult.safeStatus || "").toUpperCase() === "PENDING") {
+          notifyZaloProactiveEvent({
+            eventType: "PO_APPROVAL_NEEDED",
+            code: orderResult.po_code,
+            customerName: supplier_name || "Nhà cung cấp",
+            requesterName: me.full_name || me.username,
+            totalAmount: Number(total_amount) || 0,
+            reasonOrNote: notes || ""
+          }).catch(() => {});
+        }
       } else {
         await logAudit("UPDATE", "PROCUREMENT", `Cập nhật đơn đặt mua hàng ${orderResult.po_code} [Trạng thái: ${orderResult.safeStatus}]`);
       }
@@ -1100,6 +1113,31 @@ export async function POST(req: NextRequest) {
           invalidateSupplierCatalogCache();
         } catch (syncErr: any) {
           console.error("[AUTO_SYNC_SUPPLIER_PRODUCTS_ERR]:", syncErr?.message || syncErr);
+        }
+      }
+
+      // Auto-sync PO to Factory Internal Orders (Đơn hàng nội bộ)
+      if (Array.isArray(items) && items.length > 0) {
+        try {
+          const soCodes = Array.from(
+            new Set(
+              items
+                .map((it: any) => String(it?.source_so_code || it?.so_code || it?.source_pr_code || "").trim())
+                .filter(Boolean)
+            )
+          ).join(", ");
+          await withFactoryTx((tx) =>
+            syncKdOrderOrPoToInternalOrder(tx, {
+              kd_po_code: finalPoCode,
+              kd_so_code: soCodes || finalPoCode,
+              customer_name: supplier_name || "Đơn PO Kinh doanh / Cung ứng",
+              requested_date: expected_delivery_date || order_date || todayVN(),
+              notes: notes || `Đồng bộ tự động từ PO ${finalPoCode}`,
+              items,
+            })
+          );
+        } catch (syncFactoryErr: any) {
+          console.error("[AUTO_SYNC_PO_TO_INTERNAL_ORDER_ERR]:", syncFactoryErr?.message || syncFactoryErr);
         }
       }
 
@@ -1851,6 +1889,29 @@ export async function POST(req: NextRequest) {
         ]
       );
       await logAudit("CREATE_PR", "PROCUREMENT", `Tạo phiếu đề xuất mua hàng PR ${code}: ${title}`);
+      if (structuredItems.length > 0) {
+        try {
+          const soCodes = Array.from(
+            new Set(
+              structuredItems
+                .map((it: any) => String(it?.source_so_code || it?.so_code || "").trim())
+                .filter(Boolean)
+            )
+          ).join(", ");
+          await withFactoryTx((tx) =>
+            syncKdOrderOrPoToInternalOrder(tx, {
+              kd_po_code: code,
+              kd_so_code: soCodes || code,
+              customer_name: customer_name || "Khối Kinh doanh ABT",
+              requested_date: due_date || todayVN(),
+              notes: description || title || `Đồng bộ tự động từ Đặt hàng Hãng / PR ${code}`,
+              items: structuredItems,
+            })
+          );
+        } catch (syncPrErr: any) {
+          console.error("[AUTO_SYNC_PR_TO_INTERNAL_ORDER_ERR]:", syncPrErr?.message || syncPrErr);
+        }
+      }
       return NextResponse.json({ success: true, code });
     }
 
@@ -2000,6 +2061,22 @@ export async function POST(req: NextRequest) {
       });
 
       await logAudit("CONSOLIDATE_PO", "PROCUREMENT", `Gom ${pr_ids?.length || 0} phiếu PR vào PO ${poCode} gửi NCC ${supplier_name}`);
+      if (Array.isArray(items) && items.length > 0) {
+        try {
+          await withFactoryTx((tx) =>
+            syncKdOrderOrPoToInternalOrder(tx, {
+              kd_po_code: poCode,
+              kd_so_code: Array.isArray(pr_ids) && pr_ids.length > 0 ? pr_ids.join(", ") : poCode,
+              customer_name: supplier_name || "Đơn PO Gom PR",
+              requested_date: expected_delivery_date || todayVN(),
+              notes: notes || `Gom từ các PR: ${(pr_ids || []).join(", ")}`,
+              items,
+            })
+          );
+        } catch (syncConsErr: any) {
+          console.error("[AUTO_SYNC_CONSOLIDATED_PO_TO_INTERNAL_ORDER_ERR]:", syncConsErr?.message || syncConsErr);
+        }
+      }
       return NextResponse.json({ success: true, po_code: poCode, po_id: result.po_id });
     }
 
