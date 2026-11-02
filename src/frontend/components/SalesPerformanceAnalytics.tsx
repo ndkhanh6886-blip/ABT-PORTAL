@@ -59,7 +59,9 @@ export interface SalesPerformanceAnalyticsProps {
   isManagerOrAdmin: boolean;
   isViewerDirector: boolean;
   loggedInStaff: any;
-  onOpenTargetModal: (repId?: string) => void;
+  onOpenTargetModal: (repId?: string, currentPeriodType?: "month" | "quarter" | "year" | "all", currentPeriodValue?: string) => void;
+  onCopyTargetsToPeriod?: (fromPeriod: string, toPeriod: string, toPeriodType: "month" | "quarter" | "year") => void;
+  externalPeriodSync?: { periodType: "month" | "quarter" | "year"; periodValue: string; seq: number } | null;
 }
 
 // Benchmark transactions (Clean slate: empty by default for real-world operations)
@@ -83,15 +85,34 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
   isManagerOrAdmin,
   isViewerDirector,
   loggedInStaff,
-  onOpenTargetModal
+  onOpenTargetModal,
+  onCopyTargetsToPeriod,
+  externalPeriodSync
 }) => {
+  const defaultPeriodInfo = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth() + 1;
+    const q = Math.ceil(m / 3);
+    return {
+      month: `${y}-${String(m).padStart(2, "0")}`,
+      quarter: `${y}-Q${q}`,
+      year: `${y}`
+    };
+  }, []);
+
   // Filter States
   const [periodType, setPeriodType] = useState<"month" | "quarter" | "year" | "all">("month");
-  const [periodValue, setPeriodValue] = useState<string>(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
-  });
+  const [periodValue, setPeriodValue] = useState<string>(() => defaultPeriodInfo.month);
   const [selectedRepId, setSelectedRepId] = useState<string>("all");
+
+  // Sync period when a target is saved in the modal so the screen always reflects the newly assigned period immediately
+  React.useEffect(() => {
+    if (externalPeriodSync && externalPeriodSync.periodValue) {
+      setPeriodType(externalPeriodSync.periodType);
+      setPeriodValue(externalPeriodSync.periodValue);
+    }
+  }, [externalPeriodSync]);
 
   // Analysis Dimension & Metric & Chart Type States
   const [analysisDimension, setAnalysisDimension] = useState<
@@ -182,7 +203,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
             order_code: ord.order_code,
             date: ord.deliveredAt ? String(ord.deliveredAt).slice(0, 10) : (ord.deliveryDate || todayVN()),
             customer_code: ord.customer_code || ord.customerId || "KH-CUSTOM",
-            customer_name: ord.customer_name || ord.customerName || "Khách hàng ABT",
+            customer_name: ord.customer_name || ord.customerName || "Khách hàng TBR",
             customer_group: ord.customer_group || ord.customerGroup || "Khách hàng doanh nghiệp",
             sales_rep_id: ord.sales_rep_id || ord.salesRepId || "UNASSIGNED",
             sales_rep_name: ord.sales_rep_name || ord.salesRepName || "Chưa gán NVKD",
@@ -280,9 +301,9 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
           4: ["10", "11", "12"]
         };
         const validMonths = (qMonthsMap[qNum] || []).map(m => `${yearStr}-${m}`);
-        return validMonths.includes(t.month);
+        return validMonths.includes(t.month) || t.month === periodValue;
       }
-      if (periodType === "year") return (t.month || "").startsWith(periodValue);
+      if (periodType === "year") return (t.month || "").startsWith(periodValue) || t.month === periodValue;
       return true;
     });
 
@@ -291,7 +312,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
     const benchmarkTarget = defaultMonthlyTarget * repMultiplier * periodMultiplier;
 
     const targetAmount = currentRepTargets.length > 0 
-      ? currentRepTargets.reduce((acc, t) => acc + (t.targetAmount || 0), 0)
+      ? currentRepTargets.reduce((acc, t) => acc + (Number(t.targetAmount) || 0), 0)
       : 0;
 
     const completionRate = targetAmount > 0 ? Math.round((postVat / targetAmount) * 100) : 0;
@@ -313,11 +334,19 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
   // Format currency helper
   const fmtCurrency = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0)) + "đ";
 
+  const matchRepTargetRecord = (t: any, repId: string, repName?: string, repCode?: string): boolean => {
+    const tRepId = String(t?.salesRepId || "").trim();
+    if (tRepId && (tRepId === repId || (repCode && tRepId === repCode))) return true;
+    if (repName && t?.salesRepName) {
+      return String(t.salesRepName).trim().toLowerCase() === String(repName).trim().toLowerCase();
+    }
+    return false;
+  };
+
   // Helper to get target amount for specific rep in current period
-  const getRepTargetForPeriod = (repId: string, repName?: string): number => {
+  const getRepTargetForPeriod = (repId: string, repName?: string, repCode?: string): number => {
     const matched = salesTargets.filter(t => {
-      const matchId = t.salesRepId === repId || (repName && t.salesRepName === repName);
-      if (!matchId) return false;
+      if (!matchRepTargetRecord(t, repId, repName, repCode)) return false;
       if (periodType === "month") return t.month === periodValue;
       if (periodType === "quarter") {
         const [yearStr, qStr] = periodValue.split("-Q");
@@ -337,6 +366,33 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
     return matched.reduce((acc, t) => acc + (Number(t.targetAmount) || 0), 0);
   };
 
+  // Find if rep has a target saved in another period when current period is 0
+  const getRepOtherPeriodTarget = (repId: string, repName?: string, repCode?: string): { month: string; targetAmount: number } | null => {
+    const others = salesTargets.filter(t => {
+      if (!matchRepTargetRecord(t, repId, repName, repCode)) return false;
+      return Number(t.targetAmount) > 0 && t.month !== periodValue;
+    });
+    if (others.length === 0) return null;
+    return { month: others[0].month, targetAmount: Number(others[0].targetAmount) || 0 };
+  };
+
+  // Summary of other periods in salesTargets that have saved targets (helps detect targets saved under 2026-09, 2026-10, Q3, etc.)
+  const otherPeriodsSummary = useMemo(() => {
+    const map = new Map<string, { period: string; periodType: "month" | "quarter" | "year"; count: number; total: number }>();
+    (salesTargets || []).forEach(t => {
+      const amt = Number(t?.targetAmount) || 0;
+      const m = String(t?.month || "").trim();
+      if (!m || amt <= 0) return;
+      if (periodType !== "all" && m === periodValue) return;
+      const pType: "month" | "quarter" | "year" = m.includes("-Q") ? "quarter" : m.includes("-") ? "month" : "year";
+      const prev = map.get(m) || { period: m, periodType: pType, count: 0, total: 0 };
+      prev.count += 1;
+      prev.total += amt;
+      map.set(m, prev);
+    });
+    return Array.from(map.values()).sort((a, b) => b.period.localeCompare(a.period));
+  }, [salesTargets, periodType, periodValue]);
+
   // Comprehensive Personnel Target Tracking & KPI Evaluation Model
   const repEvaluations = useMemo(() => {
     const staffList = (visibleSalesPersonnel && visibleSalesPersonnel.length > 0) ? visibleSalesPersonnel : salesPersonnel;
@@ -351,8 +407,10 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
 
     return staffList.map((rep, idx) => {
       const repId = rep.employee_id || rep.id || rep.employee_code || `REP-${idx}`;
+      const repCode = rep.employee_code || repId;
       const repName = rep.full_name || rep.name || repId;
-      const targetAmount = getRepTargetForPeriod(repId, repName);
+      const targetAmount = getRepTargetForPeriod(repId, repName, repCode);
+      const otherTarget = targetAmount === 0 ? getRepOtherPeriodTarget(repId, repName, repCode) : null;
 
       // Find rep transactions in period
       const repTxs = filteredTransactions.filter(tx => 
@@ -412,6 +470,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
         email: rep.email || "",
         phone: rep.phone || "",
         targetAmount,
+        otherTarget,
         preVat,
         postVat,
         collected,
@@ -832,14 +891,14 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
 
   // Distinct palette colors for donut chart & items
   const PALETTE = [
-    "#0ea5e9", // Indigo
+    "#6366f1", // Indigo
     "#10b981", // Emerald
     "#f59e0b", // Amber
     "#0ea5e9", // Sky
     "#a855f7", // Purple
     "#f43f5e", // Rose
     "#14b8a6", // Teal
-    "#0ea5e9"  // Orange
+    "#f97316"  // Orange
   ];
 
   return (
@@ -870,9 +929,9 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
               onChange={(e) => {
                 const t = e.target.value as any;
                 setPeriodType(t);
-                if (t === "month") setPeriodValue("2026-08");
-                else if (t === "quarter") setPeriodValue("2026-Q3");
-                else if (t === "year") setPeriodValue("2026");
+                if (t === "month") setPeriodValue(defaultPeriodInfo.month);
+                else if (t === "quarter") setPeriodValue(defaultPeriodInfo.quarter);
+                else if (t === "year") setPeriodValue(defaultPeriodInfo.year);
                 else setPeriodValue("all");
               }}
               className="bg-transparent text-white font-bold cursor-pointer outline-none border-none focus:ring-0"
@@ -895,6 +954,10 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
               >
                 {periodType === "month" && (
                   <>
+                    <option value="2025-09" className="bg-slate-950 text-white">Tháng 9 / 2025</option>
+                    <option value="2025-10" className="bg-slate-950 text-white">Tháng 10 / 2025</option>
+                    <option value="2025-11" className="bg-slate-950 text-white">Tháng 11 / 2025</option>
+                    <option value="2025-12" className="bg-slate-950 text-white">Tháng 12 / 2025</option>
                     <option value="2026-01" className="bg-slate-950 text-white">Tháng 1 / 2026</option>
                     <option value="2026-02" className="bg-slate-950 text-white">Tháng 2 / 2026</option>
                     <option value="2026-03" className="bg-slate-950 text-white">Tháng 3 / 2026</option>
@@ -907,18 +970,37 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                     <option value="2026-10" className="bg-slate-950 text-white">Tháng 10 / 2026</option>
                     <option value="2026-11" className="bg-slate-950 text-white">Tháng 11 / 2026</option>
                     <option value="2026-12" className="bg-slate-950 text-white">Tháng 12 / 2026</option>
+                    <option value="2027-01" className="bg-slate-950 text-white">Tháng 1 / 2027</option>
+                    <option value="2027-02" className="bg-slate-950 text-white">Tháng 2 / 2027</option>
+                    <option value="2027-03" className="bg-slate-950 text-white">Tháng 3 / 2027</option>
+                    <option value="2027-04" className="bg-slate-950 text-white">Tháng 4 / 2027</option>
+                    <option value="2027-05" className="bg-slate-950 text-white">Tháng 5 / 2027</option>
+                    <option value="2027-06" className="bg-slate-950 text-white">Tháng 6 / 2027</option>
+                    <option value="2027-07" className="bg-slate-950 text-white">Tháng 7 / 2027</option>
+                    <option value="2027-08" className="bg-slate-950 text-white">Tháng 8 / 2027</option>
+                    <option value="2027-09" className="bg-slate-950 text-white">Tháng 9 / 2027</option>
+                    <option value="2027-10" className="bg-slate-950 text-white">Tháng 10 / 2027</option>
+                    <option value="2027-11" className="bg-slate-950 text-white">Tháng 11 / 2027</option>
+                    <option value="2027-12" className="bg-slate-950 text-white">Tháng 12 / 2027</option>
                   </>
                 )}
                 {periodType === "quarter" && (
                   <>
+                    <option value="2025-Q3" className="bg-slate-950 text-white">Quý 3 / 2025</option>
+                    <option value="2025-Q4" className="bg-slate-950 text-white">Quý 4 / 2025</option>
                     <option value="2026-Q1" className="bg-slate-950 text-white">Quý 1 / 2026</option>
                     <option value="2026-Q2" className="bg-slate-950 text-white">Quý 2 / 2026</option>
                     <option value="2026-Q3" className="bg-slate-950 text-white">Quý 3 / 2026</option>
                     <option value="2026-Q4" className="bg-slate-950 text-white">Quý 4 / 2026</option>
+                    <option value="2027-Q1" className="bg-slate-950 text-white">Quý 1 / 2027</option>
+                    <option value="2027-Q2" className="bg-slate-950 text-white">Quý 2 / 2027</option>
+                    <option value="2027-Q3" className="bg-slate-950 text-white">Quý 3 / 2027</option>
+                    <option value="2027-Q4" className="bg-slate-950 text-white">Quý 4 / 2027</option>
                   </>
                 )}
                 {periodType === "year" && (
                   <>
+                    <option value="2025" className="bg-slate-950 text-white">Năm 2025</option>
                     <option value="2026" className="bg-slate-950 text-white">Năm 2026</option>
                     <option value="2027" className="bg-slate-950 text-white">Năm 2027</option>
                     <option value="2028" className="bg-slate-950 text-white">Năm 2028</option>
@@ -963,7 +1045,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
           {/* Target assignment modal button */}
           {isManagerOrAdmin && (
             <button
-              onClick={() => onOpenTargetModal()}
+              onClick={() => onOpenTargetModal(undefined, periodType, periodValue)}
               className="flex items-center gap-1 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2 rounded-xl transition-colors cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -1324,7 +1406,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                     </button>
                     {isManagerOrAdmin && (
                       <button
-                        onClick={() => onOpenTargetModal()}
+                        onClick={() => onOpenTargetModal(undefined, periodType, periodValue)}
                         className="flex items-center gap-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold px-3 py-2 rounded-xl transition-all shadow-sm cursor-pointer"
                       >
                         <Plus className="w-3.5 h-3.5" />
@@ -1333,6 +1415,46 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                     )}
                   </div>
                 </div>
+
+                {/* Alert Banner when targets exist in other periods (e.g., saved under 2026-09 or previous month/quarter) */}
+                {otherPeriodsSummary.length > 0 && (
+                  <div className="bg-amber-950/30 border border-amber-500/40 rounded-xl p-3 flex flex-col gap-2">
+                    <div className="flex items-center gap-2 text-xs text-amber-300 font-bold">
+                      <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+                      <span>
+                        Phát hiện dữ liệu chỉ tiêu đã lưu ở chu kỳ khác (Kỳ đang xem hiện tại: <strong className="text-white underline">{periodType === "all" ? "Toàn bộ" : periodValue}</strong>):
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {otherPeriodsSummary.map(op => (
+                        <div key={op.period} className="flex items-center gap-1.5 bg-slate-950/90 border border-amber-500/30 rounded-lg px-2.5 py-1.5 text-[11px]">
+                          <span className="font-mono font-bold text-amber-400">{op.period}</span>
+                          <span className="text-slate-400">({op.count} NV · {fmtCurrency(op.total)})</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPeriodType(op.periodType);
+                              setPeriodValue(op.period);
+                            }}
+                            className="px-2 py-0.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[10px] cursor-pointer transition-colors"
+                          >
+                            Xem kỳ {op.period}
+                          </button>
+                          {isManagerOrAdmin && periodType !== "all" && onCopyTargetsToPeriod && (
+                            <button
+                              type="button"
+                              onClick={() => onCopyTargetsToPeriod(op.period, periodValue, periodType)}
+                              className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-500 text-white font-bold text-[10px] cursor-pointer transition-colors"
+                              title={`Sao chép/Chuyển toàn bộ ${op.count} chỉ tiêu từ kỳ ${op.period} sang kỳ đang xem (${periodValue})`}
+                            >
+                              Áp dụng sang {periodValue}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* 4 Summary Cards */}
                 <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -1563,6 +1685,21 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                               <span className={cn("text-[10px] px-2 py-0.2 rounded-full border font-bold", rep.ratingColor)}>
                                 {rep.ratingLabel}
                               </span>
+                              {rep.targetAmount === 0 && rep.otherTarget && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const m = rep.otherTarget!.month;
+                                    const pType = m.includes("-Q") ? "quarter" : m.includes("-") ? "month" : "year";
+                                    setPeriodType(pType);
+                                    setPeriodValue(m);
+                                  }}
+                                  className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950/70 text-amber-300 border border-amber-600/50 font-mono hover:bg-amber-900/80 cursor-pointer"
+                                  title="Nhấn để chuyển sang kỳ có chỉ tiêu của nhân viên này"
+                                >
+                                  Đã giao kỳ {rep.otherTarget.month}: {fmtCurrency(rep.otherTarget.targetAmount)}
+                                </button>
+                              )}
                             </div>
                             <div className="flex items-center gap-3 font-mono text-xs">
                               <span className="text-amber-400 font-semibold" title="Chỉ tiêu">
@@ -1671,7 +1808,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                   <span className="text-amber-400">{fmtCurrency(rep.targetAmount)}</span>
                                   {isManagerOrAdmin && (
                                     <button
-                                      onClick={() => onOpenTargetModal(rep.repId)}
+                                      onClick={() => onOpenTargetModal(rep.repId, periodType, periodValue)}
                                       className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-amber-400 transition-colors cursor-pointer"
                                       title="Chỉnh sửa chỉ tiêu cho nhân viên này"
                                     >
@@ -1680,15 +1817,22 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                   )}
                                 </div>
                               ) : (
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <span className="text-[10px] text-slate-500 italic">Chưa giao</span>
-                                  {isManagerOrAdmin && (
-                                    <button
-                                      onClick={() => onOpenTargetModal(rep.repId)}
-                                      className="px-2 py-0.5 rounded-md bg-indigo-600/80 hover:bg-indigo-600 text-white text-[10px] font-bold transition-colors cursor-pointer"
-                                    >
-                                      + Giao
-                                    </button>
+                                <div className="flex flex-col items-end gap-1">
+                                  <div className="flex items-center justify-end gap-1.5">
+                                    <span className="text-[10px] text-slate-500 italic">Chưa giao</span>
+                                    {isManagerOrAdmin && (
+                                      <button
+                                        onClick={() => onOpenTargetModal(rep.repId, periodType, periodValue)}
+                                        className="px-2 py-0.5 rounded-md bg-indigo-600/80 hover:bg-indigo-600 text-white text-[10px] font-bold transition-colors cursor-pointer"
+                                      >
+                                        + Giao
+                                      </button>
+                                    )}
+                                  </div>
+                                  {rep.otherTarget && (
+                                    <span className="text-[9px] text-amber-400/90 font-mono">
+                                      Kỳ {rep.otherTarget.month}: {fmtCurrency(rep.otherTarget.targetAmount)}
+                                    </span>
                                   )}
                                 </div>
                               )}
@@ -1750,7 +1894,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                               <div className="flex items-center justify-center gap-1">
                                 {isManagerOrAdmin && (
                                   <button
-                                    onClick={() => onOpenTargetModal(rep.repId)}
+                                    onClick={() => onOpenTargetModal(rep.repId, periodType, periodValue)}
                                     className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[11px] font-bold transition-all cursor-pointer"
                                     title="Gán hoặc điều chỉnh chỉ tiêu cho nhân sự này"
                                   >
@@ -1876,7 +2020,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                 className="w-6 sm:w-8 rounded-t-lg transition-all duration-500 shadow-md group-hover:brightness-125 cursor-pointer relative"
                                 style={{
                                   height: `${height}px`,
-                                  background: `linear-gradient(to top, #0369a1, ${color})`
+                                  background: `linear-gradient(to top, #4338ca, ${color})`
                                 }}
                               />
                             </div>
@@ -1940,7 +2084,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                 className="h-full rounded-full transition-all duration-700"
                                 style={{
                                   width: `${Math.max(4, pct)}%`,
-                                  background: `linear-gradient(to right, #0369a1, ${color})`
+                                  background: `linear-gradient(to right, #4338ca, ${color})`
                                 }}
                               />
                             </div>
@@ -2067,7 +2211,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                               <line x1="0" y1={height / 2} x2={width} y2={height / 2} stroke="#1e293b" strokeDasharray="4" strokeWidth="1" />
 
                               {/* Gross Revenue Line (Indigo) */}
-                              <path d={grossPath} fill="none" stroke="#0ea5e9" strokeWidth="3" />
+                              <path d={grossPath} fill="none" stroke="#6366f1" strokeWidth="3" />
                               {/* Collected Line (Emerald) */}
                               <path d={collectedPath} fill="none" stroke="#10b981" strokeWidth="2.5" strokeDasharray="3 3" />
 
@@ -2076,7 +2220,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
                                 const { x, y } = getCoords(p.revenue_gross, idx);
                                 return (
                                   <g key={idx}>
-                                    <circle cx={x} cy={y} r="5" fill="#0ea5e9" stroke="#0f172a" strokeWidth="2" className="cursor-pointer" />
+                                    <circle cx={x} cy={y} r="5" fill="#6366f1" stroke="#0f172a" strokeWidth="2" className="cursor-pointer" />
                                     <text x={x} y={y - 10} fill="#94a3b8" fontSize="9" textAnchor="middle" fontFamily="monospace">
                                       {Math.round(p.revenue_gross / 1000000)}Tr
                                     </text>

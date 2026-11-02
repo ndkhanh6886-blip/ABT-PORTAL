@@ -2287,8 +2287,24 @@ export function SalesFullABT() {
                 }
                 setDeliverySlips(Array.from(slipMap.values()));
 
-                // 5. Collections that only live in app_storage: the server copy is authoritative (even when empty)
-                if (Array.isArray(serverData.sales_targets)) setSalesTargets(serverData.sales_targets);
+                // 5. Collections that only live in app_storage: the server copy is authoritative, merged with any targets created while loading
+                if (Array.isArray(serverData.sales_targets)) {
+                    setSalesTargets(prev => {
+                        const map = new Map<string, any>();
+                        // Keep server targets first, then overlay any targets created in current session before load completed
+                        serverData!.sales_targets.forEach((t: any) => {
+                            if (t && t.salesRepId && t.month) map.set(`${t.salesRepId}__${t.month}`, t);
+                        });
+                        if (Array.isArray(prev)) {
+                            prev.forEach((t: any) => {
+                                if (t && t.salesRepId && t.month && t._savedAt) {
+                                    map.set(`${t.salesRepId}__${t.month}`, t);
+                                }
+                            });
+                        }
+                        return Array.from(map.values());
+                    });
+                }
                 if (Array.isArray(serverData.sales_specialized_plans)) setSpecializedPlans(serverData.sales_specialized_plans);
                 if (Array.isArray(serverData.sales_tasks)) setTasks(serverData.sales_tasks);
                 if (Array.isArray(serverData.sales_plans)) setPlans(serverData.sales_plans);
@@ -2301,80 +2317,7 @@ export function SalesFullABT() {
             }
         };
 
-        const handleStorageSync = () => {
-            if (typeof window === "undefined") return;
-            const qSaved = localStorage.getItem("sales_quotations");
-            if (qSaved) {
-                try {
-                    const parsed = JSON.parse(qSaved);
-                    if (Array.isArray(parsed) && parsed.length > 0) setQuotations(normalizeQuotations(parsed));
-                } catch (e) {}
-            }
-            const cSaved = localStorage.getItem("sales_contracts");
-            if (cSaved) {
-                try {
-                    const parsed = JSON.parse(cSaved);
-                    if (Array.isArray(parsed)) setContracts(normalizeContracts(parsed));
-                } catch (e) {}
-            }
-            const fSaved = localStorage.getItem("sales_factory_orders");
-            if (fSaved) {
-                try {
-                    const parsed = JSON.parse(fSaved);
-                    if (Array.isArray(parsed) && parsed.length > 0) setFactoryOrders(normalizeFactoryOrders(parsed));
-                } catch (e) {}
-            }
-            const tSaved = localStorage.getItem("sales_targets");
-            if (tSaved) {
-                try {
-                    const parsed = JSON.parse(tSaved);
-                    if (Array.isArray(parsed) && parsed.length > 0) setSalesTargets(parsed);
-                } catch (e) {}
-            }
-            const dSaved = localStorage.getItem("sales_delivery_slips");
-            if (dSaved) {
-                try {
-                    const parsed = JSON.parse(dSaved);
-                    if (Array.isArray(parsed) && parsed.length > 0) setDeliverySlips(parsed);
-                } catch (e) {}
-            }
-            const pSaved = localStorage.getItem("sales_specialized_plans");
-            if (pSaved) {
-                try {
-                    const parsed = JSON.parse(pSaved);
-                    if (Array.isArray(parsed) && parsed.length > 0) setSpecializedPlans(parsed);
-                } catch (e) {}
-            }
-            const taskSaved = localStorage.getItem("sales_tasks");
-            if (taskSaved) {
-                try {
-                    const parsed = JSON.parse(taskSaved);
-                    if (Array.isArray(parsed) && parsed.length > 0) setTasks(parsed);
-                } catch (e) {}
-            }
-            const planSaved = localStorage.getItem("sales_plans");
-            if (planSaved) {
-                try {
-                    const parsed = JSON.parse(planSaved);
-                    if (Array.isArray(parsed) && parsed.length > 0) setPlans(parsed);
-                } catch (e) {}
-            }
-            const logSaved = localStorage.getItem("sales_daily_logs");
-            if (logSaved) {
-                try {
-                    const parsed = JSON.parse(logSaved);
-                    if (Array.isArray(parsed) && parsed.length > 0) setDailyLogs(parsed);
-                } catch (e) {}
-            }
-        };
-
         loadServerSalesData();
-        window.addEventListener("storage", handleStorageSync);
-        window.addEventListener("sales_data_synced", handleStorageSync);
-        return () => {
-            window.removeEventListener("storage", handleStorageSync);
-            window.removeEventListener("sales_data_synced", handleStorageSync);
-        };
     }, []);
 
     // Filter and search states
@@ -3997,12 +3940,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [combineProcureItemNotes, setCombineProcureItemNotes] = useState<Record<string, string>>({});
 
     // Modal & Form states for Mục tiêu doanh số
+    const getCurrentDefaultMonth = () => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+    };
+    const getCurrentDefaultQuarter = () => {
+        const now = new Date();
+        return `${now.getFullYear()}-Q${Math.floor(now.getMonth() / 3) + 1}`;
+    };
+    const getCurrentDefaultYear = () => String(new Date().getFullYear());
     const [isTargetModalOpen, setIsTargetModalOpen] = useState(false);
-    const [targetMonth, setTargetMonth] = useState("2026-09");
+    const [targetAssignMode, setTargetAssignMode] = useState<"single" | "bulk">("single");
+    const [targetBulkAmounts, setTargetBulkAmounts] = useState<Record<string, number>>({});
+    const [targetMonth, setTargetMonth] = useState(getCurrentDefaultMonth);
     const [targetPeriodType, setTargetPeriodType] = useState<"month" | "quarter" | "year">("month");
     const [targetRepId, setTargetRepId] = useState("");
     const [targetAmount, setTargetAmount] = useState<number>(500000000);
-    const [analyticsMonthFilter, setAnalyticsMonthFilter] = useState("2026-08");
+    const [analyticsMonthFilter, setAnalyticsMonthFilter] = useState(getCurrentDefaultMonth);
     const [analyticsPeriodType, setAnalyticsPeriodType] = useState<"month" | "quarter" | "year">("month");
     const [analyticsRepFilter, setAnalyticsRepFilter] = useState("all");
 
@@ -15933,9 +15887,71 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         showToast("Đã lưu cấu hình thông tin doanh nghiệp thành công và đồng bộ vĩnh viễn trên máy chủ!", "success");
     };
 
-    // Chỉ tiêu doanh số
+    // Chỉ tiêu doanh số - lưu trực tiếp lên máy chủ ngay khi bấm Lưu (không phụ thuộc isSalesDataLoaded hay giới hạn 5MB của localStorage)
+    const persistSalesTargetsImmediate = (nextTargets: any[]) => {
+        try {
+            localStorage.setItem("sales_targets", JSON.stringify(nextTargets));
+        } catch (e) {
+            console.warn("localStorage quota exceeded when caching sales_targets:", e);
+        }
+        fetch("/api/storage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key: "sales_targets", data: nextTargets })
+        }).catch(err => console.error("Failed to persist sales_targets immediately:", err));
+    };
+
+    const formatTargetPeriodLabel = (pType: "month" | "quarter" | "year", pVal: string) => {
+        if (pType === "month") {
+            const parts = pVal.split("-");
+            return parts.length > 1 ? `tháng ${parseInt(parts[1], 10)}/${parts[0]}` : `tháng ${pVal}`;
+        }
+        if (pType === "quarter") {
+            const parts = pVal.split("-Q");
+            return parts.length > 1 ? `Quý ${parts[1]}/${parts[0]}` : `Quý ${pVal}`;
+        }
+        return `năm ${pVal}`;
+    };
+
     const handleSetSalesTarget = (e: React.FormEvent) => {
         e.preventDefault();
+        const periodLabel = formatTargetPeriodLabel(targetPeriodType, targetMonth);
+
+        if (targetAssignMode === "bulk") {
+            const entries = Object.entries(targetBulkAmounts).filter(([_, amt]) => Number(amt) > 0);
+            if (entries.length === 0) {
+                showToast("Vui lòng nhập chỉ tiêu (> 0đ) cho ít nhất 1 nhân viên!", "warning");
+                return;
+            }
+            const nowTs = Date.now();
+            setSalesTargets(prev => {
+                const map = new Map<string, any>();
+                prev.forEach((t: any) => {
+                    if (t && t.salesRepId && t.month) map.set(`${t.salesRepId}__${t.month}`, t);
+                });
+                entries.forEach(([repId, amt], idx) => {
+                    const repName = salesPersonnel.find(p => p.employee_id === repId)?.full_name || repId;
+                    map.set(`${repId}__${targetMonth}`, {
+                        id: `TGT-${repId}-${targetMonth}`,
+                        month: targetMonth,
+                        periodType: targetPeriodType,
+                        salesRepId: repId,
+                        salesRepName: repName,
+                        targetAmount: Number(amt),
+                        _savedAt: nowTs + idx
+                    });
+                });
+                const next = Array.from(map.values());
+                persistSalesTargetsImmediate(next);
+                return next;
+            });
+            setAnalyticsPeriodType(targetPeriodType);
+            setAnalyticsMonthFilter(targetMonth);
+            showToast(`Đã lưu chỉ tiêu doanh số cho ${entries.length} nhân viên (${periodLabel})!`, "success");
+            setIsTargetModalOpen(false);
+            return;
+        }
+
         if (!targetRepId) {
             showToast("Vui lòng chọn nhân viên!", "warning");
             return;
@@ -15943,31 +15959,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const repName = salesPersonnel.find(p => p.employee_id === targetRepId)?.full_name || targetRepId;
 
         const newTarget = {
-            id: `TGT-${Date.now()}`,
+            id: `TGT-${targetRepId}-${targetMonth}`,
             month: targetMonth,
             periodType: targetPeriodType,
             salesRepId: targetRepId,
             salesRepName: repName,
-            targetAmount: Number(targetAmount)
+            targetAmount: Number(targetAmount),
+            _savedAt: Date.now()
         };
 
         setSalesTargets(prev => {
             const filtered = prev.filter(t => !(t.salesRepId === targetRepId && t.month === targetMonth));
-            return [newTarget, ...filtered];
+            const next = [newTarget, ...filtered];
+            persistSalesTargetsImmediate(next);
+            return next;
         });
 
-        let periodLabel = "";
-        if (targetPeriodType === "month") {
-            const parts = targetMonth.split("-");
-            periodLabel = parts.length > 1 ? `tháng ${parseInt(parts[1], 10)}/${parts[0]}` : `tháng ${targetMonth}`;
-        } else if (targetPeriodType === "quarter") {
-            const parts = targetMonth.split("-Q");
-            periodLabel = parts.length > 1 ? `Quý ${parts[1]}/${parts[0]}` : `Quý ${targetMonth}`;
-        } else {
-            periodLabel = `năm ${targetMonth}`;
-        }
+        // Đồng bộ bộ lọc trên bảng KPI về đúng kỳ vừa giao để số nhảy ngay lập tức
+        setAnalyticsPeriodType(targetPeriodType);
+        setAnalyticsMonthFilter(targetMonth);
 
-        showToast(`Đã gán chỉ tiêu doanh số ${new Intl.NumberFormat("vi-VN").format(targetAmount)}đ cho ${repName} ${periodLabel}!`, "success");
+        showToast(`Đã gán chỉ tiêu doanh số ${new Intl.NumberFormat("vi-VN").format(targetAmount)}đ cho ${repName} (${periodLabel})!`, "success");
         setIsTargetModalOpen(false);
     };
 
@@ -23136,8 +23148,50 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     isManagerOrAdmin={isManagerOrAdmin}
                     isViewerDirector={isViewerDirector}
                     loggedInStaff={loggedInStaff}
-                    onOpenTargetModal={(repId?: string) => {
-                        if (repId) setTargetRepId(repId);
+                    externalPeriodSync={{ periodType: analyticsPeriodType, periodValue: analyticsMonthFilter, seq: 1 }}
+                    onCopyTargetsToPeriod={(fromPeriod: string, toPeriod: string, toPeriodType: "month" | "quarter" | "year") => {
+                        setSalesTargets(prev => {
+                            const sourceTargets = prev.filter((t: any) => t && t.month === fromPeriod && Number(t.targetAmount) > 0);
+                            if (sourceTargets.length === 0) return prev;
+                            const map = new Map<string, any>();
+                            prev.forEach((t: any) => {
+                                if (t && t.salesRepId && t.month) map.set(`${t.salesRepId}__${t.month}`, t);
+                            });
+                            const nowTs = Date.now();
+                            sourceTargets.forEach((src: any, idx: number) => {
+                                map.set(`${src.salesRepId}__${toPeriod}`, {
+                                    ...src,
+                                    id: `TGT-${src.salesRepId}-${toPeriod}`,
+                                    month: toPeriod,
+                                    periodType: toPeriodType,
+                                    _savedAt: nowTs + idx
+                                });
+                            });
+                            const next = Array.from(map.values());
+                            persistSalesTargetsImmediate(next);
+                            return next;
+                        });
+                        showToast(`Đã sao chép chỉ tiêu từ kỳ ${fromPeriod} sang kỳ ${toPeriod}!`, "success");
+                    }}
+                    onOpenTargetModal={(repId?: string, pType?: "month" | "quarter" | "year" | "all", pVal?: string) => {
+                        const activeType: "month" | "quarter" | "year" = (pType && pType !== "all") ? pType : (analyticsPeriodType || "month");
+                        const activeVal = (pVal && pVal !== "all") ? pVal : (analyticsMonthFilter || getCurrentDefaultMonth());
+                        setTargetPeriodType(activeType);
+                        setTargetMonth(activeVal);
+                        if (repId) {
+                            setTargetAssignMode("single");
+                            setTargetRepId(repId);
+                            const existing = salesTargets.find((t: any) => t.salesRepId === repId && t.month === activeVal);
+                            setTargetAmount(existing && Number(existing.targetAmount) > 0 ? Number(existing.targetAmount) : 500000000);
+                        } else {
+                            setTargetAssignMode("bulk");
+                            const initialBulk: Record<string, number> = {};
+                            visibleSalesPersonnel.forEach(p => {
+                                const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === activeVal);
+                                initialBulk[p.employee_id] = ex ? Number(ex.targetAmount) || 0 : 0;
+                            });
+                            setTargetBulkAmounts(initialBulk);
+                        }
                         setIsTargetModalOpen(true);
                     }}
                 />
@@ -32927,22 +32981,43 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             {/* 9. TARGET MODAL */}
             <Modal isOpen={isTargetModalOpen} onClose={() => setIsTargetModalOpen(false)} title="PHÂN BỔ CHỈ TIÊU DOANH SỐ" size="xl">
                 <form onSubmit={handleSetSalesTarget} className="space-y-4 p-2 text-slate-100">
-                    <div>
-                        <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nhân viên kinh doanh *</label>
-                        <select
-                            value={targetRepId}
-                            onChange={(e) => setTargetRepId(e.target.value)}
-                            required
-                            className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                    {/* Chế độ giao: Cá nhân hoặc Hàng loạt cả phòng */}
+                    <div className="flex items-center justify-between gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+                        <button
+                            type="button"
+                            onClick={() => setTargetAssignMode("single")}
+                            className={cn(
+                                "flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                                targetAssignMode === "single"
+                                    ? "bg-indigo-600 text-white shadow"
+                                    : "text-slate-400 hover:text-slate-200"
+                            )}
                         >
-                            <option value="">-- Chọn nhân viên --</option>
-                            {visibleSalesPersonnel.map(p => (
-                                <option key={p.employee_id} value={p.employee_id}>{p.full_name} ({p.employee_id})</option>
-                            ))}
-                        </select>
+                            👤 Giao từng nhân viên
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setTargetAssignMode("bulk");
+                                const initialBulk: Record<string, number> = {};
+                                visibleSalesPersonnel.forEach(p => {
+                                    const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === targetMonth);
+                                    initialBulk[p.employee_id] = ex ? Number(ex.targetAmount) || 0 : (targetBulkAmounts[p.employee_id] || 0);
+                                });
+                                setTargetBulkAmounts(initialBulk);
+                            }}
+                            className={cn(
+                                "flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                                targetAssignMode === "bulk"
+                                    ? "bg-indigo-600 text-white shadow"
+                                    : "text-slate-400 hover:text-slate-200"
+                            )}
+                        >
+                            👥 Giao hàng loạt cả phòng ({visibleSalesPersonnel.length} NV)
+                        </button>
                     </div>
 
-                    <div className="grid grid-cols-3 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Loại chu kỳ *</label>
                             <select
@@ -32950,9 +33025,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 onChange={(e) => {
                                     const type = e.target.value as "month" | "quarter" | "year";
                                     setTargetPeriodType(type);
-                                    if (type === "month") setTargetMonth("2026-09");
-                                    else if (type === "quarter") setTargetMonth("2026-Q3");
-                                    else if (type === "year") setTargetMonth("2026");
+                                    const nextPeriod = type === "month"
+                                        ? getCurrentDefaultMonth()
+                                        : type === "quarter"
+                                            ? getCurrentDefaultQuarter()
+                                            : getCurrentDefaultYear();
+                                    setTargetMonth(nextPeriod);
+                                    if (targetAssignMode === "bulk") {
+                                        const updatedBulk: Record<string, number> = {};
+                                        visibleSalesPersonnel.forEach(p => {
+                                            const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === nextPeriod);
+                                            updatedBulk[p.employee_id] = ex ? Number(ex.targetAmount) || 0 : 0;
+                                        });
+                                        setTargetBulkAmounts(updatedBulk);
+                                    } else if (targetRepId) {
+                                        const ex = salesTargets.find((t: any) => t.salesRepId === targetRepId && t.month === nextPeriod);
+                                        if (ex) setTargetAmount(Number(ex.targetAmount) || 0);
+                                    }
                                 }}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
                             >
@@ -32962,11 +33051,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Thời gian *</label>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Kỳ áp dụng *</label>
                             <select
                                 value={targetMonth}
-                                onChange={(e) => setTargetMonth(e.target.value)}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                onChange={(e) => {
+                                    const nextVal = e.target.value;
+                                    setTargetMonth(nextVal);
+                                    if (targetAssignMode === "bulk") {
+                                        const updatedBulk: Record<string, number> = {};
+                                        visibleSalesPersonnel.forEach(p => {
+                                            const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === nextVal);
+                                            updatedBulk[p.employee_id] = ex ? Number(ex.targetAmount) || 0 : 0;
+                                        });
+                                        setTargetBulkAmounts(updatedBulk);
+                                    } else if (targetRepId) {
+                                        const ex = salesTargets.find((t: any) => t.salesRepId === targetRepId && t.month === nextVal);
+                                        if (ex) setTargetAmount(Number(ex.targetAmount) || 0);
+                                    }
+                                }}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-bold"
                             >
                                 {targetPeriodType === "month" && (
                                     <>
@@ -33060,33 +33163,132 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 )}
                             </select>
                         </div>
-                        <div>
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Chỉ tiêu (VNĐ) *</label>
-                            <input
-                                type="number"
-                                min="0"
-                                step="any"
-                                value={targetAmount}
-                                onChange={(e) => setTargetAmount(Number(e.target.value))}
-                                required
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-bold"
-                            />
-                        </div>
                     </div>
+
+                    {targetAssignMode === "single" ? (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nhân viên kinh doanh *</label>
+                                <select
+                                    value={targetRepId}
+                                    onChange={(e) => {
+                                        const repId = e.target.value;
+                                        setTargetRepId(repId);
+                                        const ex = salesTargets.find((t: any) => t.salesRepId === repId && t.month === targetMonth);
+                                        if (ex && Number(ex.targetAmount) > 0) {
+                                            setTargetAmount(Number(ex.targetAmount));
+                                        }
+                                    }}
+                                    required
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                >
+                                    <option value="">-- Chọn nhân viên --</option>
+                                    {visibleSalesPersonnel.map(p => {
+                                        const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === targetMonth);
+                                        const exText = ex && Number(ex.targetAmount) > 0
+                                            ? ` — Đã giao: ${new Intl.NumberFormat("vi-VN").format(Number(ex.targetAmount))}đ`
+                                            : "";
+                                        return (
+                                            <option key={p.employee_id} value={p.employee_id}>{p.full_name} ({p.employee_id}){exText}</option>
+                                        );
+                                    })}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Chỉ tiêu (VNĐ) *</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="any"
+                                    value={targetAmount}
+                                    onChange={(e) => setTargetAmount(Number(e.target.value))}
+                                    required
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-bold"
+                                />
+                                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                    {[200_000_000, 300_000_000, 500_000_000, 1_000_000_000, 1_500_000_000].map(preset => (
+                                        <button
+                                            key={preset}
+                                            type="button"
+                                            onClick={() => setTargetAmount(preset)}
+                                            className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] text-slate-300 cursor-pointer"
+                                        >
+                                            {new Intl.NumberFormat("vi-VN").format(preset)}đ
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="space-y-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-800">
+                                <span className="text-[11px] text-slate-300 font-semibold">
+                                    Điền nhanh mức chung cho toàn bộ {visibleSalesPersonnel.length} nhân viên:
+                                </span>
+                                <div className="flex flex-wrap items-center gap-1.5">
+                                    {[200_000_000, 300_000_000, 500_000_000, 1_000_000_000, 1_500_000_000].map(preset => (
+                                        <button
+                                            key={preset}
+                                            type="button"
+                                            onClick={() => {
+                                                const next: Record<string, number> = {};
+                                                visibleSalesPersonnel.forEach(p => { next[p.employee_id] = preset; });
+                                                setTargetBulkAmounts(next);
+                                            }}
+                                            className="px-2 py-1 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/60 text-[10px] font-bold cursor-pointer"
+                                        >
+                                            Tất cả {new Intl.NumberFormat("vi-VN").format(preset)}đ
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            <div className="max-h-[340px] overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800/70 bg-slate-950/60">
+                                {visibleSalesPersonnel.map((p, idx) => {
+                                    const val = targetBulkAmounts[p.employee_id] ?? 0;
+                                    return (
+                                        <div key={p.employee_id} className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-slate-900/50">
+                                            <div className="min-w-0">
+                                                <div className="text-xs font-bold text-white truncate">
+                                                    {idx + 1}. {p.full_name} <span className="text-[10px] font-mono text-slate-400">({p.employee_id})</span>
+                                                </div>
+                                                {val > 0 && (
+                                                    <div className="text-[10px] text-emerald-400 font-mono">
+                                                        {new Intl.NumberFormat("vi-VN").format(val)}đ
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="any"
+                                                placeholder="Nhập chỉ tiêu (VNĐ)..."
+                                                value={val || ""}
+                                                onChange={(e) => {
+                                                    const num = Number(e.target.value) || 0;
+                                                    setTargetBulkAmounts(prev => ({ ...prev, [p.employee_id]: num }));
+                                                }}
+                                                className="w-48 bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs text-right text-white font-mono font-bold"
+                                            />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
 
                     <div className="pt-2 border-t border-slate-800 flex justify-end gap-2">
                         <button
                             type="button"
                             onClick={() => setIsTargetModalOpen(false)}
-                            className="bg-slate-850 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg font-bold text-xs"
+                            className="bg-slate-850 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg font-bold text-xs cursor-pointer"
                         >
                             Hủy
                         </button>
                         <button
                             type="submit"
-                            className="bg-indigo-650 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-xs"
+                            className="bg-indigo-650 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-xs cursor-pointer"
                         >
-                            Giao Chỉ Tiêu
+                            {targetAssignMode === "bulk" ? "Lưu Chỉ Tiêu Cả Phòng" : "Giao Chỉ Tiêu"}
                         </button>
                     </div>
                 </form>
