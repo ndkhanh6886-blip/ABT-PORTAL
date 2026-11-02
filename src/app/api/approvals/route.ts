@@ -356,6 +356,10 @@ export const DEFAULT_APPROVAL_TEMPLATES: ApprovalTemplateSeed[] = [
         required: true,
         options: [
           "Nghỉ phép năm (Có hưởng lương)",
+          "Nghỉ việc riêng (Không hưởng lương)",
+          "Nghỉ ốm / Thai sản / Chế độ BHXH",
+          "Nghỉ chế độ (Kết hôn / Tang chế)",
+          "Làm việc từ xa (Work From Home)",
           "Đi công tác ngoại viện / Tỉnh",
           "Đăng ký Tăng ca (Overtime) sản xuất / kỹ thuật",
           "Nghỉ việc riêng / Nghỉ ốm",
@@ -579,10 +583,10 @@ async function ensureApprovalTables() {
     );
   }
 
-  // Seed 3 realistic enterprise approval requests if table is empty
+  // Seed 3 realistic enterprise approval requests if table is empty and demo seed is enabled
   const countRes = await query(`SELECT COUNT(*)::int AS cnt FROM portal_approval_requests`);
   const existingCount = Number(countRes.rows[0]?.cnt || 0);
-  if (existingCount === 0) {
+  if (existingCount === 0 && process.env.FACTORY_ALLOW_DEMO_SEED === "1") {
     const nowIso = new Date().toISOString();
     const due24h = new Date(Date.now() + 24 * 3600 * 1000).toISOString();
     const due8h = new Date(Date.now() + 8 * 3600 * 1000).toISOString();
@@ -999,6 +1003,8 @@ export async function GET(req: NextRequest) {
     const enrichedRequests = (reqRes.rows || [])
       .filter((row: any) => {
         if (isBoss) return true;
+        // Cho phép toàn công ty & Kế toán xem lịch Nghỉ phép / Công tác (HR_LEAVE_TRIP) để phối hợp bàn giao & chấm công tháng
+        if (row.template_code === "HR_LEAVE_TRIP" || row.category === "HR") return true;
         if (sameStaffName(row.requester_name, myName) || String(row.requester_username || "").toLowerCase() === myUsername) return true;
         if (isSameWorkspaceDept(row.requester_dept, me.department)) return true;
         const stages = Array.isArray(row.approval_stages) ? row.approval_stages : [];

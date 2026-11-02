@@ -138,11 +138,17 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
   const { showToast, notifyActivity } = useNotification();
 
   const [inboxTab, setInboxTab] = useState<
-    "PENDING_ME" | "MY_REQUESTS" | "ALL_VISIBLE" | "COMPLETED" | "TEMPLATES"
+    "PENDING_ME" | "MY_REQUESTS" | "ALL_VISIBLE" | "COMPLETED" | "LEAVE_TRACKER" | "TEMPLATES"
   >("PENDING_ME");
   const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
   const [searchQ, setSearchQ] = useState<string>("");
   const debouncedQ = useDebouncedValue(searchQ, 300);
+
+  // Bộ lọc chuyên biệt cho Tab "🏖️ Nghỉ phép & Chấm công tháng"
+  const [leaveMonthFilter, setLeaveMonthFilter] = useState<string>(() => vnToday().slice(0, 7));
+  const [leaveDeptFilter, setLeaveDeptFilter] = useState<string>("all");
+  const [leaveTypeFilter, setLeaveTypeFilter] = useState<string>("all");
+  const [leaveStatusFilter, setLeaveStatusFilter] = useState<string>("all");
 
   const [loading, setLoading] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -287,6 +293,10 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
           initFields[f.key] = "";
         }
       });
+    }
+    if (code === "HR_LEAVE_TRIP") {
+      initFields.total_days_or_hours = initFields.total_days_or_hours || "1";
+      setTitle(`Xin nghỉ phép — ${currentUser?.full_name || "Nhân viên"} (${vnToday()})`);
     }
     setFormData(initFields);
     setLineItems([{ description: "", unit: "Bộ", qty: "1", unit_price: "0", note: "" }]);
@@ -441,6 +451,25 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
         delegate: `Đã ủy quyền duyệt sang ${delegateTargetName}`,
       };
       showToast(`${actionLabels[actionType]} (${selectedReq.request_code})!`, "success");
+      if (
+        actionType === "approve" &&
+        (selectedReq.template_code === "HR_LEAVE_TRIP" || selectedReq.category === "HR") &&
+        data.request?.status === "APPROVED"
+      ) {
+        const fd = selectedReq.form_data || {};
+        const lType = String(fd.hr_sub_type || "Nghỉ phép");
+        const fDate = String(fd.from_date || "");
+        const tDate = String(fd.to_date || fDate);
+        const tDays = String(fd.total_days_or_hours || "1");
+        const handover = String(fd.handover_person || "Theo phân công phòng ban");
+        const allStaffNames = staffDirectory.map((u: any) => u.full_name).filter(Boolean);
+        notifyActivity({
+          title: `🏖️ THÔNG BÁO NGHỈ PHÉP [${selectedReq.request_code}]: ${selectedReq.requester_name} (${selectedReq.requester_dept}) — ${tDays} ngày (${fDate}${tDate && tDate !== fDate ? ` → ${tDate}` : ""})`,
+          message: `Loại: ${lType} • Người nhận bàn giao công việc: ${handover}`,
+          category: "WORKFLOW",
+          targetStaffNames: allStaffNames,
+        });
+      }
       setDecisionNote("");
       setShowDelegateBox(false);
       await loadData();
@@ -888,6 +917,239 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
 
   const requestsPage = usePaged(filteredRequests, 20);
 
+  // =====================================================================
+  // BẢNG LỊCH NGHỈ PHÉP TOÀN CÔNG TY & TỔNG HỢP CHẤM CÔNG THÁNG (CHO KẾ TOÁN)
+  // =====================================================================
+  const allLeaveRequests = useMemo(() => {
+    return requests.filter(
+      (r) =>
+        r.template_code === "HR_LEAVE_TRIP" ||
+        r.category === "HR" ||
+        Boolean(r.form_data?.hr_sub_type || r.form_data?.leaveType)
+    );
+  }, [requests]);
+
+  const monthlyLeaveRequests = useMemo(() => {
+    const ym = leaveMonthFilter || vnToday().slice(0, 7);
+    const monthStart = `${ym}-01`;
+    const monthEnd = `${ym}-31`;
+    return allLeaveRequests.filter((r) => {
+      const fd = r.form_data || {};
+      const fDate = String(fd.from_date || fd.fromDate || r.created_at || "").slice(0, 10);
+      const tDate = String(fd.to_date || fd.toDate || fDate).slice(0, 10);
+      const overlapsMonth =
+        fDate.startsWith(ym) ||
+        tDate.startsWith(ym) ||
+        (fDate <= monthEnd && tDate >= monthStart);
+      if (!overlapsMonth) return false;
+      if (leaveDeptFilter !== "all" && !isSameWorkspaceDept(r.requester_dept, leaveDeptFilter)) {
+        return false;
+      }
+      const lType = String(fd.hr_sub_type || fd.leaveType || "");
+      if (leaveTypeFilter !== "all" && lType !== leaveTypeFilter) return false;
+      if (leaveStatusFilter !== "all" && r.status !== leaveStatusFilter) return false;
+      if (debouncedQ.trim()) {
+        const q = debouncedQ.trim().toLowerCase();
+        const hay = `${r.request_code} ${r.title} ${r.requester_name} ${r.requester_dept} ${lType} ${fd.handover_person || ""} ${r.justification || ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [allLeaveRequests, leaveMonthFilter, leaveDeptFilter, leaveTypeFilter, leaveStatusFilter, debouncedQ]);
+
+  const todayLeaveRequests = useMemo(() => {
+    const today = vnToday();
+    return allLeaveRequests.filter((r) => {
+      if (r.status === "REJECTED" || r.status === "WITHDRAWN") return false;
+      const fd = r.form_data || {};
+      const fDate = String(fd.from_date || fd.fromDate || "").slice(0, 10);
+      const tDate = String(fd.to_date || fd.toDate || fDate).slice(0, 10);
+      return fDate && fDate <= today && (tDate || fDate) >= today;
+    });
+  }, [allLeaveRequests]);
+
+  const leaveSummaryByStaff = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        staffName: string;
+        dept: string;
+        totalRequests: number;
+        approvedCount: number;
+        pendingCount: number;
+        paidLeaveDays: number;
+        unpaidLeaveDays: number;
+        bhxhOrPolicyDays: number;
+        wfhOrTripDays: number;
+        totalDaysOff: number;
+        handoverPartners: Set<string>;
+      }
+    >();
+
+    for (const r of monthlyLeaveRequests) {
+      if (r.status === "REJECTED" || r.status === "WITHDRAWN") continue;
+      const key = r.requester_name || "Nhân sự";
+      if (!map.has(key)) {
+        map.set(key, {
+          staffName: key,
+          dept: r.requester_dept || "—",
+          totalRequests: 0,
+          approvedCount: 0,
+          pendingCount: 0,
+          paidLeaveDays: 0,
+          unpaidLeaveDays: 0,
+          bhxhOrPolicyDays: 0,
+          wfhOrTripDays: 0,
+          totalDaysOff: 0,
+          handoverPartners: new Set<string>(),
+        });
+      }
+      const row = map.get(key)!;
+      row.totalRequests += 1;
+      if (r.status === "APPROVED") row.approvedCount += 1;
+      else row.pendingCount += 1;
+
+      const fd = r.form_data || {};
+      const rawDays = parseFloat(String(fd.total_days_or_hours || fd.totalDays || "1").replace(",", "."));
+      let days = Number.isFinite(rawDays) && rawDays > 0 ? rawDays : 1;
+      const fDate = String(fd.from_date || fd.fromDate || "").slice(0, 10);
+      const tDate = String(fd.to_date || fd.toDate || "").slice(0, 10);
+      if ((!fd.total_days_or_hours || Number(fd.total_days_or_hours) <= 0) && fDate && tDate && tDate >= fDate) {
+        const diff = Math.round((new Date(tDate).getTime() - new Date(fDate).getTime()) / 86400000) + 1;
+        if (diff > 0 && diff <= 60) days = diff;
+      }
+
+      const lType = String(fd.hr_sub_type || fd.leaveType || "").toLowerCase();
+      if (lType.includes("không hưởng lương") || lType.includes("việc riêng")) {
+        row.unpaidLeaveDays += days;
+        row.totalDaysOff += days;
+      } else if (lType.includes("ốm") || lType.includes("bhxh") || lType.includes("thai sản") || lType.includes("chế độ")) {
+        row.bhxhOrPolicyDays += days;
+        row.totalDaysOff += days;
+      } else if (lType.includes("từ xa") || lType.includes("work from home") || lType.includes("wfh") || lType.includes("công tác")) {
+        row.wfhOrTripDays += days;
+      } else {
+        row.paidLeaveDays += days;
+        row.totalDaysOff += days;
+      }
+
+      const hp = String(fd.handover_person || fd.handoverStaff || "").trim();
+      if (hp) row.handoverPartners.add(hp);
+    }
+
+    return Array.from(map.values()).sort((a, b) => b.totalDaysOff - a.totalDaysOff);
+  }, [monthlyLeaveRequests]);
+
+  const handleExportMonthlyLeaveCSV = () => {
+    const ym = leaveMonthFilter || vnToday().slice(0, 7);
+    const lines: string[] = [];
+    const escCSV = (val: unknown) => `"${String(val ?? "").replace(/"/g, '""')}"`;
+
+    lines.push(
+      [
+        "BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP THÁNG",
+        `Tháng ${ym}`,
+        `Xuất lúc: ${vnToday()}`,
+      ]
+        .map(escCSV)
+        .join(",")
+    );
+    lines.push("");
+    lines.push(["I. TỔNG HỢP SỐ NGÀY NGHỈ THEO NHÂN VIÊN (DÙNG CHO KẾ TOÁN TÍNH LƯƠNG / CHẤM CÔNG)"].map(escCSV).join(","));
+    lines.push(
+      [
+        "STT",
+        "Họ và tên Nhân viên",
+        "Phòng ban",
+        "Số đơn trong tháng",
+        "Đã duyệt",
+        "Chờ duyệt",
+        "Nghỉ phép năm có lương (Ngày)",
+        "Nghỉ việc riêng không lương (Ngày)",
+        "Nghỉ ốm / BHXH / Chế độ (Ngày)",
+        "Làm việc từ xa WFH / Công tác (Ngày)",
+        "TỔNG NGÀY NGHỈ TRỰC TIẾP",
+        "Nhân sự nhận bàn giao",
+      ]
+        .map(escCSV)
+        .join(",")
+    );
+
+    leaveSummaryByStaff.forEach((s, idx) => {
+      lines.push(
+        [
+          idx + 1,
+          s.staffName,
+          s.dept,
+          s.totalRequests,
+          s.approvedCount,
+          s.pendingCount,
+          s.paidLeaveDays,
+          s.unpaidLeaveDays,
+          s.bhxhOrPolicyDays,
+          s.wfhOrTripDays,
+          s.totalDaysOff,
+          Array.from(s.handoverPartners).join("; "),
+        ]
+          .map(escCSV)
+          .join(",")
+      );
+    });
+
+    lines.push("");
+    lines.push(["II. CHI TIẾT TỪNG ĐƠN XIN NGHỈ PHÉP TRONG THÁNG"].map(escCSV).join(","));
+    lines.push(
+      [
+        "STT",
+        "Mã đơn",
+        "Họ tên nhân viên",
+        "Phòng ban",
+        "Loại hình nghỉ",
+        "Nghỉ từ ngày",
+        "Đến hết ngày",
+        "Tổng số ngày",
+        "Người nhận bàn giao công việc",
+        "Lý do chi tiết",
+        "Trạng thái phê duyệt",
+      ]
+        .map(escCSV)
+        .join(",")
+    );
+
+    monthlyLeaveRequests.forEach((r, idx) => {
+      const fd = r.form_data || {};
+      lines.push(
+        [
+          idx + 1,
+          r.request_code,
+          r.requester_name,
+          r.requester_dept,
+          fd.hr_sub_type || "Nghỉ phép",
+          fd.from_date || "",
+          fd.to_date || "",
+          fd.total_days_or_hours || "1",
+          fd.handover_person || "",
+          r.justification || r.title || "",
+          STATUS_META[r.status]?.label || r.status,
+        ]
+          .map(escCSV)
+          .join(",")
+      );
+    });
+
+    const csvContent = "\uFEFF" + lines.join("\r\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `Bang_Cham_Cong_Nghi_Phep_ABT_Thang_${ym}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`Đã xuất file Excel (CSV) Bảng chấm công nghỉ phép tháng ${ym}!`, "success");
+  };
+
   return (
     <div className="space-y-4">
       {/* =====================================================================
@@ -910,6 +1172,15 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
           </div>
 
           <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={() => openCreateModal("HR_LEAVE_TRIP")}
+              title="Lập nhanh Đơn Xin Nghỉ Phép / Nghỉ Việc Riêng — Tự động thông báo bàn giao & tổng hợp chấm công tháng cho Kế toán"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-extrabold bg-teal-600 hover:bg-teal-700 text-white shadow-sm shadow-teal-500/20 transition-all cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>🏖️ + Xin Nghỉ Phép</span>
+            </button>
             <button
               type="button"
               onClick={() => openCreateModal()}
@@ -1032,6 +1303,12 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                 label: `✅ Đã xử lý (${
                   requests.filter((r) => ["APPROVED", "REJECTED", "WITHDRAWN"].includes(r.status)).length
                 })`,
+              },
+              {
+                id: "LEAVE_TRACKER" as const,
+                label: `🏖️ Nghỉ phép & Chấm công tháng (${monthlyLeaveRequests.length})${
+                  todayLeaveRequests.length > 0 ? ` • ${todayLeaveRequests.length} nghỉ hôm nay` : ""
+                }`,
               },
               {
                 id: "TEMPLATES" as const,
@@ -1223,6 +1500,301 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                   </div>
                 );
               })}
+          </div>
+        </div>
+      ) : inboxTab === "LEAVE_TRACKER" ? (
+        /* =====================================================================
+           2B. BẢNG THEO DÕI NGHỈ PHÉP TOÀN CÔNG TY & TỔNG HỢP CHẤM CÔNG THÁNG
+           ===================================================================== */
+        <div className="space-y-4">
+          <div className="bg-white dark:bg-slate-900 border border-teal-200 dark:border-teal-800/80 rounded-2xl p-4 shadow-xs space-y-3">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-0.5 rounded-lg text-[11px] font-black bg-teal-600 text-white">
+                    🏖️ LỊCH NGHỈ PHÉP &amp; CHẤM CÔNG THÁNG
+                  </span>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white uppercase">
+                    Theo dõi Nghỉ phép Toàn công ty &amp; Bảng Tổng hợp Chấm công Cuối tháng
+                  </h3>
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Toàn bộ nhân sự cùng nắm rõ lịch đồng nghiệp vắng mặt và <strong>người nhận bàn giao công việc thay thế</strong>; Phòng Kế toán - Hành chính tự động tổng hợp số ngày nghỉ có lương / không lương / BHXH và xuất Excel chấm công cuối tháng chỉ với 1 click.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleExportMonthlyLeaveCSV}
+                  className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-indigo-600 hover:bg-indigo-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>📥 Xuất Excel Chấm Công Tháng ({leaveMonthFilter})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openCreateModal("HR_LEAVE_TRIP")}
+                  className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-teal-600 hover:bg-teal-700 text-white shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>🏖️ + Tạo Đơn Xin Nghỉ Phép</span>
+                </button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                  📅 Tháng chấm công
+                </label>
+                <input
+                  type="month"
+                  value={leaveMonthFilter}
+                  onChange={(e) => setLeaveMonthFilter(e.target.value)}
+                  className="w-full px-3 py-1.5 rounded-xl text-xs font-bold border border-teal-300 dark:border-teal-700 bg-teal-50/40 dark:bg-teal-950/30 text-slate-800 dark:text-slate-100"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                  🏢 Phòng ban
+                </label>
+                <select
+                  value={leaveDeptFilter}
+                  onChange={(e) => setLeaveDeptFilter(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                >
+                  <option value="all">🏢 Toàn công ty (Tất cả phòng ban)</option>
+                  {["Kinh Doanh", "Application", "Kỹ Thuật", "Sản Xuất", "QA/QC", "Cung Ứng", "Kế Toán", "Pháp Chế", "Kho & Vận Hành"].map((d) => (
+                    <option key={d} value={d}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                  🏷️ Loại hình nghỉ
+                </label>
+                <select
+                  value={leaveTypeFilter}
+                  onChange={(e) => setLeaveTypeFilter(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                >
+                  <option value="all">Tất cả loại hình nghỉ</option>
+                  <option value="Nghỉ phép năm (Có hưởng lương)">Nghỉ phép năm (Có hưởng lương)</option>
+                  <option value="Nghỉ việc riêng (Không hưởng lương)">Nghỉ việc riêng (Không hưởng lương)</option>
+                  <option value="Nghỉ ốm / Thai sản / Chế độ BHXH">Nghỉ ốm / Thai sản / Chế độ BHXH</option>
+                  <option value="Nghỉ chế độ (Kết hôn / Tang chế)">Nghỉ chế độ (Kết hôn / Tang chế)</option>
+                  <option value="Làm việc từ xa (Work From Home)">Làm việc từ xa (Work From Home)</option>
+                  <option value="Đi công tác ngoại viện / Tỉnh">Đi công tác ngoại viện / Tỉnh</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">
+                  ⚡ Trạng thái duyệt
+                </label>
+                <select
+                  value={leaveStatusFilter}
+                  onChange={(e) => setLeaveStatusFilter(e.target.value)}
+                  className="w-full px-2.5 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                >
+                  <option value="all">Mọi trạng thái duyệt</option>
+                  <option value="APPROVED">✅ Đã duyệt chính thức</option>
+                  <option value="PENDING">⏳ Đang chờ duyệt</option>
+                  <option value="REJECTED">❌ Đã từ chối</option>
+                </select>
+              </div>
+            </div>
+
+            {todayLeaveRequests.length > 0 && (
+              <div className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div className="text-xs font-bold text-amber-900 dark:text-amber-200">
+                  📌 Hôm nay ({vnToday()}) có{" "}
+                  <span className="px-1.5 py-0.5 rounded bg-amber-600 text-white font-black">
+                    {todayLeaveRequests.length} nhân sự
+                  </span>{" "}
+                  đăng ký nghỉ phép / công tác:
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {todayLeaveRequests.map((tp) => (
+                    <span
+                      key={tp.id}
+                      onClick={() => setSelectedReq(tp)}
+                      className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[11px] font-bold text-slate-800 dark:text-slate-200 cursor-pointer hover:border-teal-500"
+                    >
+                      👤 {tp.requester_name} ({tp.requester_dept}) • Bàn giao:{" "}
+                      <strong className="text-teal-700 dark:text-teal-300">
+                        {tp.form_data?.handover_person || "—"}
+                      </strong>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* BẢNG 1: TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP THEO NHÂN VIÊN */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2 bg-slate-50/70 dark:bg-slate-950/60">
+              <div>
+                <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase">
+                  📊 I. Bảng Tổng Hợp Ngày Nghỉ Theo Nhân Sự Trong Tháng {leaveMonthFilter} (Phục Vụ Kế Toán Chấm Công &amp; Tính Lương)
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Tự động cộng dồn số ngày nghỉ phép năm hưởng lương, nghỉ không lương, nghỉ chế độ BHXH và làm việc từ xa/công tác.
+                </p>
+              </div>
+              <span className="text-[11px] font-bold text-teal-700 dark:text-teal-300 bg-teal-50 dark:bg-teal-950/60 px-2.5 py-1 rounded-lg border border-teal-200 dark:border-teal-800">
+                {leaveSummaryByStaff.length} nhân sự phát sinh đơn trong tháng
+              </span>
+            </div>
+
+            {leaveSummaryByStaff.length === 0 ? (
+              <div className="p-6 text-center text-xs text-slate-500">
+                Chưa có nhân sự nào phát sinh đơn nghỉ phép trong tháng <strong>{leaveMonthFilter}</strong>.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-100/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 text-[11px] uppercase">
+                      <th className="py-2.5 px-3 font-bold">#</th>
+                      <th className="py-2.5 px-3 font-bold">Nhân viên</th>
+                      <th className="py-2.5 px-3 font-bold">Phòng ban</th>
+                      <th className="py-2.5 px-3 font-bold text-center">Số đơn (Duyệt/Chờ)</th>
+                      <th className="py-2.5 px-3 font-bold text-center text-emerald-700 dark:text-emerald-400">
+                        Phép năm có lương
+                      </th>
+                      <th className="py-2.5 px-3 font-bold text-center text-rose-700 dark:text-rose-400">
+                        Nghỉ không lương
+                      </th>
+                      <th className="py-2.5 px-3 font-bold text-center text-indigo-700 dark:text-indigo-400">
+                        Ốm / BHXH / Chế độ
+                      </th>
+                      <th className="py-2.5 px-3 font-bold text-center text-sky-700 dark:text-sky-400">
+                        Làm từ xa (WFH) / Công tác
+                      </th>
+                      <th className="py-2.5 px-3 font-bold text-center bg-amber-50/70 dark:bg-amber-950/30">
+                        TỔNG NGÀY NGHỈ
+                      </th>
+                      <th className="py-2.5 px-3 font-bold">Nhân sự nhận bàn giao</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {leaveSummaryByStaff.map((row, idx) => (
+                      <tr key={row.staffName} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                        <td className="py-2.5 px-3 font-mono text-slate-400">{idx + 1}</td>
+                        <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-white">{row.staffName}</td>
+                        <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300">{row.dept}</td>
+                        <td className="py-2.5 px-3 text-center">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">{row.totalRequests}</span>{" "}
+                          <span className="text-[10px] text-slate-500">
+                            ({row.approvedCount} duyệt / {row.pendingCount} chờ)
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono font-bold text-emerald-700 dark:text-emerald-400">
+                          {row.paidLeaveDays > 0 ? `${row.paidLeaveDays} ngày` : "—"}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono font-bold text-rose-700 dark:text-rose-400">
+                          {row.unpaidLeaveDays > 0 ? `${row.unpaidLeaveDays} ngày` : "—"}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono font-bold text-indigo-700 dark:text-indigo-400">
+                          {row.bhxhOrPolicyDays > 0 ? `${row.bhxhOrPolicyDays} ngày` : "—"}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono font-bold text-sky-700 dark:text-sky-400">
+                          {row.wfhOrTripDays > 0 ? `${row.wfhOrTripDays} ngày` : "—"}
+                        </td>
+                        <td className="py-2.5 px-3 text-center font-mono font-black text-amber-800 dark:text-amber-300 bg-amber-50/50 dark:bg-amber-950/20">
+                          {row.totalDaysOff} ngày
+                        </td>
+                        <td className="py-2.5 px-3 text-slate-700 dark:text-slate-300">
+                          {Array.from(row.handoverPartners).join(", ") || "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* BẢNG 2: DANH SÁCH CHI TIẾT CÁC ĐƠN XIN NGHỈ PHÉP TRONG THÁNG */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
+            <div className="px-4 py-3 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2 bg-slate-50/70 dark:bg-slate-950/60">
+              <div>
+                <h4 className="text-xs font-black text-slate-800 dark:text-slate-200 uppercase">
+                  📋 II. Danh Sách Chi Tiết Các Đơn Xin Nghỉ Phép &amp; Bàn Giao Công Việc Tháng {leaveMonthFilter}
+                </h4>
+                <p className="text-[11px] text-slate-500">
+                  Nhấp vào bất kỳ dòng nào để xem chi tiết, phê duyệt hoặc in đơn.
+                </p>
+              </div>
+            </div>
+
+            {monthlyLeaveRequests.length === 0 ? (
+              <div className="p-8 text-center text-xs text-slate-500">
+                Không có đơn nghỉ phép nào khớp với bộ lọc trong tháng {leaveMonthFilter}.
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-100/80 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700 text-[11px] uppercase">
+                      <th className="py-2.5 px-3 font-bold">Mã đơn</th>
+                      <th className="py-2.5 px-3 font-bold">Nhân sự xin nghỉ</th>
+                      <th className="py-2.5 px-3 font-bold">Loại hình nghỉ</th>
+                      <th className="py-2.5 px-3 font-bold">Thời gian nghỉ</th>
+                      <th className="py-2.5 px-3 font-bold text-center">Số ngày</th>
+                      <th className="py-2.5 px-3 font-bold">Người nhận bàn giao</th>
+                      <th className="py-2.5 px-3 font-bold">Lý do / Ghi chú</th>
+                      <th className="py-2.5 px-3 font-bold">Trạng thái duyệt</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {monthlyLeaveRequests.map((r) => {
+                      const stMeta = STATUS_META[r.status] || STATUS_META.PENDING;
+                      const fd = r.form_data || {};
+                      return (
+                        <tr
+                          key={r.id}
+                          onClick={() => setSelectedReq(r)}
+                          className="hover:bg-teal-50/40 dark:hover:bg-slate-800/50 cursor-pointer transition-colors"
+                        >
+                          <td className="py-2.5 px-3 font-mono font-black text-teal-700 dark:text-teal-300">
+                            {r.request_code}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <div className="font-bold text-slate-900 dark:text-white">{r.requester_name}</div>
+                            <div className="text-[10px] text-slate-500">{r.requester_dept}</div>
+                          </td>
+                          <td className="py-2.5 px-3 font-semibold text-slate-800 dark:text-slate-200">
+                            {fd.hr_sub_type || "Nghỉ phép"}
+                          </td>
+                          <td className="py-2.5 px-3 font-mono text-[11px] text-slate-700 dark:text-slate-300">
+                            {fd.from_date || "—"} → {fd.to_date || fd.from_date || "—"}
+                          </td>
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded-lg bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-mono font-black">
+                              {fd.total_days_or_hours || "1"} ngày
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-3 font-bold text-teal-700 dark:text-teal-300">
+                            🤝 {fd.handover_person || "—"}
+                          </td>
+                          <td className="py-2.5 px-3 text-slate-600 dark:text-slate-300 max-w-xs truncate">
+                            {r.justification || r.title}
+                          </td>
+                          <td className="py-2.5 px-3">
+                            <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${stMeta.cls}`}>
+                              {stMeta.label}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         </div>
       ) : (
@@ -1601,16 +2173,38 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                         />
                       ) : (
-                        <input
-                          type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"}
-                          required={field.required}
-                          placeholder={field.placeholder || ""}
-                          value={formData[field.key] || ""}
-                          onChange={(e) =>
-                            setFormData((prev) => ({ ...prev, [field.key]: e.target.value }))
-                          }
-                          className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
-                        />
+                        <>
+                          <input
+                            type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"}
+                            list={field.key === "handover_person" ? "abt-staff-handover-datalist" : undefined}
+                            required={field.required}
+                            placeholder={field.placeholder || ""}
+                            value={formData[field.key] || ""}
+                            onChange={(e) => {
+                              const newVal = e.target.value;
+                              setFormData((prev) => {
+                                const next: Record<string, string> = { ...prev, [field.key]: newVal };
+                                if (field.key === "from_date" || field.key === "to_date") {
+                                  const fd = field.key === "from_date" ? newVal : next["from_date"];
+                                  const td = field.key === "to_date" ? newVal : next["to_date"];
+                                  if (fd && td && td >= fd) {
+                                    const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
+                                    next["total_days_or_hours"] = String(Math.max(1, diff));
+                                  }
+                                }
+                                return next;
+                              });
+                            }}
+                            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+                          />
+                          {field.key === "handover_person" && (
+                            <datalist id="abt-staff-handover-datalist">
+                              {staffDirectory.map((u: any) => (
+                                <option key={u.username || u.full_name} value={u.full_name} />
+                              ))}
+                            </datalist>
+                          )}
+                        </>
                       )}
                     </div>
                   ))}
