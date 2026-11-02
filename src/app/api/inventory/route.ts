@@ -5,7 +5,7 @@ import { setImportedLoginName } from "@/backend/services/accountImport";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
-import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { todayVN, toVNDateString, normalizeExcelDateToISO } from "@/backend/services/dates";
 
 /** Stock-changing actions and the permissions allowed to run them. */
 const WRITE_PERMISSIONS: Record<string, string[]> = {
@@ -505,7 +505,7 @@ export async function POST(req: NextRequest) {
             code,
             "INBOUND",
             reference_code || vat_invoice_no || "N/A",
-            date || todayVN(),
+            normalizeExcelDateToISO(date, todayVN()),
             performed_by || "Thủ kho ABT",
             warehouse_name || "Kho Trung Tâm",
             JSON.stringify(items || []),
@@ -555,13 +555,14 @@ export async function POST(req: NextRequest) {
           });
 
           // H2: lot-aware upsert (no more overwriting lot_number / expiry_date of existing stock)
+          const rawItemExp = item.expiry_date || item.expiryDate || "";
           await addStock(c, {
             productCode: pCode,
             productName: item.product_name || item.name || pCode,
             productId: prodId,
             qty: Number(item.quantity) || 0,
             lotNumber: item.lot_number || item.lotNumber || null,
-            expiryDate: item.expiry_date || item.expiryDate || null,
+            expiryDate: rawItemExp ? (normalizeExcelDateToISO(rawItemExp, String(rawItemExp).trim()) || null) : null,
             location: item.storage_location || warehouse_name || null,
             shelf: item.shelf_position || null,
             unitCost: Number(item.cost_price) || Number(item.unit_price) || 0,
@@ -607,7 +608,7 @@ export async function POST(req: NextRequest) {
         await c.query(
           `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [code, "OUTBOUND", reference_code, date || todayVN(), performed_by || "Thủ kho ABT", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
+          [code, "OUTBOUND", reference_code, normalizeExcelDateToISO(date, todayVN()), performed_by || "Thủ kho ABT", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
         );
       });
 
@@ -642,7 +643,7 @@ export async function POST(req: NextRequest) {
             shelf_position ?? null,
             warehouse_location ?? null,
             lot_number !== undefined ? String(lot_number).trim() : null,
-            expiry_date !== undefined ? String(expiry_date).trim() : null,
+            expiry_date !== undefined ? normalizeExcelDateToISO(expiry_date, String(expiry_date).trim()) : null,
             product_code
           ]
         );
@@ -664,7 +665,7 @@ export async function POST(req: NextRequest) {
 
         const targetOldLot = old_lot_number ? String(old_lot_number).trim() : "";
         const newLot = lot_number !== undefined ? (String(lot_number).trim() || "NO-LOT") : null;
-        const newExp = expiry_date !== undefined ? (String(expiry_date).trim() || null) : null;
+        const newExp = expiry_date !== undefined ? (normalizeExcelDateToISO(expiry_date, String(expiry_date).trim()) || null) : null;
         const newLoc = warehouse_location ? String(warehouse_location).trim() : null;
         const newUnitCost = cost_price !== undefined && cost_price !== null && String(cost_price) !== "" ? Number(cost_price) : null;
 
@@ -1179,18 +1180,35 @@ export async function POST(req: NextRequest) {
         const parsedInbound: any[] = [];
         // M2: one atomic code for rows without an explicit "Mã Phiếu Nhập" (was Date.now().slice(-6) per row)
         let batchInboundCode: string | null = null;
+        const [allProductsRes, allBomRes] = await Promise.all([
+          query("SELECT code, name, specification, unit, manufacturer, cost_price, storage_condition FROM products"),
+          query("SELECT * FROM product_components ORDER BY id"),
+        ]);
+        const catalogProdMap = new Map<string, any>();
+        for (const pr of allProductsRes.rows) {
+          if (pr.code) catalogProdMap.set(String(pr.code).trim().toLowerCase(), pr);
+        }
+        const bomByParentMap = new Map<string, any[]>();
+        for (const bc of allBomRes.rows) {
+          const pk = String(bc.parent_product_code || "").trim().toUpperCase();
+          if (!pk) continue;
+          const arr = bomByParentMap.get(pk) || [];
+          arr.push(bc);
+          bomByParentMap.set(pk, arr);
+        }
+
         for (const r of rows) {
           const getVal = createGetVal(r);
           const pCode = getVal(["Mã SP", "Mã sản phẩm (*)", "Mã sản phẩm", "Mã hàng", "Mã SKU (*)", "Mã SKU", "product_code", "sku", "code"]);
-          const catalogProd = pCode
-            ? (await query("SELECT code, name, specification, unit, manufacturer, cost_price, storage_condition FROM products WHERE LOWER(TRIM(code)) = LOWER(TRIM($1)) LIMIT 1", [pCode])).rows[0]
-            : null;
+          const catalogProd = pCode ? catalogProdMap.get(pCode.trim().toLowerCase()) || null : null;
           const pName = getVal(["Tên hàng hóa / Sinh phẩm (*)", "Tên sản phẩm (*)", "Tên hàng hóa", "Tên sản phẩm", "Tên SP", "product_name"], catalogProd?.name || pCode);
           const spec = getVal(["Quy cách đóng gói", "Quy cách", "specification"], catalogProd?.specification || "");
           const unit = getVal(["Đơn vị tính", "Đơn vị tính (ĐVT)", "ĐVT", "unit"], catalogProd?.unit || "Hộp");
           const lot = getVal(["Số Lô (Lot)", "Số Lô (LOT) (*)", "Số Lô (LOT)", "Số Lô sản xuất (*)", "Số Lô", "Lô", "Lot", "lot_number"], "LOT-STD");
-          const expDate = getVal(["Hạn dùng (Date)", "Hạn sử dụng (EXP) (*)", "Hạn sử dụng (EXP)", "Hạn sử dụng (*)", "Hạn sử dụng", "Hạn dùng", "Date", "expiry_date"]);
-          const mfgDate = getVal(["Ngày sản xuất (MFG)", "Ngày sản xuất", "mfg_date"]);
+          const rawExpDate = getVal(["Hạn dùng (Date)", "Hạn sử dụng (EXP) (*)", "Hạn sử dụng (EXP)", "Hạn sử dụng (*)", "Hạn sử dụng", "Hạn dùng", "Date", "expiry_date"]);
+          const expDate = normalizeExcelDateToISO(rawExpDate, rawExpDate);
+          const rawMfgDate = getVal(["Ngày sản xuất (MFG)", "Ngày sản xuất", "mfg_date"]);
+          const mfgDate = normalizeExcelDateToISO(rawMfgDate, rawMfgDate);
           const qtyRaw = getVal(["Số lượng", "Số lượng nhập (*)", "Số lượng nhập", "SL", "quantity"]);
           const qty = Number(String(qtyRaw || "0").replace(/[^\d.-]/g, "")) || 0;
           const unitCostRaw = getVal(["Giá trị / Đơn giá đầu kỳ", "Đơn giá đầu kỳ", "Giá đầu kỳ", "Giá trị đầu kỳ", "Đơn giá nhập (VNĐ)", "Đơn giá nhập", "Đơn giá", "Giá vốn", "unit_cost", "cost_price", "unitCost", "costPrice", "price"]);
@@ -1205,7 +1223,8 @@ export async function POST(req: NextRequest) {
             batchInboundCode = batchInboundCode || (await generateDocumentCode({ docType: "PNK", tagMode: "GENERAL" }));
             inboundCode = batchInboundCode;
           }
-          const inboundDate = getVal(["Ngày Nhập Kho (*)", "Ngày Nhập Kho", "date"], todayVN());
+          const rawInboundDate = getVal(["Ngày Nhập Kho (*)", "Ngày Nhập Kho", "Ngày nhập", "inbound_date"], todayVN());
+          const inboundDate = normalizeExcelDateToISO(rawInboundDate, todayVN());
           const inboundReason = getVal(["Loại hình / Lý do nhập", "Lý do nhập"], "Nhập mua hàng theo PO từ NCC");
           const poCode = getVal(["Mã Đơn Đặt Hàng (PO)", "Mã Đơn Đặt Hàng (PO) Tham Chiếu", "Mã PO", "reference_code"]);
           const vatInvoice = getVal(["Số Hóa Đơn VAT / Tờ khai HQ", "Số Hóa Đơn VAT / Tờ Khai Hải Quan", "Số Hóa Đơn VAT", "vat_invoice_no"]);
@@ -1221,33 +1240,36 @@ export async function POST(req: NextRequest) {
             let itemComponents: any[] = [];
             if (Array.isArray(contact_rows) && contact_rows.length > 0) {
               const matched = contact_rows.filter((cr: any) => {
-                const parentCode = String(cr["Mã sản phẩm chính (*)"] || cr["Mã hàng chính"] || cr["Mã sản phẩm"] || cr["parent_product_code"] || "").trim().toUpperCase();
+                const parentCode = String(cr["Mã sản phẩm chính (*)"] || cr["Mã SKU cha (*)"] || cr["Mã hàng chính"] || cr["Mã sản phẩm"] || cr["parent_product_code"] || "").trim().toUpperCase();
                 const parentLot = String(cr["Số Lô chính (*)"] || cr["Số Lô"] || cr["parent_lot_number"] || "").trim();
                 return parentCode === pCode.toUpperCase() && (!parentLot || parentLot === lot);
               });
               if (matched.length > 0) {
-                itemComponents = matched.map((cr: any) => ({
-                  component_code: cr["Mã thành phần / Phụ kiện (*)"] || cr["Mã thành phần"] || cr["component_code"],
-                  component_name: cr["Tên thành phần / Phụ kiện (*)"] || cr["Tên thành phần"] || cr["component_name"],
-                  specification: cr["Quy cách"] || cr["specification"] || "",
-                  unit: cr["Đơn vị tính"] || cr["ĐVT"] || cr["unit"] || "Cái",
-                  quantity_per_kit: Number(cr["Định mức theo bộ"] || cr["quantity_per_kit"]) || 1,
-                  tracking_type: cr["Hình thức quản lý (LOT/SERIAL)"] || cr["Hình thức quản lý"] || cr["tracking_type"] || "LOT",
-                  lot_number: cr["Số Lô (LOT) / Serial (S/N)"] || cr["Số Lô"] || cr["lot_number"] || lot,
-                  serial_number: cr["Số Serial (S/N)"] || cr["Số Lô (LOT) / Serial (S/N)"] || cr["serial_number"] || "",
-                  expiry_date: cr["Hạn dùng (EXP)"] || cr["expiry_date"] || expDate,
-                  storage_condition: cr["Nhiệt độ bảo quản riêng"] || cr["storage_condition"] || storageCondition,
-                  qc_status: cr["Tình trạng QC"] || cr["qc_status"] || qcStatus,
-                  notes: cr["Ghi chú"] || ""
-                }));
+                itemComponents = matched.map((cr: any) => {
+                  const rawCompExp = cr["Hạn dùng (EXP)"] || cr["expiry_date"] || expDate;
+                  return {
+                    component_code: cr["Mã thành phần / Phụ kiện (*)"] || cr["Mã phụ kiện / Thành phần (*)"] || cr["Mã thành phần"] || cr["Mã phụ kiện"] || cr["component_code"],
+                    component_name: cr["Tên thành phần / Phụ kiện (*)"] || cr["Tên phụ kiện / Thành phần (*)"] || cr["Tên thành phần"] || cr["Tên phụ kiện"] || cr["component_name"],
+                    specification: cr["Quy cách"] || cr["specification"] || "",
+                    unit: cr["Đơn vị tính"] || cr["ĐVT"] || cr["unit"] || "Cái",
+                    quantity_per_kit: Number(cr["Định mức theo bộ (*)"] || cr["Định mức theo bộ"] || cr["quantity_per_kit"]) || 1,
+                    tracking_type: cr["Hình thức quản lý (LOT/SERIAL)"] || cr["Hình thức quản lý"] || cr["tracking_type"] || "LOT",
+                    lot_number: cr["Số Lô (LOT) / Serial (S/N)"] || cr["Số Lô"] || cr["lot_number"] || lot,
+                    serial_number: cr["Số Serial (S/N)"] || cr["Số Lô (LOT) / Serial (S/N)"] || cr["serial_number"] || "",
+                    expiry_date: normalizeExcelDateToISO(rawCompExp, String(rawCompExp || "")),
+                    storage_condition: cr["Nhiệt độ bảo quản riêng"] || cr["Điều kiện bảo quản tiêu chuẩn"] || cr["Điều kiện bảo quản"] || cr["storage_condition"] || storageCondition,
+                    qc_status: cr["Tình trạng QC"] || cr["qc_status"] || qcStatus,
+                    notes: cr["Ghi chú"] || cr["notes"] || ""
+                  };
+                });
               }
             }
 
             // Fallback: If no components provided in Sheet 2, check if pCode has BOM in product_components table
             if (itemComponents.length === 0) {
-              const bomCompsRes = await query("SELECT * FROM product_components WHERE parent_product_code = $1 ORDER BY id", [pCode]);
-              if (bomCompsRes.rows.length > 0) {
-                itemComponents = bomCompsRes.rows.map((bc: any, bIdx: number) => ({
+              const bomComps = bomByParentMap.get(pCode.toUpperCase()) || [];
+              if (bomComps.length > 0) {
+                itemComponents = bomComps.map((bc: any, bIdx: number) => ({
                   component_code: bc.component_code,
                   component_name: bc.component_name,
                   specification: bc.specification || "",
@@ -1363,11 +1385,46 @@ export async function POST(req: NextRequest) {
               await c.query(
                 `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
                  VALUES ($1, 'INBOUND', $2, $3, $4, $5, $6, $7)`,
-                [docCode, doc.reference, doc.date, doc.performedBy, doc.warehouse, JSON.stringify(doc.items), doc.notes.length > 10 ? `${doc.notes.slice(0, 10).join(" | ")} ... (+${doc.notes.length - 10} lô khác)` : doc.notes.join(" | ")]
+                [docCode, doc.reference, normalizeExcelDateToISO(doc.date, todayVN()), doc.performedBy, doc.warehouse, JSON.stringify(doc.items), doc.notes.length > 10 ? `${doc.notes.slice(0, 10).join(" | ")} ... (+${doc.notes.length - 10} lô khác)` : doc.notes.join(" | ")]
               );
             }
             for (const entry of catalogEntries) {
               await appendCommercialCatalogEntry(c, entry);
+            }
+            if (Array.isArray(contact_rows) && contact_rows.length > 0) {
+              for (const cr of contact_rows) {
+                const getCrVal = createGetVal(cr);
+                const parentSku = getCrVal(["Mã sản phẩm chính (*)", "Mã SKU cha (*)", "Mã SKU cha", "Mã hàng chính", "Mã sản phẩm", "parent_product_code"]);
+                const compCode = getCrVal(["Mã thành phần / Phụ kiện (*)", "Mã phụ kiện / Thành phần (*)", "Mã phụ kiện / Thành phần", "Mã phụ kiện", "Mã thành phần", "component_code"]);
+                const compName = getCrVal(["Tên thành phần / Phụ kiện (*)", "Tên phụ kiện / Thành phần (*)", "Tên phụ kiện / Thành phần", "Tên phụ kiện", "Tên thành phần", "component_name"], compCode);
+                if (parentSku && compCode) {
+                  const spec = getCrVal(["Quy cách", "specification"]);
+                  const unit = getCrVal(["Đơn vị tính", "ĐVT", "unit"], "Cái");
+                  const qtyPerKit = Number(getCrVal(["Định mức theo bộ (*)", "Định mức theo bộ", "quantity_per_kit"])) || 1;
+                  const trackingType = getCrVal(["Hình thức quản lý (LOT/SERIAL)", "Hình thức quản lý", "tracking_type"]).toUpperCase().includes("SERIAL") ? "SERIAL" : "LOT";
+                  const storageCond = getCrVal(["Nhiệt độ bảo quản riêng", "Điều kiện bảo quản tiêu chuẩn", "Điều kiện bảo quản", "storage_condition"]);
+                  const compNotes = getCrVal(["Ghi chú", "notes"]);
+                  const existComp = await c.query(
+                    `SELECT id FROM product_components WHERE parent_product_code = $1 AND component_code = $2`,
+                    [parentSku, compCode]
+                  );
+                  if (existComp.rows.length > 0) {
+                    await c.query(
+                      `UPDATE product_components
+                       SET component_name = $1, specification = $2, unit = $3, quantity_per_kit = $4,
+                           tracking_type = $5, storage_condition = $6, notes = $7
+                       WHERE id = $8`,
+                      [compName, spec, unit, qtyPerKit, trackingType, storageCond, compNotes, existComp.rows[0].id]
+                    );
+                  } else {
+                    await c.query(
+                      `INSERT INTO product_components (parent_product_code, component_code, component_name, specification, unit, quantity_per_kit, tracking_type, storage_condition, notes)
+                       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                      [parentSku, compCode, compName, spec, unit, qtyPerKit, trackingType, storageCond, compNotes]
+                    );
+                  }
+                }
+              }
             }
           });
         } catch (e: any) {
@@ -1383,8 +1440,9 @@ export async function POST(req: NextRequest) {
           const getVal = createGetVal(r);
           const poCode = getVal(["Mã đơn PO (*)", "Mã đơn PO", "po_code", "Số PO"]) || autoCode("PO-IMP");
           const supplier = getVal(["Nhà cung cấp (*)", "Nhà cung cấp", "supplier_name", "Tên nhà cung cấp"], "Nhà cung cấp quốc tế");
-          const orderDate = getVal(["Ngày đặt hàng (*)", "Ngày đặt hàng", "order_date"], todayVN());
-          const expDeliv = getVal(["Hạn giao dự kiến (*)", "Hạn giao dự kiến", "expected_delivery_date"]) || null;
+          const orderDate = normalizeExcelDateToISO(getVal(["Ngày đặt hàng (*)", "Ngày đặt hàng", "order_date"], todayVN()), todayVN());
+          const expDelivRaw = getVal(["Hạn giao dự kiến (*)", "Hạn giao dự kiến", "expected_delivery_date"]);
+          const expDeliv = expDelivRaw ? (normalizeExcelDateToISO(expDelivRaw, "") || null) : null;
           const pCode = getVal(["Mã sản phẩm SKU (*)", "Mã sản phẩm SKU", "Mã SKU", "product_code"]);
           const pName = getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "product_name"], pCode);
           const qty = Number(getVal(["Số lượng đặt mua (*)", "Số lượng", "quantity"])) || 1;

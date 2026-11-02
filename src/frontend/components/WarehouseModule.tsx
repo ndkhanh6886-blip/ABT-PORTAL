@@ -59,7 +59,7 @@ import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
-import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDates } from "@/backend/services/dates";
 import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 
 export const WarehouseModule: React.FC = () => {
@@ -1673,7 +1673,7 @@ export const WarehouseModule: React.FC = () => {
         const wb = XLSX.read(bstr, { type: "binary" });
         const wsName = wb.SheetNames[0];
         const ws = wb.Sheets[wsName];
-        const rawJson: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" });
+        const rawJson: any[] = XLSX.utils.sheet_to_json(ws, { defval: "" }).map((r: any) => normalizeExcelRowDates(r));
         setPreviewImportRows(rawJson);
 
         const classification = classifyExcelTemplate(file.name, wb.SheetNames, rawJson[0] || {});
@@ -1709,7 +1709,7 @@ export const WarehouseModule: React.FC = () => {
 
           if (secondarySheetName && secondarySheetName !== wsName) {
             const secWs = wb.Sheets[secondarySheetName];
-            secondaryJson = XLSX.utils.sheet_to_json(secWs, { defval: "" });
+            secondaryJson = XLSX.utils.sheet_to_json(secWs, { defval: "" }).map((r: any) => normalizeExcelRowDates(r));
           }
         }
         setPreviewContactRows(secondaryJson);
@@ -2483,7 +2483,7 @@ export const WarehouseModule: React.FC = () => {
         const wb = XLSX.read(bstr, { type: "binary" });
         const wsName = wb.SheetNames[0];
         const ws = wb.Sheets[wsName];
-        const rawJson: any[] = XLSX.utils.sheet_to_json(ws);
+        const rawJson: any[] = XLSX.utils.sheet_to_json(ws).map((r: any) => normalizeExcelRowDates(r));
 
         if (!rawJson || rawJson.length === 0) {
           alert("File Excel không có dữ liệu hàng hóa");
@@ -2599,7 +2599,7 @@ export const WarehouseModule: React.FC = () => {
               ""
             ).trim() || "LOT-STD";
 
-          const expiry_date = String(
+          const rawExpDate = String(
             r["Hạn dùng (Date)"] ||
             r["Hạn sử dụng (EXP) (*)"] ||
             r["Hạn sử dụng (EXP)"] ||
@@ -2608,10 +2608,12 @@ export const WarehouseModule: React.FC = () => {
             r["expiry_date"] ||
             ""
           ).trim();
+          const expiry_date = normalizeExcelDateToISO(rawExpDate, rawExpDate);
 
-          const manufacture_date = String(
+          const rawMfgDate = String(
             r["Ngày sản xuất (MFG)"] || r["Ngày sản xuất"] || r["mfg_date"] || ""
           ).trim();
+          const manufacture_date = normalizeExcelDateToISO(rawMfgDate, rawMfgDate);
 
           // Không ép mặc định -20°C hoặc Kệ A01 khi người dùng để trống
           const rawTemp = String(

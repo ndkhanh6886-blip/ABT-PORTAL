@@ -1,7 +1,7 @@
 import type { PoolClient } from "pg";
 import { HttpError } from "@/backend/db/db";
 import { appendCatalogEntry } from "@/backend/services/catalogStore";
-import { todayVN } from "@/backend/services/dates";
+import { todayVN, normalizeExcelDateToISO } from "@/backend/services/dates";
 
 /**
  * Inventory ledger (Deep Code Audit H1/H2/H5).
@@ -32,6 +32,8 @@ export const LOT_EXPIRY_ISO_SQL = (col = "expiry_date") => `(CASE
       split_part(regexp_replace(${col}, '[./-]', '/', 'g'), '/', 3) || '-' ||
       lpad(split_part(regexp_replace(${col}, '[./-]', '/', 'g'), '/', 2), 2, '0') || '-' ||
       lpad(split_part(regexp_replace(${col}, '[./-]', '/', 'g'), '/', 1), 2, '0')
+    WHEN trim(${col}) ~ '^\\d{4,5}(?:\\.\\d+)?$' AND trim(${col})::numeric BETWEEN 10000 AND 80000 THEN
+      to_char(DATE '1899-12-30' + floor(trim(${col})::numeric)::int, 'YYYY-MM-DD')
     ELSE NULL END)`;
 const TODAY_VN_SQL = `to_char(now() AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD')`;
 
@@ -223,7 +225,7 @@ export async function addStock(c: Queryable, input: AddStockInput) {
            expiry_date = COALESCE(EXCLUDED.expiry_date, inventory_lots.expiry_date),
            unit_cost = CASE WHEN EXCLUDED.unit_cost > 0 THEN EXCLUDED.unit_cost ELSE COALESCE(inventory_lots.unit_cost, 0) END,
            last_updated = now()`,
-    [code, normLot(input.lotNumber), input.expiryDate || null, location, qty, lotUnitCost]
+    [code, normLot(input.lotNumber), input.expiryDate ? (normalizeExcelDateToISO(input.expiryDate, String(input.expiryDate).trim()) || null) : null, location, qty, lotUnitCost]
   );
   await c.query(
     `UPDATE inventory_items
@@ -410,7 +412,7 @@ export async function reserveStock(c: Queryable, r: ReserveInput): Promise<numbe
     `INSERT INTO inventory_reservations (
        order_code, customer_name, sales_rep_name, product_code, product_name, lot_number, quantity_reserved, hold_until_date, notes, status
      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'ACTIVE') RETURNING id`,
-    [r.orderCode, r.customerName || null, r.salesRepName || null, code, r.productName || code, r.lotNumber || null, qty, r.holdUntil || null, r.notes || null]
+    [r.orderCode, r.customerName || null, r.salesRepName || null, code, r.productName || code, r.lotNumber || null, qty, r.holdUntil ? (normalizeExcelDateToISO(r.holdUntil, "") || null) : null, r.notes || null]
   );
   return ins.rows[0].id;
 }
