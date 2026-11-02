@@ -264,7 +264,7 @@ export const ProcurementModule: React.FC = () => {
 
   // Inline Editing for Delivery Date
   const [editingDeliveryDateId, setEditingDeliveryDateId] = useState<number | null>(null);
-  const [tempDeliveryDate, setTempDeliveryDate] = useState<string>("");
+  const [tempDeliveryDate, setTempDeliveryDate] = useState<string>(() => todayVN());
 
   // Interactive Status & Payment Dropdown Popovers
   const [activeStatusDropdownId, setActiveStatusDropdownId] = useState<number | null>(null);
@@ -1544,7 +1544,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     warehouse_name: "Kho Trung Tâm",
     received_by: "",
     vat_invoice_no: "",
-    vat_invoice_date: "",
+    vat_invoice_date: todayVN(),
     shipping_unit: "",
     inbound_type: "Nhập mua hàng theo Đơn PO từ NCC"
   });
@@ -1613,7 +1613,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       warehouse_name: "Kho Trung Tâm",
       received_by: user?.full_name || user?.username || "Thủ kho ABT",
       vat_invoice_no: "",
-      vat_invoice_date: "",
+      vat_invoice_date: todayVN(),
       shipping_unit: "",
       inbound_type: "Nhập mua hàng theo Đơn PO từ NCC"
     });
@@ -3780,7 +3780,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <button
                                   onClick={() => {
                                     setEditingDeliveryDateId(po.id);
-                                    setTempDeliveryDate(po.expected_delivery_date ? dbDateVN(po.expected_delivery_date) : "");
+                                    setTempDeliveryDate(po.expected_delivery_date ? dbDateVN(po.expected_delivery_date) : todayVN());
                                   }}
                                   title="Chỉnh sửa ngày hẹn giao hàng"
                                   className="p-1 rounded-md text-slate-400 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"

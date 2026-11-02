@@ -5458,7 +5458,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setTaskAssignee(t.assignee_id || "");
         setTaskStatus(t.status);
         setTaskPriority(t.priority);
-        setTaskDueDate(t.due_date ? (/^\d{4}-\d{2}-\d{2}$/.test(String(t.due_date)) ? String(t.due_date) : toVNDateString(t.due_date)) : "");
+        setTaskDueDate(t.due_date ? (/^\d{4}-\d{2}-\d{2}$/.test(String(t.due_date)) ? String(t.due_date) : toVNDateString(t.due_date)) : todayVN());
         setTaskObjective(t.objective || "");
         setTaskMethodology(t.methodology || "");
         setTaskResults(t.results || "");
@@ -12940,7 +12940,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setSingleMfgTargetOrder(req);
         setSingleMfgExcludedKeys({});
         setSingleMfgNotes(req.mfgNotes || req.notes || "");
-        setSingleMfgEstDelivery(req.mfgEstDate || req.estimatedDeliveryDate || req.requestedDeliveryDate || "");
+        setSingleMfgEstDelivery(req.mfgEstDate || req.estimatedDeliveryDate || req.requestedDeliveryDate || todayVN());
         const notesMap: Record<string, string> = {};
         (req.items || []).forEach((it: any) => {
             if (it?.productCode && it?.notes) {

@@ -250,7 +250,7 @@ export const LegalModule: React.FC = () => {
     hospitalName: "",
     packageName: "",
     bidValue: "",
-    submissionDeadline: "",
+    submissionDeadline: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     assignedLawyer: legalLeadName,
     notes: "",
     checklist: {
@@ -813,7 +813,7 @@ export const LegalModule: React.FC = () => {
       hospitalName: "",
       packageName: "",
       bidValue: "",
-      submissionDeadline: "",
+      submissionDeadline: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       assignedLawyer: legalLeadName,
       notes: "",
       checklist: {

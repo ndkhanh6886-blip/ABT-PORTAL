@@ -309,8 +309,8 @@ export const HospitalBiddingManagement: React.FC = () => {
     wonLots: "",
     lostLotsInfo: "",
     decisionNumber: "",
-    decisionDate: "",
-    contractAwardDate: "",
+    decisionDate: todayVN(),
+    contractAwardDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     totalDeliveryCalls: 1,
     winNotes: ""
   });

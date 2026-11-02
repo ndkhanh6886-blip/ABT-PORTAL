@@ -618,7 +618,7 @@ export function ApplicationFullABT() {
 
     // Forms: Equipment Booking
     const [selectedEqId, setSelectedEqId] = useState("");
-    const [bookingDate, setBookingDate] = useState("");
+    const [bookingDate, setBookingDate] = useState(() => todayVN());
     const [bookingTime, setBookingTime] = useState("08:00 - 12:00");
     const [bookingPurpose, setBookingPurpose] = useState("");
 
@@ -2804,6 +2804,7 @@ export function ApplicationFullABT() {
                             <button
                                 onClick={() => {
                                     setNewTaskAssignee(selectedEmployee !== "Tất cả" ? selectedEmployee : (uniqueEmployees[0] || ""));
+                                    setNewTaskDueDate(todayVN());
                                     setIsTaskCreateModalOpen(true);
                                 }}
                                 className="bg-primary hover:bg-primary/90 text-white font-bold text-xs px-3.5 py-2 rounded-xl flex items-center gap-1.5 shadow-sm shadow-primary/20 active:scale-95 transition-all cursor-pointer"
@@ -2816,6 +2817,7 @@ export function ApplicationFullABT() {
                                 <button
                                     onClick={() => {
                                         setSelectedEqId(equipment[0]?.id || "");
+                                        setBookingDate(todayVN());
                                         setIsBookingModalOpen(true);
                                     }}
                                     className="bg-slate-900 border border-white/10 hover:bg-white/5 text-slate-300 font-bold text-xs px-3.5 py-2 rounded-xl flex items-center gap-1.5 active:scale-95 transition-all cursor-pointer"
