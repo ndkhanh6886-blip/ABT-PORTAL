@@ -983,13 +983,14 @@ export function DeliverySlipListView({
                                     ✅ Đã giao
                                   </button>
                                 )}
-                                {st === "PENDING" && onEditSlip && (
+                                {st !== "CANCELLED" && onEditSlip && (
                                   <button
                                     type="button"
                                     onClick={() => onEditSlip(slip)}
                                     className="text-[10px] font-bold bg-sky-800 hover:bg-sky-700 text-white px-1.5 py-0.5 rounded cursor-pointer"
+                                    title="Sửa ngày giao / thông tin phiếu giao hàng"
                                   >
-                                    ✏️
+                                    ✏️ Sửa
                                   </button>
                                 )}
                                 {st !== "CANCELLED" && onCreateRma && (
@@ -1175,6 +1176,16 @@ export function DeliverySlipListView({
                           >
                             <Eye className="w-3 h-3" /> Xem
                           </button>
+                          {st !== "CANCELLED" && onEditSlip && (
+                            <button
+                              type="button"
+                              onClick={() => onEditSlip(slip)}
+                              className="text-[10px] font-bold bg-sky-800 hover:bg-sky-700 text-white px-2 py-1 rounded cursor-pointer flex items-center gap-1"
+                              title="Sửa ngày giao / số lượng / số lô / thông tin phiếu giao hàng"
+                            >
+                              ✏️ Sửa
+                            </button>
+                          )}
                           {st !== "CANCELLED" && onCreateRma && (
                             <button
                               type="button"
