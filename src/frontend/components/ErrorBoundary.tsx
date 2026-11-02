@@ -27,6 +27,20 @@ export class ErrorBoundary extends Component<Props, State> {
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error("Uncaught error in component:", error, errorInfo);
+    const msg = `${error?.name || ""} ${error?.message || ""}`;
+    if (/ChunkLoadError|Failed to load chunk|Loading chunk [\w-]+ failed|Importing a module script failed/i.test(msg)) {
+      try {
+        const lastReload = Number(sessionStorage.getItem("agy_chunk_reload_ts") || "0");
+        if (Date.now() - lastReload > 15000) {
+          sessionStorage.setItem("agy_chunk_reload_ts", String(Date.now()));
+          window.location.reload();
+          return;
+        }
+      } catch {
+        window.location.reload();
+        return;
+      }
+    }
     this.setState({ error, errorInfo });
   }
 
