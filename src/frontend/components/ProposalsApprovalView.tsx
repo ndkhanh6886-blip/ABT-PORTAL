@@ -2284,13 +2284,13 @@ export function ProposalsApprovalView({
               <DateInputVN
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                className="text-xs font-bold bg-transparent text-slate-900 dark:text-white focus:outline-none w-[108px]"
+                className="text-xs font-bold bg-transparent text-slate-900 dark:text-white focus:outline-none w-[114px]"
               />
               <span className="text-slate-400">→</span>
               <DateInputVN
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                className="text-xs font-bold bg-transparent text-slate-900 dark:text-white focus:outline-none w-[108px]"
+                className="text-xs font-bold bg-transparent text-slate-900 dark:text-white focus:outline-none w-[114px]"
               />
               {(fromDate || toDate) && (
                 <button

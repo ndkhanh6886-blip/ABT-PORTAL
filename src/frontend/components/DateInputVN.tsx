@@ -84,7 +84,7 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
                 type="text"
                 inputMode="numeric"
                 autoComplete="off"
-                placeholder={placeholder || "Chọn ngày (dd/mm/yyyy)"}
+                placeholder={placeholder || "dd/mm/yyyy"}
                 value={text}
                 disabled={disabled}
                 required={required}
@@ -100,7 +100,7 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
                     onBlur?.(e);
                 }}
                 onChange={(e) => handleText(e.target.value)}
-                className={`${className} pr-8 cursor-pointer`}
+                className={`${className} pr-6 cursor-pointer`}
             />
             <button
                 type="button"
@@ -108,9 +108,9 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
                 onClick={openPicker}
                 disabled={disabled}
                 title="Bấm để chọn ngày trên lịch"
-                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 rounded-md text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/60 disabled:opacity-40 cursor-pointer"
+                className="absolute right-1 top-1/2 -translate-y-1/2 p-0.5 text-slate-400 hover:text-indigo-500 disabled:opacity-40 cursor-pointer"
             >
-                <CalendarDays className="w-4 h-4" />
+                <CalendarDays className="w-3.5 h-3.5" />
             </button>
             {/* lịch của trình duyệt (ẩn): chỉ dùng để chọn ngày bằng chuột */}
             <input
