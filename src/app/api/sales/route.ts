@@ -1637,14 +1637,6 @@ export async function POST(req: NextRequest) {
         // (trước đây approval_status giữ nguyên APPROVED nên đơn sau duyệt sửa tùy ý được)
         const contentChanged = (has("items") && stableStringify(parseJsonArray(existing.items)) !== stableStringify(itemsArr))
           || customerChanged;
-        let approvalReset = false;
-        if (contentChanged && String(existing.approval_status || "").toUpperCase() === "APPROVED") {
-          approvalReset = true;
-          set("approval_status", null);
-          set("approved_by", null);
-          set("approved_at", null);
-          set("approval_note", `Cần duyệt lại: đơn được sửa sau khi đã duyệt (trước đó duyệt bởi ${existing.approved_by || "?"})`);
-        }
         if (!isStockOrder) {
           const custForCredit = matchedCustomer || {
             id: resolvedCustomerId ?? existing.customer_id ?? null,
@@ -1664,6 +1656,19 @@ export async function POST(req: NextRequest) {
             set("is_credit_blocked", false);
             set("credit_block_reason", "");
           }
+        }
+        const effectiveHasZero = has("items") ? hasZeroPrice : Boolean(existing.has_zero_price_items);
+        const requiresManualApproval = !isStockOrder && (effectiveHasZero || isCreditBlocked);
+        let approvalReset = false;
+        if (contentChanged && String(existing.approval_status || "").toUpperCase() === "APPROVED" && requiresManualApproval) {
+          approvalReset = true;
+          set("approval_status", null);
+          set("approved_by", null);
+          set("approved_at", null);
+          set("approval_note", `Cần duyệt lại: đơn được sửa sau khi đã duyệt (trước đó duyệt bởi ${existing.approved_by || "?"})`);
+        } else if (!requiresManualApproval && (existing.approval_status !== "APPROVED" || String(existing.approval_note || "").startsWith("Cần duyệt lại"))) {
+          set("approval_status", "APPROVED");
+          set("approval_note", null);
         }
 
         if (sets.length > 0) {

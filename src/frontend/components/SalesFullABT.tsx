@@ -1588,7 +1588,7 @@ export function SalesFullABT() {
                 }
             }
 
-            let repName = (o.salesRepName || o.sales_rep_name || "").trim();
+            let repName = (o.salesRepName || o.sales_rep_name || o.sales_rep || o.salesRep || "").trim();
             let repId = o.salesRepId || o.sales_rep_id || "";
 
             if (isStock) {
@@ -2009,6 +2009,24 @@ export function SalesFullABT() {
                             // Fields owned by the database (status of delivery / invoice / payment, credit & price checks)
                             const dbOwned: Record<string, any> = {
                                 order_code: o.order_code,
+                                customerName: o.customerName || undefined,
+                                totalAmount: o.totalAmount !== undefined ? Number(o.totalAmount) : undefined,
+                                items: Array.isArray(o.items) && o.items.length > 0 ? o.items : undefined,
+                                date: o.date || undefined,
+                                order_date: raw0.order_date ? toVNDateString(raw0.order_date) : undefined,
+                                contactPerson: raw0.contact_person ?? undefined,
+                                contactPhone: raw0.contact_phone ?? undefined,
+                                deliveryAddress: raw0.delivery_address ?? undefined,
+                                customerContact: raw0.contact_person ?? undefined,
+                                customerPhone: raw0.contact_phone ?? undefined,
+                                customerAddress: raw0.delivery_address ?? undefined,
+                                shipping_method: raw0.shipping_method ?? undefined,
+                                tracking_code: raw0.tracking_code ?? undefined,
+                                vat_requested: raw0.vat_requested !== undefined ? Boolean(raw0.vat_requested) : undefined,
+                                vat_company_name: raw0.vat_company_name ?? undefined,
+                                vat_tax_code: raw0.vat_tax_code ?? undefined,
+                                vat_address: raw0.vat_address ?? undefined,
+                                vat_email: raw0.vat_email ?? undefined,
                                 delivery_status: raw0.delivery_status,
                                 payment_status: raw0.payment_status,
                                 amountPaid: raw0.amount_paid !== undefined && raw0.amount_paid !== null ? Number(raw0.amount_paid) : undefined,
@@ -3763,6 +3781,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [giveStockProductSearchQuery, setGiveStockProductSearchQuery] = useState("");
     const [selectedAnalysisType, setSelectedAnalysisType] = useState<"product" | "category" | "employee" | "customer" | "trend" | "target">("product");
     const [analyticsMetric, setAnalyticsMetric] = useState<"revenue" | "quantity">("revenue");
+    const [factoryOrderOrderDate, setFactoryOrderOrderDate] = useState(() => todayVN());
     const [factoryOrderDeliveryDate, setFactoryOrderDeliveryDate] = useState(() => todayVN());
     // Ghi chú chung của đơn (lấy từ "Ghi chú bổ sung" của báo giá khi tạo SO từ báo giá)
     const [factoryOrderNotes, setFactoryOrderNotes] = useState("");
@@ -4873,7 +4892,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const foEntries = matchedOrders.map((fo: any) => {
             const totalAmount = fo.totalAmount || (fo.items || []).reduce((sum: number, it: any) => {
-                const price = Number(it.price) || 0;
+                const price = Number(it.unitPrice ?? it.unit_price ?? it.price) || 0;
                 const qty = Number(it.quantity) || 1;
                 return sum + (price * qty);
             }, 0);
@@ -6789,10 +6808,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     /** Đơn thuộc NVKD đang đăng nhập: theo mã nhân viên, hoặc theo họ tên NVKD lưu trên đơn (dòng CSDL chỉ có tên). */
     const isOrderOfLoggedInStaff = (req: any): boolean => {
-        if (!loggedInStaff) return false;
-        if (req?.salesRepId && req.salesRepId === loggedInStaff.employee_id) return true;
-        const repName = String(req?.salesRepName || req?.sales_rep_name || "").trim().toLowerCase();
-        const myName = String(loggedInStaff.full_name || "").trim().toLowerCase();
+        if (!loggedInStaff && !user) return false;
+        if (loggedInStaff && req?.salesRepId && req.salesRepId === loggedInStaff.employee_id) return true;
+        const repName = String(req?.salesRepName || req?.sales_rep_name || req?.sales_rep || req?.salesRep || "").trim().toLowerCase();
+        const myName = String(loggedInStaff?.full_name || (user as any)?.full_name || user?.name || "").trim().toLowerCase();
         return Boolean(repName && myName && repName === myName);
     };
 
@@ -12235,32 +12254,39 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setFactoryOrderContactPhone(String(req.contactPhone || req.contact_phone || req.customerPhone || editPrimary?.phone || matchedEditCust?.phone || ""));
         setFactoryOrderDeliveryAddress(String(req.deliveryAddress || req.delivery_address || req.customerAddress || matchedEditCust?.delivery_address || matchedEditCust?.address || ""));
         
-        let formattedDate = "";
-        if (req.requestedDeliveryDate) {
-            const raw = String(req.requestedDeliveryDate).trim();
+        const parseToIsoDate = (rawVal: any): string => {
+            if (!rawVal) return "";
+            const raw = String(rawVal).trim();
+            if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
             if (raw.includes("/")) {
                 const parts = raw.split("/");
                 if (parts.length === 3) {
-                    formattedDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                    return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
                 }
-            } else {
-                formattedDate = raw;
             }
-        }
-        setFactoryOrderDeliveryDate(formattedDate || todayVN());
+            return raw;
+        };
+        const formattedOrderDate = parseToIsoDate((req as any).order_date || req.date || (req as any).created_at);
+        setFactoryOrderOrderDate(formattedOrderDate || todayVN());
+        const formattedDate = parseToIsoDate(req.requestedDeliveryDate || (req as any).requested_delivery_date);
+        setFactoryOrderDeliveryDate(formattedDate || formattedOrderDate || todayVN());
 
         setIsStockOrder(Boolean(req.isStockOrder || req.orderCategory === "STOCK" || (req.id && String(req.id).includes("STOCK"))));
         setExpandedAllocIndex(null);
 
         const mappedItems = (req.items || []).map((it: any) => {
-            const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
+            const pCode = it.productCode || it.product_code || it.code || "";
+            const prod = allSalesProducts.find(p => p.code === pCode) || biolabProducts.find(p => p.code === pCode);
             const isGift = Boolean(it.isGift || it.is_gift);
-            const unitPrice = isGift ? 0 : (it.unitPrice !== undefined ? it.unitPrice : (it.price !== undefined ? it.price : (prod?.price || 0)));
+            const rawPrice = it.unitPrice !== undefined ? it.unitPrice : (it.unit_price !== undefined ? it.unit_price : (it.price !== undefined ? it.price : (prod?.price || 0)));
+            const unitPrice = isGift ? 0 : (Number(rawPrice) || 0);
             const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
             const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : undefined;
             return {
-                productCode: it.productCode,
-                productName: it.productName || prod?.name || it.productCode,
+                productCode: pCode,
+                productName: it.productName || it.product_name || it.name || prod?.name || pCode,
+                unit: it.unit || prod?.unit || "Hộp",
+                sourceType: it.sourceType || it.source_type,
                 specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
                 notes: it.notes || "",
                 quantity: it.quantity || 1,
@@ -12487,7 +12513,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const quoteItem = linkedQuoteObj?.items?.[itemIdx] && (linkedQuoteObj.items[itemIdx].productCode || linkedQuoteObj.items[itemIdx].product_code || linkedQuoteObj.items[itemIdx].code) === item.productCode
                 ? linkedQuoteObj.items[itemIdx]
                 : linkedQuoteObj?.items?.find((qi: any) => (qi.productCode || qi.product_code || qi.code) === item.productCode);
-            const isComm = commercialProducts.some(p => p.code === item.productCode);
+            const isComm = item.sourceType === "COMMERCIAL" || commercialProducts.some(p => p.code === item.productCode) || !biolabProducts.some(p => p.code === item.productCode);
             const isGift = Boolean(item.isGift || item.is_gift);
             const qty = Number(item.quantity) || 1;
             const unitPrice = isGift ? 0 : Number(item.unitPrice !== undefined ? item.unitPrice : (prod?.price || 0));
@@ -12610,6 +12636,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         customerContact: resolvedContactPerson,
                         customerPhone: resolvedContactPhone,
                         customerAddress: resolvedDeliveryAddress,
+                        date: factoryOrderOrderDate || order.date,
+                        order_date: factoryOrderOrderDate || (order as any).order_date,
                         requestedDeliveryDate: factoryOrderDeliveryDate || order.requestedDeliveryDate,
                         items: items,
                         totalAmount: totalAmount,
@@ -12644,6 +12672,35 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 return order;
             }));
 
+            // Đồng bộ thông tin khách hàng, địa chỉ và đơn giá mặt hàng sang các Phiếu giao hàng liên kết (nếu có)
+            setDeliverySlips(prev => prev.map(slip => {
+                const sameOrder = String(slip.orderCode || slip.order_code || "").trim() === String(editingFactoryOrderId).trim() ||
+                    String(slip.orderId || slip.order_id || "").trim() === String(editingFactoryOrderId).trim();
+                if (!sameOrder) return slip;
+                const updatedSlipItems = Array.isArray(slip.items) ? slip.items.map((sit: any) => {
+                    const sCode = String(sit.code || sit.productCode || sit.product_code || "").trim();
+                    const isGiftSit = Boolean(sit.isGift || sit.is_gift);
+                    const matchedOrdIt = items.find(oit => String(oit.productCode || "").trim() === sCode && Boolean(oit.isGift) === isGiftSit)
+                        || items.find(oit => String(oit.productCode || "").trim() === sCode);
+                    if (!matchedOrdIt) return sit;
+                    return {
+                        ...sit,
+                        name: matchedOrdIt.productName || sit.name,
+                        unitPrice: matchedOrdIt.unitPrice,
+                        price: matchedOrdIt.unitPrice,
+                        vatRate: matchedOrdIt.vatRate ?? sit.vatRate
+                    };
+                }) : slip.items;
+                return {
+                    ...slip,
+                    customerName: realCustomerName || slip.customerName,
+                    contactPerson: resolvedContactPerson || slip.contactPerson,
+                    contactPhone: resolvedContactPhone || slip.contactPhone,
+                    deliveryAddress: resolvedDeliveryAddress || slip.deliveryAddress,
+                    items: updatedSlipItems
+                };
+            }));
+
             // Chốt chặn DB: Đồng bộ các trường sửa vào PostgreSQL nhưng bảo lưu tiến trình giao hàng (Monotonic)
             const targetOrd = factoryOrders.find(o => o.id === editingFactoryOrderId);
             fetch("/api/sales?action=order", {
@@ -12652,6 +12709,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 body: JSON.stringify({
                     order_code: editingFactoryOrderId,
                     is_update: true,
+                    order_date: factoryOrderOrderDate || undefined,
                     customer_id: matchedCust?.id,
                     customer_name: realCustomerName,
                     contact_person: resolvedContactPerson,
@@ -19875,17 +19933,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <td className="p-3 text-right whitespace-nowrap">
                                                                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
                                                                                 {ord.is_factory_order && (
-                                                                                    <button
-                                                                                        onClick={() => {
-                                                                                            setActiveTab("orders");
-                                                                                            setSearchFactoryOrderQuery(ord.raw_code || ord.order_id || "");
-                                                                                        }}
-                                                                                        className="bg-indigo-950/90 hover:bg-indigo-900 text-indigo-200 border border-indigo-600/50 text-[10px] px-2 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
-                                                                                        title="Xem chi tiết đơn và tiến độ giao hàng tại Tab 6"
-                                                                                    >
-                                                                                        <Truck className="w-3 h-3 text-indigo-400" />
-                                                                                        <span>Tab Đơn</span>
-                                                                                    </button>
+                                                                                    <>
+                                                                                        <button
+                                                                                            onClick={() => {
+                                                                                                setActiveTab("orders");
+                                                                                                setSearchFactoryOrderQuery(ord.raw_code || ord.order_id || "");
+                                                                                            }}
+                                                                                            className="bg-indigo-950/90 hover:bg-indigo-900 text-indigo-200 border border-indigo-600/50 text-[10px] px-2 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer"
+                                                                                            title="Xem chi tiết đơn và tiến độ giao hàng tại Tab Đơn Hàng"
+                                                                                        >
+                                                                                            <Truck className="w-3 h-3 text-indigo-400" />
+                                                                                            <span>Tab Đơn</span>
+                                                                                        </button>
+                                                                                        {!isCancelled && ord.raw_order && !isWarehouseStaff && (
+                                                                                            <button
+                                                                                                onClick={() => handleEditFactoryOrder(ord.raw_order)}
+                                                                                                className="bg-amber-950/80 hover:bg-amber-900 text-amber-200 border border-amber-500/50 text-[10px] px-2 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                                                                                title="Chỉnh sửa thông tin đơn hàng hoặc đơn giá"
+                                                                                            >
+                                                                                                <Edit3 className="w-3 h-3 text-amber-400" />
+                                                                                                <span>Sửa đơn</span>
+                                                                                            </button>
+                                                                                        )}
+                                                                                    </>
                                                                                 )}
 
                                                                                 {/* Phiếu giao (các đợt) + NVKD xác nhận theo từng phiếu: xem danh sách phiếu bên dưới dòng đơn */}
@@ -22872,7 +22942,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     const canEditOrDelete = (!hasMfg || (mfgStatus !== "ORDERED" && mfgStatus !== "COMPLETED")) && 
                                                                             (!hasComm || (procureStatus !== "ORDERED" && procureStatus !== "COMPLETED")) && 
                                                                             req.status !== "Delivered";
-                                                    const canUserAct = (isManagerOrAdmin && !isWarehouseStaff) || (loggedInStaff && req.salesRepId === loggedInStaff.employee_id);
+                                                    const canUserAct = !isWarehouseStaff && (isManagerOrAdmin || canManageAllOrders || canApproveSalesOrdersPerm || canViewCustomerDebt || isOrderOfLoggedInStaff(req));
 
                                                     const stockCheck = {
                                                         hasEnough: !isStockOrder && stockAnalysis.isReadyAll,
@@ -23398,12 +23468,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         </button>
                                                                     )}
                                                                     {/* 3. Nút Sửa, Nút Hủy đơn & Nút Xóa */}
-                                                                    {!isCancelledOrder && canUserAct && canEditOrDelete && (
+                                                                    {!isCancelledOrder && canUserAct && (
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => handleEditFactoryOrder(req)}
                                                                             className="bg-amber-950/60 hover:bg-amber-900/80 text-amber-200 border border-amber-500/40 text-[10px] px-2 py-1 rounded font-bold cursor-pointer transition-colors flex items-center gap-1 shadow-sm"
-                                                                            title="Sửa yêu cầu đặt hàng khi chưa gửi NCC/mua ngoài"
+                                                                            title="Chỉnh sửa thông tin khách hàng, ngày đặt/giao, mặt hàng và đơn giá của đơn hàng"
                                                                         >
                                                                             <Edit3 className="w-3 h-3" /> Sửa
                                                                         </button>
@@ -28952,14 +29022,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </select>
                             )}
                         </div>
-                        <div>
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ngày giao hàng mong muốn *</label>
-                            <DateInputVN
-                                value={factoryOrderDeliveryDate}
-                                onChange={(e) => setFactoryOrderDeliveryDate(e.target.value)}
-                                required
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
-                            />
+                        <div className="grid grid-cols-2 gap-3">
+                            <div>
+                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ngày đặt hàng *</label>
+                                <DateInputVN
+                                    value={factoryOrderOrderDate}
+                                    onChange={(e) => setFactoryOrderOrderDate(e.target.value)}
+                                    required
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Ngày giao hàng mong muốn *</label>
+                                <DateInputVN
+                                    value={factoryOrderDeliveryDate}
+                                    onChange={(e) => setFactoryOrderDeliveryDate(e.target.value)}
+                                    required
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                />
+                            </div>
                         </div>
                     </div>
 
@@ -29179,6 +29260,33 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             if (!factoryOrderCustomerName) {
                                                                 const cname = c.partyBName || c.customerName || "";
                                                                 if (cname) setFactoryOrderCustomerName(cname);
+                                                            }
+                                                            // Auto-fill items & prices from contract if current items are empty or 0đ
+                                                            const hasOnlyEmptyOrZero = factoryOrderItems.every(it => !it.productCode || Number(it.unitPrice) === 0);
+                                                            if (hasOnlyEmptyOrZero && Array.isArray(c.items) && c.items.length > 0) {
+                                                                const cItems = c.items.map((it: any) => {
+                                                                    const code = it.productCode || it.product_code || it.code || "";
+                                                                    const prod = allSalesProducts.find(p => p.code === code) || biolabProducts.find(p => p.code === code);
+                                                                    const rawVat = it.vatRate ?? it.vat_rate ?? it.vat ?? (prod as any)?.vatRate ?? (prod as any)?.vat_rate;
+                                                                    const vatRate = rawVat !== undefined && rawVat !== null && !isNaN(Number(rawVat)) ? Number(rawVat) : 8;
+                                                                    const uPr = Number(it.unitPrice ?? it.unit_price ?? it.price ?? prod?.price ?? 0) || 0;
+                                                                    return {
+                                                                        productCode: code,
+                                                                        productName: it.productName || it.product_name || it.name || prod?.name || code,
+                                                                        specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
+                                                                        notes: it.notes || "",
+                                                                        quantity: Number(it.quantity) || 1,
+                                                                        unitPrice: uPr,
+                                                                        vatRate,
+                                                                        vat: vatRate,
+                                                                        isGift: Boolean(it.isGift || it.is_gift),
+                                                                        needsInvoice: it.needsInvoice !== false
+                                                                    };
+                                                                }).filter((it: any) => it.productCode);
+                                                                if (cItems.length > 0) {
+                                                                    setFactoryOrderItems(cItems);
+                                                                    showToast(`✅ Đã nạp ${cItems.length} mặt hàng và đơn giá từ hợp đồng ${c.id || c.contract_code}`, "success");
+                                                                }
                                                             }
                                                         }}
                                                     >
@@ -29443,7 +29551,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 placeholder="Tìm mã hoặc tên sản phẩm..."
                                                 value={productSearchQueries[index] !== undefined ? productSearchQueries[index] : (() => {
                                                     const p = currentProd;
-                                                    return p ? `${p.code} - ${p.name} ${p.specification ? `(${p.specification})` : ""}` : "";
+                                                    if (p) return `${p.code} - ${p.name} ${p.specification ? `(${p.specification})` : ""}`;
+                                                    const code = item.productCode || "";
+                                                    const name = (item as any).productName || "";
+                                                    if (code && name && name !== code) return `${code} - ${name}`;
+                                                    return code || name || "";
                                                 })()}
                                                 onFocus={() => {
                                                     setOpenProductDropdownIndex(index);
@@ -29598,13 +29710,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             min="0"
                                             step="any"
                                             value={uPrice}
-                                            placeholder="Đơn giá"
+                                            placeholder="Nhập đơn giá..."
                                             onChange={(e) => {
                                                 const val = e.target.value === "" ? "" : Number(e.target.value);
                                                 setFactoryOrderItems(prev => prev.map((it, i) => i === index ? { ...it, unitPrice: val, ...(Number(val) > 0 ? { isGift: false } : {}) } : it));
                                             }}
-                                            className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-xs text-amber-300 font-mono text-right font-bold focus:border-indigo-500 focus:outline-none"
-                                            title={isStockOrder ? "Đơn giá tham chiếu (ước tính giá trị vốn lưu kho, không áp dụng bảng giá khách)" : "Đơn giá sản phẩm (có thể chỉnh sửa)"}
+                                            className={cn(
+                                                "w-32 bg-slate-950 border rounded-lg px-2.5 py-2 text-xs text-amber-300 font-mono text-right font-bold focus:border-indigo-500 focus:outline-none",
+                                                (!isStockOrder && !Boolean((item as any).isGift || (item as any).is_gift) && Number(uPrice) === 0)
+                                                    ? "border-amber-500/80 ring-1 ring-amber-500/40"
+                                                    : "border-slate-800"
+                                            )}
+                                            title={isStockOrder ? "Đơn giá tham chiếu (ước tính giá trị vốn lưu kho, không áp dụng bảng giá khách)" : "Đơn giá sản phẩm (VNĐ) — nhập trực tiếp để sửa giá"}
                                         />
                                         <div className="w-28 bg-slate-950/70 border border-slate-800/80 rounded-lg px-2 py-2 text-xs text-emerald-400 font-mono text-right font-bold truncate">
                                             {lineTotal.toLocaleString('vi-VN')} đ
@@ -30595,6 +30712,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         })()}
                                     </strong>
                                 </div>
+                                {!isWarehouseStaff && viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const ord = viewingFactoryOrderItems;
+                                            setViewingFactoryOrderItems(null);
+                                            handleEditFactoryOrder(ord);
+                                        }}
+                                        className="px-3 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-sans font-bold text-[11px] flex items-center gap-1.5 shadow-sm transition-all cursor-pointer border border-amber-400/80"
+                                        title="Chỉnh sửa thông tin khách hàng, ngày đặt/giao, mặt hàng và đơn giá của đơn hàng này"
+                                    >
+                                        <Edit3 className="w-3.5 h-3.5" />
+                                        <span>Sửa đơn / Sửa giá</span>
+                                    </button>
+                                )}
                             </div>
                         </div>
                         {/* VISUAL ORDER STEPPER 5 CHẶNG & LOGISTICS (Yêu cầu 8) */}
@@ -31058,7 +31190,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         x{it?.quantity || 1}
                                                     </td>
                                                     <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-200">
-                                                        {unitPrice > 0 ? `${unitPrice.toLocaleString('vi-VN')} đ` : "—"}
+                                                        {unitPrice > 0 ? (
+                                                            `${unitPrice.toLocaleString('vi-VN')} đ`
+                                                        ) : !isWarehouseStaff && !Boolean(it?.isGift || it?.is_gift) ? (
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    const ord = viewingFactoryOrderItems;
+                                                                    setViewingFactoryOrderItems(null);
+                                                                    handleEditFactoryOrder(ord);
+                                                                }}
+                                                                className="text-[10px] text-amber-300 hover:text-white bg-amber-950/70 hover:bg-amber-600 border border-amber-500/60 px-2 py-0.5 rounded font-sans font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                                                                title="Mặt hàng đang có đơn giá 0đ — Bấm để nhập/sửa lại đơn giá"
+                                                            >
+                                                                <Edit3 className="w-2.5 h-2.5" />
+                                                                <span>Nhập giá</span>
+                                                            </button>
+                                                        ) : (
+                                                            "—"
+                                                        )}
                                                     </td>
                                                     <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
                                                         {totalPrice > 0 ? `${totalPrice.toLocaleString('vi-VN')} đ` : "—"}
@@ -31070,21 +31220,38 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <span className="text-slate-500 italic">—</span>
                                                         )}
                                                     </td>
-                                                    {/* Cancel Line Item Action (Yêu cầu 15) */}
+                                                    {/* Cancel / Edit Line Item Action (Yêu cầu 15) */}
                                                     <td className="py-2.5 px-3 text-center">
                                                         {it?.status === "CANCELLED" ? (
                                                             <span className="text-[9px] px-2 py-0.5 rounded-full font-bold bg-rose-950 text-rose-300 border border-rose-800/80 inline-block font-mono" title={it.cancel_reason || "Đã hủy dòng"}>
                                                                 ✕ Đã hủy
                                                             </span>
                                                         ) : (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => handleOpenCancelItemModal(viewingFactoryOrderItems.id, it.productCode || it.product_code, it.productName || it.product_name)}
-                                                                className="text-[10px] text-rose-400 hover:text-white hover:bg-rose-600 border border-rose-800/60 px-2 py-0.5 rounded font-bold transition-all cursor-pointer"
-                                                                title="Hủy mặt hàng này khỏi đơn hàng"
-                                                            >
-                                                                ✕ Hủy dòng
-                                                            </button>
+                                                            <div className="flex items-center justify-center gap-1.5">
+                                                                {!isWarehouseStaff && (
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => {
+                                                                            const ord = viewingFactoryOrderItems;
+                                                                            setViewingFactoryOrderItems(null);
+                                                                            handleEditFactoryOrder(ord);
+                                                                        }}
+                                                                        className="text-[10px] text-amber-300 hover:text-white bg-amber-950/60 hover:bg-amber-600 border border-amber-600/60 px-2 py-0.5 rounded font-bold transition-all cursor-pointer inline-flex items-center gap-1"
+                                                                        title="Chỉnh sửa mặt hàng, số lượng hoặc đơn giá"
+                                                                    >
+                                                                        <Edit3 className="w-2.5 h-2.5" />
+                                                                        <span>Sửa</span>
+                                                                    </button>
+                                                                )}
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleOpenCancelItemModal(viewingFactoryOrderItems.id, it.productCode || it.product_code, it.productName || it.product_name)}
+                                                                    className="text-[10px] text-rose-400 hover:text-white hover:bg-rose-600 border border-rose-800/60 px-2 py-0.5 rounded font-bold transition-all cursor-pointer"
+                                                                    title="Hủy mặt hàng này khỏi đơn hàng"
+                                                                >
+                                                                    ✕ Hủy dòng
+                                                                </button>
+                                                            </div>
                                                         )}
                                                     </td>
                                                 </tr>
@@ -31139,6 +31306,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </button>
                             </div>
                             <div className="flex items-center gap-2">
+                                {!isWarehouseStaff && viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const ord = viewingFactoryOrderItems;
+                                            setViewingFactoryOrderItems(null);
+                                            handleEditFactoryOrder(ord);
+                                        }}
+                                        className="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-amber-950/50 border border-amber-400"
+                                        title="Chỉnh sửa thông tin khách hàng, ngày đặt/giao, mặt hàng và đơn giá của đơn hàng này"
+                                    >
+                                        <Edit3 className="w-3.5 h-3.5" />
+                                        <span>Sửa Đơn Hàng & Đơn Giá</span>
+                                    </button>
+                                )}
                                 <button
                                     type="button"
                                     onClick={() => setViewingFactoryOrderItems(null)}
