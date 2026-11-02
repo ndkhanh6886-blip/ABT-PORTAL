@@ -103,6 +103,7 @@ export function DeliverySlipListView({
   onEditSlip,
   onCancelSlip,
   canConfirmForOrder,
+  canEditSlip,
   getFinance,
   rmaList = [],
   onCreateRma,
@@ -119,6 +120,7 @@ export function DeliverySlipListView({
   onEditSlip?: (slip: any) => void;
   onCancelSlip?: (slip: any) => void;
   canConfirmForOrder?: (ord: any) => boolean;
+  canEditSlip?: (slip: any) => boolean;
   /** Thành tiền phiếu (gồm VAT), số HĐ (từ Quản lý hóa đơn), số đã thu theo phiếu */
   getFinance?: (slip: any) => { amount: number; invoiceNo: string; invoiceDate?: string; paid: number };
   /** Danh sách phiếu trả hàng (RMA) & các hàm thao tác trả hàng ngay tại Phiếu giao hàng */
@@ -983,7 +985,7 @@ export function DeliverySlipListView({
                                     ✅ Đã giao
                                   </button>
                                 )}
-                                {st !== "CANCELLED" && onEditSlip && (
+                                {st !== "CANCELLED" && onEditSlip && (!canEditSlip || canEditSlip(slip)) && (
                                   <button
                                     type="button"
                                     onClick={() => onEditSlip(slip)}
@@ -1003,7 +1005,7 @@ export function DeliverySlipListView({
                                     ↩ Trả hàng
                                   </button>
                                 )}
-                                {st === "PENDING" && onCancelSlip && (
+                                {st === "PENDING" && onCancelSlip && (!canEditSlip || canEditSlip(slip)) && (
                                   <button
                                     type="button"
                                     onClick={() => onCancelSlip(slip)}
@@ -1176,7 +1178,7 @@ export function DeliverySlipListView({
                           >
                             <Eye className="w-3 h-3" /> Xem
                           </button>
-                          {st !== "CANCELLED" && onEditSlip && (
+                          {st !== "CANCELLED" && onEditSlip && (!canEditSlip || canEditSlip(slip)) && (
                             <button
                               type="button"
                               onClick={() => onEditSlip(slip)}

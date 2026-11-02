@@ -13307,9 +13307,31 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const canConfirmDeliveryForOrder = (ord: any) => {
         const fo = resolveFactoryOrder(ord);
         if (canManageAllOrders) return true;
-        if (!loggedInStaff) return false;
-        if (!fo?.salesRepId) return true;
-        return fo.salesRepId === loggedInStaff.employee_id;
+        if (!loggedInStaff && !user) return false;
+        if (!fo?.salesRepId && !fo?.salesRepName) return true;
+        return isOrderOfLoggedInStaff(fo);
+    };
+
+    // Phân quyền chặt sửa / hủy Phiếu giao hàng:
+    // - Phiếu đã hủy (CANCELLED): Không được sửa.
+    // - Phiếu đã xác nhận giao hoàn tất (DELIVERED): Khóa không cho NVKD tự ý sửa ngày giao/số lượng;
+    //   CHỈ cho phép Quản trị viên / Ban Giám Đốc / Trưởng-Phó phòng KD / Quản lý Admin / Sale Admin (isManagerOrAdmin || canApproveSalesOrdersPerm),
+    //   Kế toán (canViewCustomerDebt), hoặc Kho Vận (isWarehouseStaff) chỉnh sửa.
+    // - Phiếu đang chờ giao (PENDING): Cho phép các vai trò quản lý/điều phối/kho trên HOẶC chính NVKD phụ trách đơn hàng đó sửa.
+    const canEditDeliverySlip = (slip: any): boolean => {
+        if (!slip) return false;
+        const fo = resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode });
+        const st = getSlipStatus(slip, fo);
+        if (st === "CANCELLED") return false;
+        const isPrivilegedSlipEditor = Boolean(isManagerOrAdmin || canApproveSalesOrdersPerm || canViewCustomerDebt || isWarehouseStaff);
+        if (st === "DELIVERED") {
+            return isPrivilegedSlipEditor;
+        }
+        if (isPrivilegedSlipEditor) return true;
+        if (fo) return isOrderOfLoggedInStaff(fo);
+        const myName = String(loggedInStaff?.full_name || (user as any)?.full_name || user?.name || "").trim().toLowerCase();
+        const slipCreator = String(slip.creatorName || slip.createdBy || "").trim().toLowerCase();
+        return Boolean(myName && slipCreator && myName === slipCreator);
     };
 
     // Danh sách người liên hệ của khách hàng thuộc đơn hàng (CRM contacts + contact_person + báo giá + đơn hàng)
@@ -14962,6 +14984,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             let slipId: string;
             if (editSlip) {
+                if (!canEditDeliverySlip(editSlip)) {
+                    showToast("Bạn không có quyền chỉnh sửa phiếu giao hàng này!", "error");
+                    return;
+                }
                 slipId = editSlip.id;
             } else {
                 // Mã phiếu chỉ do máy chủ cấp (bộ đếm nguyên tử): không tự sinh mã ở trình duyệt vì 2 người có thể ra trùng mã
@@ -15156,11 +15182,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         );
     };
 
-    // Sửa phiếu giao đang chờ giao / kho đang giao
+    // Sửa phiếu giao hàng (áp dụng phân quyền chặt)
     const handleEditDeliverySlip = (slip: any) => {
         const fo = resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode });
-        if (getSlipStep(slip, fo) === "CANCELLED") {
+        const st = getSlipStatus(slip, fo);
+        if (st === "CANCELLED") {
             showToast("Không thể sửa phiếu giao đã hủy!", "warning");
+            return;
+        }
+        if (!canEditDeliverySlip(slip)) {
+            if (st === "DELIVERED") {
+                showToast("Phiếu giao hàng đã xác nhận giao hoàn tất — chỉ Quản trị viên, Ban Giám Đốc, Quản lý/Sale Admin, Kế toán hoặc Kho Vận mới có quyền chỉnh sửa!", "error");
+            } else {
+                showToast("Bạn không có quyền chỉnh sửa phiếu giao hàng của đơn hàng này!", "error");
+            }
             return;
         }
         const orderRef = fo || { order_id: slip.orderId, order_code: slip.orderCode, raw_code: slip.orderCode, customerName: slip.customerName, items: slip.items };
@@ -15173,6 +15208,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const fo = resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode });
         if (getSlipStatus(slip, fo) !== "PENDING") {
             showToast("Chỉ hủy được phiếu giao chưa hoàn tất!", "warning");
+            return;
+        }
+        if (!canEditDeliverySlip(slip)) {
+            showToast("Bạn không có quyền hủy phiếu giao hàng của đơn hàng này!", "error");
             return;
         }
         const reason = window.prompt(`Hủy Phiếu giao hàng ${slip.id}?\nHàng trên phiếu sẽ được nhập lại kho.\n\nLý do hủy:`, "");
@@ -15317,7 +15356,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 ✅ B3: NVKD xác nhận Đã nhận
                                             </button>
                                         )}
-                                        {step !== "CANCELLED" && (
+                                        {step !== "CANCELLED" && canEditDeliverySlip(s) && (
                                             <button type="button" onClick={() => handleEditDeliverySlip(s)} className="text-[10px] font-bold bg-sky-800 hover:bg-sky-700 text-white px-1.5 py-0.5 rounded cursor-pointer" title="Sửa thông tin / điều chỉnh trạng thái phiếu">✏️ Sửa</button>
                                         )}
                                         {step !== "CANCELLED" && (
@@ -15330,7 +15369,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 ↩ Trả hàng
                                             </button>
                                         )}
-                                        {(step === "PENDING_DELIVERY" || step === "WAREHOUSE_DELIVERED") && (
+                                        {(step === "PENDING_DELIVERY" || step === "WAREHOUSE_DELIVERED") && canEditDeliverySlip(s) && (
                                             <button type="button" onClick={() => handleCancelDeliverySlip(s)} className="text-[10px] font-bold bg-rose-800 hover:bg-rose-700 text-white px-1.5 py-0.5 rounded cursor-pointer">🗑 Hủy</button>
                                         )}
                                     </div>
@@ -24564,6 +24603,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     onEditSlip={(s: any) => handleEditDeliverySlip(s)}
                     onCancelSlip={(s: any) => handleCancelDeliverySlip(s)}
                     canConfirmForOrder={(ord: any) => canConfirmDeliveryForOrder(ord)}
+                    canEditSlip={(s: any) => canEditDeliverySlip(s)}
                     getFinance={(s: any) => ({ amount: getSlipValue(s), paid: slipPaidMap[s.id] || 0, ...getSlipInvoice(s) })}
                     rmaList={rmaList}
                     onCreateRma={(ord: any, slip?: any) => handleOpenCreateRmaModal(ord, slip)}
@@ -33125,14 +33165,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     if (step === "CANCELLED") return null;
                                     return (
                                         <>
-                                            <button
-                                                type="button"
-                                                onClick={() => handleEditDeliverySlip(vs)}
-                                                className="bg-sky-600 hover:bg-sky-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
-                                                title="Sửa số lượng / số lô / trạng thái phiếu (tồn kho điều chỉnh theo chênh lệch)"
-                                            >
-                                                ✏️ Sửa phiếu
-                                            </button>
+                                            {canEditDeliverySlip(vs) && (
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleEditDeliverySlip(vs)}
+                                                    className="bg-sky-600 hover:bg-sky-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                                    title="Sửa số lượng / số lô / trạng thái phiếu (tồn kho điều chỉnh theo chênh lệch)"
+                                                >
+                                                    ✏️ Sửa phiếu
+                                                </button>
+                                            )}
                                             <button
                                                 type="button"
                                                 onClick={() => {
@@ -33145,7 +33187,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             >
                                                 ↩ Trả hàng (RMA)
                                             </button>
-                                            {step !== "DELIVERED" && (
+                                            {step !== "DELIVERED" && canEditDeliverySlip(vs) && (
                                                 <button
                                                     type="button"
                                                     onClick={() => handleCancelDeliverySlip(vs)}

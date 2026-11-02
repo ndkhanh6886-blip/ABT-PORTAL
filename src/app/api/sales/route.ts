@@ -1364,6 +1364,37 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // Phân quyền chặt khi sửa phiếu giao hàng đã xác nhận giao hoàn tất (DELIVERED):
+      // Không cho phép NVKD thường tự ý đổi ngày giao hoặc danh mục mặt hàng của phiếu đã giao.
+      if (!body.is_new) {
+        const exRes = await query("SELECT delivery_date, items, status, extra_data FROM sales_delivery_slips WHERE slip_code = $1 LIMIT 1", [finalCode]).catch(() => ({ rows: [] as any[] }));
+        const exRow = exRes.rows[0];
+        if (exRow) {
+          let exExtra: any = exRow.extra_data;
+          if (typeof exExtra === "string") { try { exExtra = JSON.parse(exExtra || "{}"); } catch { exExtra = {}; } }
+          exExtra = exExtra && typeof exExtra === "object" ? exExtra : {};
+          const wasDelivered = exExtra.isDelivered === true || exExtra.isDelivered === "true" || String(exExtra.deliveryStatus || "").toUpperCase() === "DELIVERED";
+          const dateChanged = dDate && exRow.delivery_date && String(dDate).trim() !== String(exRow.delivery_date).trim();
+          const itemsChanged = items !== undefined && stableStringify(parseJsonArray(exRow.items)) !== stableStringify(itemsArr);
+          if (wasDelivered && (dateChanged || itemsChanged)) {
+            const roleLow = String(authUser.role || "").toLowerCase();
+            const deptLow = String((authUser as any).department || "").toLowerCase();
+            const canEditDeliveredSlip =
+              isAdminUser(authUser) ||
+              canApproveSalesOrders(authUser) ||
+              isAccountantUser(authUser) ||
+              ["sales_manager", "sales_deputy", "sales_admin_manager", "sales_admin", "warehouse"].includes(roleLow) ||
+              deptLow.includes("kho") ||
+              deptLow.includes("kế toán") ||
+              hasPermission(authUser, "warehouse.export") ||
+              hasPermission(authUser, "sales.approve_orders");
+            if (!canEditDeliveredSlip) {
+              return forbiddenResponse("Phiếu giao hàng đã hoàn tất xác nhận giao — chỉ Quản trị viên, Ban Giám Đốc, Quản lý/Sale Admin, Kế toán hoặc Kho Vận mới có quyền chỉnh sửa ngày giao hoặc mặt hàng!");
+            }
+          }
+        }
+      }
+
       // Phiếu mới: chỉ chèn, không bao giờ ghi đè một phiếu khác đã có cùng mã
       if (body.is_new) {
         const ins = await query(
