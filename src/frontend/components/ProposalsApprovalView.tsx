@@ -2212,14 +2212,6 @@ export function ProposalsApprovalView({
             >
               📂 Danh mục Mẫu &amp; Luồng duyệt ({templates.length})
             </button>
-            <button
-              type="button"
-              onClick={() => openCreateProposalModal("tmpl_leave_request")}
-              className="px-3 py-1.5 rounded-xl text-xs font-extrabold transition-all cursor-pointer shrink-0 bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs"
-              title="Lập nhanh Đơn xin Nghỉ phép / Nghỉ việc riêng (DXNP)"
-            >
-              🏖️ + Xin Nghỉ Phép (DXNP)
-            </button>
           </div>
 
           {selectedIdsForBulk.length > 0 && (
