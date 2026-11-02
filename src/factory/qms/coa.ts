@@ -29,6 +29,18 @@ export async function coaForTest(tx: Tx, actor: AuthzActor, testId: string) {
             [t.entity_id]
           )
         ).rows[0]
-      : null;
+      : t.entity_type === "PRODUCTION_ORDER"
+        ? (
+            await tx.query(
+              `SELECT l.code, l.mfr_lot_no, COALESCE(po.mfg_date, l.mfg_date) AS mfg_date, COALESCE(po.expiry_date, l.expiry_date) AS expiry_date,
+                      i.code AS item_code, i.name AS item_name
+                 FROM kit.production_order po
+                 JOIN master.item i ON i.id = po.product_item_id
+                 LEFT JOIN inv.lot l ON l.id = po.lot_id
+                WHERE po.id = $1`,
+              [t.entity_id]
+            )
+          ).rows[0]
+        : null;
   return { ...(await coaHeader(tx)), test: t, lot, signature: await reviewSignature(tx, testId) };
 }

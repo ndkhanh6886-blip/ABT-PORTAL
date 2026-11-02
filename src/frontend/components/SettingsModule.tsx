@@ -22,6 +22,7 @@ import {
   RefreshCw,
   RotateCcw,
   Building2,
+  MessagesSquare,
   ShieldAlert,
   Check,
   Eye,
@@ -60,6 +61,8 @@ import {
   Smartphone
 } from "lucide-react";
 import { formatDate } from "@/backend/services/utils";
+import { FactoryAccessSection, FactoryFeatureGroups } from "@/frontend/factory/settings/FactoryAccessSection";
+import { FACTORY_NOTICE_EVENTS, TECHNICAL_MATRIX_ROLES } from "@/factory/noticeMatrix";
 import { PERMISSION_GROUPS, ROLE_PRESETS, DEPARTMENT_MODULES, DepartmentModule, resolveRolePreset, getDefaultDepartmentPermissions, getEffectivePermissions, hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { useNotification, NotificationMatrixEvent } from "@/frontend/contexts/NotificationContext";
 import { PaymentMethodsSettings } from "@/frontend/components/PaymentMethodsSettings";
@@ -296,6 +299,12 @@ DEPARTMENT_POSITIONS["Application"] = DEPARTMENT_POSITIONS["Kỹ Thuật & Ứng
 DEPARTMENT_POSITIONS["Cung Ứng"] = DEPARTMENT_POSITIONS["Mua Hàng & Cung Ứng"];
 DEPARTMENT_POSITIONS["Pháp chế"] = DEPARTMENT_POSITIONS["Pháp Chế"];
 DEPARTMENT_POSITIONS["QA/QC"] = DEPARTMENT_POSITIONS["QA / QC"];
+
+/** Portal department modules grouped by khối in "Phân Quyền Chi Tiết Cá Nhân" (Khối Kỹ thuật – Nhà máy has its own section). */
+const PORTAL_BLOCKS: { title: string; keys: string[] }[] = [
+  { title: "Khối Kinh Doanh", keys: ["sales.view", "warehouse.view", "application.view", "procurement.view"] },
+  { title: "Khối Văn Phòng & Điều Hành", keys: ["legal.view", "chat.view", "zalo.view", "settings.view"] },
+];
 
 export const PRIMARY_DEPT_KEYS = [
   "Ban Giám Đốc",
@@ -723,8 +732,11 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       {
         "Mã nhân viên (*)": "NV-ABT-001",
         "Họ và tên (*)": "Nguyễn Văn A",
+        "Tên đăng nhập (*)": "NV-ABT-001",
+        "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Ban Giám Đốc",
         "Chức vụ / Vị trí (*)": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)",
+        "Vai trò hệ thống (*)": "admin",
         "Email (*)": "a.nv@abtvn.com",
         "Số điện thoại": "0900000001",
         "Trạng thái": "ACTIVE"
@@ -732,68 +744,107 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       {
         "Mã nhân viên (*)": "NV-ABT-002",
         "Họ và tên (*)": "Trần Thị B",
-        "Phòng ban (*)": "Ban Giám Đốc",
-        "Chức vụ / Vị trí (*)": "Phó Giám Đốc",
+        "Tên đăng nhập (*)": "NV-ABT-002",
+        "Mật khẩu khởi tạo": "",
+        "Phòng ban (*)": "Kinh Doanh",
+        "Chức vụ / Vị trí (*)": "Trưởng Phòng Kinh Doanh (Head of Sales)",
+        "Vai trò hệ thống (*)": "sales_head",
         "Email (*)": "b.tt@abtvn.com",
         "Số điện thoại": "0900000002",
         "Trạng thái": "ACTIVE"
       },
       {
         "Mã nhân viên (*)": "NV-ABT-003",
-        "Họ và tên (*)": "Lê Văn C",
-        "Phòng ban (*)": "Ban Giám Đốc",
-        "Chức vụ / Vị trí (*)": "Phó Giám Đốc",
-        "Email (*)": "c.lv@abtvn.com",
+        "Họ và tên (*)": "Lê Minh Khoa",
+        "Tên đăng nhập (*)": "NV-ABT-003",
+        "Mật khẩu khởi tạo": "",
+        "Phòng ban (*)": "Nghiên Cứu R&D",
+        "Chức vụ / Vị trí (*)": "Trưởng Phòng R&D",
+        "Vai trò hệ thống (*)": "rd_head",
+        "Email (*)": "khoa.lm@abtvn.com",
         "Số điện thoại": "0900000003",
         "Trạng thái": "ACTIVE"
       },
       {
         "Mã nhân viên (*)": "NV-ABT-004",
-        "Họ và tên (*)": "Phạm Thị D",
-        "Phòng ban (*)": "Kinh Doanh",
-        "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh (Sales Specialist)",
-        "Email (*)": "d.pt@abtvn.com",
+        "Họ và tên (*)": "Phạm Hoàng Lan",
+        "Tên đăng nhập (*)": "NV-ABT-004",
+        "Mật khẩu khởi tạo": "",
+        "Phòng ban (*)": "Sản Xuất Kit",
+        "Chức vụ / Vị trí (*)": "Trưởng Phòng / Quản Đốc Sản Xuất Kit",
+        "Vai trò hệ thống (*)": "kit_head",
+        "Email (*)": "lan.ph@abtvn.com",
         "Số điện thoại": "0900000004",
+        "Trạng thái": "ACTIVE"
+      },
+      {
+        "Mã nhân viên (*)": "NV-ABT-005",
+        "Họ và tên (*)": "Vũ Quốc Tuấn",
+        "Tên đăng nhập (*)": "NV-ABT-005",
+        "Mật khẩu khởi tạo": "",
+        "Phòng ban (*)": "Tổng Hợp Oligo",
+        "Chức vụ / Vị trí (*)": "Kỹ Thuật Viên Vận Hành Máy Tổng Hợp CPG",
+        "Vai trò hệ thống (*)": "oligo_staff",
+        "Email (*)": "tuan.vq@abtvn.com",
+        "Số điện thoại": "0900000005",
+        "Trạng thái": "ACTIVE"
+      },
+      {
+        "Mã nhân viên (*)": "NV-ABT-006",
+        "Họ và tên (*)": "Đặng Thu Hà",
+        "Tên đăng nhập (*)": "NV-ABT-006",
+        "Mật khẩu khởi tạo": "",
+        "Phòng ban (*)": "QA / QC",
+        "Chức vụ / Vị trí (*)": "Trưởng Bộ Phận QA/QC (QA/QC Manager)",
+        "Vai trò hệ thống (*)": "qa_qc_lead",
+        "Email (*)": "ha.dt@abtvn.com",
+        "Số điện thoại": "0900000006",
         "Trạng thái": "ACTIVE"
       }
     ];
 
     const roleMappingData = [
-      { "Phòng Ban": "Ban Giám Đốc", "Chức Vụ / Vị Trí Công Việc": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)", "Vai Trò Hệ Thống": "admin", "Tên Tiếng Anh": "Director / CEO" },
-      { "Phòng Ban": "Ban Giám Đốc", "Chức Vụ / Vị Trí Công Việc": "Phó Giám Đốc", "Vai Trò Hệ Thống": "admin", "Tên Tiếng Anh": "Vice Director" },
-      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kinh Doanh", "Vai Trò Hệ Thống": "sales_head", "Tên Tiếng Anh": "Head of Sales" },
-      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Phó Phòng Kinh Doanh", "Vai Trò Hệ Thống": "sales_head", "Tên Tiếng Anh": "Deputy Head of Sales" },
-      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kinh Doanh (Senior/Junior)", "Vai Trò Hệ Thống": "sales_rep", "Tên Tiếng Anh": "Sales Specialist / Sales Rep" },
-      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Quản Lý Sản Phẩm (Product Manager - PM)", "Vai Trò Hệ Thống": "sales_rep", "Tên Tiếng Anh": "Product Manager (PM)" },
-      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Admin Kinh Doanh (Sales Admin)", "Vai Trò Hệ Thống": "sales_rep", "Tên Tiếng Anh": "Sales Admin" },
-      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận", "Vai Trò Hệ Thống": "warehouse_lead", "Tên Tiếng Anh": "Warehouse Manager" },
-      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", "Vai Trò Hệ Thống": "warehouse", "Tên Tiếng Anh": "Warehouse Specialist" },
-      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Nhân Viên Giao Nhận & Vận Chuyển Lạnh", "Vai Trò Hệ Thống": "warehouse", "Tên Tiếng Anh": "Logistics & Cold Chain Staff" },
-      { "Phòng Ban": "Mua Hàng & Cung Ứng", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Cung Ứng", "Vai Trò Hệ Thống": "procurement_lead", "Tên Tiếng Anh": "Procurement Lead" },
-      { "Phòng Ban": "Mua Hàng & Cung Ứng", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Mua Hàng Quốc Tế / Trong Nước", "Vai Trò Hệ Thống": "procurement_specialist", "Tên Tiếng Anh": "Procurement Specialist" },
-      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kỹ Thuật & Ứng Dụng", "Vai Trò Hệ Thống": "app_head", "Tên Tiếng Anh": "Head of Application" },
-      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Ứng Dụng PCR / Sinh Học Phân Tử", "Vai Trò Hệ Thống": "app_rep", "Tên Tiếng Anh": "Application Specialist" },
-      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Dịch Vụ Thiết Bị (Service Engineer)", "Vai Trò Hệ Thống": "app_rep", "Tên Tiếng Anh": "Service Engineer" },
-      { "Phòng Ban": "Kế Toán", "Chức Vụ / Vị Trí Công Việc": "Kế Toán Trưởng", "Vai Trò Hệ Thống": "accountant_head", "Tên Tiếng Anh": "Chief Accountant" },
-      { "Phòng Ban": "Kế Toán", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kế Toán Kho & Công Nợ", "Vai Trò Hệ Thống": "accountant", "Tên Tiếng Anh": "Receivable & Inventory Accountant" },
-      { "Phòng Ban": "QA / QC", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận QA/QC (QA/QC Manager)", "Vai Trò Hệ Thống": "qa_qc_lead", "Tên Tiếng Anh": "QA/QC Manager" },
-      { "Phòng Ban": "QA / QC", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Quản Lý Chất Lượng & ISO 13485", "Vai Trò Hệ Thống": "qa_qc", "Tên Tiếng Anh": "QA/QC Specialist" },
-      { "Phòng Ban": "Pháp Chế", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Pháp Chế", "Vai Trò Hệ Thống": "legal_head", "Tên Tiếng Anh": "Head of Legal" },
-      { "Phòng Ban": "Pháp Chế", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Pháp Chế & Tuân Thủ", "Vai Trò Hệ Thống": "legal", "Tên Tiếng Anh": "Legal Specialist" }
+      { "Phòng Ban": "Ban Giám Đốc", "Chức Vụ / Vị Trí Công Việc": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)", "Vai Trò Hệ Thống": "admin", "Khối": "Điều Hành" },
+      { "Phòng Ban": "Ban Giám Đốc", "Chức Vụ / Vị Trí Công Việc": "Phó Giám Đốc", "Vai Trò Hệ Thống": "admin", "Khối": "Điều Hành" },
+      { "Phòng Ban": "Nghiên Cứu R&D", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng R&D", "Vai Trò Hệ Thống": "rd_head", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-RD)" },
+      { "Phòng Ban": "Nghiên Cứu R&D", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên R&D Sinh Học Phân Tử", "Vai Trò Hệ Thống": "rd_staff", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-RD)" },
+      { "Phòng Ban": "Sản Xuất Kit", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng / Quản Đốc Sản Xuất Kit", "Vai Trò Hệ Thống": "kit_head", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-KIT)" },
+      { "Phòng Ban": "Sản Xuất Kit", "Chức Vụ / Vị Trí Công Việc": "Kỹ Thuật Viên Sản Xuất & Đóng Gói Kit GMP", "Vai Trò Hệ Thống": "kit_staff", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-KIT)" },
+      { "Phòng Ban": "Tổng Hợp Oligo", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Tổng Hợp Oligo", "Vai Trò Hệ Thống": "oligo_head", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-OLIGO)" },
+      { "Phòng Ban": "Tổng Hợp Oligo", "Chức Vụ / Vị Trí Công Việc": "Kỹ Thuật Viên Vận Hành Máy Tổng Hợp CPG", "Vai Trò Hệ Thống": "oligo_staff", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-OLIGO)" },
+      { "Phòng Ban": "Kỹ Thuật – Thiết Bị", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kỹ Thuật – Thiết Bị", "Vai Trò Hệ Thống": "device_head", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-DEVICE)" },
+      { "Phòng Ban": "Kỹ Thuật – Thiết Bị", "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Cơ Điện Tử & Firmware Thiết Bị Y Sinh", "Vai Trò Hệ Thống": "device_staff", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-DEVICE)" },
+      { "Phòng Ban": "QA / QC", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận QA/QC (QA/QC Manager)", "Vai Trò Hệ Thống": "qa_qc_lead", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-QA)" },
+      { "Phòng Ban": "QA / QC", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Quản Lý Chất Lượng & ISO 13485", "Vai Trò Hệ Thống": "qa_qc", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-QA)" },
+      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kinh Doanh", "Vai Trò Hệ Thống": "sales_head", "Khối": "Khối Kinh Doanh" },
+      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kinh Doanh (Senior/Junior)", "Vai Trò Hệ Thống": "sales_rep", "Khối": "Khối Kinh Doanh" },
+      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận", "Vai Trò Hệ Thống": "warehouse_lead", "Khối": "Khối Kinh Doanh" },
+      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", "Vai Trò Hệ Thống": "warehouse", "Khối": "Khối Kinh Doanh" },
+      { "Phòng Ban": "Mua Hàng & Cung Ứng", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Cung Ứng", "Vai Trò Hệ Thống": "procurement_lead", "Khối": "Khối Kinh Doanh" },
+      { "Phòng Ban": "Mua Hàng & Cung Ứng", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Mua Hàng Quốc Tế / Trong Nước", "Vai Trò Hệ Thống": "procurement_specialist", "Khối": "Khối Kinh Doanh" },
+      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kỹ Thuật & Ứng Dụng", "Vai Trò Hệ Thống": "app_head", "Khối": "Khối Kinh Doanh" },
+      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Ứng Dụng PCR / Sinh Học Phân Tử", "Vai Trò Hệ Thống": "app_rep", "Khối": "Khối Kinh Doanh" },
+      { "Phòng Ban": "Kế Toán", "Chức Vụ / Vị Trí Công Việc": "Kế Toán Trưởng", "Vai Trò Hệ Thống": "accountant_head", "Khối": "Khối Văn Phòng" },
+      { "Phòng Ban": "Kế Toán", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kế Toán Kho & Công Nợ", "Vai Trò Hệ Thống": "accountant", "Khối": "Khối Văn Phòng" },
+      { "Phòng Ban": "Pháp Chế", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Pháp Chế", "Vai Trò Hệ Thống": "legal_head", "Khối": "Khối Văn Phòng" },
+      { "Phòng Ban": "Pháp Chế", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Pháp Chế & Tuân Thủ", "Vai Trò Hệ Thống": "legal", "Khối": "Khối Văn Phòng" }
     ];
 
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wsRoles = XLSX.utils.json_to_sheet(roleMappingData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Danh_Ba_Nhan_Su");
+    XLSX.utils.book_append_sheet(wb, ws, "TaiKhoan_NhanSu_ToanCongTy");
     XLSX.utils.book_append_sheet(wb, wsRoles, "Bảng_Tham_Chiếu_Chức_Vụ");
 
     ws["!cols"] = [
       { wch: 18 }, // Mã NV
-      { wch: 25 }, // Họ tên
+      { wch: 24 }, // Họ tên
+      { wch: 18 }, // Tên đăng nhập
+      { wch: 18 }, // Mật khẩu khởi tạo
       { wch: 22 }, // Phòng ban
-      { wch: 35 }, // Chức vụ
-      { wch: 25 }, // Email
+      { wch: 38 }, // Chức vụ
+      { wch: 20 }, // Vai trò
+      { wch: 24 }, // Email
       { wch: 16 }, // SĐT
       { wch: 14 }  // Trạng thái
     ];
@@ -804,7 +855,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       { wch: 34 }
     ];
 
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_NhanSu_ABT.xlsx");
+    XLSX.writeFile(wb, "Mau_TaiKhoan_NhanSu_ToanHeThong_ABT.xlsx");
   };
 
   const handleImportPersonnelExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -915,6 +966,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       case "LEGAL": return Scale;
       case "ZALO_OA": return Smartphone;
       case "SETTINGS": return Settings;
+      case "CHAT": return MessagesSquare;
       default: return Building2;
     }
   };
@@ -1595,14 +1647,18 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
     { code: "app_rep", label: "Chuyên Viên Kỹ Thuật Lab", short: "KT Lab", color: "bg-violet-500/10 text-violet-600 border-violet-500/30" },
     { code: "accountant", label: "Kế Toán & Tài Chính", short: "Kế Toán", color: "bg-rose-500/10 text-rose-600 border-rose-500/30" },
     { code: "qa_qc", label: "Quản Lý Chất Lượng QA/QC", short: "QA/QC", color: "bg-teal-500/10 text-teal-600 border-teal-500/30" },
-    { code: "legal", label: "Pháp Chế & Tuân Thủ", short: "Pháp Chế", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" }
+    { code: "legal", label: "Pháp Chế & Tuân Thủ", short: "Pháp Chế", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" },
+    // Khối Kỹ thuật – Nhà máy (recipients resolved from factory roles on the server)
+    ...TECHNICAL_MATRIX_ROLES.map((r) => ({ code: r.code, label: r.label, short: r.short, color: "bg-teal-500/10 text-teal-700 border-teal-500/30" }))
   ];
 
   // Matrix Event Filtering
   const matrixEventsList = useMemo(() => {
     const events = Object.values(localMatrix);
     return events.filter(ev => {
-      const matchCategory = matrixCategoryFilter === "all" || ev.category === matrixCategoryFilter;
+      // "technical:<phòng>" narrows the Khối Kỹ thuật to one department
+      const matchCategory = matrixCategoryFilter === "all" || ev.category === matrixCategoryFilter ||
+        (matrixCategoryFilter.startsWith("technical:") && ev.categoryLabel === `Khối Kỹ thuật · ${matrixCategoryFilter.slice(10)}`);
       const matchSearch = !matrixSearch || 
         ev.name.toLowerCase().includes(matrixSearch.toLowerCase()) ||
         ev.description.toLowerCase().includes(matrixSearch.toLowerCase()) ||
@@ -1703,17 +1759,45 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
       {/* Header - Standardized 2-Tier Layout */}
       <div className="bg-white dark:bg-slate-900 p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3.5">
+        <input
+          type="file"
+          ref={personnelFileInputRef}
+          accept=".xlsx, .xls, .csv"
+          onChange={handleImportPersonnelExcel}
+          className="hidden"
+        />
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
             <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
               <Settings className="w-5 h-5 shrink-0" />
               <h2 className="text-lg sm:text-xl font-black tracking-tight text-slate-900 dark:text-white uppercase">
-                CẤU HÌNH HỆ THỐNG &amp; QUẢN LÝ TÀI KHOẢN
+                CẤU HÌNH HỆ THỐNG, TÀI KHOẢN &amp; NHÂN SỰ TOÀN CÔNG TY
               </h2>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-              Quản trị danh sách người dùng PostgreSQL, phân quyền vai trò (RBAC), cấp mật khẩu và theo dõi Sổ Nhật ký (Audit Trail).
+              Quản trị tập trung danh sách Nhân sự &amp; Tài khoản cho toàn bộ các khối (Kinh Doanh, Văn Phòng &amp; Khối Kỹ Thuật – Nhà Máy), phân quyền RBAC và Sổ Nhật ký.
             </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={handleDownloadPersonnelTemplate}
+              className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              title="Tải biểu mẫu Excel chuẩn để nhập Tài khoản & Nhân sự cho toàn hệ thống (gồm cả Khối Kỹ thuật & Khối Kinh doanh)"
+            >
+              <Download className="w-3.5 h-3.5 text-emerald-600" />
+              <span>Tải Mẫu Tài Khoản &amp; Nhân Sự (.xlsx)</span>
+            </button>
+            <button
+              type="button"
+              disabled={isImportingPersonnelExcel}
+              onClick={() => personnelFileInputRef.current?.click()}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-xs"
+              title="Nhập danh sách Tài khoản & Nhân sự toàn hệ thống từ file Excel (.xlsx / .xls)"
+            >
+              <Upload className={`w-3.5 h-3.5 ${isImportingPersonnelExcel ? "animate-spin" : ""}`} />
+              <span>{isImportingPersonnelExcel ? "Đang nạp Excel..." : "Nạp Excel Tài Khoản & Nhân Sự"}</span>
+            </button>
           </div>
         </div>
 
@@ -2141,19 +2225,11 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              <input
-                type="file"
-                ref={personnelFileInputRef}
-                accept=".xlsx, .xls, .csv"
-                onChange={handleImportPersonnelExcel}
-                className="hidden"
-              />
-
               <button
                 type="button"
                 onClick={handleDownloadPersonnelTemplate}
                 className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold transition-all cursor-pointer"
-                title="Tải file mẫu Excel chuẩn để nhập danh bạ nhân sự"
+                title="Tải file mẫu Excel chuẩn để nhập danh bạ nhân sự & tài khoản toàn hệ thống"
               >
                 <Download className="w-3.5 h-3.5" />
                 <span>Tải Mẫu Excel</span>
@@ -3130,13 +3206,14 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 { id: "application", label: "Lab & App" },
                 { id: "workspace", label: "Công Việc" },
                 { id: "finance", label: "Tài Chính" },
-                { id: "quality", label: "QA/QC" }
+                { id: "quality", label: "QA/QC" },
+                { id: "technical", label: "Khối Kỹ thuật" }
               ].map(f => (
                 <button
                   key={f.id}
                   onClick={() => setMatrixCategoryFilter(f.id)}
                   className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    matrixCategoryFilter === f.id
+                    matrixCategoryFilter === f.id || (f.id === "technical" && matrixCategoryFilter.startsWith("technical:"))
                       ? "bg-orange-500 text-white font-bold shadow-xs"
                       : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
                   }`}
@@ -3146,6 +3223,30 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               ))}
             </div>
           </div>
+
+          {/* Khối Kỹ thuật: one chip per department */}
+          {matrixCategoryFilter.startsWith("technical") && (
+            <div className="flex items-center flex-wrap gap-1.5 text-xs font-semibold -mt-2">
+              <span className="text-[11px] text-slate-400 mr-1">Phòng:</span>
+              {[...new Set(FACTORY_NOTICE_EVENTS.map((e) => e.dept))].map((dept) => {
+                const id = `technical:${dept}`;
+                const count = FACTORY_NOTICE_EVENTS.filter((e) => e.dept === dept).length;
+                return (
+                  <button
+                    key={id}
+                    onClick={() => setMatrixCategoryFilter(matrixCategoryFilter === id ? "technical" : id)}
+                    className={`px-2.5 py-1 rounded-lg transition-all cursor-pointer border ${
+                      matrixCategoryFilter === id
+                        ? "bg-teal-600 text-white border-teal-600"
+                        : "bg-white dark:bg-slate-900 text-teal-700 dark:text-teal-300 border-teal-200 dark:border-teal-800 hover:bg-teal-50 dark:hover:bg-teal-950/40"
+                    }`}
+                  >
+                    {dept} ({count})
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           {/* Matrix Event Cards List */}
           <div className="space-y-3">
@@ -3194,6 +3295,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                             ev.category === "application" ? "bg-purple-500/10 text-purple-600 border-purple-500/20" :
                             ev.category === "finance" ? "bg-rose-500/10 text-rose-600 border-rose-500/20" :
                             ev.category === "quality" ? "bg-teal-500/10 text-teal-600 border-teal-500/20" :
+                            ev.category === "technical" ? "bg-slate-500/10 text-teal-700 dark:text-teal-300 border-teal-500/40" :
                             "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                           }`}>
                             {ev.categoryLabel}
@@ -3243,7 +3345,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                         1. Nhóm Vai Trò Nhận Thông Báo ({ev.targetRoles?.length || 0})
                       </span>
                       <div className="flex items-center flex-wrap gap-1.5">
-                        {MATRIX_ROLES.map(role => {
+                        {/* factory events reach BGĐ + technical groups (server-side); portal events the portal groups */}
+                        {MATRIX_ROLES.filter((role) => role.code === "admin" || (ev.category === "technical") === role.code.startsWith("factory_")).map(role => {
                           const isSelected = (ev.targetRoles || []).includes(role.code);
                           return (
                             <button
@@ -3492,9 +3595,27 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     <optgroup label="👑 Ban Giám Đốc">
                       <option value="admin">Tổng Giám Đốc / Phó Giám Đốc (admin)</option>
                     </optgroup>
-                    <optgroup label="💼 Phòng Kinh Doanh">
+                    <optgroup label="🔬 Khối Kỹ Thuật, R&D & Nhà Máy">
+                      <option value="rd_head">Trưởng Phòng Nghiên Cứu R&amp;D (rd_head)</option>
+                      <option value="rd_staff">Chuyên Viên Nghiên Cứu R&amp;D (rd_staff)</option>
+                      <option value="kit_head">Trưởng Phòng Sản Xuất Kit (kit_head)</option>
+                      <option value="kit_staff">Kỹ Thuật Viên Sản Xuất Kit (kit_staff)</option>
+                      <option value="oligo_head">Trưởng Phòng Tổng Hợp Oligo (oligo_head)</option>
+                      <option value="oligo_staff">Kỹ Thuật Viên Tổng Hợp Oligo (oligo_staff)</option>
+                      <option value="device_head">Trưởng Phòng Kỹ Thuật – Thiết Bị (device_head)</option>
+                      <option value="device_staff">Kỹ Sư Chế Tạo &amp; Bảo Trì Thiết Bị (device_staff)</option>
+                    </optgroup>
+                    <optgroup label="🧬 Kỹ Thuật & Ứng Dụng (Application)">
+                      <option value="app_head">Trưởng Phòng Kỹ Thuật &amp; Ứng Dụng (app_head)</option>
+                      <option value="app_rep">Kỹ Sư Ứng Dụng / Kỹ Sư Dịch Vụ (app_rep)</option>
+                    </optgroup>
+                    <optgroup label="🛡️ Quản Lý Chất Lượng (QA/QC)">
+                      <option value="qa_qc_lead">Trưởng Bộ Phận QA/QC (qa_qc_lead)</option>
+                      <option value="qa_qc">Chuyên Viên QA/QC &amp; ISO 13485 (qa_qc)</option>
+                    </optgroup>
+                    <optgroup label="💼 Khối Kinh Doanh, PM & Marketing">
                       <option value="sales_head">Trưởng / Phó Phòng Kinh Doanh (sales_head)</option>
-                      <option value="sales_rep">Chuyên Viên KD / PM / Sales Admin (sales_rep)</option>
+                      <option value="sales_rep">Chuyên Viên KD / PM / Sales Admin / Marketing (sales_rep)</option>
                     </optgroup>
                     <optgroup label="📦 Bộ Phận Kho Vận">
                       <option value="warehouse_lead">Trưởng Bộ Phận Kho Vận (warehouse_lead)</option>
@@ -3504,21 +3625,13 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       <option value="procurement_lead">Trưởng Bộ Phận Cung Ứng (procurement_lead)</option>
                       <option value="procurement_specialist">Chuyên Viên Mua Hàng (procurement_specialist)</option>
                     </optgroup>
-                    <optgroup label="🧬 Kỹ Thuật & Ứng Dụng (Application)">
-                      <option value="app_head">Trưởng Phòng Kỹ Thuật & Ứng Dụng (app_head)</option>
-                      <option value="app_rep">Kỹ Sư Ứng Dụng / Kỹ Sư Dịch Vụ (app_rep)</option>
-                    </optgroup>
                     <optgroup label="💰 Phòng Kế Toán">
                       <option value="accountant_head">Kế Toán Trưởng (accountant_head)</option>
-                      <option value="accountant">Chuyên Viên Kế Toán Kho & Công Nợ (accountant)</option>
-                    </optgroup>
-                    <optgroup label="🛡️ Quản Lý Chất Lượng (QA/QC)">
-                      <option value="qa_qc_lead">Trưởng Bộ Phận QA/QC (qa_qc_lead)</option>
-                      <option value="qa_qc">Chuyên Viên QA/QC & ISO 13485 (qa_qc)</option>
+                      <option value="accountant">Chuyên Viên Kế Toán Kho &amp; Công Nợ (accountant)</option>
                     </optgroup>
                     <optgroup label="⚖️ Bộ Phận Pháp Chế">
                       <option value="legal_head">Trưởng Bộ Phận Pháp Chế (legal_head)</option>
-                      <option value="legal">Chuyên Viên Pháp Chế & Tuân Thủ (legal)</option>
+                      <option value="legal">Chuyên Viên Pháp Chế &amp; Tuân Thủ (legal)</option>
                     </optgroup>
                   </select>
                 </div>
@@ -3871,7 +3984,15 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                   >
                     <option value="director">director (Toàn quyền)</option>
                     <option value="manager">manager (Quản lý bộ phận)</option>
-                    <option value="sales_rep">sales_rep (Kinh doanh)</option>
+                    <option value="rd_head">rd_head (Trưởng phòng R&amp;D)</option>
+                    <option value="rd_staff">rd_staff (Chuyên viên R&amp;D)</option>
+                    <option value="kit_head">kit_head (Trưởng phòng SX Kit)</option>
+                    <option value="kit_staff">kit_staff (KTV Sản xuất Kit)</option>
+                    <option value="oligo_head">oligo_head (Trưởng phòng Oligo)</option>
+                    <option value="oligo_staff">oligo_staff (KTV Tổng hợp Oligo)</option>
+                    <option value="device_head">device_head (Trưởng phòng Thiết bị)</option>
+                    <option value="device_staff">device_staff (Kỹ sư Thiết bị)</option>
+                    <option value="sales_rep">sales_rep (Kinh doanh / PM / Marketing)</option>
                     <option value="app_rep">app_rep (Ứng dụng/Lab)</option>
                     <option value="procurement">procurement (Mua hàng)</option>
                     <option value="warehouse_lead">warehouse_lead (Kho vận)</option>
@@ -4121,7 +4242,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     </div>
                     <div>
                       <h4 className="font-extrabold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                        <span>Phòng Ban &amp; Phân Hệ Được Phép Vào</span>
+                        <span>Khối Kinh Doanh &amp; Văn Phòng — Phân Hệ Được Phép Vào</span>
                         <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
                           Hiển thị Tab Menu chính
                         </span>
@@ -4145,9 +4266,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                   )}
                 </div>
 
-                {/* Department Modules Grid */}
+                {/* Department Modules Grid, grouped by khối */}
+                {PORTAL_BLOCKS.map((block) => (
+                <div key={block.title} className="space-y-2">
+                <div className="text-[11px] font-extrabold uppercase tracking-wider text-indigo-700 dark:text-indigo-300">{block.title}</div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {DEPARTMENT_MODULES.map((deptMod) => {
+                  {DEPARTMENT_MODULES.filter((m) => block.keys.includes(m.key)).map((deptMod) => {
                     const isAccessible = Boolean(currentEditingPermissions[deptMod.key]);
                     const userDept = (permissionsModalUser?.department || "").toLowerCase();
                     const isOwnDept = deptMod.deptMatch.some(d => userDept.includes(d));
@@ -4219,7 +4343,17 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     );
                   })}
                 </div>
+                </div>
+                ))}
               </div>
+
+              {/* Khối Kỹ thuật – Nhà máy: role-based factory permissions (separate, audited) */}
+              <FactoryAccessSection
+                key={permissionsModalUser.id}
+                userId={Number(permissionsModalUser.id)}
+                username={permissionsModalUser.username}
+                isRootAdmin={permissionsModalUser.role === "admin"}
+              />
 
               {/* Divider between Departments and Granular Features */}
               <div className="flex items-center gap-2 pt-2">
@@ -4320,6 +4454,15 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                   </div>
                 );
               })}
+
+              {/* Khối Kỹ thuật – Nhà máy: feature list per department (held through roles) */}
+              <FactoryFeatureGroups
+                key={`features-${permissionsModalUser.id}`}
+                userId={Number(permissionsModalUser.id)}
+                username={permissionsModalUser.username}
+                isRootAdmin={permissionsModalUser.role === "admin"}
+                startIndex={PERMISSION_GROUPS.length + 1}
+              />
             </div>
 
             {/* Modal Footer */}
@@ -4329,7 +4472,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 <strong className="text-indigo-600 dark:text-indigo-400 font-bold">
                   {Object.values(currentEditingPermissions).filter(Boolean).length}
                 </strong>
-                <span> / {PERMISSION_GROUPS.reduce((acc, g) => acc + g.permissions.length, 0)} tính năng</span>
+                <span> / {PERMISSION_GROUPS.reduce((acc, g) => acc + g.permissions.length, 0)} tính năng Kinh doanh – Văn phòng</span>
               </div>
 
               <div className="flex items-center gap-2">

@@ -328,7 +328,10 @@ export async function updateWorkTaskAction(tx: Tx, actor: AuthzActor, taskId: st
 }
 
 export async function listWorkPlans(tx: Tx, actor: AuthzActor, orgUnitId?: string) {
-  await authorizeAnywhere(tx, actor, "rd.view").catch(() => authorizeAnywhere(tx, actor, "work.plan.submit"));
+  await authorizeAnywhere(tx, actor, "rd.view").catch((err) => {
+    if (err?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "work.plan.submit");
+    throw err;
+  });
   const rows = (
     await tx.query(
       `SELECT wp.*, wp.week_start::text AS week_start, up.display_name AS user_name, u.name AS org_unit_name,

@@ -215,6 +215,8 @@ export async function sendZaloCustomerServiceMessage(params: {
     return { success: false, status: "FAILED_NO_TOKEN", error: "Chưa cấu hình Access Token chính thức" };
   }
 
+  const safeText = String(text).length > 1950 ? String(text).slice(0, 1940) + "\n..." : String(text);
+
   const callZaloApi = async (accessToken: string) => {
     return fetch("https://openapi.zalo.me/v3.0/oa/message/cs", {
       method: "POST",
@@ -224,7 +226,7 @@ export async function sendZaloCustomerServiceMessage(params: {
       },
       body: JSON.stringify({
         recipient: { user_id: recipientId },
-        message: { text }
+        message: { text: safeText }
       })
     });
   };
@@ -235,7 +237,11 @@ export async function sendZaloCustomerServiceMessage(params: {
     let wasRenewed = false;
 
     // Kiểm tra xem Zalo có báo lỗi Token hết hạn / không hợp lệ hay không (-216, -210, -124, -204)
-    const isTokenExpiredError = replyData.error === -216 || replyData.error === -210 || replyData.error === -124;
+    const isTokenExpiredError =
+      replyData.error === -216 ||
+      replyData.error === -210 ||
+      replyData.error === -124 ||
+      replyData.error === -204;
 
     if (isTokenExpiredError) {
       console.warn(`[ZaloTokenService] ⚠️ Zalo báo lỗi Token (${replyData.error}: ${replyData.message}). Hệ thống tự động làm mới Access Token ngay lập tức...`);
@@ -259,9 +265,9 @@ export async function sendZaloCustomerServiceMessage(params: {
 
     // Lưu log tin nhắn gửi đi
     await query(
-      `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
-       VALUES ($1, $2, 'OUTBOUND', 'TEXT', $3, $4)`,
-      [recipientId, senderName, text, finalStatus]
+      `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status, payload)
+       VALUES ($1, $2, 'OUTBOUND', 'TEXT', $3, $4, $5::jsonb)`,
+      [recipientId, senderName, safeText, finalStatus, JSON.stringify(replyData || {})]
     ).catch(() => {});
 
     return {

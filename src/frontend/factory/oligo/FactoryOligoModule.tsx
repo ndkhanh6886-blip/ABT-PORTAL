@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
-import { ClipboardList, AlertTriangle, Beaker, Dna, FlaskConical, ListChecks, ListTree, Microscope, Settings2 } from "lucide-react";
+import { Calculator, ClipboardList, AlertTriangle, Beaker, Dna, FlaskConical, ListTree, Microscope, Settings2 } from "lucide-react";
 import { useFactoryMe } from "../api";
 import { Empty } from "../ui";
 import { AnalysisView } from "./AnalysisView";
@@ -14,12 +14,12 @@ import { InstrumentsView } from "./InstrumentsView";
 import { AssetEventsView } from "./AssetEventsView";
 import { ColumnsView } from "./ColumnsView";
 import { PostProcessView } from "./PostProcessView";
-import { SopConfigView } from "./SopConfigView";
 import { PreparationView } from "../prep/PreparationView";
 import { OligoOrdersView } from "./OligoOrdersView";
+import { PricingConfigView } from "./PricingConfigView";
 import { DeptMaterialActionBar } from "../warehouse/DeptMaterialActionBar";
 
-type SubTab = "orders" | "analysis" | "batches" | "post" | "equipment" | "rules" | "sop" | "prep" | "quality" | "catalog";
+type SubTab = "orders" | "analysis" | "batches" | "post" | "equipment" | "rules" | "prep" | "quality" | "catalog" | "pricing";
 
 /** "Tổng Hợp Oligo": screens of the Oligo department (post-synthesis and QC follow). */
 export function FactoryOligoModule() {
@@ -34,9 +34,9 @@ export function FactoryOligoModule() {
     { key: "quality", label: "Sự cố & Truy vết", icon: AlertTriangle },
     { key: "equipment", label: "Thiết bị", icon: Settings2 },
     { key: "rules", label: "Định mức hóa chất", icon: Beaker },
-    { key: "sop", label: "Quy trình SOP", icon: ListChecks },
     { key: "prep", label: "Pha chế", icon: Beaker },
     { key: "catalog", label: "Danh mục Mod", icon: ListTree },
+    { key: "pricing", label: "Bảng giá & Báo giá Oligo", icon: Calculator },
   ];
   if (me.isLoading) return <div className="text-sm text-slate-400 p-6">Đang tải…</div>;
   if (!perms.has("oligo.view")) return <Empty>Bạn chưa có quyền trong phân hệ Tổng hợp Oligo.</Empty>;
@@ -79,10 +79,16 @@ export function FactoryOligoModule() {
           <AssetEventsView canPlan={perms.has("asset.operate") || perms.has("asset.manage")} />
         </div>
       )}
-      {tab === "rules" && <EquipmentView section="rules" canManageAssets={perms.has("asset.manage")} canManageRules={perms.has("oligo.reagent.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} canOperate={perms.has("oligo.batch.manage")} />}
-      {tab === "sop" && <SopConfigView canManage={perms.has("oligo.sop.manage")} />}
+      {tab === "rules" && (
+        <div className="flex flex-col gap-3">
+          <EquipmentView section="rules" canManageAssets={perms.has("asset.manage")} canManageRules={perms.has("oligo.reagent.manage")} canManageCatalog={perms.has("oligo.catalog.manage")} canOperate={perms.has("oligo.batch.manage")} />
+          <InstrumentsView canManage={perms.has("asset.manage")} canOperate={perms.has("asset.operate")} />
+          <ColumnsView canManage={perms.has("asset.manage")} />
+        </div>
+      )}
       {tab === "prep" && <PreparationView canManage={perms.has("prep.formula.manage")} canExecute={perms.has("prep.execute")} />}
       {tab === "catalog" && <CatalogView canManage={perms.has("oligo.catalog.manage")} />}
+      {tab === "pricing" && <PricingConfigView canManage={perms.has("oligo.catalog.manage") || perms.has("oligo.order.manage")} />}
     </div>
   );
 }

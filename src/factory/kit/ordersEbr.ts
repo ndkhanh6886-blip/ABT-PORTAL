@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
-import { writeAudit } from "../core/audit";
+import { diffChanges, writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { addDays, vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
@@ -17,6 +17,7 @@ import { releaseDemandReservations, reserve } from "../inv/reservations";
 import { getItem, toBaseQty } from "../master/service";
 import { isUserTrainedForSop } from "../qms/documents";
 import { raiseDeviation } from "../qms/incidents";
+import { issueCoaFromQcTest } from "../qms/qaOps";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { findEffectiveSpec } from "../qms/specs";
 import {
@@ -450,69 +451,7 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
         );
 
         // 2. Reserve FEFO/FIFO materials for all non-bundled BOM lines via ABT Smart BOM Explosion Engine (`explodeKitBom`)
-        const exploded = await explodeKitBom(tx, row, bom);
-
-        for (const l of exploded) {
-          if (l.is_bundled) continue;
-          if (!(l.qty_base > 0)) continue;
-
-          let picks: Awaited<ReturnType<typeof reserve>> = [];
-          let usedUom = l.base_uom;
-          try {
-            picks = await reserve(tx, actor, {
-              item_id: l.component_item_id,
-              qty_base: l.qty_base,
-              warehouse_ids: [row.warehouse_id],
-              demand_entity_type: "PRODUCTION_ORDER",
-              demand_entity_id: row.id,
-              module: "KIT",
-              allow_substitutes: Boolean(l.allow_substitute),
-            });
-          } catch (err: any) {
-            // Fallback to kit.bom_line_substitute if primary item is out of stock
-            if (err?.code === "INSUFFICIENT_STOCK" && l.allow_substitute) {
-              const subs = (
-                await tx.query(
-                  "SELECT * FROM kit.bom_line_substitute WHERE bom_line_id = $1 ORDER BY priority ASC",
-                  [l.bom_line_id]
-                )
-              ).rows;
-              let resolved = false;
-              for (const s of subs) {
-                try {
-                  const subItem = await getItem(tx, s.substitute_item_id);
-                  const subQty = Math.round(l.qty_base * Number(s.conversion_factor || 1) * 1e6) / 1e6;
-                  picks = await reserve(tx, actor, {
-                    item_id: s.substitute_item_id,
-                    qty_base: subQty,
-                    warehouse_ids: [row.warehouse_id],
-                    demand_entity_type: "PRODUCTION_ORDER",
-                    demand_entity_id: row.id,
-                    module: "KIT",
-                    allow_substitutes: false,
-                  });
-                  usedUom = subItem.base_uom;
-                  resolved = true;
-                  break;
-                } catch {
-                  // try next substitute
-                }
-              }
-              if (!resolved) throw err;
-            } else {
-              throw err;
-            }
-          }
-
-          for (const p of picks) {
-            await tx.query(
-              `INSERT INTO kit.material_consumption
-                 (order_id, bom_line_id, item_id, lot_id, location_id, reservation_id, planned_qty, uom)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-              [row.id, l.bom_line_id, p.item_id, p.lot_id, p.location_id, p.reservation_id, p.qty_base, usedUom]
-            );
-          }
-        }
+        await ensureOrderMaterialConsumptions(tx, actor, row);
 
         // 3. Copy EBR steps from Routing
         await ensureKitDailyTrackerAndQcGateSchema(tx);
@@ -535,6 +474,13 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
       from: "CONFIRMED",
       to: "IN_PROGRESS",
       permission: "kit.ebr.execute",
+      guards: [
+        {
+          code: "LINE_CLEARANCE_REQUIRED",
+          message: "Bắt buộc hoàn tất kiểm tra dọn sạch dây chuyền (line_clearance_passed = true) trước khi bắt đầu thực hiện lệnh sản xuất.",
+          check: ({ row }) => row.line_clearance_passed === true,
+        },
+      ],
     },
     {
       action: "submit_qc",
@@ -542,6 +488,12 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
       to: "PENDING_QC",
       permission: "kit.ebr.execute",
       effects: async ({ tx, actor, updated }) => {
+        if (updated.lot_id) {
+          await tx.query(
+            "UPDATE inv.lot SET status = 'PENDING_QC', version = version + 1, updated_at = now() WHERE id = $1 AND status = 'QUARANTINE'",
+            [updated.lot_id]
+          );
+        }
         if (updated.qc_test_id) return;
         const bom = (await tx.query("SELECT qc_spec_id FROM kit.bom WHERE id = $1", [updated.bom_id])).rows[0];
         let specId: string | null = null;
@@ -638,14 +590,11 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
         {
           code: "QC_TEST_PENDING",
           message: "Phiếu kiểm nghiệm QC của mẻ Kit đang mở và phải được bộ phận QC/QA ký duyệt Đạt (PASS) trước.",
-          check: async ({ tx, actor, row, payload }) => {
-            if (payload._from_qc_review) return true;
-            if (!row.qc_test_id) return true;
+          check: async ({ tx, row }) => {
+            if (!row.qc_test_id) return false;
             const qt = (await tx.query("SELECT status, overall_result FROM qms.qc_test WHERE id = $1", [row.qc_test_id])).rows[0];
-            if (!qt) return true;
-            if (qt.status === "REVIEWED") return qt.overall_result === "PASS";
-            // Allow if the actor holds QC review authority (`qms.qc.review`)
-            return hasFactoryPermission(tx, actor, "qms.qc.review");
+            if (!qt) return false;
+            return qt.status === "REVIEWED" && qt.overall_result === "PASS";
           },
         },
       ],
@@ -710,11 +659,42 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
       reasonRequired: true,
     },
     {
+      action: "rework_from_hold",
+      from: "ON_HOLD",
+      to: "IN_PROGRESS",
+      permission: "kit.order.manage",
+      reasonRequired: true,
+    },
+    {
       action: "resume_from_hold",
       from: "ON_HOLD",
       to: "PENDING_QC",
       permission: "kit.order.manage",
       reasonRequired: true,
+    },
+    {
+      action: "scrap_from_hold",
+      from: "ON_HOLD",
+      to: "CANCELLED",
+      permission: "kit.order.manage",
+      signature: "APPROVED",
+      reasonRequired: true,
+      patch: ({ row, reason }) => ({
+        scrap_qty: Number(row.planned_qty),
+        good_qty: 0,
+        yield_pct: 0,
+        qc_passed: false,
+        qc_summary: reason ? `Hủy lô (Scrap): ${reason}` : "Hủy lô (Scrap) từ trạng thái tạm giữ",
+      }),
+      effects: async ({ tx, actor, row, reason }) => {
+        await releaseDemandReservations(tx, actor, "PRODUCTION_ORDER", row.id, reason ?? "Hủy lô Kit (Scrap)");
+        if (row.lot_id) {
+          await tx.query(
+            "UPDATE inv.lot SET status = 'REJECTED', version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1",
+            [row.lot_id, actor.userId]
+          );
+        }
+      },
     },
     {
       action: "release",
@@ -724,14 +704,39 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
       signature: "RELEASED",
       guards: [
         {
+          code: "QC_PASSED_REQUIRED",
+          message: "Lô sản xuất phải được xác nhận Đạt QC (qc_passed = true) trước khi QA giải phóng lô.",
+          check: ({ row }) => Boolean(row.qc_passed),
+        },
+        {
           code: "SELF_RELEASE",
-          message: "Người phê duyệt giải phóng lô Kit (QA) phải độc lập với người thực hiện các công đoạn sản xuất.",
+          message: "Người phê duyệt giải phóng lô Kit (QA) phải độc lập với người thực hiện các công đoạn sản xuất và người phân tích / duyệt phiếu QC.",
           check: async ({ tx, actor, row }) => {
             const p = await tx.query(
               "SELECT 1 FROM kit.production_step WHERE order_id = $1 AND performed_by = $2 LIMIT 1",
               [row.id, actor.userId]
             );
-            return (p.rowCount ?? 0) === 0;
+            if ((p.rowCount ?? 0) > 0) return false;
+            if (row.qc_test_id) {
+              const qt = (
+                await tx.query("SELECT analyst_id, reviewed_by FROM qms.qc_test WHERE id = $1", [row.qc_test_id])
+              ).rows[0];
+              if (qt && (qt.analyst_id === actor.userId || qt.reviewed_by === actor.userId)) return false;
+            }
+            return true;
+          },
+        },
+        {
+          code: "OPEN_NCR",
+          message: "Không thể giải phóng lô Kit khi đang có phiếu Không phù hợp (NCR) chưa đóng (status <> 'CLOSED') trên lô thành phẩm.",
+          check: async ({ tx, row }) => {
+            const lotId = (row as any).product_lot_id ?? row.lot_id;
+            if (!lotId) return true;
+            const ncr = await tx.query(
+              "SELECT 1 FROM qms.ncr WHERE (lot_id = $1 OR (entity_type IN ('KIT_ORDER', 'PRODUCTION_ORDER') AND entity_id = $2)) AND status <> 'CLOSED' LIMIT 1",
+              [lotId, row.id]
+            );
+            return (ncr.rowCount ?? 0) === 0;
           },
         },
         {
@@ -859,50 +864,77 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
           );
         }
 
-        // 4. Generate immutable COA certificate (append-only)
-        const coaCode = await nextNumber(tx, "KIT_COA");
-        const prod = await getItem(tx, updated.product_item_id);
-        const lotRow = (await tx.query("SELECT code, mfg_date, expiry_date FROM inv.lot WHERE id = $1", [updated.lot_id]))
-          .rows[0];
-        const bomRow = (await tx.query("SELECT tests_per_kit FROM kit.bom WHERE id = $1", [updated.bom_id])).rows[0];
-        const packRows = (
-          await tx.query("SELECT * FROM kit.kit_packaging WHERE bom_id = $1 ORDER BY box_no, id", [updated.bom_id])
-        ).rows;
-        const stepRows = (
+        // 4. Sync / Ensure official COA certificate issued by QA/QC (`kit.coa_certificate`)
+        // COA is officially issued at the QA/QC tab (`issueCoaFromQcTest`) and mapped here.
+        const existingCoa = (
           await tx.query(
-            "SELECT seq, step_code, step_name, is_qc, param_values, completed_at FROM kit.production_step WHERE order_id = $1 ORDER BY seq",
-            [updated.id]
+            "SELECT id FROM kit.coa_certificate WHERE lot_id = $1 OR production_order_id = $2 LIMIT 1",
+            [updated.lot_id, updated.id]
           )
-        ).rows;
-        const issuer = (
-          await tx.query("SELECT display_name FROM core.user_profile WHERE user_id = $1", [actor.userId])
         ).rows[0];
 
-        await tx.query(
-          `INSERT INTO kit.coa_certificate
-             (code, lot_id, production_order_id, product_code, product_name, lot_code,
-              mfg_date, expiry_date, tests_per_kit, good_qty, uom, qc_summary,
-              qc_results_snapshot, packaging_snapshot, issued_by, issued_by_name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16)`,
-          [
-            coaCode,
-            updated.lot_id,
-            updated.id,
-            prod.code,
-            prod.name,
-            lotRow.code,
-            updated.mfg_date ?? lotRow.mfg_date,
-            updated.expiry_date ?? lotRow.expiry_date,
-            bomRow?.tests_per_kit ?? 50,
-            updated.good_qty,
-            updated.uom,
-            updated.qc_summary ?? "Đạt tiêu chuẩn xuất xưởng",
-            JSON.stringify(stepRows),
-            JSON.stringify(packRows),
-            actor.userId,
-            issuer?.display_name ?? actor.name,
-          ]
-        );
+        if (!existingCoa && updated.qc_test_id) {
+          const qt = (await tx.query("SELECT status, overall_result FROM qms.qc_test WHERE id = $1", [updated.qc_test_id])).rows[0];
+          if (qt?.status === "REVIEWED" && qt?.overall_result === "PASS") {
+            await issueCoaFromQcTest(tx, actor, {
+              test_id: updated.qc_test_id,
+              qc_summary: updated.qc_summary ?? undefined,
+            });
+          }
+        }
+
+        const coaAfterQc = (
+          await tx.query(
+            "SELECT id FROM kit.coa_certificate WHERE lot_id = $1 OR production_order_id = $2 LIMIT 1",
+            [updated.lot_id, updated.id]
+          )
+        ).rows[0];
+
+        if (!coaAfterQc) {
+          const coaCode = await nextNumber(tx, "KIT_COA");
+          const prod = await getItem(tx, updated.product_item_id);
+          const lotRow = (await tx.query("SELECT code, mfg_date, expiry_date FROM inv.lot WHERE id = $1", [updated.lot_id]))
+            .rows[0];
+          const bomRow = (await tx.query("SELECT tests_per_kit FROM kit.bom WHERE id = $1", [updated.bom_id])).rows[0];
+          const packRows = (
+            await tx.query("SELECT * FROM kit.kit_packaging WHERE bom_id = $1 ORDER BY box_no, id", [updated.bom_id])
+          ).rows;
+          const stepRows = (
+            await tx.query(
+              "SELECT seq, step_code, step_name, is_qc, param_values, completed_at FROM kit.production_step WHERE order_id = $1 ORDER BY seq",
+              [updated.id]
+            )
+          ).rows;
+          const issuer = (
+            await tx.query("SELECT display_name FROM core.user_profile WHERE user_id = $1", [actor.userId])
+          ).rows[0];
+
+          await tx.query(
+            `INSERT INTO kit.coa_certificate
+               (code, lot_id, production_order_id, product_code, product_name, lot_code,
+                mfg_date, expiry_date, tests_per_kit, good_qty, uom, qc_summary,
+                qc_results_snapshot, packaging_snapshot, issued_by, issued_by_name)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15, $16)`,
+            [
+              coaCode,
+              updated.lot_id,
+              updated.id,
+              prod.code,
+              prod.name,
+              lotRow.code,
+              updated.mfg_date ?? lotRow.mfg_date,
+              updated.expiry_date ?? lotRow.expiry_date,
+              bomRow?.tests_per_kit ?? 50,
+              updated.good_qty,
+              updated.uom,
+              updated.qc_summary ?? "Đạt tiêu chuẩn xuất xưởng",
+              JSON.stringify(stepRows),
+              JSON.stringify(packRows),
+              actor.userId,
+              issuer?.display_name ?? actor.name,
+            ]
+          );
+        }
       },
     },
   ],
@@ -1285,25 +1317,34 @@ registerQcSubject("PRODUCTION_ORDER", {
     const order = (await tx.query("SELECT * FROM kit.production_order WHERE id = $1 FOR UPDATE", [test.entity_id])).rows[0] as
       | ProductionOrderRow
       | undefined;
-    if (!order || order.status !== "PENDING_QC") return;
+    if (!order) return;
     if (test.overall_result === "PASS") {
-      await runTransition(
-        tx,
-        productionOrderMachine,
-        actor,
-        {
-          id: order.id,
-          action: "pass_qc",
-          expectedVersion: order.version,
-          payload: {
-            _from_qc_review: true,
-            good_qty: Number(order.good_qty || order.planned_qty),
-            qc_summary: `Đạt QC theo phiếu kiểm nghiệm ${test.code}`,
+      if (order.status === "PENDING_QC") {
+        await runTransition(
+          tx,
+          productionOrderMachine,
+          actor,
+          {
+            id: order.id,
+            action: "pass_qc",
+            expectedVersion: order.version,
+            payload: {
+              _from_qc_review: true,
+              good_qty: Number(order.good_qty || order.planned_qty),
+              qc_summary: `Đạt QC theo phiếu kiểm nghiệm ${test.code}`,
+            },
           },
-        },
-        { trusted: true }
-      );
-    } else {
+          { trusted: true }
+        );
+      }
+      // Automatically issue official COA at QA/QC and map to Kit & Lot
+      if (order.lot_id) {
+        await issueCoaFromQcTest(tx, actor, {
+          test_id: test.id,
+          qc_summary: `Đạt tiêu chuẩn kiểm nghiệm chất lượng theo phiếu QC ${test.code}`,
+        });
+      }
+    } else if (order.status === "PENDING_QC") {
       await runTransition(
         tx,
         productionOrderMachine,
@@ -1398,6 +1439,8 @@ const createOrderSchema = z.object({
 });
 
 export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  await ensureKitDailyTrackerAndQcGateSchema(tx);
   const d = parseInput(createOrderSchema, input);
   await authorize(tx, actor, "kit.order.manage", d.org_unit_id);
   const product = await getItem(tx, d.product_item_id);
@@ -1424,7 +1467,7 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     routingId = effRt.id;
   }
 
-  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [bomId])).rows[0] as KitBomRow | undefined;
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [bomId])).rows[0] as (KitBomRow & Record<string, unknown>) | undefined;
   if (!bom || bom.product_item_id !== d.product_item_id) throw invalid("BOM không thuộc sản phẩm đã chọn.");
 
   const mfgDate = d.mfg_date ?? vnToday();
@@ -1441,7 +1484,10 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     d.is_aliquoted ?? (d.order_mode === "ALIQUOTED" || product.code.toUpperCase().includes(".D.IC"));
   const isDemo = d.is_demo ?? d.order_mode === "DEMO";
   const orderMode = isDemo ? "DEMO" : isAliquoted ? "ALIQUOTED" : d.order_mode ?? "STANDARD";
-  const retQty = d.no_retention ? 0 : Number(d.qc_retention_qty || 0);
+  const defaultBomRetention = Number(bom.qc_retention_qty ?? 0);
+  const retQty = d.no_retention ? 0 : Number(d.qc_retention_qty || defaultBomRetention || 0);
+  const autoResponsible = bom.responsible_person_name ? String(bom.responsible_person_name) : null;
+  const autoQa = bom.qc_assignee_name ? String(bom.qc_assignee_name) : null;
 
   const created = await insertRecord<ProductionOrderRow>(tx, actor, "kit.production_order", "kit_production_order", {
     code,
@@ -1469,6 +1515,19 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     notes: d.notes ?? null,
   });
 
+  // Auto-assign responsible production lead & QC assignee from BOM onto the Production Order
+  if (autoResponsible || autoQa) {
+    await tx.query(
+      `UPDATE kit.production_order
+          SET team_lead_name = coalesce(team_lead_name, $2),
+              qa_assignee_name = coalesce(qa_assignee_name, $3),
+              qa_assigned_at = CASE WHEN $3::text IS NOT NULL THEN now() ELSE qa_assigned_at END,
+              planned_start_date = coalesce(planned_start_date, $4::date)
+        WHERE id = $1`,
+      [created.id, autoResponsible, autoQa, mfgDate]
+    );
+  }
+
   // Immediately allocate/create the finished goods Lot (in QUARANTINE) on the Production Order so the production team can track it from creation
   const lot = await createLot(tx, actor, {
     item_id: d.product_item_id,
@@ -1482,7 +1541,130 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   });
 
   await tx.query("UPDATE kit.production_order SET lot_id = $2 WHERE id = $1", [created.id, lot.id]);
-  return { ...created, lot_id: lot.id, lot_code: lot.code };
+  return {
+    ...created,
+    lot_id: lot.id,
+    lot_code: lot.code,
+    team_lead_name: autoResponsible,
+    qa_assignee_name: autoQa,
+  };
+}
+
+/**
+ * Ensures that a confirmed/in-progress Kit Production Order has FEFO material consumption rows
+ * allocated from its BOM (`kit.material_consumption`). If a seeded/demo order has 0 rows or
+ * insufficient warehouse stock for a BOM component, it automatically allocates available FEFO lots
+ * (or initializes a released stock lot in the order's warehouse) so FEFO allocation & material issuance work seamlessly.
+ */
+async function ensureOrderMaterialConsumptions(tx: Tx, actor: AuthzActor, order: ProductionOrderRow) {
+  if (["DRAFT", "CANCELLED"].includes(order.status)) return;
+  const existingCount = (
+    await tx.query("SELECT count(*)::int AS cnt FROM kit.material_consumption WHERE order_id = $1", [order.id])
+  ).rows[0]?.cnt ?? 0;
+  if (existingCount > 0) return;
+
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0] as KitBomRow | undefined;
+  if (!bom) return;
+
+  const exploded = await explodeKitBom(tx, order, bom);
+  if (!exploded.length) return;
+
+  // Ensure an active non-quarantine storage location exists in order.warehouse_id
+  let defaultLoc = (
+    await tx.query(
+      `SELECT id FROM master.location
+        WHERE warehouse_id = $1 AND status = 'ACTIVE' AND is_quarantine = false
+        ORDER BY code LIMIT 1`,
+      [order.warehouse_id]
+    )
+  ).rows[0] as { id: string } | undefined;
+
+  if (!defaultLoc) {
+    const wh = (await tx.query("SELECT code FROM master.warehouse WHERE id = $1", [order.warehouse_id])).rows[0];
+    const locCode = `${wh?.code ?? "KHO"}-MAIN`;
+    defaultLoc = (
+      await tx.query(
+        `INSERT INTO master.location (warehouse_id, code, name, is_quarantine, status)
+         VALUES ($1, $2, 'Kệ Bảo Quản Chính (-20°C / +4°C)', false, 'ACTIVE')
+         ON CONFLICT (warehouse_id, code) DO UPDATE SET status = 'ACTIVE', is_quarantine = false
+         RETURNING id`,
+        [order.warehouse_id, locCode]
+      )
+    ).rows[0] as { id: string };
+  }
+
+  for (const l of exploded) {
+    if (l.is_bundled) continue;
+    if (!(l.qty_base > 0)) continue;
+
+    let picks: Awaited<ReturnType<typeof reserve>> = [];
+    let usedUom = l.base_uom;
+    try {
+      picks = await reserve(tx, actor, {
+        item_id: l.component_item_id,
+        qty_base: l.qty_base,
+        warehouse_ids: [order.warehouse_id],
+        demand_entity_type: "PRODUCTION_ORDER",
+        demand_entity_id: order.id,
+        module: "KIT",
+        allow_substitutes: Boolean(l.allow_substitute),
+      });
+    } catch (err: any) {
+      let resolved = false;
+      if (err?.code === "INSUFFICIENT_STOCK" && l.allow_substitute) {
+        const subs = (
+          await tx.query(
+            "SELECT * FROM kit.bom_line_substitute WHERE bom_line_id = $1 ORDER BY priority ASC",
+            [l.bom_line_id]
+          )
+        ).rows;
+        for (const s of subs) {
+          try {
+            const subItem = await getItem(tx, s.substitute_item_id);
+            const subQty = Math.round(l.qty_base * Number(s.conversion_factor || 1) * 1e6) / 1e6;
+            picks = await reserve(tx, actor, {
+              item_id: s.substitute_item_id,
+              qty_base: subQty,
+              warehouse_ids: [order.warehouse_id],
+              demand_entity_type: "PRODUCTION_ORDER",
+              demand_entity_id: order.id,
+              module: "KIT",
+              allow_substitutes: false,
+            });
+            usedUom = subItem.base_uom;
+            resolved = true;
+            break;
+          } catch {
+            // try next substitute
+          }
+        }
+      }
+
+      if (!resolved) {
+        throw err;
+      }
+    }
+
+    for (const p of picks) {
+      await tx.query(
+        `INSERT INTO kit.material_consumption
+           (order_id, bom_line_id, item_id, lot_id, location_id, reservation_id, planned_qty, issued_qty, actual_qty, uom)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          order.id,
+          l.bom_line_id,
+          p.item_id,
+          p.lot_id,
+          p.location_id,
+          p.reservation_id,
+          p.qty_base,
+          order.materials_issued ? p.qty_base : 0,
+          order.materials_issued ? p.qty_base : 0,
+          usedUom,
+        ]
+      );
+    }
+  }
 }
 
 /**
@@ -1499,6 +1681,8 @@ export async function issueOrderMaterials(tx: Tx, actor: AuthzActor, orderId: st
     throw invalid("Chỉ được xuất nguyên vật liệu khi lệnh sản xuất ở trạng thái Đã xác nhận (CONFIRMED) hoặc Đang sản xuất.");
   }
   if (order.materials_issued) throw invalid("Nguyên vật liệu của lệnh sản xuất này đã được xuất kho.");
+
+  await ensureOrderMaterialConsumptions(tx, actor, order);
 
   const cons = (
     await tx.query("SELECT * FROM kit.material_consumption WHERE order_id = $1 ORDER BY id FOR UPDATE", [orderId])
@@ -1888,7 +2072,10 @@ export async function splitKitLot(tx: Tx, actor: AuthzActor, orderId: string, in
   return { split: splitRow, child_lot: childLot };
 }
 
+let kitDailyTrackerSchemaEnsured = false;
+
 export async function ensureKitDailyTrackerAndQcGateSchema(tx: Tx) {
+  if (kitDailyTrackerSchemaEnsured) return;
   await tx.query(`
     ALTER TABLE kit.production_step
       ADD COLUMN IF NOT EXISTS assigned_to_name text,
@@ -1911,15 +2098,8 @@ export async function ensureKitDailyTrackerAndQcGateSchema(tx: Tx) {
       ADD COLUMN IF NOT EXISTS plan_note text
   `);
   await tx.query(`ALTER TABLE kit.production_step ADD COLUMN IF NOT EXISTS qa_assignee_name text`);
-  await tx.query(`
-    UPDATE kit.production_order
-       SET planned_start_date = coalesce(mfg_date, created_at::date, current_date),
-           planned_end_date = coalesce(mfg_date, created_at::date, current_date) + 3,
-           team_lead_name = coalesce(team_lead_name, 'Vũ Quốc Tuấn (Trưởng ca Sản xuất Kit)')
-     WHERE planned_start_date IS NULL
-  `);
 
-  // Initialize qc_gate_status and default operator assignment on existing steps if null
+  // Initialize qc_gate_status on existing steps if null (never overwrite real status or inject fake pH values)
   await tx.query(`
     UPDATE kit.production_step
        SET qc_gate_status = CASE
@@ -1929,114 +2109,7 @@ export async function ensureKitDailyTrackerAndQcGateSchema(tx: Tx) {
            END
      WHERE qc_gate_status IS NULL OR (is_qc = true AND qc_gate_status = 'NONE')
   `);
-
-  await tx.query(`
-    UPDATE kit.production_step
-       SET assigned_to_name = CASE
-             WHEN step_code LIKE '%MIX%' OR category IN ('PREPARATION', 'FORMULATION') THEN 'Nguyễn Thị Lan (Tổ Pha chế MasterMix)'
-             WHEN step_code LIKE '%ALIQUOT%' OR category IN ('FILLING', 'LYOPHILIZATION') THEN 'Trần Minh Đức (Tổ Chia lẻ Aliquot)'
-             WHEN is_qc = true THEN 'Phạm Thanh Hà (Kỹ thuật viên IPQC)'
-             ELSE 'Lê Hoàng Yến (Tổ Dán nhãn & Đóng gói)'
-           END,
-           shift_code = CASE WHEN seq IN (1, 10, 20) THEN 'CA_SANG' ELSE 'CA_CHIEU' END,
-           planned_date = coalesce(planned_date, current_date)
-     WHERE assigned_to_name IS NULL OR assigned_to_name = 'Lê Hoàng Yến (Tổ Dán nhãn & Đóng gói)'
-  `);
-
-  // QC steps are started through the step machine like any other (never forced here: it would forge EBR entries)
-
-  // Seed a realistic PO-linked Production Order & 4 EBR steps (with interleaved QC step #20) if none exists yet
-  const orderCount = (await tx.query("SELECT count(*)::int AS c FROM kit.production_order")).rows[0]?.c ?? 0;
-  if (orderCount === 0) {
-    await ensureKitBomRoutingAndIfuSchema(tx);
-    const bom = (await tx.query("SELECT * FROM kit.bom WHERE status = 'EFFECTIVE' ORDER BY created_at DESC LIMIT 1")).rows[0];
-    const routing = (
-      await tx.query(
-        "SELECT * FROM kit.routing WHERE product_item_id = $1 AND status = 'EFFECTIVE' ORDER BY created_at DESC LIMIT 1",
-        [bom?.product_item_id]
-      )
-    ).rows[0] ?? (await tx.query("SELECT * FROM kit.routing WHERE status = 'EFFECTIVE' ORDER BY created_at DESC LIMIT 1")).rows[0];
-    const wh = (await tx.query("SELECT id FROM master.warehouse WHERE code = 'KHO-KIT' LIMIT 1")).rows[0] ??
-      (await tx.query("SELECT id FROM master.warehouse ORDER BY code LIMIT 1")).rows[0];
-    const poLine = (
-      await tx.query("SELECT id FROM intake.internal_order_line ORDER BY id DESC LIMIT 1")
-    ).rows[0];
-
-    if (bom && routing && wh) {
-      let lot = (
-        await tx.query("SELECT id FROM inv.lot WHERE item_id = $1 ORDER BY created_at DESC LIMIT 1", [bom.product_item_id])
-      ).rows[0];
-      if (!lot) {
-        lot = (
-          await tx.query(
-            `INSERT INTO inv.lot (code, item_id, origin, status, mfg_date, expiry_date)
-             VALUES ('011026', $1, 'PRODUCTION', 'QUARANTINE', current_date, current_date + interval '365 days')
-             ON CONFLICT (code) DO UPDATE SET updated_at = now()
-             RETURNING id`,
-            [bom.product_item_id]
-          )
-        ).rows[0];
-      }
-
-      const ord = (
-        await tx.query(
-          `INSERT INTO kit.production_order
-             (code, org_unit_id, product_item_id, bom_id, routing_id, warehouse_id, lot_id,
-              internal_order_line_id, planned_qty, uom, order_mode, is_aliquoted, qc_retention_qty,
-              mfg_date, expiry_date, priority, status, line_clearance_passed, notes)
-           VALUES
-             ('LSX-KIT-2610-01', $1, $2, $3, $4, $5, $6,
-              $7, 100, $8, 'ALIQUOTED', true, 2,
-              current_date, current_date + interval '365 days', 'HIGH', 'IN_PROGRESS', true,
-              'Sản xuất lô Kit theo PO Kinh doanh — Đang ở Bước 20 chờ QC xác nhận thông qua (IPQC Gate)')
-           ON CONFLICT (code) DO NOTHING
-           RETURNING id`,
-          [
-            bom.org_unit_id,
-            bom.product_item_id,
-            bom.id,
-            routing.id,
-            wh.id,
-            lot?.id ?? null,
-            poLine?.id ?? null,
-            bom.base_uom || "kit",
-          ]
-        )
-      ).rows[0];
-
-      if (ord) {
-        await tx.query(
-          `INSERT INTO kit.production_step
-             (order_id, routing_step_id, seq, step_code, step_name, category, instructions,
-              sop_doc_code, required_training_doc_code, required_asset_id, asset_id, param_schema,
-              is_qc, requires_check_signature, allow_skip, status, qc_gate_status,
-              assigned_to_name, shift_code, planned_date, started_at, completed_at, param_values)
-           SELECT $1, id, seq, step_code, step_name, category, instructions,
-                  sop_doc_code, required_training_doc_code, required_asset_id, required_asset_id, param_schema,
-                  is_qc, requires_check_signature, allow_skip,
-                  CASE WHEN seq = 10 THEN 'DONE' WHEN seq = 20 THEN 'IN_PROGRESS' ELSE 'PENDING' END,
-                  CASE WHEN is_qc THEN 'WAITING_QC' ELSE 'NONE' END,
-                  CASE
-                    WHEN seq = 10 THEN 'Nguyễn Thị Lan (Tổ Pha chế MasterMix)'
-                    WHEN seq = 20 THEN 'Phạm Thanh Hà (Kỹ thuật viên IPQC)'
-                    WHEN seq = 30 THEN 'Trần Minh Đức (Tổ Chia lẻ Aliquot)'
-                    ELSE 'Lê Hoàng Yến (Tổ Dán nhãn & Đóng gói)'
-                  END,
-                  CASE WHEN seq <= 20 THEN 'CA_SANG' ELSE 'CA_CHIEU' END,
-                  current_date,
-                  CASE WHEN seq <= 20 THEN now() - interval '45 minutes' ELSE NULL END,
-                  CASE WHEN seq = 10 THEN now() - interval '20 minutes' ELSE NULL END,
-                  CASE
-                    WHEN seq = 10 THEN '{"room_temp": "21.5"}'::jsonb
-                    WHEN seq = 20 THEN '{"actual_ph": "8.32", "block_temp": "4.2"}'::jsonb
-                    ELSE '{}'::jsonb
-                  END
-             FROM kit.routing_step WHERE routing_id = $2 ORDER BY seq`,
-          [ord.id, routing.id]
-        );
-      }
-    }
-  }
+  kitDailyTrackerSchemaEnsured = true;
 }
 
 export async function assignStepOperator(
@@ -2048,8 +2121,19 @@ export async function assignStepOperator(
   await ensureKitDailyTrackerAndQcGateSchema(tx);
   const stepId = String(input.step_id ?? "").trim();
   if (!stepId) throw invalid("Chọn bước công đoạn cần phân công nhân viên.");
-  const step = (await tx.query("SELECT * FROM kit.production_step WHERE id = $1 AND order_id = $2 FOR UPDATE", [stepId, orderId])).rows[0];
+  const step = (
+    await tx.query(
+      `SELECT s.*, o.org_unit_id
+         FROM kit.production_step s
+         JOIN kit.production_order o ON o.id = s.order_id
+        WHERE s.id = $1 AND s.order_id = $2 FOR UPDATE OF s`,
+      [stepId, orderId]
+    )
+  ).rows[0];
   if (!step) throw notFound("bước công đoạn EBR");
+  if (!(await hasFactoryPermission(tx, actor, "kit.order.manage", step.org_unit_id))) {
+    await authorize(tx, actor, "kit.ebr.execute", step.org_unit_id);
+  }
 
   const assignedName = input.assigned_to_name?.trim() || null;
   const shiftCode = input.shift_code?.trim() || "CA_SANG";
@@ -2104,6 +2188,7 @@ export async function verifyStepQcGate(
   const mergedParams = { ...(step.param_values || {}), ...(input.param_values || {}) };
 
   if (decision === "REQUEST_QC") {
+    await authorize(tx, actor, "kit.ebr.execute", step.org_unit_id);
     const upd = (
       await tx.query(
         `UPDATE kit.production_step
@@ -2134,13 +2219,28 @@ export async function verifyStepQcGate(
     return upd;
   }
 
+  // PASS / REJECT requires QA/QC review permission (or kit.order.manage) and Separation of Duties
+  if (!(await hasFactoryPermission(tx, actor, "qms.qc.review"))) {
+    await authorize(tx, actor, "kit.order.manage", step.org_unit_id);
+  }
+  if (!step.performed_by) {
+    throw invalid("Bước công đoạn phải được thực hiện bởi kỹ thuật viên sản xuất (performed_by) trước khi QA/QC xác nhận cổng IPQC.");
+  }
+  if (step.performed_by === actor.userId) {
+    throw invalid("Người trực tiếp thực hiện bước công đoạn không được tự xác nhận thông qua cổng QC xen kẽ (Nguyên tắc tách nhiệm GMP/ISO 13485).");
+  }
+
   if (decision === "PASS") {
     const phVal = mergedParams?.ph ?? mergedParams?.actual_ph ?? mergedParams?.pH ?? mergedParams?.PH;
     if (phVal !== undefined && phVal !== null && String(phVal).trim() !== "") {
-      await tx.query("UPDATE kit.production_order SET actual_ph = $2 WHERE id = $1", [orderId, String(phVal).trim()]);
+      const phNum = Number(String(phVal).trim());
+      if (!Number.isFinite(phNum) || phNum <= 0 || phNum > 14) {
+        throw invalid("Giá trị độ pH thực tế không hợp lệ (phải là số trong khoảng 0–14).");
+      }
+      await tx.query("UPDATE kit.production_order SET actual_ph = $2 WHERE id = $1", [orderId, phNum]);
     }
 
-    const upd = (
+    const updatedStep = (
       await tx.query(
         `UPDATE kit.production_step
             SET qc_gate_status = 'PASSED',
@@ -2150,7 +2250,6 @@ export async function verifyStepQcGate(
                 param_values = $4::jsonb,
                 started_at = coalesce(started_at, now()),
                 completed_at = coalesce(completed_at, now()),
-                performed_by = coalesce(performed_by, $5),
                 checked_by = $5,
                 checked_at = now(),
                 status = 'DONE',
@@ -2161,6 +2260,14 @@ export async function verifyStepQcGate(
         [stepId, actor.name || "Chuyên viên QA/QC", note, JSON.stringify(mergedParams), actor.userId]
       )
     ).rows[0];
+
+    await writeAudit(tx, actor, {
+      entityType: "kit.order_step_execution",
+      entityId: stepId,
+      action: "IPQC_VERIFY",
+      changes: diffChanges(step, updatedStep, ["qc_gate_status", "status", "qc_verified_by_name", "qc_gate_note", "checked_by", "param_values"]),
+      reason: note,
+    });
 
     await checkAndAdvanceOrderToPendingQc(tx, actor, orderId);
 
@@ -2174,11 +2281,11 @@ export async function verifyStepQcGate(
       link: "/?tab=factory-kit",
       sourceKey: `kit_ipc_pass_${stepId}_${Date.now()}`,
     });
-    return upd;
+    return updatedStep;
   }
 
   // REJECT
-  const upd = (
+  const updatedStep = (
     await tx.query(
       `UPDATE kit.production_step
           SET qc_gate_status = 'REJECTED',
@@ -2194,6 +2301,14 @@ export async function verifyStepQcGate(
     )
   ).rows[0];
 
+  await writeAudit(tx, actor, {
+    entityType: "kit.order_step_execution",
+    entityId: stepId,
+    action: "IPQC_VERIFY",
+    changes: diffChanges(step, updatedStep, ["qc_gate_status", "status", "qc_verified_by_name", "qc_gate_note"]),
+    reason: note,
+  });
+
   const kitUsers = await usersWithPermission(tx, "kit.view", step.org_unit_id);
   await notifyUsers(tx, kitUsers, {
     type: "KIT_IPC_GATE_REJECTED",
@@ -2204,7 +2319,7 @@ export async function verifyStepQcGate(
     link: "/?tab=factory-kit",
     sourceKey: `kit_ipc_rej_${stepId}_${Date.now()}`,
   });
-  return upd;
+  return updatedStep;
 }
 
 export async function listDailyProductionSteps(tx: Tx, actor: AuthzActor) {
@@ -2490,8 +2605,13 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
     await tx.query(
       `SELECT o.*, o.yield_pct::float AS yield_pct, i.code AS product_code, i.name AS product_name, i.item_type AS product_type,
               b.code AS bom_code, b.bom_version, b.tests_per_kit,
+              b.bom_type, b.bom_category, b.parent_item_code, b.tccs_code, b.tccs_file_name, b.tccs_file_url, b.registration_no,
+              b.responsible_person_name AS bom_responsible_person_name, b.qc_assignee_name AS bom_qc_assignee_name,
+              b.specification AS bom_specification, b.storage_condition AS bom_storage_condition, b.shelf_life_months,
               b.label_template_code, b.label_dimensions, b.udi_di,
               b.ifu_code, b.ifu_version, b.ifu_intended_use, b.ifu_thermal_profile, b.ifu_channels, b.ifu_interpretation,
+              b.ifu_file_name, b.ifu_file_url, b.ifu_file_size, b.ifu_aliquoted_file_name, b.ifu_aliquoted_file_url, b.ifu_aliquoted_file_size,
+              b.label_design_json,
               r.code AS routing_code, r.routing_version,
               l.code AS lot_code, l.status AS lot_status,
               w.code AS warehouse_code, w.name AS warehouse_name,

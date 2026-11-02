@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
-import { api, fmtQty } from "../api";
-import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { api, fmtQty, useDebouncedValue } from "../api";
+import { Button, Card, Empty, ErrorNote, Field, inputClass, Pager, StatusBadge, Table } from "../ui";
 
 const DOC_TYPE: Record<string, string> = {
   RECEIPT: "Nhập",
@@ -89,13 +89,14 @@ function NewDocumentForm({
   const [reason, setReason] = useState("DEPT_SUPPLY");
   const [notes, setNotes] = useState("");
   const [q, setQ] = useState("");
+  const debouncedPickQ = useDebouncedValue(q, 300);
   const [lines, setLines] = useState<DraftLine[]>([]);
 
   const stock = useQuery({
-    queryKey: ["factory", "stock", "pick", whId, q],
+    queryKey: ["factory", "stock", "pick", whId, debouncedPickQ],
     queryFn: () =>
       api<{ rows: StockRow[] }>(
-        `/api/factory/inv/stock?warehouse_id=${whId}&page_size=40${q ? `&q=${encodeURIComponent(q)}` : ""}`
+        `/api/factory/inv/stock?warehouse_id=${whId}&page_size=40${debouncedPickQ ? `&q=${encodeURIComponent(debouncedPickQ)}` : ""}`
       ),
     enabled: Boolean(whId),
   });
@@ -435,13 +436,23 @@ export function DocumentsView({
   canCreate: boolean;
 }) {
   const [warehouseId, setWarehouseId] = useState("");
+  const [docType, setDocType] = useState("");
+  const [docQ, setDocQ] = useState("");
+  const debouncedDocQ = useDebouncedValue(docQ, 300);
+  const [page, setPage] = useState(1);
   const [creating, setCreating] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
+
+  const params = new URLSearchParams({ page: String(page), page_size: "50" });
+  if (warehouseId) params.set("warehouse_id", warehouseId);
+  if (docType) params.set("doc_type", docType);
+  if (debouncedDocQ.trim()) params.set("q", debouncedDocQ.trim());
+
   const list = useQuery({
-    queryKey: ["factory", "documents", warehouseId],
+    queryKey: ["factory", "documents", params.toString()],
     queryFn: () =>
-      api<
-        {
+      api<{
+        rows: {
           id: string;
           code: string;
           doc_type: string;
@@ -452,9 +463,17 @@ export function DocumentsView({
           warehouse_code: string;
           created_by_name: string | null;
           line_count: number;
-        }[]
-      >(`/api/factory/inv/documents${warehouseId ? `?warehouse_id=${warehouseId}` : ""}`),
+        }[];
+        total: number;
+        page: number;
+        page_size: number;
+      }>(`/api/factory/inv/documents?${params}`),
+    placeholderData: keepPreviousData,
   });
+
+  const rows = list.data?.rows ?? (Array.isArray(list.data) ? list.data : []);
+  const total = list.data?.total ?? rows.length;
+
   return (
     <div className="flex flex-col gap-3">
       {creating && (
@@ -470,9 +489,12 @@ export function DocumentsView({
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <select
-              className={`${inputClass} w-56`}
+              className={`${inputClass} w-52`}
               value={warehouseId}
-              onChange={(e) => setWarehouseId(e.target.value)}
+              onChange={(e) => {
+                setWarehouseId(e.target.value);
+                setPage(1);
+              }}
               aria-label="Kho"
             >
               <option value="">Tất cả kho được xem</option>
@@ -482,6 +504,31 @@ export function DocumentsView({
                 </option>
               ))}
             </select>
+            <select
+              className={`${inputClass} w-44`}
+              value={docType}
+              onChange={(e) => {
+                setDocType(e.target.value);
+                setPage(1);
+              }}
+              aria-label="Loại phiếu"
+            >
+              <option value="">Mọi loại phiếu</option>
+              {Object.entries(DOC_TYPE).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v}
+                </option>
+              ))}
+            </select>
+            <input
+              className={`${inputClass} w-52`}
+              placeholder="Tìm mã phiếu, ghi chú, lý do…"
+              value={docQ}
+              onChange={(e) => {
+                setDocQ(e.target.value);
+                setPage(1);
+              }}
+            />
             {canCreate && !creating && (
               <Button onClick={() => setCreating(true)}>+ Lập Phiếu Kho / Điều chuyển</Button>
             )}
@@ -489,34 +536,37 @@ export function DocumentsView({
         }
       >
         <ErrorNote error={list.error} />
-        {list.data?.length === 0 && <Empty>Chưa có phiếu kho.</Empty>}
-        {list.data && list.data.length > 0 && (
-          <Table head={["Mã phiếu", "Loại", "Lý do", "Kho", "Dòng", "Người lập", "Ngày", "Trạng thái"]}>
-            {list.data.map((d) => (
-              <tr
-                key={d.id}
-                className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                onClick={() => setSelected(d.id)}
-              >
-                <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{d.code}</td>
-                <td className="py-2 pr-3">{DOC_TYPE[d.doc_type] ?? d.doc_type}</td>
-                <td className="py-2 pr-3">{d.reason_code}</td>
-                <td className="py-2 pr-3 font-mono font-semibold">{d.warehouse_code}</td>
-                <td className="py-2 pr-3">{d.line_count}</td>
-                <td className="py-2 pr-3">{d.created_by_name ?? "Hệ thống"}</td>
-                <td className="py-2 pr-3 whitespace-nowrap">
-                  {new Date(d.posted_at ?? d.created_at).toLocaleString("vi-VN", {
-                    timeZone: "Asia/Ho_Chi_Minh",
-                    dateStyle: "short",
-                    timeStyle: "short",
-                  })}
-                </td>
-                <td className="py-2 pr-3">
-                  <StatusBadge status={DOC_STATUS[d.status][0]} label={DOC_STATUS[d.status][1]} />
-                </td>
-              </tr>
-            ))}
-          </Table>
+        {list.data && rows.length === 0 && <Empty>Chưa có phiếu kho phù hợp.</Empty>}
+        {rows.length > 0 && (
+          <>
+            <Table head={["Mã phiếu", "Loại", "Lý do", "Kho", "Dòng", "Người lập", "Ngày", "Trạng thái"]}>
+              {rows.map((d) => (
+                <tr
+                  key={d.id}
+                  className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50"
+                  onClick={() => setSelected(d.id)}
+                >
+                  <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{d.code}</td>
+                  <td className="py-2 pr-3">{DOC_TYPE[d.doc_type] ?? d.doc_type}</td>
+                  <td className="py-2 pr-3">{d.reason_code}</td>
+                  <td className="py-2 pr-3 font-mono font-semibold">{d.warehouse_code}</td>
+                  <td className="py-2 pr-3">{d.line_count}</td>
+                  <td className="py-2 pr-3">{d.created_by_name ?? "Hệ thống"}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap">
+                    {new Date(d.posted_at ?? d.created_at).toLocaleString("vi-VN", {
+                      timeZone: "Asia/Ho_Chi_Minh",
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    })}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <StatusBadge status={DOC_STATUS[d.status][0]} label={DOC_STATUS[d.status][1]} />
+                  </td>
+                </tr>
+              ))}
+            </Table>
+            <Pager page={list.data?.page ?? page} pageSize={list.data?.page_size ?? 50} total={total} onPage={setPage} />
+          </>
         )}
       </Card>
     </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { api, fmtDate, fmtQty } from "../api";
+import { api, fmtDate, fmtQty, vnToday } from "../api";
 import { Button, Card, Empty, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
 
 export const TEAM_LEAD_PRESETS = [
@@ -69,7 +69,7 @@ type PlanResponse = {
   can_assign_qa: boolean;
 };
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+const todayStr = () => vnToday();
 const isDoneStatus = (s: string) => s === "DONE" || s === "SKIPPED";
 
 function daysBetween(a: string, b: string) {

@@ -39,6 +39,8 @@ interface ExperimentDetail {
   status: string;
   revision: number;
   parent_code: string | null;
+  performer_name?: string | null;
+  wbs_task_code?: string | null;
   created_by_name: string | null;
   submitted_by_name: string | null;
   approved_by_name: string | null;
@@ -223,7 +225,12 @@ function ExperimentPanel({
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge status={EXP_STATUS[e.status]?.[0] ?? "QUARANTINE"} label={EXP_STATUS[e.status]?.[1] ?? e.status} />
             <span>· Dự án: <b className="font-mono">{e.project_code}</b> ({e.project_name})</span>
-            <span>· Người lập: <b>{e.created_by_name}</b></span>
+            {e.wbs_task_code && (
+              <span className="px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 font-mono font-bold">
+                📌 Công việc WBS: {e.wbs_task_code}
+              </span>
+            )}
+            <span>· NCV thực hiện: <b>{e.performer_name || e.created_by_name}</b></span>
             {e.parent_code && <span>· Sửa đổi từ bản gốc: <b className="font-mono">{e.parent_code}</b></span>}
             {e.approved_by_name && <span className="text-emerald-700 dark:text-emerald-400 font-bold">· Đã ký duyệt bởi {e.approved_by_name} ({fmtDate(e.approved_at)})</span>}
           </div>
@@ -475,11 +482,17 @@ function ExperimentPanel({
 
 export function ElnView({ canWrite }: { canWrite: boolean }) {
   const qc = useQueryClient();
+  const ctx = useRdContext("rd.view");
   const [projectId, setProjectId] = useState("");
+  const [staffFilter, setStaffFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   const [newProjId, setNewProjId] = useState("");
+  const [performerName, setPerformerName] = useState("");
+  const [wbsTaskCode, setWbsTaskCode] = useState("");
   const [title, setTitle] = useState("");
   const [objective, setObjective] = useState("");
   const [hypothesis, setHypothesis] = useState("");
@@ -502,6 +515,8 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
           objective,
           hypothesis: hypothesis || null,
           protocol_summary: protocol || null,
+          performer_name: performerName || null,
+          wbs_task_code: wbsTaskCode || null,
           start_now: true,
         },
       }),
@@ -511,9 +526,30 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
       setObjective("");
       setHypothesis("");
       setProtocol("");
+      setWbsTaskCode("");
       qc.invalidateQueries({ queryKey: ["factory", "rd", "experiments"] });
       if (created?.id) setSelected(created.id);
     },
+  });
+
+  const allExps = list.data ?? [];
+  const staffOptions = Array.from(
+    new Set([
+      ...(ctx.data?.rd_staff?.map((s) => s.name) ?? []),
+      ...allExps.map((r) => r.performer_name || r.created_by_name).filter(Boolean),
+    ])
+  );
+
+  const filteredExps = allExps.filter((r) => {
+    const performer = r.performer_name || r.created_by_name || "";
+    if (staffFilter && performer !== staffFilter) return false;
+    if (statusFilter && r.status !== statusFilter) return false;
+    if (searchQuery.trim() !== "") {
+      const q = searchQuery.toLowerCase();
+      const hay = `${r.code || ""} ${r.title || ""} ${r.project_code || ""} ${r.wbs_task_code || ""} ${performer}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
   });
 
   return (
@@ -532,9 +568,31 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
         title="Sổ thí nghiệm điện tử (ELN — Tuân thủ ALCOA+ & 21 CFR Part 11)"
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <select className={`${inputClass} w-56`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+            <input
+              className={`${inputClass} w-44`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="🔍 Tìm mã ELN, tiêu đề, WBS..."
+            />
+            <select className={`${inputClass} w-56`} value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)}>
+              <option value="">👤 Mọi nghiên cứu viên R&D</option>
+              {staffOptions.map((st) => (
+                <option key={st} value={st}>
+                  {st}
+                </option>
+              ))}
+            </select>
+            <select className={`${inputClass} w-52`} value={projectId} onChange={(e) => setProjectId(e.target.value)}>
               <option value="">Mọi dự án R&D</option>
               {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+            </select>
+            <select className={`${inputClass} w-40`} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">Mọi trạng thái ELN</option>
+              {Object.entries(EXP_STATUS).map(([k, [, label]]) => (
+                <option key={k} value={k}>
+                  {label}
+                </option>
+              ))}
             </select>
             {canWrite && <Button onClick={() => setAdding(!adding)}>+ Lập thí nghiệm ELN mới</Button>}
           </div>
@@ -542,9 +600,45 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
       >
         <ErrorNote error={list.error ?? createMut.error} />
 
+        {/* Quick Researcher Workload Filter Bar for ELN */}
+        {staffOptions.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3 pb-2.5 border-b border-slate-100 dark:border-slate-800 text-xs">
+            <span className="font-semibold text-slate-500 mr-1">🧪 Lọc nhanh Nhật ký ELN theo Nghiên cứu viên R&D:</span>
+            <button
+              type="button"
+              onClick={() => setStaffFilter("")}
+              className={`px-2.5 py-1 rounded-full font-semibold cursor-pointer transition-all ${
+                staffFilter === ""
+                  ? "bg-indigo-600 text-white"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+              }`}
+            >
+              Tất cả ({allExps.length})
+            </button>
+            {staffOptions.map((st) => {
+              const cnt = allExps.filter((r) => (r.performer_name || r.created_by_name) === st).length;
+              const active = staffFilter === st;
+              return (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setStaffFilter(active ? "" : st)}
+                  className={`px-2.5 py-1 rounded-full font-semibold cursor-pointer transition-all ${
+                    active
+                      ? "bg-indigo-600 text-white shadow-sm"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                  }`}
+                >
+                  👤 {st} ({cnt})
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {adding && (
           <form
-            className="grid gap-3 sm:grid-cols-2 p-3 mb-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/40 dark:bg-sky-950/20"
+            className="grid gap-3 sm:grid-cols-3 p-3 mb-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/40 dark:bg-sky-950/20"
             onSubmit={(e) => {
               e.preventDefault();
               createMut.mutate();
@@ -555,39 +649,70 @@ export function ElnView({ canWrite }: { canWrite: boolean }) {
                 {projects.data?.map((p) => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
               </select>
             </Field>
-            <Field label="Tiêu đề thí nghiệm *">
-              <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="VD: Khảo sát nhiệt độ bắt cặp (Ta) và nồng độ Mg2+" required />
+            <Field label="Nghiên cứu viên thực hiện (Phòng R&D)">
+              <select className={inputClass} value={performerName} onChange={(e) => setPerformerName(e.target.value)}>
+                <option value="">-- Mặc định theo người đăng nhập --</option>
+                {staffOptions.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Mã công việc WBS liên kết (Tùy chọn)">
+              <input
+                className={inputClass}
+                value={wbsTaskCode}
+                onChange={(e) => setWbsTaskCode(e.target.value)}
+                placeholder="VD: PRJ26-003-WBS-02"
+              />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field label="Tiêu đề thí nghiệm *">
+                <input className={inputClass} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="VD: Khảo sát nhiệt độ bắt cặp (Ta) và nồng độ Mg2+" required />
+              </Field>
+            </div>
+            <Field label="Giả thuyết khoa học">
+              <input className={inputClass} value={hypothesis} onChange={(e) => setHypothesis(e.target.value)} placeholder="VD: Tăng Mg2+ lên 3.0 mM giúp giảm Ct ~1.2 chu kỳ" />
             </Field>
             <Field label="Mục tiêu thí nghiệm *">
               <input className={inputClass} value={objective} onChange={(e) => setObjective(e.target.value)} placeholder="Xác định điều kiện phản ứng đạt hiệu suất khuếch đại 95–105%" required />
-            </Field>
-            <Field label="Giả thuyết khoa học">
-              <input className={inputClass} value={hypothesis} onChange={(e) => setHypothesis(e.target.value)} />
             </Field>
             <div className="sm:col-span-2">
               <Field label="Tóm tắt công thức / Protocol">
                 <textarea className={inputClass} rows={2} value={protocol} onChange={(e) => setProtocol(e.target.value)} />
               </Field>
             </div>
-            <div className="sm:col-span-2 flex justify-end gap-2">
+            <div className="sm:col-span-3 flex justify-end gap-2">
               <Button type="button" variant="ghost" onClick={() => setAdding(false)}>Hủy</Button>
               <Button type="submit" disabled={createMut.isPending}>Tạo & Bắt đầu ghi ELN</Button>
             </div>
           </form>
         )}
 
-        {list.data?.length === 0 && <Empty>Chưa có sổ thí nghiệm điện tử (ELN) nào.</Empty>}
-        {list.data && list.data.length > 0 && (
-          <Table head={["Mã ELN", "Rev", "Tiêu đề thí nghiệm", "Dự án", "Mục nhật ký", "Vật tư R&D", "Người thực hiện", "Người duyệt", "Trạng thái"]}>
-            {list.data.map((r) => (
+        {filteredExps.length === 0 && <Empty>Chưa có sổ thí nghiệm điện tử (ELN) nào khớp bộ lọc.</Empty>}
+        {filteredExps.length > 0 && (
+          <Table head={["Mã ELN", "Rev", "Tiêu đề thí nghiệm & Công việc WBS", "Dự án", "Mục nhật ký", "Vật tư R&D", "Nghiên cứu viên thực hiện", "Người duyệt", "Trạng thái"]}>
+            {filteredExps.map((r) => (
               <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
                 <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
                 <td className="py-2 pr-3 font-mono">v{r.revision}</td>
-                <td className="py-2 pr-3 font-semibold">{r.title}</td>
+                <td className="py-2 pr-3">
+                  <div className="font-semibold">{r.title}</div>
+                  {r.wbs_task_code && (
+                    <span className="mt-0.5 px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 font-mono text-[10px] inline-block">
+                      📌 WBS: {r.wbs_task_code}
+                    </span>
+                  )}
+                </td>
                 <td className="py-2 pr-3 font-mono">{r.project_code}</td>
                 <td className="py-2 pr-3 font-mono">{r.entry_count}</td>
                 <td className="py-2 pr-3 font-mono">{r.material_count}</td>
-                <td className="py-2 pr-3">{r.created_by_name}</td>
+                <td className="py-2 pr-3">
+                  <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-medium text-slate-800 dark:text-slate-200 inline-block">
+                    👤 {r.performer_name || r.created_by_name}
+                  </span>
+                </td>
                 <td className="py-2 pr-3">{r.approved_by_name || "—"}</td>
                 <td className="py-2 pr-3">
                   <StatusBadge status={EXP_STATUS[r.status]?.[0] ?? "QUARANTINE"} label={EXP_STATUS[r.status]?.[1] ?? r.status} />

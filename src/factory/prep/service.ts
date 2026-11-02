@@ -11,6 +11,7 @@ import { allocate, findCandidates } from "../inv/allocation";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { createLot, lotMachine } from "../inv/lots";
 import { getItem, toBaseQty } from "../master/service";
+import { ensureLegacyOligoDataSeeded } from "../oligo/legacySync";
 
 registerPermissions([
   { code: "prep.formula.manage", description: "Soạn / sửa công thức pha chế hóa chất" },
@@ -100,8 +101,12 @@ export async function getFormula(tx: Tx, id: string) {
 }
 
 export async function listFormulas(tx: Tx, actor: AuthzActor) {
+  await ensureLegacyOligoDataSeeded(tx);
   // anyone who prepares or writes formulas, in any department
-  await authorizeAnywhere(tx, actor, "prep.execute").catch(() => authorizeAnywhere(tx, actor, "prep.formula.manage"));
+  await authorizeAnywhere(tx, actor, "prep.execute").catch((err) => {
+    if (err?.code === "FORBIDDEN") return authorizeAnywhere(tx, actor, "prep.formula.manage");
+    throw err;
+  });
   const ids = (await tx.query("SELECT id FROM prep.formula ORDER BY status, code")).rows;
   return Promise.all(ids.map((r) => getFormula(tx, r.id)));
 }

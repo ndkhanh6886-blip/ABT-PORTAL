@@ -12,6 +12,7 @@ export interface RdContextData {
   warehouses: { id: string; code: string; name: string; owner_org_unit_id: string; purpose: string }[];
   locations: { id: string; warehouse_id: string; code: string; name: string; temperature_condition: string; is_quarantine: boolean }[];
   items: { id: string; code: string; name: string; item_type: string; base_uom: string }[];
+  rd_staff?: { name: string; role: string; specialty: string; user_id?: number | null }[];
 }
 
 export function useRdContext(perm = "rd.view") {

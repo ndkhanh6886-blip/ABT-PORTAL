@@ -1,6 +1,8 @@
 import { factoryRoute } from "@/factory/http";
 import { authorizeAnywhere } from "@/factory/core/authz";
 import { invalid } from "@/factory/core/errors";
+import "@/factory/master/permissions";
+import "@/factory/inv/permissions";
 import {
   addSpcControlPoint,
   adjustBomScrapFromAnalytics,
@@ -27,7 +29,7 @@ export const POST = factoryRoute(async (tx, { actor, body: rawBody }) => {
       await authorizeAnywhere(tx, actor, "kit.bom.manage");
       return adjustBomScrapFromAnalytics(tx, actor, body);
     case "update_dynamic_rop":
-      await authorizeAnywhere(tx, actor, "inv.stock.view");
+      await authorizeAnywhere(tx, actor, "master.item.manage");
       return updateDynamicMinStock(tx, actor, body);
     case "create_forecast_pr":
       await authorizeAnywhere(tx, actor, "purchase.pr.create");
@@ -36,6 +38,7 @@ export const POST = factoryRoute(async (tx, { actor, body: rawBody }) => {
       await authorizeAnywhere(tx, actor, "qms.qc.record");
       return addSpcControlPoint(tx, actor, body);
     case "simulate_what_if":
+      await authorizeAnywhere(tx, actor, "inv.stock.view");
       return simulateWhatIfOrder(tx, actor, body);
     case "cascade_quarantine":
       await authorizeAnywhere(tx, actor, "qms.qc.review");

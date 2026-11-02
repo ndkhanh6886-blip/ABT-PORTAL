@@ -177,8 +177,30 @@ interface ProjectOpsData {
     due_date: string | null;
     status: "TODO" | "IN_PROGRESS" | "DONE" | "BLOCKED";
     progress_pct: number;
+    linked_experiment_id: string | null;
     experiment_code: string | null;
+    experiment_title: string | null;
+    experiment_status: string | null;
+    experiment_conclusion: string | null;
+    protocol_summary: string | null;
+    result_summary: string | null;
+    key_metrics_json: { label: string; value: string; unit?: string; target?: string }[];
+    outcome_verdict: "PENDING" | "PASS" | "OPTIMIZE" | "FAIL";
+    next_steps: string | null;
+    attachment_name: string | null;
+    attachment_url: string | null;
+    completed_at: string | null;
+    completed_by_name: string | null;
     notes: string | null;
+  }[];
+  experiments?: {
+    id: string;
+    code: string;
+    title: string;
+    status: string;
+    performer_name: string | null;
+    wbs_task_code: string | null;
+    conclusion: string | null;
   }[];
   material_ledger: {
     id: string;
@@ -349,6 +371,7 @@ function ProjectPanel({
   onClose: () => void;
 }) {
   const qc = useQueryClient();
+  const ctx = useRdContext("rd.view");
   const detail = useQuery({
     queryKey: ["factory", "rd", "project", id],
     queryFn: () => api<ProjectDetail>(`/api/factory/rd/projects/${id}`),
@@ -364,11 +387,62 @@ function ProjectPanel({
 
   const [subTab, setSubTab] = useState<"gates" | "wbs" | "materials" | "bom" | "tpp" | "risks" | "roadmap">("gates");
 
-  // WBS Task form state
+  // WBS Task form & filter state
   const [taskGate, setTaskGate] = useState("1");
   const [taskTitle, setTaskTitle] = useState("");
   const [taskAssignee, setTaskAssignee] = useState("");
   const [taskDue, setTaskDue] = useState("");
+  const [wbsStaffFilter, setWbsStaffFilter] = useState("");
+  const [wbsGateFilter, setWbsGateFilter] = useState("");
+  const [wbsVerdictFilter, setWbsVerdictFilter] = useState("");
+  const [wbsNotice, setWbsNotice] = useState<string | null>(null);
+
+  // Structured Result Recording Drawer / Modal state for WBS Task
+  const [editingResultTask, setEditingResultTask] = useState<ProjectOpsData["tasks"][number] | null>(null);
+  const [resAssignee, setResAssignee] = useState("");
+  const [resStatus, setResStatus] = useState<"TODO" | "IN_PROGRESS" | "DONE" | "BLOCKED">("DONE");
+  const [resProgress, setResProgress] = useState("100");
+  const [resVerdict, setResVerdict] = useState<"PENDING" | "PASS" | "OPTIMIZE" | "FAIL">("PASS");
+  const [resProtocol, setResProtocol] = useState("");
+  const [resSummary, setResSummary] = useState("");
+  const [resNextSteps, setResNextSteps] = useState("");
+  const [resMetrics, setResMetrics] = useState<{ label: string; value: string; unit: string; target: string }[]>([]);
+  const [resLinkedExpId, setResLinkedExpId] = useState("");
+  const [resSyncToEln, setResSyncToEln] = useState(true);
+  const [resAttachName, setResAttachName] = useState("");
+  const [resAttachUrl, setResAttachUrl] = useState("");
+
+  const openResultDrawer = (t: ProjectOpsData["tasks"][number]) => {
+    setEditingResultTask(t);
+    setResAssignee(t.assignee_name || detail.data?.leader_name || "");
+    setResStatus(t.status === "TODO" ? "IN_PROGRESS" : t.status);
+    setResProgress(String(t.progress_pct > 0 ? t.progress_pct : 100));
+    setResVerdict(t.outcome_verdict && t.outcome_verdict !== "PENDING" ? t.outcome_verdict : "PASS");
+    setResProtocol(
+      t.protocol_summary ||
+        "1. Chuẩn bị dải pha loãng mẫu chuẩn 10^5 -> 10^0 copies/rxn (n=3 lặp lại).\n2. Phối trộn MasterMix 2X (10 µL) + Primer/Probe Mix (2.5 µL) + Template (5 µL) + H2O (2.5 µL).\n3. Chương trình nhiệt: 95°C 3p; 45 chu kỳ (95°C 10s, 60°C 30s — đọc FAM/HEX)."
+    );
+    setResSummary(t.result_summary || "");
+    setResNextSteps(t.next_steps || "");
+    setResMetrics(
+      Array.isArray(t.key_metrics_json) && t.key_metrics_json.length > 0
+        ? t.key_metrics_json.map((m) => ({
+            label: m.label || "",
+            value: m.value || "",
+            unit: m.unit || "",
+            target: m.target || "",
+          }))
+        : [
+            { label: "Giới hạn phát hiện (LoD95)", value: "10", unit: "copies/rxn", target: "≤ 15 copies/rxn" },
+            { label: "Hệ số tuyến tính (R²)", value: "0.998", unit: "", target: "≥ 0.990" },
+            { label: "Hiệu suất khuếch đại (E%)", value: "98.4", unit: "%", target: "90–110%" },
+          ]
+    );
+    setResLinkedExpId(t.linked_experiment_id || "");
+    setResSyncToEln(true);
+    setResAttachName(t.attachment_name || "");
+    setResAttachUrl(t.attachment_url || "");
+  };
 
   // Material Action modal state ("issue" | "pr" | "oligo" | null)
   const [matAction, setMatAction] = useState<"issue" | "pr" | "oligo" | null>(null);
@@ -453,7 +527,28 @@ function ProjectPanel({
       }),
     onSuccess: () => {
       setTaskTitle("");
+      if (editingResultTask) {
+        setWbsNotice(`✅ Đã lưu kết quả thực nghiệm & minh chứng cho công việc ${editingResultTask.code} thành công!`);
+        setEditingResultTask(null);
+      }
       refresh();
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "experiments"] });
+    },
+  });
+
+  const createTaskExpMut = useMutation({
+    mutationFn: (payload: { task_id: string; protocol_summary?: string | null }) =>
+      api<{ experiment_id: string; experiment_code: string; title: string }>("/api/factory/rd/project-ops", {
+        method: "POST",
+        json: { op: "create_task_experiment", project_id: id, ...payload },
+      }),
+    onSuccess: (res) => {
+      setWbsNotice(`🧪 Đã khởi tạo & liên kết bài thí nghiệm Sổ ELN ${res.experiment_code} ("${res.title}") trực tiếp với công việc WBS!`);
+      if (editingResultTask) {
+        setResLinkedExpId(res.experiment_id);
+      }
+      refresh();
+      qc.invalidateQueries({ queryKey: ["factory", "rd", "experiments"] });
     },
   });
 
@@ -772,9 +867,36 @@ function ProjectPanel({
 
           {subTab === "wbs" && (
             <div className="flex flex-col gap-3">
-              <div className="text-slate-500">
-                Phân rã công việc nghiên cứu (Work Breakdown Structure) theo từng cổng Stage-Gate, giao người phụ trách và theo dõi tiến độ thực hiện.
+              {/* Best-in-Class R&D Execution Loop Banner */}
+              <div className="p-3 rounded-xl border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-bold text-indigo-900 dark:text-indigo-200">
+                    Chuẩn Ghi Nhận Kết Quả Nghiên Cứu 4 Lớp (Benchling R&D Cloud / SciNote ELN / ISO 13485 Design Control)
+                  </div>
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5">
+                    <b>Lớp 1:</b> Tóm tắt Protocol & điều kiện thực nghiệm → <b>Lớp 2:</b> Bảng chỉ số định lượng (LoD, Ct, R², CV%) so với Target →{" "}
+                    <b>Lớp 3:</b> Kết luận đánh giá (ĐẠT / CẦN TỐI ƯU / KHÔNG ĐẠT) & Hướng xử lý tiếp theo → <b>Lớp 4:</b> Liên kết 2 chiều với Sổ thí nghiệm điện tử (ELN) & File dữ liệu gốc.
+                  </div>
+                </div>
               </div>
+
+              {wbsNotice && (
+                <div className="p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 font-semibold flex items-center justify-between">
+                  <span>{wbsNotice}</span>
+                  <button type="button" className="text-xs underline ml-2" onClick={() => setWbsNotice(null)}>
+                    Đóng
+                  </button>
+                </div>
+              )}
+
+              <datalist id="rd-staff-datalist">
+                {(ctx.data?.rd_staff ?? []).map((st) => (
+                  <option key={st.name} value={st.name}>
+                    {st.specialty}
+                  </option>
+                ))}
+              </datalist>
+
               {canManage && (
                 <form
                   className="grid gap-2 sm:grid-cols-6 items-end p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/40"
@@ -801,83 +923,581 @@ function ProjectPanel({
                   </Field>
                   <div className="sm:col-span-2">
                     <Field label="Nội dung công việc / Thực nghiệm *">
-                      <input className={inputClass} value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="VD: Khảo sát nhiệt độ bắt cặp mồi Annealing 56–62°C" required />
+                      <input
+                        className={inputClass}
+                        value={taskTitle}
+                        onChange={(e) => setTaskTitle(e.target.value)}
+                        placeholder="VD: Khảo sát nhiệt độ bắt cặp mồi Annealing 56–62°C"
+                        required
+                      />
                     </Field>
                   </div>
-                  <Field label="Nghiên cứu viên phụ trách">
-                    <input className={inputClass} value={taskAssignee} onChange={(e) => setTaskAssignee(e.target.value)} placeholder={p.leader_name} />
+                  <Field label="Nghiên cứu viên phụ trách (Phòng R&D)">
+                    <input
+                      list="rd-staff-datalist"
+                      className={inputClass}
+                      value={taskAssignee}
+                      onChange={(e) => setTaskAssignee(e.target.value)}
+                      placeholder={p.leader_name || "Chọn / nhập tên NCV..."}
+                    />
                   </Field>
                   <Field label="Hạn hoàn thành">
                     <input type="date" className={inputClass} value={taskDue} onChange={(e) => setTaskDue(e.target.value)} />
                   </Field>
-                  <Button type="submit" disabled={saveTaskMut.isPending}>+ Giao việc WBS</Button>
+                  <Button type="submit" disabled={saveTaskMut.isPending}>
+                    + Giao việc WBS
+                  </Button>
+                </form>
+              )}
+
+              {/* WBS Filter Bar by Researcher, Gate, and Outcome */}
+              <div className="flex flex-wrap items-center justify-between gap-2 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-slate-600 dark:text-slate-300">🔎 Lọc công việc WBS:</span>
+                  <select className={`${inputClass} w-64`} value={wbsStaffFilter} onChange={(e) => setWbsStaffFilter(e.target.value)}>
+                    <option value="">👤 Tất cả nghiên cứu viên phụ trách ({o?.tasks.length ?? 0})</option>
+                    {Array.from(
+                      new Set([
+                        ...(o?.tasks.map((t) => t.assignee_name).filter(Boolean) as string[]),
+                        ...(ctx.data?.rd_staff?.map((s) => s.name) ?? []),
+                      ])
+                    ).map((staffName) => (
+                      <option key={staffName} value={staffName}>
+                        {staffName}
+                      </option>
+                    ))}
+                  </select>
+                  <select className={`${inputClass} w-44`} value={wbsGateFilter} onChange={(e) => setWbsGateFilter(e.target.value)}>
+                    <option value="">Mọi cổng Stage-Gate</option>
+                    <option value="0">Cổng G0 (Khảo sát & TPP)</option>
+                    <option value="1">Cổng G1 (Feasibility)</option>
+                    <option value="2">Cổng G2 (Optimization)</option>
+                    <option value="3">Cổng G3 (Validation V&V)</option>
+                    <option value="4">Cổng G4 (Transfer SX)</option>
+                  </select>
+                  <select className={`${inputClass} w-48`} value={wbsVerdictFilter} onChange={(e) => setWbsVerdictFilter(e.target.value)}>
+                    <option value="">Mọi kết quả / trạng thái</option>
+                    <option value="PASS">✅ Kết luận: ĐẠT MỤC TIÊU</option>
+                    <option value="OPTIMIZE">🔧 Kết luận: CẦN TỐI ƯU THÊM</option>
+                    <option value="FAIL">❌ Kết luận: KHÔNG ĐẠT</option>
+                    <option value="HAS_RESULT">📊 Đã có báo cáo kết quả</option>
+                    <option value="NO_RESULT">⏳ Chưa ghi nhận kết quả</option>
+                  </select>
+                  {(wbsStaffFilter || wbsGateFilter || wbsVerdictFilter) && (
+                    <button
+                      type="button"
+                      className="text-xs text-sky-700 dark:text-sky-400 underline cursor-pointer"
+                      onClick={() => {
+                        setWbsStaffFilter("");
+                        setWbsGateFilter("");
+                        setWbsVerdictFilter("");
+                      }}
+                    >
+                      Xóa bộ lọc
+                    </button>
+                  )}
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Đã ghi nhận kết quả:{" "}
+                  <b className="text-emerald-700 dark:text-emerald-400">
+                    {(o?.tasks ?? []).filter((t) => t.result_summary || (t.key_metrics_json?.length ?? 0) > 0).length}/{o?.tasks.length ?? 0} công việc
+                  </b>
+                </div>
+              </div>
+
+              {/* Structured Result Recording Drawer / Panel */}
+              {editingResultTask && (
+                <form
+                  className="p-4 rounded-2xl border-2 border-sky-500/80 dark:border-sky-500/70 bg-sky-50/30 dark:bg-slate-900 shadow-lg flex flex-col gap-3"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    saveTaskMut.mutate({
+                      task_id: editingResultTask.id,
+                      gate_no: editingResultTask.gate_no,
+                      title: editingResultTask.title,
+                      assignee_name: resAssignee || editingResultTask.assignee_name || p.leader_name,
+                      due_date: editingResultTask.due_date?.slice(0, 10) || null,
+                      status: resStatus,
+                      progress_pct: Number(resProgress || 100),
+                      linked_experiment_id: resLinkedExpId || null,
+                      protocol_summary: resProtocol || null,
+                      result_summary: resSummary || null,
+                      key_metrics_json: resMetrics.filter((m) => m.label.trim() !== "" || m.value.trim() !== ""),
+                      outcome_verdict: resVerdict,
+                      next_steps: resNextSteps || null,
+                      attachment_name: resAttachName || null,
+                      attachment_url: resAttachUrl || null,
+                      sync_to_eln: resSyncToEln,
+                    });
+                  }}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-200 dark:border-slate-800 pb-2.5">
+                    <div>
+                      <div className="text-sm font-bold text-sky-900 dark:text-sky-300">
+                        📝 Phiếu Ghi Nhận Kết Quả Thực Nghiệm & Minh Chứng Công Việc WBS:{" "}
+                        <span className="font-mono">{editingResultTask.code}</span> (Cổng G{editingResultTask.gate_no})
+                      </div>
+                      <div className="text-xs font-semibold text-slate-700 dark:text-slate-200 mt-0.5">{editingResultTask.title}</div>
+                    </div>
+                    <Button type="button" variant="ghost" onClick={() => setEditingResultTask(null)}>
+                      Đóng phiếu
+                    </Button>
+                  </div>
+
+                  {/* Row 1: Assignee, Execution Status, Progress %, Verdict, Linked ELN */}
+                  <div className="grid gap-2.5 sm:grid-cols-5">
+                    <Field label="Nghiên cứu viên thực hiện *">
+                      <input
+                        list="rd-staff-datalist"
+                        className={inputClass}
+                        value={resAssignee}
+                        onChange={(e) => setResAssignee(e.target.value)}
+                        required
+                      />
+                    </Field>
+                    <Field label="Trạng thái công việc">
+                      <select className={inputClass} value={resStatus} onChange={(e) => setResStatus(e.target.value as any)}>
+                        <option value="IN_PROGRESS">Đang thực hiện</option>
+                        <option value="DONE">Hoàn thành (100%)</option>
+                        <option value="BLOCKED">Vướng mắc kỹ thuật</option>
+                        <option value="TODO">Chưa làm</option>
+                      </select>
+                    </Field>
+                    <Field label="Tiến độ (%)">
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        className={inputClass}
+                        value={resProgress}
+                        onChange={(e) => setResProgress(e.target.value)}
+                      />
+                    </Field>
+                    <Field label="Đánh giá kết luận (Verdict) *">
+                      <select className={inputClass} value={resVerdict} onChange={(e) => setResVerdict(e.target.value as any)}>
+                        <option value="PASS">✅ ĐẠT MỤC TIÊU (PASS)</option>
+                        <option value="OPTIMIZE">🔧 CẦN TỐI ƯU THÊM (OPTIMIZE)</option>
+                        <option value="FAIL">❌ KHÔNG ĐẠT (FAIL)</option>
+                        <option value="PENDING">⏳ ĐANG ĐÁNH GIÁ</option>
+                      </select>
+                    </Field>
+                    <Field label="Liên kết bài Sổ thí nghiệm ELN">
+                      <div className="flex gap-1">
+                        <select className={inputClass} value={resLinkedExpId} onChange={(e) => setResLinkedExpId(e.target.value)}>
+                          <option value="">-- Chưa liên kết ELN --</option>
+                          {(o?.experiments ?? []).map((ex) => (
+                            <option key={ex.id} value={ex.id}>
+                              {ex.code} — {ex.title}
+                            </option>
+                          ))}
+                        </select>
+                        {!resLinkedExpId && (
+                          <button
+                            type="button"
+                            title="Khởi tạo nhanh bài ELN từ công việc WBS này"
+                            className="px-2 py-1 rounded-lg bg-indigo-600 text-white font-semibold text-[11px] whitespace-nowrap cursor-pointer hover:bg-indigo-500"
+                            onClick={() => createTaskExpMut.mutate({ task_id: editingResultTask.id, protocol_summary: resProtocol })}
+                            disabled={createTaskExpMut.isPending}
+                          >
+                            + Tạo ELN
+                          </button>
+                        )}
+                      </div>
+                    </Field>
+                  </div>
+
+                  {/* Layer 1 & Layer 3: Protocol Summary & Result Summary */}
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="1. Phương pháp, Quy trình & Điều kiện thực nghiệm đã chạy (Protocol & Conditions)">
+                      <textarea
+                        rows={3}
+                        className={inputClass}
+                        value={resProtocol}
+                        onChange={(e) => setResProtocol(e.target.value)}
+                        placeholder="Mô tả công thức phối trộn, nồng độ mồi/probe, chu kỳ nhiệt, thiết bị sử dụng, cỡ mẫu..."
+                      />
+                    </Field>
+                    <Field label="2. Tóm tắt Kết quả chính & Nhận xét chuyên môn (Executive Scientific Result) *">
+                      <textarea
+                        rows={3}
+                        className={inputClass}
+                        value={resSummary}
+                        onChange={(e) => setResSummary(e.target.value)}
+                        placeholder="VD: Phản ứng đạt tín hiệu huỳnh quang FAM cao (ΔRn = 4.2), đường chuẩn tuyến tính R² = 0.998, phát hiện 100% (20/20) tại nồng độ 10 copies/rxn, không xuất hiện Primer-dimer ở NTC..."
+                        required
+                      />
+                    </Field>
+                  </div>
+
+                  {/* Layer 2: Structured Quantitative Metrics Table */}
+                  <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950/60 flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <b className="text-xs text-slate-800 dark:text-slate-200">
+                        3. Bảng Thông Số Định Lượng Đạt Được (Structured Quantitative Metrics — Ct, LoD95, R², E%, CV%, Độ đặc hiệu...)
+                      </b>
+                      <div className="flex flex-wrap gap-1.5">
+                        <button
+                          type="button"
+                          className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[11px] font-semibold cursor-pointer"
+                          onClick={() =>
+                            setResMetrics([
+                              { label: "Giới hạn phát hiện (LoD95)", value: "10", unit: "copies/rxn", target: "≤ 15 copies/rxn" },
+                              { label: "Hệ số tuyến tính (R²)", value: "0.998", unit: "", target: "≥ 0.990" },
+                              { label: "Hiệu suất khuếch đại (E%)", value: "98.5", unit: "%", target: "90–110%" },
+                              { label: "Độ lệch chuẩn lặp lại (CV%)", value: "1.85", unit: "%", target: "≤ 5.0%" },
+                            ])
+                          }
+                        >
+                          ⚡ Mẫu chỉ số qPCR/IVD
+                        </button>
+                        <button
+                          type="button"
+                          className="px-2 py-0.5 rounded bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300 text-[11px] font-semibold cursor-pointer"
+                          onClick={() => setResMetrics([...resMetrics, { label: "", value: "", unit: "", target: "" }])}
+                        >
+                          + Thêm chỉ số đo
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-2">
+                      {resMetrics.map((m, idx) => (
+                        <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-4">
+                            <input
+                              className={inputClass}
+                              value={m.label}
+                              onChange={(e) => {
+                                const next = [...resMetrics];
+                                next[idx] = { ...next[idx], label: e.target.value };
+                                setResMetrics(next);
+                              }}
+                              placeholder="Tên thông số (VD: Ct tại 10^3 copies)"
+                            />
+                          </div>
+                          <div className="col-span-3">
+                            <input
+                              className={inputClass}
+                              value={m.value}
+                              onChange={(e) => {
+                                const next = [...resMetrics];
+                                next[idx] = { ...next[idx], value: e.target.value };
+                                setResMetrics(next);
+                              }}
+                              placeholder="Giá trị đạt được (VD: 26.4 ± 0.2)"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <input
+                              className={inputClass}
+                              value={m.unit}
+                              onChange={(e) => {
+                                const next = [...resMetrics];
+                                next[idx] = { ...next[idx], unit: e.target.value };
+                                setResMetrics(next);
+                              }}
+                              placeholder="Đơn vị (copies/rxn, %)"
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <input
+                              className={inputClass}
+                              value={m.target}
+                              onChange={(e) => {
+                                const next = [...resMetrics];
+                                next[idx] = { ...next[idx], target: e.target.value };
+                                setResMetrics(next);
+                              }}
+                              placeholder="Mục tiêu (≤ 28.0)"
+                            />
+                          </div>
+                          <div className="col-span-1 text-right">
+                            <button
+                              type="button"
+                              className="text-rose-600 hover:underline text-xs cursor-pointer"
+                              onClick={() => setResMetrics(resMetrics.filter((_, i) => i !== idx))}
+                            >
+                              Xóa
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Layer 4: Next Steps, Raw Data File Attachment, and Auto-Sync to ELN */}
+                  <div className="grid gap-3 sm:grid-cols-2 items-end">
+                    <Field label="4. Đề xuất bước tiếp theo / Khuyến nghị kỹ thuật (Next Action / CAPA / Optimization)">
+                      <input
+                        className={inputClass}
+                        value={resNextSteps}
+                        onChange={(e) => setResNextSteps(e.target.value)}
+                        placeholder="VD: Chốt công thức MasterMix v1.2 để chuyển sang thẩm định độ ổn định tăng tốc Gate 3..."
+                      />
+                    </Field>
+                    <Field label="5. Đính kèm File Báo cáo / Ảnh điện di Gel / Biểu đồ đường cong qPCR (.pdf, .png, .xlsx, .csv)">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <input
+                          type="file"
+                          accept=".pdf,.png,.jpg,.jpeg,.xlsx,.csv,.docx,.zip"
+                          className="text-[11px]"
+                          onChange={(e) => {
+                            const f = e.target.files?.[0];
+                            if (!f) return;
+                            setResAttachName(f.name);
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                              if (typeof reader.result === "string") {
+                                setResAttachUrl(reader.result);
+                              }
+                            };
+                            reader.readAsDataURL(f);
+                          }}
+                        />
+                        {resAttachName && (
+                          <span className="px-2 py-0.5 rounded bg-sky-100 dark:bg-sky-900/50 text-sky-800 dark:text-sky-200 font-mono text-[11px]">
+                            📎 {resAttachName}
+                          </span>
+                        )}
+                      </div>
+                    </Field>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-sky-200 dark:border-slate-800">
+                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={resSyncToEln}
+                        onChange={(e) => setResSyncToEln(e.target.checked)}
+                      />
+                      <span>
+                        🔄 Tự động ghi đồng bộ kết quả & bảng thông số này vào mục <code className="font-mono">RESULT</code> của bài Sổ thí nghiệm ELN liên kết (ALCOA+ Audit Trail)
+                      </span>
+                    </label>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="ghost" onClick={() => setEditingResultTask(null)}>
+                        Hủy
+                      </Button>
+                      <Button type="submit" disabled={saveTaskMut.isPending}>
+                        💾 Lưu Kết Quả Thực Nghiệm & Cập Nhật WBS
+                      </Button>
+                    </div>
+                  </div>
                 </form>
               )}
 
               {(o?.tasks.length ?? 0) === 0 ? (
                 <Empty>Chưa có hạng mục công việc WBS nào.</Empty>
               ) : (
-                <Table head={["Mã việc", "Cổng", "Nội dung công việc", "Người phụ trách", "Hạn chót", "Tiến độ", "Trạng thái", "Cập nhật nhanh"]}>
-                  {o!.tasks.map((t) => (
-                    <tr key={t.id}>
-                      <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{t.code}</td>
-                      <td className="py-2 pr-3 font-mono">G{t.gate_no}</td>
-                      <td className="py-2 pr-3 font-semibold">{t.title}</td>
-                      <td className="py-2 pr-3">{t.assignee_name || "—"}</td>
-                      <td className="py-2 pr-3 font-mono">{fmtDate(t.due_date)}</td>
-                      <td className="py-2 pr-3 font-mono">{t.progress_pct}%</td>
-                      <td className="py-2 pr-3">
-                        <StatusBadge
-                          status={t.status === "DONE" ? "RELEASED" : t.status === "IN_PROGRESS" ? "PENDING_QC" : t.status === "BLOCKED" ? "REJECTED" : "QUARANTINE"}
-                          label={t.status === "DONE" ? "Hoàn thành" : t.status === "IN_PROGRESS" ? "Đang làm" : t.status === "BLOCKED" ? "Vướng mắc" : "Chưa làm"}
-                        />
-                      </td>
-                      <td className="py-2 pr-3">
-                        {canManage && (
-                          <div className="flex gap-1">
-                            {t.status !== "IN_PROGRESS" && t.status !== "DONE" && (
+                <Table
+                  head={[
+                    "Mã việc",
+                    "Cổng",
+                    "Nội dung công việc & Kết quả thực nghiệm ghi nhận",
+                    "Người phụ trách (R&D)",
+                    "Liên kết Sổ ELN",
+                    "Hạn chót",
+                    "Tiến độ & Kết luận",
+                    "Thao tác & Ghi kết quả",
+                  ]}
+                >
+                  {(o?.tasks ?? [])
+                    .filter((t) => {
+                      if (wbsStaffFilter && (t.assignee_name || "") !== wbsStaffFilter) return false;
+                      if (wbsGateFilter && String(t.gate_no) !== wbsGateFilter) return false;
+                      if (wbsVerdictFilter === "HAS_RESULT") return Boolean(t.result_summary || (t.key_metrics_json?.length ?? 0) > 0);
+                      if (wbsVerdictFilter === "NO_RESULT") return !t.result_summary && (t.key_metrics_json?.length ?? 0) === 0;
+                      if (wbsVerdictFilter && t.outcome_verdict !== wbsVerdictFilter) return false;
+                      return true;
+                    })
+                    .map((t) => {
+                      const metrics = Array.isArray(t.key_metrics_json) ? t.key_metrics_json : [];
+                      const hasResult = Boolean(t.result_summary || metrics.length > 0 || t.protocol_summary);
+                      return (
+                        <tr key={t.id} className="align-top">
+                          <td className="py-2.5 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400 whitespace-nowrap">{t.code}</td>
+                          <td className="py-2.5 pr-3 font-mono font-bold">G{t.gate_no}</td>
+                          <td className="py-2.5 pr-3 min-w-80">
+                            <div className="font-semibold text-slate-900 dark:text-slate-100">{t.title}</div>
+                            {hasResult ? (
+                              <div className="mt-1.5 p-2.5 rounded-xl border border-emerald-200/80 dark:border-emerald-900/50 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-1.5">
+                                {t.protocol_summary && (
+                                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                                    <b className="text-slate-700 dark:text-slate-300">🧪 Protocol:</b> {t.protocol_summary}
+                                  </div>
+                                )}
+                                {t.result_summary && (
+                                  <div className="text-[11px] text-slate-800 dark:text-slate-200">
+                                    <b className="text-emerald-800 dark:text-emerald-300">📊 Kết quả:</b> {t.result_summary}
+                                  </div>
+                                )}
+                                {metrics.length > 0 && (
+                                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                                    {metrics.map((m, i) => (
+                                      <span
+                                        key={i}
+                                        className="px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-emerald-300 dark:border-emerald-800 text-[11px] font-mono"
+                                      >
+                                        <b>{m.label}:</b> <span className="text-emerald-700 dark:text-emerald-400 font-bold">{m.value}</span>{" "}
+                                        {m.unit || ""} {m.target ? <span className="text-slate-400">(Đích: {m.target})</span> : null}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                                {t.next_steps && (
+                                  <div className="text-[11px] text-indigo-700 dark:text-indigo-300">
+                                    <b>👉 Bước tiếp theo:</b> {t.next_steps}
+                                  </div>
+                                )}
+                                <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500 pt-0.5">
+                                  {t.attachment_name && (
+                                    <a
+                                      href={t.attachment_url || "#"}
+                                      download={t.attachment_name}
+                                      className="text-sky-700 dark:text-sky-400 underline font-semibold"
+                                    >
+                                      📎 File báo cáo: {t.attachment_name}
+                                    </a>
+                                  )}
+                                  {t.completed_by_name && (
+                                    <span>
+                                      Cập nhật bởi: <b>{t.completed_by_name}</b> {t.completed_at ? `(${fmtDate(t.completed_at)})` : ""}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-slate-400 mt-0.5 italic">
+                                Chưa ghi nhận kết quả thực nghiệm — bấm &ldquo;📝 Ghi nhận Kết quả&rdquo; để nhập số liệu & minh chứng.
+                              </div>
+                            )}
+                          </td>
+                          <td className="py-2.5 pr-3">
+                            <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 font-medium text-slate-800 dark:text-slate-200 inline-block">
+                              👤 {t.assignee_name || p.leader_name || "—"}
+                            </span>
+                          </td>
+                          <td className="py-2.5 pr-3">
+                            {t.experiment_code ? (
+                              <div className="flex flex-col gap-0.5">
+                                <span className="px-2 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/70 text-indigo-800 dark:text-indigo-300 font-mono font-bold text-[11px] inline-block w-fit">
+                                  🧪 {t.experiment_code}
+                                </span>
+                                {t.experiment_title && <span className="text-[10px] text-slate-500 line-clamp-1">{t.experiment_title}</span>}
+                              </div>
+                            ) : canManage ? (
                               <button
                                 type="button"
-                                className="px-2 py-0.5 rounded bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300 font-semibold cursor-pointer"
-                                onClick={() =>
-                                  saveTaskMut.mutate({
-                                    task_id: t.id,
-                                    gate_no: t.gate_no,
-                                    title: t.title,
-                                    assignee_name: t.assignee_name,
-                                    due_date: t.due_date?.slice(0, 10),
-                                    status: "IN_PROGRESS",
-                                    progress_pct: 50,
-                                  })
-                                }
+                                className="px-2 py-1 rounded-lg border border-indigo-300 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 text-[11px] font-semibold cursor-pointer whitespace-nowrap"
+                                onClick={() => createTaskExpMut.mutate({ task_id: t.id, protocol_summary: t.protocol_summary })}
+                                disabled={createTaskExpMut.isPending}
                               >
-                                Đang làm (50%)
+                                🧪 + Tạo & Liên kết ELN
                               </button>
+                            ) : (
+                              <span className="text-slate-400">—</span>
                             )}
-                            {t.status !== "DONE" && (
-                              <button
-                                type="button"
-                                className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-semibold cursor-pointer"
-                                onClick={() =>
-                                  saveTaskMut.mutate({
-                                    task_id: t.id,
-                                    gate_no: t.gate_no,
-                                    title: t.title,
-                                    assignee_name: t.assignee_name,
-                                    due_date: t.due_date?.slice(0, 10),
-                                    status: "DONE",
-                                    progress_pct: 100,
-                                  })
-                                }
-                              >
-                                ✓ Hoàn thành
-                              </button>
+                          </td>
+                          <td className="py-2.5 pr-3 font-mono whitespace-nowrap">{fmtDate(t.due_date)}</td>
+                          <td className="py-2.5 pr-3">
+                            <div className="flex flex-col gap-1">
+                              <div className="flex items-center gap-1.5">
+                                <StatusBadge
+                                  status={
+                                    t.status === "DONE"
+                                      ? "RELEASED"
+                                      : t.status === "IN_PROGRESS"
+                                      ? "PENDING_QC"
+                                      : t.status === "BLOCKED"
+                                      ? "REJECTED"
+                                      : "QUARANTINE"
+                                  }
+                                  label={
+                                    t.status === "DONE"
+                                      ? `Hoàn thành (${t.progress_pct}%)`
+                                      : t.status === "IN_PROGRESS"
+                                      ? `Đang làm (${t.progress_pct}%)`
+                                      : t.status === "BLOCKED"
+                                      ? "Vướng mắc"
+                                      : "Chưa làm"
+                                  }
+                                />
+                              </div>
+                              {t.outcome_verdict && t.outcome_verdict !== "PENDING" && (
+                                <span
+                                  className={`px-2 py-0.5 rounded text-[10px] font-bold w-fit ${
+                                    t.outcome_verdict === "PASS"
+                                      ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
+                                      : t.outcome_verdict === "OPTIMIZE"
+                                      ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                                      : "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300"
+                                  }`}
+                                >
+                                  {t.outcome_verdict === "PASS"
+                                    ? "✅ KẾT LUẬN: ĐẠT"
+                                    : t.outcome_verdict === "OPTIMIZE"
+                                    ? "🔧 CẦN TỐI ƯU THÊM"
+                                    : "❌ KHÔNG ĐẠT"}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-2.5 pr-3">
+                            {canManage && (
+                              <div className="flex flex-col gap-1">
+                                <button
+                                  type="button"
+                                  className="px-2.5 py-1 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-semibold text-[11px] cursor-pointer whitespace-nowrap text-left"
+                                  onClick={() => openResultDrawer(t)}
+                                >
+                                  📝 {hasResult ? "Sửa Kết quả & Số liệu" : "Ghi nhận Kết quả"}
+                                </button>
+                                <div className="flex gap-1">
+                                  {t.status !== "IN_PROGRESS" && t.status !== "DONE" && (
+                                    <button
+                                      type="button"
+                                      className="px-2 py-0.5 rounded bg-sky-100 dark:bg-sky-900/50 text-sky-700 dark:text-sky-300 font-semibold text-[11px] cursor-pointer"
+                                      onClick={() =>
+                                        saveTaskMut.mutate({
+                                          task_id: t.id,
+                                          gate_no: t.gate_no,
+                                          title: t.title,
+                                          assignee_name: t.assignee_name,
+                                          due_date: t.due_date?.slice(0, 10),
+                                          status: "IN_PROGRESS",
+                                          progress_pct: 50,
+                                        })
+                                      }
+                                    >
+                                      Đang làm (50%)
+                                    </button>
+                                  )}
+                                  {t.status !== "DONE" && (
+                                    <button
+                                      type="button"
+                                      className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-semibold text-[11px] cursor-pointer"
+                                      onClick={() =>
+                                        saveTaskMut.mutate({
+                                          task_id: t.id,
+                                          gate_no: t.gate_no,
+                                          title: t.title,
+                                          assignee_name: t.assignee_name,
+                                          due_date: t.due_date?.slice(0, 10),
+                                          status: "DONE",
+                                          progress_pct: 100,
+                                        })
+                                      }
+                                    >
+                                      ✓ Hoàn thành
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
                             )}
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </Table>
               )}
             </div>
@@ -1507,12 +2127,15 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
   const ctx = useRdContext("rd.view");
   const [domain, setDomain] = useState("");
   const [stageFilter, setStageFilter] = useState("");
+  const [staffFilter, setStaffFilter] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [addingMode, setAddingMode] = useState<"NEW_PRODUCT" | "IMPROVEMENT" | null>(null);
 
   const [name, setName] = useState("");
   const [targetDomain, setTargetDomain] = useState("KIT");
   const [ivdClass, setIvdClass] = useState("CLASS_B");
+  const [leaderName, setLeaderName] = useState("");
   const [budgetAmount, setBudgetAmount] = useState("60000000");
   const [plannedEnd, setPlannedEnd] = useState("");
   const [description, setDescription] = useState("");
@@ -1532,6 +2155,7 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
           target_domain: targetDomain,
           ivd_class: ivdClass,
           name,
+          leader_name: leaderName || null,
           budget_amount: Number(budgetAmount || 50000000),
           planned_end: plannedEnd || null,
           description: description || null,
@@ -1547,9 +2171,37 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
   });
 
   const allProjects = list.data ?? [];
-  const filteredProjects = stageFilter
-    ? allProjects.filter((r) => matchStageKey(r.current_stage || "", r.status || "", Number(r.passed_gates || 0)) === stageFilter)
-    : allProjects;
+
+  // Build unique R&D staff list from roster + project leaders + WBS assignees
+  const staffOptions = Array.from(
+    new Set([
+      ...(ctx.data?.rd_staff?.map((s) => s.name) ?? []),
+      ...allProjects.map((r) => r.leader_name).filter(Boolean),
+      ...allProjects.flatMap((r) => (Array.isArray(r.assignees) ? r.assignees : [])).filter(Boolean),
+    ])
+  );
+
+  const matchesProjectStaff = (r: any, staff: string) => {
+    if (!staff) return true;
+    const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
+    return r.leader_name === staff || assignees.includes(staff);
+  };
+
+  const filteredProjects = allProjects.filter((r) => {
+    if (stageFilter && matchStageKey(r.current_stage || "", r.status || "", Number(r.passed_gates || 0)) !== stageFilter) {
+      return false;
+    }
+    if (staffFilter && !matchesProjectStaff(r, staffFilter)) {
+      return false;
+    }
+    if (searchQuery.trim() !== "") {
+      const q = searchQuery.toLowerCase();
+      const assigneesStr = Array.isArray(r.assignees) ? r.assignees.join(" ") : "";
+      const hay = `${r.code || ""} ${r.name || ""} ${r.leader_name || ""} ${assigneesStr}`.toLowerCase();
+      if (!hay.includes(q)) return false;
+    }
+    return true;
+  });
 
   return (
     <div className="flex flex-col gap-3">
@@ -1591,7 +2243,21 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
         title="Trung tâm Điều hành Dự án R&D theo Stage-Gate & Quản lý Vật tư Dự án (ISO 13485)"
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <select className={`${inputClass} w-44`} value={domain} onChange={(e) => setDomain(e.target.value)}>
+            <input
+              className={`${inputClass} w-48`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="🔍 Tìm mã, tên dự án, NCV..."
+            />
+            <select className={`${inputClass} w-60`} value={staffFilter} onChange={(e) => setStaffFilter(e.target.value)}>
+              <option value="">👤 Mọi nhân sự phụ trách Phòng R&D</option>
+              {staffOptions.map((st) => (
+                <option key={st} value={st}>
+                  {st}
+                </option>
+              ))}
+            </select>
+            <select className={`${inputClass} w-40`} value={domain} onChange={(e) => setDomain(e.target.value)}>
               <option value="">Mọi lĩnh vực</option>
               {Object.entries(DOMAIN_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select>
@@ -1618,6 +2284,42 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
       >
         <ErrorNote error={list.error ?? createMut.error} />
 
+        {/* Quick R&D Researcher Workload Filter Bar */}
+        {staffOptions.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3 pb-2.5 border-b border-slate-100 dark:border-slate-800 text-xs">
+            <span className="font-semibold text-slate-500 mr-1">👥 Lọc nhanh theo Nhân sự Phòng R&D:</span>
+            <button
+              type="button"
+              onClick={() => setStaffFilter("")}
+              className={`px-2.5 py-1 rounded-full font-semibold cursor-pointer transition-all ${
+                staffFilter === ""
+                  ? "bg-sky-600 text-white"
+                  : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+              }`}
+            >
+              Tất cả ({allProjects.length})
+            </button>
+            {staffOptions.map((st) => {
+              const cnt = allProjects.filter((r) => matchesProjectStaff(r, st)).length;
+              const active = staffFilter === st;
+              return (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setStaffFilter(active ? "" : st)}
+                  className={`px-2.5 py-1 rounded-full font-semibold cursor-pointer transition-all ${
+                    active
+                      ? "bg-sky-600 text-white shadow-sm"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200"
+                  }`}
+                >
+                  👤 {st} ({cnt})
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {addingMode && (
           <form
             className="grid gap-3 sm:grid-cols-3 p-3 mb-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/40 dark:bg-sky-950/20"
@@ -1641,8 +2343,15 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
                 {Object.entries(IVD_CLASS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </Field>
-            <Field label="Ngân sách Vật tư R&D dự kiến (VNĐ)">
-              <input type="number" step="1000000" className={inputClass} value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} />
+            <Field label="Chủ nhiệm đề tài / Phụ trách chính (Phòng R&D)">
+              <select className={inputClass} value={leaderName} onChange={(e) => setLeaderName(e.target.value)}>
+                <option value="">-- Mặc định theo tài khoản hoặc chọn NCV --</option>
+                {staffOptions.map((st) => (
+                  <option key={st} value={st}>
+                    {st}
+                  </option>
+                ))}
+              </select>
             </Field>
             <div className="sm:col-span-2">
               <Field label="Tên dự án R&D *">
@@ -1659,10 +2368,13 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
                 />
               </Field>
             </div>
+            <Field label="Ngân sách Vật tư R&D dự kiến (VNĐ)">
+              <input type="number" step="1000000" className={inputClass} value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} />
+            </Field>
             <Field label="Dự kiến hoàn tất chuyển giao">
               <input type="date" className={inputClass} value={plannedEnd} onChange={(e) => setPlannedEnd(e.target.value)} />
             </Field>
-            <div className="sm:col-span-3">
+            <div className="sm:col-span-2">
               <Field label="Mục tiêu kỹ thuật & Phạm vi nghiên cứu">
                 <input className={inputClass} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Mô tả chỉ tiêu LoD mục tiêu, mẫu chuẩn sử dụng, định hướng công thức..." />
               </Field>
@@ -1676,25 +2388,38 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
           </form>
         )}
 
-        {filteredProjects.length === 0 && <Empty>Chưa có dự án R&D nào ở giai đoạn lọc này.</Empty>}
+        {filteredProjects.length === 0 && <Empty>Chưa có dự án R&D nào khớp điều kiện lọc.</Empty>}
         {filteredProjects.length > 0 && (
-          <Table head={["Mã dự án", "Tên dự án", "Loại đề tài", "Lĩnh vực", "Phân loại", "Giai đoạn (Stage)", "Tiến độ Gate", "Số ELN", "Chủ nhiệm", "Trạng thái"]}>
-            {filteredProjects.map((r) => (
-              <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
-                <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
-                <td className="py-2 pr-3 font-semibold">{r.name}</td>
-                <td className="py-2 pr-3 text-xs">{PROJ_TYPE_LABEL[r.project_type] ?? r.project_type}</td>
-                <td className="py-2 pr-3">{DOMAIN_LABEL[r.target_domain] ?? r.target_domain}</td>
-                <td className="py-2 pr-3 font-mono">{r.ivd_class || "—"}</td>
-                <td className="py-2 pr-3 font-mono font-semibold">{r.current_stage}</td>
-                <td className="py-2 pr-3 font-mono">{r.passed_gates}/{r.total_gates} cổng</td>
-                <td className="py-2 pr-3 font-mono">{r.experiment_count}</td>
-                <td className="py-2 pr-3">{r.leader_name}</td>
-                <td className="py-2 pr-3">
-                  <StatusBadge status={PROJ_STATUS[r.status]?.[0] ?? "QUARANTINE"} label={PROJ_STATUS[r.status]?.[1] ?? r.status} />
-                </td>
-              </tr>
-            ))}
+          <Table head={["Mã dự án", "Tên dự án", "Loại đề tài", "Lĩnh vực", "Giai đoạn (Stage)", "Tiến độ Gate", "Số ELN", "Chủ nhiệm & Nhóm NCV phụ trách", "Trạng thái"]}>
+            {filteredProjects.map((r) => {
+              const assignees: string[] = Array.isArray(r.assignees) ? r.assignees : [];
+              return (
+                <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
+                  <td className="py-2 pr-3 font-mono font-semibold text-sky-700 dark:text-sky-400">{r.code}</td>
+                  <td className="py-2 pr-3 font-semibold">{r.name}</td>
+                  <td className="py-2 pr-3 text-xs">{PROJ_TYPE_LABEL[r.project_type] ?? r.project_type}</td>
+                  <td className="py-2 pr-3">
+                    {DOMAIN_LABEL[r.target_domain] ?? r.target_domain}
+                    {r.ivd_class ? <span className="ml-1 text-[10px] font-mono text-slate-500">({r.ivd_class})</span> : null}
+                  </td>
+                  <td className="py-2 pr-3 font-mono font-semibold">{r.current_stage}</td>
+                  <td className="py-2 pr-3 font-mono">{r.passed_gates}/{r.total_gates} cổng</td>
+                  <td className="py-2 pr-3 font-mono">{r.experiment_count}</td>
+                  <td className="py-2 pr-3">
+                    <div className="font-semibold text-slate-800 dark:text-slate-100">👤 Chủ nhiệm: {r.leader_name}</div>
+                    {assignees.length > 0 && (
+                      <div className="text-[11px] text-slate-500 mt-0.5">
+                        NCV tham gia WBS: {assignees.slice(0, 3).join(", ")}
+                        {assignees.length > 3 ? ` (+${assignees.length - 3})` : ""}
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <StatusBadge status={PROJ_STATUS[r.status]?.[0] ?? "QUARANTINE"} label={PROJ_STATUS[r.status]?.[1] ?? r.status} />
+                  </td>
+                </tr>
+              );
+            })}
           </Table>
         )}
       </Card>

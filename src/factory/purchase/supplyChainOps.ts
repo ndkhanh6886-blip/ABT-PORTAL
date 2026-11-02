@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
-import { authorizeAnywhere, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
+import { authorizeAnywhere, hasFactoryPermission, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { parseInput } from "../core/records";
@@ -11,65 +11,18 @@ import { createOrder, poMachine, syncRequestStatus } from "./orders";
 import "./permissions";
 import "../inv/permissions";
 
+let supplyChainSchemaEnsured = false;
+
 export async function ensureSupplyChainSchema(tx: Tx): Promise<void> {
   await ensureWarehouseOpsSchema(tx);
+  if (supplyChainSchemaEnsured) return;
   await tx.query(`
     ALTER TABLE purchase.purchase_request ADD COLUMN IF NOT EXISTS priority TEXT NOT NULL DEFAULT 'NORMAL';
     ALTER TABLE master.partner ADD COLUMN IF NOT EXISTS asl_status TEXT NOT NULL DEFAULT 'APPROVED';
     ALTER TABLE master.partner ADD COLUMN IF NOT EXISTS lead_time_days INT NOT NULL DEFAULT 7;
     ALTER TABLE master.partner ADD COLUMN IF NOT EXISTS category_domain TEXT NOT NULL DEFAULT 'BIOCHEM';
   `);
-
-  // Ensure at least 1 sample Urgent PR (fulfillable from KHO-TONG) exists for demonstration
-  const openPrLineCount = Number(
-    (
-      await tx.query(
-        `SELECT count(*)::int AS c
-           FROM purchase.purchase_request_line l
-           JOIN purchase.purchase_request pr ON pr.id = l.pr_id
-          WHERE pr.status IN ('DRAFT', 'SUBMITTED', 'APPROVED') AND l.qty > l.qty_ordered`
-      )
-    ).rows[0]?.c ?? 0
-  );
-  if (openPrLineCount === 0) {
-    const hubStockRow = (
-      await tx.query(
-        `SELECT b.item_id, i.code, i.name, i.base_uom, (b.qty_on_hand - b.qty_reserved)::float AS avail
-           FROM inv.stock_balance b
-           JOIN master.location loc ON loc.id = b.location_id
-           JOIN master.warehouse w ON w.id = loc.warehouse_id
-           JOIN master.item i ON i.id = b.item_id
-           LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-          WHERE w.code = 'KHO-TONG'
-            AND loc.is_quarantine = false
-            AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
-            AND i.is_purchasable = true
-            AND (b.qty_on_hand - b.qty_reserved) > 0
-          ORDER BY (b.qty_on_hand - b.qty_reserved) DESC LIMIT 1`
-      )
-    ).rows[0];
-    const kitWh = (
-      await tx.query("SELECT id, owner_org_unit_id FROM master.warehouse WHERE code = 'KHO-KIT' AND status = 'ACTIVE' LIMIT 1")
-    ).rows[0];
-    if (hubStockRow && kitWh) {
-      const reqQty = Math.max(1, Math.min(20, Math.round(Number(hubStockRow.avail) / 2)));
-      const pr = await createRequest(
-        tx,
-        { userId: 1, name: "Hệ thống", isRootAdmin: true, isPortalAdmin: true },
-        {
-          org_unit_id: kitWh.owner_org_unit_id,
-          target_warehouse_id: kitWh.id,
-          needed_by: vnToday(),
-          reason: `[Cấp tốc SX Kit] Cần bổ sung ${hubStockRow.code} (${hubStockRow.name}) cho mẻ sản xuất Kit trong tuần`,
-          lines: [{ item_id: hubStockRow.item_id, qty: reqQty, uom: hubStockRow.base_uom, est_price: 250000 }],
-        }
-      );
-      await tx.query(
-        "UPDATE purchase.purchase_request SET status = 'APPROVED', priority = 'URGENT', approved_by = 1 WHERE id = $1",
-        [pr.id]
-      );
-    }
-  }
+  supplyChainSchemaEnsured = true;
 }
 
 export async function getSupplyChainOverview(tx: Tx, actor: AuthzActor) {
@@ -139,60 +92,62 @@ export async function getSupplyChainOverview(tx: Tx, actor: AuthzActor) {
 
   const mrp_shortage_radar = (
     await tx.query(
-      `SELECT * FROM (
-         SELECT i.id AS item_id, i.code AS item_code, i.name AS item_name, i.item_type, i.base_uom,
-                COALESCE(i.min_safety_stock, 10)::float AS min_safety_stock,
-                COALESCE(i.reorder_qty, 50)::float AS reorder_qty,
-                COALESCE(i.lead_time_days, 14)::int AS lead_time_days,
-                COALESCE((
-                  SELECT sum(b.qty_on_hand - b.qty_reserved)::float
-                    FROM inv.stock_balance b
-                    JOIN master.location loc ON loc.id = b.location_id
-                    JOIN master.warehouse w ON w.id = loc.warehouse_id
-                    LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-                   WHERE b.item_id = i.id
-                     AND w.code = 'KHO-TONG'
-                     AND loc.is_quarantine = false
-                     AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
-                     AND (b.qty_on_hand - b.qty_reserved) > 0
-                ), 0) AS hub_available,
-                COALESCE((
-                  SELECT sum(b.qty_on_hand - b.qty_reserved)::float
-                    FROM inv.stock_balance b
-                    JOIN master.location loc ON loc.id = b.location_id
-                    JOIN master.warehouse w ON w.id = loc.warehouse_id
-                    LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-                   WHERE b.item_id = i.id
-                     AND w.code <> 'KHO-TONG'
-                     AND loc.is_quarantine = false
-                     AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
-                     AND (b.qty_on_hand - b.qty_reserved) > 0
-                ), 0) AS branch_available,
-                COALESCE((
-                  SELECT sum(prl.qty - prl.qty_ordered)::float
-                    FROM purchase.purchase_request_line prl
-                    JOIN purchase.purchase_request pr ON pr.id = prl.pr_id
-                   WHERE prl.item_id = i.id
-                     AND pr.status IN ('DRAFT', 'SUBMITTED', 'PENDING_BOD', 'APPROVED')
-                     AND prl.qty > prl.qty_ordered
-                ), 0) AS open_pr_qty,
-                COALESCE((
-                  SELECT sum(pol.qty_ordered - pol.qty_received)::float
-                    FROM purchase.purchase_order_line pol
-                    JOIN purchase.purchase_order po ON po.id = pol.po_id
-                   WHERE pol.item_id = i.id
-                     AND po.status IN ('DRAFT', 'ISSUED', 'PARTIALLY_RECEIVED')
-                     AND pol.qty_ordered > pol.qty_received
-                ), 0) AS open_po_qty,
-                COALESCE(
-                  (SELECT pol.unit_price::float FROM purchase.purchase_order_line pol WHERE pol.item_id = i.id AND pol.unit_price > 0 ORDER BY pol.id DESC LIMIT 1),
-                  220000
-                ) AS last_price
-           FROM master.item i
-          WHERE i.status = 'ACTIVE' AND i.is_purchasable = true
-       ) sub
-       ORDER BY ((sub.hub_available + sub.branch_available + sub.open_po_qty) - sub.min_safety_stock) ASC, sub.item_code ASC
-       LIMIT 25`
+      `WITH stock_agg AS (
+         SELECT b.item_id,
+                COALESCE(sum(b.qty_on_hand - b.qty_reserved) FILTER (
+                  WHERE w.code = 'KHO-TONG' AND loc.is_quarantine = false AND COALESCE(lot.status, 'RELEASED') = 'RELEASED' AND (b.qty_on_hand - b.qty_reserved) > 0
+                ), 0)::float AS hub_available,
+                COALESCE(sum(b.qty_on_hand - b.qty_reserved) FILTER (
+                  WHERE w.code <> 'KHO-TONG' AND loc.is_quarantine = false AND COALESCE(lot.status, 'RELEASED') = 'RELEASED' AND (b.qty_on_hand - b.qty_reserved) > 0
+                ), 0)::float AS branch_available
+           FROM inv.stock_balance b
+           JOIN master.location loc ON loc.id = b.location_id
+           JOIN master.warehouse w ON w.id = loc.warehouse_id
+           LEFT JOIN inv.lot lot ON lot.id = b.lot_id
+          WHERE b.qty_on_hand > 0
+          GROUP BY b.item_id
+       ),
+       pr_agg AS (
+         SELECT prl.item_id,
+                COALESCE(sum(prl.qty - prl.qty_ordered), 0)::float AS open_pr_qty
+           FROM purchase.purchase_request_line prl
+           JOIN purchase.purchase_request pr ON pr.id = prl.pr_id
+          WHERE pr.status IN ('DRAFT', 'SUBMITTED', 'PENDING_BOD', 'APPROVED')
+            AND prl.qty > prl.qty_ordered
+          GROUP BY prl.item_id
+       ),
+       po_agg AS (
+         SELECT pol.item_id,
+                COALESCE(sum(pol.qty_ordered - pol.qty_received), 0)::float AS open_po_qty
+           FROM purchase.purchase_order_line pol
+           JOIN purchase.purchase_order po ON po.id = pol.po_id
+          WHERE po.status IN ('DRAFT', 'ISSUED', 'PARTIALLY_RECEIVED')
+            AND pol.qty_ordered > pol.qty_received
+          GROUP BY pol.item_id
+       ),
+       last_price_agg AS (
+         SELECT DISTINCT ON (pol.item_id) pol.item_id, pol.unit_price::float AS last_price
+           FROM purchase.purchase_order_line pol
+          WHERE pol.unit_price > 0
+          ORDER BY pol.item_id, pol.id DESC
+       )
+       SELECT i.id AS item_id, i.code AS item_code, i.name AS item_name, i.item_type, i.base_uom,
+              COALESCE(i.min_safety_stock, 10)::float AS min_safety_stock,
+              COALESCE(i.reorder_qty, 50)::float AS reorder_qty,
+              COALESCE(i.lead_time_days, 14)::int AS lead_time_days,
+              COALESCE(sa.hub_available, 0) AS hub_available,
+              COALESCE(sa.branch_available, 0) AS branch_available,
+              COALESCE(pra.open_pr_qty, 0) AS open_pr_qty,
+              COALESCE(poa.open_po_qty, 0) AS open_po_qty,
+              COALESCE(lpa.last_price, 220000) AS last_price
+         FROM master.item i
+         LEFT JOIN stock_agg sa ON sa.item_id = i.id
+         LEFT JOIN pr_agg pra ON pra.item_id = i.id
+         LEFT JOIN po_agg poa ON poa.item_id = i.id
+         LEFT JOIN last_price_agg lpa ON lpa.item_id = i.id
+        WHERE i.status = 'ACTIVE' AND i.is_purchasable = true
+        ORDER BY ((COALESCE(sa.hub_available, 0) + COALESCE(sa.branch_available, 0) + COALESCE(poa.open_po_qty, 0)) - COALESCE(i.min_safety_stock, 10)::float) ASC, i.code ASC
+        LIMIT 25`
     )
   ).rows.map((r) => ({
     ...r,
@@ -273,6 +228,7 @@ const fulfillFromHubSchema = z.object({
  * without needing to buy externally!
  */
 export async function fulfillPrLineFromCentralHub(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhere(tx, actor, "inv.doc.post");
   const d = parseInput(fulfillFromHubSchema, input);
   const line = (
     await tx.query(
@@ -337,6 +293,7 @@ const fastTrackPrSchema = z.object({
 });
 
 export async function fastTrackApprovePr(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhere(tx, actor, "purchase.pr.approve");
   await ensureSupplyChainSchema(tx);
   const d = parseInput(fastTrackPrSchema, input);
   let pr = (await tx.query("SELECT * FROM purchase.purchase_request WHERE id = $1 FOR UPDATE", [d.pr_id])).rows[0];
@@ -346,13 +303,13 @@ export async function fastTrackApprovePr(tx: Tx, actor: AuthzActor, input: unkno
     await tx.query("UPDATE purchase.purchase_request SET priority = $2 WHERE id = $1", [pr.id, d.priority]);
   }
   if (pr.status === "DRAFT") {
-    pr = await runTransition(tx, prMachine, SYSTEM_ACTOR, { id: pr.id, action: "submit", expectedVersion: pr.version }, { trusted: true });
+    pr = await runTransition(tx, prMachine, actor, { id: pr.id, action: "submit", expectedVersion: pr.version });
   }
   if (pr.status === "SUBMITTED") {
     if (pr.requires_bod) {
-      pr = await runTransition(tx, prMachine, SYSTEM_ACTOR, { id: pr.id, action: "escalate", expectedVersion: pr.version }, { trusted: true });
+      pr = await runTransition(tx, prMachine, actor, { id: pr.id, action: "escalate", expectedVersion: pr.version });
     } else {
-      pr = await runTransition(tx, prMachine, SYSTEM_ACTOR, { id: pr.id, action: "approve", expectedVersion: pr.version }, { trusted: true });
+      pr = await runTransition(tx, prMachine, actor, { id: pr.id, action: "approve", expectedVersion: pr.version });
     }
   }
   return pr;
@@ -368,6 +325,7 @@ const directReplenishPoSchema = z.object({
 });
 
 export async function createDirectReplenishmentPo(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhere(tx, actor, "purchase.po.manage");
   await ensureSupplyChainSchema(tx);
   const d = parseInput(directReplenishPoSchema, input);
 
@@ -382,34 +340,44 @@ export async function createDirectReplenishmentPo(tx: Tx, actor: AuthzActor, inp
     : (await tx.query("SELECT id, code, name, lead_time_days FROM master.partner WHERE is_supplier = true AND status = 'ACTIVE' ORDER BY code LIMIT 1")).rows[0];
   if (!supplier) throw invalid("Chưa có Nhà cung cấp hoạt động trong danh mục.");
 
-  const pr = await createRequest(tx, SYSTEM_ACTOR, {
+  const pr = await createRequest(tx, actor, {
     org_unit_id: khoTong.owner_org_unit_id,
     target_warehouse_id: khoTong.id,
     reason: `[MRP Auto-Replenishment] Bù tồn kho an toàn cho ${item.code} — ${item.name}`,
     lines: [{ item_id: item.id, qty: d.qty, uom: item.base_uom, est_price: d.unit_price }],
   });
   await tx.query("UPDATE purchase.purchase_request SET priority = $2 WHERE id = $1", [pr.id, d.priority]);
-  const submitted = await runTransition(tx, prMachine, SYSTEM_ACTOR, { id: pr.id, action: "submit", expectedVersion: pr.version }, { trusted: true });
-  const approved = submitted.requires_bod
-    ? await (async () => {
-        const esc = await runTransition(tx, prMachine, SYSTEM_ACTOR, { id: pr.id, action: "escalate", expectedVersion: submitted.version }, { trusted: true });
-        return runTransition(tx, prMachine, SYSTEM_ACTOR, { id: pr.id, action: "bod_approve", expectedVersion: esc.version }, { trusted: true });
-      })()
-    : await runTransition(tx, prMachine, SYSTEM_ACTOR, { id: pr.id, action: "approve", expectedVersion: submitted.version }, { trusted: true });
+  let currentPr = await runTransition(tx, prMachine, actor, { id: pr.id, action: "submit", expectedVersion: pr.version });
 
-  const prLine = (await tx.query("SELECT id FROM purchase.purchase_request_line WHERE pr_id = $1 LIMIT 1", [approved.id])).rows[0];
-  const po = await createOrder(tx, SYSTEM_ACTOR, {
+  // Strict SoD & RBAC: An actor cannot self-approve their own PR (requester_id === actor.userId) or bypass BOD approval.
+  if (
+    currentPr.requester_id !== actor.userId &&
+    (await hasFactoryPermission(tx, actor, "purchase.pr.approve", currentPr.org_unit_id))
+  ) {
+    if (currentPr.requires_bod) {
+      currentPr = await runTransition(tx, prMachine, actor, { id: pr.id, action: "escalate", expectedVersion: currentPr.version });
+    } else {
+      currentPr = await runTransition(tx, prMachine, actor, { id: pr.id, action: "approve", expectedVersion: currentPr.version });
+    }
+  }
+
+  if (currentPr.status !== "APPROVED") {
+    return { pr_code: currentPr.code, pr: currentPr, po: null, pending_approval: true };
+  }
+
+  const prLine = (await tx.query("SELECT id FROM purchase.purchase_request_line WHERE pr_id = $1 LIMIT 1", [currentPr.id])).rows[0];
+  const po = await createOrder(tx, actor, {
     supplier_id: supplier.id,
     expected_date: vnToday(),
     payment_terms: "Chuyển khoản 30 ngày (Hợp đồng khung ASL)",
     lines: [{ pr_line_id: prLine.id, qty: d.qty, unit_price: d.unit_price, vat_rate: 8 }],
   });
 
-  if (d.issue_immediately) {
-    const issued = await runTransition(tx, poMachine, SYSTEM_ACTOR, { id: po.id, action: "issue", expectedVersion: po.version }, { trusted: true });
-    return { pr_code: approved.code, po: issued };
+  if (d.issue_immediately && (await hasFactoryPermission(tx, actor, "purchase.po.manage"))) {
+    const issued = await runTransition(tx, poMachine, actor, { id: po.id, action: "issue", expectedVersion: po.version });
+    return { pr_code: currentPr.code, pr: currentPr, po: issued };
   }
-  return { pr_code: approved.code, po };
+  return { pr_code: currentPr.code, pr: currentPr, po };
 }
 
 const updateSupplierAslSchema = z.object({

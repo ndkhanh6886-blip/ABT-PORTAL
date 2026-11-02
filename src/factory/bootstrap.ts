@@ -1,5 +1,4 @@
 import type { Tx } from "./core/db";
-import { hashPassword } from "@/backend/services/passwords";
 import { SYSTEM_ACTOR, type AuthzActor } from "./core/authz";
 import { createItem, createLocation, createPartner, createWarehouse } from "./master/service";
 import { createStockDocument, postStockDocument } from "./inv/documents";
@@ -64,26 +63,23 @@ export async function ensureFactoryBootstrapped(tx: Tx, actor: AuthzActor): Prom
     ).rows[0]?.c ?? 0
   );
 
-  // Ensure all active users have a default 21 CFR Part 11 PIN (123456) if not set
-  await tx.query(
-    "UPDATE core.user_profile SET pin_hash = $1 WHERE pin_hash IS NULL",
-    [hashPassword("123456")]
-  );
+  const allowDemoSeed = process.env.FACTORY_ALLOW_DEMO_SEED === "1";
 
   if (
     hasOligoDept &&
-    methodsCount > 0 &&
-    synthsCount > 0 &&
-    unmappedRules === 0 &&
-    deviceModelsCount > 0 &&
-    kitBomCount > 0 &&
     qaWhCount > 0 &&
     stdRolesCount >= 4 &&
-    devRdCount >= 2 &&
-    devPoCount >= 2 &&
-    qaStdCount >= 3 &&
-    rdKitProjCount >= 2 &&
-    kitOligoOrderCount >= 2
+    (!allowDemoSeed ||
+      (methodsCount > 0 &&
+        synthsCount > 0 &&
+        unmappedRules === 0 &&
+        deviceModelsCount > 0 &&
+        kitBomCount > 0 &&
+        devRdCount >= 2 &&
+        devPoCount >= 2 &&
+        qaStdCount >= 3 &&
+        rdKitProjCount >= 2 &&
+        kitOligoOrderCount >= 2))
   ) {
     bootstrapped = true;
     return;
@@ -198,6 +194,12 @@ export async function ensureFactoryBootstrapped(tx: Tx, actor: AuthzActor): Prom
       oligoQuarantineLocId = bt.id;
       oligoShelfLocId = a1.id;
     }
+  }
+
+  // Gate demo business data seeding behind FACTORY_ALLOW_DEMO_SEED === "1"
+  if (!allowDemoSeed) {
+    bootstrapped = true;
+    return;
   }
 
   // Helper to ensure an item exists and has a released lot stocked in a target warehouse (defaults to KHO-OLIGO)

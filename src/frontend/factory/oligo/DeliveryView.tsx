@@ -12,6 +12,7 @@ interface Options {
   order: { id: string; code: string; customer_label: string | null };
   internal_order: { code: string; kd_po_code: string; ship_mode: string; status: string } | null;
   lines: { id: string; line_no: number; kd_item_code: string; kd_item_name: string | null; kd_unit: string | null; qty: number; qty_delivered: number }[];
+  warehouses?: { id: string; code: string; name: string }[];
   sequences: { id: string; code: string; name: string; status: string; base_count: number; scale_code: string; purification: string; tube_count: number; labelled: boolean }[];
   deliveries: { id: string; code: string; recipient: string | null; created_at: string; shipment_status: string | null; sequences: number }[];
 }
@@ -23,10 +24,12 @@ function DeliveryPanel({ orderId, onClose }: { orderId: string; onClose: () => v
   const qc = useQueryClient();
   const opts = useQuery({ queryKey: ["factory", "oligo-delivery", orderId], queryFn: () => api<Options>(`/api/factory/oligo/deliveries/options?order_id=${orderId}`) });
   const [picked, setPicked] = useState<string[]>([]);
+  const [deliveryMode, setDeliveryMode] = useState<"TO_KD" | "TO_WAREHOUSE">("TO_KD");
+  const [warehouseId, setWarehouseId] = useState<string>("");
   const [qty, setQty] = useState<Record<string, string>>({});
   const [recipient, setRecipient] = useState("");
   const [notes, setNotes] = useState("");
-  const refresh = () => ["oligo-delivery", "oligo-deliveries", "oligo-orders", "oligo-order"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
+  const refresh = () => ["oligo-delivery", "oligo-deliveries", "oligo-orders", "oligo-order", "stock", "lot"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   const print = useMutation({ mutationFn: (ids: string[]) => printWithReprint(ids), onSuccess: refresh });
   const deliver = useMutation({
     mutationFn: () =>
@@ -36,6 +39,8 @@ function DeliveryPanel({ orderId, onClose }: { orderId: string; onClose: () => v
         json: {
           order_id: orderId,
           sequence_ids: picked,
+          delivery_mode: deliveryMode,
+          warehouse_id: deliveryMode === "TO_WAREHOUSE" ? (warehouseId || opts.data?.warehouses?.[0]?.id || null) : null,
           lines: Object.entries(qty).filter(([, v]) => Number(v) > 0).map(([order_line_id, v]) => ({ order_line_id, qty: Number(v) })),
           recipient: recipient || null,
           notes: notes || null,
@@ -85,8 +90,50 @@ function DeliveryPanel({ orderId, onClose }: { orderId: string; onClose: () => v
           )}
           {picked.length > 0 && (
             <form className="flex flex-col gap-3 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30" onSubmit={(e) => { e.preventDefault(); deliver.mutate(); }}>
-              <div className="text-xs font-bold">Giao {sel.length} trình tự ({sel.reduce((n, s) => n + s.tube_count, 0)} ống)</div>
-              {d.internal_order ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs font-bold">Giao / Nhập kho {sel.length} trình tự ({sel.reduce((n, s) => n + s.tube_count, 0)} ống)</div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setDeliveryMode("TO_KD")}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold border cursor-pointer ${
+                      deliveryMode === "TO_KD"
+                        ? "bg-sky-700 text-white border-sky-700"
+                        : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                    }`}
+                  >
+                    🚚 Giao Kinh doanh (Giao Khách)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeliveryMode("TO_WAREHOUSE")}
+                    className={`px-3 py-1 rounded-lg text-xs font-bold border cursor-pointer ${
+                      deliveryMode === "TO_WAREHOUSE"
+                        ? "bg-emerald-700 text-white border-emerald-700"
+                        : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                    }`}
+                  >
+                    📦 Nhập Kho (Cho Sản xuất Kit / R&amp;D)
+                  </button>
+                </div>
+              </div>
+
+              {deliveryMode === "TO_WAREHOUSE" ? (
+                <Field label="Chọn Kho nhận Oligo (Tự động tạo Lô inv.lot & Phiếu nhập kho RECEIPT) *">
+                  <select
+                    className={inputClass}
+                    value={warehouseId || d.warehouses?.[0]?.id || ""}
+                    onChange={(e) => setWarehouseId(e.target.value)}
+                    required
+                  >
+                    {(d.warehouses ?? []).map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.code} — {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              ) : d.internal_order ? (
                 <Table head={["Dòng PO", "Mã hàng KD", "Đặt", "Đã giao", "Giao lần này"]}>
                   {d.lines.map((l) => (
                     <tr key={l.id}>
@@ -102,7 +149,11 @@ function DeliveryPanel({ orderId, onClose }: { orderId: string; onClose: () => v
                 <Field label="Người / bộ phận nhận *"><input className={inputClass} value={recipient} onChange={(e) => setRecipient(e.target.value)} required /></Field>
               )}
               <Field label="Ghi chú"><input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
-              <div><Button type="submit" disabled={deliver.isPending}>{deliver.isPending ? "Đang lưu…" : "Lập phiếu giao"}</Button></div>
+              <div>
+                <Button type="submit" disabled={deliver.isPending}>
+                  {deliver.isPending ? "Đang lưu…" : deliveryMode === "TO_WAREHOUSE" ? "📦 Xác nhận Nhập Kho Oligo" : "🚚 Lập phiếu giao Kinh doanh"}
+                </Button>
+              </div>
               <ErrorNote error={deliver.error} />
             </form>
           )}
@@ -132,10 +183,12 @@ export function OrderDeliverySection({ orderId, canDeliver }: { orderId: string;
     enabled: canDeliver,
   });
   const [picked, setPicked] = useState<string[]>([]);
+  const [deliveryMode, setDeliveryMode] = useState<"TO_KD" | "TO_WAREHOUSE">("TO_KD");
+  const [warehouseId, setWarehouseId] = useState<string>("");
   const [qty, setQty] = useState<Record<string, string>>({});
   const [recipient, setRecipient] = useState("");
   const [notes, setNotes] = useState("");
-  const refresh = () => ["oligo-delivery", "oligo-deliveries", "oligo-orders", "oligo-order"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
+  const refresh = () => ["oligo-delivery", "oligo-deliveries", "oligo-orders", "oligo-order", "stock", "lot"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   const print = useMutation({ mutationFn: (ids: string[]) => printWithReprint(ids), onSuccess: refresh });
   const deliver = useMutation({
     mutationFn: () =>
@@ -145,6 +198,8 @@ export function OrderDeliverySection({ orderId, canDeliver }: { orderId: string;
         json: {
           order_id: orderId,
           sequence_ids: picked,
+          delivery_mode: deliveryMode,
+          warehouse_id: deliveryMode === "TO_WAREHOUSE" ? (warehouseId || opts.data?.warehouses?.[0]?.id || null) : null,
           lines: Object.entries(qty).filter(([, v]) => Number(v) > 0).map(([order_line_id, v]) => ({ order_line_id, qty: Number(v) })),
           recipient: recipient || null,
           notes: notes || null,
@@ -224,8 +279,50 @@ export function OrderDeliverySection({ orderId, canDeliver }: { orderId: string;
 
       {picked.length > 0 && (
         <form className="flex flex-col gap-3 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-white dark:bg-slate-900" onSubmit={(e) => { e.preventDefault(); deliver.mutate(); }}>
-          <div className="text-xs font-bold">Lập phiếu giao {sel.length} trình tự ({sel.reduce((n, s) => n + s.tube_count, 0)} ống)</div>
-          {d.internal_order ? (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-xs font-bold">Lập phiếu giao / Nhập kho {sel.length} trình tự ({sel.reduce((n, s) => n + s.tube_count, 0)} ống)</div>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setDeliveryMode("TO_KD")}
+                className={`px-3 py-1 rounded-lg text-xs font-bold border cursor-pointer ${
+                  deliveryMode === "TO_KD"
+                    ? "bg-sky-700 text-white border-sky-700"
+                    : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                }`}
+              >
+                🚚 Giao Kinh doanh (Để giao Khách)
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeliveryMode("TO_WAREHOUSE")}
+                className={`px-3 py-1 rounded-lg text-xs font-bold border cursor-pointer ${
+                  deliveryMode === "TO_WAREHOUSE"
+                    ? "bg-emerald-700 text-white border-emerald-700"
+                    : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                }`}
+              >
+                📦 Nhập Kho (Cho Sản xuất Kit / R&amp;D)
+              </button>
+            </div>
+          </div>
+
+          {deliveryMode === "TO_WAREHOUSE" ? (
+            <Field label="Chọn Kho nhận Oligo (Tự động sinh Số Lô inv.lot & Phiếu nhập kho RECEIPT) *">
+              <select
+                className={inputClass}
+                value={warehouseId || d.warehouses?.[0]?.id || ""}
+                onChange={(e) => setWarehouseId(e.target.value)}
+                required
+              >
+                {(d.warehouses ?? []).map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.code} — {w.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          ) : d.internal_order ? (
             <Table head={["Dòng PO", "Mã hàng KD", "Đặt", "Đã giao", "Giao lần này"]}>
               {d.lines.map((l) => (
                 <tr key={l.id}>
@@ -241,7 +338,11 @@ export function OrderDeliverySection({ orderId, canDeliver }: { orderId: string;
             <Field label="Người / bộ phận nhận *"><input className={inputClass} value={recipient} onChange={(e) => setRecipient(e.target.value)} required /></Field>
           )}
           <Field label="Ghi chú"><input className={inputClass} value={notes} onChange={(e) => setNotes(e.target.value)} /></Field>
-          <div><Button type="submit" disabled={deliver.isPending}>{deliver.isPending ? "Đang lưu…" : "Lập phiếu giao hàng"}</Button></div>
+          <div>
+            <Button type="submit" disabled={deliver.isPending}>
+              {deliver.isPending ? "Đang lưu…" : deliveryMode === "TO_WAREHOUSE" ? "📦 Xác nhận Nhập Kho Oligo" : "🚚 Lập phiếu giao Kinh doanh"}
+            </Button>
+          </div>
           <ErrorNote error={deliver.error} />
         </form>
       )}

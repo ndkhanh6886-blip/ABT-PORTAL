@@ -11,15 +11,17 @@ export const WORKSPACE_TASK_DEPARTMENTS: { id: string; label: string }[] = [
   { id: "Tổng Hợp Oligo", label: "Tổng Hợp & Tinh Sạch Oligo" },
   { id: "Kỹ Thuật – Thiết Bị", label: "Kỹ Thuật – Công Nghệ Thiết Bị" },
   { id: "QA/QC", label: "Đảm Bảo & Kiểm Soát Chất Lượng (QA/QC)" },
-  { id: "Application", label: "App (Kỹ Thuật & Ứng Dụng)" },
-  { id: "Kinh Doanh", label: "Kinh Doanh" },
+  { id: "Application", label: "Application (Kỹ Thuật & Ứng Dụng)" },
+  { id: "Kinh Doanh", label: "Kinh Doanh (Sales)" },
   { id: "Sales Admin", label: "Sales Admin" },
-  { id: "PM", label: "PM" },
-  { id: "Cung Ứng", label: "Mua Hàng & Cung Ứng" },
-  { id: "Kế Toán", label: "Kế Toán" },
-  { id: "Lab", label: "Lab" },
-  { id: "Marketing", label: "Marketing" },
-  { id: "Pháp Chế", label: "Pháp Chế" },
+  { id: "PM", label: "Quản Lý Sản Phẩm (PM)" },
+  { id: "Marketing", label: "Marketing & Tiếp Thị" },
+  { id: "Kho & Vận Hành", label: "Kho & Vận Hành (Warehouse & Logistics)" },
+  { id: "Cung Ứng", label: "Mua Hàng & Cung Ứng (Procurement)" },
+  { id: "Kế Toán", label: "Tài Chính – Kế Toán" },
+  { id: "Pháp Chế", label: "Pháp Chế & Tuân Thủ (Legal)" },
+  { id: "Hành Chính Nhân Sự", label: "Hành Chính – Nhân Sự (HR)" },
+  { id: "Lab", label: "Phòng Lab" },
 ];
 
 /** Chuẩn hóa tên phòng ban về id ở trên (tên trong Nhân sự có thể khác: "Kỹ Thuật & Ứng Dụng", "Mua Hàng & Cung Ứng"...) */
@@ -31,19 +33,20 @@ export function normalizeWorkspaceDept(raw: any): string {
   // các phòng riêng phải xét trước các nhóm rộng (Sales Admin trước Kinh Doanh, Lab trước Application)
   if (l.includes("sales admin")) return "Sales Admin";
   if (l.includes("r&d") || l.includes("nghiên cứu")) return "Nghiên Cứu R&D";
-  if (l.includes("sản xuất kit") || l.includes("kit")) return "Sản Xuất Kit";
-  if (l.includes("oligo")) return "Tổng Hợp Oligo";
-  if (l.includes("thiết bị") || l.includes("công nghệ")) return "Kỹ Thuật – Thiết Bị";
+  if (l.includes("sản xuất kit") || l.includes("sx kit") || l === "p-kit") return "Sản Xuất Kit";
+  if (l.includes("oligo") || l === "p-oligo") return "Tổng Hợp Oligo";
+  if (l.includes("thiết bị") || l.includes("công nghệ") || l === "p-tb") return "Kỹ Thuật – Thiết Bị";
   if (l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "QA/QC";
   if (l === "pm" || l.includes("product manager") || l.includes("quản lý sản phẩm")) return "PM";
-  if (l.includes("marketing")) return "Marketing";
+  if (l.includes("marketing") || l.includes("tiếp thị")) return "Marketing";
   if (l === "lab" || /(^|[\s(])lab($|[\s)])/.test(l) || l.includes("phòng lab")) return "Lab";
   if (l.includes("ứng dụng") || l.includes("application") || l.includes("kỹ thuật") || l === "app") return "Application";
   if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
   if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
   if (l.includes("kinh doanh") || l.includes("sales")) return "Kinh Doanh";
-  if (l.includes("pháp chế") || l.includes("legal")) return "Pháp Chế";
+  if (l.includes("pháp chế") || l.includes("legal") || l.includes("tuân thủ")) return "Pháp Chế";
   if (l.includes("kế toán") || l.includes("tài chính") || l.includes("accounting")) return "Kế Toán";
+  if (l.includes("nhân sự") || l.includes("hành chính") || l === "hr") return "Hành Chính Nhân Sự";
   if (l.includes("giám đốc") || l.includes("bod")) return "Ban Giám Đốc";
   return s;
 }

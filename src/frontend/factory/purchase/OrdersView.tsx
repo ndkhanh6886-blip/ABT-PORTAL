@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
-import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
+import { api, fmtDate, fmtQty, useFactoryMe, vnToday } from "../api";
 import { Button, Card, Empty, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
 
 const PO_STATUS: Record<string, [string, string]> = {
@@ -59,32 +59,27 @@ function ReceiveForm({ po, onDone }: { po: PoDetail; onDone: () => void }) {
   const set = (id: string, p: Partial<RecvLine>) => setRows({ ...rows, [id]: { ...{ qty: "", mfr_lot_no: "", mfg_date: "", expiry_date: "", serials: "" }, ...rows[id], ...p } });
   const open = po.lines.filter((l) => Number(l.qty_received) < Number(l.qty_ordered));
   const fillAllQuick = () => {
-    const today = new Date().toISOString().slice(0, 10);
-    const exp = new Date(Date.now() + 365 * 86400 * 1000).toISOString().slice(0, 10);
+    const today = vnToday();
     const next: Record<string, RecvLine> = {};
     for (const l of open) {
       const rem = Math.max(0, Number(l.qty_ordered) - Number(l.qty_received));
-      const serials =
-        l.tracking === "SERIAL"
-          ? Array.from({ length: Math.round(rem) }, (_, k) => `${l.item_code}-SN${Math.floor(100 + Math.random() * 900)}-${k + 1}`).join(", ")
-          : "";
+      const existing = rows[l.id];
       next[l.id] = {
         qty: String(rem),
-        mfr_lot_no: l.tracking === "LOT" ? `MFR-${l.item_code}-${today.replace(/-/g, "").slice(2)}` : "",
-        mfg_date: today,
-        expiry_date: exp,
-        serials,
+        mfr_lot_no: existing?.mfr_lot_no ?? "",
+        mfg_date: existing?.mfg_date || today,
+        expiry_date: existing?.expiry_date ?? "",
+        serials: existing?.serials ?? "",
       };
     }
     setRows(next);
-    if (!noteNo) setNoteNo(`PGH-${po.code}`);
   };
 
   return (
     <form className="flex flex-col gap-2 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/60 dark:bg-sky-950/30" onSubmit={(e) => { e.preventDefault(); recv.mutate(); }}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-bold">Nhận hàng vào kho (vị trí biệt trữ BT). Lô mới ở trạng thái Biệt trữ (QUARANTINE), tự động đẩy sang Hàng đợi Một Cửa của QA/QC.</div>
-        <Button type="button" variant="ghost" onClick={fillAllQuick}>⚡ Điền nhanh Nhận đủ 100% + Lô NSX & HSD</Button>
+        <Button type="button" variant="ghost" title="Điền nhanh số lượng còn chờ nhận từ PO; vui lòng đối chiếu và nhập Số Lô / Serial thực tế trên bao bì của Nhà cung cấp" onClick={fillAllQuick}>⚡ Điền nhanh SL còn chờ nhận</Button>
       </div>
       <input className={`${inputClass} sm:w-72`} placeholder="Số phiếu giao hàng của NCC" value={noteNo} onChange={(e) => setNoteNo(e.target.value)} />
       <Table head={["Vật tư", "Còn chờ", "SL nhận", "Lô NSX", "Ngày SX", "Hạn dùng", "Serial (cách nhau dấu phẩy)"]}>

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { ModelsEcoView, type CatalogModelRow } from "./ModelsEcoView";
 import { MODEL_CATEGORY_LABELS, STATION_LABELS, useDeviceOptions } from "./shared";
 
 interface GateDeliverable {
@@ -153,6 +154,7 @@ export function DeviceRdTransferView({ onOpenCatalog }: { onOpenCatalog?: () => 
       ),
   });
 
+  const [subView, setSubView] = useState<"RD" | "CATALOG">("RD");
   const [stageFilter, setStageFilter] = useState<number | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [createMode, setCreateMode] = useState<"NONE" | "NEW_PRODUCT" | "IMPROVEMENT">("NONE");
@@ -313,33 +315,63 @@ export function DeviceRdTransferView({ onOpenCatalog }: { onOpenCatalog?: () => 
     },
   });
 
+  const handleStartImprovementFromCatalog = (model: CatalogModelRow) => {
+    setSubView("RD");
+    setForm({
+      base_model_id: model.id,
+      model_code: model.code,
+      model_name: `Nâng cấp cải tiến thiết bị ${model.code} — ${model.name}`,
+      category: model.category || "OTHER",
+      target_revision: "2.0",
+      firmware_version: "v2.0.0",
+      warranty_months: String(model.warranty_months || 24),
+      required_burn_in_hours: String(model.required_burn_in_hours || 24),
+      planned_end: "2026-12-31",
+      description: `Đề tài nghiên cứu cải tiến kỹ thuật và tối ưu BOM cho dòng máy [${model.code}] ${model.name}`,
+    });
+    setCreateMode("IMPROVEMENT");
+  };
+
   return (
     <div className="flex flex-col gap-3">
       {/* Top Action & 5-Stage Pipeline Header */}
       <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-3.5 flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-indigo-600 text-white text-xs font-bold shadow-sm">
+            <button
+              type="button"
+              onClick={() => setSubView("RD")}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                subView === "RD"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                  : "border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100"
+              }`}
+            >
               <FlaskConical className="w-3.5 h-3.5" />
               Quy Trình R&amp;D Thiết Bị (Từ Đề Xuất ➔ Chuyển Giao Sản Xuất)
-              <span className="px-1.5 py-0.5 rounded-md bg-indigo-800 text-[11px]">{projects.length} dự án</span>
-            </span>
-            {onOpenCatalog && (
-              <button
-                type="button"
-                onClick={onOpenCatalog}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-100 cursor-pointer"
-              >
-                <Layers className="w-3.5 h-3.5 text-sky-600" />
-                Danh Mục Thiết Bị Đã Chuyển Giao &amp; Cây Định Mức BOM ({modelsQuery.data?.length ?? 0} model)
-              </button>
-            )}
+              <span className="px-1.5 py-0.5 rounded-md bg-black/20 text-[11px]">{projects.length} dự án</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSubView("CATALOG")}
+              className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                subView === "CATALOG"
+                  ? "bg-indigo-600 text-white shadow-lg shadow-indigo-500/20"
+                  : "border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100"
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-sky-400" />
+              Danh Mục Đã Chuyển Giao &amp; Cây Định Mức BOM
+              <span className="px-1.5 py-0.5 rounded-md bg-black/20 text-[11px]">{modelsQuery.data?.length ?? 0} model</span>
+            </button>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => {
+                setSubView("RD");
                 const firstM = modelsQuery.data?.[0];
                 setForm({
                   base_model_id: firstM?.id ?? "",
@@ -364,6 +396,7 @@ export function DeviceRdTransferView({ onOpenCatalog }: { onOpenCatalog?: () => 
             <button
               type="button"
               onClick={() => {
+                setSubView("RD");
                 setForm({
                   base_model_id: "",
                   model_code: "CENTRI-24",
@@ -386,8 +419,10 @@ export function DeviceRdTransferView({ onOpenCatalog }: { onOpenCatalog?: () => 
           </div>
         </div>
 
-        {/* 5 Stage-Gate Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
+        {subView === "RD" && (
+          <>
+            {/* 5 Stage-Gate Cards */}
+            <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
           {STAGE_CARDS.map((sc) => {
             const count = projects.filter((p) => currentGateNumber(p) === sc.gate_no).length;
             const active = stageFilter === sc.gate_no;
@@ -544,9 +579,18 @@ export function DeviceRdTransferView({ onOpenCatalog }: { onOpenCatalog?: () => 
             </div>
           </form>
         )}
+          </>
+        )}
       </div>
 
-      {/* Main Content: Project List (Left 4 cols) + Active Stage-Gate & Transfer Workspace (Right 8 cols) */}
+      {subView === "CATALOG" ? (
+        <ModelsEcoView
+          canManage={true}
+          canEcoPropose={true}
+          onStartImprovementProject={handleStartImprovementFromCatalog}
+        />
+      ) : (
+      /* Main Content: Project List (Left 4 cols) + Active Stage-Gate & Transfer Workspace (Right 8 cols) */
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
         <div className={selectedProject ? "lg:col-span-4 flex flex-col gap-3" : "lg:col-span-12 flex flex-col gap-3"}>
           <Card
@@ -961,6 +1005,7 @@ export function DeviceRdTransferView({ onOpenCatalog }: { onOpenCatalog?: () => 
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }

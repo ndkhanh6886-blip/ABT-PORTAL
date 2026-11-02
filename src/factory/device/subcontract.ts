@@ -221,19 +221,42 @@ export async function receiveSubcontractLine(tx: Tx, actor: AuthzActor, orderId:
   let lotId: string | null = line.lot_id;
   let stockDocId: string | null = line.stock_document_id;
 
-  // Strict rule: ONLY post into warehouse when qty_accepted > 0
+  // Strict rule: ONLY post into warehouse when qty_accepted > 0, and receive into QUARANTINE pending formal QC release
   if (d.qty_accepted > 0) {
     const item = await getItem(tx, line.item_id);
-    // Find a non-quarantine active shelf in the target warehouse
-    const locId =
-      d.to_location_id ??
-      (
+    // Find or create an active quarantine location in the target warehouse so QUARANTINE lot receipt is valid
+    let locId: string | undefined;
+    if (d.to_location_id) {
+      const passedLoc = (
+        await tx.query("SELECT id, is_quarantine FROM master.location WHERE id = $1 AND warehouse_id = $2 AND status = 'ACTIVE'", [
+          d.to_location_id,
+          order.warehouse_id,
+        ])
+      ).rows[0];
+      if (passedLoc?.is_quarantine) {
+        locId = passedLoc.id;
+      }
+    }
+    if (!locId) {
+      locId = (
         await tx.query(
-          "SELECT id FROM master.location WHERE warehouse_id = $1 AND NOT is_quarantine AND status = 'ACTIVE' ORDER BY code LIMIT 1",
+          "SELECT id FROM master.location WHERE warehouse_id = $1 AND is_quarantine = true AND status = 'ACTIVE' ORDER BY code LIMIT 1",
           [order.warehouse_id]
         )
       ).rows[0]?.id;
-    if (!locId) throw invalid("Kho nhận hàng gia công chưa có vị trí kệ hoạt động (không phải biệt trữ).");
+    }
+    if (!locId) {
+      locId = (
+        await tx.query(
+          `INSERT INTO master.location (warehouse_id, code, name, temperature_condition, is_quarantine, status)
+           VALUES ($1, 'BIET-TRU-GC', 'Khu Biệt Trữ Chờ IQC Gia Công', 'RT', true, 'ACTIVE')
+           ON CONFLICT (warehouse_id, code) DO UPDATE SET is_quarantine = true, status = 'ACTIVE'
+           RETURNING id`,
+          [order.warehouse_id]
+        )
+      ).rows[0]?.id;
+    }
+    if (!locId) throw invalid("Kho nhận hàng gia công chưa có vị trí biệt trữ hoạt động.");
 
     const lot = await createLot(tx, actor, {
       item_id: item.id,
@@ -243,7 +266,7 @@ export async function receiveSubcontractLine(tx: Tx, actor: AuthzActor, orderId:
       origin_entity_type: "SUBCONTRACT_ORDER",
       origin_entity_id: order.id,
     });
-    await tx.query("UPDATE inv.lot SET status = 'RELEASED', version = version + 1 WHERE id = $1", [lot.id]);
+    await tx.query("UPDATE inv.lot SET status = 'QUARANTINE' WHERE id = $1", [lot.id]);
 
     const doc = await createStockDocument(
       tx,
@@ -254,7 +277,7 @@ export async function receiveSubcontractLine(tx: Tx, actor: AuthzActor, orderId:
         warehouse_id: order.warehouse_id,
         source_entity_type: "SUBCONTRACT_ORDER",
         source_entity_id: order.id,
-        notes: `Nhập chi tiết gia công IQC Đạt (${order.code} - ${line.part_code})`,
+        notes: `Nhập biệt trữ chi tiết gia công chờ QC giải phóng (${order.code} - ${line.part_code})`,
         lines: [
           {
             item_id: item.id,

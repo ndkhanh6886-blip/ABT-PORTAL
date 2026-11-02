@@ -1628,20 +1628,6 @@ export const EnterpriseChatModule: React.FC = () => {
     const s1 = d1.toLowerCase().trim();
     const s2 = d2.toLowerCase().trim();
     if (s1 === s2) return true;
-    const isProc = (s: string) => s.includes("mua hàng") || s.includes("cung ứng") || s.includes("procurement") || s.includes("purchasing");
-    if (isProc(s1) && isProc(s2)) return true;
-    const isApp = (s: string) => s.includes("ứng dụng") || s.includes("kỹ thuật") || s.includes("application") || s === "app";
-    if (isApp(s1) && isApp(s2)) return true;
-    const isWh = (s: string) => s.includes("kho");
-    if (isWh(s1) && isWh(s2)) return true;
-    const isAcc = (s: string) => s.includes("kế toán") || s.includes("tài chính");
-    if (isAcc(s1) && isAcc(s2)) return true;
-    const isSales = (s: string) => s.includes("kinh doanh") || s.includes("sales") || s.includes("marketing");
-    if (isSales(s1) && isSales(s2)) return true;
-    const isBod = (s: string) => s.includes("giám đốc") || s.includes("bod") || s.includes("quản trị");
-    if (isBod(s1) && isBod(s2)) return true;
-    const isLegal = (s: string) => s.includes("pháp chế") || s.includes("legal");
-    if (isLegal(s1) && isLegal(s2)) return true;
     const isRd = (s: string) => s.includes("r&d") || s.includes("nghiên cứu");
     if (isRd(s1) || isRd(s2)) return isRd(s1) && isRd(s2);
     const isKit = (s: string) => s.includes("sản xuất kit") || s.includes("sx kit");
@@ -1652,6 +1638,28 @@ export const EnterpriseChatModule: React.FC = () => {
     if (isDevice(s1) || isDevice(s2)) return isDevice(s1) && isDevice(s2);
     const isQa = (s: string) => s.includes("qa") || s.includes("qc") || s.includes("chất lượng");
     if (isQa(s1) || isQa(s2)) return isQa(s1) && isQa(s2);
+    const isProc = (s: string) => s.includes("mua hàng") || s.includes("cung ứng") || s.includes("procurement") || s.includes("purchasing");
+    if (isProc(s1) && isProc(s2)) return true;
+    const isApp = (s: string) => s.includes("ứng dụng") || s.includes("application") || s === "app";
+    if (isApp(s1) && isApp(s2)) return true;
+    const isWh = (s: string) => s.includes("kho");
+    if (isWh(s1) && isWh(s2)) return true;
+    const isAcc = (s: string) => s.includes("kế toán") || s.includes("tài chính");
+    if (isAcc(s1) && isAcc(s2)) return true;
+    const isSalesAdmin = (s: string) => s.includes("sales admin") || s.includes("điều phối");
+    if (isSalesAdmin(s1) || isSalesAdmin(s2)) return isSalesAdmin(s1) && isSalesAdmin(s2);
+    const isPm = (s: string) => s === "pm" || s.includes("quản lý sản phẩm") || s.includes("product");
+    if (isPm(s1) || isPm(s2)) return isPm(s1) && isPm(s2);
+    const isMkt = (s: string) => s.includes("marketing") || s.includes("truyền thông");
+    if (isMkt(s1) || isMkt(s2)) return isMkt(s1) && isMkt(s2);
+    const isSales = (s: string) => s.includes("kinh doanh") || s === "sales";
+    if (isSales(s1) && isSales(s2)) return true;
+    const isBod = (s: string) => s.includes("giám đốc") || s.includes("bod") || s.includes("quản trị");
+    if (isBod(s1) && isBod(s2)) return true;
+    const isLegal = (s: string) => s.includes("pháp chế") || s.includes("legal");
+    if (isLegal(s1) && isLegal(s2)) return true;
+    const isHr = (s: string) => s.includes("nhân sự") || s.includes("hành chính") || s === "hr";
+    if (isHr(s1) && isHr(s2)) return true;
     return s1.includes(s2) || s2.includes(s1);
   };
 
@@ -3370,7 +3378,25 @@ export const EnterpriseChatModule: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-[11px]">
-            {["Tất cả", "Kinh Doanh", "Application", "Kho & Vận Hành", "Mua Hàng & Cung Ứng", "Ban Giám Đốc", "Kế Toán"].map(dept => (
+            {[
+              "Tất cả",
+              "Nghiên Cứu R&D",
+              "Sản Xuất Kit",
+              "Tổng Hợp Oligo",
+              "Kỹ Thuật – Thiết Bị",
+              "QA/QC",
+              "Application",
+              "Kinh Doanh",
+              "Sales Admin",
+              "PM",
+              "Marketing",
+              "Kho & Vận Hành",
+              "Cung Ứng",
+              "Kế Toán",
+              "Pháp Chế",
+              "Hành Chính Nhân Sự",
+              "Ban Giám Đốc",
+            ].map(dept => (
               <button
                 key={dept}
                 type="button"
@@ -3549,10 +3575,21 @@ export const EnterpriseChatModule: React.FC = () => {
               >
                 <option value="Liên phòng ban">Liên phòng ban (Tự do)</option>
                 <option value="Toàn công ty">Toàn công ty</option>
-                <option value="Kinh Doanh">Kinh Doanh</option>
+                <option value="Nghiên Cứu R&D">Nghiên Cứu R&amp;D</option>
+                <option value="Sản Xuất Kit">Sản Xuất Kit</option>
+                <option value="Tổng Hợp Oligo">Tổng Hợp Oligo</option>
+                <option value="Kỹ Thuật – Thiết Bị">Kỹ Thuật – Thiết Bị</option>
+                <option value="QA/QC">QA/QC</option>
                 <option value="Application">Application</option>
+                <option value="Kinh Doanh">Kinh Doanh</option>
+                <option value="Sales Admin">Sales Admin</option>
+                <option value="PM">PM (Quản lý Sản phẩm)</option>
+                <option value="Marketing">Marketing</option>
                 <option value="Kho & Vận Hành">Kho &amp; Vận Hành</option>
                 <option value="Mua Hàng & Cung Ứng">Mua Hàng &amp; Cung Ứng (Procurement)</option>
+                <option value="Kế Toán">Kế Toán</option>
+                <option value="Pháp Chế">Pháp Chế</option>
+                <option value="Hành Chính Nhân Sự">Hành Chính Nhân Sự</option>
                 <option value="Ban Giám Đốc">Ban Giám Đốc</option>
               </select>
             </div>
@@ -3654,10 +3691,21 @@ export const EnterpriseChatModule: React.FC = () => {
                 className="px-2 py-1.5 rounded-lg text-xs border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 font-medium"
               >
                 <option value="Tất cả">Tất cả phòng ban</option>
-                <option value="Kinh Doanh">Kinh Doanh</option>
+                <option value="Nghiên Cứu R&D">Nghiên Cứu R&amp;D</option>
+                <option value="Sản Xuất Kit">Sản Xuất Kit</option>
+                <option value="Tổng Hợp Oligo">Tổng Hợp Oligo</option>
+                <option value="Kỹ Thuật – Thiết Bị">Kỹ Thuật – Thiết Bị</option>
+                <option value="QA/QC">QA/QC</option>
                 <option value="Application">Application</option>
+                <option value="Kinh Doanh">Kinh Doanh</option>
+                <option value="Sales Admin">Sales Admin</option>
+                <option value="PM">PM (Quản lý Sản phẩm)</option>
+                <option value="Marketing">Marketing</option>
                 <option value="Kho & Vận Hành">Kho &amp; Vận Hành</option>
                 <option value="Mua Hàng & Cung Ứng">Mua Hàng &amp; Cung Ứng</option>
+                <option value="Kế Toán">Kế Toán</option>
+                <option value="Pháp Chế">Pháp Chế</option>
+                <option value="Hành Chính Nhân Sự">Hành Chính Nhân Sự</option>
                 <option value="Ban Giám Đốc">Ban Giám Đốc</option>
               </select>
             </div>
@@ -3757,10 +3805,21 @@ export const EnterpriseChatModule: React.FC = () => {
                 >
                   <option value="Liên phòng ban">Liên phòng ban</option>
                   <option value="Toàn công ty">Toàn công ty</option>
-                  <option value="Kinh Doanh">Kinh Doanh</option>
+                  <option value="Nghiên Cứu R&D">Nghiên Cứu R&amp;D</option>
+                  <option value="Sản Xuất Kit">Sản Xuất Kit</option>
+                  <option value="Tổng Hợp Oligo">Tổng Hợp Oligo</option>
+                  <option value="Kỹ Thuật – Thiết Bị">Kỹ Thuật – Thiết Bị</option>
+                  <option value="QA/QC">QA/QC</option>
                   <option value="Application">Application</option>
+                  <option value="Kinh Doanh">Kinh Doanh</option>
+                  <option value="Sales Admin">Sales Admin</option>
+                  <option value="PM">PM (Quản lý Sản phẩm)</option>
+                  <option value="Marketing">Marketing</option>
                   <option value="Kho & Vận Hành">Kho &amp; Vận Hành</option>
                   <option value="Mua Hàng & Cung Ứng">Mua Hàng &amp; Cung Ứng (Procurement)</option>
+                  <option value="Kế Toán">Kế Toán</option>
+                  <option value="Pháp Chế">Pháp Chế</option>
+                  <option value="Hành Chính Nhân Sự">Hành Chính Nhân Sự</option>
                   <option value="Ban Giám Đốc">Ban Giám Đốc</option>
                 </select>
               </div>

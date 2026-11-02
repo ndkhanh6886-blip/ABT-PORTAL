@@ -1,10 +1,18 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActionBar } from "../actions";
 import { api, fmtQty } from "../api";
+import { printElementHtml } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { ACTION_LABELS, CONTAINER_LABELS, type KitOptions, ROLE_LABELS, STEP_CATEGORY_LABELS } from "./shared";
+import {
+  KitLabelStudio,
+  VisualLabelCanvas,
+  normalizeLabelBundle,
+  type KitLabelDesignBundle,
+  type LabelSampleData,
+} from "./KitLabelStudio";
 
 export function BomRoutingView({ options, onRefreshOptions }: { options: KitOptions; onRefreshOptions: () => void }) {
   const [subTab, setSubTab] = useState<"bom" | "routing">("bom");
@@ -19,15 +27,20 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
   // High-scale search & filter for thousands of BOM formulas and thousands of raw material lines
   const [bomSearch, setBomSearch] = useState("");
   const [bomStatusFilter, setBomStatusFilter] = useState("");
+  const [bomTypeTab, setBomTypeTab] = useState<"ALL" | "finished_good" | "semi_finished">("ALL");
+  const [bomCategoryFilter, setBomCategoryFilter] = useState<string>("");
+  const labelPreviewRef = useRef<HTMLDivElement>(null);
   const [lineSearch, setLineSearch] = useState("");
   const [lineBoxFilter, setLineBoxFilter] = useState("");
   const [bulkLinesText, setBulkLinesText] = useState("");
   const [showBulkPaste, setShowBulkPaste] = useState(false);
   const [showCreateBom, setShowCreateBom] = useState(false);
+  const [showEditHeader, setShowEditHeader] = useState(false);
   const [showAddLine, setShowAddLine] = useState(false);
   const [showAddSub, setShowAddSub] = useState(false);
   const [showAddPack, setShowAddPack] = useState(false);
   const [showEditLabelIfu, setShowEditLabelIfu] = useState(false);
+  const [showLabelStudio, setShowLabelStudio] = useState(false);
   const [showPreviewLabelIfu, setShowPreviewLabelIfu] = useState(false);
   const [showCreateRouting, setShowCreateRouting] = useState(false);
   const [showAddStep, setShowAddStep] = useState(false);
@@ -42,15 +55,60 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     ifu_thermal_profile: "",
     ifu_channels: "",
     ifu_interpretation: "",
+    ifu_file_name: "",
+    ifu_file_url: "",
+    ifu_file_size: "",
+    ifu_aliquoted_file_name: "",
+    ifu_aliquoted_file_url: "",
+    ifu_aliquoted_file_size: "",
   });
+
+  const [labelBundle, setLabelBundle] = useState<KitLabelDesignBundle>(() => normalizeLabelBundle(null));
 
   const [bomForm, setBomForm] = useState({
     org_unit_id: options.units[0]?.id ?? "",
     product_item_id: "",
     name: "",
+    bom_type: "finished_good" as "finished_good" | "semi_finished",
+    bom_category: "PCR Kit",
+    parent_item_code: "",
+    tccs_code: "TCCS 01:2026/ABT",
+    tccs_file_name: "",
+    tccs_file_url: "",
+    registration_no: "2400189/ĐKLH-BYT-TB-CT",
+    responsible_person_name: (options as any).kit_staff?.[0]?.display_name ?? "",
+    qc_assignee_name: (options as any).qa_staff?.[0]?.display_name ?? "",
+    specification: "Hộp 50 test",
+    storage_condition: "-20°C ± 2°C",
     tests_per_kit: "50",
+    shelf_life_months: "12",
     shelf_life_days: "365",
+    qc_retention_qty: "1",
+    ph_min: "",
+    ph_max: "",
     clone_from_bom_id: "",
+  });
+
+  const [editHeaderForm, setEditHeaderForm] = useState({
+    name: "",
+    bom_type: "finished_good" as "finished_good" | "semi_finished",
+    bom_category: "PCR Kit",
+    parent_item_code: "",
+    tccs_code: "",
+    tccs_file_name: "",
+    tccs_file_url: "",
+    registration_no: "",
+    responsible_person_name: "",
+    qc_assignee_name: "",
+    specification: "",
+    storage_condition: "",
+    tests_per_kit: "50",
+    shelf_life_months: "12",
+    shelf_life_days: "365",
+    qc_retention_qty: "1",
+    ph_min: "",
+    ph_max: "",
+    notes: "",
   });
 
   const [lineForm, setLineForm] = useState({
@@ -87,6 +145,9 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     storage_temp: "-20°C",
     shelf_life_days: "365",
   });
+
+  const [editingLineId, setEditingLineId] = useState<string | null>(null);
+  const [editingPackId, setEditingPackId] = useState<string | null>(null);
 
   const [packForm, setPackForm] = useState({
     box_no: "1",
@@ -153,11 +214,39 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
       const d = await api<any>(`/api/factory/kit/boms/${id}?${qs.toString()}`);
       setBomDetail(d);
       if (d?.bom) {
+        const isSemi = d.bom.bom_type === "semi_finished" || d.bom.product_type === "SEMI_FINISHED";
+        const baseCode = String(d.bom.product_code || "").replace(/\.D\.IC$/i, "");
+        setEditHeaderForm({
+          name: d.bom.name ?? "",
+          bom_type: isSemi ? "semi_finished" : "finished_good",
+          bom_category: d.bom.bom_category ?? "PCR Kit",
+          parent_item_code: d.bom.parent_item_code ?? (String(d.bom.product_code || "").toUpperCase().endsWith(".D.IC") ? baseCode : ""),
+          tccs_code: d.bom.tccs_code ?? (isSemi ? `TCCS-BTP-${baseCode}:2026/ABT` : "TCCS 01:2026/ABT"),
+          tccs_file_name: d.bom.tccs_file_name ?? "",
+          tccs_file_url: d.bom.tccs_file_url ?? "",
+          registration_no: d.bom.registration_no ?? (isSemi ? "" : "2400189/ĐKLH-BYT-TB-CT"),
+          responsible_person_name: d.bom.responsible_person_name ?? "",
+          qc_assignee_name: d.bom.qc_assignee_name ?? "",
+          specification: d.bom.specification ?? (isSemi ? `Lô chuẩn ${d.bom.base_qty} ${d.bom.base_uom}` : `Hộp ${d.bom.tests_per_kit || 50} test`),
+          storage_condition: d.bom.storage_condition ?? "-20°C ± 2°C",
+          tests_per_kit: String(d.bom.tests_per_kit ?? 50),
+          shelf_life_months: String(d.bom.shelf_life_months ?? Math.max(1, Math.round(Number(d.bom.shelf_life_days || 365) / 30))),
+          shelf_life_days: String(d.bom.shelf_life_days ?? 365),
+          qc_retention_qty: String(d.bom.qc_retention_qty ?? (isSemi ? 0 : 1)),
+          ph_min: d.bom.ph_min != null ? String(d.bom.ph_min) : "",
+          ph_max: d.bom.ph_max != null ? String(d.bom.ph_max) : "",
+          notes: d.bom.notes ?? "",
+        });
+
         setLabelIfuForm({
           label_template_code: d.bom.label_template_code ?? `LBL-${d.bom.product_code}-V1`,
-          label_dimensions: d.bom.label_dimensions ?? "Nhãn Hộp ngoài: 95×65 mm · Nhãn Ống 1.5mL: 38×19 mm (Chịu lạnh -80°C)",
+          label_dimensions:
+            d.bom.label_dimensions ??
+            (isSemi
+              ? "Nhãn Chai/Can BTP: 70×40 mm · Nhãn Ống lưu mẫu: 35×15 mm"
+              : "Nhãn Hộp ngoài: 100×50 mm · Nhãn Hộp phụ: 80×40 mm · Nhãn Ống 1.5mL: 35×15 mm (3 tem/hàng)"),
           udi_di: d.bom.udi_di ?? "(01)08936192830117",
-          ifu_code: d.bom.ifu_code ?? `IFU-${d.bom.product_code}`,
+          ifu_code: d.bom.ifu_code ?? `IFU-${baseCode}`,
           ifu_version: d.bom.ifu_version ?? `Rev 0${d.bom.bom_version || 1} (Hiệu lực ISO 13485)`,
           ifu_intended_use:
             d.bom.ifu_intended_use ??
@@ -171,7 +260,24 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           ifu_interpretation:
             d.bom.ifu_interpretation ??
             "Dương tính: Ct (FAM) ≤ 38.0 có đường cong khuếch đại dạng chữ S · Âm tính: Không lên FAM và Ct (HEX/IC) ≤ 35.0 · Không hợp lệ: Không lên cả FAM và HEX/IC.",
+          ifu_file_name: d.bom.ifu_file_name ?? `HDSD_${baseCode}_Rev0${d.bom.bom_version || 1}.pdf`,
+          ifu_file_url: d.bom.ifu_file_url ?? "",
+          ifu_file_size: d.bom.ifu_file_size ?? "428 KB (PDF chuẩn ISO 13485)",
+          ifu_aliquoted_file_name: d.bom.ifu_aliquoted_file_name ?? `HDSD_${baseCode}.D.IC_ChiaSan_Rev0${d.bom.bom_version || 1}.pdf`,
+          ifu_aliquoted_file_url: d.bom.ifu_aliquoted_file_url ?? "",
+          ifu_aliquoted_file_size: d.bom.ifu_aliquoted_file_size ?? "452 KB (PDF bản chia sẵn .D.IC)",
         });
+
+        setLabelBundle(
+          normalizeLabelBundle(
+            d.bom.label_design_json,
+            {
+              storage: d.bom.storage_condition || "-20°C ± 2°C",
+              tccsCode: d.bom.tccs_code || "TCCS 01:2026/ABT",
+            },
+            isSemi
+          )
+        );
       }
     } catch (e) {
       setError(e);
@@ -199,12 +305,16 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     if (selectedRoutingId) loadRoutingDetail(selectedRoutingId);
   }, [selectedRoutingId, loadRoutingDetail]);
 
-  const kitProducts = options.items.filter((i) => ["FINISHED_KIT", "SEMI_FINISHED"].includes(i.item_type));
+  const kitProducts = options.items.filter((i) => ["FINISHED_KIT", "KIT", "SEMI_FINISHED"].includes(i.item_type));
+  const kitStaffList: Array<{ user_id: number; display_name: string }> = (options as any).kit_staff || [];
+  const qaStaffList: Array<{ user_id: number; display_name: string }> = (options as any).qa_staff || [];
 
   const handleCreateBom = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     try {
+      const shelfMonths = Math.max(1, Number(bomForm.shelf_life_months || 12));
+      const shelfDays = Number(bomForm.shelf_life_days) || shelfMonths * 30;
       const res = await api<{ bom: any }>("/api/factory/kit/boms", {
         method: "POST",
         idempotent: true,
@@ -212,8 +322,23 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           org_unit_id: bomForm.org_unit_id || options.units[0]?.id,
           product_item_id: bomForm.product_item_id,
           name: bomForm.name,
-          tests_per_kit: Number(bomForm.tests_per_kit),
-          shelf_life_days: Number(bomForm.shelf_life_days),
+          bom_type: bomForm.bom_type,
+          bom_category: bomForm.bom_category,
+          parent_item_code: bomForm.parent_item_code || null,
+          tccs_code: bomForm.tccs_code || null,
+          tccs_file_name: bomForm.tccs_file_name || null,
+          tccs_file_url: bomForm.tccs_file_url || null,
+          registration_no: bomForm.registration_no || null,
+          responsible_person_name: bomForm.responsible_person_name || null,
+          qc_assignee_name: bomForm.qc_assignee_name || null,
+          specification: bomForm.specification || null,
+          storage_condition: bomForm.storage_condition || null,
+          tests_per_kit: Number(bomForm.tests_per_kit || 50),
+          shelf_life_months: shelfMonths,
+          shelf_life_days: shelfDays,
+          qc_retention_qty: Number(bomForm.qc_retention_qty || 0),
+          ph_min: bomForm.ph_min !== "" ? Number(bomForm.ph_min) : null,
+          ph_max: bomForm.ph_max !== "" ? Number(bomForm.ph_max) : null,
           clone_from_bom_id: bomForm.clone_from_bom_id || null,
         },
       });
@@ -227,6 +352,145 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     }
   };
 
+  const handleSaveBomHeader = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedBomId) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+        method: "POST",
+        json: {
+          kind: "update_header",
+          ...editHeaderForm,
+          tests_per_kit: Number(editHeaderForm.tests_per_kit || 50),
+          shelf_life_months: Number(editHeaderForm.shelf_life_months || 12),
+          shelf_life_days: Number(editHeaderForm.shelf_life_days || 365),
+          qc_retention_qty: Number(editHeaderForm.qc_retention_qty || 0),
+          ph_min: editHeaderForm.ph_min !== "" ? Number(editHeaderForm.ph_min) : null,
+          ph_max: editHeaderForm.ph_max !== "" ? Number(editHeaderForm.ph_max) : null,
+        },
+      });
+      setShowEditHeader(false);
+      await loadBomDetail(selectedBomId);
+      await loadList();
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const openAndPrintIfuFile = (mode: "STANDARD" | "ALIQUOTED", autoPrint = false) => {
+    if (!bomDetail?.bom) return;
+    const b = bomDetail.bom;
+    const fileUrl = mode === "ALIQUOTED" ? labelIfuForm.ifu_aliquoted_file_url || b.ifu_aliquoted_file_url : labelIfuForm.ifu_file_url || b.ifu_file_url;
+    const fileName =
+      mode === "ALIQUOTED"
+        ? labelIfuForm.ifu_aliquoted_file_name || b.ifu_aliquoted_file_name || `HDSD_${b.product_code}.D.IC.pdf`
+        : labelIfuForm.ifu_file_name || b.ifu_file_name || `HDSD_${b.product_code}.pdf`;
+
+    if (fileUrl && (fileUrl.startsWith("data:application/pdf") || fileUrl.startsWith("http"))) {
+      const win = window.open(fileUrl, "_blank");
+      if (win && autoPrint) {
+        setTimeout(() => win.print(), 600);
+      }
+      return;
+    }
+
+    const win = window.open("", "_blank", "width=920,height=860");
+    if (!win) return;
+    win.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>${fileName} — Hướng dẫn sử dụng (IFU)</title>
+        <style>
+          body { font-family: Arial, sans-serif; margin: 28px 36px; color: #0f172a; line-height: 1.5; font-size: 13px; }
+          .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 3px solid #0284c7; padding-bottom: 12px; margin-bottom: 16px; }
+          .badge { background: #0284c7; color: #fff; font-weight: bold; padding: 4px 10px; border-radius: 4px; font-size: 12px; }
+          h1 { font-size: 18px; margin: 0 0 4px 0; color: #0369a1; }
+          .meta-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; font-size: 12px; }
+          .sec { margin-bottom: 14px; }
+          .sec-title { font-weight: bold; color: #0f172a; background: #e0f2fe; padding: 5px 10px; border-left: 4px solid #0284c7; margin-bottom: 6px; text-transform: uppercase; font-size: 12px; }
+          table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+          th, td { border: 1px solid #cbd5e1; padding: 6px 8px; text-align: left; }
+          th { background: #f1f5f9; }
+          @media print { .no-print { display: none; } body { margin: 12mm; } }
+        </style>
+      </head>
+      <body>
+        <div class="no-print" style="margin-bottom: 14px; text-align: right;">
+          <button onclick="window.print()" style="padding: 8px 16px; background: #0284c7; color: #fff; border: none; border-radius: 6px; font-weight: bold; cursor: pointer;">🖨️ In Tờ Hướng Dẫn Sử Dụng (IFU)</button>
+        </div>
+        <div class="header">
+          <div>
+            <div style="font-size: 11px; font-weight: bold; color: #0284c7;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOLAB SOLUTIONS)</div>
+            <h1>HƯỚNG DẪN SỬ DỤNG (INSTRUCTIONS FOR USE — IFU)</h1>
+            <div style="font-size: 13px; font-weight: bold;">${b.product_name} (${mode === "ALIQUOTED" ? `${b.product_code} — Dạng Chia Sẵn .D.IC` : b.product_code})</div>
+          </div>
+          <div style="text-align: right;">
+            <span class="badge">IVD · ISO 13485:2016</span>
+            <div style="font-size: 11px; margin-top: 6px; font-family: monospace;">Tệp: ${fileName}</div>
+            <div style="font-size: 11px; font-family: monospace;">Mã tài liệu: ${labelIfuForm.ifu_code} · ${labelIfuForm.ifu_version}</div>
+          </div>
+        </div>
+        <div class="meta-grid">
+          <div><b>Mã sản phẩm (REF):</b> ${b.product_code}</div>
+          <div><b>Quy cách đóng gói:</b> ${b.specification || `Hộp ${b.tests_per_kit || 50} test`}</div>
+          <div><b>Tiêu chuẩn cơ sở:</b> ${b.tccs_code || "TCCS 01:2026/ABT"}</div>
+          <div><b>Điều kiện bảo quản:</b> ${b.storage_condition || "-20°C ± 2°C"}</div>
+          <div><b>Hạn sử dụng:</b> ${b.shelf_life_months || 12} tháng kể từ NSX</div>
+          <div><b>Số ĐKLH / UDI-DI:</b> ${b.registration_no || labelIfuForm.udi_di}</div>
+        </div>
+        ${
+          fileUrl && fileUrl.startsWith("data:image/")
+            ? `<div style="text-align:center; margin: 12px 0;"><img src="${fileUrl}" style="max-width:100%; border:1px solid #cbd5e1;" /></div>`
+            : ""
+        }
+        <div class="sec">
+          <div class="sec-title">1. Mục đích sử dụng (Intended Use)</div>
+          <div>${labelIfuForm.ifu_intended_use}</div>
+        </div>
+        <div class="sec">
+          <div class="sec-title">2. Thành phần Bộ Kit & Quy cách ống (${mode === "ALIQUOTED" ? "Bản chia sẵn vào strip/tube .D.IC" : "Bản tiêu chuẩn"})</div>
+          <table>
+            <thead><tr><th>Hộp</th><th>Tên thành phần</th><th>Định mức / Đơn vị</th><th>Bảo quản</th></tr></thead>
+            <tbody>
+              ${
+                (bomDetail.packaging || []).length > 0
+                  ? (bomDetail.packaging || [])
+                      .map(
+                        (pk: any) =>
+                          `<tr><td>Hộp ${pk.box_no}: ${pk.box_name}</td><td><b>${pk.component_name}</b></td><td>${pk.units_per_kit} ống × ${pk.fill_qty} ${pk.fill_uom}</td><td>${pk.storage_temp}</td></tr>`
+                      )
+                      .join("")
+                  : (bomDetail.lines || [])
+                      .map(
+                        (ln: any) =>
+                          `<tr><td>Hộp ${ln.box_no}</td><td><b>${ln.component_code}</b> — ${ln.component_name}</td><td>${mode === "ALIQUOTED" && ln.qty_per_base_aliquoted != null ? ln.qty_per_base_aliquoted : ln.qty_per_base} ${ln.uom}</td><td>${b.storage_condition || "-20°C"}</td></tr>`
+                      )
+                      .join("")
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="sec">
+          <div class="sec-title">3. Chương trình Chu kỳ nhiệt Real-time PCR (Thermal Cycling Protocol)</div>
+          <div>${labelIfuForm.ifu_thermal_profile}</div>
+        </div>
+        <div class="sec">
+          <div class="sec-title">4. Kênh màu Huỳnh quang & Phiên giải kết quả (Result Interpretation)</div>
+          <div><b>Kênh đọc huỳnh quang:</b> ${labelIfuForm.ifu_channels}</div>
+          <div style="margin-top: 4px;"><b>Tiêu chuẩn phiên giải Ct:</b> ${labelIfuForm.ifu_interpretation}</div>
+        </div>
+      </body>
+      </html>
+    `);
+    win.document.close();
+    if (autoPrint) {
+      setTimeout(() => win.print(), 350);
+    }
+  };
+
   const handleAddBomLine = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedBomId) return;
@@ -236,7 +500,8 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
       await api(`/api/factory/kit/boms/${selectedBomId}`, {
         method: "POST",
         json: {
-          kind: "line",
+          kind: editingLineId ? "update_line" : "line",
+          line_id: editingLineId ?? undefined,
           component_item_id: lineForm.component_item_id,
           qty_per_base: Number(lineForm.qty_per_base),
           qty_per_base_aliquoted: lineForm.qty_per_base_aliquoted ? Number(lineForm.qty_per_base_aliquoted) : null,
@@ -253,7 +518,49 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           include_in_qc_retention: lineForm.include_in_qc_retention,
         },
       });
-      await loadBomDetail(selectedBomId);
+      setEditingLineId(null);
+      setShowAddLine(false);
+      await loadBomDetail(selectedBomId, lineSearch, lineBoxFilter);
+      await loadList();
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleStartEditLine = (l: any) => {
+    setEditingLineId(l.id);
+    setLineForm({
+      component_item_id: l.component_item_id || "",
+      qty_per_base: String(l.qty_per_base ?? 1),
+      qty_per_base_aliquoted: l.qty_per_base_aliquoted != null ? String(l.qty_per_base_aliquoted) : "",
+      uom: l.uom || "mL",
+      scrap_pct: String(l.scrap_pct ?? 2),
+      box_no: String(l.box_no ?? 1),
+      component_role: l.component_role || "REAGENT",
+      is_critical: l.is_critical !== false,
+      is_bundled: Boolean(l.is_bundled),
+      bundle_parent_code: l.bundle_parent_code || "",
+      allow_substitute: Boolean(l.allow_substitute),
+      is_mix_component: l.is_mix_component !== false,
+      is_demo_fixed_component: Boolean(l.is_demo_fixed_component),
+      include_in_qc_retention: l.include_in_qc_retention !== false,
+    });
+    setShowAddLine(true);
+  };
+
+  const handleDeleteBomLine = async (lineId: string) => {
+    if (!selectedBomId) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+        method: "POST",
+        json: { kind: "delete_line", line_id: lineId },
+      });
+      if (editingLineId === lineId) {
+        setEditingLineId(null);
+        setShowAddLine(false);
+      }
+      await loadBomDetail(selectedBomId, lineSearch, lineBoxFilter);
       await loadList();
     } catch (err) {
       setError(err);
@@ -287,7 +594,7 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     e.preventDefault();
     setError(null);
     try {
-      const created = await api<any>("/api/factory/inv/items", {
+      const created = await api<any>("/api/factory/master/items", {
         method: "POST",
         json: {
           code: quickItemForm.code.trim(),
@@ -319,7 +626,8 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
       await api(`/api/factory/kit/boms/${selectedBomId}`, {
         method: "POST",
         json: {
-          kind: "packaging",
+          kind: editingPackId ? "update_packaging" : "packaging",
+          pack_id: editingPackId ?? undefined,
           box_no: Number(packForm.box_no),
           box_name: packForm.box_name,
           component_name: packForm.component_name,
@@ -330,6 +638,8 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           storage_temp: packForm.storage_temp,
         },
       });
+      setEditingPackId(null);
+      setShowAddPack(false);
       await loadBomDetail(selectedBomId);
       await loadList();
     } catch (err) {
@@ -337,16 +647,68 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     }
   };
 
-  const handleSaveLabelIfu = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleStartEditPackaging = (pk: any) => {
+    setEditingPackId(pk.id);
+    setPackForm({
+      box_no: String(pk.box_no ?? 1),
+      box_name: pk.box_name || "Hộp 1: Hóa chất khuếch đại PCR",
+      component_name: pk.component_name || "",
+      container_type: pk.container_type || "TUBE_1_5ML",
+      fill_qty: String(pk.fill_qty ?? 500),
+      fill_uom: pk.fill_uom || "µL",
+      units_per_kit: String(pk.units_per_kit ?? 1),
+      storage_temp: pk.storage_temp || "-20°C",
+    });
+    setShowAddPack(true);
+  };
+
+  const handleDeletePackaging = async (packId: string) => {
     if (!selectedBomId) return;
     setError(null);
     try {
       await api(`/api/factory/kit/boms/${selectedBomId}`, {
         method: "POST",
+        json: { kind: "delete_packaging", pack_id: packId },
+      });
+      if (editingPackId === packId) {
+        setEditingPackId(null);
+        setShowAddPack(false);
+      }
+      await loadBomDetail(selectedBomId);
+      await loadList();
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleSyncPackaging = async () => {
+    if (!selectedBomId) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+        method: "POST",
+        json: { kind: "sync_packaging" },
+      });
+      await loadBomDetail(selectedBomId);
+      await loadList();
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleSaveLabelIfu = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!selectedBomId) return;
+    setError(null);
+    try {
+      const dimsSummary = `Nhãn Hộp ngoài: ${labelBundle.outer_box.width_mm}×${labelBundle.outer_box.height_mm} mm · Nhãn Hộp phụ: ${labelBundle.sub_box.width_mm}×${labelBundle.sub_box.height_mm} mm · Nhãn Ống: ${labelBundle.tube.width_mm}×${labelBundle.tube.height_mm} mm (${labelBundle.tube.labels_per_row} tem/hàng)`;
+      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+        method: "POST",
         json: {
           kind: "label_ifu",
           ...labelIfuForm,
+          label_dimensions: labelIfuForm.label_dimensions || dimsSummary,
+          label_design_json: labelBundle,
         },
       });
       setShowEditLabelIfu(false);
@@ -584,21 +946,135 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           <div className={`${bomDetail ? "lg:col-span-5" : "lg:col-span-12"} space-y-4`}>
             <Card
-              title="Danh sách phiên bản BOM (Hỗ trợ hàng ngàn công thức)"
+              title="Danh sách Định mức BOM (Thành phẩm & Bán thành phẩm)"
               actions={
                 <Button onClick={() => setShowCreateBom((v) => !v)}>
                   {showCreateBom ? "Đóng form tạo BOM" : "+ Tạo phiên bản BOM mới"}
                 </Button>
               }
             >
+              {/* Phân chia rõ BOM Thành phẩm vs BOM Bán thành phẩm */}
+              <div className="space-y-2 mb-3">
+                <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => setBomTypeTab("finished_good")}
+                    className={`px-2.5 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                      bomTypeTab === "finished_good"
+                        ? "bg-sky-600 text-white shadow"
+                        : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    <span>📦 BOM Thành phẩm</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/20">
+                      {boms.filter((b) => (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "finished_good").length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBomTypeTab("semi_finished")}
+                    className={`px-2.5 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                      bomTypeTab === "semi_finished"
+                        ? "bg-amber-600 text-white shadow"
+                        : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    <span>🧪 BOM Bán thành phẩm</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-black/20">
+                      {boms.filter((b) => (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished").length}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBomTypeTab("ALL")}
+                    className={`px-2.5 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
+                      bomTypeTab === "ALL"
+                        ? "bg-slate-700 text-white shadow"
+                        : "text-slate-600 dark:text-slate-300 hover:bg-slate-200/60 dark:hover:bg-slate-800"
+                    }`}
+                  >
+                    <span>Tất cả BOM ({boms.length})</span>
+                  </button>
+                </div>
+
+                {/* Bộ lọc nhóm PCR Kit / Tách chiết & Khác */}
+                <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                  <span className="text-slate-500 font-semibold">Nhóm:</span>
+                  {[
+                    { k: "", label: "Tất cả nhóm" },
+                    { k: "PCR Kit", label: "🧬 PCR Kit / MasterMix" },
+                    { k: "Tách chiết / Khác", label: "🧪 Kit Tách chiết / Hệ đệm Buffer" },
+                  ].map((cat) => (
+                    <button
+                      key={cat.k}
+                      type="button"
+                      onClick={() => setBomCategoryFilter(cat.k)}
+                      className={`px-2.5 py-1 rounded-full font-semibold border transition ${
+                        bomCategoryFilter === cat.k
+                          ? "bg-sky-500/20 border-sky-500 text-sky-300"
+                          : "border-slate-700 text-slate-400 hover:border-slate-500"
+                      }`}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               {showCreateBom && (
-                <form onSubmit={handleCreateBom} className="mb-4 p-3.5 rounded-xl border border-stone-200 dark:border-slate-800 bg-stone-50/70 dark:bg-slate-950/60 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-stone-800 dark:text-slate-200">Tạo phiên bản BOM mới</span>
+                <form onSubmit={handleCreateBom} className="mb-4 p-3.5 rounded-xl border border-sky-500/40 bg-slate-900/80 space-y-3">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div>
+                      <span className="text-xs font-bold text-sky-300 uppercase">
+                        + Khởi tạo Định mức BOM mới ({bomForm.bom_type === "semi_finished" ? "Bán thành phẩm" : "Thành phẩm Kit"})
+                      </span>
+                      <div className="text-[11px] text-slate-400">
+                        Cung cấp đầy đủ TCCS, Người phụ trách sản xuất &amp; QC mặc định để hệ thống tự động truy xuất và giao việc khi phát lệnh.
+                      </div>
+                    </div>
                     <Button type="button" variant="ghost" onClick={() => setShowCreateBom(false)}>
                       Hủy
                     </Button>
                   </div>
+
+                  {/* Chọn loại BOM: Thành phẩm vs Bán thành phẩm & Nhóm sản phẩm */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <Field label="Phân loại BOM *">
+                      <select
+                        className={inputClass}
+                        value={bomForm.bom_type}
+                        onChange={(e) => {
+                          const nextType = e.target.value as "finished_good" | "semi_finished";
+                          setBomForm({
+                            ...bomForm,
+                            bom_type: nextType,
+                            specification: nextType === "semi_finished" ? "Lô chuẩn 100 mL" : "Hộp 50 test",
+                            qc_retention_qty: nextType === "semi_finished" ? "0" : "1",
+                          });
+                        }}
+                      >
+                        <option value="finished_good">📦 BOM Thành phẩm (Finished Good — Kit hoàn chỉnh)</option>
+                        <option value="semi_finished">🧪 BOM Bán thành phẩm (Semi-Finished — Mix / Buffer / Oligo)</option>
+                      </select>
+                    </Field>
+                    <Field label="Nhóm công nghệ *">
+                      <select
+                        className={inputClass}
+                        value={bomForm.bom_category}
+                        onChange={(e) =>
+                          setBomForm({
+                            ...bomForm,
+                            bom_category: e.target.value,
+                            storage_condition: e.target.value === "PCR Kit" ? "-20°C ± 2°C" : "15°C...25°C",
+                          })
+                        }
+                      >
+                        <option value="PCR Kit">PCR Kit (Real-time PCR / MasterMix / Primer-Probe)</option>
+                        <option value="Tách chiết / Khác">Tách chiết / Khác (Extraction Kit / Dung dịch đệm Buffer)</option>
+                      </select>
+                    </Field>
+                  </div>
+
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <Field label="Phòng Sản xuất Kit">
                       <select
@@ -615,11 +1091,24 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                         ))}
                       </select>
                     </Field>
-                    <Field label="Sản phẩm Kit / Bán thành phẩm">
+                    <Field label="Sản phẩm Kit / Bán thành phẩm *">
                       <select
                         className={inputClass}
                         value={bomForm.product_item_id}
-                        onChange={(e) => setBomForm({ ...bomForm, product_item_id: e.target.value })}
+                        onChange={(e) => {
+                          const it = kitProducts.find((x) => x.id === e.target.value);
+                          const code = it?.code || "";
+                          const isSemi = it?.item_type === "SEMI_FINISHED" || /^(BTP|SFG|ST|MIX)/i.test(code);
+                          const parentCode = code.toUpperCase().endsWith(".D.IC") ? code.slice(0, -5) : "";
+                          setBomForm({
+                            ...bomForm,
+                            product_item_id: e.target.value,
+                            bom_type: isSemi ? "semi_finished" : "finished_good",
+                            parent_item_code: parentCode,
+                            name: it ? `BOM chuẩn ${it.name}` : bomForm.name,
+                            tccs_code: isSemi ? `TCCS-BTP-${code}:2026/ABT` : `TCCS ${code.replace(/\.D\.IC$/i, "")}:2026/ABT`,
+                          });
+                        }}
                         required
                       >
                         <option value="">-- Chọn sản phẩm --</option>
@@ -631,47 +1120,183 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                       </select>
                     </Field>
                   </div>
-                  <Field label="Tên định mức BOM">
-                    <input
-                      className={inputClass}
-                      placeholder="VD: BOM Kit Real-time PCR HBV Định lượng (50 test)"
-                      value={bomForm.name}
-                      onChange={(e) => setBomForm({ ...bomForm, name: e.target.value })}
-                      required
-                    />
-                  </Field>
-                  <div className="grid grid-cols-3 gap-2">
-                    <Field label="Số test / bộ Kit">
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                    <div className="sm:col-span-2">
+                      <Field label="Tên định mức BOM *">
+                        <input
+                          className={inputClass}
+                          placeholder="VD: BOM Kit Real-time PCR HBV Định lượng (50 test)"
+                          value={bomForm.name}
+                          onChange={(e) => setBomForm({ ...bomForm, name: e.target.value })}
+                          required
+                        />
+                      </Field>
+                    </div>
+                    <Field label="Mã SP chính (Gom nhóm COA/Nhãn)">
                       <input
-                        type="number"
-                        className={inputClass}
-                        value={bomForm.tests_per_kit}
-                        onChange={(e) => setBomForm({ ...bomForm, tests_per_kit: e.target.value })}
+                        className={`${inputClass} font-mono`}
+                        placeholder="Tự nhận diện từ .D.IC"
+                        value={bomForm.parent_item_code}
+                        onChange={(e) => setBomForm({ ...bomForm, parent_item_code: e.target.value })}
                       />
-                    </Field>
-                    <Field label="Hạn dùng (ngày)">
-                      <input
-                        type="number"
-                        className={inputClass}
-                        value={bomForm.shelf_life_days}
-                        onChange={(e) => setBomForm({ ...bomForm, shelf_life_days: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="Sao chép từ BOM cũ">
-                      <select
-                        className={inputClass}
-                        value={bomForm.clone_from_bom_id}
-                        onChange={(e) => setBomForm({ ...bomForm, clone_from_bom_id: e.target.value })}
-                      >
-                        <option value="">-- Tạo trống --</option>
-                        {boms.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.code} (v{b.bom_version})
-                          </option>
-                        ))}
-                      </select>
                     </Field>
                   </div>
+
+                  {/* Thông tin Truy xuất tự động & Giao việc tự động */}
+                  <div className="p-2.5 rounded-lg bg-sky-950/30 border border-sky-800/50 space-y-2">
+                    <div className="text-[11px] font-bold text-sky-300 uppercase">
+                      🔍 Thông tin Phục vụ Truy xuất Tự động (TCCS · ĐKLH · Giao việc Nhân sự Sản xuất &amp; QC)
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <Field label="Số Tiêu chuẩn cơ sở (TCCS — Tự động in COA)">
+                        <input
+                          className={`${inputClass} font-mono`}
+                          placeholder="VD: TCCS 01:2026/ABT"
+                          value={bomForm.tccs_code}
+                          onChange={(e) => setBomForm({ ...bomForm, tccs_code: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Số Đăng ký lưu hành (ĐKLH Bộ Y Tế)">
+                        <input
+                          className={`${inputClass} font-mono`}
+                          placeholder="VD: 2400189/ĐKLH-BYT-TB-CT"
+                          value={bomForm.registration_no}
+                          onChange={(e) => setBomForm({ ...bomForm, registration_no: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="👤 Người phụ trách SX (Tự động giao khi tạo lệnh)">
+                        <select
+                          className={inputClass}
+                          value={bomForm.responsible_person_name}
+                          onChange={(e) => setBomForm({ ...bomForm, responsible_person_name: e.target.value })}
+                        >
+                          {kitStaffList.map((s) => (
+                            <option key={s.user_id} value={s.display_name}>
+                              {s.display_name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="🛡️ Người phụ trách QC mặc định (Tự động gán IPQC/FQC)">
+                        <select
+                          className={inputClass}
+                          value={bomForm.qc_assignee_name}
+                          onChange={(e) => setBomForm({ ...bomForm, qc_assignee_name: e.target.value })}
+                        >
+                          {qaStaffList.map((s) => (
+                            <option key={s.user_id} value={s.display_name}>
+                              {s.display_name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="Quy cách đóng gói (Hiển thị trên Nhãn & COA)">
+                        <input
+                          className={inputClass}
+                          placeholder="VD: Hộp 50 test / Chai 100 mL"
+                          value={bomForm.specification}
+                          onChange={(e) => setBomForm({ ...bomForm, specification: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Điều kiện bảo quản chuẩn">
+                        <input
+                          className={inputClass}
+                          placeholder="VD: -20°C ± 2°C hoặc 15°C...25°C"
+                          value={bomForm.storage_condition}
+                          onChange={(e) => setBomForm({ ...bomForm, storage_condition: e.target.value })}
+                        />
+                      </Field>
+                    </div>
+
+                    {bomForm.bom_type === "semi_finished" ? (
+                      <div className="grid grid-cols-3 gap-2 pt-1">
+                        <Field label="pH Tiêu chuẩn Min">
+                          <input
+                            type="number"
+                            step="0.01"
+                            className={inputClass}
+                            placeholder="VD: 8.10"
+                            value={bomForm.ph_min}
+                            onChange={(e) => setBomForm({ ...bomForm, ph_min: e.target.value })}
+                          />
+                        </Field>
+                        <Field label="pH Tiêu chuẩn Max">
+                          <input
+                            type="number"
+                            step="0.01"
+                            className={inputClass}
+                            placeholder="VD: 8.50"
+                            value={bomForm.ph_max}
+                            onChange={(e) => setBomForm({ ...bomForm, ph_max: e.target.value })}
+                          />
+                        </Field>
+                        <Field label="Hạn dùng (tháng)">
+                          <input
+                            type="number"
+                            className={inputClass}
+                            value={bomForm.shelf_life_months}
+                            onChange={(e) =>
+                              setBomForm({
+                                ...bomForm,
+                                shelf_life_months: e.target.value,
+                                shelf_life_days: String(Math.max(1, Number(e.target.value || 12)) * 30),
+                              })
+                            }
+                          />
+                        </Field>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-4 gap-2 pt-1">
+                        <Field label="Số test / bộ Kit">
+                          <input
+                            type="number"
+                            className={inputClass}
+                            value={bomForm.tests_per_kit}
+                            onChange={(e) => setBomForm({ ...bomForm, tests_per_kit: e.target.value })}
+                          />
+                        </Field>
+                        <Field label="Hạn dùng (tháng)">
+                          <input
+                            type="number"
+                            className={inputClass}
+                            value={bomForm.shelf_life_months}
+                            onChange={(e) =>
+                              setBomForm({
+                                ...bomForm,
+                                shelf_life_months: e.target.value,
+                                shelf_life_days: String(Math.max(1, Number(e.target.value || 12)) * 30),
+                              })
+                            }
+                          />
+                        </Field>
+                        <Field label="Mẫu lưu QC / lô">
+                          <input
+                            type="number"
+                            min={0}
+                            className={inputClass}
+                            value={bomForm.qc_retention_qty}
+                            onChange={(e) => setBomForm({ ...bomForm, qc_retention_qty: e.target.value })}
+                          />
+                        </Field>
+                        <Field label="Sao chép từ BOM cũ">
+                          <select
+                            className={inputClass}
+                            value={bomForm.clone_from_bom_id}
+                            onChange={(e) => setBomForm({ ...bomForm, clone_from_bom_id: e.target.value })}
+                          >
+                            <option value="">-- Tạo trống --</option>
+                            {boms.map((b) => (
+                              <option key={b.id} value={b.id}>
+                                {b.code} (v{b.bom_version})
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      </div>
+                    )}
+                  </div>
+
                   <div className="flex justify-end gap-2">
                     <Button type="button" variant="ghost" onClick={() => setShowCreateBom(false)}>
                       Đóng
@@ -680,10 +1305,11 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                   </div>
                 </form>
               )}
+
               <div className="flex gap-2 mb-3">
                 <input
                   className={inputClass}
-                  placeholder="Tìm mã BOM, tên công thức, mã sản phẩm..."
+                  placeholder="Tìm mã BOM, tên công thức, mã SP, số TCCS, người phụ trách..."
                   value={bomSearch}
                   onChange={(e) => setBomSearch(e.target.value)}
                 />
@@ -699,30 +1325,67 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                   <option value="OBSOLETE">Ngừng hiệu lực (OBSOLETE)</option>
                 </select>
               </div>
-              {boms.length === 0 ? (
-                <Empty>Chưa có định mức BOM nào khớp bộ lọc. Nhấn &ldquo;+ Tạo phiên bản BOM mới&rdquo; ở góc phải trên để khởi tạo.</Empty>
-              ) : (
-                <Table head={["Mã BOM", "Sản phẩm", "Ver", "Số dòng", "Trạng thái"]}>
-                  {boms.map((b) => (
-                    <tr
-                      key={b.id}
-                      onClick={() => setSelectedBomId(b.id)}
-                      className={`cursor-pointer hover:bg-amber-50/60 ${selectedBomId === b.id ? "bg-amber-50" : ""}`}
-                    >
-                      <td className="px-3 py-2 font-mono text-xs font-semibold">{b.code}</td>
-                      <td className="px-3 py-2 text-xs">
-                        <div className="font-medium text-stone-800">{b.product_code}</div>
-                        <div className="text-stone-500">{b.name}</div>
-                      </td>
-                      <td className="px-3 py-2 text-xs">v{b.bom_version}</td>
-                      <td className="px-3 py-2 text-xs font-mono">{b.line_count ?? 0}</td>
-                      <td className="px-3 py-2">
-                        <StatusBadge status={b.status} />
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
-              )}
+              {(() => {
+                const filteredBoms = boms.filter((b) => {
+                  const bType = b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good");
+                  if (bomTypeTab !== "ALL" && bType !== bomTypeTab) return false;
+                  if (bomCategoryFilter && (b.bom_category || "PCR Kit") !== bomCategoryFilter) return false;
+                  return true;
+                });
+                if (filteredBoms.length === 0) {
+                  return (
+                    <Empty>
+                      Chưa có định mức BOM nào trong phân mục này. Nhấn &ldquo;+ Tạo phiên bản BOM mới&rdquo; ở góc phải trên để khởi tạo.
+                    </Empty>
+                  );
+                }
+                return (
+                  <Table head={["Mã BOM & Phân loại", "Sản phẩm & Truy xuất tự động", "Ver", "Số dòng", "Trạng thái"]}>
+                    {filteredBoms.map((b) => {
+                      const isSemi = (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
+                      return (
+                        <tr
+                          key={b.id}
+                          onClick={() => setSelectedBomId(b.id)}
+                          className={`cursor-pointer hover:bg-sky-500/10 ${selectedBomId === b.id ? "bg-sky-500/15" : ""}`}
+                        >
+                          <td className="px-3 py-2 text-xs">
+                            <div className="font-mono font-bold text-sky-400">{b.code}</div>
+                            <span
+                              className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                isSemi ? "bg-amber-500/20 text-amber-300" : "bg-emerald-500/20 text-emerald-300"
+                              }`}
+                            >
+                              {isSemi ? "🧪 Bán thành phẩm" : "📦 Thành phẩm"}
+                            </span>
+                            <div className="text-[10px] text-slate-400 mt-0.5">{b.bom_category || "PCR Kit"}</div>
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            <div className="font-bold text-slate-100">
+                              {b.product_code}
+                              {b.parent_item_code && (
+                                <span className="ml-1.5 px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono text-[10px]">
+                                  Mã chính: {b.parent_item_code}
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-slate-400 line-clamp-1">{b.name}</div>
+                            <div className="flex flex-wrap gap-2 mt-1 text-[10px] text-slate-300">
+                              {b.tccs_code && <span className="font-mono text-sky-300">📜 {b.tccs_code}</span>}
+                              {b.responsible_person_name && <span>👤 {b.responsible_person_name}</span>}
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-xs font-mono">v{b.bom_version}</td>
+                          <td className="px-3 py-2 text-xs font-mono">{b.line_count ?? 0}</td>
+                          <td className="px-3 py-2">
+                            <StatusBadge status={b.status} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </Table>
+                );
+              })()}
             </Card>
           </div>
 
@@ -731,8 +1394,22 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
               <Card
                 title={`${bomDetail.bom.code} (v${bomDetail.bom.bom_version}) — ${bomDetail.bom.product_code} ${bomDetail.bom.product_name}`}
                 actions={
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-xs font-bold ${
+                        (bomDetail.bom.bom_type || (bomDetail.bom.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished"
+                          ? "bg-amber-500/20 text-amber-300 border border-amber-500/40"
+                          : "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                      }`}
+                    >
+                      {(bomDetail.bom.bom_type || (bomDetail.bom.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished"
+                        ? "🧪 BOM Bán thành phẩm"
+                        : "📦 BOM Thành phẩm"}
+                    </span>
                     <StatusBadge status={bomDetail.bom.status} />
+                    <Button variant="ghost" onClick={() => setShowEditHeader((v) => !v)}>
+                      {showEditHeader ? "Đóng sửa TT truy xuất" : "✏️ Sửa TT Truy xuất & Giao việc"}
+                    </Button>
                     <Button
                       variant="ghost"
                       onClick={() => {
@@ -745,70 +1422,256 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                   </div>
                 }
               >
-                  <div className="grid grid-cols-3 gap-3 text-xs text-stone-600 mb-3">
-                    <div>
-                      Đơn vị cơ sở:{" "}
-                      <strong className="text-stone-900">
-                        {fmtQty(bomDetail.bom.base_qty)} {bomDetail.bom.base_uom}
-                      </strong>
-                    </div>
-                    <div>
-                      Quy cách: <strong className="text-stone-900">{bomDetail.bom.tests_per_kit} phản ứng/Kit</strong>
-                    </div>
-                    <div>
-                      Hạn dùng chuẩn: <strong className="text-stone-900">{bomDetail.bom.shelf_life_days} ngày</strong>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <ActionBar
-                      endpoint={`/api/factory/kit/boms/${bomDetail.bom.id}/actions`}
-                      version={bomDetail.bom.version}
-                      actions={bomDetail.allowed_actions}
-                      labels={ACTION_LABELS}
-                      onDone={() => {
-                        loadList();
-                        loadBomDetail(bomDetail.bom.id);
-                      }}
-                    />
-                    {bomDetail.bom.status !== "EFFECTIVE" && (
-                      <Button variant="secondary" onClick={handleFastActivateBom}>
-                        ✅ Kích hoạt Hiệu lực ngay (EFFECTIVE)
-                      </Button>
+                {/* Bảng thông tin truy xuất tự động & giao việc tự động */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3 rounded-xl bg-slate-900/70 border border-slate-800 text-xs mb-3">
+                  <div>
+                    <div className="text-[11px] text-slate-400">Số Tiêu chuẩn cơ sở (TCCS):</div>
+                    <div className="font-mono font-bold text-sky-300">{bomDetail.bom.tccs_code || "TCCS 01:2026/ABT"}</div>
+                    {bomDetail.bom.registration_no && (
+                      <div className="text-[10px] text-slate-400 font-mono">ĐKLH: {bomDetail.bom.registration_no}</div>
                     )}
                   </div>
-                </Card>
+                  <div>
+                    <div className="text-[11px] text-slate-400">Người phụ trách SX (Giao lệnh tự động):</div>
+                    <div className="font-bold text-emerald-300">
+                      👤 {bomDetail.bom.responsible_person_name || "Chưa phân công"}
+                    </div>
+                    <div className="text-[10px] text-amber-300">
+                      🛡️ QC: {bomDetail.bom.qc_assignee_name || "Chưa phân công"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-slate-400">Quy cách &amp; Điều kiện bảo quản:</div>
+                    <div className="font-semibold text-slate-100">
+                      {bomDetail.bom.specification || `Hộp ${bomDetail.bom.tests_per_kit} test`}
+                    </div>
+                    <div className="text-[11px] text-sky-400 font-mono">
+                      ❄️ {bomDetail.bom.storage_condition || "-20°C ± 2°C"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-slate-400">Hạn dùng &amp; Kiểm soát lô:</div>
+                    <div className="font-semibold text-slate-100">
+                      ⏳ {bomDetail.bom.shelf_life_months || Math.round((bomDetail.bom.shelf_life_days || 365) / 30)} tháng ({bomDetail.bom.shelf_life_days} ngày)
+                    </div>
+                    {bomDetail.bom.bom_type === "semi_finished" && (bomDetail.bom.ph_min != null || bomDetail.bom.ph_max != null) ? (
+                      <div className="text-[11px] text-amber-300 font-mono">
+                        🧪 pH chuẩn: {bomDetail.bom.ph_min ?? "-"} – {bomDetail.bom.ph_max ?? "-"}
+                      </div>
+                    ) : (
+                      <div className="text-[11px] text-emerald-300">
+                        📦 Mẫu lưu QC mặc định: +{bomDetail.bom.qc_retention_qty ?? 1} bộ/lô
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {showEditHeader && (
+                  <form
+                    onSubmit={handleSaveBomHeader}
+                    className="mb-3 p-3.5 rounded-xl border border-sky-500/40 bg-slate-900/90 space-y-2.5"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-800 pb-1.5">
+                      <span className="text-xs font-bold text-sky-300 uppercase">
+                        ✏️ Cập nhật Thông tin Truy xuất Tự động &amp; Phân công Nhân sự Mặc định
+                      </span>
+                      <Button type="button" variant="ghost" onClick={() => setShowEditHeader(false)}>
+                        Đóng
+                      </Button>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                      <Field label="Phân loại BOM">
+                        <select
+                          className={inputClass}
+                          value={editHeaderForm.bom_type}
+                          onChange={(e) =>
+                            setEditHeaderForm({ ...editHeaderForm, bom_type: e.target.value as "finished_good" | "semi_finished" })
+                          }
+                        >
+                          <option value="finished_good">📦 BOM Thành phẩm (Finished Good)</option>
+                          <option value="semi_finished">🧪 BOM Bán thành phẩm (Semi-Finished)</option>
+                        </select>
+                      </Field>
+                      <Field label="Nhóm sản phẩm">
+                        <select
+                          className={inputClass}
+                          value={editHeaderForm.bom_category}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, bom_category: e.target.value })}
+                        >
+                          <option value="PCR Kit">PCR Kit</option>
+                          <option value="Tách chiết / Khác">Tách chiết / Khác</option>
+                        </select>
+                      </Field>
+                      <Field label="Mã SP chính (Gom nhóm COA / Nhãn)">
+                        <input
+                          className={`${inputClass} font-mono`}
+                          value={editHeaderForm.parent_item_code}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, parent_item_code: e.target.value })}
+                          placeholder="VD: KIT-HBV-50T"
+                        />
+                      </Field>
+                      <Field label="Số Tiêu chuẩn cơ sở (TCCS)">
+                        <input
+                          className={`${inputClass} font-mono`}
+                          value={editHeaderForm.tccs_code}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, tccs_code: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Số ĐKLH / Lưu hành Bộ Y Tế">
+                        <input
+                          className={`${inputClass} font-mono`}
+                          value={editHeaderForm.registration_no}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, registration_no: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Quy cách đóng gói">
+                        <input
+                          className={inputClass}
+                          value={editHeaderForm.specification}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, specification: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="👤 Người phụ trách SX mặc định">
+                        <select
+                          className={inputClass}
+                          value={editHeaderForm.responsible_person_name}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, responsible_person_name: e.target.value })}
+                        >
+                          {kitStaffList.map((s) => (
+                            <option key={s.user_id} value={s.display_name}>
+                              {s.display_name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="🛡️ Người phụ trách QC mặc định">
+                        <select
+                          className={inputClass}
+                          value={editHeaderForm.qc_assignee_name}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, qc_assignee_name: e.target.value })}
+                        >
+                          {qaStaffList.map((s) => (
+                            <option key={s.user_id} value={s.display_name}>
+                              {s.display_name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="Điều kiện bảo quản">
+                        <input
+                          className={inputClass}
+                          value={editHeaderForm.storage_condition}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, storage_condition: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Hạn sử dụng (Tháng)">
+                        <input
+                          type="number"
+                          className={inputClass}
+                          value={editHeaderForm.shelf_life_months}
+                          onChange={(e) =>
+                            setEditHeaderForm({
+                              ...editHeaderForm,
+                              shelf_life_months: e.target.value,
+                              shelf_life_days: String(Math.max(1, Number(e.target.value || 12)) * 30),
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="Mẫu lưu QC bổ sung (Bộ/Lô)">
+                        <input
+                          type="number"
+                          min={0}
+                          className={inputClass}
+                          value={editHeaderForm.qc_retention_qty}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, qc_retention_qty: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Khoảng pH chuẩn (Min – Max cho BTP)">
+                        <div className="flex gap-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="pH Min"
+                            className={inputClass}
+                            value={editHeaderForm.ph_min}
+                            onChange={(e) => setEditHeaderForm({ ...editHeaderForm, ph_min: e.target.value })}
+                          />
+                          <input
+                            type="number"
+                            step="0.01"
+                            placeholder="pH Max"
+                            className={inputClass}
+                            value={editHeaderForm.ph_max}
+                            onChange={(e) => setEditHeaderForm({ ...editHeaderForm, ph_max: e.target.value })}
+                          />
+                        </div>
+                      </Field>
+                    </div>
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button type="button" variant="ghost" onClick={() => setShowEditHeader(false)}>
+                        Hủy
+                      </Button>
+                      <Button type="submit">💾 Lưu Thông tin Truy xuất &amp; Phân công</Button>
+                    </div>
+                  </form>
+                )}
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <ActionBar
+                    endpoint={`/api/factory/kit/boms/${bomDetail.bom.id}/actions`}
+                    version={bomDetail.bom.version}
+                    actions={bomDetail.allowed_actions}
+                    labels={ACTION_LABELS}
+                    onDone={() => {
+                      loadList();
+                      loadBomDetail(bomDetail.bom.id);
+                    }}
+                  />
+                  {bomDetail.bom.status !== "EFFECTIVE" && (
+                    <Button variant="secondary" onClick={handleFastActivateBom}>
+                      ✅ Kích hoạt Hiệu lực ngay (EFFECTIVE)
+                    </Button>
+                  )}
+                </div>
+              </Card>
 
                 <Card
                   title={`1. Định mức nguyên liệu / Bán thành phẩm (${bomDetail.lines.length}/${bomDetail.total_lines ?? bomDetail.lines.length} dòng)`}
                   actions={
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <input
-                        className={`${inputClass} w-48`}
+                        className={`${inputClass} w-44`}
                         placeholder="Lọc mã / tên nguyên liệu..."
                         value={lineSearch}
                         onChange={(e) => setLineSearch(e.target.value)}
                       />
                       <input
                         type="number"
-                        className={`${inputClass} w-24`}
+                        className={`${inputClass} w-20`}
                         placeholder="Hộp #"
                         value={lineBoxFilter}
                         onChange={(e) => setLineBoxFilter(e.target.value)}
                       />
-                      {bomDetail.bom.status === "DRAFT" && (
+                      {bomDetail.bom.status !== "OBSOLETE" && (
                         <>
-                          <Button onClick={() => setShowAddLine((v) => !v)}>
-                            {showAddLine ? "Đóng thêm dòng" : "+ Thêm dòng BOM"}
+                          <Button
+                            onClick={() => {
+                              setEditingLineId(null);
+                              setShowAddLine((v) => !v);
+                            }}
+                          >
+                            {showAddLine && !editingLineId ? "Đóng form BOM" : "➕ Thêm dòng BOM"}
                           </Button>
                           <Button variant="ghost" onClick={() => setShowBulkPaste(!showBulkPaste)}>
-                            {showBulkPaste ? "Đóng nhập hàng loạt" : "+ Dán hàng loạt (Excel/TSV)"}
+                            {showBulkPaste ? "Đóng nhập hàng loạt" : "📋 Dán hàng loạt (Excel/TSV)"}
                           </Button>
                         </>
                       )}
                     </div>
                   }
                 >
-                  {showBulkPaste && bomDetail.bom.status === "DRAFT" && (
+                  {showBulkPaste && bomDetail.bom.status !== "OBSOLETE" && (
                     <div className="mb-3 p-3 rounded-lg border border-amber-200 bg-amber-50/50 space-y-2">
                       <div className="text-xs font-semibold text-stone-800">
                         Nhập nhanh hàng trăm / hàng ngàn dòng nguyên vật liệu (mỗi dòng: <code>MÃ_VẬT_TƯ ; SỐ_LƯỢNG ; ĐVT ; HỘP_SỐ ; VAI_TRÒ ; %_HAO_HỤT</code>)
@@ -865,57 +1728,23 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                       </div>
                     </div>
                   )}
-                  {bomDetail.lines.length === 0 ? (
-                    <Empty>Chưa có dòng nguyên vật liệu nào trong BOM.</Empty>
-                  ) : (
-                    <Table head={["#", "Hộp", "Vai trò", "Mã VT / Bán TP", "Định mức (Thường / Chia sẵn .D.IC)", "Hao hụt", "Cấu hình Nổ BOM (Demo / Lưu QC / Thay thế)"]}>
-                      {bomDetail.lines.map((l: any) => (
-                        <tr key={l.id}>
-                          <td className="px-3 py-2 text-xs">{l.line_no}</td>
-                          <td className="px-3 py-2 text-xs font-medium">Hộp {l.box_no}</td>
-                          <td className="px-3 py-2 text-xs">{ROLE_LABELS[l.component_role] ?? l.component_role}</td>
-                          <td className="px-3 py-2 text-xs">
-                            <span className="font-mono font-semibold">{l.component_code}</span> — {l.component_name}
-                          </td>
-                          <td className="px-3 py-2 text-xs font-semibold">
-                            <div>
-                              {fmtQty(l.qty_per_base)} {l.uom}
-                            </div>
-                            {l.qty_per_base_aliquoted != null && (
-                              <div className="text-[11px] text-sky-700 font-mono">
-                                .D.IC: {fmtQty(l.qty_per_base_aliquoted)} {l.uom}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-xs">{fmtQty(l.scrap_pct)}%</td>
-                          <td className="px-3 py-2 text-[11px] text-stone-600 space-x-1">
-                            <span className="px-1.5 py-0.5 rounded bg-stone-100">
-                              {l.is_bundled ? `Đi kèm (${l.bundle_parent_code || "ngoài"})` : "Trừ kho"}
-                            </span>
-                            {l.is_demo_fixed_component ? (
-                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Demo: Cố định 1 bộ</span>
-                            ) : (
-                              <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">Demo: Co giãn theo test</span>
-                            )}
-                            {l.include_in_qc_retention !== false && (
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">+Mẫu lưu QC</span>
-                            )}
-                            {l.allow_substitute && (
-                              <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Cho thay thế</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
-                    </Table>
-                  )}
 
-                  {bomDetail.bom.status === "DRAFT" && showAddLine && (
-                    <form onSubmit={handleAddBomLine} className="mt-4 pt-3 border-t border-stone-200 space-y-2">
+                  {bomDetail.bom.status !== "OBSOLETE" && showAddLine && (
+                    <form onSubmit={handleAddBomLine} className="mb-4 p-3 rounded-xl border-2 border-sky-400/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-2.5">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs font-semibold text-stone-700">
-                          Thêm thành phần vào BOM (Chuẩn ABT: Hỗ trợ Định mức thường, Chia sẵn .D.IC &amp; Kit Demo)
+                        <div className="text-xs font-bold text-sky-900 dark:text-sky-200">
+                          {editingLineId
+                            ? "✏️ Đang chỉnh sửa dòng thành phần BOM"
+                            : "➕ Thêm thành phần mới vào BOM (Chuẩn ABT: Hỗ trợ Định mức thường, Chia sẵn .D.IC & Kit Demo)"}
                         </div>
-                        <Button type="button" variant="ghost" onClick={() => setShowAddLine(false)}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            setEditingLineId(null);
+                            setShowAddLine(false);
+                          }}
+                        >
                           Đóng
                         </Button>
                       </div>
@@ -1019,7 +1848,7 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                         </Field>
                       </div>
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                        <div className="flex flex-wrap gap-3 text-xs text-stone-700">
+                        <div className="flex flex-wrap gap-3 text-xs text-stone-700 dark:text-stone-300">
                           <label className="flex items-center gap-1">
                             <input
                               type="checkbox"
@@ -1059,9 +1888,98 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                             Vật tư bán kèm
                           </label>
                         </div>
-                        <Button type="submit">Thêm dòng BOM</Button>
+                        <div className="flex gap-2">
+                          {editingLineId && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() => {
+                                setEditingLineId(null);
+                                setShowAddLine(false);
+                              }}
+                            >
+                              Hủy sửa
+                            </Button>
+                          )}
+                          <Button type="submit">{editingLineId ? "💾 Lưu cập nhật dòng BOM" : "➕ Thêm dòng BOM"}</Button>
+                        </div>
                       </div>
                     </form>
+                  )}
+
+                  {bomDetail.lines.length === 0 ? (
+                    <Empty>Chưa có dòng nguyên vật liệu nào trong BOM. Hãy bấm &ldquo;➕ Thêm dòng BOM&rdquo; ở góc phải bên trên.</Empty>
+                  ) : (
+                    <Table
+                      head={[
+                        "#",
+                        "Hộp",
+                        "Vai trò",
+                        "Mã VT / Bán TP",
+                        "Định mức (Thường / Chia sẵn .D.IC)",
+                        "Hao hụt",
+                        "Cấu hình Nổ BOM (Demo / Lưu QC / Thay thế)",
+                        "Thao tác",
+                      ]}
+                    >
+                      {bomDetail.lines.map((l: any) => (
+                        <tr key={l.id} className={editingLineId === l.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+                          <td className="px-3 py-2 text-xs">{l.line_no}</td>
+                          <td className="px-3 py-2 text-xs font-medium">Hộp {l.box_no}</td>
+                          <td className="px-3 py-2 text-xs">{ROLE_LABELS[l.component_role] ?? l.component_role}</td>
+                          <td className="px-3 py-2 text-xs">
+                            <span className="font-mono font-semibold">{l.component_code}</span> — {l.component_name}
+                          </td>
+                          <td className="px-3 py-2 text-xs font-semibold">
+                            <div>
+                              {fmtQty(l.qty_per_base)} {l.uom}
+                            </div>
+                            {l.qty_per_base_aliquoted != null && (
+                              <div className="text-[11px] text-sky-700 font-mono">
+                                .D.IC: {fmtQty(l.qty_per_base_aliquoted)} {l.uom}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-xs">{fmtQty(l.scrap_pct)}%</td>
+                          <td className="px-3 py-2 text-[11px] text-stone-600 space-x-1">
+                            <span className="px-1.5 py-0.5 rounded bg-stone-100">
+                              {l.is_bundled ? `Đi kèm (${l.bundle_parent_code || "ngoài"})` : "Trừ kho"}
+                            </span>
+                            {l.is_demo_fixed_component ? (
+                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Demo: Cố định 1 bộ</span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">Demo: Co giãn theo test</span>
+                            )}
+                            {l.include_in_qc_retention !== false && (
+                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">+Mẫu lưu QC</span>
+                            )}
+                            {l.allow_substitute && (
+                              <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Cho thay thế</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-xs whitespace-nowrap">
+                            {bomDetail.bom.status !== "OBSOLETE" && (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditLine(l)}
+                                  className="px-2 py-1 rounded-md text-[11px] font-bold bg-sky-600/15 text-sky-700 dark:text-sky-300 border border-sky-500/40 hover:bg-sky-600 hover:text-white transition"
+                                >
+                                  ✏️ Sửa
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteBomLine(l.id)}
+                                  className="px-2 py-1 rounded-md text-[11px] font-bold bg-rose-600/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:bg-rose-600 hover:text-white transition"
+                                >
+                                  🗑️ Xóa
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </Table>
                   )}
 
                   {bomDetail.lines.length > 0 && (
@@ -1158,36 +2076,44 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                 <Card
                   title={`2. Cấu trúc đóng gói Bộ Kit → Hộp → Ống/Chai (${bomDetail.packaging.length} quy cách)`}
                   actions={
-                    bomDetail.bom.status === "DRAFT" ? (
-                      <Button variant="ghost" onClick={() => setShowAddPack((v) => !v)}>
-                        {showAddPack ? "Đóng form đóng gói" : "+ Thêm quy cách đóng gói"}
-                      </Button>
+                    bomDetail.bom.status !== "OBSOLETE" ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        {bomDetail.lines.length > 0 && (
+                          <Button variant="ghost" onClick={handleSyncPackaging}>
+                            ⚡ Tự nạp quy cách đóng gói từ BOM
+                          </Button>
+                        )}
+                        <Button
+                          onClick={() => {
+                            setEditingPackId(null);
+                            setShowAddPack((v) => !v);
+                          }}
+                        >
+                          {showAddPack && !editingPackId ? "Đóng form đóng gói" : "➕ Thêm quy cách đóng gói"}
+                        </Button>
+                      </div>
                     ) : null
                   }
                 >
-                  {bomDetail.packaging.length === 0 ? (
-                    <Empty>Chưa khai báo quy cách ống/hộp cho BOM này.</Empty>
-                  ) : (
-                    <Table head={["Hộp", "Tên ống / thành phần", "Loại bao bì", "Thể tích nạp", "Số ống/Kit", "Bảo quản"]}>
-                      {bomDetail.packaging.map((pk: any) => (
-                        <tr key={pk.id}>
-                          <td className="px-3 py-2 text-xs font-medium">
-                            Hộp {pk.box_no}: {pk.box_name}
-                          </td>
-                          <td className="px-3 py-2 text-xs font-semibold">{pk.component_name}</td>
-                          <td className="px-3 py-2 text-xs">{CONTAINER_LABELS[pk.container_type] ?? pk.container_type}</td>
-                          <td className="px-3 py-2 text-xs">
-                            {fmtQty(pk.fill_qty)} {pk.fill_uom}
-                          </td>
-                          <td className="px-3 py-2 text-xs">{pk.units_per_kit} ống</td>
-                          <td className="px-3 py-2 text-xs font-mono">{pk.storage_temp}</td>
-                        </tr>
-                      ))}
-                    </Table>
-                  )}
-
-                  {bomDetail.bom.status === "DRAFT" && showAddPack && (
-                    <form onSubmit={handleAddPackaging} className="mt-4 pt-3 border-t border-stone-200 space-y-2">
+                  {bomDetail.bom.status !== "OBSOLETE" && showAddPack && (
+                    <form onSubmit={handleAddPackaging} className="mb-4 p-3 rounded-xl border-2 border-sky-400/60 bg-sky-50/40 dark:bg-sky-950/20 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs font-bold text-sky-900 dark:text-sky-200">
+                          {editingPackId
+                            ? "✏️ Đang chỉnh sửa quy cách đóng gói Ống / Chai / Hộp"
+                            : "➕ Khai báo bổ sung quy cách đóng gói Ống / Chai trong Hộp Kit"}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() => {
+                            setEditingPackId(null);
+                            setShowAddPack(false);
+                          }}
+                        >
+                          Đóng
+                        </Button>
+                      </div>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                         <Field label="Hộp số & Tên hộp">
                           <div className="flex gap-1">
@@ -1234,8 +2160,8 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                           </div>
                         </Field>
                       </div>
-                      <div className="flex items-end justify-between gap-2">
-                        <div className="flex gap-2">
+                      <div className="flex flex-wrap items-end justify-between gap-2">
+                        <div className="flex flex-wrap gap-2">
                           <Field label="Lượng chiết rót / ống">
                             <input
                               type="number"
@@ -1264,174 +2190,441 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                             />
                           </Field>
                         </div>
-                        <Button type="submit">Lưu quy cách đóng gói</Button>
+                        <div className="flex gap-2">
+                          {editingPackId && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              onClick={() => {
+                                setEditingPackId(null);
+                                setShowAddPack(false);
+                              }}
+                            >
+                              Hủy sửa
+                            </Button>
+                          )}
+                          <Button type="submit">{editingPackId ? "💾 Lưu cập nhật quy cách" : "➕ Lưu quy cách đóng gói"}</Button>
+                        </div>
                       </div>
                     </form>
                   )}
+
+                  {bomDetail.packaging.length === 0 ? (
+                    <div className="py-5 text-center space-y-2.5">
+                      <div className="text-xs text-stone-500">Chưa khai báo quy cách ống/hộp cho BOM này.</div>
+                      {bomDetail.bom.status !== "OBSOLETE" && (
+                        <div className="flex flex-wrap items-center justify-center gap-2">
+                          {bomDetail.lines.length > 0 && (
+                            <Button onClick={handleSyncPackaging}>
+                              ⚡ Tự nạp {bomDetail.lines.length} quy cách Ống/Chai từ danh sách BOM
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            onClick={() => {
+                              setEditingPackId(null);
+                              setShowAddPack(true);
+                            }}
+                          >
+                            ➕ Khai báo thủ công quy cách đóng gói
+                          </Button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <Table head={["Hộp", "Tên ống / thành phần", "Loại bao bì", "Thể tích nạp", "Số ống/Kit", "Bảo quản", "Thao tác"]}>
+                      {bomDetail.packaging.map((pk: any) => (
+                        <tr key={pk.id} className={editingPackId === pk.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+                          <td className="px-3 py-2 text-xs font-medium">
+                            Hộp {pk.box_no}: {pk.box_name}
+                          </td>
+                          <td className="px-3 py-2 text-xs font-semibold">{pk.component_name}</td>
+                          <td className="px-3 py-2 text-xs">{CONTAINER_LABELS[pk.container_type] ?? pk.container_type}</td>
+                          <td className="px-3 py-2 text-xs">
+                            {fmtQty(pk.fill_qty)} {pk.fill_uom}
+                          </td>
+                          <td className="px-3 py-2 text-xs">{pk.units_per_kit} ống</td>
+                          <td className="px-3 py-2 text-xs font-mono">{pk.storage_temp}</td>
+                          <td className="px-3 py-2 text-xs whitespace-nowrap">
+                            {bomDetail.bom.status !== "OBSOLETE" && (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleStartEditPackaging(pk)}
+                                  className="px-2 py-1 rounded-md text-[11px] font-bold bg-sky-600/15 text-sky-700 dark:text-sky-300 border border-sky-500/40 hover:bg-sky-600 hover:text-white transition"
+                                >
+                                  ✏️ Sửa
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeletePackaging(pk.id)}
+                                  className="px-2 py-1 rounded-md text-[11px] font-bold bg-rose-600/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:bg-rose-600 hover:text-white transition"
+                                >
+                                  🗑️ Xóa
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </Table>
+                  )}
                 </Card>
 
-                {/* Thẻ 3: Thiết kế Mẫu Nhãn sản phẩm (Label Artwork) & Hướng dẫn sử dụng (IFU) */}
-                <Card
-                  title={`3. Thiết kế Mẫu Nhãn Sản Phẩm (Label Artwork) & Hướng Dẫn Sử Dụng (IFU — ${bomDetail.bom.ifu_code ?? "IFU"})`}
-                  actions={
-                    <div className="flex flex-wrap gap-1.5">
-                      <Button variant="ghost" onClick={() => setShowPreviewLabelIfu((v) => !v)}>
-                        {showPreviewLabelIfu ? "Ẩn Xem trước" : "👁️ Xem trước Mẫu Nhãn & Tờ HDSD (IFU)"}
-                      </Button>
-                      <Button variant="secondary" onClick={() => setShowEditLabelIfu((v) => !v)}>
-                        {showEditLabelIfu ? "Đóng chỉnh sửa" : "✏️ Thiết kế / Sửa Mẫu Nhãn & HDSD (IFU)"}
-                      </Button>
-                    </div>
-                  }
-                >
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5 text-xs mb-2">
-                    <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-                      <div className="text-[11px] text-slate-500">Mã Mẫu Nhãn &amp; UDI-DI:</div>
-                      <div className="font-mono font-bold text-sky-700 dark:text-sky-400">
-                        {bomDetail.bom.label_template_code ?? `LBL-${bomDetail.bom.product_code}-V1`}
-                      </div>
-                      <div className="font-mono text-[11px] text-slate-600 dark:text-slate-400">
-                        UDI-DI: {bomDetail.bom.udi_di ?? "(01)08936192830117"}
-                      </div>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-                      <div className="text-[11px] text-slate-500">Quy cách khổ giấy in tem:</div>
-                      <div className="font-semibold text-slate-800 dark:text-slate-200">
-                        {bomDetail.bom.label_dimensions ?? "Nhãn Hộp ngoài: 95×65 mm · Nhãn Ống: 38×19 mm"}
-                      </div>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
-                      <div className="text-[11px] text-slate-500">Tài liệu Hướng dẫn sử dụng (IFU):</div>
-                      <div className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                        {bomDetail.bom.ifu_code ?? `IFU-${bomDetail.bom.product_code}`} — {bomDetail.bom.ifu_version ?? "Rev 01"}
-                      </div>
-                    </div>
-                  </div>
+                {/* Thẻ 3: Thiết kế Mẫu Nhãn sản phẩm (Label Artwork) & Hướng dẫn sử dụng đính kèm (IFU) */}
+                {(() => {
+                  const isSemi = (bomDetail.bom.bom_type || (bomDetail.bom.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
+                  const sampleData: LabelSampleData = {
+                    productName: bomDetail.bom.product_name,
+                    productCode: bomDetail.bom.product_code,
+                    specification: bomDetail.bom.specification || (isSemi ? `Lô chuẩn ${bomDetail.bom.base_qty} ${bomDetail.bom.base_uom}` : `Hộp ${bomDetail.bom.tests_per_kit || 50} test`),
+                    quantity: isSemi ? `${bomDetail.bom.base_qty} ${bomDetail.bom.base_uom}` : `${bomDetail.bom.tests_per_kit || 50} Tests`,
+                    storage: bomDetail.bom.storage_condition || "-20°C ± 2°C",
+                    mfgDate: "01/11/2026",
+                    expDate: "01/11/2027",
+                    lotNumber: `LOT-${String(bomDetail.bom.product_code || "KIT").replace(/[^A-Z0-9]/gi, "").slice(0, 6)}-2611`,
+                    manufacturer: "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOLAB)",
+                    udiDi: labelIfuForm.udi_di || "(01)08936192830117",
+                    phValue: bomDetail.bom.ph_min != null ? `${bomDetail.bom.ph_min} – ${bomDetail.bom.ph_max}` : "8.30 ± 0.1",
+                    tccsCode: bomDetail.bom.tccs_code || "TCCS 01:2026/ABT",
+                  };
 
-                  {showEditLabelIfu && (
-                    <form
-                      onSubmit={handleSaveLabelIfu}
-                      className="mt-2 p-3 rounded-xl border border-sky-200 dark:border-sky-900 bg-sky-50/40 dark:bg-sky-950/20 space-y-2.5"
+                  const handleUploadIfuAttachment = (mode: "STANDARD" | "ALIQUOTED", file: File) => {
+                    const reader = new FileReader();
+                    reader.onload = async () => {
+                      const dataUrl = String(reader.result || "");
+                      const sizeStr = `${Math.max(1, Math.round(file.size / 1024))} KB (${file.name.split(".").pop()?.toUpperCase() || "FILE"})`;
+                      const nextForm =
+                        mode === "ALIQUOTED"
+                          ? {
+                              ...labelIfuForm,
+                              ifu_aliquoted_file_name: file.name,
+                              ifu_aliquoted_file_url: dataUrl,
+                              ifu_aliquoted_file_size: sizeStr,
+                            }
+                          : {
+                              ...labelIfuForm,
+                              ifu_file_name: file.name,
+                              ifu_file_url: dataUrl,
+                              ifu_file_size: sizeStr,
+                            };
+                      setLabelIfuForm(nextForm);
+                      try {
+                        await api(`/api/factory/kit/boms/${selectedBomId}`, {
+                          method: "POST",
+                          json: {
+                            kind: "label_ifu",
+                            ...nextForm,
+                            label_design_json: labelBundle,
+                          },
+                        });
+                        await loadBomDetail(selectedBomId);
+                      } catch (err) {
+                        setError(err);
+                      }
+                    };
+                    reader.readAsDataURL(file);
+                  };
+
+                  return (
+                    <Card
+                      title={`3. Thiết kế Mẫu Nhãn Trực Quan (Visual Label Artwork) & Tài liệu HDSD Đính Kèm (IFU — ${bomDetail.bom.ifu_code ?? "IFU"})`}
+                      actions={
+                        <div className="flex flex-wrap gap-1.5">
+                          <Button variant="secondary" onClick={() => setShowLabelStudio((v) => !v)}>
+                            {showLabelStudio ? "Đóng Studio Thiết kế Nhãn" : "🎨 Mở Studio Thiết Kế Nhãn Hiện Đại (Kéo thả & ISO/IVD)"}
+                          </Button>
+                          <Button variant="ghost" onClick={() => setShowEditLabelIfu((v) => !v)}>
+                            {showEditLabelIfu ? "Đóng cấu hình IFU" : "⚙️ Sửa thông số UDI / Chu kỳ nhiệt IFU"}
+                          </Button>
+                        </div>
+                      }
                     >
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                        <Field label="Mã Mẫu Nhãn (Label Template Code)">
-                          <input
-                            className={`${inputClass} font-mono`}
-                            value={labelIfuForm.label_template_code}
-                            onChange={(e) => setLabelIfuForm({ ...labelIfuForm, label_template_code: e.target.value })}
-                            required
-                          />
-                        </Field>
-                        <Field label="Kích thước tem Hộp & Ống (mm)">
-                          <input
-                            className={inputClass}
-                            value={labelIfuForm.label_dimensions}
-                            onChange={(e) => setLabelIfuForm({ ...labelIfuForm, label_dimensions: e.target.value })}
-                            required
-                          />
-                        </Field>
-                        <Field label="Mã định danh UDI-DI (GS1)">
-                          <input
-                            className={`${inputClass} font-mono`}
-                            value={labelIfuForm.udi_di}
-                            onChange={(e) => setLabelIfuForm({ ...labelIfuForm, udi_di: e.target.value })}
-                          />
-                        </Field>
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <Field label="Mã Tài liệu Hướng dẫn sử dụng (IFU Code)">
-                          <input
-                            className={`${inputClass} font-mono`}
-                            value={labelIfuForm.ifu_code}
-                            onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_code: e.target.value })}
-                            required
-                          />
-                        </Field>
-                        <Field label="Phiên bản HDSD (IFU Revision)">
-                          <input
-                            className={inputClass}
-                            value={labelIfuForm.ifu_version}
-                            onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_version: e.target.value })}
-                            required
-                          />
-                        </Field>
-                      </div>
-                      <Field label="1. Mục đích sử dụng trên Tờ HDSD (Intended Use)">
-                        <textarea
-                          rows={2}
-                          className={inputClass}
-                          value={labelIfuForm.ifu_intended_use}
-                          onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_intended_use: e.target.value })}
-                        />
-                      </Field>
-                      <Field label="2. Chương trình Chu kỳ nhiệt Real-time PCR (Thermal Cycling Protocol)">
-                        <textarea
-                          rows={2}
-                          className={inputClass}
-                          value={labelIfuForm.ifu_thermal_profile}
-                          onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_thermal_profile: e.target.value })}
-                        />
-                      </Field>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        <Field label="3. Kênh màu Huỳnh quang (Fluorescence Channels)">
-                          <input
-                            className={inputClass}
-                            value={labelIfuForm.ifu_channels}
-                            onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_channels: e.target.value })}
-                          />
-                        </Field>
-                        <Field label="4. Tiêu chuẩn Phiên giải Kết quả Ct (Result Interpretation)">
-                          <input
-                            className={inputClass}
-                            value={labelIfuForm.ifu_interpretation}
-                            onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_interpretation: e.target.value })}
-                          />
-                        </Field>
-                      </div>
-                      <div className="flex justify-end gap-2">
-                        <Button type="button" variant="ghost" onClick={() => setShowEditLabelIfu(false)}>
-                          Hủy
-                        </Button>
-                        <Button type="submit">💾 Lưu Thiết kế Nhãn &amp; HDSD (IFU)</Button>
-                      </div>
-                    </form>
-                  )}
+                      {/* PHẦN A: FILE ĐÍNH KÈM HƯỚNG DẪN SỬ DỤNG (IFU) ĐỂ TRUY XUẤT & IN KHI SẢN XUẤT */}
+                      <div className="mb-4 p-3.5 rounded-xl border border-emerald-500/35 bg-emerald-950/15 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-extrabold text-emerald-300 uppercase">
+                              📎 Tài Liệu Hướng Dẫn Sử Dụng Đính Kèm Theo BOM (Truy xuất tự động &amp; In ngay tại xưởng sản xuất)
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              Khi tạo Lệnh sản xuất (Thường hoặc Chia sẵn .D.IC), hệ thống tự động lấy đúng file HDSD đính kèm dưới đây để nhân viên sản xuất xem và in đóng vào hộp Kit.
+                            </div>
+                          </div>
+                        </div>
 
-                  {showPreviewLabelIfu && (
-                    <div className="mt-3 p-3 rounded-xl border-2 border-sky-600 bg-white dark:bg-slate-950 space-y-3 text-xs">
-                      <div className="font-bold text-sky-900 dark:text-sky-300 uppercase">
-                        Bản Xem Trước Mẫu Thiết Kế Nhãn &amp; Tờ Hướng Dẫn Sử Dụng (IFU) — Tự Động Ghép Số Lô Khi In Theo PO
-                      </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <div className="p-3 border-2 border-slate-800 rounded-lg bg-slate-50 dark:bg-slate-900 space-y-1">
-                          <div className="font-bold border-b border-slate-300 pb-1 flex justify-between">
-                            <span>NHÃN HỘP NGOÀI ({labelIfuForm.label_template_code})</span>
-                            <span className="px-1.5 py-0.5 rounded bg-slate-900 text-white font-mono text-[10px]">IVD</span>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                          {/* File 1: HDSD Mặc định */}
+                          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                                  📄 1. FILE HDSD TIÊU CHUẨN (MẶC ĐỊNH)
+                                </span>
+                                <div className="font-mono font-bold text-xs text-slate-100 mt-1">
+                                  {labelIfuForm.ifu_file_name || `HDSD_${bomDetail.bom.product_code}_Rev01.pdf`}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  Mã: {labelIfuForm.ifu_code} · {labelIfuForm.ifu_version} · {labelIfuForm.ifu_file_size || "428 KB"}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
+                              <Button variant="ghost" onClick={() => openAndPrintIfuFile("STANDARD", false)}>
+                                👁️ Xem file HDSD
+                              </Button>
+                              <Button variant="secondary" onClick={() => openAndPrintIfuFile("STANDARD", true)}>
+                                🖨️ In ngay HDSD
+                              </Button>
+                              <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 hover:border-sky-500 text-sky-300 cursor-pointer inline-flex items-center gap-1">
+                                📤 Đính kèm / Thay file (PDF/DOCX/Ảnh)
+                                <input
+                                  type="file"
+                                  accept=".pdf,.doc,.docx,image/*"
+                                  style={{ display: "none" }}
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) handleUploadIfuAttachment("STANDARD", f);
+                                  }}
+                                />
+                              </label>
+                            </div>
                           </div>
-                          <div className="font-bold text-sm text-sky-800 dark:text-sky-300">{bomDetail.bom.product_name}</div>
-                          <div className="grid grid-cols-2 gap-1 font-mono text-[11px] pt-1">
-                            <div>REF: {bomDetail.bom.product_code}</div>
-                            <div>LOT: [Tự điền theo PO]</div>
-                            <div>MFG: [Tự điền theo PO]</div>
-                            <div>EXP: [MFG + {bomDetail.bom.shelf_life_days} ngày]</div>
-                            <div>QUY CÁCH: {bomDetail.bom.tests_per_kit} Tests</div>
-                            <div>UDI: {labelIfuForm.udi_di}</div>
+
+                          {/* File 2: HDSD Dạng chia sẵn (.D.IC) */}
+                          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold">
+                                  🧪 2. FILE HDSD DẠNG CHIA SẴN (.D.IC — ALIQUOTED)
+                                </span>
+                                <div className="font-mono font-bold text-xs text-slate-100 mt-1">
+                                  {labelIfuForm.ifu_aliquoted_file_name || `HDSD_${bomDetail.bom.product_code}.D.IC_ChiaSan_Rev01.pdf`}
+                                </div>
+                                <div className="text-[11px] text-slate-400">
+                                  Tự động kích hoạt khi PO đặt hàng dạng chia sẵn (.D.IC) · {labelIfuForm.ifu_aliquoted_file_size || "452 KB"}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
+                              <Button variant="ghost" onClick={() => openAndPrintIfuFile("ALIQUOTED", false)}>
+                                👁️ Xem file .D.IC
+                              </Button>
+                              <Button variant="secondary" onClick={() => openAndPrintIfuFile("ALIQUOTED", true)}>
+                                🖨️ In ngay .D.IC
+                              </Button>
+                              <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 hover:border-sky-500 text-sky-300 cursor-pointer inline-flex items-center gap-1">
+                                📤 Đính kèm file .D.IC
+                                <input
+                                  type="file"
+                                  accept=".pdf,.doc,.docx,image/*"
+                                  style={{ display: "none" }}
+                                  onChange={(e) => {
+                                    const f = e.target.files?.[0];
+                                    if (f) handleUploadIfuAttachment("ALIQUOTED", f);
+                                  }}
+                                />
+                              </label>
+                            </div>
                           </div>
                         </div>
-                        <div className="p-3 border border-emerald-600 rounded-lg bg-emerald-50/40 dark:bg-emerald-950/20 space-y-1">
-                          <div className="font-bold text-emerald-900 dark:text-emerald-200 border-b border-emerald-300 pb-1 flex justify-between">
-                            <span>TỜ HƯỚNG DẪN SỬ DỤNG ({labelIfuForm.ifu_code})</span>
-                            <span className="font-mono text-[11px]">{labelIfuForm.ifu_version}</span>
+                      </div>
+
+                      {/* PHẦN B: HÌNH ẢNH MẪU NHÃN TRỰC QUAN LUÔN HIỂN THỊ (LIVE VISUAL ARTWORK PREVIEW) */}
+                      <div className="p-3.5 rounded-xl border border-sky-500/35 bg-slate-900/80 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <div className="text-xs font-extrabold text-sky-300 uppercase">
+                              🏷️ Hình ảnh Mẫu Nhãn Sản Phẩm Trực Quan ({labelIfuForm.label_template_code}) — Chuẩn ISO 15223 / IVD / Barcode GS1
+                            </div>
+                            <div className="text-[11px] text-slate-400">
+                              Mã UDI-DI: <span className="font-mono text-slate-200">{labelIfuForm.udi_di}</span> · Tự động điền LOT / NSX / HSD thực tế khi phát lệnh sản xuất.
+                            </div>
                           </div>
-                          <div><b>Mục đích:</b> {labelIfuForm.ifu_intended_use}</div>
-                          <div><b>Chu kỳ nhiệt qPCR:</b> {labelIfuForm.ifu_thermal_profile}</div>
-                          <div><b>Kênh đọc:</b> {labelIfuForm.ifu_channels}</div>
-                          <div><b>Phiên giải Ct:</b> {labelIfuForm.ifu_interpretation}</div>
+                          <div className="flex gap-1.5">
+                            <Button
+                              variant="ghost"
+                              onClick={() =>
+                                printElementHtml(
+                                  labelPreviewRef.current,
+                                  `Bộ Nhãn Sản Phẩm ${labelIfuForm.label_template_code || ""}`
+                                )
+                              }
+                            >
+                              🖨️ In thử bộ nhãn
+                            </Button>
+                            <Button variant="primary" onClick={() => setShowLabelStudio((v) => !v)}>
+                              {showLabelStudio ? "Thu gọn Trình thiết kế" : "🎨 Tùy chỉnh / Kéo thả Thiết kế Nhãn"}
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div
+                          ref={labelPreviewRef}
+                          className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center p-3 rounded-lg bg-slate-950/80 border border-slate-800 overflow-x-auto"
+                        >
+                          {/* Nhãn Hộp Ngoài / Chai BTP */}
+                          <div className="xl:col-span-7 flex flex-col items-center gap-2">
+                            <div className="text-[11px] font-bold text-sky-300">
+                              📦 {labelBundle.outer_box.name} ({labelBundle.outer_box.width_mm}×{labelBundle.outer_box.height_mm} mm)
+                            </div>
+                            <VisualLabelCanvas
+                              config={labelBundle.outer_box}
+                              sample={sampleData}
+                              scale={labelBundle.outer_box.width_mm >= 90 ? 3.5 : 4.2}
+                              interactive={false}
+                            />
+                          </div>
+
+                          {/* Nhãn Ống Thành Phần (3 tem/hàng) & Các Nhãn Thành Phần Bổ Sung */}
+                          <div className="xl:col-span-5 flex flex-col items-center gap-2">
+                            <div className="text-[11px] font-bold text-emerald-300">
+                              🧪 Ống 1: {labelBundle.tube.extra_text || labelBundle.tube.name} ({labelBundle.tube.width_mm}×{labelBundle.tube.height_mm} mm)
+                            </div>
+                            <div className="flex flex-wrap justify-center gap-2">
+                              {Array.from({ length: Math.min(2, labelBundle.tube.labels_per_row || 2) }).map((_, idx) => (
+                                <VisualLabelCanvas
+                                  key={idx}
+                                  config={labelBundle.tube}
+                                  sample={sampleData}
+                                  scale={4.0}
+                                  interactive={false}
+                                />
+                              ))}
+                            </div>
+                            {(labelBundle.extra_components || []).map((ext, extIdx) => (
+                              <div key={`ext-prev-${extIdx}`} className="flex flex-col items-center gap-1 pt-2 border-t border-slate-800 w-full">
+                                <div className="text-[11px] font-bold text-teal-300">
+                                  🧪 Thành phần #{extIdx + 2}: {ext.extra_text || ext.name} ({ext.width_mm}×{ext.height_mm} mm)
+                                </div>
+                                <div className="flex flex-wrap justify-center gap-2">
+                                  {Array.from({ length: Math.min(2, ext.labels_per_row || 1) }).map((_, idx) => (
+                                    <VisualLabelCanvas
+                                      key={idx}
+                                      config={ext}
+                                      sample={sampleData}
+                                      scale={ext.width_mm <= 45 ? 4.0 : 3.2}
+                                      interactive={false}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                            <div className="text-[10px] text-slate-400">
+                              Khổ cuộn in nhiệt: {labelBundle.tube.labels_per_row} tem/hàng (Khoảng cách ngang {labelBundle.tube.label_gap_mm}mm)
+                            </div>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
-                </Card>
+
+                      {/* PHẦN C: STUDIO THIẾT KẾ NHÃN HIỆN ĐẠI (KÉO THẢ & 18 BIỂU TƯỢNG ISO/GHS) */}
+                      {showLabelStudio && (
+                        <KitLabelStudio
+                          bundle={labelBundle}
+                          sample={sampleData}
+                          isSemiFinished={isSemi}
+                          packagingItems={bomDetail.packaging || []}
+                          bomLines={bomDetail.lines || []}
+                          onChangeBundle={setLabelBundle}
+                          onSave={() => handleSaveLabelIfu()}
+                        />
+                      )}
+
+                      {/* PHẦN D: CẤU HÌNH MÃ NHÃN, UDI-DI & THÔNG SỐ KỸ THUẬT TRÍCH XUẤT LÊN COA/IFU */}
+                      {showEditLabelIfu && (
+                        <form
+                          onSubmit={handleSaveLabelIfu}
+                          className="mt-3 p-3.5 rounded-xl border border-sky-500/40 bg-slate-900/90 space-y-2.5"
+                        >
+                          <div className="text-xs font-bold text-sky-300 uppercase">
+                            ⚙️ Cấu hình Mã Nhãn, Mã định danh UDI-DI (GS1) &amp; Thông số Chu kỳ nhiệt trích xuất tự động
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                            <Field label="Mã Mẫu Nhãn (Label Template Code)">
+                              <input
+                                className={`${inputClass} font-mono`}
+                                value={labelIfuForm.label_template_code}
+                                onChange={(e) => setLabelIfuForm({ ...labelIfuForm, label_template_code: e.target.value })}
+                                required
+                              />
+                            </Field>
+                            <Field label="Kích thước tem Hộp & Ống (mm)">
+                              <input
+                                className={inputClass}
+                                value={labelIfuForm.label_dimensions}
+                                onChange={(e) => setLabelIfuForm({ ...labelIfuForm, label_dimensions: e.target.value })}
+                                required
+                              />
+                            </Field>
+                            <Field label="Mã định danh UDI-DI (GS1)">
+                              <input
+                                className={`${inputClass} font-mono`}
+                                value={labelIfuForm.udi_di}
+                                onChange={(e) => setLabelIfuForm({ ...labelIfuForm, udi_di: e.target.value })}
+                              />
+                            </Field>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <Field label="Mã Tài liệu Hướng dẫn sử dụng (IFU Code)">
+                              <input
+                                className={`${inputClass} font-mono`}
+                                value={labelIfuForm.ifu_code}
+                                onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_code: e.target.value })}
+                                required
+                              />
+                            </Field>
+                            <Field label="Phiên bản HDSD (IFU Revision)">
+                              <input
+                                className={inputClass}
+                                value={labelIfuForm.ifu_version}
+                                onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_version: e.target.value })}
+                                required
+                              />
+                            </Field>
+                          </div>
+                          <Field label="1. Mục đích sử dụng tóm tắt (Trích xuất lên Phụ lục HDSD & COA)">
+                            <textarea
+                              rows={2}
+                              className={inputClass}
+                              value={labelIfuForm.ifu_intended_use}
+                              onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_intended_use: e.target.value })}
+                            />
+                          </Field>
+                          <Field label="2. Chương trình Chu kỳ nhiệt Real-time PCR (Thermal Cycling Protocol)">
+                            <textarea
+                              rows={2}
+                              className={inputClass}
+                              value={labelIfuForm.ifu_thermal_profile}
+                              onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_thermal_profile: e.target.value })}
+                            />
+                          </Field>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <Field label="3. Kênh màu Huỳnh quang (Fluorescence Channels)">
+                              <input
+                                className={inputClass}
+                                value={labelIfuForm.ifu_channels}
+                                onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_channels: e.target.value })}
+                              />
+                            </Field>
+                            <Field label="4. Tiêu chuẩn Phiên giải Kết quả Ct (Result Interpretation)">
+                              <input
+                                className={inputClass}
+                                value={labelIfuForm.ifu_interpretation}
+                                onChange={(e) => setLabelIfuForm({ ...labelIfuForm, ifu_interpretation: e.target.value })}
+                              />
+                            </Field>
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <Button type="button" variant="ghost" onClick={() => setShowEditLabelIfu(false)}>
+                              Hủy
+                            </Button>
+                            <Button type="submit">💾 Lưu Cấu hình Nhãn &amp; HDSD (IFU)</Button>
+                          </div>
+                        </form>
+                      )}
+                    </Card>
+                  );
+                })()}
             </div>
           )}
         </div>
@@ -1511,15 +2704,17 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                     <tr
                       key={r.id}
                       onClick={() => setSelectedRoutingId(r.id)}
-                      className={`cursor-pointer hover:bg-amber-50/60 ${selectedRoutingId === r.id ? "bg-amber-50" : ""}`}
+                      className={`cursor-pointer transition-colors hover:bg-sky-50/80 dark:hover:bg-sky-950/40 ${
+                        selectedRoutingId === r.id ? "bg-sky-100/80 dark:bg-sky-900/50" : ""
+                      }`}
                     >
-                      <td className="px-3 py-2 font-mono text-xs font-semibold">{r.code}</td>
+                      <td className="px-3 py-2 font-mono text-xs font-bold text-sky-700 dark:text-sky-300">{r.code}</td>
                       <td className="px-3 py-2 text-xs">
-                        <div className="font-medium text-stone-800">{r.product_code}</div>
-                        <div className="text-stone-500">{r.name}</div>
+                        <div className="font-semibold text-slate-800 dark:text-slate-100">{r.product_code}</div>
+                        <div className="text-slate-500 dark:text-slate-400">{r.name}</div>
                       </td>
-                      <td className="px-3 py-2 text-xs">v{r.routing_version}</td>
-                      <td className="px-3 py-2 text-xs">{r.step_count} bước</td>
+                      <td className="px-3 py-2 text-xs font-mono text-slate-700 dark:text-slate-200">v{r.routing_version}</td>
+                      <td className="px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200">{r.step_count} bước</td>
                       <td className="px-3 py-2">
                         <StatusBadge status={r.status} />
                       </td>
@@ -1589,7 +2784,7 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                 title={`Các bước công đoạn chuẩn (${routingDetail.steps.length} bước — Tự động sinh Hồ sơ lô EBR khi chạy PO)`}
                 actions={
                   <div className="flex flex-wrap gap-1.5">
-                    {routingDetail.routing.status === "DRAFT" && (
+                    {routingDetail.routing.status !== "OBSOLETE" && (
                       <Button variant="ghost" onClick={() => setShowAddStep((v) => !v)}>
                         {showAddStep ? "Đóng form thêm bước" : "+ Thêm bước thủ công"}
                       </Button>
@@ -1605,10 +2800,10 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                       <tr key={s.id}>
                         <td className="px-3 py-2 font-mono text-xs font-bold">{s.seq}</td>
                         <td className="px-3 py-2 text-xs">
-                          <div className="font-semibold text-stone-800">
+                          <div className="font-semibold text-slate-800 dark:text-slate-100">
                             {s.step_code} — {s.step_name}
                           </div>
-                          <div className="text-stone-500">{s.instructions}</div>
+                          <div className="text-slate-500 dark:text-slate-400">{s.instructions}</div>
                         </td>
                         <td className="px-3 py-2 text-xs">{STEP_CATEGORY_LABELS[s.category] ?? s.category}</td>
                         <td className="px-3 py-2 text-xs">

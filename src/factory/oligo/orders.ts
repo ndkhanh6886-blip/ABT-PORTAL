@@ -1,13 +1,23 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";
-import { vnToday } from "../core/dates";
+import { authorize, hasFactoryPermission, registerPermissions, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
+import { addDays, vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
 import { analyze, SequenceError } from "./analyzer";
 import { loadCatalog } from "./catalog";
+import { ensureLegacyOligoDataSeeded } from "./legacySync";
+import {
+  ensureOligoPricingSchema,
+  linesTotal,
+  loadPriceConfig,
+  normalizeLegacySequence,
+  orderSequenceLines,
+  recomputeOrderTotalPrice,
+  standardUnitPrice,
+} from "./pricing";
 
 registerPermissions([{ code: "oligo.order.manage", description: "Lập đơn Oligo, nhập / sửa / tách / gộp trình tự" }]);
 
@@ -17,22 +27,21 @@ export const FORMATS = ["LYOPHILIZED", "LIQUID"] as const;
 export const OLIGO_ROLES = ["PRIMER", "PROBE", "POSITIVE_CONTROL", "TEMPLATE", "BLOCKER", "OTHER"] as const;
 export type OligoRole = (typeof OLIGO_ROLES)[number];
 
-export function inferOligoRole(name: string, a: ReturnType<typeof analyze>, explicitRole?: string | null): OligoRole {
+export function inferOligoRole(
+  _name: string,
+  a: { product_type?: string },
+  explicitRole?: string | null,
+  explicitProductType?: string | null
+): OligoRole {
   if (explicitRole && (OLIGO_ROLES as readonly string[]).includes(explicitRole.toUpperCase())) {
     return explicitRole.toUpperCase() as OligoRole;
   }
-  const n = name.toUpperCase();
-  if (/(POS[_\s-]*CTRL|POSITIVE[_\s-]*CONTROL|CHUNG[_\s-]*DUONG|CHỨNG[_\s-]*DƯƠNG|\bPC\b)/.test(n)) {
-    return "POSITIVE_CONTROL";
-  }
-  if (/(TEMPLATE|AMPLICON|TARGET[_\s-]*STD|PLASMID)/.test(n) || a.length >= 60) {
+  const pt = (explicitProductType || a.product_type || "").toUpperCase();
+  if (pt === "AMPLICON_LINEAR" || pt === "AMPLICON_PLASMID") {
     return "TEMPLATE";
   }
-  if (a.product_type === "PROBE" || /(\bPROBE\b|\bPRB\b|TAQMAN)/.test(n)) {
+  if (pt === "PROBE") {
     return "PROBE";
-  }
-  if (/(\bBLOCKER\b|\bPNA\b)/.test(n)) {
-    return "BLOCKER";
   }
   return "PRIMER";
 }
@@ -55,22 +64,80 @@ export async function createOligoOrder(tx: Tx, actor: AuthzActor, input: unknown
   await authorize(tx, actor, "oligo.order.manage", data.org_unit_id);
   await oligoUnit(tx, data.org_unit_id);
   let due = data.due_date ?? null;
-  if (data.internal_order_id) {
-    const io = (await tx.query("SELECT org_unit_id, status, committed_date, kd_po_code FROM intake.internal_order WHERE id = $1", [data.internal_order_id])).rows[0];
+  let internalOrderId = data.internal_order_id ?? null;
+  let customerLabel = data.customer_label?.trim() || null;
+  let orderNotes = data.notes?.trim() || null;
+
+  if (internalOrderId) {
+    const io = (
+      await tx.query(
+        "SELECT id, code, org_unit_id, status, committed_date, requested_date, kd_po_code, notes, ship_to FROM intake.internal_order WHERE id = $1",
+        [internalOrderId]
+      )
+    ).rows[0];
     if (!io || io.org_unit_id !== data.org_unit_id) throw invalid("Đơn nội bộ không thuộc phòng Oligo này.");
-    if (!["ACCEPTED", "IN_PRODUCTION", "READY", "PARTIALLY_DELIVERED"].includes(io.status)) throw invalid("Đơn nội bộ chưa được nhận hoặc đã kết thúc.");
-    due ??= io.committed_date;
+    if (!["RECEIVED", "ACCEPTED", "IN_PRODUCTION", "READY", "PARTIALLY_DELIVERED"].includes(io.status)) {
+      throw invalid("Đơn nội bộ đã kết thúc.");
+    }
+    const ioDate = io.committed_date ? String(io.committed_date).slice(0, 10) : io.requested_date ? String(io.requested_date).slice(0, 10) : null;
+    due ??= ioDate;
+    customerLabel ??= io.ship_to?.name ? `${io.kd_po_code} — ${io.ship_to.name}` : `PO ${io.kd_po_code} (${io.code})`;
+    orderNotes ??= io.notes || `Triển khai tổng hợp Oligo theo Đơn nội bộ ${io.code} (PO ${io.kd_po_code})`;
+  } else {
+    // Tự động tạo và liên kết Đơn Nội Bộ tương ứng nếu người dùng tạo trực tiếp từ phân hệ Tổng hợp Oligo
+    const ioCode = await nextNumber(tx, "INTERNAL_ORDER");
+    const kdPoCode = await nextNumber(tx, "KD_PO_OLIGO");
+    const autoDue = due && due >= vnToday() ? due : addDays(vnToday(), 7);
+    due = autoDue;
+    const newIo = (
+      await tx.query(
+        `INSERT INTO intake.internal_order
+           (code, kd_po_id, kd_po_code, org_unit_id, ship_mode, requested_date, committed_date, initial_committed_date, status, notes, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, 'TO_KD', $5, $5, $5, 'IN_PRODUCTION', $6, $7, $7)
+         RETURNING id, code, kd_po_code`,
+        [
+          ioCode,
+          Math.floor(Date.now() / 1000) % 1000000,
+          kdPoCode,
+          data.org_unit_id,
+          autoDue,
+          orderNotes || `Đơn nội bộ tự động đồng bộ từ Phòng Tổng hợp Oligo (${customerLabel || "Khách hàng / Dự án nội bộ"})`,
+          actor.userId,
+        ]
+      )
+    ).rows[0];
+    const oligoItem = (
+      await tx.query(
+        "SELECT id, code, name, base_uom, kd_item_code FROM master.item WHERE code LIKE 'OLI-%' OR item_type = 'OLIGO_SERVICE' ORDER BY code LIMIT 1"
+      )
+    ).rows[0];
+    await tx.query(
+      `INSERT INTO intake.internal_order_line
+         (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price)
+       VALUES ($1, 1, 0, $2, $3, $4, $5, 1, 850000)`,
+      [
+        newIo.id,
+        oligoItem?.kd_item_code || oligoItem?.code || "OLI-CUSTOM-QPCR-SET",
+        oligoItem?.name || customerLabel || "Bộ Primer/Probe & Amplicon theo yêu cầu",
+        oligoItem?.base_uom || "Bộ",
+        oligoItem?.id ?? null,
+      ]
+    );
+    internalOrderId = newIo.id;
+    customerLabel ??= `PO ${newIo.kd_po_code} — Bộ Primer/Probe & Amplicon`;
+    orderNotes ??= `Liên kết tự động với Đơn nội bộ ${newIo.code} (${newIo.kd_po_code})`;
   }
+
   if (due && due < vnToday()) throw invalid("Hạn giao không được trước hôm nay.");
   const code = await nextNumber(tx, "OLIGO_ORDER");
   const order = (
     await tx.query(
       `INSERT INTO oligo.oligo_order (code, org_unit_id, internal_order_id, customer_label, due_date, initial_due_date, notes, created_by, updated_by)
        VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $7) RETURNING *`,
-      [code, data.org_unit_id, data.internal_order_id ?? null, data.customer_label ?? null, due, data.notes ?? null, actor.userId]
+      [code, data.org_unit_id, internalOrderId, customerLabel, due, orderNotes, actor.userId]
     )
   ).rows[0];
-  await writeAudit(tx, actor, { entityType: "oligo_order", entityId: order.id, action: "create", changes: { code: [null, code] } });
+  await writeAudit(tx, actor, { entityType: "oligo_order", entityId: order.id, action: "create", changes: { code: [null, code], internal_order_id: [null, internalOrderId] } });
   return order;
 }
 
@@ -125,7 +192,8 @@ async function parseLines(tx: Tx, text: string, defaults: z.infer<typeof linesSc
     const foNorm = fo === "DONG KHO" || fo === "ĐÔNG KHÔ" ? "LYOPHILIZED" : fo === "DUNG DICH" || fo === "DUNG DỊCH" ? "LIQUID" : fo;
     if (!(FORMATS as readonly string[]).includes(foNorm)) return void errors.push({ line, message: `Định dạng "${format}" không hợp lệ (LYOPHILIZED / LIQUID).` });
     try {
-      const a = analyze(raw ?? "", catalog);
+      const cleanedRaw = normalizeLegacySequence(raw ?? "") || (raw ?? "");
+      const a = analyze(cleanedRaw, catalog);
       const seqName = name || `Oligo ${line}`;
       const oligo_role = inferOligoRole(seqName, a, roleCol || defaults.oligo_role);
       const target_pathogen = (pathogenCol || defaults.target_pathogen || "").trim() || null;
@@ -141,8 +209,10 @@ async function parseLines(tx: Tx, text: string, defaults: z.infer<typeof linesSc
   return out;
 }
 
-export function productTypeOf(a: ReturnType<typeof analyze>): string {
-  return a.product_type === "AMPLICON" ? "AMPLICON_LINEAR" : a.product_type;
+export function productTypeOf(a: ReturnType<typeof analyze>, role?: OligoRole | string | null): string {
+  const r = (role || "").toUpperCase();
+  if (r === "TEMPLATE" || r === "POSITIVE_CONTROL") return "AMPLICON_LINEAR";
+  return a.product_type === "PROBE" ? "PROBE" : "PRIMER";
 }
 
 export async function insertSequence(
@@ -164,18 +234,51 @@ export async function insertSequence(
     relation?: string | null;
   }
 ) {
+  await ensureOligoPricingSchema(tx);
   const code = await nextNumber(tx, "OLIGO_SEQUENCE");
   const a = fields.a;
   const role = inferOligoRole(fields.name, a, fields.oligo_role);
+  const prodType = productTypeOf(a, role);
+  const cfg = await loadPriceConfig(tx);
+  let pricingType = "auto";
+  let pricePct = 100;
+  if (fields.order_id) {
+    const ord = (await tx.query("SELECT pricing_type, price_percentage FROM oligo.oligo_order WHERE id = $1", [fields.order_id])).rows[0];
+    if (ord) {
+      pricingType = ord.pricing_type || "auto";
+      pricePct = Number(ord.price_percentage ?? 100);
+    }
+  }
+  const cls =
+    prodType === "AMPLICON_PLASMID"
+      ? "Amplicon (Plasmid)"
+      : prodType === "AMPLICON_LINEAR"
+      ? "Amplicon (Linear)"
+      : "DNA";
+  const priceLines = orderSequenceLines({
+    sequenceStr: a.normalized || fields.raw,
+    scale: fields.scale_code,
+    purification: fields.purification,
+    format: fields.format,
+    classification: cls,
+    pricingType,
+    pricePercentage: pricePct,
+    config: cfg,
+    enforceLock: false,
+  });
+  const unitPrice = standardUnitPrice(priceLines);
+  const seqPrice = linesTotal(priceLines);
+
   return (
     await tx.query(
       `INSERT INTO oligo.oligo_sequence (code, order_id, org_unit_id, line_no, name, raw_sequence, normalized_sequence, base_count, molecule_type, product_type,
-         oligo_role, target_pathogen, scale_code, purification, format, mw, ext_coeff_260, tm, nmol_per_od, ug_per_od, gc_percent, modifications, warnings, parent_sequence_id, relation, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $26) RETURNING *`,
+         oligo_role, target_pathogen, scale_code, purification, format, mw, ext_coeff_260, tm, nmol_per_od, ug_per_od, gc_percent, modifications, warnings,
+         parent_sequence_id, relation, unit_price, price, price_lines_json, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28::jsonb, $29, $29) RETURNING *`,
       [
-        code, fields.order_id, fields.org_unit_id, fields.line_no, fields.name, fields.raw, a.normalized, a.length, a.molecule_type, productTypeOf(a),
+        code, fields.order_id, fields.org_unit_id, fields.line_no, fields.name, fields.raw, a.normalized, a.length, a.molecule_type, prodType,
         role, fields.target_pathogen ?? null, fields.scale_code, fields.purification, fields.format, a.mw, a.ext_coeff_260, a.tm, a.nmol_per_od, a.ug_per_od, a.gc_percent, a.modifications,
-        JSON.stringify(a.warnings), fields.parent_sequence_id ?? null, fields.relation ?? null, actor.userId,
+        JSON.stringify(a.warnings), fields.parent_sequence_id ?? null, fields.relation ?? null, unitPrice, seqPrice, JSON.stringify(priceLines), actor.userId,
       ]
     )
   ).rows[0];
@@ -208,6 +311,7 @@ export async function addSequences(tx: Tx, actor: AuthzActor, orderId: string, i
       })
     );
   }
+  await recomputeOrderTotalPrice(tx, orderId);
   await writeAudit(tx, actor, { entityType: "oligo_order", entityId: orderId, action: "add_sequences", changes: { sequences: [null, created.length] } });
   return { added: created.length };
 }
@@ -274,13 +378,102 @@ export async function visibleOligoUnits(tx: Tx, actor: AuthzActor): Promise<stri
   return out;
 }
 
+export async function updateOligoOrderMeta(tx: Tx, actor: AuthzActor, orderId: string, input: unknown) {
+  const schema = z.object({
+    notes: z.string().trim().max(2000).optional().nullable(),
+    customer_label: z.string().trim().max(200).optional().nullable(),
+    due_date: z.string().regex(DATE, "Ngày giao dạng YYYY-MM-DD").optional().nullable(),
+    date_change_reason: z.string().trim().optional().nullable(),
+    internal_order_id: z.string().uuid().optional().nullable(),
+  });
+  const data = parseInput(schema, input);
+  const order = (await tx.query("SELECT * FROM oligo.oligo_order WHERE id = $1 FOR UPDATE", [orderId])).rows[0];
+  if (!order) throw notFound("đơn Oligo");
+  await authorize(tx, actor, "oligo.order.manage", order.org_unit_id);
+
+  const oldDue = order.due_date ? String(order.due_date).slice(0, 10) : null;
+  const newDue = data.due_date !== undefined ? data.due_date : oldDue;
+  const isDateChanged = Boolean(newDue && newDue !== oldDue);
+
+  if (isDateChanged) {
+    if (!data.date_change_reason || data.date_change_reason.trim().length < 3) {
+      throw invalid("Vui lòng nhập lý do thay đổi ngày giao hàng (tối thiểu 3 ký tự).");
+    }
+  }
+
+  const nextNotes = data.notes !== undefined ? data.notes || null : order.notes;
+  const nextLabel = data.customer_label !== undefined ? data.customer_label || null : order.customer_label;
+  const nextIoId = data.internal_order_id !== undefined ? data.internal_order_id || null : order.internal_order_id;
+
+  const upd = (
+    await tx.query(
+      `UPDATE oligo.oligo_order
+          SET notes = $2,
+              customer_label = $3,
+              due_date = $4,
+              due_date_change_count = CASE WHEN $5::boolean THEN due_date_change_count + 1 ELSE due_date_change_count END,
+              internal_order_id = $6,
+              version = version + 1,
+              updated_at = now(),
+              updated_by = $7
+        WHERE id = $1
+        RETURNING *`,
+      [orderId, nextNotes, nextLabel, newDue, isDateChanged, nextIoId, actor.userId]
+    )
+  ).rows[0];
+
+  // Đồng bộ 2 chiều sang Đơn Nội Bộ liên kết
+  if (nextIoId) {
+    if (isDateChanged && newDue) {
+      await tx.query(
+        `UPDATE intake.internal_order
+            SET committed_date = $2,
+                due_date_change_count = due_date_change_count + 1,
+                notes = COALESCE($3, notes),
+                version = version + 1,
+                updated_at = now(),
+                updated_by = $4
+          WHERE id = $1`,
+        [nextIoId, newDue, nextNotes, actor.userId]
+      );
+    } else if (data.notes !== undefined) {
+      await tx.query(
+        `UPDATE intake.internal_order
+            SET notes = $2, updated_at = now(), updated_by = $3
+          WHERE id = $1`,
+        [nextIoId, nextNotes, actor.userId]
+      );
+    }
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "oligo_order",
+    entityId: orderId,
+    action: isDateChanged ? "change_due_date" : "update_meta",
+    changes: {
+      due_date: [oldDue, newDue],
+      notes: [order.notes, nextNotes],
+      internal_order_id: [order.internal_order_id, nextIoId],
+    },
+    reason: data.date_change_reason || undefined,
+  });
+
+  return upd;
+}
+
 export async function listOligoOrders(tx: Tx, actor: AuthzActor, status?: string) {
+  await ensureLegacyOligoDataSeeded(tx);
+  await ensureOligoPricingSchema(tx);
   const units = await visibleOligoUnits(tx, actor);
   if (units !== "ALL" && !units.length) return [];
   return (
     await tx.query(
-      `SELECT o.id, o.code, o.customer_label, o.due_date, o.due_date_change_count, o.status, o.created_at, io.kd_po_code,
+      `SELECT o.id, o.code, o.customer_label, o.due_date, o.initial_due_date, o.due_date_change_count, o.notes, o.status, o.created_at,
+              o.pricing_type, o.price_percentage::float AS price_percentage, o.vat_rate::float AS vat_rate, o.total_price::float AS total_price,
+              o.internal_order_id, io.code AS internal_order_code, io.kd_po_code, io.requested_date, io.committed_date, io.notes AS internal_order_notes,
               (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT')) AS sequence_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('PRIMER', 'PROBE')) AS primer_probe_count,
+              (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status NOT IN ('CANCELLED', 'SPLIT') AND s.product_type IN ('AMPLICON_LINEAR', 'AMPLICON_PLASMID')) AS amplicon_count,
               (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'COMPLETED') AS ready_count,
               (SELECT count(*)::int FROM oligo.oligo_sequence s WHERE s.order_id = o.id AND s.status = 'DELIVERED') AS delivered_count
          FROM oligo.oligo_order o LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
@@ -292,9 +485,15 @@ export async function listOligoOrders(tx: Tx, actor: AuthzActor, status?: string
 }
 
 export async function getOligoOrder(tx: Tx, actor: AuthzActor, id: string) {
+  await ensureLegacyOligoDataSeeded(tx);
+  await ensureOligoPricingSchema(tx);
   const order = (
     await tx.query(
-      "SELECT o.*, io.code AS internal_order_code, io.kd_po_code FROM oligo.oligo_order o LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id WHERE o.id = $1",
+      `SELECT o.*, o.price_percentage::float AS price_percentage, o.vat_rate::float AS vat_rate, o.total_price::float AS total_price,
+              io.code AS internal_order_code, io.kd_po_code, io.requested_date, io.committed_date, io.notes AS internal_order_notes
+         FROM oligo.oligo_order o
+         LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
+        WHERE o.id = $1`,
       [id]
     )
   ).rows[0];
@@ -307,6 +506,7 @@ export async function getOligoOrder(tx: Tx, actor: AuthzActor, id: string) {
               s.oligo_role, s.target_pathogen, s.scale_code, s.purification,
               s.format, s.mw::float AS mw, s.ext_coeff_260::float AS ext_coeff_260, s.tm::float AS tm, s.nmol_per_od::float AS nmol_per_od, s.ug_per_od::float AS ug_per_od,
               s.gc_percent::float AS gc_percent, s.modifications, s.warnings, s.status, s.parent_sequence_id, s.relation, s.pool_id, s.version,
+              s.unit_price::float AS unit_price, s.price::float AS price, s.price_lines_json,
               m.code AS pool_master_code
          FROM oligo.oligo_sequence s
          LEFT JOIN oligo.oligo_pool p ON p.id = s.pool_id LEFT JOIN oligo.oligo_sequence m ON m.id = p.master_sequence_id

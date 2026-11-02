@@ -112,7 +112,10 @@ export async function initZaloDatabase(force = false): Promise<{ success: boolea
     `);
 
     // Automatically sync real personnel from personnel table if bindings are empty or have mock data
-    await syncPersonnelToZaloBindings();
+    const bindCount = await query("SELECT COUNT(*) FROM zalo_user_bindings");
+    if (force || parseInt(bindCount.rows[0]?.count || "0", 10) === 0) {
+      await syncPersonnelToZaloBindings();
+    }
 
     zaloDbInitialized = true;
     return { success: true };
@@ -230,8 +233,10 @@ export async function syncPersonnelToZaloBindings() {
         const currentPhone = cleanPhone || existing.phone_number;
 
         let finalStatus = "NO_PHONE";
-        if (currentPhone) {
-          finalStatus = existingZaloId ? "CONNECTED" : "PENDING_ZALO";
+        if (existingZaloId) {
+          finalStatus = "CONNECTED";
+        } else if (currentPhone) {
+          finalStatus = "PENDING_ZALO";
         }
 
         await query(

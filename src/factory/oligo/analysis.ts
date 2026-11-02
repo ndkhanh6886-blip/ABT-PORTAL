@@ -9,6 +9,7 @@ import { analyze, SequenceError } from "./analyzer";
 import { loadCatalog } from "./catalog";
 import { insertSequence, recomputeOrderStatus, visibleOligoUnits } from "./orders";
 import { sequenceMachine } from "./sequences";
+import { ensureLegacyOligoDataSeeded } from "./legacySync";
 
 // ---- lists across orders (Primer / Probe / Amplicon) ----
 
@@ -78,6 +79,7 @@ export async function savePlasmid(tx: Tx, actor: AuthzActor, id: string | null, 
 }
 
 export async function listPlasmids(tx: Tx, actor: AuthzActor) {
+  await ensureLegacyOligoDataSeeded(tx);
   await authorizeAnywhere(tx, actor, "oligo.view");
   return (
     await tx.query(

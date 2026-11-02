@@ -6,6 +6,11 @@ import { conflict, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput, updateRecord } from "../core/records";
 import { defineMachine, listAllowedActions, runTransition } from "../core/stateMachine";
+import {
+  LEGACY_EQUIPMENT_CATALOG_SEED,
+  LEGACY_TECH_PARTS_SEED,
+  type LegacyEquipmentBOMItem,
+} from "./legacyCatalogSeed";
 import "./permissions";
 
 export type ModelStatus = "DEVELOPMENT" | "COMMERCIAL" | "DISCONTINUED";
@@ -322,42 +327,790 @@ const createModelSchema = z.object({
     .transform((s) => s.toUpperCase())
     .optional(),
   name: z.string().trim().min(3, "nhập tên model thiết bị").max(250),
-  org_unit_id: z.string().uuid("chọn phòng Kỹ thuật – Công nghệ"),
+  org_unit_id: z.string().uuid("chọn phòng Kỹ thuật – Công nghệ").optional(),
   item_id: z.string().uuid().optional().nullable(),
   category: z
     .enum(["THERMAL_CYCLER", "EXTRACTOR", "CENTRIFUGE", "SPIN_COLUMN_SYSTEM", "INCUBATOR", "SPECTROPHOTOMETER", "OTHER"])
     .default("THERMAL_CYCLER"),
+  category_label: z.string().trim().max(150).optional().nullable(),
+  manufacturer: z.string().trim().max(250).optional().nullable(),
+  origin: z.string().trim().max(120).optional().nullable(),
+  price: z.coerce.number().min(0).default(0),
+  price_dealer1: z.coerce.number().min(0).default(0),
+  price_dealer2: z.coerce.number().min(0).default(0),
+  lead_time_days: z.coerce.number().int().min(1).max(365).default(14),
+  image_url: z.string().trim().max(1000).optional().nullable(),
   warranty_months: z.coerce.number().int().min(0).max(120).default(12),
   required_burn_in_hours: z.coerce.number().min(0).max(500).default(48),
   fqc_spec_id: z.string().uuid().optional().nullable(),
   rd_project_id: z.string().uuid().optional().nullable(),
   description: z.string().trim().max(3000).optional().nullable(),
   specs_json: z.record(z.string(), z.unknown()).optional(),
+  baseline_specs_json: z.record(z.string(), z.unknown()).optional(),
   accessories_standard: z.array(z.unknown()).optional(),
   accessories_optional: z.array(z.unknown()).optional(),
+  production_stages: z.array(z.string()).optional(),
+  bom_json: z.array(z.unknown()).optional(),
+  revision: z.string().trim().max(16).optional(),
+  firmware_version: z.string().trim().max(60).optional().nullable(),
 });
 
+function mapUnitToBaseUom(unit?: string | null): string {
+  const u = (unit ?? "").trim().toLowerCase();
+  if (u === "bộ" || u === "set") return "set";
+  if (u === "khay" || u === "plate") return "plate";
+  if (u === "hộp" || u === "box") return "box";
+  if (u === "mét" || u === "m") return "m";
+  return "pcs";
+}
+
+function mapStationToCode(station?: string | null): "STATION_1_MECH" | "STATION_2_PCB" | "STATION_3_FW" | "STATION_4_FQC" {
+  const s = (station ?? "").trim();
+  if (s === "STATION_1_MECH" || s === "STATION_2_PCB" || s === "STATION_3_FW" || s === "STATION_4_FQC") {
+    return s;
+  }
+  if (s.startsWith("1") || /cơ khí|vỏ máy|khung/i.test(s)) return "STATION_1_MECH";
+  if (s.startsWith("2") || /gia nhiệt|quang học|cảm biến/i.test(s)) return "STATION_2_PCB";
+  if (s.startsWith("3") || /điện|bo mạch|pcb/i.test(s)) return "STATION_2_PCB";
+  if (s.startsWith("4") || /firmware|burn-in|hiệu chuẩn|fqc/i.test(s)) return "STATION_4_FQC";
+  return "STATION_1_MECH";
+}
+
+let catalogSeededInProcess = false;
+
+export async function ensureTechCatalogAndBomSeeded(tx: Tx) {
+  await tx.query(`
+    ALTER TABLE device.device_model
+      ADD COLUMN IF NOT EXISTS category_label text,
+      ADD COLUMN IF NOT EXISTS manufacturer text DEFAULT 'CÔNG TY TNHH GIẢI PHÁP Y SINH ABT - CHI NHÁNH LONG HẬU',
+      ADD COLUMN IF NOT EXISTS origin text DEFAULT 'Việt Nam',
+      ADD COLUMN IF NOT EXISTS price numeric(18,2) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS price_dealer1 numeric(18,2) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS price_dealer2 numeric(18,2) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS lead_time_days integer NOT NULL DEFAULT 14,
+      ADD COLUMN IF NOT EXISTS image_url text DEFAULT '/logo_abt.png',
+      ADD COLUMN IF NOT EXISTS production_stages jsonb NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS bom_json jsonb NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS baseline_specs_json jsonb NOT NULL DEFAULT '{}'::jsonb,
+      ADD COLUMN IF NOT EXISTS base_model_code text
+  `);
+
+  await tx.query(`
+    ALTER TABLE device.model_bom_line
+      ADD COLUMN IF NOT EXISTS unit_cost numeric(18,2) NOT NULL DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS display_uom text,
+      ADD COLUMN IF NOT EXISTS part_category text,
+      ADD COLUMN IF NOT EXISTS station_label text,
+      ADD COLUMN IF NOT EXISTS preferred_vendor text
+  `);
+
+  if (process.env.FACTORY_ALLOW_DEMO_SEED !== "1") {
+    catalogSeededInProcess = true;
+    return;
+  }
+
+  if (catalogSeededInProcess) {
+    const checkCnt = (await tx.query("SELECT count(*)::int AS cnt FROM device.device_model WHERE price > 0")).rows[0]?.cnt ?? 0;
+    if (checkCnt >= 25) return;
+  }
+
+  // Find default Device Engineering org_unit
+  let orgUnitId = (
+    await tx.query(
+      "SELECT id FROM core.org_unit WHERE code IN ('P-DEVICE', 'P-KT', 'DEVICE', 'TECH') AND status = 'ACTIVE' ORDER BY code LIMIT 1"
+    )
+  ).rows[0]?.id as string | undefined;
+  if (!orgUnitId) {
+    orgUnitId = (await tx.query("SELECT id FROM core.org_unit WHERE status = 'ACTIVE' ORDER BY code LIMIT 1")).rows[0]?.id;
+  }
+  if (!orgUnitId) return;
+
+  // Find or create Device Parts warehouse + default location so parts have real on-hand stock
+  let whId = (
+    await tx.query(
+      "SELECT id FROM master.warehouse WHERE (purpose = 'DEVICE_PARTS' OR code IN ('KHO-TB', 'WH-DEVICE')) AND status = 'ACTIVE' ORDER BY code LIMIT 1"
+    )
+  ).rows[0]?.id as string | undefined;
+  if (!whId) {
+    whId = (await tx.query("SELECT id FROM master.warehouse WHERE status = 'ACTIVE' ORDER BY code LIMIT 1")).rows[0]?.id;
+  }
+
+  let defaultLocId: string | undefined;
+  if (whId) {
+    defaultLocId = (
+      await tx.query("SELECT id FROM master.location WHERE warehouse_id = $1 AND is_quarantine = false AND status = 'ACTIVE' ORDER BY code LIMIT 1", [
+        whId,
+      ])
+    ).rows[0]?.id;
+    if (!defaultLocId) {
+      defaultLocId = (
+        await tx.query(
+          `INSERT INTO master.location (warehouse_id, code, name, temperature_condition, is_quarantine, status)
+           VALUES ($1, 'KE-LK-TB', 'Kệ Linh Kiện Kỹ Thuật Thiết Bị', 'RT', false, 'ACTIVE')
+           ON CONFLICT (warehouse_id, code) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [whId]
+        )
+      ).rows[0]?.id;
+    }
+  }
+
+  // 1. Seed 30 specialized tech parts into master.item + inv.lot + inv.stock_balance
+  const partItemMap = new Map<string, { id: string; baseUom: string; unit: string; unitCost: number; category: string }>();
+
+  for (const part of LEGACY_TECH_PARTS_SEED) {
+    const baseUom = mapUnitToBaseUom(part.baseUom || part.unit);
+    const tracking = part.trackingType === "SERIAL" ? "SERIAL" : part.trackingType === "BULK" ? "NONE" : "LOT";
+    const metaJson = JSON.stringify({
+      legacyTechPart: true,
+      category: part.category,
+      displayUnit: part.unit,
+      unitCost: part.unitCost,
+      location: part.location,
+      supplierName: part.supplierName,
+      lotNumber: part.lotNumber,
+      seedStockQty: part.stockQty,
+    });
+
+    const itemRow = (
+      await tx.query(
+        `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, min_stock, reorder_qty, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, notes, status)
+         VALUES ($1, $2, 'COMPONENT', $3, $4, 'RT', $5, $6, true, true, false, false, $7, 'ACTIVE')
+         ON CONFLICT (code) DO UPDATE
+           SET name = EXCLUDED.name,
+               min_stock = EXCLUDED.min_stock,
+               notes = COALESCE(master.item.notes, EXCLUDED.notes)
+         RETURNING id, base_uom`,
+        [part.code, part.name, baseUom, tracking, part.minAlertQty, Math.max(part.minAlertQty * 2, 10), metaJson]
+      )
+    ).rows[0];
+
+    partItemMap.set(part.code, {
+      id: itemRow.id,
+      baseUom: itemRow.base_uom,
+      unit: part.unit,
+      unitCost: part.unitCost,
+      category: part.category,
+    });
+
+    if (defaultLocId && part.stockQty > 0) {
+      const existingBal = (
+        await tx.query("SELECT coalesce(sum(qty_on_hand), 0)::float AS qty FROM inv.stock_balance WHERE item_id = $1", [itemRow.id])
+      ).rows[0]?.qty ?? 0;
+      if (existingBal <= 0) {
+        const lotRow = (
+          await tx.query(
+            `INSERT INTO inv.lot (code, item_id, mfr_lot_no, received_date, status, origin)
+             VALUES ($1, $2, $1, current_date, 'RELEASED', 'OPENING')
+             ON CONFLICT (item_id, code) DO UPDATE SET status = 'RELEASED'
+             RETURNING id`,
+            [part.lotNumber || `LOT-${part.code}`, itemRow.id]
+          )
+        ).rows[0];
+
+        await tx.query(
+          `INSERT INTO inv.stock_balance (item_id, lot_id, container_id, location_id, qty_on_hand, qty_reserved)
+           SELECT $1, $2, NULL, $3, $4, 0
+           WHERE NOT EXISTS (
+             SELECT 1 FROM inv.stock_balance WHERE item_id = $1 AND location_id = $3
+           )`,
+          [itemRow.id, lotRow.id, defaultLocId, part.stockQty]
+        );
+      }
+    }
+  }
+
+  // 2. Seed all 31+ commercial models from LEGACY_EQUIPMENT_CATALOG_SEED
+  for (const seed of LEGACY_EQUIPMENT_CATALOG_SEED) {
+    const existing = (
+      await tx.query(
+        `SELECT id, current_revision_id, price::float AS price,
+                CASE WHEN jsonb_typeof(bom_json) = 'array' THEN jsonb_array_length(bom_json) ELSE 0 END AS bom_len
+           FROM device.device_model WHERE code = $1`,
+        [seed.code]
+      )
+    ).rows[0];
+
+    let modelId: string;
+    let currentRevId: string | null = existing?.current_revision_id ?? null;
+
+    if (!existing) {
+      // Also ensure finished device item exists in master.item
+      const devItem = (
+        await tx.query(
+          `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, min_stock, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, status)
+           VALUES ($1, $2, 'DEVICE', 'pcs', 'SERIAL', 'RT', 1, true, false, true, true, 'ACTIVE')
+           ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+           RETURNING id`,
+          [seed.code, seed.name]
+        )
+      ).rows[0];
+
+      const ins = (
+        await tx.query(
+          `INSERT INTO device.device_model (
+             code, name, org_unit_id, item_id, category, category_label, manufacturer, origin,
+             price, price_dealer1, price_dealer2, warranty_months, lead_time_days, required_burn_in_hours,
+             image_url, description, specs_json, baseline_specs_json, accessories_standard, accessories_optional,
+             production_stages, bom_json, status
+           ) VALUES (
+             $1, $2, $3, $4, $5, $6, $7, $8,
+             $9, $10, $11, $12, $13, $14,
+             $15, $16, $17::jsonb, $18::jsonb, $19::jsonb, $20::jsonb,
+             $21::jsonb, $22::jsonb, 'COMMERCIAL'
+           ) RETURNING id`,
+          [
+            seed.code,
+            seed.name,
+            orgUnitId,
+            devItem.id,
+            seed.category,
+            seed.categoryLabel,
+            seed.manufacturer,
+            seed.origin,
+            seed.price,
+            seed.priceDealer1,
+            seed.priceDealer2,
+            seed.warrantyMonths,
+            seed.leadTimeDays,
+            seed.burnInHours,
+            seed.imageUrl || "/logo_abt.png",
+            `${seed.categoryLabel} — Xuất xứ: ${seed.origin}`,
+            JSON.stringify(seed.specs ?? {}),
+            JSON.stringify(seed.baselineSpecs ?? seed.specs ?? {}),
+            JSON.stringify(seed.accessoriesStandard ?? []),
+            JSON.stringify(seed.accessoriesOptional ?? []),
+            JSON.stringify(seed.productionStages ?? []),
+            JSON.stringify(seed.bom ?? []),
+          ]
+        )
+      ).rows[0];
+      modelId = ins.id;
+    } else {
+      modelId = existing.id;
+      if (!existing.price || existing.price <= 0 || !existing.bom_len || existing.bom_len === 0) {
+        await tx.query(
+          `UPDATE device.device_model
+              SET category_label = COALESCE(category_label, $2),
+                  manufacturer = COALESCE(manufacturer, $3),
+                  origin = COALESCE(origin, $4),
+                  price = CASE WHEN price <= 0 THEN $5 ELSE price END,
+                  price_dealer1 = CASE WHEN price_dealer1 <= 0 THEN $6 ELSE price_dealer1 END,
+                  price_dealer2 = CASE WHEN price_dealer2 <= 0 THEN $7 ELSE price_dealer2 END,
+                  warranty_months = COALESCE(warranty_months, $8),
+                  lead_time_days = CASE WHEN lead_time_days <= 0 THEN $9 ELSE lead_time_days END,
+                  image_url = COALESCE(image_url, $10),
+                  specs_json = CASE WHEN specs_json IS NULL OR specs_json = '[]'::jsonb OR specs_json = '{}'::jsonb THEN $11::jsonb ELSE specs_json END,
+                  baseline_specs_json = CASE WHEN baseline_specs_json IS NULL OR baseline_specs_json = '{}'::jsonb THEN $12::jsonb ELSE baseline_specs_json END,
+                  accessories_standard = CASE WHEN accessories_standard IS NULL OR accessories_standard = '[]'::jsonb THEN $13::jsonb ELSE accessories_standard END,
+                  accessories_optional = CASE WHEN accessories_optional IS NULL OR accessories_optional = '[]'::jsonb THEN $14::jsonb ELSE accessories_optional END,
+                  production_stages = CASE WHEN production_stages IS NULL OR production_stages = '[]'::jsonb THEN $15::jsonb ELSE production_stages END,
+                  bom_json = CASE WHEN bom_json IS NULL OR bom_json = '[]'::jsonb THEN $16::jsonb ELSE bom_json END,
+                  status = 'COMMERCIAL'
+            WHERE id = $1`,
+          [
+            modelId,
+            seed.categoryLabel,
+            seed.manufacturer,
+            seed.origin,
+            seed.price,
+            seed.priceDealer1,
+            seed.priceDealer2,
+            seed.warrantyMonths,
+            seed.leadTimeDays,
+            seed.imageUrl || "/logo_abt.png",
+            JSON.stringify(seed.specs ?? {}),
+            JSON.stringify(seed.baselineSpecs ?? seed.specs ?? {}),
+            JSON.stringify(seed.accessoriesStandard ?? []),
+            JSON.stringify(seed.accessoriesOptional ?? []),
+            JSON.stringify(seed.productionStages ?? []),
+            JSON.stringify(seed.bom ?? []),
+          ]
+        );
+      }
+    }
+
+    // Ensure a RELEASED model_revision exists and has BOM lines
+    if (!currentRevId) {
+      const existingRev = (
+        await tx.query("SELECT id FROM device.model_revision WHERE model_id = $1 ORDER BY created_at DESC LIMIT 1", [modelId])
+      ).rows[0];
+      if (existingRev) {
+        currentRevId = existingRev.id;
+      } else {
+        const revIns = (
+          await tx.query(
+            `INSERT INTO device.model_revision (model_id, revision, firmware_version, dmr_summary, effectivity_type, released_at, status)
+             VALUES ($1, $2, $3, $4, 'IMMEDIATE', now(), 'RELEASED')
+             RETURNING id`,
+            [
+              modelId,
+              seed.revision || "1.0",
+              seed.firmwareVersion || "v1.0.0",
+              `Hồ sơ thiết kế gốc (DMR) chuyển giao sản xuất cho thiết bị ${seed.code} (${seed.name})`,
+            ]
+          )
+        ).rows[0];
+        currentRevId = revIns.id;
+      }
+      await tx.query("UPDATE device.device_model SET current_revision_id = $2 WHERE id = $1 AND current_revision_id IS NULL", [
+        modelId,
+        currentRevId,
+      ]);
+    }
+
+    if (currentRevId && seed.bom && seed.bom.length > 0) {
+      const bomCnt = (
+        await tx.query("SELECT count(*)::int AS cnt FROM device.model_bom_line WHERE revision_id = $1", [currentRevId])
+      ).rows[0]?.cnt ?? 0;
+      if (bomCnt === 0) {
+        await syncBomJsonToRevisionLines(tx, currentRevId, seed.bom, partItemMap, defaultLocId);
+      }
+    }
+  }
+
+  catalogSeededInProcess = true;
+}
+
+async function syncBomJsonToRevisionLines(
+  tx: Tx,
+  revisionId: string,
+  bomItems: LegacyEquipmentBOMItem[],
+  partItemMap?: Map<string, { id: string; baseUom: string; unit: string; unitCost: number; category: string }>,
+  defaultLocId?: string
+) {
+  await tx.query("DELETE FROM device.model_bom_line WHERE revision_id = $1", [revisionId]);
+  let lineNo = 1;
+  for (const line of bomItems) {
+    const partCode = (line.partCode || `PART-${lineNo}`).trim().toUpperCase();
+    const partName = (line.partName || partCode).trim();
+    const baseUom = mapUnitToBaseUom(line.unit);
+    let itemId = partItemMap?.get(partCode)?.id;
+
+    if (!itemId) {
+      const found = (await tx.query("SELECT id FROM master.item WHERE code = $1", [partCode])).rows[0];
+      if (found) {
+        itemId = found.id;
+      } else {
+        const metaJson = JSON.stringify({
+          legacyTechPart: true,
+          category: line.category || "Cơ khí & Vỏ máy",
+          displayUnit: line.unit || "Cái",
+          unitCost: Number(line.unitCost) || 0,
+          location: "Kho Kỹ thuật",
+        });
+        const created = (
+          await tx.query(
+            `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, min_stock, reorder_qty, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, notes, status)
+             VALUES ($1, $2, 'COMPONENT', $3, 'LOT', 'RT', 5, 10, true, true, false, false, $4, 'ACTIVE')
+             ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+             RETURNING id`,
+            [partCode, partName, baseUom, metaJson]
+          )
+        ).rows[0];
+        itemId = created.id;
+        if (defaultLocId) {
+          const lotRow = (
+            await tx.query(
+              `INSERT INTO inv.lot (code, item_id, mfr_lot_no, received_date, status, origin)
+               VALUES ($1, $2, $1, current_date, 'RELEASED', 'OPENING')
+               ON CONFLICT (item_id, code) DO UPDATE SET status = 'RELEASED'
+               RETURNING id`,
+              [`LOT-${partCode}`, itemId]
+            )
+          ).rows[0];
+          await tx.query(
+            `INSERT INTO inv.stock_balance (item_id, lot_id, container_id, location_id, qty_on_hand, qty_reserved)
+             SELECT $1, $2, NULL, $3, 15, 0
+             WHERE NOT EXISTS (
+               SELECT 1 FROM inv.stock_balance WHERE item_id = $1 AND location_id = $3
+             )`,
+            [itemId, lotRow.id, defaultLocId]
+          );
+        }
+      }
+    }
+
+    const stationCode = mapStationToCode(line.station);
+    const sourceType = line.sourceType === "OUTSOURCE" ? "SUBCONTRACT" : "BUY";
+    const qty = Math.max(Number(line.quantity) || 1, 0.0001);
+
+    await tx.query(
+      `INSERT INTO device.model_bom_line (
+         revision_id, line_no, station_code, component_item_id, qty_per_unit, uom,
+         source_type, is_critical, requires_serial, tracking_type, drawing_code, notes,
+         unit_cost, display_uom, part_category, station_label, preferred_vendor
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6,
+         $7, true, false, 'LOT', $8, $9,
+         $10, $11, $12, $13, $14
+       )`,
+      [
+        revisionId,
+        lineNo++,
+        stationCode,
+        itemId,
+        qty,
+        baseUom,
+        sourceType,
+        line.drawingFile || null,
+        line.notes || null,
+        Number(line.unitCost) || 0,
+        line.unit || "Cái",
+        line.category || "Bo mạch & Điện tử",
+        line.station || "1. Lắp ráp Khung Cơ khí & Vỏ máy",
+        line.preferredVendor || null,
+      ]
+    );
+  }
+}
+
+export async function listTechPartsInventory(tx: Tx, actor: AuthzActor) {
+  await authorizeAnywhere(tx, actor, "device.view");
+  await ensureTechCatalogAndBomSeeded(tx);
+
+  const rows = (
+    await tx.query(
+      `SELECT i.id, i.code, i.name, i.base_uom, i.tracking, i.min_stock::float AS min_alert_qty, i.notes,
+              coalesce((SELECT sum(sb.qty_on_hand - sb.qty_reserved)::float FROM inv.stock_balance sb WHERE sb.item_id = i.id), 0) AS stock_qty,
+              coalesce((SELECT sum(sb.qty_on_hand)::float FROM inv.stock_balance sb WHERE sb.item_id = i.id), 0) AS on_hand_qty
+         FROM master.item i
+        WHERE i.item_type IN ('COMPONENT', 'SPARE_PART', 'RAW_MATERIAL')
+          AND i.status = 'ACTIVE'
+        ORDER BY i.code ASC`
+    )
+  ).rows;
+
+  const seedLookup = new Map(LEGACY_TECH_PARTS_SEED.map((p) => [p.code, p]));
+  return rows.map((r) => {
+    let parsed: Record<string, unknown> = {};
+    if (r.notes && typeof r.notes === "string" && r.notes.trim().startsWith("{")) {
+      try {
+        parsed = JSON.parse(r.notes);
+      } catch {
+        parsed = {};
+      }
+    }
+    const seed = seedLookup.get(r.code);
+    return {
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      category: (parsed.category as string) || seed?.category || "Bo mạch & Điện tử",
+      unit: (parsed.displayUnit as string) || seed?.unit || r.base_uom,
+      base_uom: r.base_uom,
+      stock_qty: Number(r.stock_qty ?? seed?.stockQty ?? 0),
+      on_hand_qty: Number(r.on_hand_qty ?? seed?.stockQty ?? 0),
+      min_alert_qty: Number(r.min_alert_qty || seed?.minAlertQty || 5),
+      unit_cost: Number(parsed.unitCost ?? seed?.unitCost ?? 0),
+      location: (parsed.location as string) || seed?.location || "Kệ Linh kiện Kỹ thuật",
+      supplier_name: (parsed.supplierName as string) || seed?.supplierName || "Nhà cung cấp ABT",
+      lot_number: (parsed.lotNumber as string) || seed?.lotNumber || `LOT-${r.code}`,
+      tracking_type: r.tracking === "SERIAL" ? "SERIAL" : r.tracking === "NONE" ? "BULK" : "LOT",
+    };
+  });
+}
+
 export async function createDeviceModel(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureTechCatalogAndBomSeeded(tx);
   const d = parseInput(createModelSchema, input);
-  await authorize(tx, actor, "device.model.manage", d.org_unit_id);
+
+  let orgUnitId = d.org_unit_id;
+  if (!orgUnitId) {
+    orgUnitId = (
+      await tx.query(
+        "SELECT id FROM core.org_unit WHERE code IN ('P-DEVICE', 'P-KT', 'DEVICE', 'TECH') AND status = 'ACTIVE' ORDER BY code LIMIT 1"
+      )
+    ).rows[0]?.id;
+  }
+  if (!orgUnitId) throw invalid("Không tìm thấy đơn vị Phòng Kỹ thuật – Công nghệ.");
+
+  await authorize(tx, actor, "device.model.manage", orgUnitId);
   const code = d.code ?? (await nextNumber(tx, "DEVICE_MODEL"));
   const dup = await tx.query("SELECT 1 FROM device.device_model WHERE code = $1", [code]);
   if (dup.rowCount) throw conflict(`Mã model thiết bị ${code} đã tồn tại.`, "DUPLICATE_CODE");
-  return insertRecord<DeviceModelRow>(tx, actor, "device.device_model", "device_model", {
+
+  let itemId = d.item_id ?? null;
+  if (!itemId) {
+    const devItem = (
+      await tx.query(
+        `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, min_stock, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, kd_item_code, status)
+         VALUES ($1, $2, 'DEVICE', 'pcs', 'SERIAL', 'RT', 1, true, false, true, true, $1, 'ACTIVE')
+         ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+         RETURNING id`,
+        [code, d.name]
+      )
+    ).rows[0];
+    itemId = devItem.id;
+  }
+
+  const defaultStages =
+    d.production_stages && d.production_stages.length > 0
+      ? d.production_stages
+      : [
+          "1. Gia công & Lắp ráp Khung vỏ cơ khí",
+          "2. Lắp đặt Cụm chức năng & Đấu nối Điện - Bo mạch",
+          "3. Nạp Firmware, Hiệu chuẩn thông số & Burn-in",
+          "4. Kiểm định QC xuất xưởng (FQC) & Đóng gói",
+        ];
+
+  const created = await insertRecord<DeviceModelRow>(tx, actor, "device.device_model", "device_model", {
     code,
     name: d.name,
-    org_unit_id: d.org_unit_id,
-    item_id: d.item_id ?? null,
+    org_unit_id: orgUnitId,
+    item_id: itemId,
     category: d.category,
+    category_label: d.category_label || "Thiết bị phụ trợ phòng Lab",
+    manufacturer: d.manufacturer || "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT - CHI NHÁNH LONG HẬU",
+    origin: d.origin || "Việt Nam",
+    price: d.price,
+    price_dealer1: d.price_dealer1 || (d.price > 0 ? Math.round(d.price * 0.85) : 0),
+    price_dealer2: d.price_dealer2 || (d.price > 0 ? Math.round(d.price * 0.9) : 0),
+    lead_time_days: d.lead_time_days,
+    image_url: d.image_url || "/logo_abt.png",
     warranty_months: d.warranty_months,
     required_burn_in_hours: d.required_burn_in_hours,
     fqc_spec_id: d.fqc_spec_id ?? null,
     rd_project_id: d.rd_project_id ?? null,
     description: d.description ?? null,
     specs_json: JSON.stringify(d.specs_json ?? {}),
+    baseline_specs_json: JSON.stringify(d.baseline_specs_json ?? d.specs_json ?? {}),
     accessories_standard: JSON.stringify(d.accessories_standard ?? []),
     accessories_optional: JSON.stringify(d.accessories_optional ?? []),
+    production_stages: JSON.stringify(defaultStages),
+    bom_json: JSON.stringify(d.bom_json ?? []),
+    status: "COMMERCIAL",
   });
+
+  // Create initial Revision 1.0 automatically so it appears in the catalog with Rev 1.0 ready
+  const revCode = d.revision || "1.0";
+  const rev = (
+    await tx.query(
+      `INSERT INTO device.model_revision (model_id, revision, firmware_version, dmr_summary, effectivity_type, released_by, released_at, status, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, 'IMMEDIATE', $5, now(), 'RELEASED', $5, $5)
+       RETURNING id`,
+      [
+        created.id,
+        revCode,
+        d.firmware_version || "v1.0.0",
+        `Hồ sơ thiết kế gốc (DMR) khởi tạo cho thiết bị ${code} (${d.name})`,
+        actor.userId,
+      ]
+    )
+  ).rows[0];
+
+  await tx.query("UPDATE device.device_model SET current_revision_id = $2 WHERE id = $1", [created.id, rev.id]);
+
+  if (Array.isArray(d.bom_json) && d.bom_json.length > 0) {
+    await syncBomJsonToRevisionLines(tx, rev.id, d.bom_json as LegacyEquipmentBOMItem[]);
+  }
+
+  return { ...created, current_revision_id: rev.id, current_revision: revCode };
+}
+
+const updateCatalogBomSchema = z.object({
+  model_id: z.string().uuid("chọn model thiết bị"),
+  code: z.string().trim().min(2).max(40).optional(),
+  name: z.string().trim().min(2).max(250).optional(),
+  category: z
+    .enum(["THERMAL_CYCLER", "EXTRACTOR", "CENTRIFUGE", "SPIN_COLUMN_SYSTEM", "INCUBATOR", "SPECTROPHOTOMETER", "OTHER"])
+    .optional(),
+  category_label: z.string().trim().max(150).optional().nullable(),
+  manufacturer: z.string().trim().max(250).optional().nullable(),
+  origin: z.string().trim().max(120).optional().nullable(),
+  price: z.coerce.number().min(0).optional(),
+  price_dealer1: z.coerce.number().min(0).optional(),
+  price_dealer2: z.coerce.number().min(0).optional(),
+  warranty_months: z.coerce.number().int().min(0).max(120).optional(),
+  lead_time_days: z.coerce.number().int().min(1).max(365).optional(),
+  required_burn_in_hours: z.coerce.number().min(0).max(500).optional(),
+  image_url: z.string().trim().max(1000).optional().nullable(),
+  description: z.string().trim().max(3000).optional().nullable(),
+  specs_json: z.record(z.string(), z.unknown()).optional(),
+  baseline_specs_json: z.record(z.string(), z.unknown()).optional(),
+  accessories_standard: z.array(z.unknown()).optional(),
+  accessories_optional: z.array(z.unknown()).optional(),
+  production_stages: z.array(z.string()).optional(),
+  bom_json: z.array(z.unknown()).optional(),
+});
+
+export async function updateDeviceModelCatalogAndBom(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureTechCatalogAndBomSeeded(tx);
+  const d = parseInput(updateCatalogBomSchema, input);
+  const cur = (await tx.query("SELECT * FROM device.device_model WHERE id = $1 FOR UPDATE", [d.model_id])).rows[0];
+  if (!cur) throw notFound("model thiết bị");
+  await authorize(tx, actor, "device.model.manage", cur.org_unit_id);
+
+  const patch: Record<string, unknown> = {};
+  if (d.code !== undefined && d.code.toUpperCase() !== cur.code) {
+    const newCode = d.code.toUpperCase();
+    const dup = await tx.query("SELECT 1 FROM device.device_model WHERE code = $1 AND id <> $2", [newCode, d.model_id]);
+    if (dup.rowCount) throw conflict(`Mã thiết bị ${newCode} đã tồn tại.`);
+    patch.code = newCode;
+  }
+  if (d.name !== undefined) patch.name = d.name;
+  if (d.category !== undefined) patch.category = d.category;
+  if (d.category_label !== undefined) patch.category_label = d.category_label;
+  if (d.manufacturer !== undefined) patch.manufacturer = d.manufacturer;
+  if (d.origin !== undefined) patch.origin = d.origin;
+  if (d.price !== undefined) patch.price = d.price;
+  if (d.price_dealer1 !== undefined) patch.price_dealer1 = d.price_dealer1;
+  if (d.price_dealer2 !== undefined) patch.price_dealer2 = d.price_dealer2;
+  if (d.warranty_months !== undefined) patch.warranty_months = d.warranty_months;
+  if (d.lead_time_days !== undefined) patch.lead_time_days = d.lead_time_days;
+  if (d.required_burn_in_hours !== undefined) patch.required_burn_in_hours = d.required_burn_in_hours;
+  if (d.image_url !== undefined) patch.image_url = d.image_url;
+  if (d.description !== undefined) patch.description = d.description;
+  if (d.specs_json !== undefined) patch.specs_json = JSON.stringify(d.specs_json);
+  if (d.baseline_specs_json !== undefined) patch.baseline_specs_json = JSON.stringify(d.baseline_specs_json);
+  if (d.accessories_standard !== undefined) patch.accessories_standard = JSON.stringify(d.accessories_standard);
+  if (d.accessories_optional !== undefined) patch.accessories_optional = JSON.stringify(d.accessories_optional);
+  if (d.production_stages !== undefined) patch.production_stages = JSON.stringify(d.production_stages);
+  if (d.bom_json !== undefined) patch.bom_json = JSON.stringify(d.bom_json);
+
+  const updated = await updateRecord<DeviceModelRow>(
+    tx,
+    actor,
+    "device.device_model",
+    "device_model",
+    d.model_id,
+    cur.version,
+    patch
+  );
+
+  // Sync bom_json to active/latest revision's model_bom_line table
+  if (d.bom_json !== undefined) {
+    let revId = cur.current_revision_id as string | null;
+    if (!revId) {
+      const latestRev = (
+        await tx.query("SELECT id FROM device.model_revision WHERE model_id = $1 ORDER BY created_at DESC LIMIT 1", [d.model_id])
+      ).rows[0];
+      if (latestRev) {
+        revId = latestRev.id;
+      } else {
+        const revIns = (
+          await tx.query(
+            `INSERT INTO device.model_revision (model_id, revision, firmware_version, dmr_summary, effectivity_type, released_by, released_at, status, created_by, updated_by)
+             VALUES ($1, '1.0', 'v1.0.0', $2, 'IMMEDIATE', $3, now(), 'RELEASED', $3, $3)
+             RETURNING id`,
+            [d.model_id, `Hồ sơ DMR cho thiết bị ${cur.code}`, actor.userId]
+          )
+        ).rows[0];
+        revId = revIns.id;
+        await tx.query("UPDATE device.device_model SET current_revision_id = $2 WHERE id = $1", [d.model_id, revId]);
+      }
+    }
+    if (revId) {
+      await syncBomJsonToRevisionLines(tx, revId, d.bom_json as LegacyEquipmentBOMItem[]);
+    }
+  }
+
+  return getDeviceModelDetail(tx, actor, updated.id);
+}
+
+const cloneUpgradeSchema = z.object({
+  source_model_id: z.string().uuid("chọn thiết bị gốc"),
+  new_code: z.string().trim().min(2).max(40).optional(),
+  new_name: z.string().trim().min(3).max(250).optional(),
+  target_revision: z.string().trim().max(16).default("2.0"),
+  upgrade_reason: z.string().trim().max(1000).optional(),
+});
+
+export async function cloneOrUpgradeDeviceModel(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureTechCatalogAndBomSeeded(tx);
+  const d = parseInput(cloneUpgradeSchema, input);
+  const src = (await tx.query("SELECT * FROM device.device_model WHERE id = $1", [d.source_model_id])).rows[0];
+  if (!src) throw notFound("thiết bị gốc");
+  await authorize(tx, actor, "device.model.manage", src.org_unit_id);
+
+  const baseCode = src.code.replace(/-V\d+$/i, "");
+  let newCode = (d.new_code || `${baseCode}-V2`).toUpperCase();
+  let suffix = 2;
+  while ((await tx.query("SELECT 1 FROM device.device_model WHERE code = $1", [newCode])).rowCount) {
+    suffix++;
+    newCode = `${baseCode}-V${suffix}`;
+  }
+
+  const newName = d.new_name || `${src.name} (Bản nâng cấp V${suffix})`;
+  const devItem = (
+    await tx.query(
+      `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, min_stock, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, kd_item_code, status)
+       VALUES ($1, $2, 'DEVICE', 'pcs', 'SERIAL', 'RT', 1, true, false, true, true, $1, 'ACTIVE')
+       ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+       RETURNING id`,
+      [newCode, newName]
+    )
+  ).rows[0];
+
+  const created = await insertRecord<DeviceModelRow>(tx, actor, "device.device_model", "device_model", {
+    code: newCode,
+    name: newName,
+    org_unit_id: src.org_unit_id,
+    item_id: devItem.id,
+    category: src.category,
+    category_label: src.category_label || "Thiết bị chuyên sâu",
+    manufacturer: src.manufacturer || "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT - CHI NHÁNH LONG HẬU",
+    origin: src.origin || "Việt Nam",
+    price: Number(src.price) || 0,
+    price_dealer1: Number(src.price_dealer1) || 0,
+    price_dealer2: Number(src.price_dealer2) || 0,
+    warranty_months: src.warranty_months,
+    lead_time_days: src.lead_time_days || 21,
+    required_burn_in_hours: src.required_burn_in_hours,
+    image_url: src.image_url || "/logo_abt.png",
+    description: d.upgrade_reason || `Bản nâng cấp thế hệ mới kế thừa từ model ${src.code}`,
+    specs_json: JSON.stringify(src.specs_json ?? {}),
+    baseline_specs_json: JSON.stringify(src.specs_json ?? {}),
+    accessories_standard: JSON.stringify(src.accessories_standard ?? []),
+    accessories_optional: JSON.stringify(src.accessories_optional ?? []),
+    production_stages: JSON.stringify(src.production_stages ?? []),
+    bom_json: JSON.stringify(src.bom_json ?? []),
+    base_model_code: src.code,
+    status: "COMMERCIAL",
+  });
+
+  const rev = (
+    await tx.query(
+      `INSERT INTO device.model_revision (model_id, revision, firmware_version, dmr_summary, effectivity_type, released_by, released_at, status, created_by, updated_by)
+       VALUES ($1, $2, 'v2.0.0', $3, 'IMMEDIATE', $4, now(), 'RELEASED', $4, $4)
+       RETURNING id`,
+      [
+        created.id,
+        d.target_revision || "2.0",
+        `Hồ sơ thiết kế nâng cấp (Rev ${d.target_revision || "2.0"}) kế thừa từ ${src.code}. ${d.upgrade_reason || ""}`.trim(),
+        actor.userId,
+      ]
+    )
+  ).rows[0];
+
+  await tx.query("UPDATE device.device_model SET current_revision_id = $2 WHERE id = $1", [created.id, rev.id]);
+
+  if (Array.isArray(src.bom_json) && src.bom_json.length > 0) {
+    await syncBomJsonToRevisionLines(tx, rev.id, src.bom_json as LegacyEquipmentBOMItem[]);
+  }
+
+  return getDeviceModelDetail(tx, actor, created.id);
+}
+
+export async function deleteDeviceModel(tx: Tx, actor: AuthzActor, modelId: string) {
+  const cur = (await tx.query("SELECT * FROM device.device_model WHERE id = $1 FOR UPDATE", [modelId])).rows[0];
+  if (!cur) throw notFound("model thiết bị");
+  await authorize(tx, actor, "device.model.manage", cur.org_unit_id);
+
+  const hasOrders = (await tx.query("SELECT 1 FROM device.device_order WHERE model_id = $1 LIMIT 1", [modelId])).rowCount;
+  if (hasOrders) {
+    await tx.query(
+      "UPDATE device.device_model SET status = 'DISCONTINUED', version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1",
+      [modelId, actor.userId]
+    );
+    return { deleted: false, discontinued: true, id: modelId };
+  }
+
+  await tx.query("UPDATE device.device_model SET current_revision_id = NULL WHERE id = $1", [modelId]);
+  await tx.query("DELETE FROM device.eco_request WHERE model_id = $1", [modelId]);
+  await tx.query("DELETE FROM device.model_revision WHERE model_id = $1", [modelId]);
+  await tx.query("DELETE FROM device.device_model WHERE id = $1", [modelId]);
+  return { deleted: true, id: modelId };
 }
 
 const createRevisionSchema = z.object({
@@ -539,16 +1292,24 @@ export async function updateEcoImpact(tx: Tx, actor: AuthzActor, ecoId: string, 
 
 export async function listDeviceModels(tx: Tx, actor: AuthzActor) {
   await authorizeAnywhere(tx, actor, "device.view");
+  await ensureTechCatalogAndBomSeeded(tx);
   const rows = (
     await tx.query(
-      `SELECT m.*, m.required_burn_in_hours::float AS required_burn_in_hours,
+      `SELECT m.*,
+              m.required_burn_in_hours::float AS required_burn_in_hours,
+              coalesce(m.price, 0)::float AS price,
+              coalesce(m.price_dealer1, 0)::float AS price_dealer1,
+              coalesce(m.price_dealer2, 0)::float AS price_dealer2,
+              coalesce(m.lead_time_days, 14)::int AS lead_time_days,
               u.name AS org_unit_name, it.code AS item_code, it.name AS item_name,
-              r.revision AS current_revision, r.firmware_version AS current_firmware,
-              (SELECT count(*)::int FROM device.device_unit du WHERE du.model_id = m.id) AS unit_count
+              coalesce(r.revision, '1.0') AS current_revision, r.firmware_version AS current_firmware,
+              (SELECT count(*)::int FROM device.device_unit du WHERE du.model_id = m.id) AS unit_count,
+              (SELECT count(*)::int FROM device.eco_request ec WHERE ec.model_id = m.id) AS eco_count
          FROM device.device_model m
          JOIN core.org_unit u ON u.id = m.org_unit_id
          LEFT JOIN master.item it ON it.id = m.item_id
          LEFT JOIN device.model_revision r ON r.id = m.current_revision_id
+        WHERE m.status <> 'DISCONTINUED'
         ORDER BY m.code ASC`
     )
   ).rows;
@@ -560,15 +1321,23 @@ export async function listDeviceModels(tx: Tx, actor: AuthzActor) {
 }
 
 export async function getDeviceModelDetail(tx: Tx, actor: AuthzActor, id: string) {
+  await ensureTechCatalogAndBomSeeded(tx);
   const model = (
     await tx.query(
-      `SELECT m.*, m.required_burn_in_hours::float AS required_burn_in_hours,
+      `SELECT m.*,
+              m.required_burn_in_hours::float AS required_burn_in_hours,
+              coalesce(m.price, 0)::float AS price,
+              coalesce(m.price_dealer1, 0)::float AS price_dealer1,
+              coalesce(m.price_dealer2, 0)::float AS price_dealer2,
+              coalesce(m.lead_time_days, 14)::int AS lead_time_days,
               u.name AS org_unit_name, it.code AS item_code, it.name AS item_name,
-              qs.code AS fqc_spec_code, qs.name AS fqc_spec_name
+              qs.code AS fqc_spec_code, qs.name AS fqc_spec_name,
+              coalesce(r.revision, '1.0') AS current_revision, r.firmware_version AS current_firmware
          FROM device.device_model m
          JOIN core.org_unit u ON u.id = m.org_unit_id
          LEFT JOIN master.item it ON it.id = m.item_id
          LEFT JOIN qms.qc_spec qs ON qs.id = m.fqc_spec_id
+         LEFT JOIN device.model_revision r ON r.id = m.current_revision_id
         WHERE m.id = $1`,
       [id]
     )
@@ -592,7 +1361,11 @@ export async function getDeviceModelDetail(tx: Tx, actor: AuthzActor, id: string
   for (const rev of revisions) {
     rev.bom_lines = (
       await tx.query(
-        `SELECT bl.*, bl.qty_per_unit::float AS qty_per_unit, it.code AS item_code, it.name AS item_name
+        `SELECT bl.*,
+                bl.qty_per_unit::float AS qty_per_unit,
+                coalesce(bl.unit_cost, 0)::float AS unit_cost,
+                it.code AS item_code, it.name AS item_name,
+                coalesce((SELECT sum(sb.qty_on_hand - sb.qty_reserved)::float FROM inv.stock_balance sb WHERE sb.item_id = bl.component_item_id), 0) AS stock_qty
            FROM device.model_bom_line bl
            JOIN master.item it ON it.id = bl.component_item_id
           WHERE bl.revision_id = $1 ORDER BY bl.line_no ASC`,

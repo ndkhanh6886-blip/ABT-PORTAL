@@ -2,12 +2,14 @@ import { z } from "zod";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, registerPermissions, type AuthzActor } from "../core/authz";
-import { vnToday } from "../core/dates";
+import { addDays, vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { enqueueEvent } from "../core/outbox";
 import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
+import { createStockDocument, stockDocumentMachine } from "../inv/documents";
+import { createLot } from "../inv/lots";
 import { syncOrderStatus } from "../intake/shipments";
 import { registerNcrSubject, type Ncr } from "../qms/ncr";
 import { analyze, pyRound } from "./analyzer";
@@ -202,21 +204,40 @@ export async function deliveryOptions(tx: Tx, actor: AuthzActor, orderId: string
       [orderId]
     )
   ).rows;
-  return { order: { id: o.id, code: o.code, customer_label: o.customer_label }, internal_order: internal, lines, sequences: await deliverable(tx, orderId), deliveries };
+  const warehouses = (
+    await tx.query(
+      `SELECT id, code, name
+         FROM master.warehouse
+        WHERE status = 'ACTIVE'
+        ORDER BY CASE WHEN code IN ('KHO-KIT', 'KHO-PHA-CHE', 'KHO-NVL', 'KHO-RD') THEN 0 ELSE 1 END, code`
+    )
+  ).rows;
+  return {
+    order: { id: o.id, code: o.code, customer_label: o.customer_label },
+    internal_order: internal,
+    lines,
+    warehouses,
+    sequences: await deliverable(tx, orderId),
+    deliveries,
+  };
 }
 
 const deliverySchema = z.object({
   order_id: z.string().uuid(),
   sequence_ids: z.array(z.string().uuid()).min(1, "chọn ít nhất một trình tự").max(500),
+  delivery_mode: z.enum(["TO_KD", "TO_WAREHOUSE", "INTERNAL_HANDOVER"]).optional(),
+  warehouse_id: z.string().uuid().optional().nullable(),
   lines: z.array(z.object({ order_line_id: z.string().uuid(), qty: z.coerce.number().positive("số lượng phải lớn hơn 0") })).max(50).default([]),
   recipient: z.string().trim().max(200).optional().nullable(),
   notes: z.string().trim().max(1000).optional().nullable(),
 });
 
 /**
- * Delivers labelled, QC-passed sequences. An order from a Kinh doanh PO becomes a shipment to Kinh doanh
- * (counted against the PO lines, never over the ordered quantity; a drop ship still goes through KD's paperwork);
- * an order without a PO is an internal hand-over to a named recipient.
+ * Delivers labelled, QC-passed sequences:
+ * - Mode 1 (`TO_WAREHOUSE`): Synthesized Oligo for Kit production / R&D -> automatically creates `master.item` (if needed),
+ *   released `inv.lot` (`LOT-<seq_code>`) and posts a `RECEIPT` stock document into the chosen warehouse.
+ * - Mode 2 (`TO_KD`): Synthesized Oligo for commercial customer -> creates shipment to Kinh doanh (`intake.shipment`).
+ * - Mode 3 (`INTERNAL_HANDOVER`): Direct handover to a named recipient.
  */
 export async function createDelivery(tx: Tx, actor: AuthzActor, input: unknown) {
   const data = parseInput(deliverySchema, input);
@@ -233,7 +254,140 @@ export async function createDelivery(tx: Tx, actor: AuthzActor, input: unknown) 
 
   const code = await nextNumber(tx, "DELIVERY_NOTE");
   let shipmentId: string | null = null;
-  if (o.internal_order_id) {
+  let recipientLabel: string | null = data.recipient ?? null;
+
+  const mode =
+    data.delivery_mode ??
+    (data.warehouse_id ? "TO_WAREHOUSE" : o.internal_order_id ? "TO_KD" : "INTERNAL_HANDOVER");
+
+  if (mode === "TO_WAREHOUSE") {
+    if (!data.warehouse_id) throw invalid("Vui lòng chọn Kho nhận để nhập kho các trình tự Oligo.");
+    const wh = (await tx.query("SELECT id, code, name FROM master.warehouse WHERE id = $1", [data.warehouse_id])).rows[0];
+    if (!wh) throw notFound("kho nhận Oligo");
+
+    let loc = (
+      await tx.query(
+        "SELECT id, code FROM master.location WHERE warehouse_id = $1 AND status = 'ACTIVE' AND is_quarantine = false ORDER BY code LIMIT 1",
+        [wh.id]
+      )
+    ).rows[0];
+    if (!loc) {
+      loc = (
+        await tx.query(
+          "SELECT id, code FROM master.location WHERE warehouse_id = $1 AND status = 'ACTIVE' ORDER BY code LIMIT 1",
+          [wh.id]
+        )
+      ).rows[0];
+    }
+    if (!loc) throw invalid(`Kho ${wh.code} chưa có vị trí lưu trữ (location) hoạt động.`);
+
+    const mfgDate = vnToday();
+    const expiryDate = addDays(mfgDate, 365);
+    const receiptLines: { item_id: string; lot_id: string; to_location_id: string; qty: number; uom: string }[] = [];
+
+    for (const s of picked) {
+      const seq = s!;
+      // Match existing item by item_id or code only (never by lower(name))
+      const itemCodeCandidate = `OLI-${seq.code}`.toUpperCase();
+      let item = (
+        await tx.query(
+          `SELECT id, code, name, base_uom
+             FROM master.item
+            WHERE ($1::uuid IS NOT NULL AND id = $1)
+               OR lower(code) = lower($2)
+               OR lower(code) = lower($3)
+            ORDER BY CASE WHEN ($1::uuid IS NOT NULL AND id = $1) THEN 0 WHEN lower(code) = lower($2) THEN 1 ELSE 2 END
+            LIMIT 1`,
+          [(seq as any).item_id ?? null, itemCodeCandidate, seq.code]
+        )
+      ).rows[0];
+
+      if (!item) {
+        item = (
+          await tx.query(
+            `INSERT INTO master.item
+               (code, name, item_type, base_uom, tracking, shelf_life_days, storage_temp, receipt_qc_required, status, created_by, updated_by)
+             VALUES ($1, $2, 'SEMI_FINISHED', 'tube', 'LOT', 365, '-20°C', false, 'ACTIVE', $3, $3)
+             ON CONFLICT (code) DO UPDATE SET updated_at = now()
+             RETURNING id, code, name, base_uom`,
+            [
+              itemCodeCandidate,
+              `${seq.name} (${seq.scale_code} · ${seq.purification})`,
+              actor.userId,
+            ]
+          )
+        ).rows[0];
+      }
+
+      const desiredLotCode = `LOT-${seq.code}`;
+      const existingLot = (
+        await tx.query("SELECT id, code, status FROM inv.lot WHERE lower(code) = lower($1) LIMIT 1", [desiredLotCode])
+      ).rows[0];
+
+      let lotId: string;
+      if (existingLot) {
+        if (existingLot.status === "REJECTED" || existingLot.status === "ON_HOLD") {
+          throw invalid(`Lô ${existingLot.code} đang ở trạng thái ${existingLot.status}, không được phép tự động ghi đè thành RELEASED.`);
+        }
+        lotId = existingLot.id;
+        if (existingLot.status !== "RELEASED") {
+          await tx.query(
+            "UPDATE inv.lot SET status = 'RELEASED', updated_at = now() WHERE id = $1 AND status NOT IN ('REJECTED', 'ON_HOLD')",
+            [lotId]
+          );
+        }
+      } else {
+        const createdLot = await createLot(tx, actor, {
+          item_id: item.id,
+          origin: "SYNTHESIS",
+          code: desiredLotCode,
+          mfg_date: mfgDate,
+          expiry_date: expiryDate,
+          origin_entity_type: "OLIGO_SEQUENCE",
+          origin_entity_id: seq.id,
+        });
+        lotId = createdLot.id;
+        await tx.query(
+          "UPDATE inv.lot SET status = 'RELEASED', updated_at = now() WHERE id = $1 AND status NOT IN ('REJECTED', 'ON_HOLD')",
+          [lotId]
+        );
+      }
+
+      receiptLines.push({
+        item_id: item.id,
+        lot_id: lotId,
+        to_location_id: loc.id,
+        qty: Math.max(1, Number(seq.tube_count || 1)),
+        uom: item.base_uom || "tube",
+      });
+    }
+
+    const rcpt = await createStockDocument(
+      tx,
+      actor,
+      {
+        doc_type: "RECEIPT",
+        warehouse_id: wh.id,
+        reason_code: "PRODUCTION_OUTPUT",
+        ref_entity_type: "OLIGO_ORDER",
+        ref_entity_id: o.id,
+        notes: data.notes
+          ? `Nhập kho Oligo từ đơn ${o.code}: ${data.notes}`
+          : `Nhập kho Oligo đã đạt QC từ đơn ${o.code} (${picked.length} trình tự)`,
+        lines: receiptLines,
+      },
+      { trusted: true }
+    );
+    await runTransition(
+      tx,
+      stockDocumentMachine,
+      actor,
+      { id: rcpt.id, action: "post", expectedVersion: rcpt.version },
+      { trusted: true }
+    );
+
+    recipientLabel = `Nhập kho ${wh.code} (${wh.name}) · Phiếu ${rcpt.code}`;
+  } else if (mode === "TO_KD" && o.internal_order_id) {
     await authorize(tx, actor, "intake.shipment.post", o.org_unit_id);
     const io = (await tx.query("SELECT * FROM intake.internal_order WHERE id = $1 FOR UPDATE", [o.internal_order_id])).rows[0];
     if (!["ACCEPTED", "IN_PRODUCTION", "READY", "PARTIALLY_DELIVERED"].includes(io.status)) throw invalid(`Đơn nội bộ ${io.code} không ở trạng thái giao được.`);
@@ -252,10 +406,24 @@ export async function createDelivery(tx: Tx, actor: AuthzActor, input: unknown) 
         throw invalid(`Dòng ${i + 1} (${ol.kd_item_code}): giao vượt số lượng đặt (đặt ${Number(ol.qty)}, đã giao ${Number(ol.qty_delivered)}).`, undefined, "OVER_DELIVERY");
       }
       await tx.query("UPDATE intake.internal_order_line SET qty_delivered = qty_delivered + $2 WHERE id = $1", [ol.id, l.qty]);
-      await tx.query("INSERT INTO intake.shipment_line (shipment_id, order_line_id, item_id, qty) VALUES ($1, $2, $3, $4)", [shipment.id, ol.id, ol.item_id, l.qty]);
+      const traceLot = (
+        await tx.query(
+          `SELECT id, code, mfg_date, expiry_date
+             FROM inv.lot
+            WHERE (origin_entity_type = 'OLIGO_SEQUENCE' AND origin_entity_id = ANY($1::uuid[]))
+               OR ($2::uuid IS NOT NULL AND item_id = $2 AND status = 'RELEASED')
+            ORDER BY CASE WHEN origin_entity_type = 'OLIGO_SEQUENCE' THEN 0 ELSE 1 END, created_at DESC
+            LIMIT 1`,
+          [ids, ol.item_id ?? null]
+        )
+      ).rows[0];
+      await tx.query(
+        "INSERT INTO intake.shipment_line (shipment_id, order_line_id, item_id, lot_id, qty) VALUES ($1, $2, $3, $4, $5)",
+        [shipment.id, ol.id, ol.item_id, traceLot?.id ?? null, l.qty]
+      );
       eventLines.push({
         line_index: ol.kd_line_index, product_code: ol.kd_item_code, product_name: ol.kd_item_name, unit: ol.kd_unit, quantity: l.qty,
-        unit_price: Number(ol.transfer_price), lot_number: o.code, expiry_date: null, manufacture_date: vnToday(),
+        unit_price: Number(ol.transfer_price), lot_number: traceLot?.code ?? o.code, expiry_date: traceLot?.expiry_date ?? null, manufacture_date: traceLot?.mfg_date ?? vnToday(),
       });
     }
     await syncOrderStatus(tx, actor, io.id);
@@ -268,13 +436,13 @@ export async function createDelivery(tx: Tx, actor: AuthzActor, input: unknown) 
       },
       "KD"
     );
-  } else if (!data.recipient) {
-    throw invalid("Đơn không gắn PO Kinh doanh: ghi người / bộ phận nhận (bàn giao nội bộ).");
+  } else if (!recipientLabel) {
+    throw invalid("Vui lòng nhập người / bộ phận nhận (hoặc chọn chế độ Nhập kho / Giao Kinh doanh).");
   }
 
   const d = (
     await tx.query("INSERT INTO oligo.delivery (code, order_id, shipment_id, recipient, notes, created_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *", [
-      code, o.id, shipmentId, shipmentId ? null : data.recipient, data.notes ?? null, actor.userId,
+      code, o.id, shipmentId, shipmentId ? null : recipientLabel, data.notes ?? null, actor.userId,
     ])
   ).rows[0];
   for (const s of picked) {

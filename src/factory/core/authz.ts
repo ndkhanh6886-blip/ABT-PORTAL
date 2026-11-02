@@ -83,6 +83,8 @@ export async function hasFactoryPermission(tx: Tx, actor: AuthzActor, permission
   if (def.systemOnly || actor.isSystem) return Boolean(def.systemOnly && actor.isSystem);
   if (actor.isRootAdmin) return true;
   if (def.bootstrapAdmin && actor.isPortalAdmin) return true;
+  // Khối Kinh Doanh & toàn bộ nhân sự nội bộ đều được xem/theo dõi tiến độ Đơn Nội Bộ chuyển sản xuất
+  if (permission === "intake.order.view" && actor.userId > 0) return true;
   const res = await tx.query(
     `WITH RECURSIVE ancestors AS (
        SELECT id, parent_id FROM core.org_unit WHERE id = $3::uuid

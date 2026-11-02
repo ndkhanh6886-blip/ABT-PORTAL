@@ -54,6 +54,12 @@ export interface MachineDef<S extends string, Row> {
   scopeOf?: (row: Row, tx: Tx) => string | null | undefined | Promise<string | null | undefined>;
 }
 
+const machines = new Map<string, MachineDef<any, any>>();
+/** Machine by entity type (outbox handlers find the record behind an event). */
+export function getMachine(entityType: string): MachineDef<any, any> | undefined {
+  return machines.get(entityType);
+}
+
 export function defineMachine<S extends string, Row extends { id: string; status: S; version: number }>(
   def: MachineDef<S, Row>
 ): MachineDef<S, Row> {
@@ -71,6 +77,7 @@ export function defineMachine<S extends string, Row extends { id: string; status
       seen.add(key);
     }
   }
+  machines.set(def.entityType, def);
   return def;
 }
 
@@ -83,22 +90,9 @@ export function actionsFrom<S extends string, Row>(machine: MachineDef<S, Row>, 
   return machine.transitions.filter((t) => (Array.isArray(t.from) ? t.from.includes(from) : t.from === from));
 }
 
-const ROOT_BYPASS_SOD_CODES = new Set([
-  "SELF_APPROVAL",
-  "SELF_CHECK",
-  "SELF_RELEASE",
-  "SELF_REVIEW",
-  "SAME_PERSON",
-  "SAME_PERFORMER",
-  "NOT_ANALYST",
-]);
-
 async function failedGuards<Row>(guards: Guard<Row>[] | undefined, ctx: GuardContext<Row>) {
   const failed: { code: string; message: string }[] = [];
   for (const g of guards ?? []) {
-    if (ctx.actor.isRootAdmin && ctx.actor.userId === 1 && (g.code.startsWith("SELF_") || ROOT_BYPASS_SOD_CODES.has(g.code))) {
-      continue;
-    }
     if (!(await g.check(ctx))) failed.push({ code: g.code, message: g.message });
   }
   return failed;

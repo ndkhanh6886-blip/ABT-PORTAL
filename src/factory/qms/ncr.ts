@@ -134,6 +134,8 @@ interface Deviation {
   severity: string;
   status: DevStatus;
   version: number;
+  detected_by?: number | null;
+  reported_by?: number | null;
   root_cause?: string | null;
   corrective_action?: string | null;
   preventive_action?: string | null;
@@ -191,8 +193,15 @@ export const deviationMachine = defineMachine<DevStatus, Deviation>({
         },
         {
           code: "CAPA_REQUIRED",
-          message: "Sai lệch mức HIGH/CRITICAL phải điều tra và ghi CAPA (nguyên nhân, khắc phục, phòng ngừa) trước khi đóng.",
-          check: ({ row }) => !serious(row.severity) || Boolean(row.root_cause && row.corrective_action && row.preventive_action),
+          message: "Phải ghi nhận nguyên nhân gốc (root_cause) trước khi đóng sai lệch; sai lệch mức HIGH/CRITICAL phải có đầy đủ CAPA (nguyên nhân, khắc phục, phòng ngừa).",
+          check: ({ row: d }) =>
+            Boolean(d.root_cause && d.root_cause.trim()) &&
+            (!serious(d.severity) || Boolean(d.corrective_action && d.preventive_action)),
+        },
+        {
+          code: "NOT_REPORTER",
+          message: "Người đóng sai lệch phải khác người đã mở / báo cáo sai lệch.",
+          check: ({ row: d, actor }) => (d.reported_by ?? d.detected_by) !== actor.userId,
         },
       ],
       patch: () => ({ closed_at: new Date() }),

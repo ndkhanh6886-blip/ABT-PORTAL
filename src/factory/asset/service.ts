@@ -6,6 +6,8 @@ import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
+import { ensureHplcReagentSlotsAndColumnsSeed } from "./slots";
+import { ensureLegacyOligoDataSeeded } from "../oligo/legacySync";
 
 registerPermissions([
   { code: "asset.view", description: "Xem thiết bị phòng lab" },
@@ -53,6 +55,7 @@ export async function createAsset(tx: Tx, actor: AuthzActor, input: unknown) {
     ownerOrgUnitId = u?.id ?? null;
   }
   if (!ownerOrgUnitId) throw invalid("Chưa chọn phòng quản lý thiết bị.");
+  await authorize(tx, actor, "asset.manage", ownerOrgUnitId);
   if (data.asset_type === "SYNTHESIZER" && !data.synthesizer) throw invalid("Máy tổng hợp cần số vị trí cột.");
   const { synthesizer, dept_code: _dc, ...fields } = data;
   const code = await nextNumber(tx, "ASSET");
@@ -85,6 +88,14 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
   const nextSerial = data.serial_no === undefined ? cur.serial_no : data.serial_no;
   const nextStatus = data.status ?? cur.status;
   const nextCal = data.next_calibration_due === undefined ? cur.next_calibration_due : data.next_calibration_due;
+
+  const curCalStr = cur.next_calibration_due ? String(cur.next_calibration_due).slice(0, 10) : null;
+  const nextCalStr = nextCal ? String(nextCal).slice(0, 10) : null;
+  const statusChanged = data.status !== undefined && data.status !== cur.status;
+  const calChanged = data.next_calibration_due !== undefined && nextCalStr !== curCalStr;
+  if ((statusChanged || calChanged) && (!data.reason || data.reason.trim().length < 3)) {
+    throw invalid("Bắt buộc nhập lý do (tối thiểu 3 ký tự) khi thay đổi trạng thái hoặc hạn hiệu chuẩn thiết bị.", undefined, "REASON_REQUIRED");
+  }
 
   await tx.query(
     `UPDATE asset.asset
@@ -126,18 +137,36 @@ export async function updateAsset(tx: Tx, actor: AuthzActor, assetId: string, in
   return { id: assetId };
 }
 
+/** Auto-marks any IN_SERVICE / ACTIVE assets with next_calibration_due < CURRENT_DATE as OUT_OF_CALIBRATION. */
+export async function syncOverdueCalibrationAssets(tx: Tx): Promise<void> {
+  await tx.query(
+    `UPDATE asset.asset
+        SET status = 'OUT_OF_CALIBRATION', version = version + 1, updated_at = now()
+      WHERE status IN ('IN_SERVICE', 'ACTIVE')
+        AND next_calibration_due IS NOT NULL
+        AND next_calibration_due < CURRENT_DATE`
+  );
+}
+
 /** Equipment may be used only while in service and within its calibration date (docs 02 §5). */
 export async function assertUsable(tx: Tx, assetId: string): Promise<{ id: string; code: string; owner_org_unit_id: string }> {
   const a = (await tx.query("SELECT id, code, name, status, next_calibration_due, owner_org_unit_id FROM asset.asset WHERE id = $1", [assetId])).rows[0];
   if (!a) throw notFound("thiết bị");
-  if (a.status !== "IN_SERVICE") throw invalid(`Thiết bị ${a.code} (${a.name}) đang không sẵn sàng (${a.status}).`, undefined, "ASSET_UNAVAILABLE");
   if (a.next_calibration_due && a.next_calibration_due < vnToday()) {
+    if (a.status === "IN_SERVICE" || a.status === "ACTIVE") {
+      await tx.query(
+        "UPDATE asset.asset SET status = 'OUT_OF_CALIBRATION', version = version + 1, updated_at = now() WHERE id = $1",
+        [assetId]
+      );
+    }
     throw invalid(`Thiết bị ${a.code} (${a.name}) đã quá hạn hiệu chuẩn (${a.next_calibration_due}). Hiệu chuẩn rồi mới dùng.`, undefined, "ASSET_CALIBRATION_DUE");
   }
+  if (a.status !== "IN_SERVICE") throw invalid(`Thiết bị ${a.code} (${a.name}) đang không sẵn sàng (${a.status}).`, undefined, "ASSET_UNAVAILABLE");
   return a;
 }
 
 export async function ensureDepartmentEquipmentSeed(tx: Tx) {
+  if (process.env.FACTORY_ALLOW_DEMO_SEED !== "1") return;
   const depts = (
     await tx.query("SELECT id, code, name FROM core.org_unit WHERE code IN ('P-RD', 'P-KIT', 'P-QA', 'P-OLIGO', 'P-DEVICE')")
   ).rows as { id: string; code: string; name: string }[];
@@ -315,6 +344,9 @@ export async function ensureDepartmentEquipmentSeed(tx: Tx) {
 
 export async function listAssets(tx: Tx, actor: AuthzActor, type?: string, deptCode?: string) {
   await ensureDepartmentEquipmentSeed(tx);
+  await ensureHplcReagentSlotsAndColumnsSeed(tx);
+  await ensureLegacyOligoDataSeeded(tx);
+  await syncOverdueCalibrationAssets(tx);
   const rows = (
     await tx.query(
       `SELECT a.*, o.code AS owner_code, o.name AS owner_name, s.column_positions, s.supported_scales,

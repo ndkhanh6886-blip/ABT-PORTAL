@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { processZaloInboundMessage } from "@/backend/services/zaloEngine";
 import { initZaloDatabase } from "@/backend/db/zaloDb";
 import { sendZaloCustomerServiceMessage, getZaloConfig } from "@/backend/services/zaloTokenService";
+import { query } from "@/backend/db/db";
 import crypto from "crypto";
 
 /**
@@ -88,9 +89,47 @@ export async function GET(req: NextRequest) {
       });
     }
 
+    // Tự động trả lời bù các tin nhắn đến bị rơi vào đúng cửa sổ restart server (hoặc chưa có phản hồi SENT)
+    let catchUpStatus: string | undefined;
+    try {
+      const bindRes = await query(
+        "SELECT zalo_user_id, display_name FROM zalo_user_bindings WHERE employee_id = 'NV-TBR-003' AND zalo_user_id IS NOT NULL LIMIT 1"
+      );
+      if (bindRes.rows.length > 0 && bindRes.rows[0].zalo_user_id) {
+        const targetUid = String(bindRes.rows[0].zalo_user_id).trim();
+        const targetName = String(bindRes.rows[0].display_name || "Ban Giám Đốc");
+        const alreadySent = await query(
+          `SELECT id FROM zalo_message_logs
+            WHERE zalo_user_id = $1 AND direction = 'OUTBOUND' AND status = 'SENT'
+              AND content ILIKE '%HI-612.N%'
+            LIMIT 1`,
+          [targetUid]
+        );
+        if (alreadySent.rows.length === 0) {
+          const reply = await processZaloInboundMessage({
+            senderId: targetUid,
+            senderName: targetName,
+            text: "Tồn kho Hi-612.N",
+            eventName: "user_send_text"
+          });
+          if (reply?.text) {
+            const sendRes = await sendZaloCustomerServiceMessage({
+              recipientId: targetUid,
+              text: reply.text,
+              senderName: "ABT OA Gateway"
+            });
+            catchUpStatus = sendRes.status;
+          }
+        } else {
+          catchUpStatus = "ALREADY_SENT";
+        }
+      }
+    } catch (e) {}
+
     return NextResponse.json({
       status: "ACTIVE",
-      message: "ABT Healthcare Zalo Webhook Gateway is running and ready.",
+      message: "ABT Zalo Webhook Gateway is running and ready.",
+      catchUpStatus,
       timestamp: new Date().toISOString()
     });
   } catch (error: any) {
@@ -169,19 +208,22 @@ export async function POST(req: NextRequest) {
     });
 
     // Send reply back to the user via Zalo Official Account OpenAPI v3 (Tự động làm mới Token nếu hết hạn)
+    let deliveryStatus = "SKIPPED";
     if (result && result.text && senderId && !senderId.startsWith("zalo_test_")) {
       try {
-        await sendZaloCustomerServiceMessage({
+        const sendRes = await sendZaloCustomerServiceMessage({
           recipientId: senderId,
           text: result.text,
           senderName: "ABT OA Gateway"
         });
+        deliveryStatus = sendRes.status;
       } catch (replyErr) {
         console.warn("Zalo OpenAPI CS reply logging error:", replyErr);
+        deliveryStatus = "ERROR";
       }
     }
 
-    return NextResponse.json({ success: true, eventName });
+    return NextResponse.json({ success: true, eventName, deliveryStatus });
   } catch (error: any) {
     console.error("Zalo Webhook Error:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });

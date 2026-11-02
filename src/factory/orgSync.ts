@@ -70,27 +70,6 @@ const STANDARD_FACTORY_ROLES: { code: string; name: string; desc: string; prefix
   { code: "WH_STAFF", name: "Thủ kho / Chuyên viên Cung ứng Nhà máy", desc: "Thực hiện nhập kho, xuất cấp phát NVL theo lô FEFO và lập đơn mua hàng", prefixes: ["inv.", "master.", "purchase.", "intake."], isHead: false },
 ];
 
-const SAMPLE_TECH_PERSONNEL: {
-  employee_code: string;
-  full_name: string;
-  department: string;
-  position: string;
-  email: string;
-  phone: string;
-}[] = [
-  { employee_code: "NV-ABT-101", full_name: "TS. Nguyễn Minh Khoa", department: "Nghiên Cứu R&D", position: "Trưởng phòng R&D", email: "khoa.nm@abtvn.com", phone: "0903111201" },
-  { employee_code: "NV-ABT-102", full_name: "ThS. Lê Hoàng Lan", department: "Nghiên Cứu R&D", position: "Chuyên viên R&D Sinh học phân tử", email: "lan.lh@abtvn.com", phone: "0903111202" },
-  { employee_code: "NV-ABT-103", full_name: "DS. Trần Quốc Bảo", department: "Sản Xuất Kit", position: "Trưởng phòng Sản xuất Kit", email: "bao.tq@abtvn.com", phone: "0903111203" },
-  { employee_code: "NV-ABT-104", full_name: "CN. Phạm Thu Hà", department: "Sản Xuất Kit", position: "Kỹ thuật viên Pha chế & Chia chuẩn GMP", email: "ha.pt@abtvn.com", phone: "0903111204" },
-  { employee_code: "NV-ABT-105", full_name: "ThS. Vũ Đình Khôi", department: "Tổng Hợp Oligo", position: "Trưởng phòng Tổng hợp Oligo", email: "khoi.vd@abtvn.com", phone: "0903111205" },
-  { employee_code: "NV-ABT-106", full_name: "CN. Đặng Ngọc Ánh", department: "Tổng Hợp Oligo", position: "Kỹ thuật viên Tổng hợp CPG & Tinh sạch HPLC", email: "anh.dn@abtvn.com", phone: "0903111206" },
-  { employee_code: "NV-ABT-107", full_name: "KS. Hoàng Gia Huy", department: "Kỹ Thuật – Thiết Bị", position: "Trưởng phòng Kỹ thuật – Thiết bị", email: "huy.hg@abtvn.com", phone: "0903111207" },
-  { employee_code: "NV-ABT-108", full_name: "KS. Bùi Thanh Tùng", department: "Kỹ Thuật – Thiết Bị", position: "Kỹ sư Cơ điện tử & Lắp ráp DHR", email: "tung.bt@abtvn.com", phone: "0903111208" },
-  { employee_code: "NV-ABT-109", full_name: "ThS. Ngô Bích Ngọc", department: "QA/QC", position: "Trưởng phòng QA/QC (ISO 13485)", email: "ngoc.nb@abtvn.com", phone: "0903111209" },
-  { employee_code: "NV-ABT-110", full_name: "CN. Lý Minh Tâm", department: "QA/QC", position: "Chuyên viên Kiểm nghiệm QC Sinh học phân tử", email: "tam.lm@abtvn.com", phone: "0903111210" },
-  { employee_code: "NV-ABT-111", full_name: "LS. Đỗ Quỳnh Trang", department: "Pháp Chế", position: "Trưởng phòng Pháp chế & Đăng ký IVD", email: "trang.dq@abtvn.com", phone: "0903111211" },
-];
-
 export async function ensureFactoryRolesAndSyncAllUsers(tx?: Tx): Promise<void> {
   const db: { query: (sql: string, params?: any[]) => Promise<{ rows: any[]; rowCount: number | null }> } = tx ?? getFactoryPool();
 
@@ -122,32 +101,16 @@ export async function ensureFactoryRolesAndSyncAllUsers(tx?: Tx): Promise<void> 
     }
   }
 
-  // 2. Ensure sample technical & legal personnel exist so directory & dropdowns are complete
   await ensurePersonnelTable();
-  for (const p of SAMPLE_TECH_PERSONNEL) {
-    const role = inferSystemRoleFromPosition(p.department, p.position);
-    await query(
-      `INSERT INTO personnel (employee_code, full_name, department, position, email, phone, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE')
-       ON CONFLICT (employee_code) DO NOTHING`,
-      [p.employee_code, p.full_name, p.department, p.position, p.email, p.phone]
-    );
-    await query(
-      `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
-       VALUES ($1, $2, $3, $4, $5, $6, true, true)
-       ON CONFLICT (username) DO NOTHING`,
-      [p.employee_code, hashPassword(generateTemporaryPassword(24)), p.full_name, role, p.department, p.email]
-    );
-  }
 
-  // 3. Map core.org_unit by module_key
+  // 2. Map core.org_unit by module_key
   const orgUnits = (await db.query("SELECT id, code, module_key, name FROM core.org_unit WHERE status = 'ACTIVE'")).rows;
   const orgIdByModule: Record<string, string> = {};
   for (const o of orgUnits) {
     if (o.module_key) orgIdByModule[o.module_key] = o.id;
   }
 
-  // 4. Sync all portal users -> core.user_profile + core.user_role
+  // 3. Sync all portal users -> core.user_profile + core.user_role
   const usersRes = await query(
     `SELECT u.id, u.username, u.full_name, u.department, u.role, u.is_active, p.position
        FROM users u
@@ -155,22 +118,21 @@ export async function ensureFactoryRolesAndSyncAllUsers(tx?: Tx): Promise<void> 
       WHERE u.role <> 'customer'`
   );
 
-  const defaultPinHash = hashPassword("123456");
-
+  const activeUserIds: number[] = [];
   for (const u of usersRes.rows) {
     const userId = Number(u.id);
+    activeUserIds.push(userId);
     const modKey = inferFactoryModuleFromDept(u.department, u.role);
     const targetOrgId = modKey ? orgIdByModule[modKey] ?? null : null;
 
     await db.query(
       `INSERT INTO core.user_profile (user_id, display_name, org_unit_id, pin_hash, status)
-       VALUES ($1, $2, $3, $4, $5)
+       VALUES ($1, $2, $3, NULL, $4)
        ON CONFLICT (user_id) DO UPDATE SET
          display_name = EXCLUDED.display_name,
          org_unit_id = COALESCE(core.user_profile.org_unit_id, EXCLUDED.org_unit_id),
-         pin_hash = COALESCE(core.user_profile.pin_hash, EXCLUDED.pin_hash),
          status = EXCLUDED.status`,
-      [userId, u.full_name || u.username, targetOrgId, defaultPinHash, u.is_active === false ? "INACTIVE" : "ACTIVE"]
+      [userId, u.full_name || u.username, targetOrgId, u.is_active === false ? "INACTIVE" : "ACTIVE"]
     );
 
     const fRoleCode = inferFactoryRoleCode(modKey, u.role, u.position);
@@ -188,6 +150,12 @@ export async function ensureFactoryRolesAndSyncAllUsers(tx?: Tx): Promise<void> 
         );
       }
     }
+  }
+
+  // Prune orphan factory profiles & roles for deleted portal users
+  if (activeUserIds.length > 0) {
+    await db.query("DELETE FROM core.user_role WHERE NOT (user_id = ANY($1::int[]))", [activeUserIds]);
+    await db.query("DELETE FROM core.user_profile WHERE NOT (user_id = ANY($1::int[]))", [activeUserIds]);
   }
 }
 
@@ -225,14 +193,13 @@ export async function syncSinglePortalUserToFactory(opts: {
 
   await pool.query(
     `INSERT INTO core.user_profile (user_id, display_name, org_unit_id, pin_hash, status)
-     VALUES ($1, $2, $3, $4, $5)
+     VALUES ($1, $2, $3, NULL, $4)
      ON CONFLICT (user_id) DO UPDATE SET
        display_name = EXCLUDED.display_name,
        org_unit_id = COALESCE($3, core.user_profile.org_unit_id),
-       pin_hash = COALESCE(core.user_profile.pin_hash, EXCLUDED.pin_hash),
        status = EXCLUDED.status,
        updated_at = now()`,
-    [Number(userRow.id), userRow.full_name || userRow.username, orgUnitId, hashPassword("123456"), userRow.is_active === false ? "INACTIVE" : "ACTIVE"]
+    [Number(userRow.id), userRow.full_name || userRow.username, orgUnitId, userRow.is_active === false ? "INACTIVE" : "ACTIVE"]
   );
 
   const fRoleCode = inferFactoryRoleCode(modKey, role, opts.position);

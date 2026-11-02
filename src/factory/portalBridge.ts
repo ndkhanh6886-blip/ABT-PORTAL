@@ -4,6 +4,8 @@ import type { PasswordVerifier } from "./core/signature";
 import type { UserDirectory } from "./core/roles";
 import { setKdGateway } from "./intake/gateway";
 import { applyFactoryEvent } from "@/backend/services/factoryBridge";
+import { setNoticePolicy } from "./core/notifications";
+import { factoryNoticeKey, TECHNICAL_MATRIX_ROLES } from "./noticeMatrix";
 
 /**
  * The only place the factory reads ABT Portal accounts (shared login, Q3). Kept behind small
@@ -32,3 +34,31 @@ export const verifyPortalPassword: PasswordVerifier = async (userId, password) =
 
 // Factory → Kinh doanh events are applied by the Kinh doanh bridge (its own transaction and inbox).
 setKdGateway({ deliver: (event) => applyFactoryEvent(event) });
+
+// Factory notices follow the portal "Ma trận thông báo" (Khối Kỹ thuật events): read at most every 30 s.
+let matrixCache: { at: number; data: Record<string, any> } | null = null;
+setNoticePolicy({
+  async ruleFor(type) {
+    if (!matrixCache || Date.now() - matrixCache.at > 30_000) {
+      const data = (await query("SELECT data FROM app_storage WHERE key = 'system_notification_matrix'")).rows[0]?.data;
+      matrixCache = { at: Date.now(), data: data && typeof data === "object" ? data : {} };
+    }
+    const ev = matrixCache.data[factoryNoticeKey(type)];
+    if (!ev) return null;
+    const roles: string[] = Array.isArray(ev.targetRoles) ? ev.targetRoles : [];
+    const names: string[] = Array.isArray(ev.targetEmployeeNames) ? ev.targetEmployeeNames : [];
+    const userIds = roles.includes("admin") || names.length
+      ? (
+          await query(
+            "SELECT id FROM users WHERE is_active IS NOT FALSE AND role <> 'customer' AND (($1 AND role = 'admin') OR full_name = ANY($2::text[]))",
+            [roles.includes("admin"), names]
+          )
+        ).rows.map((r: any) => Number(r.id))
+      : [];
+    return {
+      enabled: ev.enabled !== false,
+      permissions: TECHNICAL_MATRIX_ROLES.filter((r) => roles.includes(r.code)).map((r) => r.permission),
+      userIds,
+    };
+  },
+});

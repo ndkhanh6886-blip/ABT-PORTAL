@@ -165,26 +165,28 @@ async function ensureSampleLegalStorage(): Promise<void> {
 
 export const GET = factoryRoute(async (tx, { actor }) => {
   await ensureFactoryBootstrapped(tx, actor);
-  await ensureSampleLegalStorage().catch(() => {});
+  if (process.env.FACTORY_ALLOW_DEMO_SEED === "1") {
+    await ensureSampleLegalStorage().catch(() => {});
 
-  // Ensure standard QMS Controlled Documents (SOPs) exist so QA/QC and Legal share controlled documents
-  const qaOrg = (await tx.query("SELECT id FROM core.org_unit WHERE module_key = 'QA' LIMIT 1")).rows[0];
-  const rdOrg = (await tx.query("SELECT id FROM core.org_unit WHERE module_key = 'RD' LIMIT 1")).rows[0];
-  const docCount = Number((await tx.query("SELECT count(*)::int AS c FROM qms.controlled_document")).rows[0]?.c ?? 0);
-  if (docCount === 0) {
-    await tx.query(
-      `INSERT INTO qms.controlled_document
-         (code, doc_version, title, doc_type, org_unit_id, effective_date, review_due_date, content_summary, status, approved_by, approved_at, created_by)
-       VALUES
-         ('SOP-QA-001', 1, 'Quy trình Thẩm định QC & Giải phóng Lô Xuất Xưởng (COA) theo ISO 13485:2016', 'SOP', $1, '2026-01-01', '2027-01-01',
-          'Quy định trình tự kiểm nghiệm IQC/IPQC/OQC, đối soát hồ sơ lô eBR/DHR và cấp Chứng nhận phân tích xuất xưởng (COA) phục vụ lưu hành & đấu thầu bệnh viện.',
-          'EFFECTIVE', 1, now(), 1),
-         ('SOP-RD-002', 1, 'Quy trình Kiểm soát Thiết kế (DHF), Thẩm định Hiệu năng Lâm sàng & Hồ sơ CSDT Đăng ký Lưu hành IVD', 'SOP', $2, '2026-01-01', '2027-01-01',
-          'Quy định cấu trúc Hồ sơ Lịch sử Thiết kế (DHF), nghiên cứu độ ổn định (Stability) và bàn giao hồ sơ kỹ thuật CSDT sang Phòng Pháp Chế đăng ký số lưu hành Bộ Y Tế.',
-          'EFFECTIVE', 1, now(), 1)
-       ON CONFLICT DO NOTHING`,
-      [qaOrg?.id ?? null, rdOrg?.id ?? null]
-    );
+    // Ensure standard QMS Controlled Documents (SOPs) exist so QA/QC and Legal share controlled documents
+    const qaOrg = (await tx.query("SELECT id FROM core.org_unit WHERE module_key = 'QA' LIMIT 1")).rows[0];
+    const rdOrg = (await tx.query("SELECT id FROM core.org_unit WHERE module_key = 'RD' LIMIT 1")).rows[0];
+    const docCount = Number((await tx.query("SELECT count(*)::int AS c FROM qms.controlled_document")).rows[0]?.c ?? 0);
+    if (docCount === 0) {
+      await tx.query(
+        `INSERT INTO qms.controlled_document
+           (code, doc_version, title, doc_type, org_unit_id, effective_date, review_due_date, content_summary, status, approved_by, approved_at, created_by)
+         VALUES
+           ('SOP-QA-001', 1, 'Quy trình Thẩm định QC & Giải phóng Lô Xuất Xưởng (COA) theo ISO 13485:2016', 'SOP', $1, '2026-01-01', '2027-01-01',
+            'Quy định trình tự kiểm nghiệm IQC/IPQC/OQC, đối soát hồ sơ lô eBR/DHR và cấp Chứng nhận phân tích xuất xưởng (COA) phục vụ lưu hành & đấu thầu bệnh viện.',
+            'EFFECTIVE', 1, now(), 1),
+           ('SOP-RD-002', 1, 'Quy trình Kiểm soát Thiết kế (DHF), Thẩm định Hiệu năng Lâm sàng & Hồ sơ CSDT Đăng ký Lưu hành IVD', 'SOP', $2, '2026-01-01', '2027-01-01',
+            'Quy định cấu trúc Hồ sơ Lịch sử Thiết kế (DHF), nghiên cứu độ ổn định (Stability) và bàn giao hồ sơ kỹ thuật CSDT sang Phòng Pháp Chế đăng ký số lưu hành Bộ Y Tế.',
+            'EFFECTIVE', 1, now(), 1)
+         ON CONFLICT DO NOTHING`,
+        [qaOrg?.id ?? null, rdOrg?.id ?? null]
+      );
+    }
   }
 
   const products = (

@@ -3,6 +3,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 
+export interface TechPartInventoryItem {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  unit: string;
+  base_uom: string;
+  stock_qty: number;
+  on_hand_qty: number;
+  min_alert_qty: number;
+  unit_cost: number;
+  location: string;
+  supplier_name: string;
+  lot_number: string;
+  tracking_type: "SERIAL" | "LOT" | "BULK";
+}
+
 export interface DeviceOptions {
   units: { id: string; code: string; name: string; unit_type: string }[];
   warehouses: { id: string; code: string; name: string; owner_org_unit_id: string }[];
@@ -18,6 +35,7 @@ export interface DeviceOptions {
     model_name: string;
     org_unit_id: string;
   }[];
+  parts_inventory?: TechPartInventoryItem[];
 }
 
 export function useDeviceOptions() {

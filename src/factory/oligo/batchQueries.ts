@@ -79,7 +79,15 @@ export async function listBatches(tx: Tx, actor: AuthzActor, status?: string) {
   return (
     await tx.query(
       `SELECT b.id, b.code, b.status, b.program_name, b.planned_start, b.started_at, b.finished_at, b.created_at, a.code AS synthesizer_code, a.name AS synthesizer_name,
-              (SELECT count(*)::int FROM oligo.synthesis_position p WHERE p.batch_id = b.id) AS position_count
+              (SELECT count(*)::int FROM oligo.synthesis_position p WHERE p.batch_id = b.id) AS position_count,
+              ARRAY(
+                SELECT DISTINCT o.code
+                  FROM oligo.synthesis_position p
+                  JOIN oligo.oligo_sequence s ON s.id = p.sequence_id
+                  JOIN oligo.oligo_order o ON o.id = s.order_id
+                 WHERE p.batch_id = b.id AND o.code IS NOT NULL
+                 ORDER BY o.code
+              ) AS order_codes
          FROM oligo.synthesis_batch b JOIN asset.asset a ON a.id = b.synthesizer_id
         WHERE ($1::uuid[] IS NULL OR b.org_unit_id = ANY($1::uuid[])) AND ($2::text IS NULL OR b.status = $2)
         ORDER BY b.created_at DESC LIMIT 200`,
@@ -147,10 +155,14 @@ export async function batchCandidates(tx: Tx, actor: AuthzActor, orgUnitId: stri
   const sequences = (
     await tx.query(
       `SELECT s.id, s.code, s.name, s.normalized_sequence, s.base_count, s.scale_code, s.purification, s.relation,
-              s.oligo_role, s.target_pathogen, o.code AS order_code, o.due_date
-         FROM oligo.oligo_sequence s LEFT JOIN oligo.oligo_order o ON o.id = s.order_id
+              s.oligo_role, s.target_pathogen, s.product_type,
+              s.order_id, o.code AS order_code, o.customer_label, o.due_date,
+              io.code AS internal_order_code, io.kd_po_code
+         FROM oligo.oligo_sequence s
+         LEFT JOIN oligo.oligo_order o ON o.id = s.order_id
+         LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id
         WHERE s.org_unit_id = $1 AND s.status = 'PENDING'
-        ORDER BY o.due_date NULLS LAST, s.code LIMIT 500`,
+        ORDER BY o.due_date NULLS LAST, o.code NULLS LAST, s.line_no NULLS LAST, s.code LIMIT 500`,
       [orgUnitId]
     )
   ).rows;

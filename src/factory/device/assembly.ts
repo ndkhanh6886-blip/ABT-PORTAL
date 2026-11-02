@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, hasFactoryPermission, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, hasFactoryPermission, registerPermissions, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
@@ -12,6 +12,11 @@ import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { getItem, toBaseQty } from "../master/service";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import "./permissions";
+
+registerPermissions([
+  { code: "device.qa.release", description: "QA giải phóng xuất xưởng thiết bị", gxpCritical: true },
+  { code: "qms.qc.record", description: "Ghi nhận kết quả đo kiểm QC thiết bị", gxpCritical: true },
+]);
 
 export type DeviceOrderStatus =
   | "RECEIVED"
@@ -63,6 +68,7 @@ export interface DeviceUnitRow {
   fqc_test_id: string | null;
   fqc_passed: boolean;
   fqc_summary: string | null;
+  assembled_by?: number | null;
   qa_released_by: number | null;
   qa_released_at: string | null;
   customer_name: string | null;
@@ -315,6 +321,7 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
           code: "SELF_RELEASE",
           message: "Người ký QA giải phóng xuất xưởng phải độc lập với kỹ thuật viên đã lắp ráp linh kiện trên máy này.",
           check: async ({ tx, actor, row }) => {
+            if (row.assembled_by && row.assembled_by === actor.userId) return false;
             const inst = await tx.query(
               "SELECT 1 FROM device.device_unit_component WHERE unit_id = $1 AND installed_by = $2 LIMIT 1",
               [row.id, actor.userId]
@@ -342,8 +349,18 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
         },
         {
           code: "FQC_NOT_PASSED",
-          message: "Máy phải được ghi nhận kết quả kiểm tra xuất xưởng FQC Đạt (PASS) trước khi QA ký giải phóng.",
-          check: ({ row }) => row.fqc_passed === true,
+          message: "Máy phải được ghi nhận kết quả kiểm tra xuất xưởng FQC Đạt (PASS) và Phiếu QC FQC đã được QA/QC duyệt Đạt trước khi QA ký giải phóng.",
+          check: async ({ tx, row }) => {
+            if (row.fqc_test_id) {
+              const qt = (
+                await tx.query("SELECT status, overall_result FROM qms.qc_test WHERE id = $1", [row.fqc_test_id])
+              ).rows[0];
+              if (qt) {
+                return qt.status === "REVIEWED" && qt.overall_result === "PASS";
+              }
+            }
+            return row.fqc_passed === true;
+          },
         },
       ],
       patch: ({ actor }) => ({ qa_released_by: actor.userId, qa_released_at: new Date() }),
@@ -692,6 +709,8 @@ export async function installUnitComponent(tx: Tx, actor: AuthzActor, unitId: st
     ).rows[0];
     inserted.push(row);
   }
+  await tx.query("ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS assembled_by integer");
+  await tx.query("UPDATE device.device_unit SET assembled_by = COALESCE(assembled_by, $2) WHERE id = $1", [unit.id, actor.userId]);
   await writeAudit(tx, actor, {
     entityType: "device_unit",
     entityId: unit.id,
@@ -747,15 +766,34 @@ const fqcResultSchema = z.object({
 });
 
 export async function recordUnitFqcResult(tx: Tx, actor: AuthzActor, unitId: string, input: unknown) {
+  await tx.query("ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS assembled_by integer");
   const d = parseInput(fqcResultSchema, input);
   const unit = (await tx.query("SELECT * FROM device.device_unit WHERE id = $1 FOR UPDATE", [unitId])).rows[0] as
     | DeviceUnitRow
     | undefined;
   if (!unit) throw notFound("máy (serial)");
   const orgId = await unitOrgUnit(tx, unit.order_id);
-  await authorize(tx, actor, "device.assembly.execute", orgId);
+  const canRecordFqc =
+    (await hasFactoryPermission(tx, actor, "qms.qc.record", orgId)) ||
+    (await hasFactoryPermission(tx, actor, "device.qa.release", orgId)) ||
+    (await hasFactoryPermission(tx, actor, "device.unit.release", orgId)) ||
+    (await hasFactoryPermission(tx, actor, "qms.qc.analyze", orgId));
+  if (!canRecordFqc) {
+    await authorize(tx, actor, "qms.qc.record", orgId);
+  }
   if (unit.status !== "FQC") {
     throw invalid("Máy phải đang ở trạng thái Kiểm tra xuất xưởng (FQC) mới ghi được kết quả FQC.");
+  }
+  const inst = await tx.query(
+    "SELECT 1 FROM device.device_unit_component WHERE unit_id = $1 AND installed_by = $2 LIMIT 1",
+    [unit.id, actor.userId]
+  );
+  if (unit.assembled_by === actor.userId || inst.rowCount) {
+    throw invalid(
+      "Nhân sự kiểm tra xuất xưởng (FQC) phải độc lập với kỹ thuật viên đã lắp ráp thiết bị này (Segregation of Duties).",
+      undefined,
+      "SELF_FQC"
+    );
   }
   if (!d.passed) {
     return runTransition(

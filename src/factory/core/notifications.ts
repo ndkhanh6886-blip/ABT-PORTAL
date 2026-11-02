@@ -12,8 +12,39 @@ export interface NoticeInput {
   sourceKey?: string | null;
 }
 
+/** What the portal "Ma trận thông báo" says about a notice type: switched off, or extra recipient groups / people. */
+export interface NoticeRule {
+  enabled: boolean;
+  permissions: string[];
+  userIds: number[];
+}
+export interface NoticePolicy {
+  ruleFor(type: string): Promise<NoticeRule | null>;
+}
+let policy: NoticePolicy | null = null;
+export function setNoticePolicy(p: NoticePolicy | null): void {
+  policy = p;
+}
+
+/** Users holding `permission` through an active role in any department. */
+export async function usersWithPermissionAnywhere(tx: Tx, permission: string): Promise<number[]> {
+  const res = await tx.query(
+    `SELECT DISTINCT ur.user_id FROM core.user_role ur
+       JOIN core.role r ON r.id = ur.role_id AND r.status = 'ACTIVE'
+       JOIN core.role_permission rp ON rp.role_id = ur.role_id AND rp.permission_code = $1
+       JOIN core.user_profile up ON up.user_id = ur.user_id AND up.status = 'ACTIVE'
+      WHERE ur.revoked_at IS NULL AND ur.valid_from <= now() AND (ur.valid_to IS NULL OR ur.valid_to > now())`,
+    [permission]
+  );
+  return res.rows.map((r) => r.user_id);
+}
+
 export async function notifyUsers(tx: Tx, userIds: number[], n: NoticeInput): Promise<number> {
-  const ids = [...new Set(userIds.filter((id) => id > 0))];
+  // the matrix never blocks the work itself: an unreadable policy falls back to the built-in recipients
+  const rule = policy ? await policy.ruleFor(n.type).catch(() => null) : null;
+  if (rule && !rule.enabled) return 0;
+  const extra = rule ? [...rule.userIds, ...(await Promise.all(rule.permissions.map((p) => usersWithPermissionAnywhere(tx, p)))).flat()] : [];
+  const ids = [...new Set([...userIds, ...extra].filter((id) => id > 0))];
   if (!ids.length) return 0;
   const res = await tx.query(
     `INSERT INTO core.notification (user_id, type, title, body, entity_type, entity_id, link, source_key)

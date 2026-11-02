@@ -48,6 +48,8 @@ export async function heldPermissions(tx: Tx, actor: AuthzActor): Promise<string
     [actor.userId]
   );
   const codes = new Set<string>(res.rows.map((r) => r.permission_code));
+  // Every signed-in internal user (including Khối Kinh Doanh) can view and track internal orders transferred to production
+  codes.add("intake.order.view");
   for (const code of ["core.org.manage", "core.role.manage", "core.sequence.manage", "core.setting.manage", "core.audit.view", "master.warehouse.manage"]) {
     if (getPermission(code)?.bootstrapAdmin && (await hasFactoryPermission(tx, actor, code))) codes.add(code);
   }

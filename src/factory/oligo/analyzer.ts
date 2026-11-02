@@ -97,9 +97,9 @@ const CUSTOMER_MOD_ALIASES: Record<string, string> = {
   "5-VIC": "VIC",
   "5ROX": "ROX",
   "5-ROX": "ROX",
-  "5TEXRD-XN": "ROX",
-  "TEXRD": "ROX",
-  "TEXASRED": "ROX",
+  "5TEXRD-XN": "TXR",
+  "TEXRD": "TXR",
+  "TEXASRED": "TXR",
   "5CY5": "CY5",
   "5-CY5": "CY5",
   "5CY3": "CY3",
@@ -125,20 +125,68 @@ const CUSTOMER_MOD_ALIASES: Record<string, string> = {
   "PHOS": "PO4",
   "5MEDC": "5MC",
   "I5MEDC": "5MC",
+  "5-ME-DC": "5MC",
+  "5-METHYL-DC": "5MC",
 };
 
 class Catalog {
   readonly byKey = new Map<string, CatalogEntry>();
   constructor(readonly entries: CatalogEntry[]) {
-    for (const e of entries) {
-      this.byKey.set(e.code.toUpperCase(), e);
+    for (const raw of entries) {
+      const codeUp = raw.code.toUpperCase();
+      let e: CatalogEntry = { ...raw };
+      if (codeUp === "TXR") {
+        e = { ...e, mw: 881.03, ext_coeff_260: 14400, nn_role: "MOD" };
+      } else if (codeUp === "CY7" && Number(e.ext_coeff_260) === 199000) {
+        e = { ...e, ext_coeff_260: 10000 };
+      } else if (codeUp === "DABCYL" && Number(e.ext_coeff_260) === 32000) {
+        e = { ...e, ext_coeff_260: 11000 };
+      } else if (codeUp === "5MC" || e.kind === "METHYL") {
+        e = {
+          ...e,
+          nn_role: "BASE",
+          base_letter: e.base_letter || "C",
+          mw: null,
+          mw_delta: e.mw_delta ?? 14.03,
+          ext_coeff_260: 0,
+        };
+      }
+      this.byKey.set(codeUp, e);
       for (const a of e.aliases) this.byKey.set(a.toUpperCase(), e);
     }
+    if (!this.byKey.has("TXR")) {
+      const txr: CatalogEntry = {
+        code: "TXR",
+        name: "Texas Red (Sulforhodamine 101)",
+        kind: "DYE",
+        base_letter: null,
+        nn_role: "MOD",
+        mw: 881.03,
+        mw_delta: null,
+        ext_coeff_260: 14400,
+        aliases: ["5TEXRD-XN", "TEXRD", "TEXASRED", "5TXR"],
+        position_type: "ANY",
+      };
+      this.byKey.set("TXR", txr);
+    }
+    if (!this.byKey.has("5MC")) {
+      const m5c: CatalogEntry = {
+        code: "5MC",
+        name: "5-Methyl-dC (5mC)",
+        kind: "METHYL",
+        base_letter: "C",
+        nn_role: "BASE",
+        mw: null,
+        mw_delta: 14.03,
+        ext_coeff_260: 0,
+        aliases: ["5MEDC", "I5MEDC", "5-ME-DC", "5-METHYL-DC"],
+        position_type: "ANY",
+      };
+      this.byKey.set("5MC", m5c);
+    }
     for (const [alias, targetCode] of Object.entries(CUSTOMER_MOD_ALIASES)) {
-      if (!this.byKey.has(alias)) {
-        const target = this.byKey.get(targetCode);
-        if (target) this.byKey.set(alias, target);
-      }
+      const target = this.byKey.get(targetCode);
+      if (target) this.byKey.set(alias, target);
     }
   }
   base(letter: string) {
@@ -171,9 +219,14 @@ export function tokenize(input: string, catalog: CatalogEntry[]): Token[] {
   const modToken = (raw: string) => {
     const key = raw.trim();
     if (!key || ORIENTATION.test(key)) return;
-    const entry = cat.byKey.get(key.toUpperCase());
+    const keyUp = key.toUpperCase();
+    const entry = keyUp === "MC" ? cat.base("5MC") ?? cat.byKey.get(keyUp) : cat.byKey.get(keyUp);
+    if (entry && (entry.kind === "METHYL" || entry.code.toUpperCase() === "5MC")) {
+      tokens.push({ code: entry.code, text: "5mC", entry, base: entry.base_letter || "C" });
+      return;
+    }
     if (!entry || entry.nn_role !== "MOD") throw new SequenceError(`Không nhận diện được modification "${key}". Dùng mã trong danh mục, ví dụ /FAM/, /BHQ1/.`);
-    tokens.push({ code: entry.code, text: entry.kind === "METHYL" ? "5mC" : `/${entry.code}/`, entry, base: null });
+    tokens.push({ code: entry.code, text: `/${entry.code}/`, entry, base: null });
   };
   const baseRun = (chunk: string) => {
     let i = 0;
@@ -185,12 +238,12 @@ export function tokenize(input: string, catalog: CatalogEntry[]): Token[] {
         tokens.push({ code: e.code, text: e.code, entry: e, base: e.base_letter });
         i += 2;
       } else if ((c === "m" || c === "f") && next && "ACGTU".includes(next)) {
-        const e = cat.base(`${c.toUpperCase()}${next}`)!;
-        tokens.push({ code: e.code, text: `${c}${next}`, entry: e, base: e.base_letter });
+        const e = (c === "m" && next === "C" ? cat.base("5MC") ?? cat.base("MC") : cat.base(`${c.toUpperCase()}${next}`))!;
+        tokens.push({ code: e.code, text: e.code === "5MC" ? "5mC" : `${c}${next}`, entry: e, base: e.base_letter || next.toUpperCase() });
         i += 2;
       } else if (c === "5" && (next === "m" || next === "M") && chunk[i + 2]?.toUpperCase() === "C") {
         const e = cat.base("5MC")!;
-        tokens.push({ code: e.code, text: "5mC", entry: e, base: null });
+        tokens.push({ code: e.code, text: "5mC", entry: e, base: e.base_letter || "C" });
         i += 3;
       } else if ("ACGTUI".includes(c.toUpperCase())) {
         const e = cat.base(c.toUpperCase())!;

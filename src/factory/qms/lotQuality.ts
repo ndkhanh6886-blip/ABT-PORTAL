@@ -1,8 +1,13 @@
-import { registerLotQualityGuards, type Lot } from "../inv/lots";
+import { lotMachine, registerLotQualityGuards, type Lot } from "../inv/lots";
 import type { Tx } from "../core/db";
 import { hasOpenNcr, raiseDeviation } from "./incidents";
 import { createQcTest } from "./qcTests";
 import { findEffectiveSpec } from "./specs";
+
+const releaseTransition = lotMachine.transitions.find((t) => t.action === "release");
+if (releaseTransition) {
+  releaseTransition.from = ["PENDING_QC", "ON_HOLD"];
+}
 
 /** Receipts are checked against the receiving (IQC) spec first, then the general item spec. */
 async function specForLot(tx: Tx, lot: Lot) {
@@ -40,6 +45,16 @@ registerLotQualityGuards({
     },
   ],
   release: [
+    {
+      code: "OPEN_NCR_EXISTS",
+      message: "Lô đang có phiếu Sai lệch / NCR chưa đóng. Phải hoàn tất điều tra OOS và đóng NCR trước khi giải phóng lô.",
+      check: async ({ tx, row }) => {
+        const openNcr = await tx.query("SELECT 1 FROM qms.ncr WHERE lot_id = $1 AND status <> 'CLOSED' LIMIT 1", [row.id]);
+        if (openNcr.rowCount) return false;
+        const openDev = await tx.query("SELECT 1 FROM qms.deviation WHERE entity_type = 'LOT' AND entity_id = $1 AND status <> 'CLOSED' LIMIT 1", [row.id]);
+        return !openDev.rowCount;
+      },
+    },
     {
       code: "QC_OPEN",
       message: "Lô còn phiếu QC chưa được duyệt.",

@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { api, fmtDate, fmtQty } from "../api";
+import { api, fmtDate, fmtQty, useDebouncedValue } from "../api";
 import { Card, Empty, ErrorNote, inputClass, LOT_STATUS_LABEL, Pager, StatusBadge, Table } from "../ui";
 import { LotPanel } from "./LotPanel";
 
@@ -34,12 +34,13 @@ export function StockView({
 }) {
   const [warehouseId, setWarehouseId] = useState(initialWarehouseId);
   const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q, 300);
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
   const [lotId, setLotId] = useState<string | null>(null);
   const params = new URLSearchParams({ page: String(page), page_size: "50" });
   if (warehouseId) params.set("warehouse_id", warehouseId);
-  if (q.trim()) params.set("q", q.trim());
+  if (debouncedQ.trim()) params.set("q", debouncedQ.trim());
   if (status) params.set("status", status);
 
   const stock = useQuery({

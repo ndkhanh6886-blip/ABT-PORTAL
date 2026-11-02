@@ -17,7 +17,7 @@ export interface ZaloMessageResponse {
   quoteData?: any;
 }
 
-const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://portal.abtvn.com";
+const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tbr-portal.vn";
 
 const QUOTE_CODE_REGEX = /BG-(?:TBR|VIA|ABT)-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
 const SO_CODE_REGEX = /SO[0-9]{2}-[A-Za-z0-9-]+|SO-(?:TBR|VIA|ABT)?-?[A-Za-z0-9-]+/i;
@@ -540,7 +540,7 @@ export async function processZaloInboundMessage(params: {
   await initZaloDatabase();
 
   const { senderId, senderName = "Người dùng Zalo", text, attachments = [] } = params;
-  const rawText = (text || "").trim();
+  const rawText = String(text || "").normalize("NFC").trim();
   const lowerText = rawText.toLowerCase();
 
   // 1. Sender binding: ONLY by the Zalo user id that was linked with a one-time code from the portal.
@@ -555,44 +555,43 @@ export async function processZaloInboundMessage(params: {
   }
 
   // 1B. LINKING: the message contains a one-time code "LK-XXXXXX" created by the employee in ABT Portal
-  if (!senderBinding) {
+  const linkCodeMatch = rawText.toUpperCase().replace(/\s+/g, "").match(/LK-?([A-F0-9]{6})/);
+  if (linkCodeMatch) {
     try {
-      const codeMatch = rawText.toUpperCase().replace(/\s+/g, "").match(/LK-?([A-F0-9]{6})/);
-      if (codeMatch) {
-        const normalizedCode = `LK-${codeMatch[1]}`;
-        const codeHash = crypto.createHash("sha256").update(normalizedCode).digest("hex");
-        const matchRes = await query(
-          "SELECT * FROM zalo_user_bindings WHERE link_code_hash = $1 AND (link_code_expires IS NULL OR link_code_expires > NOW() - INTERVAL '24 hours') LIMIT 1",
-          [codeHash]
+      const normalizedCode = `LK-${linkCodeMatch[1]}`;
+      const codeHash = crypto.createHash("sha256").update(normalizedCode).digest("hex");
+      const matchRes = await query(
+        "SELECT * FROM zalo_user_bindings WHERE link_code_hash = $1 AND (link_code_expires IS NULL OR link_code_expires > NOW() - INTERVAL '24 hours') LIMIT 1",
+        [codeHash]
+      );
+      if (matchRes.rows.length > 0) {
+        senderBinding = matchRes.rows[0];
+        await query("UPDATE zalo_user_bindings SET zalo_user_id = NULL, connection_status = 'PENDING_ZALO' WHERE zalo_user_id = $1 AND id <> $2", [senderId, senderBinding.id]);
+        await query(
+          `UPDATE zalo_user_bindings
+           SET zalo_user_id = $1,
+               connection_status = 'CONNECTED',
+               is_active = TRUE,
+               link_code_hash = NULL,
+               link_code_expires = NULL,
+               updated_at = CURRENT_TIMESTAMP
+           WHERE id = $2`,
+          [senderId, senderBinding.id]
         );
-        if (matchRes.rows.length > 0) {
-          senderBinding = matchRes.rows[0];
-          await query("UPDATE zalo_user_bindings SET zalo_user_id = NULL, connection_status = 'PENDING_ZALO' WHERE zalo_user_id = $1 AND id <> $2", [senderId, senderBinding.id]);
-          await query(
-            `UPDATE zalo_user_bindings
-             SET zalo_user_id = $1,
-                 connection_status = 'CONNECTED',
-                 is_active = TRUE,
-                 link_code_hash = NULL,
-                 link_code_expires = NULL,
-                 updated_at = CURRENT_TIMESTAMP
-             WHERE id = $2`,
-            [senderId, senderBinding.id]
-          );
-          senderBinding.zalo_user_id = senderId;
-          senderBinding.connection_status = "CONNECTED";
-          senderBinding.is_active = true;
+        senderBinding.zalo_user_id = senderId;
+        senderBinding.connection_status = "CONNECTED";
+        senderBinding.is_active = true;
 
-          await query(
-            `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
-             VALUES ($1, $2, 'INBOUND', 'TEXT', $3, 'CONNECTED')`,
-            [senderId, senderBinding.display_name, `${normalizedCode} (Đã liên kết nhân sự ${senderBinding.employee_id})`]
-          ).catch(() => {});
+        await query(
+          `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
+           VALUES ($1, $2, 'INBOUND', 'TEXT', $3, 'CONNECTED')`,
+          [senderId, senderBinding.display_name, `${normalizedCode} (Đã liên kết nhân sự ${senderBinding.employee_id})`]
+        ).catch(() => {});
 
-          return {
-            recipientId: senderId,
-            messageType: "TEXT",
-            text:
+        return {
+          recipientId: senderId,
+          messageType: "TEXT",
+          text:
 `🎉 XÁC THỰC THÀNH CÔNG!
 Chào mừng ${senderBinding.display_name} [${senderBinding.employee_id}] (${senderBinding.department} - ${senderBinding.position || 'Nhân sự'})!
 
@@ -606,13 +605,14 @@ Từ bây giờ, bạn có thể thực hiện trực tiếp trên Zalo:
 5. 📦 Tra cứu tồn kho FEFO & Giữ chỗ 48h: Gõ "Tồn kho ..." hoặc "Giữ chỗ ..."
 
 Gõ "menu" hoặc "help" bất kỳ lúc nào để xem danh sách lệnh hỗ trợ.`
-          };
-        }
+        };
       }
     } catch (autoBindErr) {
       console.warn("Zalo link code error:", autoBindErr);
     }
+  }
 
+  if (!senderBinding) {
     try {
       await query(
         `INSERT INTO zalo_message_logs (zalo_user_id, sender_name, direction, message_type, content, status)
@@ -625,11 +625,11 @@ Gõ "menu" hoặc "help" bất kỳ lúc nào để xem danh sách lệnh hỗ t
       recipientId: senderId,
       messageType: "TEXT",
       text: 
-`👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty TNHH Giải pháp Y sinh ABT.
+`👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty Cổ phần Công nghệ TBR.
 
 ⚠️ Hiện tại tài khoản Zalo này CHƯA ĐƯỢC LIÊN KẾT với hồ sơ nhân sự trên hệ thống ABT Portal.
 
-👉 ĐỂ LIÊN KẾT TÀI KHOẢN (dành cho nhân viên ABT):
+👉 ĐỂ LIÊN KẾT TÀI KHOẢN (dành cho nhân viên TBR):
 1. Đăng nhập ABT Portal → bấm vào tên của bạn → "Bảo mật tài khoản" → "Tạo mã liên kết Zalo".
 2. Nhắn mã vừa nhận (dạng LK-XXXXXX, hiệu lực 30 phút) vào khung chat này.
 
@@ -637,8 +637,8 @@ Vì lý do bảo mật, hệ thống không liên kết theo số điện thoạ
     };
   }
 
-  // If personnel has NO phone number or is marked NO_PHONE:
-  if (!senderBinding.phone_number || senderBinding.connection_status === "NO_PHONE") {
+  // If personnel has NO phone number and is NOT linked via Zalo ID:
+  if (!senderBinding.zalo_user_id && (!senderBinding.phone_number || senderBinding.connection_status === "NO_PHONE")) {
     const empName = senderBinding.display_name || senderName;
     const empCode = senderBinding.employee_id ? ` [${senderBinding.employee_id}]` : "";
 
@@ -1281,7 +1281,7 @@ ${Number(row.total_amount) > 0 ? `💰 Giá trị: ${fmtVnd(row.total_amount)} V
         text:
           "⚠️ Vui lòng ghi rõ mã hồ sơ cần duyệt hoặc từ chối.\n" +
           "Ví dụ:\n" +
-          "• Báo giá (CK cao / 0đ): 'Duyệt BG-ABT-2609-089'\n" +
+          "• Báo giá (CK cao / 0đ): 'Duyệt BG-TBR-2609-089'\n" +
           "• Đơn hàng 0đ / Công nợ: 'Duyệt 0đ SO26-...' hoặc 'Duyệt nợ SO26-...'\n" +
           "• Nghỉ phép / Tờ trình: 'Duyệt DX-202611-0001'\n" +
           "• Đơn mua hàng / Trả hàng: 'Duyệt PO26-...' hoặc 'Duyệt RMA26-...'\n" +
@@ -1420,9 +1420,9 @@ ${signedDocumentUrl("quotation", q.quote_code)}`;
 Vui lòng cung cấp mã báo giá cần lập hợp đồng mua bán.
 
 💡 Ví dụ:
-• "Hợp đồng BG-ABT-2610-9017"
-• "Soạn hợp đồng từ BG-ABT-2610-9017"
-• "Tạo HĐ BG-ABT-2610-9017 mặc định"`
+• "Hợp đồng BG-TBR-2610-9017"
+• "Soạn hợp đồng từ BG-TBR-2610-9017"
+• "Tạo HĐ BG-TBR-2610-9017 mặc định"`
       };
     }
 
@@ -2068,7 +2068,7 @@ Soạn: "Báo giá ${suggestedName}: 2 bộ HI-612, ck 0%"`
           messageType: "TEXT",
           text: `⚠️ CHƯA NHẬN DIỆN ĐƯỢC MÃ HÀNG CẦN BÁO GIÁ
 
-Vui lòng ghi rõ mã sản phẩm của ABT trong tin nhắn.
+Vui lòng ghi rõ mã sản phẩm của TBR trong tin nhắn.
 Ví dụ:
 • "Báo giá BV Bạch Mai: 10 SQH-115, 2 EQ-EXTRACT-32, ck 12%"
 • "Báo giá BV Chợ Rẫy: 20 EXS-021, 5 CS-TIP-FILTER, ck 5%"
@@ -2090,7 +2090,7 @@ ${sampleSkus}
 
       // Determine approval status based on Director Discount Threshold!
       const requiresDirectorApproval = discountRate >= config.director_discount_threshold;
-      const quoteCode = `BG-ABT-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
+      const quoteCode = `BG-TBR-${new Date().getFullYear().toString().slice(-2)}${(new Date().getMonth() + 1).toString().padStart(2, "0")}-${Date.now().toString().slice(-4)}`;
       const status = requiresDirectorApproval ? "PENDING_DIRECTOR_APPROVAL" : "APPROVED";
       const salesRepName = senderBinding?.display_name || senderName || "Bùi Lê Phương Quân (NVKD)";
 
@@ -2198,8 +2198,9 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
 
   // ==============================================================
   // INTENT 4: TRA CỨU TỒN KHO & HẠN DÙNG THỰC TẾ (FEFO)
-  // Cú pháp: "Tồn kho [Mã SKU/Tên]" hoặc "Check kho ..."
+  // Cú pháp: "Tồn kho [Mã SKU/Tên]" hoặc "Check kho ..." hoặc nhập trực tiếp mã SKU (VD: "HI-612.N")
   // ==============================================================
+  const directSkuMatch = /^[A-Z]{2,4}-[A-Z0-9.\-]+$/i.test(rawText);
   const isInventoryQuery = 
     lowerText.includes("tồn kho") || 
     lowerText.includes("ton kho") || 
@@ -2208,7 +2209,9 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
     lowerText.includes("check kho") || 
     lowerText.includes("kiểm tra kho") || 
     lowerText.includes("kiem tra kho") || 
-    lowerText.startsWith("kho ");
+    lowerText.startsWith("kho ") ||
+    lowerText === "kho" ||
+    directSkuMatch;
 
   if (isInventoryQuery) {
     let qTerm = rawText
@@ -2218,31 +2221,54 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
       .toUpperCase()
       .replace(/^[:\-\s]+/, "").trim();
 
-    // Query real inventory_items joined with products using LEFT JOIN
+    const formatExpStr = (val: any): string => {
+      if (!val) return "Chưa có HSD";
+      const s = String(val).trim();
+      const dmyDot = s.match(/^(\d{2})[./-](\d{2})[./-](\d{4})$/);
+      if (dmyDot) return `${dmyDot[1]}/${dmyDot[2]}/${dmyDot[3]}`;
+      const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (ymd) return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
+      const d = new Date(s);
+      if (!isNaN(d.getTime())) {
+        return d.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+      }
+      return s;
+    };
+
+    const cleanQ = qTerm.replace(/[^A-Z0-9]/gi, "");
     let invQuery = `
       SELECT i.*, COALESCE(p.name, i.product_name, i.product_code) as product_name, 
              p.standard_price, COALESCE(p.unit, 'Hộp') as unit, p.specification, p.category
       FROM inventory_items i
       LEFT JOIN products p ON i.product_code = p.code
     `;
-    const params: any[] = [];
+    const qParams: any[] = [];
     if (qTerm && qTerm !== "TẤT CẢ" && qTerm !== "ALL") {
-      invQuery += ` WHERE i.product_code ILIKE $1 OR COALESCE(p.name, i.product_name, '') ILIKE $1 OR i.lot_number ILIKE $1 OR i.shelf_position ILIKE $1`;
-      params.push(`%${qTerm}%`);
+      invQuery += `
+        WHERE i.product_code ILIKE $1
+           OR COALESCE(p.name, i.product_name, '') ILIKE $1
+           OR COALESCE(i.lot_number, '') ILIKE $1
+           OR COALESCE(i.shelf_position, '') ILIKE $1
+           OR ($2 <> '' AND REGEXP_REPLACE(i.product_code, '[^a-zA-Z0-9]', '', 'g') ILIKE $2)
+      `;
+      qParams.push(`%${qTerm}%`, cleanQ ? `%${cleanQ}%` : "");
     }
-    invQuery += ` ORDER BY i.expiry_date ASC NULLS LAST LIMIT 10`;
+    invQuery += ` ORDER BY i.product_code ASC LIMIT 10`;
 
     try {
-      const invRes = await query(invQuery, params);
+      const invRes = await query(invQuery, qParams);
 
       if (invRes.rows.length === 0) {
         // Fallback: check in products table if item exists in catalog
         const prodCheck = await query(
           `SELECT code, name, unit, standard_price, specification, category 
            FROM products 
-           WHERE code ILIKE $1 OR name ILIKE $1 
+           WHERE code ILIKE $1
+              OR name ILIKE $1
+              OR ($2 <> '' AND REGEXP_REPLACE(code, '[^a-zA-Z0-9]', '', 'g') ILIKE $2)
+           ORDER BY code ASC
            LIMIT 5`,
-          [`%${qTerm}%`]
+          [`%${qTerm}%`, cleanQ ? `%${cleanQ}%` : ""]
         );
 
         if (prodCheck.rows.length > 0) {
@@ -2261,23 +2287,49 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
         return {
           recipientId: senderId,
           messageType: "TEXT",
-          text: `🔍 KẾT QUẢ TRA CỨU TỒN KHO: Không tìm thấy sản phẩm nào khớp với từ khóa "${qTerm || "tồn kho"}".\n\n👉 Vui lòng kiểm tra lại mã SKU (Ví dụ: HI-612, HI-007.A, SQH-115, SQH-116...) hoặc gõ "Tồn kho" để tra cứu.`
+          text: `🔍 KẾT QUẢ TRA CỨU TỒN KHO: Không tìm thấy sản phẩm nào khớp với từ khóa "${qTerm || "tồn kho"}".\n\n👉 Vui lòng kiểm tra lại mã SKU (Ví dụ: HI-612.N, HI-612, HI-007.A, SQH-115...) hoặc gõ "Tồn kho" để xem danh sách.`
         };
       }
 
+      const matchedCodes = invRes.rows.map((r: any) => r.product_code).filter(Boolean);
+      const lotsRes = await query(
+        `SELECT product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, COALESCE(is_quarantined, false) AS is_quarantined
+           FROM inventory_lots
+          WHERE product_code = ANY($1::text[]) AND quantity_on_hand > 0
+          ORDER BY product_code ASC, id ASC`,
+        [matchedCodes]
+      ).catch(() => ({ rows: [] as any[] }));
+
       const itemsText = invRes.rows.map((row: any, i: number) => {
-        const expDate = row.expiry_date ? new Date(row.expiry_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Chưa có HSD";
-        const availableQty = (row.quantity_on_hand || 0) - (row.quantity_allocated || 0);
+        const expDate = formatExpStr(row.expiry_date);
+        const onHand = Number(row.quantity_on_hand || 0);
+        const allocated = Number(row.quantity_allocated || 0);
+        const availableQty = Math.max(0, onHand - allocated);
+        const priceFmt = Number(row.standard_price) > 0 ? ` | Giá chuẩn: ${fmtVnd(row.standard_price)} đ/${row.unit || "Hộp"}` : "";
+        const prodLots = lotsRes.rows.filter((l: any) => l.product_code === row.product_code);
+
+        const lotDetails = prodLots.length > 0
+          ? prodLots.map((l: any) =>
+              `   • Lô ${l.lot_number || "N/A"}: ${l.quantity_on_hand} ${row.unit || "Hộp"} • HSD: ${formatExpStr(l.expiry_date)}${l.is_quarantined ? " [ĐANG BIỆT TRỮ]" : ""} (${l.warehouse_location || row.warehouse_location || "Kho ABT"})`
+            ).join("\n")
+          : `   • Số Lô: ${row.lot_number || "Chưa có Lô"} • HSD: ${expDate} (${row.warehouse_location || "Kho ABT"})`;
+
         return `${i + 1}. [${row.product_code}] ${row.product_name}
-   • Tồn khả dụng: ${availableQty} ${row.unit || "Hộp"} (Đang giữ chỗ: ${row.quantity_allocated || 0})
-   • Số Lô: ${row.lot_number || "Chưa có Lô"} • HSD: ${expDate} (FEFO)
-   • Vị trí lưu kho: ${row.shelf_position || "Kệ chính"} (${row.warehouse_location || "Kho ABT"})`;
+   • Quy cách: ${row.specification || "Tiêu chuẩn"}${priceFmt}
+   • Tồn khả dụng: ${availableQty} ${row.unit || "Hộp"} (Tổng tồn: ${onHand} • Đang giữ chỗ: ${allocated})
+${lotDetails}
+   • Vị trí kệ: ${row.shelf_position || "Kệ chính"}`;
       }).join("\n\n");
 
+      const firstCode = invRes.rows[0]?.product_code || "HI-612.N";
       return {
         recipientId: senderId,
-        messageType: "TEXT",
-        text: `📦 KẾT QUẢ TRA CỨU TỒN KHO & HẠN DÙNG THỰC TẾ (FEFO):\n\n${itemsText}`
+        messageType: "CARD",
+        text: `📦 KẾT QUẢ TRA CỨU TỒN KHO & HẠN DÙNG THỰC TẾ (FEFO):\n━━━━━━━━━━━━━━━━━━━━━━\n${itemsText}\n\n💡 Gõ "Giữ chỗ 5 ${firstCode} cho BV..." để giữ hàng 48h hoặc "Báo giá BV...: 5 ${firstCode}" để lập báo giá.`,
+        buttons: [
+          { label: `🔒 Giữ chỗ 5 ${firstCode}`, action: "quick_cmd", payload: `Giữ chỗ 5 ${firstCode} cho Bệnh Viện Chợ Rẫy` },
+          { label: `📄 Báo giá 5 ${firstCode}`, action: "quick_cmd", payload: `Báo giá Bệnh Viện Chợ Rẫy: 5 ${firstCode}, ck 0%` }
+        ]
       };
     } catch (invErr: any) {
       console.warn("Inventory query error in Zalo Engine:", invErr);
@@ -3016,7 +3068,7 @@ Danh sách các nghiệp vụ tự động hỗ trợ Nhân sự & Ban Giám Đ�
 
 5. 📄 Soạn Báo Giá & Hợp Đồng Tự Động (Kèm File PDF):
    • Gõ: "Báo giá BV Chợ Rẫy: 20 kit HBV, ck 12%"
-   • Gõ: "Hợp đồng BG-ABT-..."
+   • Gõ: "Hợp đồng BG-TBR-..."
 
 6. 📦 Tra Cứu Tồn Kho FEFO, Giữ Chỗ 48h, Khách Hàng & Daily:
    • Gõ: "Tồn kho KIT-HBV-100" | "Giữ chỗ 20 KIT-HBV cho BV Chợ Rẫy"

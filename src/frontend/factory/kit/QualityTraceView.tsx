@@ -3,6 +3,7 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { ActionBar } from "../actions";
 import { api, fmtDate, fmtDateTime, fmtQty } from "../api";
+import { printKitCoaCertificate } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { ACTION_LABELS, type KitOptions } from "./shared";
 
@@ -141,7 +142,7 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
           Truy xuất phả hệ Lô 2 chiều
         </Button>
         <Button variant={subTab === "coa" ? "primary" : "ghost"} onClick={() => setSubTab("coa")}>
-          Chứng nhận COA ({coas.length})
+          Chứng nhận COA do QC cấp ({coas.length})
         </Button>
         <Button variant={subTab === "retain" ? "primary" : "ghost"} onClick={() => setSubTab("retain")}>
           Mẫu lưu đối chứng ({retains.length})
@@ -275,21 +276,25 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
 
       {subTab === "coa" && (
         <div className="space-y-4">
-          <Card title="Chứng nhận phân tích xuất xưởng (COA — Bất biến sau khi phát hành)">
+          <Card title="Chứng nhận phân tích xuất xưởng (COA — Do Phòng QA/QC cấp phát tại Tab QC & ánh xạ tự động sang Sản xuất Kit)">
             {coas.length === 0 ? (
               <Empty>
-                Chưa có COA nào được phát hành. COA tự động sinh khi QA ký giải phóng lệnh sản xuất Kit.
+                Chưa có COA nào được Phòng QA/QC cấp phát. Khi Phòng QA/QC duyệt Đạt phiếu kiểm nghiệm tại Tab Quản lý Chất lượng (QA/QC), COA sẽ tự động được cấp và ánh xạ sang đây.
               </Empty>
             ) : (
               <Table
-                head={["Số COA", "Mã Lô Kit", "Sản phẩm", "NSX → HSD", "Quy cách / pH", "SL giải phóng", "Người ký & Bản in"]}
+                head={["Số COA (Do QC cấp)", "Phiếu QC gốc", "Mã Lô Kit", "Sản phẩm", "NSX → HSD", "Quy cách / pH", "SL Đạt", "QA/QC Ký Cấp & Bản in"]}
               >
                 {coas.map((c) => (
                   <tr key={c.id}>
-                    <td className="px-3 py-2 font-mono text-xs font-bold">{c.code}</td>
+                    <td className="px-3 py-2 font-mono text-xs font-bold text-emerald-700 dark:text-emerald-400">{c.code}</td>
+                    <td className="px-3 py-2 font-mono text-xs">
+                      <div className="font-semibold text-sky-700 dark:text-sky-400">{c.qc_test_code || "QC-AUTO"}</div>
+                      {c.spec_code && <div className="text-[11px] text-stone-500">{c.spec_code}</div>}
+                    </td>
                     <td className="px-3 py-2 font-mono text-xs font-semibold">{c.lot_code}</td>
                     <td className="px-3 py-2 text-xs">
-                      <div className="font-medium text-stone-800">
+                      <div className="font-medium text-stone-800 dark:text-slate-200">
                         {c.product_code} — {c.product_name}
                       </div>
                       <div className="text-stone-500">{c.qc_summary}</div>
@@ -305,7 +310,8 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
                       {fmtQty(c.good_qty)} {c.uom}
                     </td>
                     <td className="px-3 py-2 text-xs">
-                      <div>{c.issued_by_name}</div>
+                      {c.analyst_name && <div className="text-stone-500">KN: {c.analyst_name}</div>}
+                      <div className="font-semibold text-emerald-700 dark:text-emerald-400">Duyệt: {c.issued_by_name}</div>
                       <div className="text-stone-500 mb-1">{fmtDateTime(c.issued_at)}</div>
                       <Button variant="ghost" onClick={() => setSelectedCoa(c)}>
                         📄 Xem &amp; In COA Song ngữ
@@ -319,10 +325,10 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
 
           {selectedCoa && (
             <Card
-              title={`Bản in Chứng nhận Phân tích Song ngữ — CERTIFICATE OF ANALYSIS (${selectedCoa.code})`}
+              title={`Bản in Chứng nhận Phân tích Song ngữ — CERTIFICATE OF ANALYSIS (${selectedCoa.code} · Ánh xạ từ Phòng QA/QC)`}
               actions={
                 <div className="flex gap-2">
-                  <Button onClick={() => window.print()}>🖨️ In COA (Print / PDF)</Button>
+                  <Button onClick={() => printKitCoaCertificate(selectedCoa)}>🖨️ In COA (Print / PDF)</Button>
                   <Button variant="ghost" onClick={() => setSelectedCoa(null)}>
                     Đóng
                   </Button>
@@ -338,7 +344,9 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
                     GIẤY CHỨNG NHẬN PHÂN TÍCH / CERTIFICATE OF ANALYSIS (COA)
                   </div>
                   <div className="text-xs font-mono text-stone-600">
-                    Số chứng nhận / Certificate No.: <strong>{selectedCoa.code}</strong> · ISO 13485:2016 Compliant
+                    Số chứng nhận / Certificate No.: <strong>{selectedCoa.code}</strong>
+                    {selectedCoa.qc_test_code ? <> · Phiếu QC gốc / QC Test Ref: <strong>{selectedCoa.qc_test_code}</strong></> : null}
+                    {" "}· Cấp bởi Phòng QA/QC (ISO 13485:2016)
                   </div>
                 </div>
 
@@ -397,23 +405,29 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
 
                 <div className="space-y-1">
                   <div className="text-xs font-bold uppercase text-stone-700">
-                    2. Kết quả kiểm tra chất lượng / Quality Control Results
+                    2. Kết quả kiểm nghiệm chất lượng (Do Phòng QA/QC Cấp) / Quality Control Results
                   </div>
-                  <Table head={["Bước / Chỉ tiêu (Test Item)", "Thông số ghi nhận (Observed Values)", "Kết luận (Result)"]}>
+                  <Table head={["#", "Chỉ tiêu kiểm nghiệm / Parameter", "Phương pháp / Method", "Yêu cầu / Specification", "Kết quả QC / Observed Result", "Kết luận / Result"]}>
                     {(Array.isArray(selectedCoa.qc_results_snapshot) ? selectedCoa.qc_results_snapshot : []).map(
                       (st: any, idx: number) => (
                         <tr key={idx}>
+                          <td className="px-3 py-1.5 text-xs font-mono">{st.seq ?? idx + 1}</td>
                           <td className="px-3 py-1.5 text-xs font-semibold">
-                            #{st.seq} {st.step_code} — {st.step_name}
+                            {st.parameter_name ?? `${st.step_code ?? ""} — ${st.step_name ?? ""}`}
                           </td>
-                          <td className="px-3 py-1.5 text-xs font-mono">
-                            {st.param_values && Object.keys(st.param_values).length > 0
-                              ? Object.entries(st.param_values)
-                                  .map(([k, v]) => `${k}: ${v}`)
-                                  .join(" · ")
-                              : "Đạt chuẩn quy trình / Conforms"}
+                          <td className="px-3 py-1.5 text-xs">{st.method ?? "SOP-QC"}</td>
+                          <td className="px-3 py-1.5 text-xs font-mono">{st.spec_limit ?? "Đạt chuẩn / Conforms"}</td>
+                          <td className="px-3 py-1.5 text-xs font-mono font-semibold">
+                            {st.observed_value ??
+                              (st.param_values && Object.keys(st.param_values).length > 0
+                                ? Object.entries(st.param_values)
+                                    .map(([k, v]) => `${k}: ${v}`)
+                                    .join(" · ")
+                                : "Đạt chuẩn quy trình / Conforms")}
                           </td>
-                          <td className="px-3 py-1.5 text-xs font-bold text-emerald-700">ĐẠT / PASS</td>
+                          <td className="px-3 py-1.5 text-xs font-bold text-emerald-700">
+                            {st.passed === false ? "KHÔNG ĐẠT / FAIL" : "ĐẠT / PASS"}
+                          </td>
                         </tr>
                       )
                     )}
@@ -425,10 +439,13 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
                     <div>
                       Kết luận xuất xưởng / Final Disposition: <strong className="text-emerald-700">{selectedCoa.qc_summary}</strong>
                     </div>
-                    <div className="text-stone-500">Chứng nhận điện tử tuân thủ 21 CFR Part 11 &amp; ISO 13485</div>
+                    {selectedCoa.analyst_name && (
+                      <div className="text-stone-600">Chuyên viên kiểm nghiệm / QC Analyst: <strong>{selectedCoa.analyst_name}</strong></div>
+                    )}
+                    <div className="text-stone-500">Chứng nhận điện tử do Phòng QA/QC cấp phát tuân thủ 21 CFR Part 11 &amp; ISO 13485</div>
                   </div>
                   <div className="text-right">
-                    <div className="font-bold">QA/QC Phê duyệt / Approved by QA:</div>
+                    <div className="font-bold">Phòng QA/QC Phê duyệt &amp; Cấp COA / Approved by QA/QC:</div>
                     <div className="font-mono text-sky-900 font-semibold">{selectedCoa.issued_by_name}</div>
                     <div className="text-stone-500">{fmtDateTime(selectedCoa.issued_at)}</div>
                   </div>

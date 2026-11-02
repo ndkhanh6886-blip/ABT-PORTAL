@@ -8,6 +8,7 @@ import { defineMachine, runTransition } from "../core/stateMachine";
 import { analyze, SequenceError } from "./analyzer";
 import { loadCatalog } from "./catalog";
 import { FORMATS, inferOligoRole, insertSequence, OLIGO_ROLES, productTypeOf, PURIFICATIONS, recomputeOrderStatus, visibleOligoUnits } from "./orders";
+import { ensureOligoPricingSchema, linesTotal, loadPriceConfig, normalizeLegacySequence, orderSequenceLines, recomputeOrderTotalPrice, standardUnitPrice } from "./pricing";
 
 export type SeqStatus =
   | "PENDING" | "SPLIT" | "POOLED" | "QUEUED" | "SYNTHESIZING" | "SYNTHESIZED" | "POST_PROCESSING" | "QC" | "COMPLETED" | "DELIVERED" | "FAILED" | "CANCELLED";
@@ -94,7 +95,7 @@ export async function editSequence(tx: Tx, actor: AuthzActor, id: string, input:
     throw invalid(`Thang "${data.scale_code}" không có trong cấu hình.`);
   }
   const cur = (await tx.query("SELECT * FROM oligo.oligo_sequence WHERE id = $1", [id])).rows[0];
-  const raw = data.raw_sequence ?? cur.raw_sequence;
+  const raw = normalizeLegacySequence(data.raw_sequence ?? cur.raw_sequence);
   let a;
   try {
     a = analyze(raw, await loadCatalog(tx));
@@ -113,13 +114,36 @@ export async function editSequence(tx: Tx, actor: AuthzActor, id: string, input:
     oligo_role: data.oligo_role ?? cur.oligo_role ?? inferOligoRole(nextName, a),
     target_pathogen: data.target_pathogen === undefined ? cur.target_pathogen : data.target_pathogen,
   };
+  await ensureOligoPricingSchema(tx);
+  const priceCfg = await loadPriceConfig(tx);
+  const prodType = productTypeOf(a);
+  const cls =
+    prodType === "AMPLICON_PLASMID"
+      ? "Amplicon (Plasmid)"
+      : prodType === "AMPLICON_LINEAR"
+      ? "Amplicon (Linear)"
+      : "DNA";
+  const priceLines = orderSequenceLines({
+    sequenceStr: a.normalized || raw,
+    scale: next.scale_code,
+    purification: next.purification,
+    format: next.format,
+    classification: cls,
+    config: priceCfg,
+    enforceLock: false,
+  });
+  const totalVnd = linesTotal(priceLines);
+  const unitPrice = standardUnitPrice(priceLines);
   await tx.query(
     `UPDATE oligo.oligo_sequence SET name = $2, raw_sequence = $3, normalized_sequence = $4, base_count = $5, molecule_type = $6, product_type = $7,
             scale_code = $8, purification = $9, format = $10, mw = $11, ext_coeff_260 = $12, tm = $13, nmol_per_od = $14, ug_per_od = $15, gc_percent = $16,
-            modifications = $17, warnings = $18, oligo_role = $20, target_pathogen = $21, version = version + 1, updated_at = now(), updated_by = $19 WHERE id = $1`,
-    [id, next.name, raw, a.normalized, a.length, a.molecule_type, productTypeOf(a), next.scale_code, next.purification, next.format, a.mw, a.ext_coeff_260, a.tm,
-     a.nmol_per_od, a.ug_per_od, a.gc_percent, a.modifications, JSON.stringify(a.warnings), actor.userId, next.oligo_role, next.target_pathogen]
+            modifications = $17, warnings = $18, oligo_role = $20, target_pathogen = $21, unit_price = $22, price = $23, price_lines_json = $24,
+            version = version + 1, updated_at = now(), updated_by = $19 WHERE id = $1`,
+    [id, next.name, raw, a.normalized, a.length, a.molecule_type, prodType, next.scale_code, next.purification, next.format, a.mw, a.ext_coeff_260, a.tm,
+     a.nmol_per_od, a.ug_per_od, a.gc_percent, a.modifications, JSON.stringify(a.warnings), actor.userId, next.oligo_role, next.target_pathogen,
+     unitPrice, totalVnd, JSON.stringify(priceLines)]
   );
+  if (cur.order_id) await recomputeOrderTotalPrice(tx, cur.order_id);
   const changes: Record<string, [unknown, unknown]> = {};
   for (const k of Object.keys(next) as (keyof typeof next)[]) if (cur[k] !== next[k]) changes[k] = [cur[k], next[k]];
   await writeAudit(tx, actor, { entityType: "oligo_sequence", entityId: id, action: "edit", changes, reason: data.reason ?? null });
@@ -128,7 +152,10 @@ export async function editSequence(tx: Tx, actor: AuthzActor, id: string, input:
 export async function cancelSequence(tx: Tx, actor: AuthzActor, id: string, reason: unknown) {
   const s = await lockSequence(tx, id);
   await move(tx, actor, s, "cancel", parseInput(z.string().trim().min(3, "nhập lý do hủy"), reason));
-  if (s.order_id) await recomputeOrderStatus(tx, actor, s.order_id);
+  if (s.order_id) {
+    await recomputeOrderStatus(tx, actor, s.order_id);
+    await recomputeOrderTotalPrice(tx, s.order_id);
+  }
 }
 
 /** Splits a pending sequence into separate tubes (child sequences), before any synthesis. */
@@ -147,6 +174,7 @@ export async function splitSequence(tx: Tx, actor: AuthzActor, id: string, input
     });
   }
   await recomputeOrderStatus(tx, actor, cur.order_id);
+  if (cur.order_id) await recomputeOrderTotalPrice(tx, cur.order_id);
 }
 
 /** Undoes a split while none of the tubes has moved on. */
@@ -160,7 +188,10 @@ export async function unsplitSequence(tx: Tx, actor: AuthzActor, id: string) {
     actor.userId,
   ]);
   await writeAudit(tx, actor, { entityType: "oligo_sequence", entityId: id, action: "unsplit_children", changes: { cancelled_children: [null, children.length] } });
-  if (s.order_id) await recomputeOrderStatus(tx, actor, s.order_id);
+  if (s.order_id) {
+    await recomputeOrderStatus(tx, actor, s.order_id);
+    await recomputeOrderTotalPrice(tx, s.order_id);
+  }
 }
 
 /**

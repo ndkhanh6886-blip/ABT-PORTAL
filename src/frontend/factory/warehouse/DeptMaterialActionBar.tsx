@@ -210,7 +210,7 @@ export function DeptMaterialActionBar({
 
   const selectedPrUnit = prOptions.data?.find((o) => o.id === prOrgUnitId);
 
-  const navigateToHub = (tab: "factory-warehouse" | "factory-purchase") => {
+  const navigateToHub = (tab: "factory-warehouse" | "factory-purchase" | "factory-import") => {
     if (typeof window !== "undefined") {
       window.dispatchEvent(new CustomEvent("tbr-navigate", { detail: { tab } }));
     }
@@ -294,6 +294,15 @@ export function DeptMaterialActionBar({
             title="Mở phân hệ Cung Ứng NVL tập trung"
           >
             Cung Ứng NVL <ArrowUpRight className="w-3 h-3" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => navigateToHub("factory-import")}
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200 dark:border-indigo-800 hover:bg-indigo-100 cursor-pointer"
+            title="Mở Trung tâm Nhập liệu Excel kéo-thả & Tải biểu mẫu chuẩn cho phòng ban"
+          >
+            📥 Nhập Excel &amp; Biểu mẫu <ArrowUpRight className="w-3 h-3" />
           </button>
         </div>
       </div>

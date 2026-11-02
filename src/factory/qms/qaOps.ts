@@ -6,9 +6,26 @@ import { vnToday, addDays } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
-import { createQcTest } from "./qcTests";
-import { createStockDocument, postStockDocument } from "../inv/documents";
+import { createQcTest, registerQcSubject, runTransition } from "./qcTests";
+import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import "./permissions";
+
+registerQcSubject("LOT", {
+  label: async (tx, id) => {
+    const l = (
+      await tx.query(
+        "SELECT l.code, i.code AS item_code, i.name AS item_name FROM inv.lot l JOIN master.item i ON i.id = l.item_id WHERE l.id = $1",
+        [id]
+      )
+    ).rows[0];
+    return l ? `lô ${l.code} (${l.item_code} — ${l.item_name})` : `lô ${id}`;
+  },
+  onReviewed: async (tx, actor, test) => {
+    if (test.overall_result === "PASS") {
+      await issueCoaFromQcTest(tx, actor, { test_id: test.id });
+    }
+  },
+});
 
 let qaOpsSchemaEnsured = false;
 
@@ -124,6 +141,69 @@ export async function ensureQaOpsSchema(tx: Tx): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+
+    ALTER TABLE kit.coa_certificate
+      ALTER COLUMN production_order_id DROP NOT NULL,
+      ADD COLUMN IF NOT EXISTS qc_test_id uuid REFERENCES qms.qc_test(id),
+      ADD COLUMN IF NOT EXISTS qc_test_code text,
+      ADD COLUMN IF NOT EXISTS spec_code text,
+      ADD COLUMN IF NOT EXISTS spec_version integer,
+      ADD COLUMN IF NOT EXISTS analyst_name text,
+      ADD COLUMN IF NOT EXISTS standard_usages_snapshot jsonb NOT NULL DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS custom_notes text,
+      ADD COLUMN IF NOT EXISTS revision_no int NOT NULL DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS revision_reason text;
+
+    DROP TRIGGER IF EXISTS kit_coa_append_only ON kit.coa_certificate;
+    DROP TRIGGER IF EXISTS kit_coa_no_delete ON kit.coa_certificate;
+    CREATE TRIGGER kit_coa_no_delete BEFORE DELETE OR TRUNCATE ON kit.coa_certificate
+      FOR EACH STATEMENT EXECUTE FUNCTION core.forbid_change();
+
+    UPDATE kit.coa_certificate
+       SET tests_per_kit = 0
+     WHERE production_order_id IS NULL
+       AND UPPER(COALESCE(uom, '')) NOT IN ('KIT', 'BỘ', 'HOP', 'HỘP')
+       AND tests_per_kit = 50;
+
+    CREATE TABLE IF NOT EXISTS qms.coa_template_config (
+      id int PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+      company_name text NOT NULL DEFAULT 'CÔNG TY TNHH GIẢI PHÁP Y SINH ABT — ABT BIOLOGICAL SOLUTIONS CO., LTD',
+      document_title text NOT NULL DEFAULT 'GIẤY CHỨNG NHẬN PHÂN TÍCH / CERTIFICATE OF ANALYSIS (COA)',
+      iso_subtitle text NOT NULL DEFAULT 'Do Phòng QA/QC Cấp Phát (ISO 13485:2016 & GMP-IVD)',
+      address_line text NOT NULL DEFAULT 'Nhà máy & Phòng Lab QA/QC Đạt Chuẩn ISO 13485:2016',
+      footer_statement text NOT NULL DEFAULT 'Chứng nhận điện tử cấp bởi Phòng QA/QC tuân thủ 21 CFR Part 11 & ISO 13485',
+      approver_title text NOT NULL DEFAULT 'Phòng QA/QC Phê duyệt & Cấp COA / Approved by QA/QC:',
+      results_display_mode text NOT NULL DEFAULT 'SUMMARY_TEMPLATE',
+      default_coa_parameters jsonb NOT NULL DEFAULT '[
+        {"seq":1,"parameter_name":"Ngoại quan & Quy cách đóng gói / Appearance & Packaging","method":"Kiểm tra ngoại quan (TCCS)","spec_limit":"Đồng nhất, nguyên vẹn, đúng quy cách / Conforms","observed_value":"Đạt tiêu chuẩn / Conforms","passed":true},
+        {"seq":2,"parameter_name":"Độ tinh khiết & Tính toàn vẹn thành phần / Purity & Integrity","method":"Tiêu chuẩn cơ sở ABT (TCCS)","spec_limit":"Đạt giới hạn chất lượng công bố / Meets Spec","observed_value":"Đạt tiêu chuẩn / Conforms","passed":true},
+        {"seq":3,"parameter_name":"Hoạt tính sinh học & Hiệu năng phản ứng / Functional Performance","method":"Thử nghiệm hoạt tính (SOP-QC)","spec_limit":"Đạt độ nhạy & độ đặc hiệu chuẩn / Conforms","observed_value":"Đạt tiêu chuẩn / Conforms","passed":true},
+        {"seq":4,"parameter_name":"Kiểm tra độ sạch & Không nhiễm chéo / Contamination Check","method":"Kiểm nghiệm đối chứng âm (NTC)","spec_limit":"Không phát hiện tín hiệu nhiễm / Negative","observed_value":"Đạt tiêu chuẩn / Conforms","passed":true}
+      ]'::jsonb,
+      updated_by int,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    ALTER TABLE qms.coa_template_config
+      ADD COLUMN IF NOT EXISTS results_display_mode text NOT NULL DEFAULT 'SUMMARY_TEMPLATE',
+      ADD COLUMN IF NOT EXISTS default_coa_parameters jsonb NOT NULL DEFAULT '[
+        {"seq":1,"parameter_name":"Ngoại quan & Quy cách đóng gói / Appearance & Packaging","method":"Kiểm tra ngoại quan (TCCS)","spec_limit":"Đồng nhất, nguyên vẹn, đúng quy cách / Conforms","observed_value":"Đạt tiêu chuẩn / Conforms","passed":true},
+        {"seq":2,"parameter_name":"Độ tinh khiết & Tính toàn vẹn thành phần / Purity & Integrity","method":"Tiêu chuẩn cơ sở ABT (TCCS)","spec_limit":"Đạt giới hạn chất lượng công bố / Meets Spec","observed_value":"Đạt tiêu chuẩn / Conforms","passed":true},
+        {"seq":3,"parameter_name":"Hoạt tính sinh học & Hiệu năng phản ứng / Functional Performance","method":"Thử nghiệm hoạt tính (SOP-QC)","spec_limit":"Đạt độ nhạy & độ đặc hiệu chuẩn / Conforms","observed_value":"Đạt tiêu chuẩn / Conforms","passed":true},
+        {"seq":4,"parameter_name":"Kiểm tra độ sạch & Không nhiễm chéo / Contamination Check","method":"Kiểm nghiệm đối chứng âm (NTC)","spec_limit":"Không phát hiện tín hiệu nhiễm / Negative","observed_value":"Đạt tiêu chuẩn / Conforms","passed":true}
+      ]'::jsonb;
+
+    INSERT INTO qms.coa_template_config (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
+
+    CREATE TABLE IF NOT EXISTS qms.qc_spec_item (
+      spec_id uuid NOT NULL REFERENCES qms.qc_spec(id) ON DELETE CASCADE,
+      item_id uuid NOT NULL REFERENCES master.item(id) ON DELETE CASCADE,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (spec_id, item_id)
+    );
+    INSERT INTO qms.qc_spec_item (spec_id, item_id)
+    SELECT id, item_id FROM qms.qc_spec WHERE item_id IS NOT NULL
+    ON CONFLICT (spec_id, item_id) DO NOTHING;
   `);
   qaOpsSchemaEnsured = true;
 }
@@ -179,27 +259,53 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
               (
                 SELECT t.id
                   FROM qms.qc_test t
-                 WHERE t.entity_type = 'LOT' AND t.entity_id = l.id
+                 WHERE (t.entity_type = 'LOT' AND t.entity_id = l.id)
+                    OR EXISTS (
+                      SELECT 1 FROM kit.production_order po
+                       WHERE po.lot_id = l.id
+                         AND (po.qc_test_id = t.id OR (t.entity_type = 'PRODUCTION_ORDER' AND t.entity_id = po.id))
+                    )
                  ORDER BY t.created_at DESC LIMIT 1
               ) AS latest_test_id,
               (
                 SELECT t.code
                   FROM qms.qc_test t
-                 WHERE t.entity_type = 'LOT' AND t.entity_id = l.id
+                 WHERE (t.entity_type = 'LOT' AND t.entity_id = l.id)
+                    OR EXISTS (
+                      SELECT 1 FROM kit.production_order po
+                       WHERE po.lot_id = l.id
+                         AND (po.qc_test_id = t.id OR (t.entity_type = 'PRODUCTION_ORDER' AND t.entity_id = po.id))
+                    )
                  ORDER BY t.created_at DESC LIMIT 1
               ) AS latest_test_code,
               (
                 SELECT t.status
                   FROM qms.qc_test t
-                 WHERE t.entity_type = 'LOT' AND t.entity_id = l.id
+                 WHERE (t.entity_type = 'LOT' AND t.entity_id = l.id)
+                    OR EXISTS (
+                      SELECT 1 FROM kit.production_order po
+                       WHERE po.lot_id = l.id
+                         AND (po.qc_test_id = t.id OR (t.entity_type = 'PRODUCTION_ORDER' AND t.entity_id = po.id))
+                    )
                  ORDER BY t.created_at DESC LIMIT 1
               ) AS latest_test_status,
               (
                 SELECT t.overall_result
                   FROM qms.qc_test t
-                 WHERE t.entity_type = 'LOT' AND t.entity_id = l.id
+                 WHERE (t.entity_type = 'LOT' AND t.entity_id = l.id)
+                    OR EXISTS (
+                      SELECT 1 FROM kit.production_order po
+                       WHERE po.lot_id = l.id
+                         AND (po.qc_test_id = t.id OR (t.entity_type = 'PRODUCTION_ORDER' AND t.entity_id = po.id))
+                    )
                  ORDER BY t.created_at DESC LIMIT 1
-              ) AS latest_test_result
+              ) AS latest_test_result,
+              (
+                SELECT c.code
+                  FROM kit.coa_certificate c
+                 WHERE c.lot_id = l.id
+                 ORDER BY c.issued_at DESC LIMIT 1
+              ) AS issued_coa_code
          FROM inv.lot l
          JOIN master.item i ON i.id = l.item_id
         WHERE l.status IN ('QUARANTINE', 'PENDING_QC')
@@ -292,6 +398,28 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
     )
   ).rows;
 
+  // 7. Official COAs issued by QA/QC and mapped across Production & Sales
+  const issuedCoas = (
+    await tx.query(
+      `SELECT c.*, po.code AS order_code, po.actual_ph::float AS actual_ph
+         FROM kit.coa_certificate c
+         LEFT JOIN kit.production_order po ON po.id = c.production_order_id
+        ORDER BY c.issued_at DESC
+        LIMIT 100`
+    )
+  ).rows;
+
+  // 8. Global COA Template Configuration
+  const coaTemplate =
+    (await tx.query("SELECT * FROM qms.coa_template_config WHERE id = 1")).rows[0] ?? {
+      company_name: "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT — ABT BIOLOGICAL SOLUTIONS CO., LTD",
+      document_title: "GIẤY CHỨNG NHẬN PHÂN TÍCH / CERTIFICATE OF ANALYSIS (COA)",
+      iso_subtitle: "Do Phòng QA/QC Cấp Phát (ISO 13485:2016 & GMP-IVD)",
+      address_line: "Nhà máy & Phòng Lab QA/QC Đạt Chuẩn ISO 13485:2016",
+      footer_statement: "Chứng nhận điện tử cấp bởi Phòng QA/QC tuân thủ 21 CFR Part 11 & ISO 13485",
+      approver_title: "Phòng QA/QC Phê duyệt & Cấp COA / Approved by QA/QC:",
+    };
+
   return {
     reception_queue: queueLots,
     all_lots: allLots,
@@ -299,6 +427,8 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
     standard_usages: standardUsages,
     methods,
     retention_samples: retentionSamples,
+    issued_coas: issuedCoas,
+    coa_template: coaTemplate,
   };
 }
 
@@ -315,7 +445,12 @@ async function ensureEffectiveSpecForItem(
   for (const ap of appliesOrder) {
     const found = (
       await tx.query(
-        "SELECT id, code FROM qms.qc_spec WHERE item_id = $1 AND applies_to = $2 AND status = 'EFFECTIVE' ORDER BY spec_version DESC LIMIT 1",
+        `SELECT s.id, s.code
+           FROM qms.qc_spec s
+          WHERE (s.item_id = $1 OR EXISTS (SELECT 1 FROM qms.qc_spec_item si WHERE si.spec_id = s.id AND si.item_id = $1))
+            AND s.applies_to = $2
+            AND s.status = 'EFFECTIVE'
+          ORDER BY s.spec_version DESC LIMIT 1`,
         [itemId, ap]
       )
     ).rows[0];
@@ -379,6 +514,7 @@ async function ensureEffectiveSpecForItem(
 const receiveLotQcSchema = z.object({
   lot_id: z.string().uuid(),
   test_kind: z.enum(["IQC", "IPQC", "FQC", "RELEASE", "STABILITY"]).optional(),
+  spec_id: z.string().uuid().optional().nullable(),
 });
 
 /**
@@ -403,12 +539,20 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
   ).rows[0];
   if (!lot) throw notFound("lô hàng");
 
-  // Check if an open test already exists for this lot
+  // Check if an open test already exists for this lot (either LOT or linked PRODUCTION_ORDER)
   const existingOpen = (
     await tx.query(
-      `SELECT id, code, status FROM qms.qc_test
-        WHERE entity_type = 'LOT' AND entity_id = $1 AND status IN ('PLANNED', 'IN_PROGRESS', 'RESULTS_ENTERED')
-        ORDER BY created_at DESC LIMIT 1`,
+      `SELECT t.id, t.code, t.status FROM qms.qc_test t
+        WHERE (
+          (t.entity_type = 'LOT' AND t.entity_id = $1)
+          OR EXISTS (
+            SELECT 1 FROM kit.production_order po
+             WHERE po.lot_id = $1
+               AND (po.qc_test_id = t.id OR (t.entity_type = 'PRODUCTION_ORDER' AND t.entity_id = po.id))
+          )
+        )
+        AND t.status IN ('PLANNED', 'IN_PROGRESS', 'RESULTS_ENTERED')
+        ORDER BY t.created_at DESC LIMIT 1`,
       [lot.id]
     )
   ).rows[0];
@@ -427,7 +571,14 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
         ? "FQC"
         : "IQC");
 
-  const spec = await ensureEffectiveSpecForItem(tx, actor, lot.item_id, autoKind);
+  let spec: { id: string; code: string };
+  if (d.spec_id) {
+    const chosen = (await tx.query("SELECT id, code FROM qms.qc_spec WHERE id = $1", [d.spec_id])).rows[0];
+    if (!chosen) throw notFound("tiêu chuẩn QC đã chọn");
+    spec = chosen;
+  } else {
+    spec = await ensureEffectiveSpecForItem(tx, actor, lot.item_id, autoKind);
+  }
 
   if (lot.status === "QUARANTINE") {
     await tx.query(
@@ -443,7 +594,333 @@ export async function receiveAndCreateQcTest(tx: Tx, actor: AuthzActor, input: u
     test_kind: autoKind,
   });
 
+  // Also link to kit.production_order if one exists for this lot and has no qc_test_id
+  await tx.query(
+    `UPDATE kit.production_order
+        SET qc_test_id = COALESCE(qc_test_id, $2),
+            updated_at = now()
+      WHERE lot_id = $1`,
+    [lot.id, test.id]
+  );
+
   return { test_id: test.id, test_code: test.code, lot_code: lot.code, spec_code: spec.code };
+}
+
+const issueCoaFromTestSchema = z.object({
+  test_id: z.string().uuid(),
+  qc_summary: z.string().trim().max(500).optional().nullable(),
+});
+
+/**
+ * Issues an official, immutable Certificate of Analysis (`kit.coa_certificate`) directly from an approved QC Test
+ * at the QA/QC department (`Tab QA/QC`), capturing:
+ * - Official QC Spec parameters, methods, limits, and actual QC measured results (`qms.qc_test_result`)
+ * - Reference Standards / Control Panels evaluated in the run (`qms.reference_standard_usage`)
+ * - QA/QC Analyst & Reviewer electronic approval metadata
+ * And automatically maps (`ánh xạ`) the issued COA to the linked Kit Production Order & Lot.
+ */
+export async function issueCoaFromQcTest(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureQaOpsSchema(tx);
+  await authorize(tx, actor, "qms.qc.review");
+  const d = parseInput(issueCoaFromTestSchema, input);
+
+  const test = (
+    await tx.query(
+      `SELECT t.*, s.code AS spec_code, s.spec_version, s.name AS spec_name,
+              an.display_name AS analyst_name, rv.display_name AS reviewer_name
+         FROM qms.qc_test t
+         JOIN qms.qc_spec s ON s.id = t.spec_id
+         LEFT JOIN core.user_profile an ON an.user_id = t.analyst_id
+         LEFT JOIN core.user_profile rv ON rv.user_id = t.reviewer_id
+        WHERE t.id = $1`,
+      [d.test_id]
+    )
+  ).rows[0];
+  if (!test) throw notFound("phiếu kiểm nghiệm QC");
+  if (test.status !== "REVIEWED" || test.overall_result !== "PASS") {
+    throw invalid("Chỉ được cấp COA chính thức khi Phiếu kiểm nghiệm QC đã được Duyệt (REVIEWED) với kết quả ĐẠT (PASS).");
+  }
+
+  // Resolve linked Production Order and Lot
+  let order: any = null;
+  let lot: any = null;
+
+  if (test.entity_type === "PRODUCTION_ORDER") {
+    order = (
+      await tx.query("SELECT * FROM kit.production_order WHERE id = $1 FOR UPDATE", [test.entity_id])
+    ).rows[0];
+    if (order?.lot_id) {
+      lot = (
+        await tx.query(
+          `SELECT l.*, i.code AS item_code, i.name AS item_name, i.base_uom
+             FROM inv.lot l JOIN master.item i ON i.id = l.item_id
+            WHERE l.id = $1`,
+          [order.lot_id]
+        )
+      ).rows[0];
+    }
+  } else if (test.entity_type === "LOT") {
+    lot = (
+      await tx.query(
+        `SELECT l.*, i.code AS item_code, i.name AS item_name, i.base_uom
+           FROM inv.lot l JOIN master.item i ON i.id = l.item_id
+          WHERE l.id = $1`,
+        [test.entity_id]
+      )
+    ).rows[0];
+    if (lot) {
+      order = (
+        await tx.query(
+          "SELECT * FROM kit.production_order WHERE lot_id = $1 ORDER BY created_at DESC LIMIT 1 FOR UPDATE",
+          [lot.id]
+        )
+      ).rows[0];
+    }
+  }
+
+  if (!lot) {
+    throw invalid("Phiếu QC này chưa gắn với Lô hàng (inv.lot) để cấp phát COA lô.");
+  }
+
+  // Check if COA was already issued for this lot or test (since kit.coa_certificate is append-only)
+  const existingCoa = (
+    await tx.query(
+      `SELECT * FROM kit.coa_certificate
+        WHERE qc_test_id = $1 OR lot_id = $2 OR ($3::uuid IS NOT NULL AND production_order_id = $3)
+        ORDER BY issued_at DESC LIMIT 1`,
+      [test.id, lot.id, order?.id ?? null]
+    )
+  ).rows[0];
+
+  if (existingCoa) {
+    // Ensure the production order is linked and marked QC passed if still in PENDING_QC
+    if (order) {
+      await tx.query(
+        `UPDATE kit.production_order
+            SET qc_test_id = COALESCE(qc_test_id, $2),
+                qc_passed = true,
+                qc_summary = COALESCE($3, qc_summary, $4),
+                status = CASE WHEN status = 'PENDING_QC' THEN 'PENDING_RELEASE' ELSE status END,
+                good_qty = COALESCE(NULLIF(good_qty, 0), planned_qty),
+                updated_at = now()
+          WHERE id = $1`,
+        [order.id, test.id, d.qc_summary ?? null, `Đạt QC & Đã cấp COA ${existingCoa.code} từ phiếu ${test.code}`]
+      );
+    }
+    return { coa: existingCoa, already_issued: true };
+  }
+
+  // Gather actual QC Test Parameters & Results evaluated by QA/QC
+  const qcParamRows = (
+    await tx.query(
+      `SELECT p.seq,
+              p.name AS parameter_name,
+              p.method,
+              p.unit,
+              p.value_type,
+              p.lower_limit::float AS lower_limit,
+              p.upper_limit::float AS upper_limit,
+              p.target,
+              p.is_critical,
+              r.value_numeric::float AS value_numeric,
+              r.observed_numeric::float AS observed_numeric,
+              r.value_text,
+              r.passed
+         FROM qms.qc_spec_parameter p
+         LEFT JOIN qms.qc_result r ON r.parameter_id = p.id AND r.test_id = $1
+        WHERE p.spec_id = $2
+        ORDER BY p.seq ASC`,
+      [test.id, test.spec_id]
+    )
+  ).rows.map((p) => {
+    const specLimit =
+      p.value_type === "NUMERIC"
+        ? [
+            p.lower_limit != null ? `≥ ${p.lower_limit}` : null,
+            p.upper_limit != null ? `≤ ${p.upper_limit}` : null,
+          ]
+            .filter(Boolean)
+            .join(" và ") + (p.unit ? ` ${p.unit}` : "")
+        : p.value_type === "PASS_FAIL"
+          ? "Đạt tiêu chuẩn / Conforms"
+          : p.target ?? "Đạt";
+
+    const observedValue =
+      p.value_numeric != null
+        ? `${p.value_numeric}${p.unit ? ` ${p.unit}` : ""}${
+            p.observed_numeric != null ? ` (đo: ${p.observed_numeric})` : ""
+          }`
+        : p.value_text === "PASS"
+          ? "Đạt / Pass"
+          : p.value_text === "FAIL"
+            ? "Không đạt / Fail"
+            : p.value_text ?? "Đạt / Pass";
+
+    return {
+      seq: p.seq,
+      source: "QC_TEST",
+      parameter_name: p.parameter_name,
+      method: p.method ?? "SOP-QC",
+      spec_limit: specLimit || "Đạt",
+      observed_value: observedValue,
+      passed: p.passed ?? true,
+      // Backward-compatible fields for any legacy renderer
+      step_code: `QC-${String(p.seq).padStart(2, "0")}`,
+      step_name: `${p.parameter_name} (${p.method ?? "SOP-QC"})`,
+      param_values: {
+        "Yêu cầu": specLimit || "Đạt",
+        "Kết quả QC": observedValue,
+      },
+    };
+  });
+
+  // Gather COA template config to determine how parameters should be displayed on the COA
+  const tplCfg = (await tx.query("SELECT * FROM qms.coa_template_config WHERE id = 1")).rows[0];
+  const displayMode: string = tplCfg?.results_display_mode ?? "SUMMARY_TEMPLATE";
+  const tplDefaultParams: any[] = Array.isArray(tplCfg?.default_coa_parameters) ? tplCfg.default_coa_parameters : [];
+
+  let finalCoaResults = qcParamRows;
+  if (displayMode === "SUMMARY_TEMPLATE" && tplDefaultParams.length > 0) {
+    finalCoaResults = tplDefaultParams.map((p: any, idx: number) => ({
+      seq: p.seq ?? idx + 1,
+      source: "COA_TEMPLATE",
+      parameter_name: p.parameter_name,
+      method: p.method || "TCCS / SOP-QC",
+      spec_limit: p.spec_limit || "Đạt tiêu chuẩn / Conforms",
+      observed_value: p.observed_value || "Đạt tiêu chuẩn / Conforms",
+      passed: p.passed !== false,
+      step_code: `COA-${String(idx + 1).padStart(2, "0")}`,
+      step_name: p.parameter_name,
+      param_values: {
+        "Yêu cầu": p.spec_limit || "Đạt tiêu chuẩn / Conforms",
+        "Kết quả QC": p.observed_value || "Đạt tiêu chuẩn / Conforms",
+      },
+    }));
+  } else if (displayMode === "CONFORMS_ONLY") {
+    finalCoaResults = qcParamRows.map((p) => ({
+      ...p,
+      spec_limit: "Đạt tiêu chuẩn nhà sản xuất / Conforms",
+      observed_value: p.passed === false ? "Không đạt / Fail" : "Đạt tiêu chuẩn / Conforms",
+      param_values: {
+        "Yêu cầu": "Đạt tiêu chuẩn nhà sản xuất / Conforms",
+        "Kết quả QC": p.passed === false ? "Không đạt / Fail" : "Đạt tiêu chuẩn / Conforms",
+      },
+    }));
+  }
+  const stdUsages = (
+    await tx.query(
+      `SELECT rs.code AS standard_code,
+              rs.name AS standard_name,
+              rs.lot_no,
+              rs.target_metric,
+              rs.lower_limit::float AS lower_limit,
+              rs.upper_limit::float AS upper_limit,
+              rs.unit,
+              u.measured_value::float AS measured_value,
+              u.measured_text,
+              u.passed
+         FROM qms.reference_standard_usage u
+         JOIN qms.reference_standard rs ON rs.id = u.standard_id
+        WHERE u.test_id = $1
+        ORDER BY u.used_at ASC`,
+      [test.id]
+    )
+  ).rows;
+
+  let testsPerKit = 0;
+  let packRows: any[] = [];
+  if (order?.bom_id) {
+    const bomRow = (await tx.query("SELECT tests_per_kit FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0];
+    if (bomRow?.tests_per_kit) testsPerKit = Number(bomRow.tests_per_kit);
+    packRows = (
+      await tx.query("SELECT * FROM kit.kit_packaging WHERE bom_id = $1 ORDER BY box_no, id", [order.bom_id])
+    ).rows;
+  } else if (String(lot.base_uom ?? "").toUpperCase() === "KIT") {
+    testsPerKit = 50;
+  }
+
+  const ohRow = (
+    await tx.query("SELECT COALESCE(SUM(qty_on_hand), 0)::float AS qty FROM inv.stock_balance WHERE lot_id = $1", [lot.id])
+  ).rows[0];
+  const goodQty = Number(order?.good_qty || order?.planned_qty || ohRow?.qty || 1);
+  const uom = order?.uom || lot.base_uom || "KIT";
+  const mfgDate = order?.mfg_date ?? lot.mfg_date ?? vnToday();
+  const expiryDate = order?.expiry_date ?? lot.expiry_date ?? addDays(vnToday(), 365);
+
+  const issuerProfile = (
+    await tx.query("SELECT display_name FROM core.user_profile WHERE user_id = $1", [test.reviewer_id ?? actor.userId])
+  ).rows[0];
+  const issuedByName = test.reviewer_name ?? issuerProfile?.display_name ?? actor.name ?? "Trưởng phòng QA/QC";
+  const coaCode = await nextNumber(tx, "KIT_COA");
+  const summaryText =
+    d.qc_summary?.trim() ||
+    `Đạt tiêu chuẩn kiểm nghiệm chất lượng theo phiếu QC ${test.code} (${test.spec_code} v${test.spec_version})`;
+
+  const coa = (
+    await tx.query(
+      `INSERT INTO kit.coa_certificate
+         (code, lot_id, production_order_id, qc_test_id, qc_test_code, spec_code, spec_version,
+          product_code, product_name, lot_code, mfg_date, expiry_date,
+          tests_per_kit, good_qty, uom, qc_summary,
+          qc_results_snapshot, standard_usages_snapshot, packaging_snapshot,
+          analyst_name, issued_by, issued_by_name)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18::jsonb, $19::jsonb, $20, $21, $22)
+       RETURNING *`,
+      [
+        coaCode,
+        lot.id,
+        order?.id ?? null,
+        test.id,
+        test.code,
+        test.spec_code,
+        test.spec_version,
+        lot.item_code,
+        lot.item_name,
+        lot.code,
+        mfgDate,
+        expiryDate,
+        testsPerKit,
+        goodQty,
+        uom,
+        summaryText,
+        JSON.stringify(finalCoaResults),
+        JSON.stringify(stdUsages),
+        JSON.stringify(packRows),
+        test.analyst_name ?? null,
+        test.reviewer_id ?? actor.userId,
+        issuedByName,
+      ]
+    )
+  ).rows[0];
+
+  if (order) {
+    const planned = Number(order.planned_qty) || 1;
+    const sampleQty = Number(order.sample_qty ?? 0);
+    const retainQty = Number(order.retain_qty ?? 0);
+    const yieldPct = Math.round(((goodQty + sampleQty + retainQty) / planned) * 10000) / 100;
+    await tx.query(
+      `UPDATE kit.production_order
+          SET qc_test_id = $2,
+              qc_passed = true,
+              qc_summary = $3,
+              good_qty = $4,
+              yield_pct = $5,
+              status = CASE WHEN status = 'PENDING_QC' THEN 'PENDING_RELEASE' ELSE status END,
+              version = version + 1,
+              updated_at = now()
+        WHERE id = $1`,
+      [order.id, test.id, summaryText, goodQty, yieldPct]
+    );
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "coa_certificate",
+    entityId: coa.id,
+    action: "issue_coa_from_qc",
+    changes: { coa_code: [null, coa.code], qc_test_code: [null, test.code], lot_code: [null, lot.code] },
+  });
+
+  return { coa, already_issued: false };
 }
 
 const releaseFromTestSchema = z.object({
@@ -465,9 +942,30 @@ export async function releaseLotFromQcTest(tx: Tx, actor: AuthzActor, input: unk
     await tx.query("SELECT * FROM qms.qc_test WHERE id = $1", [d.test_id])
   ).rows[0];
   if (!test) throw notFound("phiếu QC");
-  if (test.entity_type !== "LOT") throw invalid("Chỉ áp dụng giải phóng lô cho phiếu QC của Lô hàng (LOT).");
+  if (!["LOT", "PRODUCTION_ORDER"].includes(test.entity_type)) {
+    throw invalid("Chỉ áp dụng giải phóng lô & cấp COA cho phiếu QC của Lô hàng (LOT) hoặc Lệnh sản xuất (PRODUCTION_ORDER).");
+  }
   if (test.status !== "REVIEWED" || test.overall_result !== "PASS") {
-    throw invalid("Phiếu QC phải được duyệt với kết quả ĐẠT (PASS) trước khi giải phóng lô.");
+    throw invalid("Phiếu QC phải được duyệt với kết quả ĐẠT (PASS) trước khi giải phóng lô & cấp COA.");
+  }
+  if (test.analyst_id != null && test.analyst_id === actor.userId) {
+    throw invalid("Người giải phóng lô phải khác người kiểm nghiệm phiếu QC này (SoD).");
+  }
+
+  let lotId: string | null = test.entity_type === "LOT" ? test.entity_id : null;
+  if (test.entity_type === "PRODUCTION_ORDER") {
+    const po = (await tx.query("SELECT lot_id FROM kit.production_order WHERE id = $1", [test.entity_id])).rows[0];
+    lotId = po?.lot_id ?? null;
+  }
+  if (!lotId) throw notFound("lô hàng gắn với phiếu QC");
+
+  const openNcr = await tx.query("SELECT code FROM qms.ncr WHERE lot_id = $1 AND status <> 'CLOSED' LIMIT 1", [lotId]);
+  if (openNcr.rowCount) {
+    throw invalid("Lô đang có phiếu Sai lệch / NCR chưa đóng. Phải hoàn tất điều tra OOS và đóng NCR trước khi giải phóng lô.");
+  }
+  const openDev = await tx.query("SELECT code FROM qms.deviation WHERE entity_type = 'LOT' AND entity_id = $1 AND status <> 'CLOSED' LIMIT 1", [lotId]);
+  if (openDev.rowCount) {
+    throw invalid("Lô đang có phiếu Sai lệch / NCR chưa đóng. Phải hoàn tất điều tra OOS và đóng NCR trước khi giải phóng lô.");
   }
 
   const lot = (
@@ -476,7 +974,7 @@ export async function releaseLotFromQcTest(tx: Tx, actor: AuthzActor, input: unk
          FROM inv.lot l
          JOIN master.item i ON i.id = l.item_id
         WHERE l.id = $1 FOR UPDATE`,
-      [test.entity_id]
+      [lotId]
     )
   ).rows[0];
   if (!lot) throw notFound("lô hàng");
@@ -515,26 +1013,30 @@ export async function releaseLotFromQcTest(tx: Tx, actor: AuthzActor, input: unk
         )
       ).rows[0];
       if (shelfLoc && b.qty > 0) {
-        const rootAct: AuthzActor = { ...actor, isRootAdmin: true };
-        const moveDoc = await createStockDocument(tx, rootAct, {
-          doc_type: "TRANSFER",
-          reason_code: "PUTAWAY",
-          warehouse_id: b.warehouse_id,
-          source_entity_type: "QC_TEST",
-          source_entity_id: test.id,
-          notes: `Tự động chuyển kệ chính sau khi duyệt đạt QC (${test.code})`,
-          lines: [
-            {
-              item_id: lot.item_id,
-              lot_id: lot.id,
-              from_location_id: b.from_loc_id,
-              to_location_id: shelfLoc.id,
-              qty: b.qty,
-              uom: lot.base_uom,
-            },
-          ],
-        }, { trusted: true });
-        await postStockDocument(tx, rootAct, moveDoc.id, moveDoc.version);
+        const moveDoc = await createStockDocument(
+          tx,
+          actor,
+          {
+            doc_type: "TRANSFER",
+            reason_code: "PUTAWAY",
+            warehouse_id: b.warehouse_id,
+            source_entity_type: "QC_TEST",
+            source_entity_id: test.id,
+            notes: `Tự động chuyển kệ chính sau khi duyệt đạt QC (${test.code})`,
+            lines: [
+              {
+                item_id: lot.item_id,
+                lot_id: lot.id,
+                from_location_id: b.from_loc_id,
+                to_location_id: shelfLoc.id,
+                qty: b.qty,
+                uom: lot.base_uom,
+              },
+            ],
+          },
+          { trusted: true }
+        );
+        await runTransition(tx, stockDocumentMachine, actor, { id: moveDoc.id, action: "post", expectedVersion: moveDoc.version }, { trusted: true });
         putawayCount++;
       }
     }
@@ -570,11 +1072,15 @@ export async function releaseLotFromQcTest(tx: Tx, actor: AuthzActor, input: unk
     );
   }
 
+  // Automatically issue official COA from QC test and map to Kit/Lot
+  const coaRes = await issueCoaFromQcTest(tx, actor, { test_id: test.id });
+
   return {
     lot_code: lot.code,
     lot_status: "RELEASED",
     putaway_executed: putawayCount > 0,
     retention_code: retentionCode,
+    coa_code: coaRes.coa?.code ?? null,
   };
 }
 
@@ -952,4 +1458,360 @@ export async function triggerStabilityQcTest(tx: Tx, actor: AuthzActor, input: u
   );
 
   return { test_id: test.id, test_code: test.code, retention_code: ret.code };
+}
+
+const coaResultLineSchema = z.object({
+  seq: z.coerce.number().int().min(1).optional(),
+  parameter_name: z.string().trim().min(1),
+  method: z.string().trim().default("SOP-QC"),
+  spec_limit: z.string().trim().default("Đạt / Conforms"),
+  observed_value: z.string().trim().default("Đạt / Pass"),
+  passed: z.boolean().default(true),
+});
+
+const coaTemplateSchema = z.object({
+  company_name: z.string().trim().min(3).max(300),
+  document_title: z.string().trim().min(3).max(300),
+  iso_subtitle: z.string().trim().max(300).default("Do Phòng QA/QC Cấp Phát (ISO 13485:2016)"),
+  address_line: z.string().trim().max(400).default(""),
+  footer_statement: z.string().trim().max(500).default(""),
+  approver_title: z.string().trim().max(250).default("Phòng QA/QC Phê duyệt & Cấp COA / Approved by QA/QC:"),
+  results_display_mode: z.enum(["SUMMARY_TEMPLATE", "CONFORMS_ONLY", "DETAILED_QC"]).default("SUMMARY_TEMPLATE"),
+  default_coa_parameters: z.array(coaResultLineSchema).default([]),
+  apply_to_existing_coas: z.boolean().default(true),
+});
+
+/**
+ * Updates the global COA Template Configuration (`qms.coa_template_config`) and syncs `core.setting`
+ * (`company.coa_header`, `company.coa_footer`) so all printed COAs reflect the latest template.
+ */
+export async function saveCoaTemplateConfig(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureQaOpsSchema(tx);
+  await authorize(tx, actor, "qms.qc.review");
+  const d = parseInput(coaTemplateSchema, input);
+
+  const normalizedParams = d.default_coa_parameters.map((r, i) => ({
+    seq: r.seq ?? i + 1,
+    source: "COA_TEMPLATE",
+    parameter_name: r.parameter_name,
+    method: r.method || "TCCS / SOP-QC",
+    spec_limit: r.spec_limit || "Đạt tiêu chuẩn / Conforms",
+    observed_value: r.observed_value || "Đạt tiêu chuẩn / Conforms",
+    passed: r.passed ?? true,
+    step_code: `COA-${String(i + 1).padStart(2, "0")}`,
+    step_name: r.parameter_name,
+    param_values: {
+      "Yêu cầu": r.spec_limit || "Đạt tiêu chuẩn / Conforms",
+      "Kết quả QC": r.observed_value || "Đạt tiêu chuẩn / Conforms",
+    },
+  }));
+
+  const row = (
+    await tx.query(
+      `INSERT INTO qms.coa_template_config
+         (id, company_name, document_title, iso_subtitle, address_line, footer_statement, approver_title,
+          results_display_mode, default_coa_parameters, updated_by, updated_at)
+       VALUES (1, $1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, now())
+       ON CONFLICT (id) DO UPDATE SET
+         company_name = EXCLUDED.company_name,
+         document_title = EXCLUDED.document_title,
+         iso_subtitle = EXCLUDED.iso_subtitle,
+         address_line = EXCLUDED.address_line,
+         footer_statement = EXCLUDED.footer_statement,
+         approver_title = EXCLUDED.approver_title,
+         results_display_mode = EXCLUDED.results_display_mode,
+         default_coa_parameters = EXCLUDED.default_coa_parameters,
+         updated_by = EXCLUDED.updated_by,
+         updated_at = now()
+       RETURNING *`,
+      [
+        d.company_name,
+        d.document_title,
+        d.iso_subtitle,
+        d.address_line,
+        d.footer_statement,
+        d.approver_title,
+        d.results_display_mode,
+        JSON.stringify(normalizedParams),
+        actor.userId,
+      ]
+    )
+  ).rows[0];
+
+  // Sync to core.setting (`company.coa_header` and `company.coa_footer`) for Phiếu KQ / Oligo COA printing
+  const headerStr = [d.company_name, d.address_line].filter(Boolean).join("\n");
+  const footerStr = d.footer_statement;
+  await tx.query(
+    "UPDATE core.setting SET value = $2::jsonb, version = version + 1, updated_at = now(), updated_by = $3 WHERE key = $1",
+    ["company.coa_header", JSON.stringify(headerStr), actor.userId]
+  );
+  await tx.query(
+    "UPDATE core.setting SET value = $2::jsonb, version = version + 1, updated_at = now(), updated_by = $3 WHERE key = $1",
+    ["company.coa_footer", JSON.stringify(footerStr), actor.userId]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "coa_template_config",
+    entityId: "1",
+    action: "update_template",
+    changes: {
+      company_name: [null, d.company_name],
+      results_display_mode: [null, d.results_display_mode],
+      parameters_count: [null, normalizedParams.length],
+    },
+  });
+
+  return row;
+}
+
+const updateCoaCertSchema = z.object({
+  id: z.string().uuid(),
+  code: z.string().trim().min(2).max(60),
+  product_code: z.string().trim().min(1).max(120),
+  product_name: z.string().trim().min(1).max(300),
+  lot_code: z.string().trim().min(1).max(120),
+  mfg_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  expiry_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  tests_per_kit: z.coerce.number().int().min(0).default(0),
+  good_qty: z.coerce.number().positive(),
+  uom: z.string().trim().min(1).max(40),
+  spec_code: z.string().trim().max(80).optional().nullable(),
+  qc_summary: z.string().trim().max(1000).optional().nullable(),
+  analyst_name: z.string().trim().max(200).optional().nullable(),
+  issued_by_name: z.string().trim().min(1).max(200),
+  custom_notes: z.string().trim().max(1000).optional().nullable(),
+  reason: z.string().trim().max(500).optional().nullable(),
+  qc_results_snapshot: z.array(coaResultLineSchema).default([]),
+});
+
+/**
+ * Updates an issued COA Certificate (`kit.coa_certificate`) with auditable revision tracking (`revision_no`, `revision_reason`).
+ */
+export async function updateCoaCertificate(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureQaOpsSchema(tx);
+  await authorize(tx, actor, "qms.qc.review");
+  const d = parseInput(updateCoaCertSchema, input);
+
+  const oldRow = (await tx.query("SELECT * FROM kit.coa_certificate WHERE id = $1 FOR UPDATE", [d.id])).rows[0];
+  if (!oldRow) throw notFound("Giấy chứng nhận phân tích (COA)");
+
+  const normalizedResults = d.qc_results_snapshot.map((r, i) => ({
+    seq: r.seq ?? i + 1,
+    source: "QC_TEST",
+    parameter_name: r.parameter_name,
+    method: r.method || "SOP-QC",
+    spec_limit: r.spec_limit || "Đạt",
+    observed_value: r.observed_value || "Đạt / Pass",
+    passed: r.passed ?? true,
+    step_code: `QC-${String(i + 1).padStart(2, "0")}`,
+    step_name: `${r.parameter_name} (${r.method || "SOP-QC"})`,
+    param_values: {
+      "Yêu cầu": r.spec_limit || "Đạt",
+      "Kết quả QC": r.observed_value || "Đạt / Pass",
+    },
+  }));
+
+  const revisionReason = d.reason || "Cập nhật phiên bản COA";
+
+  const updatedRow = (
+    await tx.query(
+      `UPDATE kit.coa_certificate
+          SET code = $2,
+              product_code = $3,
+              product_name = $4,
+              lot_code = $5,
+              mfg_date = $6,
+              expiry_date = $7,
+              tests_per_kit = $8,
+              good_qty = $9,
+              uom = $10,
+              spec_code = $11,
+              qc_summary = $12,
+              analyst_name = $13,
+              issued_by_name = $14,
+              custom_notes = $15,
+              qc_results_snapshot = $16::jsonb,
+              revision_no = COALESCE(revision_no, 1) + 1,
+              revision_reason = $17
+        WHERE id = $1
+        RETURNING *`,
+      [
+        d.id,
+        d.code,
+        d.product_code,
+        d.product_name,
+        d.lot_code,
+        d.mfg_date,
+        d.expiry_date,
+        d.tests_per_kit,
+        d.good_qty,
+        d.uom,
+        d.spec_code ?? oldRow.spec_code,
+        d.qc_summary ?? oldRow.qc_summary,
+        d.analyst_name ?? null,
+        d.issued_by_name,
+        d.custom_notes ?? null,
+        JSON.stringify(normalizedResults),
+        revisionReason,
+      ]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "kit.coa_certificate",
+    entityId: d.id,
+    action: "UPDATE",
+    changes: {
+      revision_no: [oldRow.revision_no ?? 1, updatedRow.revision_no],
+      code: [oldRow.code, updatedRow.code],
+      product_name: [oldRow.product_name, updatedRow.product_name],
+      qc_summary: [oldRow.qc_summary, updatedRow.qc_summary],
+      qc_results_snapshot: [oldRow.qc_results_snapshot, updatedRow.qc_results_snapshot],
+    },
+    reason: revisionReason,
+  });
+
+  return updatedRow;
+}
+
+const assignSpecItemSchema = z.object({
+  spec_id: z.string().uuid(),
+  mode: z.enum(["ASSIGN", "CLONE"]).default("ASSIGN"),
+  applies_to: z.enum(["ITEM", "RECEIPT", "PRODUCT", "OLIGO", "DEVICE_MODEL"]),
+  item_id: z.string().uuid().optional().nullable(),
+  item_ids: z.array(z.string().uuid()).optional(),
+  custom_name: z.string().trim().max(250).optional().nullable(),
+  make_effective: z.boolean().default(true),
+});
+
+/**
+ * Assigns an existing QC Specification (`qms.qc_spec`) directly to 1 or multiple Products / Items (`mode = 'ASSIGN'`)
+ * OR clones an existing QC Specification (with all its parameters) to 1 or multiple Products / Items (`mode = 'CLONE'`).
+ */
+export async function assignSpecToItem(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureQaOpsSchema(tx);
+  await authorize(tx, actor, "qms.spec.manage");
+  const d = parseInput(assignSpecItemSchema, input);
+
+  const srcSpec = (await tx.query("SELECT * FROM qms.qc_spec WHERE id = $1 FOR UPDATE", [d.spec_id])).rows[0];
+  if (!srcSpec) throw notFound("tiêu chuẩn QC");
+
+  const targetItemIds = Array.from(new Set([...(d.item_ids ?? []), ...(d.item_id ? [d.item_id] : [])]));
+
+  let itemRows: { id: string; code: string; name: string }[] = [];
+  if (targetItemIds.length > 0) {
+    itemRows = (
+      await tx.query("SELECT id, code, name FROM master.item WHERE id = ANY($1::uuid[]) ORDER BY code", [targetItemIds])
+    ).rows;
+    if (itemRows.length === 0) throw notFound("vật tư / sản phẩm");
+  } else if (["ITEM", "RECEIPT", "PRODUCT"].includes(d.applies_to)) {
+    throw invalid("Vui lòng chọn ít nhất một Vật tư / Bán thành phẩm / Sản phẩm cần gán tiêu chuẩn.");
+  }
+
+  const primaryItem = itemRows[0] ?? null;
+
+  if (d.mode === "ASSIGN") {
+    const newName =
+      d.custom_name?.trim() ||
+      (itemRows.length === 1
+        ? `Tiêu chuẩn QC — ${itemRows[0].code} ${itemRows[0].name}`
+        : itemRows.length > 1
+          ? `Tiêu chuẩn QC — ${itemRows[0].code} (+${itemRows.length - 1} sản phẩm)`
+          : srcSpec.name);
+
+    const updated = (
+      await tx.query(
+        `UPDATE qms.qc_spec
+            SET applies_to = $2,
+                item_id = $3,
+                name = $4,
+                status = CASE WHEN $5::boolean THEN 'EFFECTIVE' ELSE status END,
+                effective_at = CASE WHEN $5::boolean THEN COALESCE(effective_at, now()) ELSE effective_at END,
+                version = version + 1,
+                updated_at = now(),
+                updated_by = $6
+          WHERE id = $1
+          RETURNING *`,
+        [srcSpec.id, d.applies_to, primaryItem?.id ?? null, newName, d.make_effective, actor.userId]
+      )
+    ).rows[0];
+
+    await tx.query("DELETE FROM qms.qc_spec_item WHERE spec_id = $1", [srcSpec.id]);
+    for (const ir of itemRows) {
+      await tx.query(
+        "INSERT INTO qms.qc_spec_item (spec_id, item_id) VALUES ($1, $2) ON CONFLICT (spec_id, item_id) DO NOTHING",
+        [srcSpec.id, ir.id]
+      );
+    }
+
+    await writeAudit(tx, actor, {
+      entityType: "qc_spec",
+      entityId: srcSpec.id,
+      action: "assign_items",
+      changes: {
+        assigned_count: [null, itemRows.length],
+        item_codes: [null, itemRows.map((x) => x.code).join(", ")],
+        applies_to: [srcSpec.applies_to, d.applies_to],
+      },
+    });
+    return { spec: updated, mode: "ASSIGN", count: itemRows.length };
+  }
+
+  // mode === "CLONE": Clone spec + parameters for the target product(s)
+  const newCode = await nextNumber(tx, "QC_SPEC");
+  const cloneName =
+    d.custom_name?.trim() ||
+    (itemRows.length === 1
+      ? `Tiêu chuẩn QC — ${itemRows[0].code} ${itemRows[0].name}`
+      : itemRows.length > 1
+        ? `Tiêu chuẩn QC — ${itemRows[0].code} (+${itemRows.length - 1} sản phẩm)`
+        : `${srcSpec.name} (Bản sao)`);
+
+  const cloned = (
+    await tx.query(
+      `INSERT INTO qms.qc_spec
+         (code, spec_version, name, applies_to, item_id, status, effective_at, notes, created_by, updated_by)
+       VALUES ($1, 1, $2, $3, $4, $5, CASE WHEN $5 = 'EFFECTIVE' THEN now() ELSE NULL END, $6, $7, $7)
+       RETURNING *`,
+      [
+        newCode,
+        cloneName,
+        d.applies_to,
+        primaryItem?.id ?? null,
+        d.make_effective ? "EFFECTIVE" : "DRAFT",
+        srcSpec.notes ?? `Sao chép và gán từ tiêu chuẩn ${srcSpec.code}`,
+        actor.userId,
+      ]
+    )
+  ).rows[0];
+
+  for (const ir of itemRows) {
+    await tx.query(
+      "INSERT INTO qms.qc_spec_item (spec_id, item_id) VALUES ($1, $2) ON CONFLICT (spec_id, item_id) DO NOTHING",
+      [cloned.id, ir.id]
+    );
+  }
+
+  await tx.query(
+    `INSERT INTO qms.qc_spec_parameter
+       (spec_id, seq, name, method, unit, value_type, lower_limit, upper_limit, target, is_critical, derived_metric, oligo_purifications)
+     SELECT $1, seq, name, method, unit, value_type, lower_limit, upper_limit, target, is_critical, derived_metric, oligo_purifications
+       FROM qms.qc_spec_parameter
+      WHERE spec_id = $2
+      ORDER BY seq`,
+    [cloned.id, srcSpec.id]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "qc_spec",
+    entityId: cloned.id,
+    action: "clone_to_items",
+    changes: {
+      from_spec: [null, srcSpec.code],
+      new_code: [null, newCode],
+      assigned_count: [null, itemRows.length],
+    },
+  });
+
+  return { spec: cloned, mode: "CLONE", count: itemRows.length };
 }

@@ -1,6 +1,7 @@
 import { factoryRoute } from "@/factory/http";
 import { invalid } from "@/factory/core/errors";
 import {
+  createExperimentFromProjectTask,
   createOligoTrialForProject,
   createPrForProject,
   createQuickRdProject,
@@ -25,6 +26,8 @@ export const POST = factoryRoute(async (tx, { actor, body: rawBody }) => {
       return createQuickRdProject(tx, actor, body);
     case "save_task":
       return saveProjectTask(tx, actor, body);
+    case "create_task_experiment":
+      return createExperimentFromProjectTask(tx, actor, body);
     case "issue_material":
       return issueMaterialForProject(tx, actor, body);
     case "create_pr":

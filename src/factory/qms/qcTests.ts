@@ -8,6 +8,7 @@ import { parseInput } from "../core/records";
 import { defineMachine, runTransition } from "../core/stateMachine";
 import { evaluateResult, overallResult, type ParameterSpec } from "./evaluate";
 import { raiseDeviation } from "./incidents";
+import { assertUsable } from "../asset/service";
 import "./permissions";
 
 type QcStatus = "PLANNED" | "IN_PROGRESS" | "RESULTS_ENTERED" | "REVIEWED" | "CANCELLED";
@@ -59,6 +60,21 @@ async function results(tx: Tx, testId: string) {
 
 /** What the failure is about, for the deviation / NCR (lot and item when the test is on a lot). */
 async function subjectOf(tx: Tx, test: QcTest) {
+  if (test.entity_type === "PRODUCTION_ORDER") {
+    const po = (
+      await tx.query(
+        `SELECT po.code AS po_code, l.id, l.code, l.item_id, i.code AS item_code
+           FROM kit.production_order po
+           LEFT JOIN inv.lot l ON l.id = po.lot_id
+           LEFT JOIN master.item i ON i.id = COALESCE(l.item_id, po.product_item_id)
+          WHERE po.id = $1`,
+        [test.entity_id]
+      )
+    ).rows[0];
+    if (po?.id) {
+      return { item_id: po.item_id, lot_id: po.id, label: `lô ${po.code} (${po.item_code})` };
+    }
+  }
   if (test.entity_type !== "LOT") {
     const h = subjects.get(test.entity_type);
     return { item_id: null, lot_id: null, label: h ? await h.label(tx, test.entity_id) : `${test.entity_type} ${test.entity_id}` };
@@ -116,11 +132,21 @@ export const qcTestMachine = defineMachine<QcStatus, QcTest>({
 
 async function raiseFailure(tx: Tx, actor: AuthzActor, updated: QcTest) {
   const subject = await subjectOf(tx, updated);
+  const critFailed = (
+    await tx.query(
+      `SELECT 1 FROM qms.qc_result r
+         JOIN qms.qc_spec_parameter p ON p.id = r.parameter_id
+        WHERE r.test_id = $1 AND r.passed = false AND p.is_critical = true
+        LIMIT 1`,
+      [updated.id]
+    )
+  ).rowCount;
+  const severity = critFailed ? "HIGH" : "MEDIUM";
   await raiseDeviation(tx, actor, {
     source_module: "QMS",
     entity_type: updated.entity_type,
     entity_id: updated.entity_id,
-    severity: "MEDIUM",
+    severity,
     description: `Phiếu QC ${updated.code} không đạt cho ${subject.label}.`,
     step_ref: updated.code,
     performer_id: updated.analyst_id,
@@ -149,6 +175,7 @@ export async function createQcTest(
 }
 
 const resultsSchema = z.object({
+  instrument_asset_id: z.string().uuid().nullable().optional(),
   results: z
     .array(
       z.object({
@@ -156,6 +183,7 @@ const resultsSchema = z.object({
         value_numeric: z.coerce.number().optional().nullable(),
         value_text: z.string().trim().max(500).optional().nullable(),
         raw_attachment_id: z.string().uuid().optional().nullable(),
+        instrument_asset_id: z.string().uuid().nullable().optional(),
       })
     )
     .min(1)
@@ -169,12 +197,22 @@ export async function saveResults(tx: Tx, actor: AuthzActor, testId: string, inp
   const test = (await tx.query("SELECT * FROM qms.qc_test WHERE id = $1 FOR UPDATE", [testId])).rows[0] as QcTest | undefined;
   if (!test) throw notFound("phiếu QC");
   if (test.status !== "IN_PROGRESS") throw invalid("Chỉ nhập kết quả khi phiếu đang kiểm nghiệm. Kết quả đã duyệt không sửa được: hãy tạo phiếu kiểm lại.");
-  if (test.analyst_id !== actor.userId && !actor.isRootAdmin) throw new FactoryError(403, "FORBIDDEN", "Chỉ người đang kiểm nghiệm phiếu này mới nhập kết quả.");
+  if (test.analyst_id !== actor.userId) throw new FactoryError(403, "FORBIDDEN", "Chỉ người đang kiểm nghiệm phiếu này mới nhập kết quả.");
+  const validatedInstruments = new Set<string>();
+  if (data.instrument_asset_id) {
+    await assertUsable(tx, data.instrument_asset_id);
+    validatedInstruments.add(data.instrument_asset_id);
+  }
   const params = new Map((await specParameters(tx, test)).map((p) => [p.id, p]));
   const handler = subjects.get(test.entity_type);
   for (const r of data.results) {
     const p = params.get(r.parameter_id);
     if (!p) throw invalid("Chỉ tiêu không thuộc tiêu chuẩn của phiếu này (hoặc không áp dụng cho mẫu này).");
+    const instrumentId = r.instrument_asset_id ?? data.instrument_asset_id ?? null;
+    if (instrumentId && !validatedInstruments.has(instrumentId)) {
+      await assertUsable(tx, instrumentId);
+      validatedInstruments.add(instrumentId);
+    }
     // a derived parameter: the analyst enters the raw reading (or nothing) and the server computes the value
     let observed: number | null = null;
     if (p.derived_metric) {
@@ -191,12 +229,24 @@ export async function saveResults(tx: Tx, actor: AuthzActor, testId: string, inp
     }
     const prev = (await tx.query("SELECT value_numeric::text AS n, value_text AS t FROM qms.qc_result WHERE test_id = $1 AND parameter_id = $2", [testId, p.id])).rows[0];
     await tx.query(
-      `INSERT INTO qms.qc_result (test_id, parameter_id, value_numeric, value_text, passed, raw_attachment_id, entered_by, observed_numeric)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      `INSERT INTO qms.qc_result (test_id, parameter_id, value_numeric, value_text, passed, raw_attachment_id, instrument_asset_id, entered_by, observed_numeric)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (test_id, parameter_id) DO UPDATE SET value_numeric = EXCLUDED.value_numeric, value_text = EXCLUDED.value_text,
-         passed = EXCLUDED.passed, raw_attachment_id = EXCLUDED.raw_attachment_id, entered_by = EXCLUDED.entered_by, entered_at = now(),
+         passed = EXCLUDED.passed, raw_attachment_id = EXCLUDED.raw_attachment_id,
+         instrument_asset_id = COALESCE(EXCLUDED.instrument_asset_id, qms.qc_result.instrument_asset_id),
+         entered_by = EXCLUDED.entered_by, entered_at = now(),
          observed_numeric = EXCLUDED.observed_numeric`,
-      [testId, p.id, p.value_type === "NUMERIC" ? r.value_numeric : null, p.value_type === "NUMERIC" ? null : r.value_text, passed, r.raw_attachment_id ?? null, actor.userId, observed]
+      [
+        testId,
+        p.id,
+        p.value_type === "NUMERIC" ? r.value_numeric : null,
+        p.value_type === "NUMERIC" ? null : r.value_text,
+        passed,
+        r.raw_attachment_id ?? null,
+        instrumentId,
+        actor.userId,
+        observed,
+      ]
     );
     const before = prev ? prev.n ?? prev.t : null;
     const after = p.value_type === "NUMERIC" ? String(r.value_numeric) + (observed != null ? ` (đo ${observed})` : "") : r.value_text;
@@ -223,9 +273,23 @@ export async function createRetest(tx: Tx, actor: AuthzActor, testId: string, re
 export async function getQcTest(tx: Tx, id: string) {
   const test = (
     await tx.query(
-      `SELECT t.*, s.code AS spec_code, s.spec_version, s.name AS spec_name, a.display_name AS analyst_name, r.display_name AS reviewer_name
+      `SELECT t.*, s.code AS spec_code, s.spec_version, s.name AS spec_name,
+              a.display_name AS analyst_name, r.display_name AS reviewer_name,
+              COALESCE(l.code, pol.code) AS lot_code,
+              COALESCE(i.code, poi.code) AS item_code,
+              COALESCE(i.name, poi.name) AS item_name,
+              (SELECT c.code FROM kit.coa_certificate c
+                WHERE c.qc_test_id = t.id
+                   OR (COALESCE(l.id, pol.id) IS NOT NULL AND c.lot_id = COALESCE(l.id, pol.id))
+                ORDER BY c.issued_at DESC LIMIT 1) AS coa_code
          FROM qms.qc_test t JOIN qms.qc_spec s ON s.id = t.spec_id
-         LEFT JOIN core.user_profile a ON a.user_id = t.analyst_id LEFT JOIN core.user_profile r ON r.user_id = t.reviewer_id
+         LEFT JOIN core.user_profile a ON a.user_id = t.analyst_id
+         LEFT JOIN core.user_profile r ON r.user_id = t.reviewer_id
+         LEFT JOIN inv.lot l ON t.entity_type = 'LOT' AND l.id = t.entity_id
+         LEFT JOIN master.item i ON i.id = l.item_id
+         LEFT JOIN kit.production_order po ON t.entity_type = 'PRODUCTION_ORDER' AND po.id = t.entity_id
+         LEFT JOIN inv.lot pol ON pol.id = po.lot_id
+         LEFT JOIN master.item poi ON poi.id = po.product_item_id
         WHERE t.id = $1`,
       [id]
     )
@@ -233,7 +297,14 @@ export async function getQcTest(tx: Tx, id: string) {
   if (!test) throw notFound("phiếu QC");
   const parameters = await specParameters(tx, test);
   const values = (
-    await tx.query("SELECT parameter_id, value_numeric::text AS value_numeric, observed_numeric::text AS observed_numeric, value_text, passed FROM qms.qc_result WHERE test_id = $1", [id])
+    await tx.query(
+      `SELECT r.parameter_id, r.value_numeric::text AS value_numeric, r.observed_numeric::text AS observed_numeric,
+              r.value_text, r.passed, r.instrument_asset_id, a.code AS instrument_code, a.name AS instrument_name
+         FROM qms.qc_result r
+         LEFT JOIN asset.asset a ON a.id = r.instrument_asset_id
+        WHERE r.test_id = $1`,
+      [id]
+    )
   ).rows;
   const h = subjects.get(test.entity_type);
   const subject = h ? { label: await h.label(tx, test.entity_id), reference: (await h.reference?.(tx, test.entity_id)) ?? null } : null;
@@ -245,12 +316,23 @@ export async function listQcTests(tx: Tx, actor: AuthzActor, status?: string) {
   return (
     await tx.query(
       `SELECT t.id, t.code, t.entity_type, t.entity_id, t.test_kind, t.status, t.overall_result, t.version, t.created_at, t.analyst_id,
-              s.code AS spec_code, s.name AS spec_name, l.code AS lot_code, i.code AS item_code, i.name AS item_name,
-              sq.code AS sequence_code, sq.name AS sequence_name
+              s.code AS spec_code, s.name AS spec_name,
+              COALESCE(l.code, pol.code) AS lot_code,
+              COALESCE(i.code, poi.code) AS item_code,
+              COALESCE(i.name, poi.name) AS item_name,
+              sq.code AS sequence_code, sq.name AS sequence_name,
+              po.code AS order_code,
+              (SELECT c.code FROM kit.coa_certificate c
+                WHERE c.qc_test_id = t.id
+                   OR (COALESCE(l.id, pol.id) IS NOT NULL AND c.lot_id = COALESCE(l.id, pol.id))
+                ORDER BY c.issued_at DESC LIMIT 1) AS coa_code
          FROM qms.qc_test t JOIN qms.qc_spec s ON s.id = t.spec_id
          LEFT JOIN oligo.oligo_sequence sq ON t.entity_type = 'OLIGO_SEQUENCE' AND sq.id = t.entity_id
          LEFT JOIN inv.lot l ON t.entity_type = 'LOT' AND l.id = t.entity_id
          LEFT JOIN master.item i ON i.id = l.item_id
+         LEFT JOIN kit.production_order po ON t.entity_type = 'PRODUCTION_ORDER' AND po.id = t.entity_id
+         LEFT JOIN inv.lot pol ON pol.id = po.lot_id
+         LEFT JOIN master.item poi ON poi.id = po.product_item_id
         WHERE ($1::text IS NULL AND t.status NOT IN ('REVIEWED', 'CANCELLED')) OR t.status = $1
         ORDER BY t.created_at DESC LIMIT 200`,
       [status ?? null]

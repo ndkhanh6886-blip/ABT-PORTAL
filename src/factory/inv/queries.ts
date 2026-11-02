@@ -13,24 +13,28 @@ export async function viewableWarehouses(tx: Tx, actor: AuthzActor) {
         WHERE w.status = 'ACTIVE' ORDER BY w.code`
     )
   ).rows;
-  const visible = [];
-  let viewerAnywhere: boolean | null = null;
-  for (const w of all) {
-    if (await hasFactoryPermission(tx, actor, "inv.stock.view", w.owner_org_unit_id)) visible.push(w);
-    else if (w.access_mode === "SHARED_READ") {
-      if (viewerAnywhere === null) {
-        viewerAnywhere = (
-          await tx.query(
-            `SELECT 1 FROM core.user_role ur JOIN core.role_permission rp ON rp.role_id = ur.role_id
-              WHERE ur.user_id = $1 AND rp.permission_code = 'inv.stock.view' AND ur.revoked_at IS NULL LIMIT 1`,
-            [actor.userId]
-          )
-        ).rowCount! > 0;
-      }
-      if (viewerAnywhere) visible.push(w);
-    }
-  }
-  return visible;
+  if (actor.isRootAdmin || actor.isPortalAdmin) return all;
+
+  // Single-query permission lookup across all org units instead of N+1 queries per warehouse
+  const grants = (
+    await tx.query(
+      `SELECT ur.org_unit_id, r.scope
+         FROM core.user_role ur
+         JOIN core.role r ON r.id = ur.role_id
+         JOIN core.role_permission rp ON rp.role_id = r.id
+        WHERE ur.user_id = $1
+          AND rp.permission_code = 'inv.stock.view'
+          AND ur.revoked_at IS NULL`,
+      [actor.userId]
+    )
+  ).rows;
+
+  if (grants.length === 0) return [];
+  const hasCompanyScope = grants.some((g) => g.scope === "COMPANY" || g.org_unit_id === null);
+  if (hasCompanyScope) return all;
+
+  const grantedOrgIds = new Set(grants.map((g) => g.org_unit_id).filter(Boolean));
+  return all.filter((w) => w.access_mode === "SHARED_READ" || grantedOrgIds.has(w.owner_org_unit_id));
 }
 
 const stockQuerySchema = z.object({

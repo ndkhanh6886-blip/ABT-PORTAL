@@ -1,7 +1,7 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
-import { authorize, authorizeAnywhere, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
+import { authorize, authorizeAnywhere, hasFactoryPermission, registerPermissions, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
@@ -531,6 +531,44 @@ export async function advanceDeviceRdGate(
 
   if (!gate) throw invalid("Tất cả các cổng Stage-Gate của dự án đã được phê duyệt (PASSED).");
 
+  if (Number(gate.gate_no) >= 3) {
+    const failedOrPendingSpecs = await tx.query(
+      `SELECT 1 FROM rd.spec_evaluation
+        WHERE project_id = $1
+          AND (result IN ('FAIL', 'PENDING') OR actual_value IS NULL OR btrim(actual_value) = '')
+        LIMIT 1`,
+      [projectId]
+    );
+    if (failedOrPendingSpecs.rowCount) {
+      throw invalid(
+        "Tất cả chỉ tiêu đánh giá thiết kế (Spec Evaluation) phải có kết quả đo kiểm thực tế (actual_value) và đạt PASS trước khi qua cổng.",
+        undefined,
+        "SPEC_EVALUATION_NOT_PASSED"
+      );
+    }
+  }
+
+  const unmitigatedRisks = await tx.query(
+    `SELECT 1 FROM rd.risk_item
+      WHERE project_id = $1
+        AND (
+          status = 'OPEN'
+          OR (
+            COALESCE(residual_severity * residual_occurrence * residual_detection, rpn) >= 15
+            AND status NOT IN ('MITIGATED', 'ACCEPTED')
+          )
+        )
+      LIMIT 1`,
+    [projectId]
+  );
+  if (unmitigatedRisks.rowCount) {
+    throw invalid(
+      "Còn mục rủi ro ISO 14971 đang mở (OPEN) hoặc có RPN tồn dư cao chưa được giảm thiểu / chấp nhận trước khi qua cổng.",
+      undefined,
+      "UNMITIGATED_RISK_ITEMS"
+    );
+  }
+
   const stageDef = DEVICE_RD_STAGE_DEFS.find((s) => s.gate_no === Number(gate.gate_no));
   const delivs = (
     await tx.query("SELECT * FROM rd.gate_deliverable WHERE project_gate_id = $1 ORDER BY seq ASC", [gate.id])
@@ -654,7 +692,7 @@ export async function transferDeviceRdToProduction(
         [itemId, model.code]
       );
     } else {
-      const createdItem = await createItem(tx, { ...actor, isRootAdmin: true }, {
+      const createdItem = await createItem(tx, actor, {
         code: model.code,
         name: model.name,
         item_type: "DEVICE",
@@ -670,23 +708,26 @@ export async function transferDeviceRdToProduction(
     }
   }
 
-  // Collect specs from rd.spec_evaluation and mark PASS
-  await tx.query(
-    `UPDATE rd.spec_evaluation
-        SET actual_value = COALESCE(NULLIF(actual_value, ''), target_value),
-            result = 'PASS',
-            updated_at = now(),
-            updated_by = $2
-      WHERE project_id = $1`,
-    [projectId, actor.userId]
+  // Verify all rd.spec_evaluation rows have actual measured PASS results (never overwrite actual_value with target_value)
+  const specRows = (
+    await tx.query("SELECT parameter, actual_value, target_value, unit, result FROM rd.spec_evaluation WHERE project_id = $1", [projectId])
+  ).rows;
+  const unverifiedSpec = specRows.find(
+    (s) => s.result !== "PASS" || s.actual_value == null || String(s.actual_value).trim() === ""
   );
-  const specRows = (await tx.query("SELECT parameter, actual_value, target_value, unit FROM rd.spec_evaluation WHERE project_id = $1", [projectId])).rows;
+  if (unverifiedSpec) {
+    throw invalid(
+      `Chỉ tiêu thiết kế '${unverifiedSpec.parameter}' chưa có kết quả đo kiểm thực tế đạt PASS, không thể chuyển giao sản xuất.`,
+      undefined,
+      "SPEC_EVALUATION_NOT_PASSED"
+    );
+  }
   const mergedSpecs: Record<string, string> =
     model.specs_json && typeof model.specs_json === "object" && !Array.isArray(model.specs_json)
       ? { ...(model.specs_json as Record<string, string>) }
       : {};
   for (const s of specRows) {
-    const val = s.actual_value || s.target_value;
+    const val = s.actual_value;
     mergedSpecs[s.parameter] = s.unit && !String(val).includes(s.unit) ? `${val} ${s.unit}` : String(val);
   }
 
@@ -1060,7 +1101,7 @@ export async function createDevicePoOrder(tx: Tx, actor: AuthzActor, input: unkn
     if (existingItem) {
       itemId = existingItem.id;
     } else {
-      const created = await createItem(tx, { ...actor, isRootAdmin: true }, {
+      const created = await createItem(tx, actor, {
         code: model.code,
         name: model.name,
         item_type: "DEVICE",
@@ -1340,7 +1381,7 @@ export async function proposePrFromPoShortage(
     await tx.query("UPDATE master.item SET is_purchasable = true WHERE id = $1", [item.item_id]);
   }
 
-  const pr = await createRequest(tx, { ...actor, isRootAdmin: true }, {
+  const pr = await createRequest(tx, actor, {
     org_unit_id: po.org_unit_id,
     target_warehouse_id: devWh.id,
     needed_by: po.committed_date || po.requested_date || vnToday(),
@@ -1407,11 +1448,12 @@ export async function createSubcontractFromPo(
     if (v) {
       vendorId = v.id;
     } else {
+      const partnerCode = await nextNumber(tx, "PARTNER");
       const createdVendor = (
         await tx.query(
           `INSERT INTO master.partner (code, name, is_supplier, is_subcontractor, status, created_by, updated_by)
            VALUES ($1, 'Công ty Cơ khí Chính xác & Gia công CNC', true, true, 'ACTIVE', $2, $2) RETURNING id`,
-          [`NCC-CNC-${Math.floor(1000 + Math.random() * 8999)}`, actor.userId]
+          [partnerCode, actor.userId]
         )
       ).rows[0];
       vendorId = createdVendor.id;
@@ -1624,6 +1666,8 @@ export async function issueWorkOrderBomKitting(
         );
         componentsInstalled++;
       }
+      await tx.query("ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS assembled_by integer");
+      await tx.query("UPDATE device.device_unit SET assembled_by = COALESCE(assembled_by, $2) WHERE id = $1", [unit.id, actor.userId]);
     }
 
     if (opts?.auto_advance_to_burn_in) {
@@ -1695,7 +1739,12 @@ export async function progressWorkOrderStage(
     | undefined;
   if (!order) throw notFound("Lệnh lắp ráp thiết bị");
   if (input.stage_action === "fqc_pass_and_qa_release") {
-    await authorizeAnywhere(tx, actor, "device.view");
+    const canQaRelease =
+      (await hasFactoryPermission(tx, actor, "device.qa.release", order.org_unit_id)) ||
+      (await hasFactoryPermission(tx, actor, "device.unit.release", order.org_unit_id));
+    if (!canQaRelease) {
+      await authorize(tx, actor, "device.qa.release", order.org_unit_id);
+    }
   } else {
     await authorize(tx, actor, "device.order.manage", order.org_unit_id);
   }
@@ -1761,8 +1810,20 @@ export async function progressWorkOrderStage(
       }
     }
   } else if (input.stage_action === "fqc_pass_and_qa_release") {
+    await tx.query("ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS assembled_by integer");
     for (const u of units) {
       if (u.status === "FQC") {
+        const inst = await tx.query(
+          "SELECT 1 FROM device.device_unit_component WHERE unit_id = $1 AND installed_by = $2 LIMIT 1",
+          [u.id, actor.userId]
+        );
+        if ((u as any).assembled_by === actor.userId || inst.rowCount) {
+          throw invalid(
+            `Người ký QA giải phóng xuất xưởng phải độc lập với kỹ thuật viên đã lắp ráp máy ${u.serial_no} (Segregation of Duties).`,
+            undefined,
+            "SELF_RELEASE"
+          );
+        }
         await tx.query(
           `UPDATE device.device_unit
               SET fqc_passed = true,

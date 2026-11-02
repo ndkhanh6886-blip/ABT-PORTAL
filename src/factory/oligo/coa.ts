@@ -12,7 +12,7 @@ import { visibleOligoUnits } from "./orders";
 export async function orderCoa(tx: Tx, actor: AuthzActor, orderId: string) {
   const o = (
     await tx.query(
-      "SELECT o.*, io.kd_po_code FROM oligo.oligo_order o LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id WHERE o.id = $1",
+      "SELECT o.*, io.code AS internal_order_code, io.kd_po_code FROM oligo.oligo_order o LEFT JOIN intake.internal_order io ON io.id = o.internal_order_id WHERE o.id = $1",
       [orderId]
     )
   ).rows[0];
@@ -20,7 +20,8 @@ export async function orderCoa(tx: Tx, actor: AuthzActor, orderId: string) {
   if (!o || (units !== "ALL" && !units.includes(o.org_unit_id))) throw notFound("đơn Oligo");
   const seqs = (
     await tx.query(
-      `SELECT s.id, s.code, s.name, s.normalized_sequence, s.base_count, s.molecule_type, s.scale_code, s.purification, s.format, s.mw::float AS mw, s.tm::float AS tm,
+      `SELECT s.id, s.code, s.name, s.normalized_sequence, s.base_count, s.molecule_type, s.product_type, s.oligo_role, s.target_pathogen,
+              s.scale_code, s.purification, s.format, s.mw::float AS mw, s.tm::float AS tm,
               s.gc_percent::float AS gc_percent, s.ext_coeff_260::float AS ext_coeff_260, s.nmol_per_od::float AS nmol_per_od, s.ug_per_od::float AS ug_per_od, s.modifications, s.status,
               coalesce(m.id, s.id) AS tested_id
          FROM oligo.oligo_sequence s
@@ -52,11 +53,31 @@ export async function orderCoa(tx: Tx, actor: AuthzActor, orderId: string) {
           )
         ).rows
       : [];
-    sequences.push({ ...s, measured: pp ?? null, qc: test ? { code: test.code, reviewed_at: test.reviewed_at, signature: await reviewSignature(tx, test.id), results } : null });
+    const is_amplicon =
+      Boolean(s.is_amplicon) ||
+      s.product_type === "AMPLICON_LINEAR" ||
+      s.product_type === "AMPLICON_PLASMID" ||
+      s.oligo_role === "TEMPLATE" ||
+      s.oligo_role === "POSITIVE_CONTROL";
+    sequences.push({
+      ...s,
+      is_amplicon,
+      measured: pp ?? null,
+      qc: test ? { code: test.code, reviewed_at: test.reviewed_at, signature: await reviewSignature(tx, test.id), results } : null,
+    });
   }
   return {
     ...(await coaHeader(tx)),
-    order: { code: o.code, customer_label: o.customer_label, kd_po_code: o.kd_po_code, due_date: o.due_date },
+    order: {
+      id: o.id,
+      code: o.code,
+      customer_label: o.customer_label,
+      kd_po_code: o.kd_po_code,
+      internal_order_code: o.internal_order_code,
+      due_date: o.due_date,
+      notes: o.notes,
+      created_at: o.created_at,
+    },
     sequences,
   };
 }

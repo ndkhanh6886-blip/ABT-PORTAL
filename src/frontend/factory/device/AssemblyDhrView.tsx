@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
-import { api, fmtDate, fmtDateTime, fmtQty } from "../api";
+import { api, escHtml, fmtDate, fmtDateTime, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { ORDER_STATUS, STATION_LABELS, UNIT_STATUS, useDeviceOptions } from "./shared";
 
@@ -203,25 +203,25 @@ export function AssemblyDhrView() {
     const rowsHtml = (order.kitting_summary ?? [])
       .map(
         (k) => `<tr>
-          <td>${k.line_no}</td>
-          <td>${STATION_LABELS[k.station_code] ?? k.station_code}</td>
-          <td><b>${k.item_code}</b>${k.drawing_code ? `<br/><small>${k.drawing_code}</small>` : ""}</td>
-          <td>${k.item_name}</td>
-          <td>${k.source_type ?? "BUY"} / ${k.tracking_type ?? (k.requires_serial ? "SERIAL" : "LOT")}</td>
-          <td style="text-align:right">${k.qty_per_unit} ${k.uom}</td>
-          <td style="text-align:right"><b>${k.total_required} ${k.uom}</b></td>
-          <td style="text-align:right">${k.qty_installed}</td>
-          <td style="text-align:right">${k.qty_available}</td>
-          <td style="text-align:right;color:${k.shortage > 0 ? "#b91c1c" : "#15803d"}"><b>${k.shortage > 0 ? `Thiếu ${k.shortage}` : "Đủ"}</b></td>
+          <td>${escHtml(k.line_no)}</td>
+          <td>${escHtml(STATION_LABELS[k.station_code] ?? k.station_code)}</td>
+          <td><b>${escHtml(k.item_code)}</b>${k.drawing_code ? `<br/><small>${escHtml(k.drawing_code)}</small>` : ""}</td>
+          <td>${escHtml(k.item_name)}</td>
+          <td>${escHtml(k.source_type ?? "BUY")} / ${escHtml(k.tracking_type ?? (k.requires_serial ? "SERIAL" : "LOT"))}</td>
+          <td style="text-align:right">${escHtml(k.qty_per_unit)} ${escHtml(k.uom)}</td>
+          <td style="text-align:right"><b>${escHtml(k.total_required)} ${escHtml(k.uom)}</b></td>
+          <td style="text-align:right">${escHtml(k.qty_installed)}</td>
+          <td style="text-align:right">${escHtml(k.qty_available)}</td>
+          <td style="text-align:right;color:${k.shortage > 0 ? "#b91c1c" : "#15803d"}"><b>${k.shortage > 0 ? `Thiếu ${escHtml(k.shortage)}` : "Đủ"}</b></td>
         </tr>`
       )
       .join("");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Phiếu Soạn Linh Kiện — ${order.code}</title>
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Phiếu Soạn Linh Kiện — ${escHtml(order.code)}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:14px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
     </head><body>
       <h2 style="margin:0">CÔNG TY TNHH Y SINH ABT — PHIẾU SOẠN LINH KIỆN LẮP RÁP (BOM KITTING SLIP)</h2>
-      <p style="font-size:13px;margin:6px 0">Số lệnh: <b>${order.code}</b> · Model: <b>${order.model_code} — ${order.model_name} (Rev ${order.revision_code})</b> · Số lượng: <b>${order.qty} máy</b> · Kho xuất: <b>${order.warehouse_code}</b></p>
-      <p style="font-size:12px;margin:4px 0">Danh sách Serial máy: <b>${order.units.map((x) => x.serial_no).join(", ") || "Chưa cấp"}</b></p>
+      <p style="font-size:13px;margin:6px 0">Số lệnh: <b>${escHtml(order.code)}</b> · Model: <b>${escHtml(order.model_code)} — ${escHtml(order.model_name)} (Rev ${escHtml(order.revision_code)})</b> · Số lượng: <b>${escHtml(order.qty)} máy</b> · Kho xuất: <b>${escHtml(order.warehouse_code)}</b></p>
+      <p style="font-size:12px;margin:4px 0">Danh sách Serial máy: <b>${escHtml(order.units.map((x) => x.serial_no).join(", ") || "Chưa cấp")}</b></p>
       <table><thead><tr><th>#</th><th>Trạm lắp ráp</th><th>Mã LK / Bản vẽ</th><th>Tên linh kiện</th><th>Nguồn / Truy vết</th><th>ĐM/máy</th><th>Tổng cần</th><th>Đã lắp</th><th>Tồn kho</th><th>Tình trạng</th></tr></thead><tbody>${rowsHtml}</tbody></table>
       <div style="display:flex;justify-content:space-between;margin-top:36px;font-size:13px">
         <div><b>Thủ kho xuất linh kiện</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>
@@ -243,15 +243,15 @@ export function AssemblyDhrView() {
         ? unit.accessories_standard
         : handoverAccessoriesText.split(/\r?\n/).filter(Boolean);
     const accHtml = accList
-      .map((a, idx) => `<tr><td>${idx + 1}</td><td>${typeof a === "string" ? a : JSON.stringify(a)}</td><td>Đạt / Mới 100%</td><td>☑</td></tr>`)
+      .map((a, idx) => `<tr><td>${idx + 1}</td><td>${escHtml(typeof a === "string" ? a : JSON.stringify(a))}</td><td>Đạt / Mới 100%</td><td>☑</td></tr>`)
       .join("");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Bàn Giao Thiết Bị — ${unit.serial_no}</title>
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Bàn Giao Thiết Bị — ${escHtml(unit.serial_no)}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
     </head><body>
       <h2 style="margin:0">CÔNG TY TNHH Y SINH ABT — BIÊN BẢN BÀN GIAO &amp; KÍCH HOẠT BẢO HÀNH THIẾT BỊ</h2>
-      <p style="font-size:13px;margin:6px 0">Thiết bị: <b>${unit.model_code} — ${unit.model_name} (Rev ${unit.revision_code})</b> · Số Serial (S/N): <b>${unit.serial_no}</b> · Firmware: <b>${unit.firmware_version ?? "—"}</b></p>
-      <p style="font-size:13px;margin:6px 0">Đơn vị nhận bàn giao: <b>${unit.customer_name || deliverCustomer}</b> · Ngày bàn giao: <b>${fmtDate(unit.delivered_at ?? null)}</b> · Bảo hành đến: <b>${fmtDate(unit.warranty_end)}</b></p>
-      <p style="font-size:12px;margin:6px 0">Kết quả chạy lão hóa (Burn-in): <b>${unit.passed_burn_in_hours ?? unit.required_burn_in_hours} giờ (PASS)</b> · Kết quả FQC: <b>${unit.fqc_summary ?? "ĐẠT"}</b> · QA phê duyệt xuất xưởng: <b>${unit.qa_released_by_name ?? "Đã ký"}</b></p>
+      <p style="font-size:13px;margin:6px 0">Thiết bị: <b>${escHtml(unit.model_code)} — ${escHtml(unit.model_name)} (Rev ${escHtml(unit.revision_code)})</b> · Số Serial (S/N): <b>${escHtml(unit.serial_no)}</b> · Firmware: <b>${escHtml(unit.firmware_version ?? "—")}</b></p>
+      <p style="font-size:13px;margin:6px 0">Đơn vị nhận bàn giao: <b>${escHtml(unit.customer_name || deliverCustomer)}</b> · Ngày bàn giao: <b>${escHtml(fmtDate(unit.delivered_at ?? null))}</b> · Bảo hành đến: <b>${escHtml(fmtDate(unit.warranty_end))}</b></p>
+      <p style="font-size:12px;margin:6px 0">Kết quả chạy lão hóa (Burn-in): <b>${escHtml(unit.passed_burn_in_hours ?? unit.required_burn_in_hours)} giờ (PASS)</b> · Kết quả FQC: <b>${escHtml(unit.fqc_summary ?? "ĐẠT")}</b> · QA phê duyệt xuất xưởng: <b>${escHtml(unit.qa_released_by_name ?? "Đã ký")}</b></p>
       <h4 style="margin:16px 0 6px">DANH MỤC PHỤ KIỆN TIÊU CHUẨN &amp; HỒ SƠ BÀN GIAO ĐI KÈM</h4>
       <table><thead><tr><th>#</th><th>Tên phụ kiện / Tài liệu đi kèm</th><th>Tình trạng</th><th>Xác nhận</th></tr></thead><tbody>${accHtml}</tbody></table>
       <div style="display:flex;justify-content:space-between;margin-top:36px;font-size:13px">
@@ -274,21 +274,21 @@ export function AssemblyDhrView() {
             <strong style="font-size:13px">CÔNG TY TNHH Y SINH ABT</strong>
             <span style="background:#0284c7;color:#fff;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:4px">ISO 13485 · IVD</span>
           </div>
-          <div style="font-size:13px;font-weight:bold;margin-bottom:4px">${order.model_code} — ${order.model_name} (Rev ${order.revision_code})</div>
-          <div style="font-family:monospace;font-size:16px;font-weight:bold;color:#0369a1;margin:6px 0">S/N: ${unit.serial_no}</div>
-          <div style="font-size:11px;color:#334155">Firmware: <b>${unit.firmware_version ?? order.default_firmware ?? "v1.0"}</b> · Lệnh SX: <b>${order.code}</b></div>
-          <div style="font-size:11px;color:#334155;margin-top:3px">Nguồn điện: 220VAC 50Hz · Chạy lão hóa: ${unit.passed_burn_in_hours ?? order.required_burn_in_hours}h</div>
+          <div style="font-size:13px;font-weight:bold;margin-bottom:4px">${escHtml(order.model_code)} — ${escHtml(order.model_name)} (Rev ${escHtml(order.revision_code)})</div>
+          <div style="font-family:monospace;font-size:16px;font-weight:bold;color:#0369a1;margin:6px 0">S/N: ${escHtml(unit.serial_no)}</div>
+          <div style="font-size:11px;color:#334155">Firmware: <b>${escHtml(unit.firmware_version ?? order.default_firmware ?? "v1.0")}</b> · Lệnh SX: <b>${escHtml(order.code)}</b></div>
+          <div style="font-size:11px;color:#334155;margin-top:3px">Nguồn điện: 220VAC 50Hz · Chạy lão hóa: ${escHtml(unit.passed_burn_in_hours ?? order.required_burn_in_hours)}h</div>
           <div style="margin-top:8px;padding-top:6px;border-top:1px dashed #94a3b8;display:flex;justify-content:space-between;align-items:center;font-size:11px">
             <span style="color:#15803d;font-weight:bold">✔ QC PASS / QA RELEASED</span>
-            <span style="font-family:monospace">|||| |||| |||| ${unit.serial_no}</span>
+            <span style="font-family:monospace">|||| |||| |||| ${escHtml(unit.serial_no)}</span>
           </div>
         </div>`
       )
       .join("");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Tem Nhãn Thiết Bị &amp; Tem QC — ${order.code}</title>
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Tem Nhãn Thiết Bị &amp; Tem QC — ${escHtml(order.code)}</title>
       <style>body{font-family:Arial,sans-serif;padding:20px;color:#0f172a}</style>
     </head><body>
-      <h3 style="margin:0 0 12px">TEM NHÃN THIẾT BỊ (NAMEPLATE) &amp; TEM NIÊM PHONG QC PASS — LỆNH ${order.code}</h3>
+      <h3 style="margin:0 0 12px">TEM NHÃN THIẾT BỊ (NAMEPLATE) &amp; TEM NIÊM PHONG QC PASS — LỆNH ${escHtml(order.code)}</h3>
       <div style="display:flex;flex-wrap:wrap;gap:14px">${cardsHtml}</div>
       <script>window.onload=()=>window.print();</script>
     </body></html>`);
@@ -302,21 +302,21 @@ export function AssemblyDhrView() {
       .map(
         (u, idx) => `<tr>
           <td>${idx + 1}</td>
-          <td><b>${u.serial_no}</b></td>
-          <td>${order.model_code} — ${order.model_name} (Rev ${order.revision_code})</td>
-          <td>${u.firmware_version ?? order.default_firmware ?? "—"}</td>
-          <td>${u.passed_burn_in_hours ?? order.required_burn_in_hours}h PASS</td>
+          <td><b>${escHtml(u.serial_no)}</b></td>
+          <td>${escHtml(order.model_code)} — ${escHtml(order.model_name)} (Rev ${escHtml(order.revision_code)})</td>
+          <td>${escHtml(u.firmware_version ?? order.default_firmware ?? "—")}</td>
+          <td>${escHtml(u.passed_burn_in_hours ?? order.required_burn_in_hours)}h PASS</td>
           <td>${u.fqc_passed !== false ? "ĐẠT" : "KHÔNG ĐẠT"}</td>
-          <td>${fmtDate(u.warranty_end)}</td>
+          <td>${escHtml(fmtDate(u.warranty_end))}</td>
         </tr>`
       )
       .join("");
-    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Xuất Kho Giao Hàng — ${order.code}</title>
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"/><title>Biên Bản Xuất Kho Giao Hàng — ${escHtml(order.code)}</title>
       <style>body{font-family:Arial,sans-serif;padding:24px;color:#0f172a}table{width:100%;border-collapse:collapse;margin-top:12px;font-size:12px}th,td{border:1px solid #cbd5e1;padding:6px 8px;text-align:left}th{background:#f1f5f9}</style>
     </head><body>
       <h2 style="margin:0">CÔNG TY TNHH Y SINH ABT — PHIẾU XUẤT KHO GIAO HÀNG &amp; BIÊN BẢN BÀN GIAO THIẾT BỊ</h2>
-      <p style="font-size:13px;margin:6px 0">Số lệnh sản xuất: <b>${order.code}</b> · Dòng thiết bị: <b>${order.model_code} — ${order.model_name} (Rev ${order.revision_code})</b> · Số lượng bàn giao: <b>${order.units.length} máy</b></p>
-      <p style="font-size:13px;margin:6px 0">Khách hàng / Đơn vị nhận: <b>${deliverCustomer}</b> · Ngày xuất kho bàn giao: <b>${fmtDate(new Date().toISOString())}</b></p>
+      <p style="font-size:13px;margin:6px 0">Số lệnh sản xuất: <b>${escHtml(order.code)}</b> · Dòng thiết bị: <b>${escHtml(order.model_code)} — ${escHtml(order.model_name)} (Rev ${escHtml(order.revision_code)})</b> · Số lượng bàn giao: <b>${escHtml(order.units.length)} máy</b></p>
+      <p style="font-size:13px;margin:6px 0">Khách hàng / Đơn vị nhận: <b>${escHtml(deliverCustomer)}</b> · Ngày xuất kho bàn giao: <b>${escHtml(fmtDate(new Date().toISOString()))}</b></p>
       <table><thead><tr><th>#</th><th>Số Serial (S/N)</th><th>Model Thiết Bị</th><th>Firmware</th><th>Chạy Lão Hóa (Burn-in)</th><th>Kiểm Định FQC</th><th>Hạn Bảo Hành</th></tr></thead><tbody>${rowsHtml}</tbody></table>
       <div style="display:flex;justify-content:space-between;margin-top:36px;font-size:13px">
         <div><b>Phụ trách Sản xuất Thiết bị</b><br/><br/><br/>(Ký, ghi rõ họ tên)</div>

@@ -286,3 +286,120 @@ registerQcSubject("OLIGO_SEQUENCE", {
     }
   },
 });
+
+const batchPostSchema = z.object({
+  action: z.enum(["batch_start", "batch_measure", "batch_submit_qc"]),
+  sequence_ids: z.array(z.string().uuid()).min(1, "chọn ít nhất 1 trình tự").max(200),
+  a260: z.coerce.number().positive().max(1000).optional(),
+  dilution_factor: z.coerce.number().min(1).max(100000).optional().default(10),
+  path_cm: z.coerce.number().positive().max(10).optional().default(1),
+  stock_volume_ul: z.coerce.number().positive().max(1_000_000).optional().default(200),
+  target_conc_um: z.coerce.number().positive().max(100000).optional().nullable().default(100),
+  tube_count: z.coerce.number().int().min(1).max(100).optional().default(1),
+  auto_submit_qc: z.boolean().optional().default(false),
+});
+
+async function ensureSopStepsCompletedForBatch(tx: Tx, actor: AuthzActor, rec: any) {
+  const sop: { step_no: number; method_id: string; name: string }[] | null = rec.workflow_steps;
+  if (!Array.isArray(sop) || !sop.length) {
+    await tx.query(
+      "UPDATE oligo.post_process SET cleavage_done = true, deprotection_done = true, purification_done = true WHERE id = $1",
+      [rec.id]
+    );
+    return;
+  }
+  const existing = (await tx.query("SELECT step_no FROM oligo.ps_step_log WHERE post_process_id = $1", [rec.id])).rows.map(
+    (r) => Number(r.step_no)
+  );
+  for (let i = 0; i < sop.length; i++) {
+    const stepNo = sop[i].step_no ?? i + 1;
+    if (existing.includes(stepNo)) continue;
+    await tx.query(
+      `INSERT INTO oligo.ps_step_log (post_process_id, step_no, method_id, step_name, values, performed_by)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6)`,
+      [rec.id, stepNo, sop[i].method_id, sop[i].name, JSON.stringify({ batch_logged: true }), actor.userId]
+    );
+  }
+  await tx.query(
+    "UPDATE oligo.post_process SET cleavage_done = true, deprotection_done = true, purification_done = true WHERE id = $1",
+    [rec.id]
+  );
+}
+
+/**
+ * Batch post-processing actions across a plate / order of Oligo sequences:
+ * - `batch_start`: transitions selected `SYNTHESIZED` sequences to `POST_PROCESSING`
+ * - `batch_measure`: records cleavage, deprotection, purification, and OD260 quantification across selected sequences (and optionally submits to QC)
+ * - `batch_submit_qc`: submits all selected `POST_PROCESSING` sequences that have OD260 > 0 to QA/QC
+ */
+export async function batchPostProcessAction(tx: Tx, actor: AuthzActor, input: unknown) {
+  const d = parseInput(batchPostSchema, input);
+  const ids = [...new Set(d.sequence_ids)];
+  const processed: string[] = [];
+
+  if (d.action === "batch_start") {
+    for (const seqId of ids) {
+      const s = await lockSequence(tx, seqId);
+      if (s.status === "SYNTHESIZED") {
+        await startPostProcess(tx, actor, seqId);
+        processed.push(s.code);
+      }
+    }
+    return { action: d.action, count: processed.length, codes: processed };
+  }
+
+  if (d.action === "batch_measure") {
+    if (d.a260 == null || !Number.isFinite(d.a260) || d.a260 <= 0) {
+      throw invalid("Bắt buộc nhập giá trị A260 đo được (> 0) từ máy quang phổ trước khi ghi kết quả đo OD hàng loạt.", undefined, "A260_REQUIRED");
+    }
+    const a260 = d.a260;
+    for (const seqId of ids) {
+      let s = await lockSequence(tx, seqId);
+      if (s.status === "SYNTHESIZED") {
+        await startPostProcess(tx, actor, seqId);
+        s = await lockSequence(tx, seqId);
+      }
+      if (s.status !== "POST_PROCESSING") continue;
+      let rec = await liveRecord(tx, seqId, true);
+      if (!rec || rec.status !== "OPEN") continue;
+
+      await savePostProcess(tx, actor, seqId, {
+        version: rec.version,
+        cleavage_done: true,
+        deprotection_done: true,
+        purification_done: true,
+        a260,
+        dilution_factor: d.dilution_factor,
+        path_cm: d.path_cm,
+        stock_volume_ul: d.stock_volume_ul,
+        target_conc_um: rec.format === "LIQUID" ? (d.target_conc_um ?? 100) : null,
+        tube_count: d.tube_count,
+      });
+
+      rec = await liveRecord(tx, seqId, true);
+      await ensureSopStepsCompletedForBatch(tx, actor, rec);
+
+      if (d.auto_submit_qc) {
+        await sendToQc(tx, actor, seqId);
+      }
+      processed.push(s.code);
+    }
+    return { action: d.action, count: processed.length, codes: processed };
+  }
+
+  if (d.action === "batch_submit_qc") {
+    for (const seqId of ids) {
+      const s = await lockSequence(tx, seqId);
+      if (s.status !== "POST_PROCESSING") continue;
+      const rec = await liveRecord(tx, seqId, true);
+      if (!rec || rec.status !== "OPEN" || !(Number(rec.od_total) > 0)) continue;
+      await ensureSopStepsCompletedForBatch(tx, actor, rec);
+      await sendToQc(tx, actor, seqId);
+      processed.push(s.code);
+    }
+    return { action: d.action, count: processed.length, codes: processed };
+  }
+
+  throw invalid("Hành động xử lý hàng loạt không hợp lệ.");
+}
+

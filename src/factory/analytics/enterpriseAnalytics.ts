@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { Tx } from "../core/db";
-import { type AuthzActor } from "../core/authz";
+import { authorizeAnywhere, type AuthzActor } from "../core/authz";
 import { writeAudit } from "../core/audit";
 import { addDays, vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
@@ -147,9 +147,9 @@ export async function ensureAnalyticsSchema(tx: Tx): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_spc_point_series ON qms.spc_control_point(series_id, seq);
   `);
 
-  // Seed SPC series & points if empty
+  // Seed SPC series & points if empty and demo seed is enabled
   const spcCount = Number((await tx.query("SELECT count(*)::int AS c FROM qms.spc_control_series")).rows[0]?.c ?? 0);
-  if (spcCount === 0) {
+  if (spcCount === 0 && process.env.FACTORY_ALLOW_DEMO_SEED === "1") {
     const seriesList = [
       {
         code: "SPC-KIT-CT-POS",
@@ -258,7 +258,7 @@ export async function ensureAnalyticsSchema(tx: Tx): Promise<void> {
     }
   }
 
-  // Ensure realistic freeze-thaw counters on cold-chain lots
+  // Ensure realistic freeze-thaw limits on cold-chain lots
   await tx.query(`
     UPDATE inv.lot l
        SET max_freeze_thaw = CASE
@@ -271,66 +271,12 @@ export async function ensureAnalyticsSchema(tx: Tx): Promise<void> {
      WHERE l.item_id = i.id AND l.freeze_thaw_count = 0
   `);
 
-  const ftSeeded = Number((await tx.query("SELECT count(*)::int AS c FROM inv.lot WHERE freeze_thaw_count > 0")).rows[0]?.c ?? 0);
-  if (ftSeeded === 0) {
-    const sampleLots = (await tx.query("SELECT id FROM inv.lot ORDER BY created_at ASC LIMIT 3")).rows;
-    if (sampleLots[0]) {
-      await tx.query(
-        "UPDATE inv.lot SET freeze_thaw_count = 3, max_freeze_thaw = 3, last_thaw_at = now() - interval '2 hours', last_thaw_by = 'Lê Hoàng QC' WHERE id = $1",
-        [sampleLots[0].id]
-      );
-    }
-    if (sampleLots[1]) {
-      await tx.query(
-        "UPDATE inv.lot SET freeze_thaw_count = 2, max_freeze_thaw = 5, last_thaw_at = now() - interval '1 day', last_thaw_by = 'Nguyễn Kỹ Thuật Kit' WHERE id = $1",
-        [sampleLots[1].id]
-      );
-    }
-  }
-
-  // Ensure at least one parent -> child genealogy link in kit.lot_genealogy if empty so 360° Genealogy works immediately
-  const genCount = Number((await tx.query("SELECT count(*)::int AS c FROM kit.lot_genealogy")).rows[0]?.c ?? 0);
-  if (genCount === 0) {
-    const rawLots = (
-      await tx.query(
-        `SELECT l.id, i.base_uom
-           FROM inv.lot l
-           JOIN master.item i ON i.id = l.item_id
-          WHERE i.item_type IN ('RAW_MATERIAL', 'PACKAGING', 'SEMI_FINISHED')
-          ORDER BY l.created_at ASC LIMIT 3`
-      )
-    ).rows;
-    const fgLots = (
-      await tx.query(
-        `SELECT l.id, po.id AS po_id
-           FROM inv.lot l
-           JOIN master.item i ON i.id = l.item_id
-           LEFT JOIN kit.production_order po ON po.lot_id = l.id
-          WHERE i.item_type IN ('FINISHED_KIT', 'SEMI_FINISHED')
-          ORDER BY l.created_at DESC LIMIT 2`
-      )
-    ).rows;
-    const allLots = (await tx.query("SELECT l.id, i.base_uom FROM inv.lot l JOIN master.item i ON i.id = l.item_id ORDER BY l.created_at ASC LIMIT 4")).rows;
-    const parents = rawLots.length > 0 ? rawLots : allLots.slice(0, 2);
-    const children = fgLots.length > 0 ? fgLots : allLots.slice(2, 4).map((x: any) => ({ id: x.id, po_id: null }));
-    for (const p of parents) {
-      for (const c of children) {
-        if (p.id !== c.id) {
-          await tx.query(
-            `INSERT INTO kit.lot_genealogy (parent_lot_id, child_lot_id, production_order_id, qty_used, uom)
-             VALUES ($1, $2, $3, 15, $4)
-             ON CONFLICT DO NOTHING`,
-            [p.id, c.id, c.po_id ?? null, p.base_uom ?? "EA"]
-          );
-        }
-      }
-    }
-  }
-
   analyticsSchemaEnsured = true;
 }
 
 export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) {
+  // cross-department quality analytics: whoever may view QC records, deviations and NCRs
+  await authorizeAnywhere(tx, actor, "qms.qc.view");
   await ensureAnalyticsSchema(tx);
   const today = vnToday();
 
@@ -675,89 +621,7 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
     `)
   ).rows;
 
-  const combinedBatches =
-    kitBatchesRaw.length + deviceBatchesRaw.length > 0
-      ? [...kitBatchesRaw, ...deviceBatchesRaw]
-      : [
-          {
-            id: "00000000-0000-0000-0000-000000000101",
-            code: "MO2610-0001",
-            batch_domain: "KIT",
-            status: "PENDING_RELEASE",
-            order_mode: "STANDARD",
-            planned_qty: 200,
-            good_qty: 198,
-            scrap_qty: 2,
-            uom: "KIT",
-            line_clearance_passed: true,
-            qc_passed: true,
-            materials_issued: true,
-            product_code: "KIT-HBV-QPCR-50",
-            product_name: "Bộ Kit Real-time PCR Định lượng HBV (50 test)",
-            std_unit_cost: 350000,
-            lot_code: "LOT-HBV-2610A",
-            lot_status: "PENDING_QC",
-            total_steps: 5,
-            done_steps: 5,
-            failed_steps: 0,
-            missing_dual_sign: 0,
-            max_bom_variance_pct: 1.4,
-            open_deviations: 0,
-            open_ncrs: 0,
-          },
-          {
-            id: "00000000-0000-0000-0000-000000000102",
-            code: "MO2610-0002",
-            batch_domain: "KIT",
-            status: "IN_PROGRESS",
-            order_mode: "ALIQUOTED",
-            planned_qty: 150,
-            good_qty: 142,
-            scrap_qty: 8,
-            uom: "KIT",
-            line_clearance_passed: true,
-            qc_passed: false,
-            materials_issued: true,
-            product_code: "KIT-EXT-MAG-96",
-            product_name: "Bộ Kit Tách chiết DNA/RNA Hạt từ Tự động (.D.IC)",
-            std_unit_cost: 280000,
-            lot_code: "LOT-EXT-2610B",
-            lot_status: "QUARANTINE",
-            total_steps: 5,
-            done_steps: 3,
-            failed_steps: 0,
-            missing_dual_sign: 1,
-            max_bom_variance_pct: 6.8,
-            open_deviations: 1,
-            open_ncrs: 0,
-          },
-          {
-            id: "00000000-0000-0000-0000-000000000103",
-            code: "WO-DEV-2610-01",
-            batch_domain: "DEVICE",
-            status: "QC_TESTING",
-            order_mode: "STANDARD",
-            planned_qty: 5,
-            good_qty: 5,
-            scrap_qty: 0,
-            uom: "EA",
-            line_clearance_passed: true,
-            qc_passed: true,
-            materials_issued: true,
-            product_code: "DEV-EZ32-PRO",
-            product_name: "Máy Tách Chiết Tự Động 32 Mẫu ABT EZ32-Pro",
-            std_unit_cost: 18500000,
-            lot_code: "REV-A",
-            lot_status: "RELEASED",
-            total_steps: 4,
-            done_steps: 4,
-            failed_steps: 0,
-            missing_dual_sign: 0,
-            max_bom_variance_pct: 0.8,
-            open_deviations: 0,
-            open_ncrs: 0,
-          },
-        ];
+  const combinedBatches = [...kitBatchesRaw, ...deviceBatchesRaw];
 
   const review_by_exception_batches = combinedBatches.map((b: any) => {
     const exceptions: string[] = [];
@@ -960,16 +824,17 @@ export async function getEnterpriseAnalyticsOverview(tx: Tx, actor: AuthzActor) 
       ORDER BY abs(COALESCE(avg(mc.variance_pct), 0)) DESC, bl.line_no ASC
       LIMIT 12
     `)
-  ).rows.map((r: any, idx: number) => {
-    // Provide realistic observed variance when no historical material_consumption rows exist yet
-    const syntheticVar = idx === 0 ? 6.4 : idx === 1 ? 4.8 : idx === 2 ? -3.2 : 1.5;
-    const actualVar = r.sample_batches > 0 && r.observed_variance_pct !== 0 ? Number(r.observed_variance_pct.toFixed(2)) : syntheticVar;
-    const recommendedScrap = Number(Math.max(0, Math.min(25, Number(r.current_scrap_pct) + actualVar * 0.7)).toFixed(2));
+  ).rows.map((r: any) => {
+    const hasHistory = Number(r.sample_batches) > 0;
+    const actualVar = hasHistory ? Number(Number(r.observed_variance_pct).toFixed(2)) : 0;
+    const recommendedScrap = hasHistory
+      ? Number(Math.max(0, Math.min(25, Number(r.current_scrap_pct) + actualVar * 0.7)).toFixed(2))
+      : Number(r.current_scrap_pct);
     return {
       ...r,
       observed_variance_pct: actualVar,
       recommended_scrap_pct: recommendedScrap,
-      needs_adjustment: Math.abs(actualVar - Number(r.current_scrap_pct)) >= 2.5,
+      needs_adjustment: hasHistory && Math.abs(actualVar - Number(r.current_scrap_pct)) >= 2.5,
     };
   });
 
@@ -1423,7 +1288,7 @@ export async function createForecastPrOneClick(tx: Tx, actor: AuthzActor, input:
 
   const pr = await createRequest(
     tx,
-    { ...actor, isRootAdmin: true, isPortalAdmin: true },
+    actor,
     {
       org_unit_id: wh.owner_org_unit_id,
       target_warehouse_id: wh.id,
@@ -1750,9 +1615,15 @@ export async function cascadeQuarantineLotTree(tx: Tx, actor: AuthzActor, input:
 
   for (const lot of allAffectedLots) {
     await tx.query(
-      "UPDATE inv.lot SET status = 'ON_HOLD', notes = COALESCE(notes, '') || $2, updated_at = now() WHERE id = $1",
-      [lot.id, `\n[Cascade Quarantine ${vnToday()}]: ${d.reason}`]
+      "UPDATE inv.lot SET status = 'ON_HOLD', updated_at = now() WHERE id = $1",
+      [lot.id]
     );
+    await writeAudit(tx, actor, {
+      entityType: "lot",
+      entityId: lot.id,
+      action: "cascade_quarantine_hold",
+      changes: { status: [lot.status, "ON_HOLD"], reason: [null, d.reason] },
+    });
     quarantinedCodes.push(lot.code);
   }
 
@@ -1814,7 +1685,6 @@ export async function recordLotFreezeThaw(tx: Tx, actor: AuthzActor, input: unkn
             last_thaw_at = now(),
             last_thaw_by = $3,
             status = $4,
-            notes = COALESCE(notes, '') || $5,
             updated_at = now()
       WHERE id = $1`,
     [
@@ -1822,7 +1692,6 @@ export async function recordLotFreezeThaw(tx: Tx, actor: AuthzActor, input: unkn
       newCount,
       actor.name || "Nhân viên Lab/Kho",
       nextStatus,
-      `\n[Rã đông lần #${newCount}/${maxAllowed} — ${vnToday()}]: ${d.notes || "Xuất dùng rã đông sinh phẩm lạnh"}`,
     ]
   );
 
@@ -1852,17 +1721,38 @@ const fastTrackReleaseSchema = z.object({
 export async function fastTrackReleaseZeroExceptionBatch(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensureAnalyticsSchema(tx);
   const d = parseInput(fastTrackReleaseSchema, input);
-  if (d.batch_id.startsWith("00000000-0000-0000-0000-0000000001")) {
-    return { ok: true, code: d.batch_domain === "KIT" ? "MO2610-0001" : "WO-DEV-2610-01" };
-  }
   if (d.batch_domain === "KIT") {
-    const po = (await tx.query("SELECT id, code, lot_id, planned_qty, status FROM kit.production_order WHERE id = $1", [d.batch_id])).rows[0];
+    const po = (
+      await tx.query(
+        `SELECT po.id, po.code, po.lot_id, po.planned_qty, po.status,
+                po.qc_passed, po.line_clearance_passed, po.created_by,
+                (SELECT count(*)::int FROM qms.ncr n WHERE (n.entity_id = po.id OR n.lot_id = po.lot_id) AND n.status <> 'CLOSED') AS open_ncrs,
+                EXISTS (
+                  SELECT 1 FROM kit.production_step s
+                   WHERE s.order_id = po.id AND s.performed_by = $2
+                ) AS actor_is_performer
+           FROM kit.production_order po
+          WHERE po.id = $1 FOR UPDATE`,
+        [d.batch_id, actor.userId]
+      )
+    ).rows[0];
     if (!po) throw notFound("Lệnh sản xuất Kit");
+    if (po.qc_passed !== true) {
+      throw invalid(`Lô ${po.code} chưa đạt kiểm nghiệm QC (qc_passed !== true). Không được giải phóng nhanh.`, undefined, "QC_NOT_PASSED");
+    }
+    if (po.line_clearance_passed !== true) {
+      throw invalid(`Lô ${po.code} chưa hoàn tất dọn dây chuyền GMP (line_clearance_passed !== true).`, undefined, "LINE_CLEARANCE_REQUIRED");
+    }
+    if (Number(po.open_ncrs) > 0) {
+      throw invalid(`Lô ${po.code} đang có ${po.open_ncrs} phiếu NCR chưa đóng. Không được giải phóng lô.`, undefined, "OPEN_NCR");
+    }
+    if (po.actor_is_performer || Number(po.created_by) === actor.userId) {
+      throw invalid("Vi phạm nguyên tắc Bất kiêm nhiệm (SoD / SELF_RELEASE): Người trực tiếp thực hiện sản xuất không được tự ký giải phóng lô.", undefined, "SELF_RELEASE");
+    }
+
     await tx.query(
       `UPDATE kit.production_order
-          SET line_clearance_passed = true,
-              qc_passed = true,
-              good_qty = COALESCE(good_qty, planned_qty),
+          SET good_qty = COALESCE(good_qty, planned_qty),
               released_by = $2,
               released_at = now(),
               status = CASE WHEN status IN ('PENDING_RELEASE', 'PENDING_QC') THEN 'COMPLETED' ELSE status END,
@@ -1881,16 +1771,47 @@ export async function fastTrackReleaseZeroExceptionBatch(tx: Tx, actor: AuthzAct
     });
     return { ok: true, code: po.code };
   } else {
-    const o = (await tx.query("SELECT id, code FROM device.device_order WHERE id = $1", [d.batch_id])).rows[0];
+    const o = (
+      await tx.query(
+        `SELECT o.id, o.code, o.created_by,
+                (SELECT count(*)::int FROM device.device_unit u WHERE u.order_id = o.id) AS total_units,
+                (SELECT count(*)::int FROM device.device_unit u WHERE u.order_id = o.id AND u.fqc_passed = true) AS passed_units,
+                (SELECT count(*)::int FROM qms.ncr n WHERE n.entity_id = o.id AND n.status <> 'CLOSED') AS open_ncrs,
+                EXISTS (
+                  SELECT 1 FROM device.station_execution se
+                    JOIN device.device_unit u ON u.id = se.unit_id
+                   WHERE u.order_id = o.id AND se.performed_by = $2
+                ) AS actor_is_performer
+           FROM device.device_order o
+          WHERE o.id = $1 FOR UPDATE`,
+        [d.batch_id, actor.userId]
+      )
+    ).rows[0];
     if (!o) throw notFound("Lệnh lắp ráp thiết bị");
+    if (Number(o.total_units) === 0 || Number(o.passed_units) < Number(o.total_units)) {
+      throw invalid(`Lệnh lắp ráp ${o.code} chưa đạt FQC 100% các máy trong lô (qc_passed !== true).`, undefined, "QC_NOT_PASSED");
+    }
+    if (Number(o.open_ncrs) > 0) {
+      throw invalid(`Lệnh lắp ráp ${o.code} đang có ${o.open_ncrs} phiếu NCR chưa đóng.`, undefined, "OPEN_NCR");
+    }
+    if (o.actor_is_performer || Number(o.created_by) === actor.userId) {
+      throw invalid("Vi phạm nguyên tắc Bất kiêm nhiệm (SoD / SELF_RELEASE): Kỹ sư trực tiếp lắp ráp không được tự ký giải phóng xuất xưởng.", undefined, "SELF_RELEASE");
+    }
+
     await tx.query(
       "UPDATE device.device_order SET status = 'READY', approved_by = $2, approved_at = now(), updated_at = now() WHERE id = $1",
       [o.id, actor.userId]
     );
     await tx.query(
-      "UPDATE device.device_unit SET fqc_passed = true, qa_released_by = $2, qa_released_at = now(), status = 'QA_PASSED' WHERE order_id = $1 AND status IN ('IN_ASSEMBLY', 'BURN_IN', 'FQC')",
+      "UPDATE device.device_unit SET qa_released_by = $2, qa_released_at = now(), status = 'QA_PASSED' WHERE order_id = $1 AND fqc_passed = true AND status IN ('IN_ASSEMBLY', 'BURN_IN', 'FQC')",
       [o.id, actor.userId]
     );
+    await writeAudit(tx, actor, {
+      entityType: "device_order",
+      entityId: o.id,
+      action: "rbe_fast_track_release",
+      changes: { rbe: [null, "ZERO_EXCEPTION_FAST_TRACK"] },
+    });
     return { ok: true, code: o.code };
   }
 }

@@ -236,17 +236,65 @@ const createBomSchema = z.object({
   base_uom: z.string().trim().min(1).optional(),
   tests_per_kit: z.coerce.number().int().positive("số phản ứng/kit phải > 0").default(50),
   shelf_life_days: z.coerce.number().int().positive("hạn dùng (ngày) phải > 0").default(365),
+  shelf_life_months: z.coerce.number().int().positive().optional().nullable(),
   qc_spec_id: z.string().uuid().optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
   clone_from_bom_id: z.string().uuid().optional().nullable(),
+  bom_type: z.enum(["finished_good", "semi_finished"]).optional(),
+  bom_category: z.string().trim().max(80).optional().nullable(),
+  parent_item_code: z.string().trim().max(80).optional().nullable(),
+  tccs_code: z.string().trim().max(120).optional().nullable(),
+  tccs_file_name: z.string().trim().max(250).optional().nullable(),
+  tccs_file_url: z.string().optional().nullable(),
+  registration_no: z.string().trim().max(120).optional().nullable(),
+  responsible_person_id: z.string().trim().max(80).optional().nullable(),
+  responsible_person_name: z.string().trim().max(150).optional().nullable(),
+  qc_assignee_name: z.string().trim().max(150).optional().nullable(),
+  specification: z.string().trim().max(200).optional().nullable(),
+  storage_condition: z.string().trim().max(120).optional().nullable(),
+  qc_retention_qty: z.coerce.number().min(0).optional().nullable(),
+  ph_min: z.coerce.number().optional().nullable(),
+  ph_max: z.coerce.number().optional().nullable(),
+  ifu_file_name: z.string().trim().max(250).optional().nullable(),
+  ifu_file_url: z.string().optional().nullable(),
+  ifu_file_size: z.string().trim().max(60).optional().nullable(),
+  ifu_aliquoted_file_name: z.string().trim().max(250).optional().nullable(),
+  ifu_aliquoted_file_url: z.string().optional().nullable(),
+  ifu_aliquoted_file_size: z.string().trim().max(60).optional().nullable(),
 });
 
+export function inferParentItemCode(code: string): string | null {
+  const trimmed = (code || "").trim();
+  if (!trimmed) return null;
+  if (trimmed.toUpperCase().endsWith(".D.IC")) {
+    return trimmed.slice(0, -5);
+  }
+  const parenMatch = trimmed.match(/^(.+?)\s*\([^)]+\)$/);
+  if (parenMatch) return parenMatch[1].trim();
+  return null;
+}
+
 export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
   const d = parseInput(createBomSchema, input);
   await authorize(tx, actor, "kit.bom.manage", d.org_unit_id);
   const product = await getItem(tx, d.product_item_id);
   const baseUom = d.base_uom ?? product.base_uom;
   await toBaseQty(tx, product, d.base_qty, baseUom);
+
+  const inferredBomType: "finished_good" | "semi_finished" =
+    d.bom_type ??
+    (product.item_type === "SEMI_FINISHED" || /^(BTP|SFG|ST|MIX)/i.test(product.code)
+      ? "semi_finished"
+      : "finished_good");
+
+  const inferredCategory =
+    d.bom_category?.trim() ||
+    (/pcr|topsensi|hi-|sqh|abp|qpc/i.test(`${product.code} ${product.name}`) ? "PCR Kit" : "Tách chiết / Khác");
+
+  const shelfMonths = d.shelf_life_months ?? Math.max(1, Math.round(d.shelf_life_days / 30));
+  const shelfDays = d.shelf_life_days || shelfMonths * 30;
+  const parentCode = d.parent_item_code?.trim() || inferParentItemCode(product.code);
 
   const nextVer = Number(
     (
@@ -265,10 +313,62 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
     base_qty: d.base_qty,
     base_uom: baseUom,
     tests_per_kit: d.tests_per_kit,
-    shelf_life_days: d.shelf_life_days,
+    shelf_life_days: shelfDays,
     qc_spec_id: d.qc_spec_id ?? null,
     notes: d.notes ?? null,
   });
+
+  await tx.query(
+    `UPDATE kit.bom
+        SET bom_type = $2,
+            bom_category = $3,
+            parent_item_code = $4,
+            tccs_code = $5,
+            tccs_file_name = $6,
+            tccs_file_url = $7,
+            registration_no = $8,
+            responsible_person_id = $9,
+            responsible_person_name = $10,
+            qc_assignee_name = $11,
+            specification = $12,
+            storage_condition = $13,
+            shelf_life_months = $14,
+            qc_retention_qty = $15,
+            ph_min = $16,
+            ph_max = $17,
+            ifu_file_name = $18,
+            ifu_file_url = $19,
+            ifu_file_size = $20,
+            ifu_aliquoted_file_name = $21,
+            ifu_aliquoted_file_url = $22,
+            ifu_aliquoted_file_size = $23
+      WHERE id = $1`,
+    [
+      bom.id,
+      inferredBomType,
+      inferredCategory,
+      parentCode,
+      d.tccs_code?.trim() || (inferredBomType === "finished_good" ? `TCCS ${product.code}:2026/ABT` : null),
+      d.tccs_file_name?.trim() || null,
+      d.tccs_file_url || null,
+      d.registration_no?.trim() || null,
+      d.responsible_person_id?.trim() || null,
+      d.responsible_person_name?.trim() || null,
+      d.qc_assignee_name?.trim() || null,
+      d.specification?.trim() || (inferredBomType === "finished_good" ? `Hộp ${d.tests_per_kit} test` : `Lô chuẩn ${d.base_qty} ${baseUom}`),
+      d.storage_condition?.trim() || (inferredCategory === "PCR Kit" ? "-20°C ± 2°C" : "15°C...25°C"),
+      shelfMonths,
+      d.qc_retention_qty ?? (inferredBomType === "finished_good" ? 1 : 0),
+      d.ph_min ?? null,
+      d.ph_max ?? null,
+      d.ifu_file_name?.trim() || null,
+      d.ifu_file_url || null,
+      d.ifu_file_size?.trim() || null,
+      d.ifu_aliquoted_file_name?.trim() || null,
+      d.ifu_aliquoted_file_url || null,
+      d.ifu_aliquoted_file_size?.trim() || null,
+    ]
+  );
 
   if (d.clone_from_bom_id) {
     await tx.query(
@@ -289,6 +389,90 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
     );
   }
   return bom;
+}
+
+export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, input: Record<string, unknown>) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as Record<string, unknown> | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
+
+  const name = input.name !== undefined ? String(input.name).trim() : String(bom.name);
+  const testsPerKit = input.tests_per_kit !== undefined ? Math.max(1, Number(input.tests_per_kit) || 50) : Number(bom.tests_per_kit || 50);
+  const shelfMonths =
+    input.shelf_life_months !== undefined && input.shelf_life_months !== null && input.shelf_life_months !== ""
+      ? Math.max(1, Number(input.shelf_life_months))
+      : Number(bom.shelf_life_months || Math.max(1, Math.round(Number(bom.shelf_life_days || 365) / 30)));
+  const shelfDays =
+    input.shelf_life_days !== undefined && input.shelf_life_days !== null && input.shelf_life_days !== ""
+      ? Math.max(1, Number(input.shelf_life_days))
+      : shelfMonths * 30;
+
+  const updated = (
+    await tx.query(
+      `UPDATE kit.bom
+          SET name = $2,
+              tests_per_kit = $3,
+              shelf_life_days = $4,
+              shelf_life_months = $5,
+              bom_type = $6,
+              bom_category = $7,
+              parent_item_code = $8,
+              tccs_code = $9,
+              tccs_file_name = $10,
+              tccs_file_url = $11,
+              registration_no = $12,
+              responsible_person_id = $13,
+              responsible_person_name = $14,
+              qc_assignee_name = $15,
+              specification = $16,
+              storage_condition = $17,
+              qc_retention_qty = $18,
+              ph_min = $19,
+              ph_max = $20,
+              notes = $21,
+              updated_at = now(),
+              updated_by = $22
+        WHERE id = $1
+        RETURNING *`,
+      [
+        bomId,
+        name,
+        testsPerKit,
+        shelfDays,
+        shelfMonths,
+        input.bom_type === "semi_finished" ? "semi_finished" : "finished_good",
+        input.bom_category ? String(input.bom_category).trim() : String(bom.bom_category || "PCR Kit"),
+        input.parent_item_code ? String(input.parent_item_code).trim() : null,
+        input.tccs_code ? String(input.tccs_code).trim() : null,
+        input.tccs_file_name !== undefined ? (input.tccs_file_name ? String(input.tccs_file_name).trim() : null) : bom.tccs_file_name,
+        input.tccs_file_url !== undefined ? (input.tccs_file_url ? String(input.tccs_file_url) : null) : bom.tccs_file_url,
+        input.registration_no ? String(input.registration_no).trim() : null,
+        input.responsible_person_id ? String(input.responsible_person_id).trim() : null,
+        input.responsible_person_name ? String(input.responsible_person_name).trim() : null,
+        input.qc_assignee_name ? String(input.qc_assignee_name).trim() : null,
+        input.specification ? String(input.specification).trim() : null,
+        input.storage_condition ? String(input.storage_condition).trim() : null,
+        input.qc_retention_qty !== undefined && input.qc_retention_qty !== "" ? Number(input.qc_retention_qty) : Number(bom.qc_retention_qty ?? 0),
+        input.ph_min !== undefined && input.ph_min !== null && input.ph_min !== "" ? Number(input.ph_min) : null,
+        input.ph_max !== undefined && input.ph_max !== null && input.ph_max !== "" ? Number(input.ph_max) : null,
+        input.notes !== undefined ? (input.notes ? String(input.notes).trim() : null) : bom.notes,
+        actor.userId,
+      ]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_bom",
+    entityId: bomId,
+    action: "update_bom_header",
+    changes: {
+      bom_type: [bom.bom_type, updated.bom_type],
+      tccs_code: [bom.tccs_code, updated.tccs_code],
+      responsible_person_name: [bom.responsible_person_name, updated.responsible_person_name],
+    },
+  });
+  return updated;
 }
 
 const bomLineItemSchema = z.object({
@@ -330,7 +514,7 @@ export async function addBomLine(tx: Tx, actor: AuthzActor, input: unknown) {
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [d.bom_id])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được thêm dòng nguyên liệu khi BOM đang ở trạng thái Nháp (DRAFT).");
+  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa BOM đã hết hiệu lực (OBSOLETE).");
   if (d.component_item_id === bom.product_item_id) {
     throw invalid("Nguyên vật liệu thành phần không được trùng với sản phẩm đầu ra của BOM.");
   }
@@ -380,6 +564,110 @@ export async function addBomLine(tx: Tx, actor: AuthzActor, input: unknown) {
     changes: { line: [null, `#${nextLine} ${compItem.code} (${d.qty_per_base} ${d.uom}, Hộp ${d.box_no})`] },
   });
   return row;
+}
+
+export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, input: Record<string, unknown>) {
+  const lineId = String(input.line_id || "");
+  if (!lineId) throw invalid("Thiếu ID dòng BOM cần chỉnh sửa.");
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
+  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa BOM đã hết hiệu lực (OBSOLETE).");
+
+  const existing = (await tx.query("SELECT * FROM kit.bom_line WHERE id = $1 AND bom_id = $2", [lineId, bomId])).rows[0];
+  if (!existing) throw notFound("dòng nguyên vật liệu BOM");
+
+  const compId = String(input.component_item_id || existing.component_item_id);
+  const compItem = await getItem(tx, compId);
+  const qty = Number(input.qty_per_base ?? existing.qty_per_base);
+  const qtyAliq =
+    input.qty_per_base_aliquoted !== undefined && input.qty_per_base_aliquoted !== "" && input.qty_per_base_aliquoted !== null
+      ? Number(input.qty_per_base_aliquoted)
+      : null;
+  const uom = String(input.uom || existing.uom || compItem.base_uom);
+  const scrapPct = Number(input.scrap_pct ?? existing.scrap_pct ?? 0);
+  const boxNo = Math.max(1, Number(input.box_no ?? existing.box_no ?? 1));
+  const role = String(input.component_role || existing.component_role || "REAGENT");
+  const isBundled = input.is_bundled !== undefined ? Boolean(input.is_bundled) : Boolean(existing.is_bundled);
+  const allowSub = input.allow_substitute !== undefined ? Boolean(input.allow_substitute) : Boolean(existing.allow_substitute);
+  const isDemoFixed =
+    input.is_demo_fixed_component !== undefined
+      ? Boolean(input.is_demo_fixed_component)
+      : Boolean(existing.is_demo_fixed_component);
+  const incRetention =
+    input.include_in_qc_retention !== undefined
+      ? Boolean(input.include_in_qc_retention)
+      : Boolean(existing.include_in_qc_retention ?? true);
+
+  const row = (
+    await tx.query(
+      `UPDATE kit.bom_line
+          SET component_item_id = $2,
+              qty_per_base = $3,
+              qty_per_base_aliquoted = $4,
+              uom = $5,
+              scrap_pct = $6,
+              box_no = $7,
+              component_role = $8,
+              is_bundled = $9,
+              allow_substitute = $10,
+              is_demo_fixed_component = $11,
+              is_mix_component = $12,
+              include_in_qc_retention = $13,
+              updated_by = $14,
+              updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [
+        lineId,
+        compId,
+        qty,
+        qtyAliq,
+        uom,
+        scrapPct,
+        boxNo,
+        role,
+        isBundled,
+        allowSub,
+        isDemoFixed,
+        !isDemoFixed,
+        incRetention,
+        actor.userId,
+      ]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_bom",
+    entityId: bomId,
+    action: "update_bom_line",
+    changes: { line: [`#${existing.line_no}`, `#${existing.line_no} ${compItem.code} (${qty} ${uom}, Hộp ${boxNo})`] },
+  });
+  return row;
+}
+
+export async function deleteBomLine(tx: Tx, actor: AuthzActor, bomId: string, lineId: string) {
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
+  if (bom.status === "OBSOLETE") throw invalid("Không thể xóa dòng của BOM đã hết hiệu lực (OBSOLETE).");
+
+  await tx.query("DELETE FROM kit.bom_line WHERE id = $1 AND bom_id = $2", [lineId, bomId]);
+  await tx.query(
+    `WITH ordered AS (
+       SELECT id, row_number() OVER (ORDER BY box_no, line_no, id) AS rn
+         FROM kit.bom_line WHERE bom_id = $1
+     )
+     UPDATE kit.bom_line bl SET line_no = ordered.rn FROM ordered WHERE bl.id = ordered.id`,
+    [bomId]
+  );
+  await writeAudit(tx, actor, {
+    entityType: "kit_bom",
+    entityId: bomId,
+    action: "delete_bom_line",
+    changes: { deleted_line_id: [lineId, null] },
+  });
+  return { deleted: true };
 }
 
 const bomLineSubSchema = z.object({
@@ -438,7 +726,7 @@ export async function bulkAddBomLines(tx: Tx, actor: AuthzActor, input: unknown)
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [d.bom_id])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được thêm dòng nguyên liệu khi BOM đang ở trạng thái Nháp (DRAFT).");
+  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa BOM đã hết hiệu lực (OBSOLETE).");
 
   for (const l of d.lines) {
     if (l.component_item_id === bom.product_item_id) {
@@ -521,7 +809,7 @@ export async function addKitPackaging(tx: Tx, actor: AuthzActor, input: unknown)
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [d.bom_id])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
   await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
-  if (bom.status !== "DRAFT") throw invalid("Chỉ được chỉnh sửa cấu trúc đóng gói khi BOM đang ở trạng thái Nháp (DRAFT).");
+  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa cấu trúc đóng gói khi BOM đã hết hiệu lực (OBSOLETE).");
 
   const row = (
     await tx.query(
@@ -549,6 +837,156 @@ export async function addKitPackaging(tx: Tx, actor: AuthzActor, input: unknown)
     changes: { packaging: [null, `Hộp ${d.box_no} (${d.box_name}): ${d.units_per_kit} × ${d.component_name} (${d.fill_qty} ${d.fill_uom})`] },
   });
   return row;
+}
+
+const updatePackagingSchema = packagingSchema.extend({
+  pack_id: z.string().uuid("chọn quy cách đóng gói"),
+});
+
+export async function updateKitPackaging(tx: Tx, actor: AuthzActor, bomId: string, input: unknown) {
+  const d = parseInput(updatePackagingSchema, { ...(input as Record<string, unknown>), bom_id: bomId });
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
+  if (bom.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa cấu trúc đóng gói khi BOM đã hết hiệu lực (OBSOLETE).");
+
+  const existing = (await tx.query("SELECT * FROM kit.kit_packaging WHERE id = $1 AND bom_id = $2", [d.pack_id, bomId])).rows[0];
+  if (!existing) throw notFound("quy cách đóng gói");
+
+  const row = (
+    await tx.query(
+      `UPDATE kit.kit_packaging
+          SET box_no = $1,
+              box_name = $2,
+              component_name = $3,
+              container_type = $4,
+              fill_qty = $5,
+              fill_uom = $6,
+              units_per_kit = $7,
+              storage_temp = $8,
+              label_spec = $9
+        WHERE id = $10 AND bom_id = $11
+        RETURNING *`,
+      [
+        d.box_no,
+        d.box_name,
+        d.component_name,
+        d.container_type,
+        d.fill_qty,
+        d.fill_uom,
+        d.units_per_kit,
+        d.storage_temp,
+        d.label_spec ?? null,
+        d.pack_id,
+        bomId,
+      ]
+    )
+  ).rows[0];
+  await writeAudit(tx, actor, {
+    entityType: "kit_bom",
+    entityId: bomId,
+    action: "update_packaging",
+    changes: {
+      packaging: [
+        `Hộp ${existing.box_no}: ${existing.component_name}`,
+        `Hộp ${d.box_no} (${d.box_name}): ${d.units_per_kit} × ${d.component_name} (${d.fill_qty} ${d.fill_uom})`,
+      ],
+    },
+  });
+  return row;
+}
+
+export async function deleteKitPackaging(tx: Tx, actor: AuthzActor, bomId: string, packId: string) {
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
+  if (bom.status === "OBSOLETE") throw invalid("Không thể xóa quy cách đóng gói khi BOM đã hết hiệu lực (OBSOLETE).");
+
+  const existing = (await tx.query("SELECT * FROM kit.kit_packaging WHERE id = $1 AND bom_id = $2", [packId, bomId])).rows[0];
+  if (!existing) throw notFound("quy cách đóng gói");
+
+  await tx.query("DELETE FROM kit.kit_packaging WHERE id = $1 AND bom_id = $2", [packId, bomId]);
+  await writeAudit(tx, actor, {
+    entityType: "kit_bom",
+    entityId: bomId,
+    action: "delete_packaging",
+    changes: { packaging: [`Hộp ${existing.box_no}: ${existing.component_name}`, null] },
+  });
+  return { deleted: true, id: packId };
+}
+
+export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId: string) {
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", bom.org_unit_id);
+  if (bom.status === "OBSOLETE") throw invalid("Không thể đồng bộ quy cách đóng gói khi BOM đã hết hiệu lực (OBSOLETE).");
+
+  const lines = (
+    await tx.query(
+      `SELECT bl.*, it.sku AS component_sku, it.name AS component_name, it.storage_condition
+         FROM kit.bom_line bl
+         JOIN inv.item it ON it.id = bl.component_item_id
+        WHERE bl.bom_id = $1
+        ORDER BY bl.box_no ASC, bl.line_no ASC`,
+      [bomId]
+    )
+  ).rows as Array<Record<string, unknown>>;
+
+  const existingRows = (await tx.query("SELECT component_name FROM kit.kit_packaging WHERE bom_id = $1", [bomId])).rows as Array<{
+    component_name: string;
+  }>;
+  const existingSet = new Set(existingRows.map((r) => r.component_name.trim().toLowerCase()));
+
+  let added = 0;
+  for (const l of lines) {
+    const role = String(l.role || "");
+    if (role === "BOX" || role === "IFU") continue;
+    const compTitle = `${l.component_sku} — ${l.component_name}`;
+    if (existingSet.has(compTitle.trim().toLowerCase()) || existingSet.has(String(l.component_name).trim().toLowerCase())) {
+      continue;
+    }
+    const qty = Number(l.qty_per_batch || 1);
+    const uom = String(l.uom || "µL");
+    const uomLower = uom.toLowerCase();
+    let containerType = "TUBE_1_5ML";
+    if (role === "PLATE_STRIP") containerType = "STRIP_8";
+    else if (uomLower === "ml" && qty >= 25) containerType = "BOTTLE_50ML";
+    else if (uomLower === "ml" && qty >= 5) containerType = "BOTTLE_10ML";
+    else if ((uomLower === "µl" || uomLower === "ul") && qty <= 500) containerType = "TUBE_0_5ML";
+    else if ((uomLower === "µl" || uomLower === "ul") && qty > 1500) containerType = "TUBE_2_0ML";
+
+    const boxNo = Number(l.box_no || 1);
+    const boxName = boxNo === 1 ? "Hộp 1: Hóa chất / Bán thành phẩm chính" : `Hộp ${boxNo}: Thành phần phụ trợ`;
+    const storageTemp = String(l.storage_condition || "-20°C").slice(0, 60);
+
+    await tx.query(
+      `INSERT INTO kit.kit_packaging
+         (bom_id, box_no, box_name, component_name, container_type, fill_qty, fill_uom, units_per_kit, storage_temp, label_spec)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        bomId,
+        boxNo,
+        boxName,
+        compTitle.slice(0, 200),
+        containerType,
+        qty > 0 ? qty : 1,
+        uom,
+        1,
+        storageTemp,
+        `Tem ống/chai ${l.component_sku} (${qty} ${uom})`,
+      ]
+    );
+    existingSet.add(compTitle.trim().toLowerCase());
+    added++;
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_bom",
+    entityId: bomId,
+    action: "sync_packaging_from_bom",
+    changes: { added_packaging_count: [0, added] },
+  });
+  return { added };
 }
 
 const createRoutingSchema = z.object({
@@ -618,7 +1056,7 @@ export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) 
     | undefined;
   if (!rtg) throw notFound("quy trình công đoạn (Routing)");
   await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
-  if (rtg.status !== "DRAFT") throw invalid("Chỉ thêm bước công đoạn khi quy trình Routing đang ở trạng thái Nháp (DRAFT).");
+  if (rtg.status === "OBSOLETE") throw invalid("Không thể thêm bước công đoạn khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
 
   const seq =
     d.seq ??
@@ -666,15 +1104,20 @@ export interface ListFormulaFilter {
   q?: string | null;
   status?: string | null;
   product_item_id?: string | null;
+  bom_type?: string | null;
+  bom_category?: string | null;
   limit?: number;
   offset?: number;
 }
 
 /**
- * Lists BOMs with server-side search, status/product filtering, and single-query org-unit scope resolution
+ * Lists BOMs with server-side search, status/product/bom_type filtering, and single-query org-unit scope resolution
  * so thousands of formulas can be searched and paginated cleanly.
  */
+let kitBomRoutingIfuSchemaEnsured = false;
+
 export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
+  if (kitBomRoutingIfuSchemaEnsured) return;
   await tx.query(`
     ALTER TABLE kit.bom
       ADD COLUMN IF NOT EXISTS label_template_code text,
@@ -685,45 +1128,284 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
       ADD COLUMN IF NOT EXISTS ifu_intended_use text,
       ADD COLUMN IF NOT EXISTS ifu_thermal_profile text,
       ADD COLUMN IF NOT EXISTS ifu_channels text,
-      ADD COLUMN IF NOT EXISTS ifu_interpretation text
+      ADD COLUMN IF NOT EXISTS ifu_interpretation text,
+      ADD COLUMN IF NOT EXISTS bom_type text DEFAULT 'finished_good',
+      ADD COLUMN IF NOT EXISTS bom_category text DEFAULT 'PCR Kit',
+      ADD COLUMN IF NOT EXISTS parent_item_code text,
+      ADD COLUMN IF NOT EXISTS tccs_code text,
+      ADD COLUMN IF NOT EXISTS tccs_file_name text,
+      ADD COLUMN IF NOT EXISTS tccs_file_url text,
+      ADD COLUMN IF NOT EXISTS registration_no text,
+      ADD COLUMN IF NOT EXISTS responsible_person_id text,
+      ADD COLUMN IF NOT EXISTS responsible_person_name text,
+      ADD COLUMN IF NOT EXISTS qc_assignee_name text,
+      ADD COLUMN IF NOT EXISTS specification text,
+      ADD COLUMN IF NOT EXISTS storage_condition text,
+      ADD COLUMN IF NOT EXISTS shelf_life_months int DEFAULT 12,
+      ADD COLUMN IF NOT EXISTS qc_retention_qty numeric DEFAULT 1,
+      ADD COLUMN IF NOT EXISTS ph_min numeric,
+      ADD COLUMN IF NOT EXISTS ph_max numeric,
+      ADD COLUMN IF NOT EXISTS ifu_file_name text,
+      ADD COLUMN IF NOT EXISTS ifu_file_url text,
+      ADD COLUMN IF NOT EXISTS ifu_file_size text,
+      ADD COLUMN IF NOT EXISTS ifu_updated_at timestamptz,
+      ADD COLUMN IF NOT EXISTS ifu_aliquoted_file_name text,
+      ADD COLUMN IF NOT EXISTS ifu_aliquoted_file_url text,
+      ADD COLUMN IF NOT EXISTS ifu_aliquoted_file_size text,
+      ADD COLUMN IF NOT EXISTS label_design_json jsonb DEFAULT '{}'::jsonb
   `);
 
-  // Populate default Label Artwork & IFU (Instructions For Use) on existing BOMs if empty
+  await tx.query(`
+    ALTER TABLE kit.bom_line
+      ADD COLUMN IF NOT EXISTS qty_per_base_aliquoted numeric,
+      ADD COLUMN IF NOT EXISTS is_mix_component boolean DEFAULT true,
+      ADD COLUMN IF NOT EXISTS is_demo_fixed_component boolean DEFAULT false,
+      ADD COLUMN IF NOT EXISTS include_in_qc_retention boolean DEFAULT true
+  `);
+
+  // Backfill metadata on existing BOMs if missing
   await tx.query(`
     UPDATE kit.bom b
-       SET label_template_code = coalesce(b.label_template_code, 'LBL-' || it.code || '-V1'),
-           label_dimensions = coalesce(b.label_dimensions, 'Nhãn Hộp ngoài: 95×65 mm · Nhãn Ống 1.5mL: 38×19 mm (Chịu lạnh -80°C)'),
-           udi_di = coalesce(b.udi_di, '(01)0893619283' || lpad((b.bom_version * 117)::text, 4, '0')),
-           ifu_code = coalesce(b.ifu_code, 'IFU-' || it.code),
-           ifu_version = coalesce(b.ifu_version, 'Rev 0' || b.bom_version::text || ' (Hiệu lực ISO 13485)'),
-           ifu_intended_use = coalesce(b.ifu_intended_use, 'Bộ Kit xét nghiệm chẩn đoán in vitro (IVD) phát hiện và định lượng acid nucleic đặc hiệu bằng kỹ thuật Real-time PCR / RT-qPCR trên mẫu bệnh phẩm lâm sàng.'),
-           ifu_thermal_profile = coalesce(b.ifu_thermal_profile, 'Bước 1 (UNG/RT): 50°C × 10 phút (1 chu kỳ) ➔ Bước 2 (Biến tính đầu): 95°C × 3 phút (1 chu kỳ) ➔ Bước 3 (Khuếch đại 45 chu kỳ): 95°C × 15 giây + 60°C × 45 giây (Thu tín hiệu huỳnh quang tại 60°C).'),
-           ifu_channels = coalesce(b.ifu_channels, 'FAM: Đích tác nhân chính (Target) · HEX/VIC: Chứng nội (Internal Control - IC) · ROX: Tham chiếu thụ động'),
-           ifu_interpretation = coalesce(b.ifu_interpretation, 'Dương tính: Ct (FAM) ≤ 38.0 có đường cong khuếch đại dạng chữ S điển hình · Âm tính: Không lên tín hiệu FAM và Ct (HEX/IC) ≤ 35.0 · Không hợp lệ (Chạy lại): Không lên cả FAM và HEX/IC.')
+       SET bom_type = CASE
+             WHEN it.item_type = 'SEMI_FINISHED' OR it.code ~* '^(BTP|SFG|ST|MIX)' THEN 'semi_finished'
+             ELSE coalesce(nullif(b.bom_type, ''), 'finished_good')
+           END,
+           bom_category = CASE
+             WHEN it.code ~* '(PCR|HBV|HCV|HPV|HI-|SQH|ABP)' OR it.name ~* '(PCR|TopSENSI)' THEN 'PCR Kit'
+             ELSE coalesce(nullif(b.bom_category, ''), 'Tách chiết / Khác')
+           END,
+           parent_item_code = coalesce(
+             b.parent_item_code,
+             CASE WHEN upper(it.code) LIKE '%.D.IC' THEN substring(it.code from 1 for length(it.code) - 5) ELSE NULL END
+           ),
+           tccs_code = coalesce(b.tccs_code, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN 'TCCS 01:2026/ABT' ELSE 'TCCS-BTP:2026/ABT' END),
+           registration_no = coalesce(b.registration_no, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN '2400189/ĐKLH-BYT-TB-CT' ELSE NULL END),
+           specification = coalesce(b.specification, CASE WHEN it.item_type = 'SEMI_FINISHED' THEN 'Lô chuẩn 100 mL' ELSE 'Hộp ' || coalesce(b.tests_per_kit, 50)::text || ' test' END),
+           storage_condition = coalesce(b.storage_condition, CASE WHEN it.code ~* '(HK-|ST)' THEN '15°C...25°C' ELSE '-20°C ± 2°C' END),
+           shelf_life_months = coalesce(b.shelf_life_months, greatest(1, round(coalesce(b.shelf_life_days, 365)::numeric / 30.0)::int)),
+           qc_retention_qty = coalesce(b.qc_retention_qty, CASE WHEN it.item_type = 'SEMI_FINISHED' THEN 0 ELSE 1 END),
+           ifu_file_name = coalesce(b.ifu_file_name, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN 'HDSD_' || replace(it.code, '.D.IC', '') || '_Rev01.pdf' ELSE NULL END),
+           ifu_file_size = coalesce(b.ifu_file_size, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN '428 KB (PDF chuẩn ISO 13485)' ELSE NULL END),
+           ifu_aliquoted_file_name = coalesce(b.ifu_aliquoted_file_name, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN 'HDSD_' || replace(it.code, '.D.IC', '') || '.D.IC_ChiaSan_Rev01.pdf' ELSE NULL END),
+           ifu_aliquoted_file_size = coalesce(b.ifu_aliquoted_file_size, CASE WHEN it.item_type <> 'SEMI_FINISHED' THEN '452 KB (PDF bản chia sẵn .D.IC)' ELSE NULL END)
       FROM master.item it
      WHERE it.id = b.product_item_id
-       AND (b.ifu_code IS NULL OR b.label_template_code IS NULL)
+       AND (b.tccs_code IS NULL OR b.specification IS NULL)
   `);
 
-  // Restore any OBSOLETE routing to EFFECTIVE if its product currently has NO EFFECTIVE routing (fixes RT-HBV-50T-V1 stuck in OBSOLETE)
-  await tx.query(`
-    UPDATE kit.routing r
-       SET status = 'EFFECTIVE',
-           approved_at = coalesce(r.approved_at, now()),
-           updated_at = now()
-     WHERE r.status = 'OBSOLETE'
-       AND NOT EXISTS (
-         SELECT 1 FROM kit.routing r2
-          WHERE r2.product_item_id = r.product_item_id
-            AND r2.status = 'EFFECTIVE'
-       )
-  `);
+  // Seed representative Semi-Finished BOMs & Finished Good BOMs from molecularkit-mes if no semi_finished BOM exists yet
+  const semiCheck = await tx.query("SELECT count(*)::int AS c FROM kit.bom WHERE bom_type = 'semi_finished'");
+  if (Number(semiCheck.rows[0]?.c ?? 0) === 0 && process.env.FACTORY_ALLOW_DEMO_SEED === "1") {
+    const kitOrg = (await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-KIT' LIMIT 1")).rows[0]?.id;
+    if (kitOrg) {
+      const uomRows = (await tx.query("SELECT code FROM master.uom WHERE status = 'ACTIVE'")).rows as Array<{ code: string }>;
+      const findUom = (preferred: string[], fallback = "pcs") => {
+        for (const p of preferred) {
+          const hit = uomRows.find((u) => u.code.toLowerCase() === p.toLowerCase());
+          if (hit) return hit.code;
+        }
+        return uomRows[0]?.code ?? fallback;
+      };
+      const mlUom = findUom(["mL", "ml", "L", "pcs"]);
+      const kitUom = findUom(["kit", "KIT", "box", "pcs"]);
+
+      // Ensure standard semi-finished & finished items from molecularkit-mes exist
+      const seedItems = [
+        { code: "BTP-MMIX-2X", name: "Bán thành phẩm qPCR MasterMix 2X (Pha sẵn)", type: "SEMI_FINISHED", uom: mlUom, temp: "-20" },
+        { code: "BTP-PRIMER-HBV", name: "Bán thành phẩm Hỗn hợp Primer/Probe HBV 10X", type: "SEMI_FINISHED", uom: mlUom, temp: "-20" },
+        { code: "ST127", name: "Bán thành phẩm Dung dịch đệm VBL Buffer Ver 2", type: "SEMI_FINISHED", uom: mlUom, temp: "RT" },
+        { code: "ST035", name: "Bán thành phẩm Dung dịch rửa WB1 Buffer", type: "SEMI_FINISHED", uom: mlUom, temp: "RT" },
+        { code: "HK-008", name: "TopPURE® Viral DNA/RNA Extraction Kit (50 test)", type: "FINISHED_KIT", uom: kitUom, temp: "RT" },
+        { code: "HI-712", name: "TopSENSI® HPV-16/18 & High-Risk qPCR Kit (50 test)", type: "FINISHED_KIT", uom: kitUom, temp: "-20" },
+      ];
+      for (const si of seedItems) {
+        await tx.query(
+          `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, status)
+           VALUES ($1, $2, $3, $4, 'LOT', $5, true, false, $6, true, 'ACTIVE')
+           ON CONFLICT (code) DO NOTHING`,
+          [si.code, si.name, si.type, si.uom, si.temp, si.type === "FINISHED_KIT"]
+        );
+      }
+
+      const rawItems = (
+        await tx.query("SELECT id, code, base_uom FROM master.item WHERE item_type IN ('RAW_MATERIAL', 'REAGENT', 'CONSUMABLE', 'SEMI_FINISHED') ORDER BY code ASC LIMIT 12")
+      ).rows as Array<{ id: string; code: string; base_uom: string }>;
+
+      const seedBoms = [
+        {
+          bom_code: "BOM-BTP-MMIX-2X-V1",
+          item_code: "BTP-MMIX-2X",
+          name: "BOM Bán thành phẩm qPCR MasterMix 2X (Lô chuẩn 50 mL)",
+          bom_type: "semi_finished",
+          bom_category: "PCR Kit",
+          base_qty: 50,
+          base_uom: mlUom,
+          tests_per_kit: 2500,
+          shelf_life_days: 365,
+          shelf_life_months: 12,
+          tccs_code: "TCCS-BTP-MMIX:2026/ABT",
+          responsible_person_name: "Trần Minh Khoa (Tổ trưởng Pha chế Kit)",
+          qc_assignee_name: "Lê Thu Hà (Chuyên viên QC Kit)",
+          specification: "Chai 50 mL (Đủ chia 50 bộ Kit 50 test)",
+          storage_condition: "-20°C ± 2°C",
+          qc_retention_qty: 1,
+          ph_min: 8.2,
+          ph_max: 8.4,
+        },
+        {
+          bom_code: "BOM-BTP-PRIMER-HBV-V1",
+          item_code: "BTP-PRIMER-HBV",
+          name: "BOM Bán thành phẩm Hỗn hợp Primer/Probe HBV 10X (Lô chuẩn 10 mL)",
+          bom_type: "semi_finished",
+          bom_category: "PCR Kit",
+          base_qty: 10,
+          base_uom: mlUom,
+          tests_per_kit: 2000,
+          shelf_life_days: 365,
+          shelf_life_months: 12,
+          tccs_code: "TCCS-BTP-OLI:2026/ABT",
+          responsible_person_name: "Nguyễn Thị Ngọc Ánh (Chuyên viên Pha chế PCR)",
+          qc_assignee_name: "Lê Thu Hà (Chuyên viên QC Kit)",
+          specification: "Ống Falcon 10 mL bọc giấy bạc chống sáng",
+          storage_condition: "-20°C ± 2°C (Tránh ánh sáng)",
+          qc_retention_qty: 1,
+          ph_min: 7.9,
+          ph_max: 8.1,
+        },
+        {
+          bom_code: "BOM-ST127-VBL-V2",
+          item_code: "ST127",
+          name: "BOM Bán thành phẩm Dung dịch đệm ly giải VBL Buffer Ver 2 (Lô 1000 mL)",
+          bom_type: "semi_finished",
+          bom_category: "Tách chiết / Khác",
+          base_qty: 1000,
+          base_uom: mlUom,
+          tests_per_kit: 2000,
+          shelf_life_days: 730,
+          shelf_life_months: 24,
+          tccs_code: "TCCS-BTP-ST127:2026/ABT",
+          responsible_person_name: "Phạm Quốc Cường (Chuyên viên Pha chế Buffer)",
+          qc_assignee_name: "Đỗ Hoàng Yến (Chuyên viên QC Hóa lý)",
+          specification: "Can HDPE 1000 mL",
+          storage_condition: "15°C...25°C",
+          qc_retention_qty: 1,
+          ph_min: 6.5,
+          ph_max: 6.9,
+        },
+        {
+          bom_code: "BOM-HK-008-V1",
+          item_code: "HK-008",
+          name: "BOM Thành phẩm TopPURE® Viral DNA/RNA Extraction Kit (HK-008 · 50 test)",
+          bom_type: "finished_good",
+          bom_category: "Tách chiết / Khác",
+          base_qty: 1,
+          base_uom: kitUom,
+          tests_per_kit: 50,
+          shelf_life_days: 730,
+          shelf_life_months: 24,
+          tccs_code: "TCCS 08:2025/ABT",
+          registration_no: "2300045/ĐKLH-BYT-TB-CT",
+          responsible_person_name: "Phạm Quốc Cường (Chuyên viên Pha chế Buffer)",
+          qc_assignee_name: "Đỗ Hoàng Yến (Chuyên viên QC Hóa lý)",
+          specification: "Hộp 50 test (Cột thu hồi Silica + Hệ đệm VBL/WB1/WB2/RBB)",
+          storage_condition: "15°C...25°C (Proteinase K & Carrier RNA bảo quản -20°C)",
+          qc_retention_qty: 1,
+          ph_min: null,
+          ph_max: null,
+        },
+      ];
+
+      for (const sb of seedBoms) {
+        const itRow = (await tx.query("SELECT id FROM master.item WHERE code = $1 LIMIT 1", [sb.item_code])).rows[0];
+        if (!itRow) continue;
+        const gtinSeed = [...String(sb.item_code)].reduce((acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 1000, 0);
+        const gtin13 = `0893619283${String(gtinSeed).padStart(3, "0")}`;
+        const gtinSum = [...gtin13].reduce((acc, d, idx) => acc + Number(d) * (idx % 2 === 0 ? 3 : 1), 0);
+        const gtinCheck = (10 - (gtinSum % 10)) % 10;
+        const gtin14 = `(01)${gtin13}${gtinCheck}`;
+
+        const insertedBom = (
+          await tx.query(
+            `INSERT INTO kit.bom
+               (code, org_unit_id, product_item_id, bom_version, name, base_qty, base_uom, tests_per_kit,
+                shelf_life_days, shelf_life_months, status, bom_type, bom_category, tccs_code, registration_no,
+                responsible_person_name, qc_assignee_name, specification, storage_condition, qc_retention_qty,
+                ph_min, ph_max, label_template_code, label_dimensions, udi_di, ifu_code, ifu_version,
+                ifu_file_name, ifu_file_size, ifu_aliquoted_file_name, ifu_aliquoted_file_size)
+             VALUES ($1,$2,$3,1,$4,$5,$6,$7,$8,$9,'EFFECTIVE',$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,'Rev 02',$25,'460 KB (PDF)',$26,'485 KB (PDF)')
+             ON CONFLICT DO NOTHING
+             RETURNING id`,
+            [
+              sb.bom_code,
+              kitOrg,
+              itRow.id,
+              sb.name,
+              sb.base_qty,
+              sb.base_uom,
+              sb.tests_per_kit,
+              sb.shelf_life_days,
+              sb.shelf_life_months,
+              sb.bom_type,
+              sb.bom_category,
+              sb.tccs_code,
+              (sb as { registration_no?: string }).registration_no ?? null,
+              sb.responsible_person_name,
+              sb.qc_assignee_name,
+              sb.specification,
+              sb.storage_condition,
+              sb.qc_retention_qty,
+              sb.ph_min,
+              sb.ph_max,
+              `LBL-${sb.item_code}-V1`,
+              sb.bom_type === "semi_finished" ? "Nhãn Chai BTP: 70×40 mm" : "Nhãn Hộp ngoài: 100×50 mm · Nhãn Ống: 35×15 mm",
+              gtin14,
+              `IFU-${sb.item_code}`,
+              `HDSD_${sb.item_code}_Rev02.pdf`,
+              `HDSD_${sb.item_code}.D.IC_Rev02.pdf`,
+            ]
+          )
+        ).rows[0];
+
+        if (insertedBom && rawItems.length >= 2) {
+          const filteredComps = rawItems.filter((r) => r.id !== itRow.id).slice(0, 3);
+          let ln = 1;
+          for (const comp of filteredComps) {
+            await tx.query(
+              `INSERT INTO kit.bom_line
+                 (bom_id, line_no, component_item_id, qty_per_base, uom, scrap_pct, box_no, component_role, is_critical, is_mix_component, include_in_qc_retention, notes)
+               VALUES ($1, $2, $3, $4, $5, 2, 1, 'REAGENT', true, true, true, $6)
+               ON CONFLICT DO NOTHING`,
+              [
+                insertedBom.id,
+                ln++,
+                comp.id,
+                sb.bom_type === "semi_finished" ? 12.5 : 1,
+                comp.base_uom,
+                sb.bom_type === "semi_finished" ? "Cân/đong chính xác trong tủ ATSH, kiểm tra pH sau khuấy từ" : "Thành phần đóng gói theo định mức chuẩn",
+              ]
+            );
+          }
+        }
+      }
+    }
+  }
+
+  kitBomRoutingIfuSchemaEnsured = true;
 }
 
 export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: string, input: Record<string, unknown>) {
   await ensureKitBomRoutingAndIfuSchema(tx);
-  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as Record<string, unknown> | undefined;
   if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
+
+  const labelDesignJson =
+    input.label_design_json !== undefined
+      ? typeof input.label_design_json === "string"
+        ? input.label_design_json
+        : JSON.stringify(input.label_design_json ?? {})
+      : JSON.stringify(bom.label_design_json ?? {});
+
   const updated = (
     await tx.query(
       `UPDATE kit.bom
@@ -736,21 +1418,36 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
               ifu_thermal_profile = $8,
               ifu_channels = $9,
               ifu_interpretation = $10,
+              ifu_file_name = $11,
+              ifu_file_url = $12,
+              ifu_file_size = $13,
+              ifu_updated_at = now(),
+              ifu_aliquoted_file_name = $14,
+              ifu_aliquoted_file_url = $15,
+              ifu_aliquoted_file_size = $16,
+              label_design_json = $17::jsonb,
               updated_at = now(),
-              updated_by = $11
+              updated_by = $18
         WHERE id = $1
         RETURNING *`,
       [
         bomId,
-        input.label_template_code ? String(input.label_template_code).trim() : null,
-        input.label_dimensions ? String(input.label_dimensions).trim() : null,
-        input.udi_di ? String(input.udi_di).trim() : null,
-        input.ifu_code ? String(input.ifu_code).trim() : null,
-        input.ifu_version ? String(input.ifu_version).trim() : null,
-        input.ifu_intended_use ? String(input.ifu_intended_use).trim() : null,
-        input.ifu_thermal_profile ? String(input.ifu_thermal_profile).trim() : null,
-        input.ifu_channels ? String(input.ifu_channels).trim() : null,
-        input.ifu_interpretation ? String(input.ifu_interpretation).trim() : null,
+        input.label_template_code !== undefined ? (input.label_template_code ? String(input.label_template_code).trim() : null) : bom.label_template_code,
+        input.label_dimensions !== undefined ? (input.label_dimensions ? String(input.label_dimensions).trim() : null) : bom.label_dimensions,
+        input.udi_di !== undefined ? (input.udi_di ? String(input.udi_di).trim() : null) : bom.udi_di,
+        input.ifu_code !== undefined ? (input.ifu_code ? String(input.ifu_code).trim() : null) : bom.ifu_code,
+        input.ifu_version !== undefined ? (input.ifu_version ? String(input.ifu_version).trim() : null) : bom.ifu_version,
+        input.ifu_intended_use !== undefined ? (input.ifu_intended_use ? String(input.ifu_intended_use).trim() : null) : bom.ifu_intended_use,
+        input.ifu_thermal_profile !== undefined ? (input.ifu_thermal_profile ? String(input.ifu_thermal_profile).trim() : null) : bom.ifu_thermal_profile,
+        input.ifu_channels !== undefined ? (input.ifu_channels ? String(input.ifu_channels).trim() : null) : bom.ifu_channels,
+        input.ifu_interpretation !== undefined ? (input.ifu_interpretation ? String(input.ifu_interpretation).trim() : null) : bom.ifu_interpretation,
+        input.ifu_file_name !== undefined ? (input.ifu_file_name ? String(input.ifu_file_name).trim() : null) : bom.ifu_file_name,
+        input.ifu_file_url !== undefined ? (input.ifu_file_url ? String(input.ifu_file_url) : null) : bom.ifu_file_url,
+        input.ifu_file_size !== undefined ? (input.ifu_file_size ? String(input.ifu_file_size).trim() : null) : bom.ifu_file_size,
+        input.ifu_aliquoted_file_name !== undefined ? (input.ifu_aliquoted_file_name ? String(input.ifu_aliquoted_file_name).trim() : null) : bom.ifu_aliquoted_file_name,
+        input.ifu_aliquoted_file_url !== undefined ? (input.ifu_aliquoted_file_url ? String(input.ifu_aliquoted_file_url) : null) : bom.ifu_aliquoted_file_url,
+        input.ifu_aliquoted_file_size !== undefined ? (input.ifu_aliquoted_file_size ? String(input.ifu_aliquoted_file_size).trim() : null) : bom.ifu_aliquoted_file_size,
+        labelDesignJson,
         actor.userId,
       ]
     )
@@ -759,7 +1456,11 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
     entityType: "kit_bom",
     entityId: bomId,
     action: "update_label_ifu_spec",
-    changes: { ifu_code: [null, updated.ifu_code], label_template_code: [null, updated.label_template_code] },
+    changes: {
+      ifu_code: [null, updated.ifu_code],
+      ifu_file_name: [null, updated.ifu_file_name],
+      label_template_code: [null, updated.label_template_code],
+    },
   });
   return updated;
 }
@@ -767,6 +1468,22 @@ export async function updateBomLabelIfuSpec(tx: Tx, actor: AuthzActor, bomId: st
 export async function fastActivateBom(tx: Tx, actor: AuthzActor, bomId: string) {
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.approve", bom.org_unit_id);
+  if ((bom as any).created_by === actor.userId || (bom as any).updated_by === actor.userId) {
+    throw invalid("Người tạo hoặc chỉnh sửa định mức BOM không được tự phê duyệt hiệu lực (Nguyên tắc tách nhiệm ISO 13485).", undefined, "SELF_APPROVAL");
+  }
+  const lastAuthor = (
+    await tx.query(
+      `SELECT user_id FROM core.audit_log
+        WHERE entity_type IN ('kit_bom', 'kit.bom', 'bom') AND entity_id = $1
+          AND action IN ('create', 'update', 'submit_review', 'update_label_ifu_spec')
+        ORDER BY id DESC LIMIT 1`,
+      [bomId]
+    )
+  ).rows[0];
+  if (lastAuthor && Number(lastAuthor.user_id) === actor.userId) {
+    throw invalid("Người tạo hoặc chỉnh sửa định mức BOM không được tự phê duyệt hiệu lực (Nguyên tắc tách nhiệm ISO 13485).", undefined, "SELF_APPROVAL");
+  }
   const lineCount = Number((await tx.query("SELECT count(*)::int AS c FROM kit.bom_line WHERE bom_id = $1", [bomId])).rows[0]?.c ?? 0);
   if (lineCount === 0) throw invalid("Định mức BOM phải có ít nhất 1 dòng nguyên vật liệu trước khi kích hoạt hiệu lực (EFFECTIVE).");
   await tx.query(
@@ -783,7 +1500,7 @@ export async function fastActivateBom(tx: Tx, actor: AuthzActor, bomId: string) 
     entityType: "kit_bom",
     entityId: bomId,
     action: "fast_activate",
-    changes: { status: [bom.status, "EFFECTIVE"] },
+    changes: { status: [bom.status, "EFFECTIVE"], approved_by: [(bom as any).approved_by ?? null, actor.userId] },
   });
   return updated;
 }
@@ -791,6 +1508,7 @@ export async function fastActivateBom(tx: Tx, actor: AuthzActor, bomId: string) 
 export async function cloneRouting(tx: Tx, actor: AuthzActor, routingId: string) {
   const src = (await tx.query("SELECT * FROM kit.routing WHERE id = $1", [routingId])).rows[0] as KitRoutingRow | undefined;
   if (!src) throw notFound("quy trình Routing");
+  await authorize(tx, actor, "kit.bom.manage", src.org_unit_id);
   const nextVer = Number(
     (
       await tx.query("SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id = $1", [
@@ -822,8 +1540,9 @@ export async function cloneRouting(tx: Tx, actor: AuthzActor, routingId: string)
 export async function loadStandardKitRoutingSteps(tx: Tx, actor: AuthzActor, routingId: string) {
   const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as KitRoutingRow | undefined;
   if (!rtg) throw notFound("quy trình Routing");
+  await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
   if (rtg.status !== "DRAFT") {
-    await tx.query("UPDATE kit.routing SET status = 'DRAFT', updated_at = now() WHERE id = $1", [routingId]);
+    throw invalid("Chỉ được nạp mẫu bước công đoạn khi quy trình (Routing) đang ở trạng thái Bản nháp (DRAFT). Hãy bấm 'Nhân bản phiên bản mới' trước.");
   }
   await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routingId]);
 
@@ -903,9 +1622,14 @@ export async function loadStandardKitRoutingSteps(tx: Tx, actor: AuthzActor, rou
 export async function fastActivateRouting(tx: Tx, actor: AuthzActor, routingId: string) {
   const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as KitRoutingRow | undefined;
   if (!rtg) throw notFound("quy trình Routing");
+  await authorize(tx, actor, "kit.bom.approve", rtg.org_unit_id);
   const stepCount = Number((await tx.query("SELECT count(*)::int AS c FROM kit.routing_step WHERE routing_id = $1", [routingId])).rows[0]?.c ?? 0);
   if (stepCount === 0) {
-    await loadStandardKitRoutingSteps(tx, actor, routingId);
+    if (rtg.status === "DRAFT") {
+      await loadStandardKitRoutingSteps(tx, actor, routingId);
+    } else {
+      throw invalid("Quy trình Routing phải có ít nhất 1 bước công đoạn trước khi kích hoạt hiệu lực.");
+    }
   }
   await tx.query(
     "UPDATE kit.routing SET status = 'OBSOLETE', updated_at = now() WHERE product_item_id = $1 AND status = 'EFFECTIVE' AND id <> $2",
@@ -935,6 +1659,8 @@ export async function listBoms(tx: Tx, actor: AuthzActor, filter: ListFormulaFil
   const q = filter.q?.trim() ? `%${filter.q.trim().toLowerCase()}%` : null;
   const status = filter.status?.trim() || null;
   const productItemId = filter.product_item_id?.trim() || null;
+  const bomType = filter.bom_type?.trim() || null;
+  const bomCategory = filter.bom_category?.trim() || null;
   const limit = Math.min(Math.max(Number(filter.limit) || 500, 1), 2000);
   const offset = Math.max(Number(filter.offset) || 0, 0);
 
@@ -952,16 +1678,12 @@ export async function listBoms(tx: Tx, actor: AuthzActor, filter: ListFormulaFil
         WHERE ($1::uuid[] IS NULL OR b.org_unit_id = ANY($1::uuid[]))
           AND ($2::text IS NULL OR b.status = $2)
           AND ($3::uuid IS NULL OR b.product_item_id = $3)
-          AND (
-            $4::text IS NULL
-            OR lower(b.code) LIKE $4
-            OR lower(b.name) LIKE $4
-            OR lower(it.code) LIKE $4
-            OR lower(it.name) LIKE $4
-          )
-        ORDER BY it.code ASC, b.bom_version DESC
-        LIMIT $5 OFFSET $6`,
-      [units === "ALL" ? null : units, status, productItemId, q, limit, offset]
+          AND ($4::text IS NULL OR lower(b.code) LIKE $4 OR lower(b.name) LIKE $4 OR lower(it.code) LIKE $4 OR lower(it.name) LIKE $4 OR lower(coalesce(b.tccs_code, '')) LIKE $4 OR lower(coalesce(b.responsible_person_name, '')) LIKE $4)
+          AND ($5::text IS NULL OR coalesce(b.bom_type, 'finished_good') = $5)
+          AND ($6::text IS NULL OR coalesce(b.bom_category, 'PCR Kit') = $6)
+        ORDER BY CASE WHEN coalesce(b.bom_type, 'finished_good') = 'finished_good' THEN 0 ELSE 1 END ASC, it.code ASC, b.bom_version DESC
+        LIMIT $7 OFFSET $8`,
+      [units === "ALL" ? null : units, status, productItemId, q, bomType, bomCategory, limit, offset]
     )
   ).rows;
 }

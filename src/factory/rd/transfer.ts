@@ -119,6 +119,51 @@ export const techTransferMachine = defineMachine<TransferStatus, TechTransferRow
       ],
       patch: ({ actor }) => ({ accepted_by: actor.userId, accepted_at: new Date() }),
       effects: async ({ tx, actor, updated }) => {
+        // Ensure product_item_id exists in master.item if not linked yet
+        let productItemId = updated.product_item_id;
+        if (!productItemId && (updated.target_domain === "KIT" || updated.target_domain === "DEVICE")) {
+          const proj = (await tx.query("SELECT code, title FROM rd.project WHERE id = $1", [updated.project_id])).rows[0];
+          const prodCode = `PRD-${String(proj?.code || updated.code).toUpperCase().replace(/[^A-Z0-9-]/g, "")}`;
+          const existingProd = (await tx.query("SELECT id FROM master.item WHERE upper(code) = $1 LIMIT 1", [prodCode])).rows[0];
+          if (existingProd) {
+            productItemId = existingProd.id;
+          } else {
+            const newProd = (
+              await tx.query(
+                `INSERT INTO master.item (code, name, item_type, base_uom, tracking, shelf_life_days, status, created_by, updated_by)
+                 VALUES ($1, $2, 'PRODUCT', $3, 'LOT', 365, 'ACTIVE', $4, $4) RETURNING id`,
+                [prodCode, updated.title, updated.target_domain === "KIT" ? "kit" : "unit", actor.userId]
+              )
+            ).rows[0];
+            productItemId = newProd.id;
+          }
+          await tx.query("UPDATE rd.tech_transfer_package SET product_item_id = $2 WHERE id = $1", [updated.id, productItemId]);
+          updated.product_item_id = productItemId;
+        }
+
+        const resolveOrCreateComponentItem = async (bl: Record<string, unknown>) => {
+          const compCode = String(bl.component_code ?? "").trim().toUpperCase();
+          const compId = bl.component_item_id ? String(bl.component_item_id) : null;
+          let matched = compId
+            ? (await tx.query("SELECT id, base_uom FROM master.item WHERE id = $1", [compId])).rows[0]
+            : compCode
+              ? (await tx.query("SELECT id, base_uom FROM master.item WHERE upper(code) = $1", [compCode])).rows[0]
+              : null;
+          if (!matched && compCode) {
+            const uom = String(bl.uom || "mL").trim();
+            matched = (
+              await tx.query(
+                `INSERT INTO master.item (code, name, item_type, base_uom, tracking, shelf_life_days, status, created_by, updated_by)
+                 VALUES ($1, $2, 'RAW_MATERIAL', $3, 'LOT', 365, 'ACTIVE', $4, $4)
+                 ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+                 RETURNING id, base_uom`,
+                [compCode, String(bl.component_name || compCode).trim(), uom, actor.userId]
+              )
+            ).rows[0];
+          }
+          return matched as { id: string; base_uom: string } | null;
+        };
+
         // Automatically generate a DRAFT QC Specification in QMS if product_item_id is set and no draft exists yet
         if (updated.product_item_id && !updated.created_qc_spec_id) {
           const existingDraft = await tx.query(
@@ -193,17 +238,11 @@ export const techTransferMachine = defineMachine<TransferStatus, TechTransferRow
               )
             ).rows[0];
 
-            // Populate kit.bom_line from bom_specification where component_code matches master.item
+            // Populate kit.bom_line from bom_specification (auto-creating missing master.item if needed)
             const bomSpecLines = Array.isArray(updated.bom_specification) ? (updated.bom_specification as Record<string, unknown>[]) : [];
             let lineNo = 0;
             for (const bl of bomSpecLines) {
-              const compCode = String(bl.component_code ?? "").trim().toUpperCase();
-              const compId = bl.component_item_id ? String(bl.component_item_id) : null;
-              const matchedItem = compId
-                ? (await tx.query("SELECT id, base_uom FROM master.item WHERE id = $1", [compId])).rows[0]
-                : compCode
-                  ? (await tx.query("SELECT id, base_uom FROM master.item WHERE upper(code) = $1", [compCode])).rows[0]
-                  : null;
+              const matchedItem = await resolveOrCreateComponentItem(bl);
               if (matchedItem && matchedItem.id !== updated.product_item_id) {
                 lineNo++;
                 await tx.query(
@@ -298,10 +337,7 @@ export const techTransferMachine = defineMachine<TransferStatus, TechTransferRow
             const bomSpecLines = Array.isArray(updated.bom_specification) ? (updated.bom_specification as Record<string, unknown>[]) : [];
             let lineNo = 0;
             for (const bl of bomSpecLines) {
-              const compCode = String(bl.component_code ?? "").trim().toUpperCase();
-              const matchedItem = compCode
-                ? (await tx.query("SELECT id, base_uom FROM master.item WHERE upper(code) = $1", [compCode])).rows[0]
-                : null;
+              const matchedItem = await resolveOrCreateComponentItem(bl);
               if (matchedItem) {
                 lineNo++;
                 await tx.query(
@@ -378,11 +414,11 @@ export const swReleaseMachine = defineMachine<SwReleaseStatus, SwReleaseRow>({
         },
         {
           code: "IEC62304_SRS_FAILED",
-          message: "Theo chuẩn IEC 62304, phần mềm Hạng B/C không được có ca kiểm thử yêu cầu (SRS Traceability) nào ở trạng thái FAIL.",
+          message: "Theo chuẩn IEC 62304, phần mềm Hạng B/C bắt buộc phải có ma trận truy xuất yêu cầu (SRS Traceability) và 100% ca kiểm thử ở trạng thái PASS.",
           check: ({ row }) => {
             const traces = Array.isArray(row.srs_traceability) ? row.srs_traceability : [];
-            if (row.safety_class === "CLASS_C" && traces.length === 0) return false;
-            return traces.every((t) => t.result !== "FAIL");
+            if ((row.safety_class === "CLASS_C" || row.safety_class === "CLASS_B") && traces.length === 0) return false;
+            return traces.every((t) => t.result === "PASS");
           },
         },
         {
@@ -403,6 +439,44 @@ export const swReleaseMachine = defineMachine<SwReleaseStatus, SwReleaseRow>({
       permission: "rd.transfer.manage",
       reasonRequired: true,
       patch: ({ reason }) => ({ withdraw_reason: reason }),
+      effects: async ({ tx, actor, updated, reason }) => {
+        await tx.query("ALTER TABLE qms.deviation ADD COLUMN IF NOT EXISTS category text");
+        const linkedUnits = (
+          await tx.query("SELECT id, serial_no FROM device.device_unit WHERE firmware_release_id = $1", [updated.id])
+        ).rows;
+        const linkedRevs = (
+          await tx.query(
+            `SELECT r.id, r.revision, m.code AS model_code
+               FROM device.model_revision r
+               JOIN device.device_model m ON m.id = r.model_id
+              WHERE r.firmware_release_id = $1`,
+            [updated.id]
+          )
+        ).rows;
+        const devCode = await nextNumber(tx, "DEVIATION");
+        const affectedSummary = [
+          linkedRevs.length > 0
+            ? `Phiên bản DMR ảnh hưởng: ${linkedRevs.map((r) => `${r.model_code} Rev ${r.revision}`).join(", ")}`
+            : null,
+          linkedUnits.length > 0
+            ? `Thiết bị xuất xưởng ảnh hưởng (${linkedUnits.length} máy): ${linkedUnits.map((u) => u.serial_no).join(", ")}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join("; ");
+        await tx.query(
+          `INSERT INTO qms.deviation
+             (code, source_module, category, entity_type, entity_id, title, severity, description, detected_by, status, created_by, updated_by)
+           VALUES ($1, 'RD', 'SOFTWARE_RECALL', 'SOFTWARE_RELEASE', $2, $3, 'CRITICAL', $4, $5, 'OPEN', $5, $5)`,
+          [
+            devCode,
+            updated.id,
+            `Thu hồi phiên bản phần mềm/Firmware ${updated.code} (${updated.version_tag})`,
+            `Thu hồi phần mềm ${updated.code} (${updated.version_tag}) — Lý do: ${reason ?? updated.withdraw_reason ?? "Thu hồi khẩn cấp"}. ${affectedSummary}`.trim(),
+            actor.userId,
+          ]
+        );
+      },
     },
   ],
 });

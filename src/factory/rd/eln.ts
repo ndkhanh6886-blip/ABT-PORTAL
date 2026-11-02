@@ -163,10 +163,17 @@ const createExpSchema = z.object({
   objective: z.string().trim().min(5, "nhập mục tiêu thí nghiệm").max(3000),
   hypothesis: z.string().trim().max(3000).optional().nullable(),
   protocol_summary: z.string().trim().max(4000).optional().nullable(),
+  performer_name: z.string().trim().max(150).optional().nullable(),
+  wbs_task_code: z.string().trim().max(60).optional().nullable(),
   start_now: z.boolean().default(false),
 });
 
 export async function createExperiment(tx: Tx, actor: AuthzActor, input: unknown) {
+  await tx.query(`
+    ALTER TABLE rd.experiment
+      ADD COLUMN IF NOT EXISTS performer_name varchar(150),
+      ADD COLUMN IF NOT EXISTS wbs_task_code varchar(60);
+  `);
   const d = parseInput(createExpSchema, input);
   const owner = await expOwner(tx, d.project_id);
   await authorize(tx, actor, "rd.eln.write", owner);
@@ -178,6 +185,8 @@ export async function createExperiment(tx: Tx, actor: AuthzActor, input: unknown
     objective: d.objective,
     hypothesis: d.hypothesis ?? null,
     protocol_summary: d.protocol_summary ?? null,
+    performer_name: d.performer_name?.trim() || actor.name || null,
+    wbs_task_code: d.wbs_task_code?.trim() || null,
   });
   if (d.start_now) {
     return runTransition(tx, experimentMachine, actor, { id: exp.id, action: "start", expectedVersion: exp.version });
@@ -433,10 +442,17 @@ export async function createExperimentRevision(tx: Tx, actor: AuthzActor, experi
 
 export async function listExperiments(tx: Tx, actor: AuthzActor, projectId?: string) {
   await authorizeAnywhere(tx, actor, "rd.view");
+  await tx.query(`
+    ALTER TABLE rd.experiment
+      ADD COLUMN IF NOT EXISTS performer_name varchar(150),
+      ADD COLUMN IF NOT EXISTS wbs_task_code varchar(60);
+  `);
   const rows = (
     await tx.query(
       `SELECT e.*, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id,
-              cb.display_name AS created_by_name, ab.display_name AS approved_by_name,
+              coalesce(nullif(e.performer_name, ''), cb.display_name) AS created_by_name,
+              coalesce(nullif(e.performer_name, ''), cb.display_name) AS performer_name,
+              ab.display_name AS approved_by_name,
               (SELECT count(*)::int FROM rd.experiment_entry en WHERE en.experiment_id = e.id) AS entry_count,
               (SELECT count(*)::int FROM rd.experiment_material em WHERE em.experiment_id = e.id) AS material_count
          FROM rd.experiment e
@@ -456,10 +472,17 @@ export async function listExperiments(tx: Tx, actor: AuthzActor, projectId?: str
 }
 
 export async function getExperimentDetail(tx: Tx, actor: AuthzActor, id: string) {
+  await tx.query(`
+    ALTER TABLE rd.experiment
+      ADD COLUMN IF NOT EXISTS performer_name varchar(150),
+      ADD COLUMN IF NOT EXISTS wbs_task_code varchar(60);
+  `);
   const exp = (
     await tx.query(
       `SELECT e.*, p.code AS project_code, p.name AS project_name, p.owner_org_unit_id,
-              cb.display_name AS created_by_name, sb.display_name AS submitted_by_name, ab.display_name AS approved_by_name,
+              coalesce(nullif(e.performer_name, ''), cb.display_name) AS created_by_name,
+              coalesce(nullif(e.performer_name, ''), cb.display_name) AS performer_name,
+              sb.display_name AS submitted_by_name, ab.display_name AS approved_by_name,
               pe.code AS parent_code
          FROM rd.experiment e
          JOIN rd.project p ON p.id = e.project_id

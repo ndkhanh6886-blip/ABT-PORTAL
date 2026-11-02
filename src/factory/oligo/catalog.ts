@@ -4,6 +4,7 @@ import { authorize, authorizeAnywhere, registerPermissions, type AuthzActor } fr
 import { conflict, invalid, notFound } from "../core/errors";
 import { parseInput, updateRecord } from "../core/records";
 import { analyze, SequenceError, type Analysis, type CatalogEntry } from "./analyzer";
+import { ensureLegacyOligoDataSeeded } from "./legacySync";
 
 registerPermissions([
   { code: "oligo.view", description: "Xem phân hệ Tổng hợp Oligo, tính thông số trình tự" },
@@ -16,6 +17,7 @@ const COLUMNS =
 /** Catalogue cached until any entry changes (count + newest update), so edits apply at once everywhere. */
 let cache: { key: string; entries: CatalogEntry[] } | null = null;
 export async function loadCatalog(tx: Tx): Promise<CatalogEntry[]> {
+  await ensureLegacyOligoDataSeeded(tx);
   const stamp = (await tx.query("SELECT count(*)::int AS n, max(updated_at)::text AS t FROM oligo.modification")).rows[0];
   const key = `${stamp.n}|${stamp.t}`;
   if (cache?.key === key) return cache.entries;
@@ -25,6 +27,7 @@ export async function loadCatalog(tx: Tx): Promise<CatalogEntry[]> {
 }
 
 export async function listCatalog(tx: Tx, actor: AuthzActor) {
+  await ensureLegacyOligoDataSeeded(tx);
   await authorize(tx, actor, "oligo.view");
   return (await tx.query(`SELECT ${COLUMNS} FROM oligo.modification ORDER BY array_position(ARRAY['BASE','LNA','OME','F2','METHYL','DYE','QUENCHER','MODIFIER','SPACER'], kind), code`)).rows;
 }

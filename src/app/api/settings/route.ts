@@ -296,6 +296,7 @@ export async function POST(req: NextRequest) {
         await c.query("DELETE FROM personnel");
         await c.query("DELETE FROM users WHERE username != 'admin'");
         await c.query("DELETE FROM zalo_user_bindings WHERE employee_id != 'admin'");
+        await c.query("DELETE FROM app_storage WHERE key IN ('sales_personnel_custom', 'sales_personnel_contacts')");
         await c.query(`
           INSERT INTO users (username, password_hash, full_name, role, department, email, is_active)
           VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@abtvn.com', true)
@@ -305,6 +306,7 @@ export async function POST(req: NextRequest) {
             is_active = true
         `, [unusablePasswordHash()]); // tài khoản admin đã có giữ nguyên mật khẩu (ON CONFLICT không đổi mật khẩu)
       });
+      await ensureFactoryRolesAndSyncAllUsers().catch((e) => console.warn("Factory sync on reset warning:", e?.message));
       await logAudit("RESET", "SETTINGS", "Quản trị viên đã thực hiện Reset toàn bộ danh bạ nhân sự, tài khoản và danh mục Zalo");
       return NextResponse.json({ success: true, message: "Đã làm sạch toàn bộ dữ liệu Nhân sự, Tài khoản và Danh mục Zalo." });
     }

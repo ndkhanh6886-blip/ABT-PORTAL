@@ -9,7 +9,7 @@ import { notifyUsers, usersWithPermission } from "../core/notifications";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, type GuardContext } from "../core/stateMachine";
-import { ensureDepartmentEquipmentSeed } from "./service";
+import { ensureDepartmentEquipmentSeed, syncOverdueCalibrationAssets } from "./service";
 
 type EventStatus = "PLANNED" | "DONE" | "CANCELLED";
 export interface AssetEvent {
@@ -51,8 +51,11 @@ async function applyToAsset(tx: Tx, actor: AuthzActor, ev: AssetEvent & Record<s
     } else next.status = "OUT_OF_CALIBRATION";
   }
   if (ev.kind === "QUALIFICATION" && ev.passed === false) next.status = "UNDER_MAINTENANCE";
-  if (ev.out_of_service && a.status === "UNDER_MAINTENANCE") {
-    const open = await tx.query("SELECT 1 FROM asset.event WHERE asset_id = $1 AND out_of_service AND status = 'PLANNED' AND id <> $2", [ev.asset_id, ev.id]);
+  if ((ev.out_of_service || ev.kind === "REPAIR") && a.status === "UNDER_MAINTENANCE") {
+    const open = await tx.query(
+      "SELECT 1 FROM asset.event WHERE asset_id = $1 AND (out_of_service OR kind = 'REPAIR') AND status = 'PLANNED' AND id <> $2",
+      [ev.asset_id, ev.id]
+    );
     if (!open.rowCount && next.status === undefined) next.status = "IN_SERVICE";
   }
   const keys = Object.keys(next);
@@ -61,6 +64,35 @@ async function applyToAsset(tx: Tx, actor: AuthzActor, ev: AssetEvent & Record<s
     ev.asset_id, ...keys.map((k) => next[k]), actor.userId,
   ]);
   await writeAudit(tx, actor, { entityType: "asset", entityId: ev.asset_id, action: `event_${ev.kind.toLowerCase()}`, changes: Object.fromEntries(keys.map((k) => [k, [a[k], next[k]]])), reason: `Phiếu ${ev.code}` });
+
+  if (next.status === "OUT_OF_CALIBRATION") {
+    await tx.query("ALTER TABLE qms.deviation ADD COLUMN IF NOT EXISTS category TEXT");
+    const devCode = await nextNumber(tx, "DEVIATION");
+    const title = `Thiết bị lệch chuẩn / không đạt hiệu chuẩn: ${a.code} (${a.name})`;
+    const description = `[Tự động từ Phiếu ${ev.code}] Thiết bị ${a.code} (${a.name}) chuyển trạng thái OUT_OF_CALIBRATION. Yêu cầu QA/QC đánh giá tác động hồi cứu (Retrospective Impact Assessment) các lô đã kiểm nghiệm / sản xuất trên thiết bị này.`;
+    const dev = (
+      await tx.query(
+        `INSERT INTO qms.deviation
+           (code, source_module, category, entity_type, entity_id, step_ref, severity, title, description, detected_by, created_by, updated_by)
+         VALUES ($1, 'ASSET', 'INSTRUMENT', 'ASSET', $2, $3, 'HIGH', $4, $5, $6, $6, $6)
+         RETURNING id`,
+        [devCode, ev.asset_id, ev.code, title, description, actor.userId]
+      )
+    ).rows[0];
+    await writeAudit(tx, actor, {
+      entityType: "deviation",
+      entityId: dev.id,
+      action: "create_instrument_out_of_calibration",
+      changes: {
+        code: [null, devCode],
+        severity: [null, "HIGH"],
+        category: [null, "INSTRUMENT"],
+        entity_type: [null, "ASSET"],
+        entity_id: [null, ev.asset_id],
+      },
+      reason: `Phiếu ${ev.code}`,
+    });
+  }
 }
 
 const completePatch = ({ payload }: GuardContext<AssetEvent>) => {
@@ -173,13 +205,14 @@ export async function planEvent(tx: Tx, actor: AuthzActor, input: unknown) {
   if (a.status === "RETIRED") throw invalid("Thiết bị đã ngừng sử dụng.");
   const code = await nextNumber(tx, "ASSET_EVENT");
   const assignee = d.assignee?.trim() || "Phòng Kỹ thuật – Thiết bị";
+  const outOfService = Boolean(d.out_of_service || d.kind === "REPAIR");
   const ev = (
     await tx.query(
       `INSERT INTO asset.event (code, asset_id, kind, planned_date, assignee, description, out_of_service, created_by, updated_by) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING *`,
-      [code, d.asset_id, d.kind, d.planned_date, assignee, d.description ?? null, d.out_of_service, actor.userId]
+      [code, d.asset_id, d.kind, d.planned_date, assignee, d.description ?? null, outOfService, actor.userId]
     )
   ).rows[0];
-  if (d.out_of_service && a.status !== "UNDER_MAINTENANCE") {
+  if (outOfService && a.status !== "UNDER_MAINTENANCE") {
     await tx.query("UPDATE asset.asset SET status = 'UNDER_MAINTENANCE', version = version + 1, updated_at = now(), updated_by = $2 WHERE id = $1", [a.id, actor.userId]);
     await writeAudit(tx, actor, { entityType: "asset", entityId: a.id, action: "out_of_service", changes: { status: [a.status, "UNDER_MAINTENANCE"] }, reason: `Phiếu ${code}: ${d.description ?? ""}`.trim() });
   }
@@ -217,6 +250,7 @@ const listSchema = z.object({
 /** Events of the instruments across departments, plus instruments whose calibration falls due within 30 days. */
 export async function listEvents(tx: Tx, actor: AuthzActor, query: unknown) {
   await ensureDepartmentEquipmentSeed(tx);
+  await syncOverdueCalibrationAssets(tx);
   const q = parseInput(listSchema, query);
   const rows = (
     await tx.query(

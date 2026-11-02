@@ -16,6 +16,26 @@ export interface AllowedAction {
 
 const MEANING: Record<string, string> = { PERFORMED: "Thực hiện", CHECKED: "Kiểm tra", REVIEWED: "Xem xét", APPROVED: "Phê duyệt", RELEASED: "Giải phóng" };
 
+const DEFAULT_ACTION_LABELS: Record<string, string> = {
+  supersede: "🔄 Thay thế bằng phiên bản mới (Chuyển hết hiệu lực)",
+  obsolete: "🚫 Ngừng hiệu lực (Đóng phiên bản)",
+  approve: "✅ Phê duyệt",
+  submit_review: "📤 Gửi thẩm định / Xem xét",
+  return_draft: "↩️ Trả về bản nháp",
+  release: "🛡️ Giải phóng / Phát hành",
+  cancel: "❌ Hủy bỏ",
+  hold: "⏸️ Tạm giữ",
+  rework_from_hold: "🔧 Mở giữ → Quay lại Sản xuất / Làm lại (Rework)",
+  resume_from_hold: "▶️ Mở giữ → Kiểm tra lại QC",
+  scrap_from_hold: "🗑️ Hủy lô không thể khắc phục (Scrap)",
+  start: "▶️ Bắt đầu thực hiện",
+  complete: "✅ Hoàn tất",
+  reopen: "🔄 Mở lại",
+};
+
+const labelOf = (labels: Record<string, string>, action: string) =>
+  labels[action] ?? DEFAULT_ACTION_LABELS[action] ?? action;
+
 /**
  * Buttons for a record's state-machine actions. Buttons come from the server (never inferred here);
  * a blocked action shows why; a reason / e-signature is asked for in a dialog before sending.
@@ -39,6 +59,27 @@ export function ActionBar({
   const [reason, setReason] = useState("");
   const [authMethod, setAuthMethod] = useState<"PIN" | "PASSWORD">("PIN");
   const [pin, setPin] = useState("");
+  const [showPinSetup, setShowPinSetup] = useState(false);
+  const [newPin, setNewPin] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [pinNotice, setPinNotice] = useState<string | null>(null);
+
+  const savePinMutation = useMutation({
+    mutationFn: () =>
+      api("/api/factory/me/pin", {
+        method: "POST",
+        json: { pin: newPin, password: loginPassword },
+      }),
+    onSuccess: () => {
+      setPinNotice("✅ Đã lưu mã PIN chữ ký điện tử cá nhân. Hệ thống đã điền sẵn mã PIN để bạn ký xác nhận.");
+      setAuthMethod("PIN");
+      setPin(newPin);
+      setNewPin("");
+      setLoginPassword("");
+      setShowPinSetup(false);
+    },
+  });
+
   const run = useMutation({
     mutationFn: (a: AllowedAction) => {
       const payload = typeof extraPayload === "function" ? extraPayload(a.action) : extraPayload;
@@ -78,14 +119,14 @@ export function ActionBar({
             title={a.blockedBy.join(" ")}
             onClick={() => start(a)}
           >
-            {labels[a.action] ?? a.action}
+            {labelOf(labels, a.action)}
             {a.signature && " ✍"}
           </Button>
         ))}
       </div>
       {actions.filter((a) => a.blockedBy.length).map((a) => (
         <p key={a.action} className="text-[11px] text-amber-700 dark:text-amber-400">
-          {labels[a.action] ?? a.action}: {a.blockedBy.join(" ")}
+          {labelOf(labels, a.action)}: {a.blockedBy.join(" ")}
         </p>
       ))}
       {!open && <ErrorNote error={run.error} />}
@@ -98,7 +139,7 @@ export function ActionBar({
           }}
         >
           <div className="sm:col-span-3 text-xs font-bold text-slate-700 dark:text-slate-200">
-            {labels[open.action] ?? open.action}
+            {labelOf(labels, open.action)}
             {open.signature && <span className="font-normal"> — ký điện tử với ý nghĩa “{MEANING[open.signature] ?? open.signature}”</span>}
           </div>
           {open.reasonRequired && (
@@ -135,6 +176,60 @@ export function ActionBar({
                   autoFocus={!open.reasonRequired}
                 />
               </div>
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  className="text-[11px] font-semibold text-sky-700 hover:text-sky-900 dark:text-sky-400 underline"
+                  onClick={() => {
+                    setShowPinSetup((v) => !v);
+                    setPinNotice(null);
+                    savePinMutation.reset();
+                  }}
+                >
+                  🔑 Đặt / Đổi PIN cá nhân
+                </button>
+                {pinNotice && <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-400">{pinNotice}</span>}
+              </div>
+              {showPinSetup && (
+                <div className="mt-2 p-2.5 rounded-lg border border-sky-300 dark:border-sky-800 bg-white dark:bg-slate-900 grid gap-2 sm:grid-cols-3 items-end">
+                  <Field label="Mật khẩu đăng nhập hiện tại *">
+                    <input
+                      className={inputClass}
+                      type="password"
+                      autoComplete="current-password"
+                      placeholder="Nhập mật khẩu đăng nhập"
+                      value={loginPassword}
+                      onChange={(e) => setLoginPassword(e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Mã PIN mới (6–8 chữ số) *">
+                    <input
+                      className={inputClass}
+                      type="password"
+                      inputMode="numeric"
+                      pattern="\d{6,8}"
+                      placeholder="VD: 246810"
+                      value={newPin}
+                      onChange={(e) => setNewPin(e.target.value)}
+                    />
+                  </Field>
+                  <div className="flex gap-1.5">
+                    <Button
+                      type="button"
+                      disabled={savePinMutation.isPending || !/^\d{6,8}$/.test(newPin)}
+                      onClick={() => savePinMutation.mutate()}
+                    >
+                      {savePinMutation.isPending ? "Đang lưu…" : "Lưu PIN"}
+                    </Button>
+                    <Button type="button" variant="ghost" onClick={() => setShowPinSetup(false)}>
+                      Đóng
+                    </Button>
+                  </div>
+                  <div className="sm:col-span-3">
+                    <ErrorNote error={savePinMutation.error} />
+                  </div>
+                </div>
+              )}
             </Field>
           )}
           <div className="flex gap-2">

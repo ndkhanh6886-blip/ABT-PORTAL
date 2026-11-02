@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, CheckCircle2, AlertCircle, Info, Bell, CheckSquare, Calendar, FileText, Truck, Package, FlaskConical, FileCheck2 } from "lucide-react";
 import { cn } from "@/backend/services/utils";
 import { useAuth } from "@/frontend/contexts/AuthContext";
+import { FACTORY_NOTICE_EVENTS, factoryNoticeKey } from "@/factory/noticeMatrix";
 
 type ToastType = "success" | "error" | "info" | "warning";
 
@@ -70,7 +71,7 @@ export interface PersonnelItem {
 export interface NotificationMatrixEvent {
     key: string;
     name: string;
-    category: "sales" | "warehouse" | "procurement" | "application" | "workspace" | "finance" | "quality";
+    category: "sales" | "warehouse" | "procurement" | "application" | "workspace" | "finance" | "quality" | "technical";
     categoryLabel: string;
     description: string;
     enabled: boolean;
@@ -234,7 +235,14 @@ export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent
         enableToast: true,
         targetRoles: ["qa_qc", "warehouse", "admin"],
         targetEmployeeIds: []
-    }
+    },
+    // Khối Kỹ thuật – Nhà máy: built-in recipients always apply, the matrix may switch an event off or add groups
+    ...Object.fromEntries(
+        FACTORY_NOTICE_EVENTS.map((e): [string, NotificationMatrixEvent] => [
+            factoryNoticeKey(e.type),
+            { key: factoryNoticeKey(e.type), name: e.name, category: "technical", categoryLabel: `Khối Kỹ thuật · ${e.dept}`, description: e.description, enabled: true, enableToast: true, targetRoles: [], targetEmployeeIds: [] },
+        ])
+    ),
 };
 
 export const TBR_PERSONNEL: PersonnelItem[] = [];

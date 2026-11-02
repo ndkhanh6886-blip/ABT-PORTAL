@@ -1,6 +1,17 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { QueryClient, useQuery } from "@tanstack/react-query";
+
+/** Hook trì hoãn giá trị tìm kiếm (Debounce) để tránh bắn truy vấn SQL dồn dập trên mỗi phím gõ khi dữ liệu lớn. */
+export function useDebouncedValue<T>(value: T, delayMs = 300): T {
+  const [debounced, setDebounced] = useState<T>(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
 
 /** Error from a factory API call; `message` is the server's Vietnamese explanation. */
 export class ApiError extends Error {

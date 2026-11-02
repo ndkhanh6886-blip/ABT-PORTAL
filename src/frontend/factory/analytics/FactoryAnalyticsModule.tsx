@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { api, fmtQty } from "../api";
+import { api, escHtml, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge } from "../ui";
 
 type AnalyticsSubTab = "scorecard_rbe" | "spc_pareto_pdca" | "forecast_whatif" | "genealogy_bio_iso";
@@ -159,10 +159,10 @@ export function FactoryAnalyticsModule() {
       .map(
         (s: any) => `
         <tr>
-          <td style="padding:10px;border:1px solid #cbd5e1;font-weight:700;">${s.clause}</td>
+          <td style="padding:10px;border:1px solid #cbd5e1;font-weight:700;">${escHtml(s.clause)}</td>
           <td style="padding:10px;border:1px solid #cbd5e1;text-align:center;">${s.status === "GOOD" ? "ĐẠT CHUẨN" : "CẦN LƯU Ý"}</td>
-          <td style="padding:10px;border:1px solid #cbd5e1;">${s.summary}</td>
-          <td style="padding:10px;border:1px solid #cbd5e1;color:#0f172a;font-weight:600;">${s.recommended_decision}</td>
+          <td style="padding:10px;border:1px solid #cbd5e1;">${escHtml(s.summary)}</td>
+          <td style="padding:10px;border:1px solid #cbd5e1;color:#0f172a;font-weight:600;">${escHtml(s.recommended_decision)}</td>
         </tr>`
       )
       .join("");
@@ -170,10 +170,10 @@ export function FactoryAnalyticsModule() {
       .map(
         (d: any) => `
         <tr>
-          <td style="padding:8px;border:1px solid #cbd5e1;font-weight:700;">${d.dept_code} — ${d.dept_name}</td>
-          <td style="padding:8px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${d.health_score}/100</td>
-          <td style="padding:8px;border:1px solid #cbd5e1;">${d.primary_kpi_label}: <b>${d.primary_kpi_value}</b> (Mục tiêu ${d.target_label})</td>
-          <td style="padding:8px;border:1px solid #cbd5e1;">${d.forecast_note}</td>
+          <td style="padding:8px;border:1px solid #cbd5e1;font-weight:700;">${escHtml(d.dept_code)} — ${escHtml(d.dept_name)}</td>
+          <td style="padding:8px;border:1px solid #cbd5e1;text-align:center;font-weight:700;">${escHtml(d.health_score)}/100</td>
+          <td style="padding:8px;border:1px solid #cbd5e1;">${escHtml(d.primary_kpi_label)}: <b>${escHtml(d.primary_kpi_value)}</b> (Mục tiêu ${escHtml(d.target_label)})</td>
+          <td style="padding:8px;border:1px solid #cbd5e1;">${escHtml(d.forecast_note)}</td>
         </tr>`
       )
       .join("");
@@ -185,7 +185,7 @@ export function FactoryAnalyticsModule() {
         <body style="font-family:Segoe UI,Arial,sans-serif;padding:28px;color:#0f172a;">
           <h2 style="margin:0 0 4px 0;">CÔNG TY Y SINH ABT — HỆ THỐNG QUẢN LÝ CHẤT LƯỢNG ISO 13485:2016</h2>
           <h3 style="margin:0 0 16px 0;color:#0369a1;">BIÊN BẢN & BÁO CÁO XEM XÉT CỦA LÃNH ĐẠO (MANAGEMENT REVIEW §5.6)</h3>
-          <p style="margin:4px 0 16px 0;font-size:13px;">Kỳ báo cáo: <b>${rev.review_period}</b> · Điểm sức khỏe vận hành toàn nhà máy: <b>${rev.overall_health_score}/100</b></p>
+          <p style="margin:4px 0 16px 0;font-size:13px;">Kỳ báo cáo: <b>${escHtml(rev.review_period)}</b> · Điểm sức khỏe vận hành toàn nhà máy: <b>${escHtml(rev.overall_health_score)}/100</b></p>
           <h4>I. BẢNG ĐIỂM HIỆU SUẤT KPI & SLA 8 PHÒNG BAN</h4>
           <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px;">
             <thead>

@@ -21,11 +21,20 @@ export interface Port {
   port_no: number;
   role: string;
   label: string | null;
+  item_id?: string | null;
   current_lot_id: string | null;
   version: number;
 }
 
+let synthPortSchemaEnsured = false;
+async function ensureSynthPortSchema(tx: Tx) {
+  if (synthPortSchemaEnsured) return;
+  await tx.query("ALTER TABLE oligo.synth_port ADD COLUMN IF NOT EXISTS item_id uuid REFERENCES master.item(id)");
+  synthPortSchemaEnsured = true;
+}
+
 async function synthesizer(tx: Tx, id: string) {
+  await ensureSynthPortSchema(tx);
   const s = (await tx.query("SELECT s.*, a.code, a.name, a.owner_org_unit_id FROM oligo.synthesizer s JOIN asset.asset a ON a.id = s.asset_id WHERE s.asset_id = $1", [id])).rows[0];
   if (!s) throw notFound("máy tổng hợp");
   return s;
@@ -35,8 +44,9 @@ const warehousesOf = async (tx: Tx, unit: string) =>
 const runningBatch = async (tx: Tx, synthId: string) =>
   (await tx.query("SELECT code FROM oligo.synthesis_batch WHERE synthesizer_id = $1 AND status = 'RUNNING' LIMIT 1", [synthId])).rows[0]?.code as string | undefined;
 
-/** The stock item a port role draws: the reagent rule's item, or a modification's own amidite (else MOD_DEFAULT's). */
-export async function itemForRole(tx: Tx, role: string): Promise<string | null> {
+/** The stock item a port role draws: explicit port item_id first, then the reagent rule's item, or a modification's own amidite (else MOD_DEFAULT's). */
+export async function itemForRole(tx: Tx, role: string, portItemId?: string | null): Promise<string | null> {
+  if (portItemId) return portItemId;
   if (role.startsWith("MOD:")) {
     const m = (await tx.query("SELECT amidite_item_id FROM oligo.modification WHERE code = $1", [role.slice(4)])).rows[0];
     if (m?.amidite_item_id) return m.amidite_item_id;
@@ -51,9 +61,9 @@ async function roleExists(tx: Tx, role: string) {
 }
 
 /** A lot may go on a port when it is the role's item, released, unexpired and in stock in the department's warehouses. */
-async function checkLotForRole(tx: Tx, synth: any, role: string, lotId: string) {
-  const itemId = await itemForRole(tx, role);
-  if (!itemId) throw invalid(`Vai trò ${role} chưa gắn mã hàng: gắn ở Định mức hóa chất trước khi lắp chai.`, undefined, "REAGENT_UNMAPPED");
+async function checkLotForRole(tx: Tx, synth: any, role: string, lotId: string, portItemId?: string | null) {
+  const itemId = await itemForRole(tx, role, portItemId);
+  if (!itemId) throw invalid(`Vai trò ${role} chưa gắn mã hàng: chọn mã hóa chất kho ngay trên cổng hoặc ở Định mức hóa chất trước khi lắp chai.`, undefined, "REAGENT_UNMAPPED");
   const lot = (await tx.query("SELECT id, code, item_id, status, expiry_date FROM inv.lot WHERE id = $1", [lotId])).rows[0];
   if (!lot) throw notFound("lô");
   if (lot.item_id !== itemId) throw invalid(`Lô ${lot.code} không phải mã hàng của vai trò ${role}.`, undefined, "WRONG_ITEM");
@@ -79,7 +89,15 @@ async function checkLotForRole(tx: Tx, synth: any, role: string, lotId: string) 
 
 const portsSchema = z.object({
   ports: z
-    .array(z.object({ port_no: z.coerce.number().int().min(1).max(200), role: z.string().trim().min(1).max(60), label: z.string().trim().max(100).optional().nullable() }))
+    .array(
+      z.object({
+        port_no: z.coerce.number().int().min(1).max(200),
+        role: z.string().trim().min(1).max(60),
+        label: z.string().trim().max(100).optional().nullable(),
+        item_id: z.string().uuid().optional().nullable(),
+        current_lot_id: z.string().uuid().optional().nullable(),
+      })
+    )
     .max(200),
 });
 
@@ -93,6 +111,19 @@ export async function configurePorts(tx: Tx, actor: AuthzActor, synthId: string,
   if (new Set(ports.map((p) => p.port_no)).size !== ports.length) throw invalid("Trùng số cổng.");
   if (new Set(ports.map((p) => p.role)).size !== ports.length) throw invalid("Mỗi hóa chất chỉ gắn một cổng trên một máy.");
   for (const p of ports) if (!(await roleExists(tx, p.role))) throw invalid(`Vai trò "${p.role}" không có trong định mức / danh mục modification.`);
+
+  // Đồng bộ mã hóa chất kho (item_id) nếu người dùng chọn trực tiếp trên cổng
+  for (const p of ports) {
+    if (p.item_id) {
+      await getItem(tx, p.item_id);
+      if (p.role.startsWith("MOD:")) {
+        await tx.query("UPDATE oligo.modification SET amidite_item_id = $2, version = version + 1 WHERE code = $1", [p.role.slice(4), p.item_id]);
+      } else {
+        await tx.query("UPDATE oligo.reagent_rule SET item_id = $2, version = version + 1 WHERE role = $1", [p.role, p.item_id]);
+      }
+    }
+  }
+
   const cur: Port[] = (await tx.query("SELECT * FROM oligo.synth_port WHERE synthesizer_id = $1 ORDER BY port_no FOR UPDATE", [synthId])).rows;
   for (const c of cur) {
     const next = ports.find((p) => p.port_no === c.port_no);
@@ -101,11 +132,28 @@ export async function configurePorts(tx: Tx, actor: AuthzActor, synthId: string,
     await tx.query("DELETE FROM oligo.synth_port WHERE synthesizer_id = $1 AND port_no = $2", [synthId, c.port_no]);
   }
   for (const p of ports) {
+    const resolvedItemId = p.item_id ?? (await itemForRole(tx, p.role));
     await tx.query(
-      `INSERT INTO oligo.synth_port (synthesizer_id, port_no, role, label) VALUES ($1, $2, $3, $4)
-       ON CONFLICT (synthesizer_id, port_no) DO UPDATE SET label = EXCLUDED.label, version = oligo.synth_port.version + 1`,
-      [synthId, p.port_no, p.role, p.label ?? null]
+      `INSERT INTO oligo.synth_port (synthesizer_id, port_no, role, label, item_id) VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (synthesizer_id, port_no) DO UPDATE SET label = EXCLUDED.label, item_id = EXCLUDED.item_id, version = oligo.synth_port.version + 1`,
+      [synthId, p.port_no, p.role, p.label ?? null, resolvedItemId]
     );
+    if (p.current_lot_id !== undefined) {
+      const existingPort = cur.find((c) => c.port_no === p.port_no && c.role === p.role);
+      if (p.current_lot_id !== (existingPort?.current_lot_id ?? null)) {
+        if (p.current_lot_id) {
+          await checkLotForRole(tx, synth, p.role, p.current_lot_id, resolvedItemId);
+        }
+        await tx.query(
+          "UPDATE oligo.synth_port SET current_lot_id = $3, installed_at = now(), installed_by = $4 WHERE synthesizer_id = $1 AND port_no = $2",
+          [synthId, p.port_no, p.current_lot_id, actor.userId]
+        );
+        await event(tx, actor, synthId, p.port_no, p.role, p.current_lot_id ? "INSTALL" : "REMOVE", {
+          lot_id: p.current_lot_id,
+          old_lot_id: existingPort?.current_lot_id ?? null,
+        });
+      }
+    }
   }
   await writeAudit(tx, actor, {
     entityType: "synthesizer",
@@ -138,28 +186,70 @@ export async function setBottle(tx: Tx, actor: AuthzActor, synthId: string, port
   const running = await runningBatch(tx, synthId);
   if (running) throw conflict(`Máy đang chạy mẻ ${running}: thay chai trong mẻ (ghi chu kỳ thay) ở màn hình mẻ.`, "SYNTHESIZER_RUNNING");
   const port = await lockPort(tx, synthId, portNo);
-  if (lot_id) await checkLotForRole(tx, synth, port.role, lot_id);
+  if (lot_id) await checkLotForRole(tx, synth, port.role, lot_id, port.item_id);
   await tx.query("UPDATE oligo.synth_port SET current_lot_id = $3, installed_at = now(), installed_by = $4, version = version + 1 WHERE synthesizer_id = $1 AND port_no = $2", [
     synthId, portNo, lot_id, actor.userId,
   ]);
   await event(tx, actor, synthId, portNo, port.role, lot_id ? "INSTALL" : "REMOVE", { lot_id, old_lot_id: port.current_lot_id });
 }
 
+const DEFAULT_SYNTH_PORTS: { port_no: number; role: string; label: string }[] = [
+  { port_no: 1, role: "dA", label: "Bottle 1 — dA Amidite" },
+  { port_no: 2, role: "dC", label: "Bottle 2 — dC Amidite" },
+  { port_no: 3, role: "dG", label: "Bottle 3 — dG Amidite" },
+  { port_no: 4, role: "dT", label: "Bottle 4 — dT Amidite" },
+  { port_no: 5, role: "DEBLOCK", label: "Bottle 5 — TCA Deblock" },
+  { port_no: 6, role: "ACTIVATOR", label: "Bottle 6 — ETT Activator" },
+  { port_no: 7, role: "CAP_A", label: "Bottle 7 — Cap A (THF/Ac2O)" },
+  { port_no: 8, role: "CAP_B", label: "Bottle 8 — Cap B (NMI)" },
+  { port_no: 9, role: "OXIDATION", label: "Bottle 9 — Iodine Oxidizer" },
+  { port_no: 10, role: "ACN", label: "Bottle 10 — Acetonitrile Wash" },
+];
+
 export async function listPorts(tx: Tx, actor: AuthzActor, synthId: string) {
   const synth = await synthesizer(tx, synthId);
   await authorize(tx, actor, "oligo.view", synth.owner_org_unit_id);
+  const warehouses = await warehousesOf(tx, synth.owner_org_unit_id);
+
+  // Tự động khởi tạo 10 cổng hóa chất chuẩn nếu máy chưa có cổng nào và chưa từng bị xóa cấu hình
+  const existingCount = Number((await tx.query("SELECT count(*)::int AS c FROM oligo.synth_port WHERE synthesizer_id = $1", [synthId])).rows[0]?.c || 0);
+  if (existingCount === 0) {
+    const everConfigured = (
+      await tx.query(
+        "SELECT 1 FROM core.audit_log WHERE entity_type = 'synthesizer' AND entity_id = $1 AND action = 'configure_ports' LIMIT 1",
+        [synthId]
+      )
+    ).rowCount;
+    if (!everConfigured) {
+      for (const dp of DEFAULT_SYNTH_PORTS) {
+        const itemId = await itemForRole(tx, dp.role);
+        let firstLotId: string | null = null;
+        if (itemId) {
+          const cands = await findCandidates(tx, itemId, warehouses);
+          firstLotId = cands.find((c) => c.lot_id && Number(c.available) > 0)?.lot_id ?? null;
+        }
+        await tx.query(
+          `INSERT INTO oligo.synth_port (synthesizer_id, port_no, role, label, item_id, current_lot_id, installed_at)
+           VALUES ($1, $2, $3, $4, $5, $6, CASE WHEN $6::uuid IS NOT NULL THEN now() ELSE NULL END)
+           ON CONFLICT (synthesizer_id, port_no) DO NOTHING`,
+          [synthId, dp.port_no, dp.role, dp.label, itemId, firstLotId]
+        );
+      }
+    }
+  }
+
   const ports = (
     await tx.query(
-      `SELECT p.port_no, p.role, p.label, p.current_lot_id, p.installed_at, l.code AS lot_code, l.expiry_date, r.name AS rule_name, r.display_name
+      `SELECT p.port_no, p.role, p.label, p.item_id, p.current_lot_id, p.installed_at, l.code AS lot_code, l.expiry_date, r.name AS rule_name, r.display_name, r.qty::float AS rule_qty, r.uom AS rule_uom, r.basis AS rule_basis
          FROM oligo.synth_port p LEFT JOIN inv.lot l ON l.id = p.current_lot_id LEFT JOIN oligo.reagent_rule r ON r.role = p.role
         WHERE p.synthesizer_id = $1 ORDER BY p.port_no`,
       [synthId]
     )
   ).rows;
-  const warehouses = await warehousesOf(tx, synth.owner_org_unit_id);
   for (const p of ports) {
-    const itemId = await itemForRole(tx, p.role);
+    const itemId = await itemForRole(tx, p.role, p.item_id);
     p.item = itemId ? await getItem(tx, itemId).then((i) => ({ id: i.id, code: i.code, name: i.name, base_uom: i.base_uom })) : null;
+    p.item_id = p.item?.id ?? null;
     const cands = itemId ? await findCandidates(tx, itemId, warehouses) : [];
     const byLot = new Map<string, { lot_id: string; available: number; expiry_date: string | null }>();
     for (const c of cands) {

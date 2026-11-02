@@ -1,8 +1,10 @@
 import { authorizeAnywhere, hasFactoryPermission } from "@/factory/core/authz";
+import { listTechPartsInventory } from "@/factory/device/models";
 import { factoryRoute } from "@/factory/http";
 
 export const GET = factoryRoute(async (tx, { actor }) => {
   await authorizeAnywhere(tx, actor, "device.view");
+  const partsInventory = await listTechPartsInventory(tx, actor);
   const allUnits = (
     await tx.query("SELECT id, code, name, unit_type FROM core.org_unit WHERE status = 'ACTIVE' ORDER BY code")
   ).rows;
@@ -33,5 +35,5 @@ export const GET = factoryRoute(async (tx, { actor }) => {
         ORDER BY du.serial_no DESC LIMIT 300`
     )
   ).rows;
-  return { units, warehouses, items, vendors, serial_units: serialUnits };
+  return { units, warehouses, items, vendors, serial_units: serialUnits, parts_inventory: partsInventory };
 });

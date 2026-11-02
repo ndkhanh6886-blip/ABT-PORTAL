@@ -6,8 +6,9 @@ import { vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
+import { runTransition } from "../core/stateMachine";
 import { allocate, findCandidates } from "../inv/allocation";
-import { createStockDocument, postStockDocument } from "../inv/documents";
+import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { createOligoOrder, addSequences } from "../oligo/orders";
 import { createRequest } from "../purchase/requests";
 import { createProject } from "./projects";
@@ -20,7 +21,12 @@ export async function ensureRdProjectOpsSchema(tx: Tx): Promise<void> {
   await tx.query(`
     ALTER TABLE rd.project
       ADD COLUMN IF NOT EXISTS budget_amount numeric(18,2) NOT NULL DEFAULT 50000000,
-      ADD COLUMN IF NOT EXISTS target_product_item_id uuid REFERENCES master.item(id);
+      ADD COLUMN IF NOT EXISTS target_product_item_id uuid REFERENCES master.item(id),
+      ADD COLUMN IF NOT EXISTS leader_name_override varchar(150);
+
+    ALTER TABLE rd.experiment
+      ADD COLUMN IF NOT EXISTS performer_name varchar(150),
+      ADD COLUMN IF NOT EXISTS wbs_task_code varchar(60);
 
     CREATE TABLE IF NOT EXISTS rd.project_task (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -40,6 +46,17 @@ export async function ensureRdProjectOpsSchema(tx: Tx): Promise<void> {
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     );
+
+    ALTER TABLE rd.project_task
+      ADD COLUMN IF NOT EXISTS protocol_summary text,
+      ADD COLUMN IF NOT EXISTS result_summary text,
+      ADD COLUMN IF NOT EXISTS key_metrics_json jsonb DEFAULT '[]'::jsonb,
+      ADD COLUMN IF NOT EXISTS outcome_verdict varchar(30) DEFAULT 'PENDING',
+      ADD COLUMN IF NOT EXISTS next_steps text,
+      ADD COLUMN IF NOT EXISTS attachment_name varchar(255),
+      ADD COLUMN IF NOT EXISTS attachment_url text,
+      ADD COLUMN IF NOT EXISTS completed_at timestamptz,
+      ADD COLUMN IF NOT EXISTS completed_by_name varchar(150);
 
     CREATE TABLE IF NOT EXISTS rd.project_material_ledger (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -113,7 +130,52 @@ export async function ensureRdProjectOpsSchema(tx: Tx): Promise<void> {
       }
     }
   }
+
+  await tx.query(`
+    UPDATE rd.experiment e
+       SET performer_name = coalesce(nullif(e.performer_name, ''), up.display_name)
+      FROM core.user_profile up
+     WHERE up.user_id = e.created_by AND (e.performer_name IS NULL OR e.performer_name = '')
+  `);
+
   rdOpsSchemaEnsured = true;
+}
+
+export interface RdStaffMember {
+  name: string;
+  role: string;
+  specialty: string;
+  user_id?: number | null;
+}
+
+export async function listRdStaffRoster(tx: Tx): Promise<RdStaffMember[]> {
+  await ensureRdProjectOpsSchema(tx);
+  const roster: RdStaffMember[] = [];
+
+  const dbUsers = (
+    await tx.query(
+      `SELECT DISTINCT up.user_id, up.display_name, coalesce(ou.name, 'Phòng R&D') AS dept_name
+         FROM core.user_profile up
+         LEFT JOIN core.org_unit ou ON ou.id = up.org_unit_id
+        WHERE ou.module_key = 'RD' OR up.display_name IS NOT NULL
+        ORDER BY up.display_name LIMIT 30`
+    )
+  ).rows;
+
+  const seen = new Set<string>();
+  for (const u of dbUsers) {
+    const nm = String(u.display_name || "").trim();
+    if (nm && !seen.has(nm.toLowerCase())) {
+      seen.add(nm.toLowerCase());
+      roster.push({
+        name: nm,
+        role: "Cán bộ Nghiên cứu / Quản trị",
+        specialty: u.dept_name || "Phòng Nghiên cứu R&D",
+        user_id: u.user_id,
+      });
+    }
+  }
+  return roster;
 }
 
 /**
@@ -166,11 +228,29 @@ export async function getProjectOpsOverview(tx: Tx, actor: AuthzActor, projectId
   // 3. WBS Tasks
   const tasks = (
     await tx.query(
-      `SELECT t.*, e.code AS experiment_code, e.title AS experiment_title
+      `SELECT t.*,
+              e.code AS experiment_code,
+              e.title AS experiment_title,
+              e.status AS experiment_status,
+              e.conclusion AS experiment_conclusion
          FROM rd.project_task t
          LEFT JOIN rd.experiment e ON e.id = t.linked_experiment_id
         WHERE t.project_id = $1
         ORDER BY t.gate_no ASC, t.due_date ASC NULLS LAST, t.created_at ASC`,
+      [projectId]
+    )
+  ).rows;
+
+  // Project Experiments list for linking to WBS tasks
+  const experiments = (
+    await tx.query(
+      `SELECT e.id, e.code, e.title, e.status, e.revision, e.conclusion,
+              coalesce(nullif(e.performer_name, ''), up.display_name, 'Nghiên cứu viên R&D') AS performer_name,
+              e.wbs_task_code, e.created_at
+         FROM rd.experiment e
+         LEFT JOIN core.user_profile up ON up.user_id = e.created_by
+        WHERE e.project_id = $1
+        ORDER BY e.created_at DESC`,
       [projectId]
     )
   ).rows;
@@ -338,6 +418,7 @@ export async function getProjectOpsOverview(tx: Tx, actor: AuthzActor, projectId
       material_tx_count: allLedger.length,
     },
     tasks,
+    experiments,
     material_ledger: allLedger,
     material_summary: Array.from(summaryMap.values()),
     prototype_bom: prototypeBom,
@@ -349,6 +430,7 @@ const quickProjectSchema = z.object({
   target_domain: z.enum(["KIT", "OLIGO", "DEVICE", "SOFTWARE", "OTHER"]).default("KIT"),
   ivd_class: z.enum(["CLASS_A", "CLASS_B", "CLASS_C", "CLASS_D", "RUO", "NA"]).default("CLASS_B"),
   name: z.string().trim().min(3, "Nhập tên dự án R&D").max(250),
+  leader_name: z.string().trim().max(150).optional().nullable(),
   target_product_item_id: z.string().uuid().optional().nullable(),
   budget_amount: z.coerce.number().min(0).default(50000000),
   planned_start: z.string().optional().nullable(),
@@ -380,39 +462,12 @@ export async function createQuickRdProject(tx: Tx, actor: AuthzActor, input: unk
     description: data.description ?? null,
   });
 
+  const leadName = data.leader_name?.trim() || actor.name || null;
   await tx.query(
-    "UPDATE rd.project SET budget_amount = $2, target_product_item_id = $3 WHERE id = $1",
-    [project.id, data.budget_amount, data.target_product_item_id ?? null]
+    "UPDATE rd.project SET budget_amount = $2, target_product_item_id = $3, leader_name_override = $4 WHERE id = $1",
+    [project.id, data.budget_amount, data.target_product_item_id ?? null, leadName]
   );
   const code = project.code;
-
-  // Create default WBS Tasks tailored to NEW_PRODUCT vs IMPROVEMENT
-  const defaultTasks =
-    data.project_type === "IMPROVEMENT"
-      ? [
-          { gate: 0, title: "Đánh giá thông số hiện trạng (Baseline) & Xác định mục tiêu cải tiến", status: "IN_PROGRESS", pct: 50 },
-          { gate: 1, title: "Thực nghiệm so sánh công thức cũ vs công thức cải tiến (Bridging Study)", status: "TODO", pct: 0 },
-          { gate: 2, title: "Đánh giá tác động thay đổi (Impact Assessment) & Cập nhật định mức BOM", status: "TODO", pct: 0 },
-          { gate: 3, title: "Xác nhận hiệu năng trên mẫu chuẩn & Chuyển giao phiên bản mới", status: "TODO", pct: 0 },
-        ]
-      : [
-          { gate: 0, title: "Xây dựng bảng chỉ tiêu kỹ thuật mục tiêu (TPP) & Thiết kế mồi/công thức", status: "IN_PROGRESS", pct: 30 },
-          { gate: 1, title: "Thử nghiệm tính khả thi (Feasibility) trên mẫu chuẩn dương/âm", status: "TODO", pct: 0 },
-          { gate: 2, title: "Tối ưu hóa nồng độ thành phần phản ứng & Chốt công thức Prototype BOM", status: "TODO", pct: 0 },
-          { gate: 3, title: "Thẩm định giới hạn phát hiện (LoD), độ lặp lại & độ ổn định", status: "TODO", pct: 0 },
-          { gate: 4, title: "Sản xuất 03 mẻ Pilot & Đóng gói hồ sơ chuyển giao sản xuất", status: "TODO", pct: 0 },
-        ];
-
-  for (let idx = 0; idx < defaultTasks.length; idx++) {
-    const t = defaultTasks[idx];
-    const tCode = `${code}-WBS-0${idx + 1}`;
-    await tx.query(
-      `INSERT INTO rd.project_task
-         (code, project_id, gate_no, title, assignee_name, status, progress_pct, created_by, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)`,
-      [tCode, project.id, t.gate, t.title, actor.name || "Chủ nhiệm đề tài", t.status, t.pct, actor.userId]
-    );
-  }
 
   await writeAudit(tx, actor, {
     entityType: "rd_project",
@@ -424,17 +479,32 @@ export async function createQuickRdProject(tx: Tx, actor: AuthzActor, input: unk
   return project;
 }
 
+const taskMetricItemSchema = z.object({
+  label: z.string().trim().min(1).max(120),
+  value: z.string().trim().min(1).max(120),
+  unit: z.string().trim().max(40).optional().nullable(),
+  target: z.string().trim().max(120).optional().nullable(),
+});
+
 const taskSchema = z.object({
   task_id: z.string().uuid().optional().nullable(),
   project_id: z.string().uuid(),
   gate_no: z.coerce.number().int().min(0).max(10).default(1),
   title: z.string().trim().min(2, "Nhập tên công việc WBS").max(250),
-  assignee_name: z.string().trim().max(120).optional().nullable(),
+  assignee_name: z.string().trim().max(150).optional().nullable(),
   due_date: z.string().optional().nullable(),
   status: z.enum(["TODO", "IN_PROGRESS", "DONE", "BLOCKED"]).default("TODO"),
   progress_pct: z.coerce.number().int().min(0).max(100).default(0),
   linked_experiment_id: z.string().uuid().optional().nullable(),
-  notes: z.string().trim().max(1000).optional().nullable(),
+  notes: z.string().trim().max(2000).optional().nullable(),
+  protocol_summary: z.string().trim().max(4000).optional().nullable(),
+  result_summary: z.string().trim().max(4000).optional().nullable(),
+  key_metrics_json: z.array(taskMetricItemSchema).max(20).optional().default([]),
+  outcome_verdict: z.enum(["PENDING", "PASS", "OPTIMIZE", "FAIL"]).optional().default("PENDING"),
+  next_steps: z.string().trim().max(2000).optional().nullable(),
+  attachment_name: z.string().trim().max(255).optional().nullable(),
+  attachment_url: z.string().optional().nullable(),
+  sync_to_eln: z.boolean().optional().default(true),
 });
 
 export async function saveProjectTask(tx: Tx, actor: AuthzActor, input: unknown) {
@@ -445,16 +515,20 @@ export async function saveProjectTask(tx: Tx, actor: AuthzActor, input: unknown)
   await authorize(tx, actor, "rd.project.manage", p.owner_org_unit_id);
 
   const pct = d.status === "DONE" ? 100 : d.progress_pct;
+  const metricsJson = JSON.stringify(d.key_metrics_json ?? []);
+  let row;
   if (!d.task_id) {
     const cnt = Number(
       (await tx.query("SELECT count(*)::int AS c FROM rd.project_task WHERE project_id = $1", [d.project_id])).rows[0]?.c ?? 0
     );
     const code = `${p.code}-WBS-${String(cnt + 1).padStart(2, "0")}`;
-    const row = (
+    row = (
       await tx.query(
         `INSERT INTO rd.project_task
-           (code, project_id, gate_no, title, assignee_name, due_date, status, progress_pct, linked_experiment_id, notes, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+           (code, project_id, gate_no, title, assignee_name, due_date, status, progress_pct, linked_experiment_id, notes,
+            protocol_summary, result_summary, key_metrics_json, outcome_verdict, next_steps, attachment_name, attachment_url,
+            completed_at, completed_by_name, created_by, updated_by)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18, $19, $20, $20)
          RETURNING *`,
         [
           code,
@@ -467,37 +541,194 @@ export async function saveProjectTask(tx: Tx, actor: AuthzActor, input: unknown)
           pct,
           d.linked_experiment_id || null,
           d.notes ?? null,
+          d.protocol_summary ?? null,
+          d.result_summary ?? null,
+          metricsJson,
+          d.outcome_verdict ?? "PENDING",
+          d.next_steps ?? null,
+          d.attachment_name ?? null,
+          d.attachment_url ?? null,
+          d.status === "DONE" ? new Date() : null,
+          d.status === "DONE" ? (d.assignee_name || actor.name) : null,
           actor.userId,
         ]
       )
     ).rows[0];
-    return row;
+  } else {
+    const existing = (await tx.query("SELECT * FROM rd.project_task WHERE id = $1 AND project_id = $2", [d.task_id, d.project_id])).rows[0];
+    if (!existing) throw notFound("công việc WBS");
+    const rawIn = (input ?? {}) as Record<string, unknown>;
+    const keepProtocol = rawIn.protocol_summary !== undefined ? (d.protocol_summary ?? null) : existing.protocol_summary;
+    const keepResult = rawIn.result_summary !== undefined ? (d.result_summary ?? null) : existing.result_summary;
+    const keepMetrics = rawIn.key_metrics_json !== undefined ? metricsJson : JSON.stringify(existing.key_metrics_json ?? []);
+    const keepVerdict = rawIn.outcome_verdict !== undefined ? d.outcome_verdict : (existing.outcome_verdict || "PENDING");
+    const keepNextSteps = rawIn.next_steps !== undefined ? (d.next_steps ?? null) : existing.next_steps;
+    const keepAttName = rawIn.attachment_name !== undefined ? (d.attachment_name ?? null) : existing.attachment_name;
+    const keepAttUrl = rawIn.attachment_url !== undefined ? (d.attachment_url ?? null) : existing.attachment_url;
+    const keepExpId = rawIn.linked_experiment_id !== undefined ? (d.linked_experiment_id || null) : existing.linked_experiment_id;
+    const keepNotes = rawIn.notes !== undefined ? (d.notes ?? null) : existing.notes;
+
+    row = (
+      await tx.query(
+        `UPDATE rd.project_task
+            SET gate_no = $2, title = $3, assignee_name = $4, due_date = $5,
+                status = $6, progress_pct = $7, linked_experiment_id = $8, notes = $9,
+                protocol_summary = $10, result_summary = $11, key_metrics_json = $12::jsonb,
+                outcome_verdict = $13, next_steps = $14, attachment_name = $15, attachment_url = $16,
+                completed_at = CASE WHEN $6 = 'DONE' THEN coalesce(completed_at, now()) ELSE completed_at END,
+                completed_by_name = CASE WHEN $6 = 'DONE' THEN coalesce($4, completed_by_name, $17) ELSE completed_by_name END,
+                updated_at = now(), updated_by = $18
+          WHERE id = $1 AND project_id = $19
+          RETURNING *`,
+        [
+          d.task_id,
+          d.gate_no,
+          d.title,
+          d.assignee_name || null,
+          d.due_date || null,
+          d.status,
+          pct,
+          keepExpId,
+          keepNotes,
+          keepProtocol,
+          keepResult,
+          keepMetrics,
+          keepVerdict,
+          keepNextSteps,
+          keepAttName,
+          keepAttUrl,
+          actor.name,
+          actor.userId,
+          d.project_id,
+        ]
+      )
+    ).rows[0];
   }
 
-  const upd = (
+  // Synchronize structured result to linked ELN Experiment if present
+  if (d.sync_to_eln && row?.linked_experiment_id && (row.result_summary || (Array.isArray(d.key_metrics_json) && d.key_metrics_json.length > 0))) {
+    const exp = (await tx.query("SELECT * FROM rd.experiment WHERE id = $1", [row.linked_experiment_id])).rows[0];
+    if (exp && ["PLANNED", "IN_PROGRESS", "SUBMITTED"].includes(exp.status)) {
+      const seq = Number(
+        (await tx.query("SELECT coalesce(max(seq), 0) + 1 AS s FROM rd.experiment_entry WHERE experiment_id = $1", [exp.id])).rows[0]?.s ?? 1
+      );
+      const metricsText = Array.isArray(d.key_metrics_json) && d.key_metrics_json.length
+        ? d.key_metrics_json.map((m) => `${m.label}: ${m.value}${m.unit ? " " + m.unit : ""}${m.target ? ` (Mục tiêu: ${m.target})` : ""}`).join(" · ")
+        : "";
+      const bodyText = [row.result_summary, metricsText ? `[Số liệu định lượng] ${metricsText}` : "", row.next_steps ? `[Hướng tiếp theo] ${row.next_steps}` : ""]
+        .filter(Boolean)
+        .join("\n");
+      await tx.query(
+        `INSERT INTO rd.experiment_entry (experiment_id, seq, entry_type, title, content, created_by)
+         VALUES ($1, $2, 'RESULT', $3, $4::jsonb, $5)`,
+        [
+          exp.id,
+          seq,
+          `[Đồng bộ từ WBS ${row.code}] Kết quả & Số liệu thực nghiệm (${row.outcome_verdict})`,
+          JSON.stringify({ text: bodyText, metrics: d.key_metrics_json ?? [], verdict: row.outcome_verdict, wbs_code: row.code }),
+          actor.userId,
+        ]
+      );
+      await tx.query(
+        `UPDATE rd.experiment
+            SET conclusion = coalesce($2, conclusion),
+                protocol_summary = coalesce($3, protocol_summary),
+                performer_name = coalesce($4, performer_name),
+                wbs_task_code = $5,
+                status = CASE WHEN status = 'PLANNED' THEN 'IN_PROGRESS' ELSE status END,
+                started_at = coalesce(started_at, now())
+          WHERE id = $1`,
+        [exp.id, row.result_summary || null, row.protocol_summary || null, row.assignee_name || null, row.code]
+      );
+    }
+  }
+
+  return row;
+}
+
+const createTaskExperimentSchema = z.object({
+  project_id: z.string().uuid(),
+  task_id: z.string().uuid(),
+});
+
+/**
+ * 1-Click creates a new ELN Experiment (`rd.experiment`) directly from a WBS Task (`rd.project_task`),
+ * pre-populating Objective, Protocol, Performer, and initial Result Entry, and linking them 2-way.
+ */
+export async function createExperimentFromProjectTask(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureRdProjectOpsSchema(tx);
+  const d = parseInput(createTaskExperimentSchema, input);
+  const p = (await tx.query("SELECT * FROM rd.project WHERE id = $1", [d.project_id])).rows[0];
+  if (!p) throw notFound("dự án R&D");
+  await authorize(tx, actor, "rd.eln.write", p.owner_org_unit_id);
+
+  const task = (await tx.query("SELECT * FROM rd.project_task WHERE id = $1 AND project_id = $2 FOR UPDATE", [d.task_id, d.project_id])).rows[0];
+  if (!task) throw notFound("công việc WBS");
+
+  const expCode = await nextNumber(tx, "RD_EXPERIMENT");
+  const expTitle = `[${task.code}] ${task.title}`;
+  const expObjective = `Thực hiện công việc WBS ${task.code} (Cổng G${task.gate_no}): ${task.title}`;
+  const expProtocol = task.protocol_summary || `Theo quy trình khảo sát thực nghiệm của dự án ${p.code} (Giai đoạn G${task.gate_no}).`;
+  const performer = task.assignee_name || actor.name || "Nghiên cứu viên R&D";
+
+  const exp = (
     await tx.query(
-      `UPDATE rd.project_task
-          SET gate_no = $2, title = $3, assignee_name = $4, due_date = $5,
-              status = $6, progress_pct = $7, linked_experiment_id = $8, notes = $9,
-              updated_at = now(), updated_by = $10
-        WHERE id = $1 AND project_id = $11
-        RETURNING *`,
+      `INSERT INTO rd.experiment
+         (code, project_id, title, objective, hypothesis, protocol_summary, conclusion,
+          status, revision, started_at, performer_name, wbs_task_code, created_by, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'IN_PROGRESS', 1, now(), $8, $9, $10, $10)
+       RETURNING *`,
       [
-        d.task_id,
-        d.gate_no,
-        d.title,
-        d.assignee_name || null,
-        d.due_date || null,
-        d.status,
-        pct,
-        d.linked_experiment_id || null,
-        d.notes ?? null,
+        expCode,
+        p.id,
+        expTitle,
+        expObjective,
+        `Xác minh chỉ tiêu kỹ thuật của hạng mục ${task.code} đạt yêu cầu thiết kế TPP.`,
+        expProtocol,
+        task.result_summary || null,
+        performer,
+        task.code,
         actor.userId,
-        d.project_id,
       ]
     )
   ).rows[0];
-  return upd;
+
+  if (task.result_summary) {
+    await tx.query(
+      `INSERT INTO rd.experiment_entry (experiment_id, seq, entry_type, title, content, created_by)
+       VALUES ($1, 1, 'RESULT', $2, $3::jsonb, $4)`,
+      [
+        exp.id,
+        `Ghi nhận kết quả ban đầu từ công việc ${task.code}`,
+        JSON.stringify({
+          text: task.result_summary,
+          metrics: task.key_metrics_json ?? [],
+          verdict: task.outcome_verdict ?? "PENDING",
+        }),
+        actor.userId,
+      ]
+    );
+  }
+
+  await tx.query(
+    `UPDATE rd.project_task
+        SET linked_experiment_id = $2,
+            status = CASE WHEN status = 'TODO' THEN 'IN_PROGRESS' ELSE status END,
+            progress_pct = CASE WHEN progress_pct < 30 THEN 50 ELSE progress_pct END,
+            updated_at = now(),
+            updated_by = $3
+      WHERE id = $1`,
+    [task.id, exp.id, actor.userId]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "rd_experiment",
+    entityId: exp.id,
+    action: "create_from_wbs_task",
+    changes: { code: [null, exp.code], wbs_task_code: [null, task.code] },
+  });
+
+  return { experiment_id: exp.id, experiment_code: exp.code, task_code: task.code };
 }
 
 const projectIssueSchema = z.object({
@@ -551,10 +782,9 @@ export async function issueMaterialForProject(tx: Tx, actor: AuthzActor, input: 
     throw invalid(`Không đủ tồn kho khả dụng cho ${item.code} (còn thiếu ${plan.shortfall} ${item.base_uom}).`);
   }
 
-  const rootAct: AuthzActor = { ...actor, isRootAdmin: true };
   const doc = await createStockDocument(
     tx,
-    rootAct,
+    actor,
     {
       doc_type: "ISSUE",
       reason_code: "RD_EXPERIMENT",
@@ -572,7 +802,7 @@ export async function issueMaterialForProject(tx: Tx, actor: AuthzActor, input: 
     },
     { trusted: true }
   );
-  await postStockDocument(tx, rootAct, doc.id, doc.version);
+  await runTransition(tx, stockDocumentMachine, actor, { id: doc.id, action: "post", expectedVersion: doc.version }, { trusted: true });
 
   const ledger = (
     await tx.query(
@@ -642,8 +872,7 @@ export async function createPrForProject(tx: Tx, actor: AuthzActor, input: unkno
     ])
   ).rows[0];
 
-  const rootAct: AuthzActor = { ...actor, isRootAdmin: true };
-  const pr = await createRequest(tx, rootAct, {
+  const pr = await createRequest(tx, actor, {
     org_unit_id: p.owner_org_unit_id,
     target_warehouse_id: rdWh?.id ?? null,
     needed_by: d.needed_by_date || vnToday(),
@@ -698,14 +927,13 @@ export async function createOligoTrialForProject(tx: Tx, actor: AuthzActor, inpu
   ).rows[0];
   if (!oligoDept) throw invalid("Chưa cấu hình Phòng Tổng hợp Oligo.");
 
-  const rootAct: AuthzActor = { ...actor, isRootAdmin: true };
-  const order = await createOligoOrder(tx, rootAct, {
+  const order = await createOligoOrder(tx, actor, {
     org_unit_id: oligoDept.id,
     customer_label: `[R&D ${p.code}] ${p.name}`,
     notes: `${d.purpose} (Giai đoạn G${d.gate_no})`,
   });
 
-  const added = await addSequences(tx, rootAct, order.id, {
+  const added = await addSequences(tx, actor, order.id, {
     text: d.sequences_text,
     defaults: {
       scale_code: d.scale_code,

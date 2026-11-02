@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api, fmtQty } from "../api";
+import { api, fmtQty, useDebouncedValue } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, Pager, StatusBadge, Table } from "../ui";
 
 const ITEM_TYPE_LABEL: Record<string, string> = {
@@ -149,9 +149,10 @@ function NewItemForm({ onDone }: { onDone: () => void }) {
 
 export function ItemsView({ canManage }: { canManage: boolean }) {
   const [q, setQ] = useState("");
+  const debouncedQ = useDebouncedValue(q, 300);
   const [page, setPage] = useState(1);
   const [adding, setAdding] = useState(false);
-  const params = new URLSearchParams({ page: String(page), page_size: "50", ...(q.trim() ? { q: q.trim() } : {}) });
+  const params = new URLSearchParams({ page: String(page), page_size: "50", ...(debouncedQ.trim() ? { q: debouncedQ.trim() } : {}) });
   const items = useQuery({
     queryKey: ["factory", "items", params.toString()],
     queryFn: () => api<{ rows: ItemRow[]; total: number; page: number; page_size: number }>(`/api/factory/master/items?${params}`),

@@ -3,6 +3,7 @@ import { hasFactoryPermission } from "@/factory/core/authz";
 import { invalid } from "@/factory/core/errors";
 import { createStrategicGoal, listEvaluationCriteria, listStrategicGoals, saveEvaluationCriterion } from "@/factory/rd/ideas";
 import { listGateTemplates } from "@/factory/rd/projects";
+import { listRdStaffRoster } from "@/factory/rd/projectOps";
 
 export const GET = factoryRoute(async (tx, { actor, url }) => {
   const perm = url.searchParams.get("perm") ?? "rd.view";
@@ -19,9 +20,10 @@ export const GET = factoryRoute(async (tx, { actor, url }) => {
     }
   }
   const targetUnits = allUnits.filter((u) => ["KIT", "OLIGO", "DEVICE", "RD"].includes(u.module_key));
-  const goals = await listStrategicGoals(tx, actor).catch(() => []);
-  const criteria = await listEvaluationCriteria(tx, actor).catch(() => []);
-  const templates = await listGateTemplates(tx, actor).catch(() => []);
+  const goals = await listStrategicGoals(tx, actor);
+  const criteria = await listEvaluationCriteria(tx, actor);
+  const templates = await listGateTemplates(tx, actor);
+  const rd_staff = await listRdStaffRoster(tx);
   const warehouses = (
     await tx.query(
       "SELECT id, code, name, owner_org_unit_id, purpose FROM master.warehouse WHERE status = 'ACTIVE' ORDER BY CASE purpose WHEN 'RD' THEN 0 ELSE 1 END, code"
@@ -33,7 +35,7 @@ export const GET = factoryRoute(async (tx, { actor, url }) => {
   const items = (
     await tx.query("SELECT id, code, name, item_type, base_uom FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 500")
   ).rows;
-  return { units, targetUnits, goals, criteria, templates, warehouses, locations, items };
+  return { units, targetUnits, goals, criteria, templates, warehouses, locations, items, rd_staff };
 });
 
 export const POST = factoryRoute(async (tx, ctx) => {

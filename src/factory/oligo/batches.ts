@@ -232,11 +232,17 @@ const planSchema = z.object({
   planned_start: z.string().datetime({ offset: true }).optional().nullable(),
   notes: z.string().trim().max(2000).optional().nullable(),
   allow_adjacent_contamination: z.boolean().optional().default(false),
+  contamination_override_reason: z.string().trim().max(1000).optional().nullable(),
   positions: z.array(z.object({ sequence_id: z.string().uuid(), column_lot_id: z.string().uuid("chọn lô cột CPG") })).min(1, "chọn ít nhất một trình tự"),
 });
 
 function cleanBasesOnly(normalized: string): string {
-  return normalized.replace(/\[[^\]]+\]/g, "").replace(/[^ACGTUacgtu]/g, "").toUpperCase().replace(/U/g, "T");
+  return normalized
+    .replace(/\/[^/]+\//g, "")
+    .replace(/\[[^\]]+\]/g, "")
+    .replace(/[^ACGTUacgtu]/g, "")
+    .toUpperCase()
+    .replace(/U/g, "T");
 }
 
 function revCompBases(bases: string): string {
@@ -350,9 +356,16 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
 
   // Check column-based cross-contamination between POSITIVE_CONTROL/TEMPLATE and PRIMER/PROBE columns
   const contam = checkColumnContamination(analysed);
+  if (data.allow_adjacent_contamination && (!data.contamination_override_reason || !data.contamination_override_reason.trim())) {
+    throw invalid(
+      "Khi cho phép ghi đè cảnh báo nhiễm chéo cột liền kề (allow_adjacent_contamination = true), bắt buộc nhập lý do phê duyệt (contamination_override_reason).",
+      undefined,
+      "CONTAMINATION_REASON_REQUIRED"
+    );
+  }
   if (contam.adjacentCollisions.length > 0 && !data.allow_adjacent_contamination) {
     throw invalid(
-      `Phát hiện nguy cơ nhiễm chéo trên vị trí cột liền kề của máy tổng hợp: ${contam.adjacentCollisions.join("; ")}. Vui lòng tách vị trí cột cách xa nhau, xếp sang mẻ riêng, hoặc xác nhận ghi nhận cảnh báo (allow_adjacent_contamination = true).`,
+      `Phát hiện nguy cơ nhiễm chéo trên vị trí cột liền kề của máy tổng hợp: ${contam.adjacentCollisions.join("; ")}. Vui lòng tách vị trí cột cách xa nhau, xếp sang mẻ riêng, hoặc xác nhận ghi nhận cảnh báo (allow_adjacent_contamination = true) kèm lý do (contamination_override_reason).`,
       contam.adjacentCollisions,
       "COLUMN_CROSS_CONTAMINATION_RISK"
     );
@@ -408,6 +421,21 @@ export async function planBatch(tx: Tx, actor: AuthzActor, input: unknown) {
     await tx.query("INSERT INTO oligo.synthesis_reagent_use (batch_id, role, item_id, est_qty_base) VALUES ($1, $2, $3, $4)", [batch.id, roles.join(", "), itemId, Math.round(qty * 1e6) / 1e6]);
   }
   await moveSequences(tx, actor, batch.id, "queue");
-  await writeAudit(tx, actor, { entityType: "synthesis_batch", entityId: batch.id, action: "plan", changes: { code: [null, code], positions: [null, analysed.length] } });
+  await writeAudit(tx, actor, {
+    entityType: "synthesis_batch",
+    entityId: batch.id,
+    action: "plan",
+    changes: {
+      code: [null, code],
+      positions: [null, analysed.length],
+      ...(data.allow_adjacent_contamination
+        ? {
+            allow_adjacent_contamination: [false, true],
+            contamination_override_reason: [null, data.contamination_override_reason?.trim() ?? null],
+          }
+        : {}),
+    },
+    reason: data.allow_adjacent_contamination ? data.contamination_override_reason?.trim() : undefined,
+  });
   return batch;
 }

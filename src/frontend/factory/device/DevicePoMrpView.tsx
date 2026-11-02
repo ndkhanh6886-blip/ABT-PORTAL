@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -100,8 +100,10 @@ const PO_STATUS_BADGE: Record<string, [string, string]> = {
 };
 
 export function DevicePoMrpView({
+  initialPoId,
   onNavigateTab,
 }: {
+  initialPoId?: string | null;
   onNavigateTab?: (tab: "assembly" | "subcontract", targetId?: string) => void;
 }) {
   const qc = useQueryClient();
@@ -120,7 +122,13 @@ export function DevicePoMrpView({
       ),
   });
 
-  const [selectedPoId, setSelectedPoId] = useState<string | null>(null);
+  const [selectedPoId, setSelectedPoId] = useState<string | null>(initialPoId ?? null);
+
+  useEffect(() => {
+    if (initialPoId) {
+      setSelectedPoId(initialPoId);
+    }
+  }, [initialPoId]);
   const [showCreatePo, setShowCreatePo] = useState(false);
   const [serialPrefix, setSerialPrefix] = useState("");
   const [customSerials, setCustomSerials] = useState("");

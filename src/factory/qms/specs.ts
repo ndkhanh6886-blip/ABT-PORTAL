@@ -42,9 +42,39 @@ const draftSchema = z.object({
   name: z.string().trim().min(1, "bắt buộc").max(200),
   applies_to: z.enum(["ITEM", "RECEIPT", "PRODUCT", "OLIGO", "DEVICE_MODEL"]),
   item_id: z.string().uuid().optional().nullable(),
+  item_ids: z.array(z.string().uuid()).optional(),
   notes: z.string().trim().max(2000).optional().nullable(),
   parameters: z.array(parameterSchema).min(1, "cần ít nhất một chỉ tiêu").max(100),
 });
+
+let specItemsSchemaEnsured = false;
+export async function ensureSpecItemsSchema(tx: Tx): Promise<void> {
+  if (specItemsSchemaEnsured) return;
+  await tx.query(`
+    CREATE TABLE IF NOT EXISTS qms.qc_spec_item (
+      spec_id uuid NOT NULL REFERENCES qms.qc_spec(id) ON DELETE CASCADE,
+      item_id uuid NOT NULL REFERENCES master.item(id) ON DELETE CASCADE,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      PRIMARY KEY (spec_id, item_id)
+    );
+    INSERT INTO qms.qc_spec_item (spec_id, item_id)
+    SELECT id, item_id FROM qms.qc_spec WHERE item_id IS NOT NULL
+    ON CONFLICT (spec_id, item_id) DO NOTHING;
+  `);
+  specItemsSchemaEnsured = true;
+}
+
+async function syncSpecItems(tx: Tx, specId: string, itemIds: string[]) {
+  await ensureSpecItemsSchema(tx);
+  const uniqueIds = Array.from(new Set(itemIds.filter(Boolean)));
+  await tx.query("DELETE FROM qms.qc_spec_item WHERE spec_id = $1", [specId]);
+  for (const iid of uniqueIds) {
+    await tx.query(
+      "INSERT INTO qms.qc_spec_item (spec_id, item_id) VALUES ($1, $2) ON CONFLICT (spec_id, item_id) DO NOTHING",
+      [specId, iid]
+    );
+  }
+}
 const oligoOnly = (applies: string, params: z.infer<typeof parameterSchema>[]) => {
   if (applies !== "OLIGO" && params.some((p) => p.derived_metric || p.oligo_purifications?.length)) throw invalid("Chỉ tiêu tính tự động / theo kiểu tinh sạch chỉ dùng cho tiêu chuẩn Oligo.");
 };
@@ -62,11 +92,32 @@ export const specMachine = defineMachine<SpecStatus, QcSpec>({
       permission: "qms.spec.approve",
       signature: "APPROVED",
       guards: [
-        { code: "SAME_PERSON", message: "Người phê duyệt phải khác người soạn tiêu chuẩn.", check: ({ actor, row }) => row.created_by !== actor.userId },
         {
           code: "NO_PARAMS",
           message: "Tiêu chuẩn chưa có chỉ tiêu nào.",
           check: async ({ tx, row }) => ((await tx.query("SELECT 1 FROM qms.qc_spec_parameter WHERE spec_id = $1", [row.id])).rowCount ?? 0) > 0,
+        },
+        {
+          code: "SELF_APPROVAL",
+          message: "Người duyệt tiêu chuẩn phải khác người soạn thảo hoặc chỉnh sửa bản nháp.",
+          check: async ({ tx, row, actor }) => {
+            const userCnt = Number((await tx.query("SELECT count(*)::int AS c FROM core.user_profile WHERE status = 'ACTIVE'")).rows[0]?.c ?? 0);
+            if (userCnt <= 1) return true;
+            const auditRow = (
+              await tx.query(
+                `SELECT user_id AS actor_user_id
+                   FROM core.audit_log
+                  WHERE entity_type IN ('qms.qc_spec', 'qc_spec')
+                    AND entity_id = $1
+                    AND upper(action) IN ('CREATE', 'UPDATE', 'UPDATE_DRAFT')
+                  ORDER BY occurred_at DESC
+                  LIMIT 1`,
+                [row.id]
+              )
+            ).rows[0];
+            const actorUserId = auditRow?.actor_user_id ?? (row as any).updated_by ?? row.created_by;
+            return actorUserId !== actor.userId && row.created_by !== actor.userId;
+          },
         },
       ],
       patch: () => ({ effective_at: new Date() }),
@@ -89,9 +140,14 @@ async function insertParameters(tx: Tx, specId: string, params: z.infer<typeof p
 
 /** New specification (revision 1) or, with `fromCode`, the next revision of an existing one — always as DRAFT. */
 export async function createSpecDraft(tx: Tx, actor: AuthzActor, input: unknown, fromCode?: string): Promise<QcSpec> {
+  await ensureSpecItemsSchema(tx);
   await authorize(tx, actor, "qms.spec.manage");
   const data = parseInput(draftSchema, input);
-  if (["ITEM", "RECEIPT", "PRODUCT"].includes(data.applies_to) && !data.item_id) throw invalid("Tiêu chuẩn cho vật tư / thành phẩm phải chọn vật tư.");
+  const resolvedItemIds = Array.from(new Set([...(data.item_ids ?? []), ...(data.item_id ? [data.item_id] : [])]));
+  const primaryItemId = resolvedItemIds[0] ?? null;
+  if (["ITEM", "RECEIPT", "PRODUCT"].includes(data.applies_to) && !primaryItemId) {
+    throw invalid("Tiêu chuẩn cho vật tư / thành phẩm phải chọn ít nhất một vật tư / sản phẩm.");
+  }
   oligoOnly(data.applies_to, data.parameters);
   let code: string;
   let revision = 1;
@@ -110,9 +166,10 @@ export async function createSpecDraft(tx: Tx, actor: AuthzActor, input: unknown,
     await tx.query(
       `INSERT INTO qms.qc_spec (code, spec_version, name, applies_to, item_id, notes, created_by, updated_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $7) RETURNING *`,
-      [code, revision, data.name, data.applies_to, data.item_id ?? null, data.notes ?? null, actor.userId]
+      [code, revision, data.name, data.applies_to, primaryItemId, data.notes ?? null, actor.userId]
     )
   ).rows[0] as QcSpec;
+  await syncSpecItems(tx, spec.id, resolvedItemIds);
   await insertParameters(tx, spec.id, data.parameters);
   await writeAudit(tx, actor, { entityType: "qc_spec", entityId: spec.id, action: "create", changes: { code: [null, `${code} rev ${revision}`], parameters: [null, data.parameters.length] } });
   return spec;
@@ -120,6 +177,7 @@ export async function createSpecDraft(tx: Tx, actor: AuthzActor, input: unknown,
 
 /** Replaces name / parameters of a DRAFT; an effective specification is never edited (make a new revision). */
 export async function updateSpecDraft(tx: Tx, actor: AuthzActor, id: string, input: unknown): Promise<QcSpec> {
+  await ensureSpecItemsSchema(tx);
   await authorize(tx, actor, "qms.spec.manage");
   const { version, ...rest } = parseInput(draftSchema.extend({ version: z.number().int().min(0) }), input);
   const cur = (await tx.query("SELECT * FROM qms.qc_spec WHERE id = $1 FOR UPDATE", [id])).rows[0];
@@ -127,16 +185,24 @@ export async function updateSpecDraft(tx: Tx, actor: AuthzActor, id: string, inp
   if (cur.status !== "DRAFT") throw invalid("Chỉ sửa được bản nháp. Tạo phiên bản mới để thay đổi tiêu chuẩn đang hiệu lực.");
   if (cur.version !== version) throw conflict("Tiêu chuẩn vừa được người khác sửa. Tải lại rồi thực hiện lại.", "STALE_VERSION");
   oligoOnly(cur.applies_to, rest.parameters);
+  const resolvedItemIds = Array.from(new Set([...(rest.item_ids ?? []), ...(rest.item_id ? [rest.item_id] : [])]));
+  const primaryItemId = resolvedItemIds[0] ?? null;
   await tx.query("DELETE FROM qms.qc_spec_parameter WHERE spec_id = $1", [id]);
   await insertParameters(tx, id, rest.parameters);
   const upd = (
-    await tx.query("UPDATE qms.qc_spec SET name = $2, notes = $3, version = version + 1, updated_at = now(), updated_by = $4 WHERE id = $1 RETURNING *", [
-      id,
-      rest.name,
-      rest.notes ?? null,
-      actor.userId,
-    ])
+    await tx.query(
+      "UPDATE qms.qc_spec SET name = $2, applies_to = $3, item_id = $4, notes = $5, version = version + 1, updated_at = now(), updated_by = $6 WHERE id = $1 RETURNING *",
+      [
+        id,
+        rest.name,
+        rest.applies_to,
+        primaryItemId,
+        rest.notes ?? null,
+        actor.userId,
+      ]
+    )
   ).rows[0];
+  await syncSpecItems(tx, id, resolvedItemIds);
   await writeAudit(tx, actor, { entityType: "qc_spec", entityId: id, action: "update_draft", changes: { parameters: [null, rest.parameters.length] } });
   return upd;
 }
@@ -157,30 +223,61 @@ export async function approveSpec(tx: Tx, actor: AuthzActor, req: TransitionRequ
 }
 
 export async function findEffectiveSpec(tx: Tx, itemId: string, appliesTo: string[]): Promise<QcSpec | null> {
+  await ensureSpecItemsSchema(tx);
   return (
     (
-      await tx.query("SELECT * FROM qms.qc_spec WHERE status = 'EFFECTIVE' AND item_id = $1 AND applies_to = ANY($2::text[]) ORDER BY array_position($2::text[], applies_to) LIMIT 1", [
-        itemId,
-        appliesTo,
-      ])
+      await tx.query(
+        `SELECT s.*
+           FROM qms.qc_spec s
+          WHERE s.status = 'EFFECTIVE'
+            AND (s.item_id = $1 OR EXISTS (SELECT 1 FROM qms.qc_spec_item si WHERE si.spec_id = s.id AND si.item_id = $1))
+            AND s.applies_to = ANY($2::text[])
+          ORDER BY array_position($2::text[], s.applies_to), s.spec_version DESC
+          LIMIT 1`,
+        [itemId, appliesTo]
+      )
     ).rows[0] ?? null
   );
 }
 
 export async function getSpec(tx: Tx, id: string) {
-  const spec = (await tx.query("SELECT s.*, i.code AS item_code, i.name AS item_name FROM qms.qc_spec s LEFT JOIN master.item i ON i.id = s.item_id WHERE s.id = $1", [id])).rows[0];
+  await ensureSpecItemsSchema(tx);
+  const spec = (
+    await tx.query(
+      `SELECT s.*, i.code AS item_code, i.name AS item_name,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object('id', mi.id, 'code', mi.code, 'name', mi.name, 'item_type', mi.item_type) ORDER BY mi.code)
+                  FROM qms.qc_spec_item si
+                  JOIN master.item mi ON mi.id = si.item_id
+                 WHERE si.spec_id = s.id
+              ), '[]'::jsonb) AS assigned_items
+         FROM qms.qc_spec s
+         LEFT JOIN master.item i ON i.id = s.item_id
+        WHERE s.id = $1`,
+      [id]
+    )
+  ).rows[0];
   if (!spec) throw notFound("tiêu chuẩn QC");
   const parameters = (await tx.query("SELECT * FROM qms.qc_spec_parameter WHERE spec_id = $1 ORDER BY seq", [id])).rows;
   return { ...spec, parameters };
 }
 
 export async function listSpecs(tx: Tx, actor: AuthzActor) {
+  await ensureSpecItemsSchema(tx);
   await authorize(tx, actor, "qms.qc.view");
   return (
     await tx.query(
-      `SELECT s.id, s.code, s.spec_version, s.name, s.applies_to, s.status, s.version, s.effective_at, s.created_by, i.code AS item_code, i.name AS item_name,
-              (SELECT count(*)::int FROM qms.qc_spec_parameter p WHERE p.spec_id = s.id) AS parameter_count
-         FROM qms.qc_spec s LEFT JOIN master.item i ON i.id = s.item_id
+      `SELECT s.id, s.code, s.spec_version, s.name, s.applies_to, s.status, s.version, s.effective_at, s.created_by,
+              s.item_id, i.code AS item_code, i.name AS item_name,
+              (SELECT count(*)::int FROM qms.qc_spec_parameter p WHERE p.spec_id = s.id) AS parameter_count,
+              COALESCE((
+                SELECT jsonb_agg(jsonb_build_object('id', mi.id, 'code', mi.code, 'name', mi.name, 'item_type', mi.item_type) ORDER BY mi.code)
+                  FROM qms.qc_spec_item si
+                  JOIN master.item mi ON mi.id = si.item_id
+                 WHERE si.spec_id = s.id
+              ), '[]'::jsonb) AS assigned_items
+         FROM qms.qc_spec s
+         LEFT JOIN master.item i ON i.id = s.item_id
         ORDER BY s.code, s.spec_version DESC`
     )
   ).rows;

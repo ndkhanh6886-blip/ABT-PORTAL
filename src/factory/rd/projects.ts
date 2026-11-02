@@ -176,6 +176,34 @@ export const projectGateMachine = defineMachine<GateStatus, ProjectGateRow>({
             return !unaccepted.rowCount;
           },
         },
+        {
+          code: "SPEC_EVALUATION_NOT_PASSED",
+          message: "Tất cả chỉ tiêu thiết kế / TPP (spec_evaluation) của giai đoạn này phải đạt kết quả PASS trước khi qua cổng.",
+          check: async ({ tx, row }) => {
+            const unpassed = await tx.query(
+              "SELECT 1 FROM rd.spec_evaluation WHERE project_id = $1 AND result IN ('FAIL', 'PENDING') LIMIT 1",
+              [row.project_id]
+            );
+            return !unpassed.rowCount;
+          },
+        },
+        {
+          code: "UNMITIGATED_RISK_ITEMS",
+          message: "Không được qua cổng khi còn mục rủi ro ISO 14971 đang mở (OPEN) hoặc có RPN tồn dư cao (≥ 15) chưa được giảm thiểu / chấp nhận.",
+          check: async ({ tx, row }) => {
+            const openRisk = await tx.query(
+              `SELECT 1 FROM rd.risk_item
+                WHERE project_id = $1
+                  AND (
+                    status = 'OPEN'
+                    OR (COALESCE(residual_severity * residual_occurrence * residual_detection, rpn) >= 15 AND status NOT IN ('MITIGATED', 'ACCEPTED'))
+                  )
+                LIMIT 1`,
+              [row.project_id]
+            );
+            return !openRisk.rowCount;
+          },
+        },
       ],
       patch: ({ actor, reason, payload }) => ({
         decision: "GO",
@@ -480,10 +508,59 @@ const specEvalSchema = z.object({
   result: z.enum(["PENDING", "PASS", "FAIL"]).default("PENDING"),
 });
 
+async function assertDhfEditable(
+  tx: Tx,
+  projectId: string,
+  opts?: { isUpdate?: boolean; explicitDesignStage?: string | null; checkAnyPassedGate?: boolean }
+) {
+  const proj = (await tx.query("SELECT status, current_stage FROM rd.project WHERE id = $1", [projectId])).rows[0];
+  if (!proj) throw notFound("dự án R&D");
+  if (
+    proj.status === "TRANSFERRED" ||
+    (proj.status as string) === "COMPLETED" ||
+    proj.status === "KILLED" ||
+    proj.current_stage === "TRANSFERRED"
+  ) {
+    throw invalid("Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.");
+  }
+  const gates = (
+    await tx.query("SELECT gate_no, status FROM rd.project_gate WHERE project_id = $1 ORDER BY gate_no ASC", [projectId])
+  ).rows;
+  if (gates.length > 0 && gates.every((g) => g.status === "PASSED")) {
+    throw invalid("Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.");
+  }
+  if ((opts?.isUpdate || opts?.checkAnyPassedGate) && gates.some((g) => g.status === "PASSED")) {
+    throw invalid("Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.");
+  }
+  if (opts?.explicitDesignStage) {
+    const stageGateMap: Record<string, number> = {
+      USER_NEED: 0,
+      INPUT: 0,
+      DESIGN_INPUT: 0,
+      OUTPUT: 1,
+      DESIGN_OUTPUT: 1,
+      VERIFICATION: 2,
+      VALIDATION: 3,
+    };
+    const gateNo = stageGateMap[opts.explicitDesignStage];
+    if (gateNo !== undefined) {
+      const gate = gates.find((g) => Number(g.gate_no) === gateNo);
+      if (gate?.status === "PASSED") {
+        throw invalid("Hồ sơ thiết kế (DHF) của giai đoạn đã phê duyệt không được phép chỉnh sửa trực tiếp.");
+      }
+    }
+  }
+}
+
 /** Saves a Design Input / Design Output / V&V Traceability Matrix (TPP) row for a project (ISO 13485 §7.3). */
 export async function saveSpecEvaluation(tx: Tx, actor: AuthzActor, projectId: string, specId: string | null, input: unknown) {
   const owner = await projectOwner(tx, projectId);
   await authorize(tx, actor, "rd.project.manage", owner);
+  const rawDesignStage =
+    input && typeof input === "object" && "design_stage" in input && typeof (input as any).design_stage === "string"
+      ? (input as any).design_stage
+      : null;
+  await assertDhfEditable(tx, projectId, { isUpdate: Boolean(specId), explicitDesignStage: rawDesignStage });
   const d = parseInput(specEvalSchema, input);
   if (!specId) {
     const row = (
@@ -584,11 +661,20 @@ const riskItemSchema = z.object({
 export async function saveRiskItem(tx: Tx, actor: AuthzActor, projectId: string, riskId: string | null, input: unknown) {
   const owner = await projectOwner(tx, projectId);
   await authorize(tx, actor, "rd.project.manage", owner);
+  await assertDhfEditable(tx, projectId, { isUpdate: Boolean(riskId), checkAnyPassedGate: true });
   const d = parseInput(riskItemSchema, input);
   const occ = d.occurrence ?? d.probability ?? 2;
   const det = d.detection ?? d.detectability ?? 2;
   const mit = d.mitigation_measure ?? d.control_measure ?? null;
   if (!riskId) {
+    const resSev = d.residual_severity ?? null;
+    const resOcc = d.residual_occurrence ?? null;
+    const resDet = d.residual_detection ?? null;
+    if ((d.status === "MITIGATED" || d.status === "ACCEPTED") && (resSev == null || resOcc == null || resDet == null)) {
+      throw invalid(
+        "Phải nhập đầy đủ các chỉ số rủi ro tồn dư (residual_severity, residual_occurrence, residual_detection) trước khi đặt trạng thái MITIGATED hoặc ACCEPTED."
+      );
+    }
     const code = await nextNumber(tx, "RD_RISK");
     const row = (
       await tx.query(
@@ -607,9 +693,9 @@ export async function saveRiskItem(tx: Tx, actor: AuthzActor, projectId: string,
           occ,
           det,
           mit,
-          d.residual_severity ?? d.severity,
-          d.residual_occurrence ?? Math.max(1, occ - 1),
-          d.residual_detection ?? det,
+          resSev,
+          resOcc,
+          resDet,
           d.status,
           actor.userId,
         ]
@@ -625,6 +711,14 @@ export async function saveRiskItem(tx: Tx, actor: AuthzActor, projectId: string,
   }
   const cur = (await tx.query("SELECT * FROM rd.risk_item WHERE id = $1 AND project_id = $2 FOR UPDATE", [riskId, projectId])).rows[0];
   if (!cur) throw notFound("mục quản lý rủi ro ISO 14971");
+  const nextResSev = d.residual_severity !== undefined ? d.residual_severity : cur.residual_severity;
+  const nextResOcc = d.residual_occurrence !== undefined ? d.residual_occurrence : cur.residual_occurrence;
+  const nextResDet = d.residual_detection !== undefined ? d.residual_detection : cur.residual_detection;
+  if ((d.status === "MITIGATED" || d.status === "ACCEPTED") && (nextResSev == null || nextResOcc == null || nextResDet == null)) {
+    throw invalid(
+      "Phải nhập đầy đủ các chỉ số rủi ro tồn dư (residual_severity, residual_occurrence, residual_detection) trước khi đặt trạng thái MITIGATED hoặc ACCEPTED."
+    );
+  }
   const upd = (
     await tx.query(
       `UPDATE rd.risk_item
@@ -641,9 +735,9 @@ export async function saveRiskItem(tx: Tx, actor: AuthzActor, projectId: string,
         occ,
         det,
         mit,
-        d.residual_severity ?? cur.residual_severity,
-        d.residual_occurrence ?? cur.residual_occurrence,
-        d.residual_detection ?? cur.residual_detection,
+        nextResSev,
+        nextResOcc,
+        nextResDet,
         d.status,
         actor.userId,
       ]
@@ -733,12 +827,24 @@ export async function exportRoadmapIcs(tx: Tx, actor: AuthzActor, projectId?: st
 
 export async function listProjects(tx: Tx, actor: AuthzActor, domain?: string) {
   await authorizeAnywhere(tx, actor, "rd.view");
+  await tx.query(`
+    ALTER TABLE rd.project
+      ADD COLUMN IF NOT EXISTS leader_name_override varchar(150);
+  `);
   const rows = (
     await tx.query(
-      `SELECT p.*, u.name AS org_unit_name, l.display_name AS leader_name, t.name AS template_name,
+      `SELECT p.*,
+              u.name AS org_unit_name,
+              coalesce(nullif(p.leader_name_override, ''), l.display_name) AS leader_name,
+              t.name AS template_name,
               (SELECT count(*)::int FROM rd.project_gate g WHERE g.project_id = p.id) AS total_gates,
               (SELECT count(*)::int FROM rd.project_gate g WHERE g.project_id = p.id AND g.status = 'PASSED') AS passed_gates,
-              (SELECT count(*)::int FROM rd.experiment e WHERE e.project_id = p.id) AS experiment_count
+              (SELECT count(*)::int FROM rd.experiment e WHERE e.project_id = p.id) AS experiment_count,
+              coalesce((
+                SELECT jsonb_agg(DISTINCT pt.assignee_name) FILTER (WHERE pt.assignee_name IS NOT NULL AND pt.assignee_name <> '')
+                  FROM rd.project_task pt
+                 WHERE pt.project_id = p.id
+              ), '[]'::jsonb) AS assignees
          FROM rd.project p
          JOIN core.org_unit u ON u.id = p.owner_org_unit_id
          LEFT JOIN core.user_profile l ON l.user_id = p.leader_id
@@ -756,9 +862,15 @@ export async function listProjects(tx: Tx, actor: AuthzActor, domain?: string) {
 }
 
 export async function getProjectDetail(tx: Tx, actor: AuthzActor, id: string) {
+  await tx.query(`
+    ALTER TABLE rd.project
+      ADD COLUMN IF NOT EXISTS leader_name_override varchar(150);
+  `);
   const project = (
     await tx.query(
-      `SELECT p.*, u.name AS org_unit_name, l.display_name AS leader_name, t.code AS template_code, t.name AS template_name,
+      `SELECT p.*, u.name AS org_unit_name,
+              coalesce(nullif(p.leader_name_override, ''), l.display_name) AS leader_name,
+              t.code AS template_code, t.name AS template_name,
               i.code AS idea_code, i.title AS idea_title
          FROM rd.project p
          JOIN core.org_unit u ON u.id = p.owner_org_unit_id

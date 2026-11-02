@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
@@ -8,6 +8,8 @@ import { QC_STATUS_LABEL } from "../qa/QcTestsView";
 import { printWithReprint } from "./labels";
 import { PoolAliquotForm } from "./PoolAliquotForm";
 import { StepLogForm, StepTable, type FrozenStep, type StepLog } from "./StepLogForm";
+import { ColumnsView } from "./ColumnsView";
+import { SopConfigView } from "./SopConfigView";
 import { FORMAT, PURIFICATION, SEQ_STATUS } from "./shared";
 
 interface Row {
@@ -204,56 +206,317 @@ function BulkStep({ ids, onDone }: { ids: string[]; onDone: () => void }) {
 
 export function PostProcessView({ canManage, canLabel }: { canManage: boolean; canLabel: boolean }) {
   const qc = useQueryClient();
+  const [subView, setSubView] = useState<"PROCESSING" | "COMPLETED" | "SOP" | "HPLC_COLUMNS">("PROCESSING");
   const [selected, setSelected] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>([]);
   const [status, setStatus] = useState("");
-  const list = useQuery({ queryKey: ["factory", "oligo-post", status], queryFn: () => api<Row[]>(`/api/factory/oligo/post${status ? `?status=${status}` : ""}`) });
+  const [orderFilter, setOrderFilter] = useState("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [batchA260, setBatchA260] = useState("");
+  const [batchDilution, setBatchDilution] = useState("10");
+  const [batchVolUl, setBatchVolUl] = useState("200");
+  const [batchTubeCount, setBatchTubeCount] = useState("1");
+  const effectiveStatus = subView === "COMPLETED" ? "COMPLETED" : status;
+  const list = useQuery({
+    queryKey: ["factory", "oligo-post", effectiveStatus],
+    queryFn: () => api<Row[]>(`/api/factory/oligo/post${effectiveStatus ? `?status=${effectiveStatus}` : ""}`),
+  });
+
+  const batchAct = useMutation({
+    mutationFn: (payload: Record<string, unknown>) => api("/api/factory/oligo/post", { method: "POST", json: payload }),
+    onSuccess: () => {
+      setPicked([]);
+      refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
+    },
+  });
+
+  const orderGroups = useMemo(() => {
+    const map = new Map<string, { key: string; label: string; count: number }>();
+    for (const r of list.data ?? []) {
+      const key = r.order_code ?? "__POOL__";
+      const existing = map.get(key);
+      if (existing) existing.count += 1;
+      else map.set(key, { key, label: r.order_code ?? "Trình tự gộp", count: 1 });
+    }
+    return Array.from(map.values());
+  }, [list.data]);
+
+  const filteredList = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    return (list.data ?? []).filter((r) => {
+      if (orderFilter !== "ALL") {
+        const key = r.order_code ?? "__POOL__";
+        if (key !== orderFilter) return false;
+      }
+      if (q) {
+        const hay = `${r.code} ${r.name ?? ""} ${r.order_code ?? ""} ${r.qc_code ?? ""}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [list.data, orderFilter, searchQuery]);
+
   return (
     <div className="flex flex-col gap-3">
-      {selected && <PostPanel key={selected} id={selected} canManage={canManage} canLabel={canLabel} onClose={() => setSelected(null)} />}
-      <Card
-        title="Hậu tổng hợp & QC"
-        actions={
-          <select className={`${inputClass} w-44`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
-            {FILTERS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
-        }
-      >
-        <ErrorNote error={list.error} />
-        {list.data?.length === 0 && <Empty>Không có trình tự nào.</Empty>}
-        {canManage && picked.length > 0 && (
-          <div className="mb-3">
-            <BulkStep
-              ids={picked}
-              onDone={() => {
-                setPicked([]);
-                refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
-              }}
-            />
-          </div>
-        )}
-        {list.data && list.data.length > 0 && (
-          <Table head={["", "Trình tự", "Đơn", "Hạn giao", "Thang / tinh sạch", "Tổng OD", "nmol", "QC", "Trạng thái"]}>
-            {list.data.map((r) => (
-              <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
-                <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
-                  {canManage && r.status === "POST_PROCESSING" && (
-                    <input type="checkbox" checked={picked.includes(r.id)} onChange={() => setPicked(picked.includes(r.id) ? picked.filter((x) => x !== r.id) : [...picked, r.id])} aria-label={`Chọn ${r.code} để ghi bước chung`} />
-                  )}
-                </td>
-                <td className="py-2 pr-3 font-mono text-xs">{r.code} <span className="font-sans text-slate-500">{r.name}</span></td>
-                <td className="py-2 pr-3 font-mono text-xs">{r.order_code ?? "gộp"}</td>
-                <td className="py-2 pr-3 text-xs whitespace-nowrap">{fmtDate(r.due_date)}</td>
-                <td className="py-2 pr-3 text-xs">{r.scale_code} · {PURIFICATION[r.purification as keyof typeof PURIFICATION]}</td>
-                <td className="py-2 pr-3 text-right">{fmtQty(r.od_total)}</td>
-                <td className="py-2 pr-3 text-right">{fmtQty(r.nmol)}</td>
-                <td className="py-2 pr-3 text-xs">{r.qc_code ? `${r.qc_code} · ${QC_STATUS_LABEL[r.qc_status!]}` : "—"}</td>
-                <td className="py-2 pr-3"><StatusBadge status={SEQ_STATUS[r.status][0]} label={SEQ_STATUS[r.status][1]} /></td>
-              </tr>
-            ))}
-          </Table>
-        )}
-      </Card>
+      {/* Thanh tab con y hệt màn hình Xử lý Sau Tổng Hợp của OligoFlow (abt-portal.online) */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          type="button"
+          onClick={() => {
+            setSubView("PROCESSING");
+            setStatus("");
+          }}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+            subView === "PROCESSING"
+              ? "bg-sky-700 text-white"
+              : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800"
+          }`}
+        >
+          ⏳ Đang xử lý ({subView === "PROCESSING" ? list.data?.length ?? 0 : "…"})
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setSubView("COMPLETED");
+            setStatus("COMPLETED");
+          }}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+            subView === "COMPLETED"
+              ? "bg-emerald-700 text-white"
+              : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800"
+          }`}
+        >
+          ✅ Đã hoàn thành
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubView("SOP")}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+            subView === "SOP"
+              ? "bg-amber-600 text-white"
+              : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800"
+          }`}
+        >
+          ⚙️ Cấu hình Quy trình SOP
+        </button>
+        <button
+          type="button"
+          onClick={() => setSubView("HPLC_COLUMNS")}
+          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+            subView === "HPLC_COLUMNS"
+              ? "bg-sky-700 text-white"
+              : "bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800"
+          }`}
+        >
+          📊 Khấu hao &amp; Sử dụng Cột HPLC
+        </button>
+      </div>
+
+      {subView === "SOP" && <SopConfigView canManage={canManage} />}
+      {subView === "HPLC_COLUMNS" && <ColumnsView canManage={canManage} />}
+
+      {(subView === "PROCESSING" || subView === "COMPLETED") && (
+        <>
+          {selected && <PostPanel key={selected} id={selected} canManage={canManage} canLabel={canLabel} onClose={() => setSelected(null)} />}
+          <Card
+            title="Hậu tổng hợp & QC"
+            actions={
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className={`${inputClass} w-52`}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Tìm mã trình tự, tên, đơn..."
+                />
+                <select
+                  className={`${inputClass} w-48`}
+                  value={orderFilter}
+                  onChange={(e) => setOrderFilter(e.target.value)}
+                  aria-label="Lọc trình tự theo đơn hàng"
+                >
+                  <option value="ALL">Mọi đơn hàng ({list.data?.length ?? 0})</option>
+                  {orderGroups.map((og) => (
+                    <option key={og.key} value={og.key}>
+                      Đơn {og.label} ({og.count} trình tự)
+                    </option>
+                  ))}
+                </select>
+                {subView === "PROCESSING" && (
+                  <select className={`${inputClass} w-44`} value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Trạng thái">
+                    {FILTERS.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                  </select>
+                )}
+              </div>
+            }
+          >
+            <ErrorNote error={list.error ?? batchAct.error} />
+            {orderGroups.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5 mb-3">
+                <span className="text-[11px] font-bold text-slate-500 mr-1">📦 Lọc theo Đơn:</span>
+                <button
+                  type="button"
+                  onClick={() => setOrderFilter("ALL")}
+                  className={`px-2 py-0.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
+                    orderFilter === "ALL"
+                      ? "bg-sky-700 text-white border-sky-700"
+                      : "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700"
+                  }`}
+                >
+                  Tất cả ({list.data?.length ?? 0})
+                </button>
+                {orderGroups.map((og) => (
+                  <button
+                    key={og.key}
+                    type="button"
+                    onClick={() => setOrderFilter(og.key)}
+                    className={`px-2 py-0.5 rounded-lg text-xs font-mono font-bold border transition cursor-pointer ${
+                      orderFilter === og.key
+                        ? "bg-sky-700 text-white border-sky-700"
+                        : "bg-white dark:bg-slate-900 text-sky-700 dark:text-sky-300 border-sky-200 dark:border-sky-800"
+                    }`}
+                  >
+                    🧬 {og.label} ({og.count})
+                  </button>
+                ))}
+                {canManage && filteredList.some((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING") && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const selectableIds = filteredList
+                        .filter((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING")
+                        .map((r) => r.id);
+                      const allSelected = selectableIds.every((id) => picked.includes(id));
+                      setPicked(allSelected ? [] : selectableIds);
+                    }}
+                    className="ml-auto px-2.5 py-0.5 rounded-lg text-xs font-bold border border-indigo-300 dark:border-indigo-700 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-800 dark:text-indigo-200 cursor-pointer"
+                  >
+                    ☑️ Chọn / Bỏ chọn toàn bộ danh sách đang lọc ({filteredList.filter((r) => r.status === "SYNTHESIZED" || r.status === "POST_PROCESSING").length})
+                  </button>
+                )}
+              </div>
+            )}
+            {filteredList.length === 0 && <Empty>Không có trình tự nào.</Empty>}
+            {canManage && picked.length > 0 && (
+              <div className="mb-3 space-y-2 rounded-xl border border-sky-300 dark:border-sky-800 bg-sky-50/60 dark:bg-sky-950/30 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-bold text-sky-900 dark:text-sky-200">
+                    ⚡ Xử lý Hàng loạt theo Mẻ / Khay ({picked.length} trình tự đã chọn)
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      disabled={batchAct.isPending}
+                      onClick={() => batchAct.mutate({ action: "batch_start", sequence_ids: picked })}
+                    >
+                      ▶️ Bắt đầu Hậu tổng hợp ({picked.length})
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={batchAct.isPending}
+                      onClick={() => batchAct.mutate({ action: "batch_submit_qc", sequence_ids: picked })}
+                    >
+                      📤 Gửi QC các chuỗi đã đo OD
+                    </Button>
+                  </div>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-6 items-end pt-1 border-t border-sky-200 dark:border-sky-800/70">
+                  <Field label="A260 đo được (bắt buộc > 0)">
+                    <input
+                      className={inputClass}
+                      inputMode="decimal"
+                      placeholder="Nhập A260..."
+                      value={batchA260}
+                      onChange={(e) => setBatchA260(e.target.value)}
+                    />
+                  </Field>
+                  <Field label="Hệ số pha loãng">
+                    <input className={inputClass} value={batchDilution} onChange={(e) => setBatchDilution(e.target.value)} />
+                  </Field>
+                  <Field label="Thể tích gốc (µL)">
+                    <input className={inputClass} value={batchVolUl} onChange={(e) => setBatchVolUl(e.target.value)} />
+                  </Field>
+                  <Field label="Số ống / chuỗi">
+                    <input className={inputClass} value={batchTubeCount} onChange={(e) => setBatchTubeCount(e.target.value)} />
+                  </Field>
+                  <Button
+                    variant="ghost"
+                    disabled={batchAct.isPending || !(Number(batchA260.replace(",", ".")) > 0)}
+                    onClick={() =>
+                      batchAct.mutate({
+                        action: "batch_measure",
+                        sequence_ids: picked,
+                        a260: Number(batchA260.replace(",", ".")),
+                        dilution_factor: Number(batchDilution || 10),
+                        stock_volume_ul: Number(batchVolUl || 200),
+                        tube_count: Number(batchTubeCount || 1),
+                        auto_submit_qc: false,
+                      })
+                    }
+                  >
+                    🧪 Ghi Cắt cột + Tinh sạch + Đo OD Hàng loạt
+                  </Button>
+                  <Button
+                    disabled={batchAct.isPending || !(Number(batchA260.replace(",", ".")) > 0)}
+                    onClick={() =>
+                      batchAct.mutate({
+                        action: "batch_measure",
+                        sequence_ids: picked,
+                        a260: Number(batchA260.replace(",", ".")),
+                        dilution_factor: Number(batchDilution || 10),
+                        stock_volume_ul: Number(batchVolUl || 200),
+                        tube_count: Number(batchTubeCount || 1),
+                        auto_submit_qc: true,
+                      })
+                    }
+                  >
+                    🚀 Hoàn tất Hậu tổng hợp &amp; Gửi QC Hàng loạt
+                  </Button>
+                </div>
+                <BulkStep
+                  ids={picked}
+                  onDone={() => {
+                    setPicked([]);
+                    refreshKeys.forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
+                  }}
+                />
+              </div>
+            )}
+            {filteredList.length > 0 && (
+              <Table head={["", "Trình tự", "Đơn", "Hạn giao", "Thang / tinh sạch", "Tổng OD", "nmol", "QC", "Trạng thái"]}>
+                {filteredList.map((r) => (
+                  <tr key={r.id} className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50" onClick={() => setSelected(r.id)}>
+                    <td className="py-2 pr-2" onClick={(e) => e.stopPropagation()}>
+                      {canManage && (r.status === "POST_PROCESSING" || r.status === "SYNTHESIZED") && (
+                        <input type="checkbox" checked={picked.includes(r.id)} onChange={() => setPicked(picked.includes(r.id) ? picked.filter((x) => x !== r.id) : [...picked, r.id])} aria-label={`Chọn ${r.code} để xử lý hàng loạt`} />
+                      )}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs">{r.code} <span className="font-sans text-slate-500">{r.name}</span></td>
+                    <td className="py-2 pr-3 font-mono text-xs">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setOrderFilter(r.order_code ?? "__POOL__");
+                        }}
+                        title="Bấm để lọc riêng các trình tự thuộc đơn này"
+                        className="font-bold text-sky-700 dark:text-sky-400 hover:underline cursor-pointer"
+                      >
+                        {r.order_code ?? "gộp"}
+                      </button>
+                    </td>
+                    <td className="py-2 pr-3 text-xs whitespace-nowrap">{fmtDate(r.due_date)}</td>
+                    <td className="py-2 pr-3 text-xs">{r.scale_code} · {PURIFICATION[r.purification as keyof typeof PURIFICATION]}</td>
+                    <td className="py-2 pr-3 text-right">{fmtQty(r.od_total)}</td>
+                    <td className="py-2 pr-3 text-right">{fmtQty(r.nmol)}</td>
+                    <td className="py-2 pr-3 text-xs">{r.qc_code ? `${r.qc_code} · ${QC_STATUS_LABEL[r.qc_status!]}` : "—"}</td>
+                    <td className="py-2 pr-3"><StatusBadge status={SEQ_STATUS[r.status][0]} label={SEQ_STATUS[r.status][1]} /></td>
+                  </tr>
+                ))}
+              </Table>
+            )}
+          </Card>
+        </>
+      )}
     </div>
   );
 }

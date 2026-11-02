@@ -12,79 +12,29 @@ import { createRequest, prMachine } from "../purchase/requests";
 import "./permissions";
 import "../purchase/permissions";
 
+let warehouseOpsSchemaEnsured = false;
+
 export async function ensureWarehouseOpsSchema(tx: Tx): Promise<void> {
+  if (warehouseOpsSchemaEnsured) return;
   await tx.query(`
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
     ALTER TABLE master.item ADD COLUMN IF NOT EXISTS min_safety_stock NUMERIC(18,6) NOT NULL DEFAULT 10;
     ALTER TABLE master.item ADD COLUMN IF NOT EXISTS reorder_qty NUMERIC(18,6) NOT NULL DEFAULT 50;
     ALTER TABLE master.item ADD COLUMN IF NOT EXISTS lead_time_days INT NOT NULL DEFAULT 14;
+    ALTER TABLE inv.container ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ;
+    ALTER TABLE inv.container ADD COLUMN IF NOT EXISTS open_expiry_date DATE;
+
+    CREATE INDEX IF NOT EXISTS idx_master_item_code_trgm ON master.item USING gin (code gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_master_item_name_trgm ON master.item USING gin (name gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_inv_lot_code_trgm ON inv.lot USING gin (code gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_inv_lot_mfr_trgm ON inv.lot USING gin (mfr_lot_no gin_trgm_ops);
+    CREATE INDEX IF NOT EXISTS idx_inv_stock_balance_active ON inv.stock_balance (location_id, item_id, lot_id) WHERE qty_on_hand > 0;
+    CREATE INDEX IF NOT EXISTS idx_inv_stock_balance_item_active ON inv.stock_balance (item_id, lot_id) WHERE qty_on_hand > 0;
+    CREATE INDEX IF NOT EXISTS idx_inv_lot_fefo ON inv.lot (item_id, status, expiry_date ASC NULLS LAST);
+    CREATE INDEX IF NOT EXISTS idx_inv_stock_doc_wh_created ON inv.stock_document (warehouse_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_inv_stock_doc_code_trgm ON inv.stock_document USING gin (code gin_trgm_ops);
   `);
-
-  const khoTong = (
-    await tx.query(
-      `SELECT w.id,
-              (SELECT l.id FROM master.location l WHERE l.warehouse_id = w.id AND l.is_quarantine = false AND l.status = 'ACTIVE' ORDER BY l.code LIMIT 1) AS a1_id,
-              (SELECT l.id FROM master.location l WHERE l.warehouse_id = w.id AND l.is_quarantine = true AND l.status = 'ACTIVE' ORDER BY l.code LIMIT 1) AS bt_id
-         FROM master.warehouse w
-        WHERE w.code = 'KHO-TONG' AND w.status = 'ACTIVE' LIMIT 1`
-    )
-  ).rows[0];
-
-  if (khoTong && khoTong.a1_id && khoTong.bt_id) {
-    const cnt = Number(
-      (
-        await tx.query(
-          "SELECT count(*)::int AS c FROM inv.stock_balance b JOIN master.location l ON l.id = b.location_id WHERE l.warehouse_id = $1 AND b.qty_on_hand > 0",
-          [khoTong.id]
-        )
-      ).rows[0]?.c ?? 0
-    );
-    if (cnt === 0) {
-      const sampleItems = (
-        await tx.query(
-          "SELECT id, code, base_uom FROM master.item WHERE status = 'ACTIVE' AND is_purchasable = true AND tracking = 'LOT' ORDER BY code LIMIT 4"
-        )
-      ).rows;
-      const rootActor: AuthzActor = { userId: 1, name: "Hệ thống", isRootAdmin: true, isPortalAdmin: true };
-      const lines: any[] = [];
-      for (const [idx, it] of sampleItems.entries()) {
-        const lotCode = `LOT-HUB-2610-0${idx + 1}`;
-        let lot = (await tx.query("SELECT * FROM inv.lot WHERE code = $1 LIMIT 1", [lotCode])).rows[0];
-        if (!lot) {
-          lot = await createLot(tx, rootActor, {
-            item_id: it.id,
-            origin: "OPENING",
-            code: lotCode,
-            mfr_lot_no: `MFR-HUB-0${idx + 1}`,
-            mfg_date: "2026-09-01",
-            expiry_date: idx === 0 ? "2026-12-15" : "2027-09-01",
-          });
-        }
-        await tx.query("UPDATE inv.lot SET status = 'RELEASED' WHERE id = $1", [lot.id]);
-        lines.push({
-          item_id: it.id,
-          lot_id: lot.id,
-          to_location_id: idx === 3 ? khoTong.bt_id : khoTong.a1_id,
-          qty: idx === 3 ? 120 : 500,
-          uom: it.base_uom,
-        });
-      }
-      if (lines.length > 0) {
-        const doc = await createStockDocument(
-          tx,
-          rootActor,
-          {
-            doc_type: "RECEIPT",
-            reason_code: "OPENING",
-            warehouse_id: khoTong.id,
-            notes: "Tồn kho đầu kỳ tại Kho Trung Tâm KHO-TONG (A1 & BT chờ Put-Away)",
-            lines,
-          },
-          { trusted: true }
-        );
-        await runTransition(tx, stockDocumentMachine, rootActor, { id: doc.id, action: "post", expectedVersion: doc.version }, { trusted: true });
-      }
-    }
-  }
+  warehouseOpsSchemaEnsured = true;
 }
 
 export async function getWarehouseHubOverview(tx: Tx, actor: AuthzActor) {
@@ -94,41 +44,42 @@ export async function getWarehouseHubOverview(tx: Tx, actor: AuthzActor) {
 
   const warehouses = (
     await tx.query(
-      `SELECT w.id, w.code, w.name, w.purpose, w.owner_org_unit_id,
+      `WITH wh_agg AS (
+         SELECT loc.warehouse_id,
+                count(DISTINCT b.lot_id) FILTER (
+                  WHERE loc.is_quarantine = false
+                    AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
+                    AND (b.qty_on_hand - b.qty_reserved) > 0
+                )::int AS released_lot_count,
+                count(DISTINCT b.lot_id) FILTER (
+                  WHERE (loc.is_quarantine = true OR COALESCE(lot.status, 'RELEASED') IN ('QUARANTINE', 'PENDING_QC'))
+                    AND b.qty_on_hand > 0
+                )::int AS quarantine_lot_count,
+                count(DISTINCT b.lot_id) FILTER (
+                  WHERE loc.is_quarantine = true
+                    AND lot.status = 'RELEASED'
+                    AND (b.qty_on_hand - b.qty_reserved) > 0
+                )::int AS ready_putaway_count,
+                count(DISTINCT b.item_id) FILTER (WHERE b.qty_on_hand > 0)::int AS active_item_count
+           FROM inv.stock_balance b
+           JOIN master.location loc ON loc.id = b.location_id
+           LEFT JOIN inv.lot lot ON lot.id = b.lot_id
+          WHERE b.qty_on_hand > 0
+          GROUP BY loc.warehouse_id
+       )
+       SELECT w.id, w.code, w.name, w.purpose, w.owner_org_unit_id,
               ou.code AS owner_code, ou.name AS owner_name, ou.module_key AS owner_module_key,
               (SELECT id FROM master.location l WHERE l.warehouse_id = w.id AND l.is_quarantine = true AND l.status = 'ACTIVE' ORDER BY l.code LIMIT 1) AS bt_location_id,
               (SELECT code FROM master.location l WHERE l.warehouse_id = w.id AND l.is_quarantine = true AND l.status = 'ACTIVE' ORDER BY l.code LIMIT 1) AS bt_location_code,
               (SELECT id FROM master.location l WHERE l.warehouse_id = w.id AND l.is_quarantine = false AND l.status = 'ACTIVE' ORDER BY l.code LIMIT 1) AS a1_location_id,
               (SELECT code FROM master.location l WHERE l.warehouse_id = w.id AND l.is_quarantine = false AND l.status = 'ACTIVE' ORDER BY l.code LIMIT 1) AS a1_location_code,
-              (SELECT count(DISTINCT b.lot_id)::int
-                 FROM inv.stock_balance b
-                 JOIN master.location loc ON loc.id = b.location_id
-                 LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-                WHERE loc.warehouse_id = w.id
-                  AND loc.is_quarantine = false
-                  AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
-                  AND (b.qty_on_hand - b.qty_reserved) > 0) AS released_lot_count,
-              (SELECT count(DISTINCT b.lot_id)::int
-                 FROM inv.stock_balance b
-                 JOIN master.location loc ON loc.id = b.location_id
-                 LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-                WHERE loc.warehouse_id = w.id
-                  AND (loc.is_quarantine = true OR COALESCE(lot.status, 'RELEASED') IN ('QUARANTINE', 'PENDING_QC'))
-                  AND b.qty_on_hand > 0) AS quarantine_lot_count,
-              (SELECT count(DISTINCT b.lot_id)::int
-                 FROM inv.stock_balance b
-                 JOIN master.location loc ON loc.id = b.location_id
-                 JOIN inv.lot lot ON lot.id = b.lot_id
-                WHERE loc.warehouse_id = w.id
-                  AND loc.is_quarantine = true
-                  AND lot.status = 'RELEASED'
-                  AND (b.qty_on_hand - b.qty_reserved) > 0) AS ready_putaway_count,
-              (SELECT count(DISTINCT b.item_id)::int
-                 FROM inv.stock_balance b
-                 JOIN master.location loc ON loc.id = b.location_id
-                WHERE loc.warehouse_id = w.id AND b.qty_on_hand > 0) AS active_item_count
+              COALESCE(wa.released_lot_count, 0) AS released_lot_count,
+              COALESCE(wa.quarantine_lot_count, 0) AS quarantine_lot_count,
+              COALESCE(wa.ready_putaway_count, 0) AS ready_putaway_count,
+              COALESCE(wa.active_item_count, 0) AS active_item_count
          FROM master.warehouse w
          LEFT JOIN core.org_unit ou ON ou.id = w.owner_org_unit_id
+         LEFT JOIN wh_agg wa ON wa.warehouse_id = w.id
         WHERE w.status = 'ACTIVE'
         ORDER BY CASE w.code
           WHEN 'KHO-TONG' THEN 1
@@ -168,7 +119,8 @@ export async function getWarehouseHubOverview(tx: Tx, actor: AuthzActor) {
           AND loc.is_quarantine = false
           AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
           AND (b.qty_on_hand - b.qty_reserved) > 0
-        ORDER BY CASE w.code WHEN 'KHO-TONG' THEN 0 ELSE 1 END, i.code, lot.expiry_date ASC NULLS LAST`
+        ORDER BY CASE w.code WHEN 'KHO-TONG' THEN 0 ELSE 1 END, i.code, lot.expiry_date ASC NULLS LAST
+        LIMIT 200`
     )
   ).rows;
 
@@ -189,7 +141,8 @@ export async function getWarehouseHubOverview(tx: Tx, actor: AuthzActor) {
         WHERE loc.is_quarantine = true
           AND lot.status = 'RELEASED'
           AND (b.qty_on_hand - b.qty_reserved) > 0
-        ORDER BY w.code, i.code`
+        ORDER BY w.code, i.code
+        LIMIT 100`
     )
   ).rows;
 
@@ -217,70 +170,57 @@ export async function getWarehouseHubOverview(tx: Tx, actor: AuthzActor) {
 
   const low_stock_radar = (
     await tx.query(
-      `SELECT i.id AS item_id, i.code AS item_code, i.name AS item_name, i.item_type, i.base_uom,
+      `WITH stock_agg AS (
+         SELECT b.item_id,
+                COALESCE(sum(b.qty_on_hand - b.qty_reserved) FILTER (
+                  WHERE w.code = 'KHO-TONG' AND loc.is_quarantine = false AND COALESCE(lot.status, 'RELEASED') = 'RELEASED' AND (b.qty_on_hand - b.qty_reserved) > 0
+                ), 0)::float AS hub_available,
+                COALESCE(sum(b.qty_on_hand - b.qty_reserved) FILTER (
+                  WHERE w.code <> 'KHO-TONG' AND loc.is_quarantine = false AND COALESCE(lot.status, 'RELEASED') = 'RELEASED' AND (b.qty_on_hand - b.qty_reserved) > 0
+                ), 0)::float AS branch_available,
+                COALESCE(sum(b.qty_on_hand) FILTER (
+                  WHERE (loc.is_quarantine = true OR COALESCE(lot.status, 'RELEASED') IN ('QUARANTINE', 'PENDING_QC')) AND b.qty_on_hand > 0
+                ), 0)::float AS quarantine_qty
+           FROM inv.stock_balance b
+           JOIN master.location loc ON loc.id = b.location_id
+           JOIN master.warehouse w ON w.id = loc.warehouse_id
+           LEFT JOIN inv.lot lot ON lot.id = b.lot_id
+          WHERE b.qty_on_hand > 0
+          GROUP BY b.item_id
+       ),
+       pr_agg AS (
+         SELECT prl.item_id,
+                COALESCE(sum(prl.qty - prl.qty_ordered), 0)::float AS open_pr_qty
+           FROM purchase.purchase_request_line prl
+           JOIN purchase.purchase_request pr ON pr.id = prl.pr_id
+          WHERE pr.status IN ('DRAFT', 'SUBMITTED', 'PENDING_BOD', 'APPROVED')
+            AND prl.qty > prl.qty_ordered
+          GROUP BY prl.item_id
+       ),
+       po_agg AS (
+         SELECT pol.item_id,
+                COALESCE(sum(pol.qty_ordered - pol.qty_received), 0)::float AS open_po_qty
+           FROM purchase.purchase_order_line pol
+           JOIN purchase.purchase_order po ON po.id = pol.po_id
+          WHERE po.status IN ('DRAFT', 'ISSUED', 'PARTIALLY_RECEIVED')
+            AND pol.qty_ordered > pol.qty_received
+          GROUP BY pol.item_id
+       )
+       SELECT i.id AS item_id, i.code AS item_code, i.name AS item_name, i.item_type, i.base_uom,
               COALESCE(i.min_safety_stock, 10)::float AS min_safety_stock,
               COALESCE(i.reorder_qty, 50)::float AS reorder_qty,
               COALESCE(i.lead_time_days, 14)::int AS lead_time_days,
-              COALESCE((
-                SELECT sum(b.qty_on_hand - b.qty_reserved)::float
-                  FROM inv.stock_balance b
-                  JOIN master.location loc ON loc.id = b.location_id
-                  JOIN master.warehouse w ON w.id = loc.warehouse_id
-                  LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-                 WHERE b.item_id = i.id
-                   AND w.code = 'KHO-TONG'
-                   AND loc.is_quarantine = false
-                   AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
-                   AND (b.qty_on_hand - b.qty_reserved) > 0
-              ), 0) AS hub_available,
-              COALESCE((
-                SELECT sum(b.qty_on_hand - b.qty_reserved)::float
-                  FROM inv.stock_balance b
-                  JOIN master.location loc ON loc.id = b.location_id
-                  JOIN master.warehouse w ON w.id = loc.warehouse_id
-                  LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-                 WHERE b.item_id = i.id
-                   AND w.code <> 'KHO-TONG'
-                   AND loc.is_quarantine = false
-                   AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
-                   AND (b.qty_on_hand - b.qty_reserved) > 0
-              ), 0) AS branch_available,
-              COALESCE((
-                SELECT sum(b.qty_on_hand)::float
-                  FROM inv.stock_balance b
-                  JOIN master.location loc ON loc.id = b.location_id
-                  LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-                 WHERE b.item_id = i.id
-                   AND (loc.is_quarantine = true OR COALESCE(lot.status, 'RELEASED') IN ('QUARANTINE', 'PENDING_QC'))
-                   AND b.qty_on_hand > 0
-              ), 0) AS quarantine_qty,
-              COALESCE((
-                SELECT sum(prl.qty - prl.qty_ordered)::float
-                  FROM purchase.purchase_request_line prl
-                  JOIN purchase.purchase_request pr ON pr.id = prl.pr_id
-                 WHERE prl.item_id = i.id
-                   AND pr.status IN ('DRAFT', 'SUBMITTED', 'PENDING_BOD', 'APPROVED')
-                   AND prl.qty > prl.qty_ordered
-              ), 0) AS open_pr_qty,
-              COALESCE((
-                SELECT sum(pol.qty_ordered - pol.qty_received)::float
-                  FROM purchase.purchase_order_line pol
-                  JOIN purchase.purchase_order po ON po.id = pol.po_id
-                 WHERE pol.item_id = i.id
-                   AND po.status IN ('DRAFT', 'ISSUED', 'PARTIALLY_RECEIVED')
-                   AND pol.qty_ordered > pol.qty_received
-              ), 0) AS open_po_qty
+              COALESCE(sa.hub_available, 0) AS hub_available,
+              COALESCE(sa.branch_available, 0) AS branch_available,
+              COALESCE(sa.quarantine_qty, 0) AS quarantine_qty,
+              COALESCE(pra.open_pr_qty, 0) AS open_pr_qty,
+              COALESCE(poa.open_po_qty, 0) AS open_po_qty
          FROM master.item i
+         LEFT JOIN stock_agg sa ON sa.item_id = i.id
+         LEFT JOIN pr_agg pra ON pra.item_id = i.id
+         LEFT JOIN po_agg poa ON poa.item_id = i.id
         WHERE i.status = 'ACTIVE' AND i.is_purchasable = true
-        ORDER BY (
-          COALESCE((
-            SELECT sum(b.qty_on_hand - b.qty_reserved)::float
-              FROM inv.stock_balance b
-              JOIN master.location loc ON loc.id = b.location_id
-              LEFT JOIN inv.lot lot ON lot.id = b.lot_id
-             WHERE b.item_id = i.id AND loc.is_quarantine = false AND COALESCE(lot.status, 'RELEASED') = 'RELEASED'
-          ), 0) - COALESCE(i.min_safety_stock, 10)::float
-        ) ASC, i.code ASC
+        ORDER BY (COALESCE(sa.hub_available, 0) + COALESCE(sa.branch_available, 0) - COALESCE(i.min_safety_stock, 10)::float) ASC, i.code ASC
         LIMIT 30`
     )
   ).rows;
@@ -565,10 +505,63 @@ const holdLotSchema = z.object({
 });
 
 export async function holdNearExpiryLot(tx: Tx, actor: AuthzActor, input: unknown) {
-  await authorizeAnywhere(tx, actor, "inv.stock.view");
+  await authorizeAnywhere(tx, actor, "inv.lot.hold");
   const d = parseInput(holdLotSchema, input);
   const lot = (await tx.query("SELECT * FROM inv.lot WHERE id = $1", [d.lot_id])).rows[0];
   if (!lot) throw notFound("Lô hàng");
   if (lot.status !== "RELEASED") throw invalid(`Chỉ khóa được lô đang ở trạng thái RELEASED (hiện tại: ${lot.status}).`);
-  return runTransition(tx, lotMachine, actor, { id: lot.id, action: "hold", expectedVersion: lot.version, reason: d.reason }, { trusted: true });
+  return runTransition(tx, lotMachine, actor, { id: lot.id, action: "hold", expectedVersion: lot.version, reason: d.reason });
+}
+
+const openContainerSchema = z.object({
+  container_id: z.string().uuid("Chọn lọ / bình hóa chất cần mở nắp"),
+  days: z.coerce.number().int().positive("Số ngày hạn dùng sau mở nắp phải lớn hơn 0").optional(),
+  open_shelf_life_days: z.coerce.number().int().positive().optional(),
+  reason: z.string().trim().max(500).optional().nullable(),
+});
+
+/**
+ * GMP Opened-Container Shelf-Life Control (open_container):
+ * Sets opened_at = now() and open_expiry_date = (CURRENT_DATE + make_interval(days => $days))::date
+ * on inv.container and writes an audit trail entry.
+ */
+export async function openReagentContainer(tx: Tx, actor: AuthzActor, input: unknown) {
+  await authorizeAnywhere(tx, actor, "inv.document.create");
+  await ensureWarehouseOpsSchema(tx);
+  const d = parseInput(openContainerSchema, input);
+  const cur = (
+    await tx.query(
+      `SELECT c.*, i.open_shelf_life_days AS item_open_shelf_life_days
+         FROM inv.container c
+         LEFT JOIN inv.lot l ON l.id = c.lot_id
+         LEFT JOIN master.item i ON i.id = l.item_id
+        WHERE c.id = $1 FOR UPDATE OF c`,
+      [d.container_id]
+    )
+  ).rows[0];
+  if (!cur) throw notFound("Bình / lọ chứa hóa chất (container)");
+  const days = d.days ?? d.open_shelf_life_days ?? Number(cur.item_open_shelf_life_days || 30);
+  const upd = (
+    await tx.query(
+      `UPDATE inv.container
+          SET opened_at = now(),
+              open_expiry_date = (CURRENT_DATE + make_interval(days => $2::int))::date,
+              status = CASE WHEN status = 'AVAILABLE' THEN 'IN_USE' ELSE status END
+        WHERE id = $1
+        RETURNING *`,
+      [d.container_id, days]
+    )
+  ).rows[0];
+  await writeAudit(tx, actor, {
+    entityType: "container",
+    entityId: d.container_id,
+    action: "open_container",
+    changes: {
+      opened_at: [cur.opened_at ?? null, upd.opened_at],
+      open_expiry_date: [cur.open_expiry_date ?? null, upd.open_expiry_date],
+      status: [cur.status, upd.status],
+    },
+    reason: d.reason || `Mở nắp bình/lọ hóa chất (hạn dùng sau mở nắp: ${days} ngày)`,
+  });
+  return upd;
 }

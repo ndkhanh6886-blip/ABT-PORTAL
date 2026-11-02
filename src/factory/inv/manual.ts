@@ -7,6 +7,9 @@ import { createStockDocument, postStockDocument, stockDocumentMachine, type Stoc
 import { viewableWarehouses } from "./queries";
 import { stockLineSchema } from "./schemas";
 import { listAllowedActions } from "../core/stateMachine";
+import { openReagentContainer } from "./warehouseOps";
+
+export { openReagentContainer };
 
 /**
  * Documents a person may raise by hand. Receipts come only from purchasing / production (they create
@@ -77,20 +80,56 @@ export async function putAwayLot(tx: Tx, actor: AuthzActor, input: unknown): Pro
   return postStockDocument(tx, actor, doc.id, doc.version);
 }
 
-export async function listDocuments(tx: Tx, actor: AuthzActor, warehouseId?: string) {
+const docListQuerySchema = z.object({
+  warehouse_id: z.string().uuid().optional().or(z.literal("")),
+  doc_type: z.enum(["RECEIPT", "RETURN", "ISSUE", "TRANSFER", "ADJUSTMENT", "COUNT_ADJUST"]).optional().or(z.literal("")),
+  q: z.string().trim().max(100).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  page_size: z.coerce.number().int().min(1).max(200).default(50),
+});
+
+export async function listDocuments(tx: Tx, actor: AuthzActor, queryOrWarehouseId?: unknown) {
+  const q =
+    typeof queryOrWarehouseId === "string" || queryOrWarehouseId === undefined
+      ? { warehouse_id: queryOrWarehouseId || undefined, doc_type: undefined, q: undefined, page: 1, page_size: 50 }
+      : parseInput(docListQuerySchema, queryOrWarehouseId);
+
   const allowed = (await viewableWarehouses(tx, actor)).map((w) => w.id);
-  if (warehouseId && !allowed.includes(warehouseId)) throw forbidden("Bạn không có quyền xem kho này.");
-  return (
+  const whId = q.warehouse_id || undefined;
+  if (whId && !allowed.includes(whId)) throw forbidden("Bạn không có quyền xem kho này.");
+
+  const params: unknown[] = [whId ? [whId] : allowed];
+  const where: string[] = ["d.warehouse_id = ANY($1::uuid[])"];
+  if (q.doc_type) {
+    params.push(q.doc_type);
+    where.push(`d.doc_type = $${params.length}`);
+  }
+  if (q.q) {
+    params.push(`%${q.q}%`);
+    where.push(`(d.code ILIKE $${params.length} OR COALESCE(d.notes, '') ILIKE $${params.length} OR d.reason_code ILIKE $${params.length})`);
+  }
+
+  const whereSql = where.join(" AND ");
+  const total = Number(
+    (await tx.query(`SELECT count(*)::int AS c FROM inv.stock_document d WHERE ${whereSql}`, params)).rows[0]?.c ?? 0
+  );
+
+  params.push(q.page_size, (q.page - 1) * q.page_size);
+  const rows = (
     await tx.query(
       `SELECT d.id, d.code, d.doc_type, d.reason_code, d.status, d.posted_at, d.created_at, d.notes, d.reversal_of_id,
               w.code AS warehouse_code, up.display_name AS created_by_name,
               (SELECT count(*)::int FROM inv.stock_document_line l WHERE l.document_id = d.id) AS line_count
          FROM inv.stock_document d JOIN master.warehouse w ON w.id = d.warehouse_id
          LEFT JOIN core.user_profile up ON up.user_id = d.created_by
-        WHERE d.warehouse_id = ANY($1::uuid[]) ORDER BY d.created_at DESC LIMIT 300`,
-      [warehouseId ? [warehouseId] : allowed]
+        WHERE ${whereSql}
+        ORDER BY d.created_at DESC
+        LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
     )
   ).rows;
+
+  return { rows, total, page: q.page, page_size: q.page_size };
 }
 
 export async function getDocumentDetail(tx: Tx, actor: AuthzActor, id: string) {

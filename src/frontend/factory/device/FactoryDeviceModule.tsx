@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   AlertTriangle,
   Cpu,
@@ -34,6 +34,26 @@ export function FactoryDeviceModule() {
   const me = useFactoryMe();
   const perms = new Set(me.data?.permissions ?? []);
   const [tab, setTab] = useState<TabKey>("rd_transfer");
+  const [initialPoId, setInitialPoId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const pendingPoId = window.sessionStorage.getItem("factory_open_device_po_id");
+    if (pendingPoId) {
+      window.sessionStorage.removeItem("factory_open_device_po_id");
+      setInitialPoId(pendingPoId);
+      setTab("po_mrp");
+    }
+    const handleOpenDevicePo = (e: Event) => {
+      const custom = e as CustomEvent<{ poId?: string }>;
+      if (custom.detail?.poId) {
+        setInitialPoId(custom.detail.poId);
+      }
+      setTab("po_mrp");
+    };
+    window.addEventListener("factory-open-device-po", handleOpenDevicePo);
+    return () => window.removeEventListener("factory-open-device-po", handleOpenDevicePo);
+  }, []);
 
   const tabs: { key: TabKey; label: string; icon: React.ElementType }[] = [
     { key: "rd_transfer", label: "1. R&D & Chuyển giao", icon: FlaskConical },
@@ -86,6 +106,7 @@ export function FactoryDeviceModule() {
       )}
       {tab === "po_mrp" && (
         <DevicePoMrpView
+          initialPoId={initialPoId}
           onNavigateTab={(target) => {
             setTab(target);
           }}
