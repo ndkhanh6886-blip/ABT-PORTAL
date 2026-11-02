@@ -256,7 +256,7 @@ export async function GET(req: NextRequest) {
         query("SELECT id, customer_code, name, address, phone, email, contact_person, contacts, classification, region, province FROM sales_customers ORDER BY name ASC"),
         query("SELECT code, name, category, unit, standard_price FROM products ORDER BY name ASC"),
         query("SELECT id, employee_code, full_name, department, position, email, phone FROM personnel ORDER BY full_name ASC"),
-        query("SELECT id, username, full_name, department, role, email FROM users ORDER BY full_name ASC"),
+        query("SELECT id, username, full_name, department, role, email, permissions FROM users ORDER BY full_name ASC"),
         query("SELECT * FROM workflow_templates WHERE is_active = TRUE ORDER BY id ASC"),
         // Đơn bán gần đây cho ô "Liên quan tới: Đơn hàng" (chỉ mã đơn + khách hàng)
         query("SELECT order_code, customer_name FROM sales_orders ORDER BY id DESC LIMIT 500").catch((err: any) => {
@@ -274,7 +274,8 @@ export async function GET(req: NextRequest) {
         personnel: personnel.rows,
         users: users.rows,
         templates: templates.rows,
-        orders: recentOrders.rows
+        orders: recentOrders.rows,
+        currentUserPermissions: authUser.permissions || {}
       });
     }
 

@@ -1038,6 +1038,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
         body: JSON.stringify({
           id: permissionsModalUser.id,
           username: permissionsModalUser.username,
+          full_name: permissionsModalUser.full_name,
           permissions: currentEditingPermissions
         })
       });

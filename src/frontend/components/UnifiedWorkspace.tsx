@@ -1483,7 +1483,8 @@ export const renderWorkflowResultSummary = (summary: any) => {
 
 export const UnifiedWorkspace: React.FC = () => {
   const { showToast, notifyActivity, filteredNotifications, markAsRead } = useNotification();
-  const { user, can } = useAuth();
+  const { user, can, updateUser } = useAuth();
+  const [serverMyPermissions, setServerMyPermissions] = useState<Record<string, boolean>>({});
   const warnNoTemplatePermission = () =>
     showToast("Bạn chưa có quyền tạo / sửa quy trình mẫu. Nhờ Quản trị viên cấp quyền \"Quản lý quy trình phối hợp mẫu\" (Cấu hình → Phân quyền) hoặc gửi nội dung quy trình để Quản trị viên tạo.", "warning");
 
@@ -1506,7 +1507,33 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [isDirector, userRole]);
 
   // Tạo / sửa / xóa quy trình mẫu: Ban Giám Đốc, Trưởng/Phó phòng hoặc người được cấp quyền "Quản lý quy trình phối hợp mẫu"
-  const canManageTemplates = Boolean(isDirector || isManager || (can && can("workspace.manage_templates")));
+  const canManageTemplates = Boolean(
+    isDirector ||
+    isManager ||
+    (can && can("workspace.manage_templates")) ||
+    serverMyPermissions["*"] ||
+    serverMyPermissions["workspace.manage_templates"]
+  );
+
+  const ensureManageTemplatesPermission = async (): Promise<boolean> => {
+    if (canManageTemplates) return true;
+    try {
+      const r = await fetch("/api/auth?action=session");
+      if (r.ok) {
+        const d = await r.json().catch(() => null);
+        const livePerms = d?.user?.permissions;
+        if (livePerms && typeof livePerms === "object") {
+          setServerMyPermissions(livePerms);
+          updateUser({ permissions: livePerms });
+          if (livePerms["*"] || livePerms["workspace.manage_templates"]) {
+            return true;
+          }
+        }
+      }
+    } catch {}
+    warnNoTemplatePermission();
+    return false;
+  };
 
   const isStaff = !isDirector && !isManager;
   const rolePerspective = isDirector ? "director" : isManager ? "manager" : "staff";
@@ -2090,6 +2117,32 @@ export const UnifiedWorkspace: React.FC = () => {
         if (Array.isArray(data.customers)) setCustomerList(data.customers);
         if (Array.isArray(data.products)) setProductList(data.products);
         setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
+
+        // Đồng bộ ngay quyền mới nhất từ máy chủ cho tài khoản đang đăng nhập (không cần đăng xuất / F5)
+        const mergedMyPerms: Record<string, boolean> = {
+          ...(data.currentUserPermissions && typeof data.currentUserPermissions === "object" ? data.currentUserPermissions : {})
+        };
+        if (Array.isArray(data.users)) {
+          data.users.forEach((uRow: any) => {
+            const matchByUsername = user?.username && uRow.username && String(uRow.username).toLowerCase() === String(user.username).toLowerCase();
+            const matchByName = currentStaffName && uRow.full_name && sameStaffName(uRow.full_name, currentStaffName);
+            if (matchByUsername || matchByName) {
+              let rowPerms = uRow.permissions;
+              if (typeof rowPerms === "string") {
+                try { rowPerms = JSON.parse(rowPerms); } catch { rowPerms = {}; }
+              }
+              if (rowPerms && typeof rowPerms === "object") {
+                Object.entries(rowPerms).forEach(([k, v]) => {
+                  if (v === true) mergedMyPerms[k] = true;
+                });
+              }
+            }
+          });
+        }
+        if (Object.keys(mergedMyPerms).length > 0) {
+          setServerMyPermissions(mergedMyPerms);
+          updateUser({ permissions: { ...(user?.permissions || {}), ...mergedMyPerms } });
+        }
 
         // Load suppliers from procurement API & product manufacturers
         try {
@@ -3650,8 +3703,8 @@ export const UnifiedWorkspace: React.FC = () => {
   };
 
   // Open Create Template Modal
-  const handleOpenCreateTemplate = () => {
-    if (!canManageTemplates) { warnNoTemplatePermission(); return; }
+  const handleOpenCreateTemplate = async () => {
+    if (!(await ensureManageTemplatesPermission())) return;
     setTemplateForm({
       id: null,
       code: `WF-TMP-${Date.now().toString().slice(-4)}`,
@@ -3691,8 +3744,8 @@ export const UnifiedWorkspace: React.FC = () => {
     setIsTemplateModalOpen(true);
   };
 
-  const handleEditTemplate = (tmpl: any) => {
-    if (!canManageTemplates) { warnNoTemplatePermission(); return; }
+  const handleEditTemplate = async (tmpl: any) => {
+    if (!(await ensureManageTemplatesPermission())) return;
     setTemplateForm({
       id: typeof tmpl.id === "number" ? tmpl.id : null,
       code: tmpl.code || tmpl.id || `WF-TMP-${Date.now().toString().slice(-4)}`,
@@ -3759,8 +3812,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Lưu trực tiếp các bước & thời gian SLA đang chỉnh sửa trong Modal Khởi Tạo Phiếu vào Mẫu Quy Trình
   const handleSaveCurrentWfStepsToTemplate = async () => {
-    if (!canManageTemplates) {
-      warnNoTemplatePermission();
+    if (!(await ensureManageTemplatesPermission())) {
       return;
     }
     const allTemplates = workflowTemplates.length > 0 ? workflowTemplates : DEFAULT_WORKFLOW_TEMPLATES;
@@ -6997,34 +7049,30 @@ export const UnifiedWorkspace: React.FC = () => {
                       {slaDays}d
                     </span>
                   </button>
-                  {canManageTemplates && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleEditTemplate(wf);
-                      }}
-                      title="Chỉnh sửa mẫu quy trình & thời gian SLA"
-                      className="px-2 py-1 text-[11px] font-bold border-l border-indigo-200/70 dark:border-indigo-800/70 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200/70 dark:hover:bg-indigo-800/70 transition-colors cursor-pointer shrink-0"
-                    >
-                      ✏️ Sửa
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleEditTemplate(wf);
+                    }}
+                    title="Chỉnh sửa mẫu quy trình & thời gian SLA"
+                    className="px-2 py-1 text-[11px] font-bold border-l border-indigo-200/70 dark:border-indigo-800/70 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200/70 dark:hover:bg-indigo-800/70 transition-colors cursor-pointer shrink-0"
+                  >
+                    ✏️ Sửa
+                  </button>
                 </div>
               );
             })}
             {templatesExpanded && <span className="text-[11px] text-slate-400">Chọn quy trình ở các thẻ bên dưới</span>}
             <div className="ml-auto flex items-center gap-1.5">
-              {canManageTemplates && (
-                <button
-                  type="button"
-                  onClick={handleOpenCreateTemplate}
-                  className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer flex items-center gap-1 shadow-2xs"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>+ Tạo mẫu quy trình</span>
-                </button>
-              )}
+              <button
+                type="button"
+                onClick={handleOpenCreateTemplate}
+                className="px-2.5 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer flex items-center gap-1 shadow-2xs"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Tạo mẫu quy trình</span>
+              </button>
               <button
                 type="button"
                 onClick={() => setTemplatesExpanded(v => { const n = !v; try { localStorage.setItem("ws_templates_expanded", n ? "1" : "0"); } catch {} return n; })}
@@ -7048,7 +7096,6 @@ export const UnifiedWorkspace: React.FC = () => {
                   key={wf.id || wf.code}
                   className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3.5 shadow-xs flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-700 transition-all group relative"
                 >
-                  {canManageTemplates && (
                   <div className="absolute top-2 right-2 flex items-center gap-1">
                     <button
                       type="button"
@@ -7058,7 +7105,7 @@ export const UnifiedWorkspace: React.FC = () => {
                     >
                       ✏️ Sửa
                     </button>
-                    {isCustom && typeof wf.id === "number" && (
+                    {canManageTemplates && isCustom && typeof wf.id === "number" && (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleDeleteTemplate(wf.id); }}
@@ -7069,7 +7116,6 @@ export const UnifiedWorkspace: React.FC = () => {
                       </button>
                     )}
                   </div>
-                  )}
 
                   <div>
                     <div className="flex items-center gap-2 mb-2">
@@ -7098,16 +7144,14 @@ export const UnifiedWorkspace: React.FC = () => {
                     </p>
                   </div>
                   <div className="flex items-center gap-1.5">
-                    {canManageTemplates && (
-                      <button
-                        type="button"
-                        onClick={() => handleEditTemplate(wf)}
-                        className="py-1.5 px-2.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer shrink-0"
-                        title="Chỉnh sửa các bước & thời gian SLA của quy trình này"
-                      >
-                        ✏️ Sửa &amp; SLA
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleEditTemplate(wf)}
+                      className="py-1.5 px-2.5 rounded-lg text-xs font-bold border border-slate-200 dark:border-slate-700 bg-slate-50 hover:bg-slate-100 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer shrink-0"
+                      title="Chỉnh sửa các bước & thời gian SLA của quy trình này"
+                    >
+                      ✏️ Sửa &amp; SLA
+                    </button>
                     <button
                       type="button"
                       onClick={() => handleInitiateFromTemplate(wf)}

@@ -26,6 +26,36 @@ export async function getAuthorizedUser(req: Request, opts: { allowPasswordChang
     if (typeof perms === "string") {
       try { perms = JSON.parse(perms); } catch { perms = {}; }
     }
+    const mergedPerms: Record<string, boolean> = perms && typeof perms === "object" ? { ...perms } : {};
+
+    // Đồng bộ hợp nhất quyền từ các bản ghi tài khoản cùng nhân sự (VD: NV-TBR-016 vs TBR016 hoặc trùng Họ tên)
+    if (row.full_name || row.username) {
+      const aliasRes = await query(
+        `SELECT permissions FROM users
+         WHERE id != $1
+           AND permissions IS NOT NULL
+           AND (
+             ($2 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($2)))
+             OR ($3 <> '' AND (
+               LOWER(username) = LOWER(REPLACE(REPLACE($3, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA'))
+               OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBR|VIA)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+             ))
+           )`,
+        [row.id, String(row.full_name || ""), String(row.username || "")]
+      ).catch(() => ({ rows: [] as any[] }));
+      for (const aRow of aliasRes.rows) {
+        let aPerms = aRow.permissions;
+        if (typeof aPerms === "string") {
+          try { aPerms = JSON.parse(aPerms); } catch { aPerms = {}; }
+        }
+        if (aPerms && typeof aPerms === "object") {
+          for (const [k, v] of Object.entries(aPerms)) {
+            if (v === true) mergedPerms[k] = true;
+          }
+        }
+      }
+    }
+
     return {
       ...session,
       id: row.id,
@@ -33,7 +63,7 @@ export async function getAuthorizedUser(req: Request, opts: { allowPasswordChang
       full_name: row.full_name || session.full_name,
       role: row.role || "",
       department: row.department || "",
-      permissions: perms && typeof perms === "object" ? perms : {},
+      permissions: mergedPerms,
     };
   } catch {
     return null;

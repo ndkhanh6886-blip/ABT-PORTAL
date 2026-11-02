@@ -70,6 +70,7 @@ export async function GET(req: NextRequest) {
     if (action === "session" || !searchParams.get("username")) {
       const user = await fetchUser("id = $1", [me.id]);
       if (!user) return unauthorizedResponse();
+      user.permissions = { ...(user.permissions || {}), ...(me.permissions || {}) };
       return NextResponse.json({ user });
     }
 
@@ -95,11 +96,17 @@ export async function POST(req: NextRequest) {
 
     // Heartbeat / presence: only for the signed-in user, never for an arbitrary account named in the body
     if (action === "heartbeat" || action === "presence") {
-      const session = await getSessionFromRequest(req);
-      if (!session || session.role === "customer") return NextResponse.json({ success: false }, { status: 401 });
+      const me = await getAuthorizedUser(req, { allowPasswordChangePending: true });
+      if (!me || me.role === "customer") return NextResponse.json({ success: false }, { status: 401 });
       const timeExpr = status === "offline" ? "NOW() - INTERVAL '1 hour'" : "NOW()";
-      await query(`UPDATE users SET last_seen_at = ${timeExpr} WHERE id = $1`, [session.id]).catch(() => {});
-      return NextResponse.json({ success: true, timestamp: new Date().toISOString() });
+      await query(`UPDATE users SET last_seen_at = ${timeExpr} WHERE id = $1`, [me.id]).catch(() => {});
+      return NextResponse.json({
+        success: true,
+        timestamp: new Date().toISOString(),
+        role: me.role,
+        department: me.department,
+        permissions: me.permissions || {}
+      });
     }
 
     if (action === "logout") {

@@ -523,18 +523,25 @@ export async function POST(req: NextRequest) {
     }
 
     if (action === "update_permissions") {
-      const { id, permissions, username } = body;
+      const { id, permissions, username, full_name } = body;
       const cleanUsername = String(username || "").trim();
+      const cleanFullName = String(full_name || "").trim();
       const numId = (id && !isNaN(Number(id))) ? Number(id) : null;
       const cleanPerms = JSON.stringify(permissions || {});
 
-      // Cập nhật đa tầng an toàn: theo ID số, Username chính thức, hoặc các định dạng mã nhân viên (NV-ABT / NV-VIA / VIA)
+      // Cập nhật đa tầng an toàn: theo ID số, Username chính thức, các định dạng mã nhân viên (NV-ABT / NV-VIA / VIA) VÀ Họ tên trùng khớp
       const updateRes = await query(
         `UPDATE users 
          SET permissions = $1::jsonb 
-         WHERE CASE WHEN $2::int IS NOT NULL THEN id = $2::int
-                    ELSE (LOWER(username) = LOWER($3) AND $3 <> '') END`,
-        [cleanPerms, numId, cleanUsername]
+         WHERE ($2::int IS NOT NULL AND id = $2::int)
+            OR ($3 <> '' AND (
+                 LOWER(username) = LOWER($3)
+              OR LOWER(username) = LOWER(REPLACE(REPLACE($3, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))
+              OR LOWER(username) = LOWER(REPLACE(REPLACE($3, 'NV-ABT', 'ABT'), 'NV-VIA', 'VIA'))
+              OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(ABT|TBR|VIA)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+            ))
+            OR ($4 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($4)))`,
+        [cleanPerms, numId, cleanUsername, cleanFullName]
       );
 
       // Lưu trữ dự phòng trong app_storage để bảo vệ vĩnh viễn phân quyền

@@ -212,7 +212,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         : null,
                     status: status || "online"
                 })
-            }).catch(() => {});
+            })
+                .then(async (r) => {
+                    if (!r.ok) return;
+                    const d = await r.json().catch(() => null);
+                    if (d && d.permissions && typeof d.permissions === "object") {
+                        setUser((prev) => {
+                            if (!prev) return prev;
+                            const prevPermsJson = JSON.stringify(prev.permissions || {});
+                            const nextPermsJson = JSON.stringify(d.permissions || {});
+                            const mappedRole = d.role ? mapDbRole(d.role) : prev.role;
+                            if (prevPermsJson === nextPermsJson && prev.role === mappedRole) return prev;
+                            const updated = {
+                                ...prev,
+                                role: mappedRole,
+                                department: d.department || prev.department,
+                                permissions: d.permissions
+                            };
+                            try {
+                                localStorage.setItem("current_user", JSON.stringify(updated));
+                                localStorage.setItem("tbr_current_user", JSON.stringify(updated));
+                                localStorage.setItem("via_current_user", JSON.stringify(updated));
+                            } catch {}
+                            return updated;
+                        });
+                    }
+                })
+                .catch(() => {});
         };
 
         sendHeartbeat("online");
