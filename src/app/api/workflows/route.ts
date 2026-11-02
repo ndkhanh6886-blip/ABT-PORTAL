@@ -65,9 +65,10 @@ function canApprovePurchaseRequest(me: AuthorizedUser) {
   return isAdminUser(me) || hasPermission(me, "procurement.approve_po");
 }
 
-/** Requester, assignee (ticket or current step) or a member of the involved department may act on a ticket. */
+/** Requester, assignee (ticket or current step), manager/template-manager, or a member of the involved department may act on a ticket. */
 function canActOnWorkflow(me: AuthorizedUser, wf: any, step?: any) {
   if (isAdminUser(me)) return true;
+  if (hasPermission(me, "workspace.manage_templates") || hasPermission(me, "workspace.approve_dept")) return true;
   const name = lower(me.full_name);
   if (name && [wf?.requester_name, wf?.assignee_name, step?.assignee_name].map(lower).includes(name)) return true;
   const dept = me.department;
@@ -746,7 +747,7 @@ export async function POST(req: NextRequest) {
           return forbiddenResponse("Chỉ Trưởng bộ phận Cung ứng / Ban Giám Đốc mới được duyệt / kết thúc đề xuất mua hàng (PR).");
         }
 
-        // Merge steps safely so already completed steps retain completed_at and deliverables
+        // Merge steps safely so already completed steps retain completed_at and deliverables unless explicitly edited
         let safeSteps = Array.isArray(steps) && steps.length > 0 ? steps : (existing.steps || []);
         if (Array.isArray(existing.steps) && Array.isArray(safeSteps) && !isRollback) {
           safeSteps = safeSteps.map((st: any, idx: number) => {
@@ -757,12 +758,37 @@ export async function POST(req: NextRequest) {
                 status: "COMPLETED", 
                 completed_at: oldSt.completed_at || st.completed_at, 
                 completed_by: oldSt.completed_by || st.completed_by, 
-                deliverables_note: oldSt.deliverables_note || st.deliverables_note 
+                deliverables_note: st.deliverables_note || oldSt.deliverables_note 
               };
             }
             return st;
           });
         }
+
+        if (safeSteps.length > 0) {
+          safeStepIndex = Math.min(Math.max(0, safeStepIndex), safeSteps.length - 1);
+        } else {
+          safeStepIndex = 0;
+        }
+
+        const activeStep = safeSteps.length > 0 ? (safeSteps[safeStepIndex] || safeSteps[0]) : null;
+        const effectiveTargetDept = activeStep?.dept || target_dept || existing.target_dept || "Application";
+        const effectiveAssignee = activeStep && activeStep.assignee_name !== undefined
+          ? cleanAssigneeName(activeStep.assignee_name)
+          : (assignee_name !== undefined ? cleanAssigneeName(assignee_name) : (existing.assignee_name || ""));
+
+        const safeComments = Array.isArray(comments) ? comments : (existing.comments || []);
+        const safeAttachments = Array.isArray(attachments) ? attachments : (existing.attachments || []);
+        const safeResultsSummary = results_summary !== undefined && results_summary !== "" ? results_summary : (existing.results_summary || "");
+
+        const prevLogs: any[] = Array.isArray(existing.logs) ? existing.logs : [];
+        const mergedWfLogs: any[] = Array.isArray(logs) && logs.length >= prevLogs.length ? [...logs] : [...prevLogs];
+        const actorName = me.full_name || me.username || "Nhân viên";
+        mergedWfLogs.push({
+          time: nowVNDateTime(),
+          action: `[Chỉnh sửa thông tin phiếu]: ${actorName} đã cập nhật thông tin phiếu phối hợp / các bước & SLA`,
+          actor: actorName
+        });
 
         await query(
           `UPDATE workflow_requests 
@@ -772,27 +798,58 @@ export async function POST(req: NextRequest) {
                comments=$14, logs=$15, steps=$16, current_step_index=$17, updated_at=CURRENT_TIMESTAMP
            WHERE id=$18`,
           [
-            title,
-            priority || "MEDIUM",
+            title || existing.title,
+            priority || existing.priority || "MEDIUM",
             safeStatus,
-            requester_name || "",
-            requester_dept || "",
-            assignee_name || "",
-            target_dept || "",
-            customer_name || "",
-            product_info || "",
-            due_date || null,
-            description || "",
-            results_summary || "",
-            JSON.stringify(attachments || []),
-            JSON.stringify(comments || []),
-            JSON.stringify(logs || []),
+            requester_name || existing.requester_name || "",
+            requester_dept || existing.requester_dept || "",
+            effectiveAssignee,
+            effectiveTargetDept,
+            customer_name !== undefined ? customer_name : (existing.customer_name || ""),
+            product_info !== undefined ? product_info : (existing.product_info || ""),
+            due_date || existing.due_date || null,
+            description !== undefined ? description : (existing.description || ""),
+            safeResultsSummary,
+            JSON.stringify(safeAttachments),
+            JSON.stringify(safeComments),
+            JSON.stringify(mergedWfLogs),
             JSON.stringify(safeSteps),
             safeStepIndex,
             id
           ]
         );
-        await logAudit("UPDATE", "WORKFLOW", `Cập nhật phiếu quy trình: ${title} (${target_dept}) [Bước: ${safeStepIndex + 1}]`);
+
+        // Đồng bộ thông tin vừa chỉnh sửa sang Công việc (company_tasks) đang gắn với phiếu quy trình này
+        if (existing.workflow_code) {
+          const syncedTaskTitle = safeSteps.length > 0 && activeStep
+            ? `[Bước ${safeStepIndex + 1}/${safeSteps.length}: ${activeStep.title}] ${title || existing.title}`
+            : `[Phối hợp từ ${requester_dept || existing.requester_dept}] ${title || existing.title}`;
+          const syncedTaskDesc = `Yêu cầu từ: ${requester_name || existing.requester_name} (${requester_dept || existing.requester_dept})\nSản phẩm: ${product_info !== undefined ? product_info : (existing.product_info || "")}\nNội dung: ${description !== undefined ? description : (existing.description || "")}${activeStep?.deliverables ? `\nYêu cầu kết quả bước ${safeStepIndex + 1}: ${activeStep.deliverables}` : ""}`;
+
+          await query(
+            `UPDATE company_tasks
+             SET title = $1,
+                 department = $2,
+                 assignee_name = $3,
+                 customer_name = $4,
+                 priority = $5,
+                 deadline = $6,
+                 description = $7
+             WHERE related_workflow_code = $8 AND status != 'DONE'`,
+            [
+              syncedTaskTitle,
+              effectiveTargetDept,
+              effectiveAssignee,
+              customer_name !== undefined ? customer_name : (existing.customer_name || ""),
+              priority || existing.priority || "MEDIUM",
+              due_date || existing.due_date || null,
+              syncedTaskDesc,
+              existing.workflow_code
+            ]
+          );
+        }
+
+        await logAudit("UPDATE", "WORKFLOW", `Cập nhật phiếu quy trình ${existing.workflow_code}: ${title} (${effectiveTargetDept}) [Bước: ${safeStepIndex + 1}]`);
       } else {
         const isProcReq =
           workflow_type === "TO_PROCUREMENT" ||

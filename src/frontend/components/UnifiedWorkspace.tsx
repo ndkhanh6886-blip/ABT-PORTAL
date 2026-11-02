@@ -65,48 +65,19 @@ import { cn } from "@/backend/services/utils";
 import { todayVN, toVNDateString, nowVNDateTime } from "@/backend/services/dates";
 import { AttachmentPicker, AttachmentList, uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
-import {
-  WORKSPACE_TASK_DEPARTMENTS,
-  DEFAULT_TASK_CATEGORIES,
-  TASK_CATEGORY_STORAGE_KEY,
-  TASK_STATUSES,
-  TASK_RELATED_TYPES,
-  taskStatusLabel,
-  getTaskAccess,
-  normalizeWorkspaceDept,
-  isSameWorkspaceDept,
-  canonStaffName,
-  sameStaffName,
-} from "@/backend/services/workspaceTasks";
-import { WorkPlansView } from "@/frontend/factory/rd/WorkPlansView";
-import { PlannerView } from "@/frontend/factory/oligo/PlannerView";
-import { useFactoryMe } from "@/frontend/factory/api";
-import { EnterpriseApprovalsCenter } from "@/frontend/components/EnterpriseApprovalsCenter";
+import { ProposalsApprovalView, ProposalItem, isProposalWaitingForUser } from "@/frontend/components/ProposalsApprovalView";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 
 // Configuration for Departments
-const DEPARTMENT_ICONS: Record<string, any> = {
-  "Ban Giám Đốc": Award,
-  "Nghiên Cứu R&D": FlaskConical,
-  "Sản Xuất Kit": Package,
-  "Tổng Hợp Oligo": FlaskConical,
-  "Kỹ Thuật – Thiết Bị": Activity,
-  "QA/QC": ShieldCheck,
-  "Kế Toán": DollarSign,
-  "Sales Admin": Briefcase,
-  "PM": Briefcase,
-  "Application": FlaskConical,
-  "Kho & Vận Hành": Package,
-  "Cung Ứng": ShoppingCart,
-  "Kinh Doanh": Briefcase,
-  "Lab": FlaskConical,
-  "Marketing": Briefcase,
-  "Pháp Chế": ShieldCheck,
-  "Hành Chính Nhân Sự": Users,
-};
 export const DEPARTMENTS = [
   { id: "all", name: "Toàn công ty", icon: Building2 },
-  ...WORKSPACE_TASK_DEPARTMENTS.map(d => ({ id: d.id, name: d.label, icon: DEPARTMENT_ICONS[d.id] || Building2 })),
+  { id: "Kinh Doanh", name: "Kinh Doanh", icon: Briefcase },
+  { id: "Application", name: "Application (Lab)", icon: FlaskConical },
+  { id: "Kho & Vận Hành", name: "Kho & Vận Hành", icon: Package },
+  { id: "Cung Ứng", name: "Cung Ứng", icon: ShoppingCart },
+  { id: "Pháp Chế", name: "Pháp Chế & Tuân Thủ", icon: ShieldCheck },
+  { id: "Kế Toán", name: "Kế Toán - Tài Chính", icon: DollarSign },
+  { id: "Ban Giám Đốc", name: "Ban Giám Đốc", icon: Award },
 ];
 
 export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
@@ -119,7 +90,25 @@ export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
   "đội vận chuyển"
 ]);
 
+/**
+ * Tên nhân sự để so sánh: cùng một tên có thể được lưu ở dạng Unicode tổ hợp / dựng sẵn khác nhau, hoặc đặt dấu
+ * kiểu cũ / mới ("Thùy" - "Thuỳ", "Hòa" - "Hoà"), có khoảng trắng thừa. Tên ở Tài khoản và ở Nhân sự lệch nhau
+ * như vậy làm nhân viên không thấy việc được giao cho mình.
+ */
+export function canonStaffName(name: any): string {
+  let s = String(name || "").normalize("NFC").toLowerCase().replace(/[\s\u00a0\u200b]+/g, " ").trim();
+  // đặt dấu kiểu mới (dấu trên chữ thứ hai của oa, oe, uy) -> kiểu cũ, để hai cách gõ trùng nhau
+  s = s.normalize("NFD").replace(/([ou])([\u0300\u0301\u0309\u0303\u0323])([aey])/g, "$1$3$2").normalize("NFC");
+  return s;
+}
 
+/** Hai tên là cùng một người (so sánh sau chuẩn hóa; tên đầy đủ chứa tên ngắn vẫn tính là trùng). */
+export function sameStaffName(a: any, b: any): boolean {
+  const x = canonStaffName(a);
+  const y = canonStaffName(b);
+  if (!x || !y) return false;
+  return x === y || x.includes(y) || y.includes(x);
+}
 
 export function cleanWorkspaceAssignee(name: any): string {
   const s = String(name || "").trim();
@@ -128,10 +117,120 @@ export function cleanWorkspaceAssignee(name: any): string {
   return s;
 }
 
+export function normalizeWorkspaceDept(raw: any): string {
+  const s = String(raw || "").trim();
+  if (!s) return "";
+  if (s === "all") return "all";
+  const l = s.toLowerCase();
+  if (l.includes("ứng dụng") || l.includes("application") || l.includes("kỹ thuật")) return "Application";
+  if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
+  if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
+  if (l.includes("kinh doanh") || l.includes("sales") || l.includes("marketing")) return "Kinh Doanh";
+  if (l.includes("pháp chế") || l.includes("legal") || l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "Pháp Chế";
+  if (l.includes("kế toán") || l.includes("tài chính") || l.includes("accounting")) return "Kế Toán";
+  if (l.includes("giám đốc") || l.includes("bod")) return "Ban Giám Đốc";
+  return s;
+}
+
+export function isSameWorkspaceDept(a: any, b: any): boolean {
+  const na = normalizeWorkspaceDept(a);
+  const nb = normalizeWorkspaceDept(b);
+  if (!na || !nb) return false;
+  if (na === "all" || nb === "all") return true;
+  return na.toLowerCase() === nb.toLowerCase();
+}
+
+export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
+  "Kinh Doanh": [
+    "Chăm sóc KH",
+    "Báo giá & Đàm phán",
+    "Hợp đồng & Đơn hàng",
+    "Theo dõi Giao hàng",
+    "Thu hồi Công nợ",
+    "Phát triển Thị trường / Khách mới",
+    "Hỗ trợ thầu / Dự án",
+    "Khác"
+  ],
+  "Application": [
+    "Demo máy & Thiết bị tại viện",
+    "Thử nghiệm mẫu & Đánh giá Kit",
+    "Đào tạo / HDSD khách hàng",
+    "Đánh giá QC nội bộ",
+    "Khắc phục sự cố kỹ thuật (Troubleshooting)",
+    "Viết SOP / Hướng dẫn quy trình",
+    "Bảo trì / Hiệu chuẩn thiết bị",
+    "Khác"
+  ],
+  "Kho & Vận Hành": [
+    "Nhập kho PO",
+    "Soạn hàng & Đóng gói phiếu xuất",
+    "Kiểm kê định kỳ",
+    "Giao nhận vận chuyển",
+    "Bảo quản kho lạnh / âm sâu",
+    "Khác"
+  ],
+  "Cung Ứng": [
+    "Tìm nguồn hàng & Đàm phán NCC",
+    "Lập đơn mua hàng (PO)",
+    "Theo dõi tiến độ giao hàng NCC",
+    "Thủ tục hải quan & Nhập khẩu",
+    "Đánh giá định kỳ NCC",
+    "Khác"
+  ],
+  "Pháp Chế": [
+    "Thẩm định Hợp đồng Kinh tế & Mua bán",
+    "Rà soát tính hợp pháp Hồ sơ Thầu Bệnh viện",
+    "Quản lý Giấy phép lưu hành & CFS / COA IVD",
+    "Thỏa thuận Bảo mật & Hợp đồng Đại lý",
+    "Bảo hộ Sở hữu trí tuệ thương hiệu TBR",
+    "Tư vấn Pháp luật Doanh nghiệp & Lao động",
+    "Khác"
+  ]
+};
 
 
-
-
+export const DEPARTMENT_STAFF: Record<string, string[]> = {
+  "Ban Giám Đốc": [
+    "Nguyễn Văn Hưng (CEO)",
+    "Đỗ Ngọc Diễm Trúc (Phó Giám Đốc)",
+    "Võ Thị Cẩm Giang (Phó Giám Đốc)"
+  ],
+  "Application": [
+    "Vũ Nhật Tân (Trưởng Phòng)",
+    "Vũ Thị Quỳnh Như",
+    "Mai Quí Minh",
+    "Huỳnh Ngọc Nhi"
+  ],
+  "Kinh Doanh": [
+    "Lê Hữu Nhân",
+    "K' Trọng Nghĩa",
+    "Đỗ Phạm Bảo Ngọc",
+    "Nguyễn Ánh Nhựt",
+    "Phạm Nguyễn Minh Châu",
+    "Phan Minh Nghĩa",
+    "Phạm Thị Thu Thủy",
+    "Lê Thị Thuỳ Trang",
+    "Trần Thị Mỹ Linh",
+    "Ngô Thị Yến Nhi"
+  ],
+  "Kho & Vận Hành": [
+    "Dương Phương Bảo Khoa (Trưởng Bộ Phận)",
+    "Trần Thị Minh Hậu (Thủ Kho)",
+    "Hoàng Thị Huệ (Thủ Kho)"
+  ],
+  "Cung Ứng": [
+    "Trần Thị Trà My",
+    "Nguyễn Tấn Lộc"
+  ],
+  "Kế Toán": [
+    "Võ Thị Ngọc Giàu (Kế Toán Trưởng)",
+    "Nguyễn Thị Hạnh",
+    "Nguyễn Lệ Quân"
+  ],
+  "Pháp Chế": [
+    "Nguyễn Thị Ngọc Huyền"
+  ]
+};
 
 export interface ThematicStageTemplate {
   name: string;
@@ -149,99 +248,6 @@ export interface ThematicTypeDefinition {
 }
 
 export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]> = {
-  "Nghiên Cứu R&D": [
-    {
-      id: "rd_stage_gate_dhf",
-      name: "Nghiên cứu Thiết kế & Thẩm định Kit / Thiết bị (ISO 13485 §7.3)",
-      icon: "🧬",
-      codePrefix: "RD-DHF",
-      description: "Lộ trình Stage-Gate từ Design Input, Design Output, Verification, Validation đến Chuyển giao sản xuất và hồ sơ DHF.",
-      sampleObjectives: "Hoàn thành thẩm định độ nhạy phân tích (LoD ≤ 10 copies/rxn) và độ lặp lại CV < 3% cho Kit Multiplex Real-time PCR.",
-      defaultStages: [
-        { name: "Xác lập yêu cầu đầu vào (Design Input) & Phân tích rủi ro FMEA (ISO 14971)", estimatedDays: 3 },
-        { name: "Tối ưu công thức mồi/dò, đệm phản ứng & Ghi chép Sổ thí nghiệm (ELN)", estimatedDays: 5 },
-        { name: "Kiểm chứng hiệu năng phân tích (Design Verification: LoD, Độ đặc hiệu, Độ ổn định)", estimatedDays: 5 },
-        { name: "Thẩm định trên mẫu lâm sàng (Design Validation) & Phê duyệt chuyển giao sản xuất", estimatedDays: 4 }
-      ]
-    },
-    {
-      id: "rd_iec62304_sw",
-      name: "Phát triển & Kiểm thử Phần mềm Chẩn đoán / Firmware (IEC 62304)",
-      icon: "💻",
-      codePrefix: "RD-SW",
-      description: "Phát triển thuật toán phân tích tín hiệu chẩn đoán / Firmware thiết bị kèm ma trận truy vết SRS – Test Case và kiểm soát SOUP.",
-      sampleObjectives: "Phát hành phiên bản phần mềm phân tích Ct tự động đạt 100% ca kiểm thử SRS và 0 lỗi Critical/High.",
-      defaultStages: [
-        { name: "Đặc tả yêu cầu phần mềm (SRS) & Phân loại an toàn (Class A/B/C)", estimatedDays: 2 },
-        { name: "Lập trình thuật toán, tích hợp thư viện SOUP & Kiểm thử đơn vị", estimatedDays: 4 },
-        { name: "Thực thi ma trận kiểm thử hệ thống (Traceability Matrix) & Rà soát lỗi", estimatedDays: 3 },
-        { name: "Ký duyệt phát hành (Release) & Liên kết vào hồ sơ kỹ thuật DMR", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "Sản Xuất Kit": [
-    {
-      id: "kit_gmp_campaign",
-      name: "Chiến dịch Sản xuất Lô Kit GMP & Hồ sơ Lô điện tử (eBR)",
-      icon: "🧪",
-      codePrefix: "KIT-GMP",
-      description: "Kế hoạch pha chế bán thành phẩm, chia lẻ, đóng gói hộp Kit theo BOM/Routing chuẩn GMP và cân đối hiệu suất thu hồi.",
-      sampleObjectives: "Sản xuất và hoàn thiện hồ sơ lô eBR cho 500 bộ Kit Real-time PCR đạt hiệu suất thu hồi 98% – 100%.",
-      defaultStages: [
-        { name: "Kiểm tra dọn dây chuyền (Line Clearance) & Giữ chỗ lô nguyên vật liệu FEFO", estimatedDays: 1 },
-        { name: "Pha chế Master Mix / Chứng dương trong phòng sạch & Ghi thông số IPC", estimatedDays: 2 },
-        { name: "Chiết rót, dán nhãn ống/hộp, lấy mẫu QC & mẫu lưu (Retain Sample)", estimatedDays: 2 },
-        { name: "Đối chiếu cân bằng nguyên liệu (Reconciliation) & Trình QA/QC phê duyệt xuất xưởng", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "Tổng Hợp Oligo": [
-    {
-      id: "oligo_column_synth",
-      name: "Chiến dịch Tổng hợp Oligo trên Cột CPG & Tinh sạch HPLC/PAGE",
-      icon: "🧬",
-      codePrefix: "OLG-SYN",
-      description: "Xếp mẻ tổng hợp trên cột CPG (kiểm soát chống nhiễm chéo cột liền kề), cắt khử bảo vệ, tinh sạch và đo OD260.",
-      sampleObjectives: "Tổng hợp và tinh sạch HPLC 120 trình tự Probe/Primer đạt độ tinh khiết ≥ 95%, giao đúng hạn cam kết.",
-      defaultStages: [
-        { name: "Phân tích trình tự, kiểm tra chống nhiễm chéo cột liền kề & Xếp mẻ máy tổng hợp", estimatedDays: 1 },
-        { name: "Chạy tổng hợp trên cột CPG, cắt khỏi cột & Khử bảo vệ (Cleavage & Deprotection)", estimatedDays: 1 },
-        { name: "Tinh sạch (Desalt / OPC / HPLC / PAGE), đo OD260, tính nmol/µg & Đông khô", estimatedDays: 2 },
-        { name: "Kiểm định QC, in nhãn ống và lập phiếu bàn giao Kinh doanh / Nội bộ", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "Kỹ Thuật – Thiết Bị": [
-    {
-      id: "dev_dhr_assembly",
-      name: "Lắp ráp Thiết bị 4 Trạm (DHR) & Kiểm định Xuất xưởng (FQC)",
-      icon: "⚙️",
-      codePrefix: "DEV-DHR",
-      description: "Lắp ráp cơ khí, điện tử, nạp Firmware IEC 62304, chạy già hóa (Burn-in) và hiệu chuẩn xuất xưởng.",
-      sampleObjectives: "Hoàn thành lắp ráp và hiệu chuẩn lô 10 máy tách chiết / nhiệt luân chuyển kèm hồ sơ DHR đầy đủ.",
-      defaultStages: [
-        { name: "Soạn linh kiện theo DMR/BOM & Lắp ráp Trạm 1–2 (Cơ khí & Bo mạch điện tử)", estimatedDays: 2 },
-        { name: "Trạm 3: Nạp Firmware đã phát hành, tích hợp cảm biến & Hiệu chuẩn nhiệt/quang", estimatedDays: 2 },
-        { name: "Trạm 4: Chạy thử tải liên tục (Burn-in test) & Kiểm tra an toàn điện", estimatedDays: 2 },
-        { name: "Nghiệm thu FQC, sinh số Serial vào kho Biệt trữ & Chờ QA duyệt xuất xưởng", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "QA/QC": [
-    {
-      id: "qa_iso_audit_release",
-      name: "Thẩm định Chất lượng Lô (Lot Release), CAPA & Kiểm soát Tài liệu ISO",
-      icon: "🛡️",
-      codePrefix: "QMS-REL",
-      description: "Kiểm nghiệm IQC/IPQC/FQC, rà soát hồ sơ lô DHR/eBR, phê duyệt xuất xưởng từ kho Biệt trữ và xử lý NCR/CAPA.",
-      sampleObjectives: "Hoàn thành kiểm định QC trong vòng 24h cho các lô Kit/Oligo/Thiết bị và rà soát 100% đào tạo SOP hiệu lực.",
-      defaultStages: [
-        { name: "Lấy mẫu và thực hiện phép thử QC theo bộ tiêu chuẩn kỹ thuật (QC Spec)", estimatedDays: 2 },
-        { name: "Thẩm tra độc lập kết quả QC, đối chiếu chữ ký điện tử & Hồ sơ lô eBR/DHR", estimatedDays: 1 },
-        { name: "Quyết định phê duyệt xuất xưởng (Release) hoặc Mở phiếu NCR / CAPA nếu lệch chuẩn", estimatedDays: 1 }
-      ]
-    }
-  ],
   "Application": [
     {
       id: "app_kit_validation",
@@ -445,7 +451,7 @@ export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]>
         { name: "Kiểm tra bộ chứng từ xuất nhập khẩu (Invoice, Packing List, CO, CQ, BL)", estimatedDays: 2 },
         { name: "Đăng ký kiểm tra chất lượng nhà nước / Giấy phép nhập khẩu BYT", estimatedDays: 3 },
         { name: "Truyền tờ khai hải quan điện tử & Phối hợp thông quan tại cửa khẩu", estimatedDays: 2 },
-        { name: "Điều xe lạnh chuyên dụng vận chuyển hàng về kho ABT an toàn", estimatedDays: 1 }
+        { name: "Điều xe lạnh chuyên dụng vận chuyển hàng về kho TBR an toàn", estimatedDays: 1 }
       ]
     },
     {
@@ -507,264 +513,8 @@ export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]>
         { name: "Tham gia đàm phán hợp đồng trực tiếp cùng các bên & Ký duyệt pháp lý", estimatedDays: 2 }
       ]
     }
-  ],
-  "Ban Giám Đốc": [
-    {
-      id: "bgd_strategy_okr",
-      name: "Hoạch định Chiến lược Quý / Năm & Đánh giá Mục tiêu Trọng điểm (OKR/KPI)",
-      icon: "🏛️",
-      codePrefix: "BGD-STR",
-      description: "Xây dựng mục tiêu chiến lược toàn công ty, phân bổ ngân sách R&D – Sản xuất – Kinh doanh và rà soát KPI liên phòng ban.",
-      sampleObjectives: "Hoàn thành khung kế hoạch chiến lược, giao chỉ tiêu KPI/OKR cho 100% khối/phòng ban và phê duyệt ngân sách trọng điểm.",
-      defaultStages: [
-        { name: "Tổng hợp báo cáo kết quả hoạt động từ Khối Kỹ thuật, Kinh doanh & Tài chính", estimatedDays: 2 },
-        { name: "Họp Hội đồng Ban Giám Đốc hoạch định mục tiêu tăng trưởng & danh mục dự án ưu tiên", estimatedDays: 2 },
-        { name: "Phê duyệt hạn mức ngân sách, định biên nhân sự & chỉ tiêu KPI các phòng ban", estimatedDays: 2 },
-        { name: "Ban hành Nghị quyết / Quyết định triển khai và tổ chức lễ giao chỉ tiêu toàn công ty", estimatedDays: 1 }
-      ]
-    },
-    {
-      id: "bgd_investment_audit",
-      name: "Thẩm định Dự án Đầu tư Dây chuyền / Hợp tác Chuyển giao Công nghệ",
-      icon: "🚀",
-      codePrefix: "BGD-INV",
-      description: "Đánh giá hiệu quả đầu tư (ROI), năng lực đối tác OEM/chuyển giao công nghệ và phê duyệt chủ trương đầu tư lớn.",
-      sampleObjectives: "Thẩm định toàn diện tính khả thi kỹ thuật, pháp lý và tài chính của dự án trước khi ký kết hợp đồng đầu tư.",
-      defaultStages: [
-        { name: "Tiếp nhận hồ sơ đề xuất chủ trương đầu tư từ R&D / Nhà máy / PM", estimatedDays: 2 },
-        { name: "Thẩm định phương án tài chính (ROI, dòng tiền) cùng Kế Toán & Pháp Chế", estimatedDays: 3 },
-        { name: "Đàm phán cấp cao với đối tác chiến lược / nhà cung cấp công nghệ", estimatedDays: 3 },
-        { name: "Ký quyết định phê duyệt đầu tư & thành lập Ban dự án triển khai", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "Kế Toán": [
-    {
-      id: "acc_costing_audit",
-      name: "Quyết toán Giá thành Sản xuất Lô (COGS) & Đối soát Công nợ Dự án/Thầu",
-      icon: "💰",
-      codePrefix: "ACC-COG",
-      description: "Tập hợp chi phí nguyên vật liệu, nhân công, khấu hao máy móc theo từng Lệnh sản xuất (WO) và đối soát công nợ hợp đồng thầu.",
-      sampleObjectives: "Tính đúng, tính đủ giá thành thực tế từng lô Kit/Oligo/Thiết bị (chênh lệch định mức < 3%) và thu hồi công nợ đúng hạn.",
-      defaultStages: [
-        { name: "Tập hợp phiếu xuất kho NVL, định mức BOM và hao hụt thực tế từ Nhà máy/Kho", estimatedDays: 2 },
-        { name: "Phân bổ chi phí nhân công trực tiếp, khấu hao thiết bị & chi phí QC theo lô", estimatedDays: 2 },
-        { name: "Đối chiếu hóa đơn GTGT, biên bản nghiệm thu bàn giao & lịch thanh toán của khách hàng", estimatedDays: 2 },
-        { name: "Lập báo cáo phân tích lãi gộp (Gross Margin) & trình Ban Giám Đốc phê duyệt", estimatedDays: 1 }
-      ]
-    },
-    {
-      id: "acc_budget_tax",
-      name: "Lập Kế hoạch Ngân sách Dòng tiền & Kiểm toán Báo cáo Tài chính / Thuế",
-      icon: "📊",
-      codePrefix: "ACC-FIN",
-      description: "Cân đối dòng tiền thanh toán nhà cung cấp quốc tế/nội địa, kiểm soát hạn mức chi phí các phòng ban và chuẩn bị hồ sơ thuế.",
-      sampleObjectives: "Đảm bảo 100% hồ sơ chứng từ hợp lệ, tối ưu dòng tiền thanh toán PO và hoàn thành báo cáo tài chính đúng hạn.",
-      defaultStages: [
-        { name: "Rà soát kế hoạch thu từ Kinh Doanh và lịch thanh toán PO từ Cung Ứng", estimatedDays: 2 },
-        { name: "Kiểm tra tính hợp lệ của bộ chứng từ thanh toán, tạm ứng & hoàn ứng nội bộ", estimatedDays: 3 },
-        { name: "Cân đối hạn mức tín dụng, ngoại tệ thanh toán nhập khẩu & dự phòng quỹ", estimatedDays: 2 },
-        { name: "Chốt sổ kế toán kỳ, lập tờ khai thuế & báo cáo dòng tiền trình BGĐ", estimatedDays: 2 }
-      ]
-    }
-  ],
-  "Sales Admin": [
-    {
-      id: "sa_contract_po_coord",
-      name: "Chuẩn hóa Hồ sơ Hợp đồng, Điều phối Đơn hàng (SO/PO) & Theo dõi Giao nhận",
-      icon: "📑",
-      codePrefix: "SAD-ORD",
-      description: "Kiểm tra điều khoản thương mại, phát hành đơn hàng nội bộ sang Nhà máy/Kho vận và theo dõi tiến độ giao hàng đến nghiệm thu.",
-      sampleObjectives: "Xử lý 100% đơn hàng trong vòng 4 giờ làm việc, đồng bộ chính xác chứng từ COA/CO/CQ và hóa đơn kèm hàng.",
-      defaultStages: [
-        { name: "Tiếp nhận PO khách hàng/hợp đồng thầu, kiểm tra giá, chiết khấu & hạn mức công nợ", estimatedDays: 1 },
-        { name: "Phát hành Lệnh đặt hàng nội bộ sang Sản xuất / Kho vận & giữ hàng tồn kho (FEFO)", estimatedDays: 1 },
-        { name: "Tập hợp bộ chứng từ giao hàng (Phiếu xuất kho, Biên bản bàn giao, COA, Hóa đơn)", estimatedDays: 1 },
-        { name: "Xác nhận khách hàng nhận hàng thành công & bàn giao hồ sơ thanh toán cho Kế Toán", estimatedDays: 1 }
-      ]
-    },
-    {
-      id: "sa_tender_docs",
-      name: "Tổng hợp Hồ sơ Năng lực & Hành chính Thầu Y tế",
-      icon: "🗂️",
-      codePrefix: "SAD-TND",
-      description: "Chuẩn bị hồ sơ hành chính, bảo lãnh dự thầu, hợp đồng tương tự và biểu mẫu giá phục vụ đấu thầu bệnh viện/CDC.",
-      sampleObjectives: "Hoàn thiện bộ hồ sơ hành chính & thương mại chuẩn xác 100% trước thời điểm đóng thầu tối thiểu 48 giờ.",
-      defaultStages: [
-        { name: "Rà soát yêu cầu hành chính trong HSMT & lập checklist tài liệu cần chuẩn bị", estimatedDays: 1 },
-        { name: "Liên hệ ngân hàng làm Bảo lãnh dự thầu & sao y công chứng hợp đồng tương tự", estimatedDays: 2 },
-        { name: "Phối hợp PM/Pháp Chế ghép bộ hồ sơ kỹ thuật – pháp lý – biểu giá hoàn chỉnh", estimatedDays: 2 },
-        { name: "Kiểm tra chéo lần cuối, đóng dấu niêm phong / ký số E-GP & lưu trữ hồ sơ thầu", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "PM": [
-    {
-      id: "pm_product_launch",
-      name: "Chiến dịch Ra mắt Sản phẩm Mới (New Product Launch) & Đào tạo Giải pháp",
-      icon: "🎯",
-      codePrefix: "PM-LNC",
-      description: "Xây dựng định vị sản phẩm, bộ tài liệu kỹ thuật – thương mại (Brochure, So sánh cấu hình, Bảng giá) và huấn luyện đội ngũ Sales.",
-      sampleObjectives: "Hoàn thiện 100% bộ công cụ bán hàng (Sales Kit), tổ chức đào tạo sản phẩm và đạt mục tiêu doanh số giai đoạn ra mắt.",
-      defaultStages: [
-        { name: "Phối hợp R&D / Hãng phân tích USP sản phẩm, cấu hình kỹ thuật & đối thủ cạnh tranh", estimatedDays: 3 },
-        { name: "Xây dựng bảng giá chiến lược, gói giải pháp (Máy + Hóa chất) & tờ rơi kỹ thuật", estimatedDays: 3 },
-        { name: "Tổ chức buổi đào tạo chuyên sâu (Product Training) cho Kinh Doanh & Application", estimatedDays: 2 },
-        { name: "Triển khai chương trình dùng thử / hội thảo giới thiệu tại các bệnh viện trọng điểm", estimatedDays: 5 }
-      ]
-    },
-    {
-      id: "pm_spec_forecast",
-      name: "Xây dựng Cấu hình Kỹ thuật Thầu (Spec-in) & Dự báo Nhu cầu Đặt hàng (Forecast)",
-      icon: "📈",
-      codePrefix: "PM-FCST",
-      description: "Tư vấn cấu hình kỹ thuật chuyên sâu cho chủ đầu tư và lập dự báo nhu cầu sản xuất/nhập khẩu theo quý.",
-      sampleObjectives: "Đảm bảo cấu hình kỹ thuật tối ưu cho khách hàng và độ chính xác Forecast đạt trên 85% để tránh đứt hàng.",
-      defaultStages: [
-        { name: "Khảo sát nhu cầu xét nghiệm thực tế tại các khoa Vi sinh / Sinh học phân tử", estimatedDays: 2 },
-        { name: "Soạn thảo bảng thông số kỹ thuật tiêu chuẩn & bảng đối chiếu tính năng tương đương", estimatedDays: 2 },
-        { name: "Tổng hợp pipeline dự án từ Sales để lập bảng Forecast sản xuất/nhập hàng Quý", estimatedDays: 2 },
-        { name: "Họp S&OP cùng Sản xuất, Kho vận & Cung ứng để chốt kế hoạch tồn kho an toàn", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "Marketing": [
-    {
-      id: "mkt_conference_event",
-      name: "Tổ chức Hội nghị Khoa học Y tế, Triển lãm Chuyên ngành & Webinar",
-      icon: "📣",
-      codePrefix: "MKT-EVT",
-      description: "Lập kế hoạch truyền thông, thiết kế gian hàng triển lãm, chuẩn bị ấn phẩm học thuật và thu thập khách hàng tiềm năng (Leads).",
-      sampleObjectives: "Tổ chức thành công sự kiện/hội nghị, thu thập tối thiểu 50+ khách hàng tiềm năng chất lượng và nâng cao nhận diện thương hiệu ABT.",
-      defaultStages: [
-        { name: "Lên ý tưởng chủ đề, danh sách khách mời (Bác sĩ/Trưởng khoa Lab) & dự toán ngân sách", estimatedDays: 3 },
-        { name: "Thiết kế bộ nhận diện sự kiện, Standee, Brochure, quà tặng & bài báo cáo khoa học", estimatedDays: 4 },
-        { name: "Phối hợp PM & Application chuẩn bị máy demo, mẫu vật trưng bày tại sự kiện", estimatedDays: 2 },
-        { name: "Tổ chức sự kiện, truyền thông đa kênh & bàn giao danh sách Leads cho Kinh Doanh", estimatedDays: 2 }
-      ]
-    },
-    {
-      id: "mkt_brand_catalog",
-      name: "Sản xuất Ấn phẩm Kỹ thuật, Video Hướng dẫn & Chuẩn hóa Digital Marketing",
-      icon: "🎨",
-      codePrefix: "MKT-CNT",
-      description: "Thiết kế Catalogue sản phẩm, quay dựng video hướng dẫn sử dụng Kit/Máy tại Lab và tối ưu nội dung Website/Fanpage.",
-      sampleObjectives: "Xuất bản bộ Catalogue/Video chuẩn nhận diện thương hiệu, hỗ trợ trực tiếp cho công tác chào hàng và đào tạo khách hàng.",
-      defaultStages: [
-        { name: "Thu thập thông tin kỹ thuật chuẩn xác từ R&D, PM và Application", estimatedDays: 2 },
-        { name: "Biên tập nội dung, thiết kế đồ họa 2D/3D hoặc quay dựng thực tế tại phòng Lab", estimatedDays: 4 },
-        { name: "Hiệu đính chuyên môn cùng QA/QC & Pháp Chế (đảm bảo tuân thủ quảng cáo TTBYT)", estimatedDays: 2 },
-        { name: "In ấn / xuất bản lên hệ thống học liệu số và phân phối cho toàn khối Kinh Doanh", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "Hành Chính Nhân Sự": [
-    {
-      id: "hr_recruitment_onboarding",
-      name: "Chiến dịch Tuyển dụng Nhân sự Chuyên môn Cao & Hội nhập (Onboarding)",
-      icon: "👥",
-      codePrefix: "HR-REC",
-      description: "Tuyển dụng kỹ sư R&D, chuyên viên Application, QA/QC, nhân viên Kinh doanh và tổ chức đào tạo hội nhập văn hóa – quy trình công ty.",
-      sampleObjectives: "Tuyển dụng đủ 100% định biên nhân sự đúng hạn và đảm bảo nhân sự mới nắm vững quy trình ISO/ERP sau thời gian thử việc.",
-      defaultStages: [
-        { name: "Tiếp nhận yêu cầu tuyển dụng từ Trưởng bộ phận, mô tả công việc (JD) & đăng tuyển", estimatedDays: 3 },
-        { name: "Sàng lọc hồ sơ CV, tổ chức phỏng vấn vòng Nhân sự & vòng Chuyên môn", estimatedDays: 5 },
-        { name: "Thỏa thuận đãi ngộ (Offer), tiếp nhận hồ sơ nhân sự & cấp phát tài khoản/trang thiết bị", estimatedDays: 2 },
-        { name: "Tổ chức đào tạo hội nhập, nội quy an toàn sinh học & đánh giá nghiệm thu thử việc", estimatedDays: 3 }
-      ]
-    },
-    {
-      id: "hr_training_kpi_culture",
-      name: "Đánh giá Năng lực Nhân sự (KPI/Đào tạo Nội bộ) & Hoạt động Văn hóa Doanh nghiệp",
-      icon: "🏆",
-      codePrefix: "HR-TRN",
-      description: "Tổ chức kỳ đánh giá hiệu suất định kỳ, chương trình đào tạo nâng cao nghiệp vụ ISO 13485 và sự kiện gắn kết nội bộ.",
-      sampleObjectives: "Hoàn thành đánh giá KPI công bằng, minh bạch cho 100% CBNV và thực hiện đầy đủ kế hoạch đào tạo năm theo chuẩn ISO.",
-      defaultStages: [
-        { name: "Khảo sát nhu cầu đào tạo từ các phòng ban & ban hành biểu mẫu đánh giá KPI kỳ", estimatedDays: 2 },
-        { name: "Phối hợp các Trưởng bộ phận tổ chức đào tạo nội bộ / đánh giá hiệu suất cá nhân", estimatedDays: 4 },
-        { name: "Tổng hợp kết quả xếp loại, đề xuất khen thưởng, điều chỉnh lương hoặc lộ trình thăng tiến", estimatedDays: 2 },
-        { name: "Trình Ban Giám Đốc phê duyệt & lưu hồ sơ năng lực nhân sự theo chuẩn ISO 13485", estimatedDays: 1 }
-      ]
-    }
-  ],
-  "Lab": [
-    {
-      id: "lab_biosafety_calibration",
-      name: "Kiểm soát An toàn Sinh học Phòng Lab & Hiệu chuẩn Thiết bị Định kỳ",
-      icon: "🧪",
-      codePrefix: "LAB-CAL",
-      description: "Thực hiện khử nhiễm UV/hóa chất, kiểm tra chéo nhiễm ngoại chuẩn (Carry-over) và hiệu chuẩn Micropipette, máy Real-time PCR.",
-      sampleObjectives: "Đảm bảo môi trường phòng Lab vô trùng, không nhiễm chéo amplicon và 100% thiết bị đo lường có tem hiệu chuẩn còn hạn.",
-      defaultStages: [
-        { name: "Kiểm tra nhật ký nhiệt độ/độ ẩm, áp suất phòng sạch & hạn hiệu chuẩn thiết bị Lab", estimatedDays: 1 },
-        { name: "Thực hiện vệ sinh khử nhiễm bề mặt, tủ an toàn sinh học & chạy mẫu kiểm tra nhiễm nền (NTC)", estimatedDays: 2 },
-        { name: "Hiệu chuẩn nội bộ Micropipette, máy ly tâm, khối nhiệt & phối hợp đơn vị kiểm định ngoài", estimatedDays: 2 },
-        { name: "Cập nhật hồ sơ quản lý phòng Lab, dán tem trạng thái & nghiệm thu cùng QA/QC", estimatedDays: 1 }
-      ]
-    },
-    {
-      id: "lab_sample_testing",
-      name: "Tiếp nhận, Lưu trữ Mẫu đối chứng (Biobank) & Chạy Thử nghiệm Chuyên sâu",
-      icon: "🔬",
-      codePrefix: "LAB-TST",
-      description: "Quản lý ngân hàng mẫu chuẩn/mẫu lâm sàng ở tủ âm sâu (-80°C) và thực hiện các mẻ chạy thử nghiệm đối chiếu theo yêu cầu.",
-      sampleObjectives: "Mã hóa truy xuất 100% mẫu lưu trữ theo vị trí khay/hộp và trả kết quả phân tích đúng thời hạn cam kết.",
-      defaultStages: [
-        { name: "Tiếp nhận mẫu, kiểm tra điều kiện bảo quản lạnh & mã hóa định danh vào sổ Biobank", estimatedDays: 1 },
-        { name: "Tách chiết DNA/RNA và chuẩn bị dải pha loãng mẫu chuẩn nội kiểm", estimatedDays: 1 },
-        { name: "Thực hiện phản ứng khuếch đại Real-time PCR / điện di và phân tích dữ liệu Ct", estimatedDays: 2 },
-        { name: "Xuất báo cáo kết quả thử nghiệm và lưu trữ mẫu dư tại tủ -80°C theo quy định", estimatedDays: 1 }
-      ]
-    }
   ]
 };
-
-export function getThematicTypesForDept(dept: string): ThematicTypeDefinition[] {
-  const normalized = normalizeWorkspaceDept(dept) || dept;
-  if (DEPARTMENT_THEMATIC_TYPES[dept] && DEPARTMENT_THEMATIC_TYPES[dept].length > 0) {
-    return DEPARTMENT_THEMATIC_TYPES[dept];
-  }
-  if (DEPARTMENT_THEMATIC_TYPES[normalized] && DEPARTMENT_THEMATIC_TYPES[normalized].length > 0) {
-    return DEPARTMENT_THEMATIC_TYPES[normalized];
-  }
-  const cleanCode = (normalized || "PRJ")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-zA-Z0-9]/g, "")
-    .slice(0, 3)
-    .toUpperCase() || "PRJ";
-  return [
-    {
-      id: `custom_${cleanCode.toLowerCase()}_plan`,
-      name: `Kế hoạch Chuyên đề Trọng tâm Phòng ${dept || "Chuyên môn"}`,
-      icon: "🎯",
-      codePrefix: `${cleanCode}-KH`,
-      description: `Thiết lập mục tiêu, phân công nhân sự và theo dõi các giai đoạn triển khai chuyên đề của phòng ${dept}.`,
-      sampleObjectives: `Hoàn thành 100% các hạng mục công việc trọng tâm của phòng ${dept} đúng tiến độ và tiêu chuẩn chất lượng.`,
-      defaultStages: [
-        { name: "Khảo sát hiện trạng, xác định mục tiêu & lập đề cương chi tiết", estimatedDays: 2 },
-        { name: "Phân công nhân sự, chuẩn bị nguồn lực & triển khai thực hiện giai đoạn 1", estimatedDays: 5 },
-        { name: "Kiểm tra, đánh giá kết quả giữa kỳ & hiệu chỉnh phương án", estimatedDays: 3 },
-        { name: "Nghiệm thu tổng kết chuyên đề & báo cáo Ban Giám Đốc", estimatedDays: 2 }
-      ]
-    },
-    {
-      id: `custom_${cleanCode.toLowerCase()}_sop`,
-      name: `Chuẩn hóa Quy trình Nghiệp vụ (SOP) & Cải tiến Chất lượng Phòng ${dept || "Chuyên môn"}`,
-      icon: "📋",
-      codePrefix: `${cleanCode}-SOP`,
-      description: `Rà soát, xây dựng mới hoặc cải tiến quy trình phối hợp và biểu mẫu nghiệp vụ tại phòng ${dept}.`,
-      sampleObjectives: `Chuẩn hóa 100% quy trình thao tác chuẩn (SOP), rút ngắn thời gian xử lý công việc và giảm thiểu sai sót vận hành.`,
-      defaultStages: [
-        { name: "Rà soát các điểm nghẽn trong quy trình vận hành hiện tại của bộ phận", estimatedDays: 2 },
-        { name: "Biên soạn dự thảo quy trình SOP mới và bộ biểu mẫu kiểm soát đi kèm", estimatedDays: 3 },
-        { name: "Lấy ý kiến các phòng ban liên quan, chạy thử nghiệm & đào tạo nhân sự", estimatedDays: 3 },
-        { name: "Trình phê duyệt ban hành chính thức và đưa vào áp dụng", estimatedDays: 1 }
-      ]
-    }
-  ];
-}
 
 export const PREDEFINED_APP_PROJECTS: any[] = [];
 
@@ -776,7 +526,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     sourceDept: "Kinh Doanh",
     targetDept: "Application",
     icon: "FlaskConical",
-    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab ABT hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
+    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab TBR hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
     sla_days: 5,
     steps: [
       { step_index: 0, title: "Tiếp nhận & Thẩm định mẫu / Thiết bị", dept: "Application", assignee_name: "", sla_hours: 24, deliverables: "Xác nhận loại mẫu sinh học, hóa chất tương thích, phân công nhân sự & lịch Demo" },
@@ -811,7 +561,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     steps: [
       { step_index: 0, title: "Tiếp nhận đề xuất PR & Khảo sát nhà cung cấp", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
       { step_index: 1, title: "Trình duyệt ban giám đốc & Phát hành đơn PO", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Đơn đặt hàng PO có chữ ký phê duyệt" },
-      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho ABT", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
+      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho TBR", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
     ]
   },
   {
@@ -839,84 +589,9 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     description: "Yêu cầu bộ phận Pháp chế thẩm định các điều khoản hợp đồng kinh tế, đại lý phân phối hoặc hồ sơ pháp lý dự thầu bệnh viện.",
     sla_days: 3,
     steps: [
-      { step_index: 0, title: "Tiếp nhận dự thảo hợp đồng & Kiểm tra tính pháp lý", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Biên bản thẩm tra pháp lý, rà soát điều khoản thanh toán, phạt vi phạm & bảo hành" },
-      { step_index: 1, title: "Hiệu chỉnh điều khoản & Phản hồi cho Sales", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Bản hợp đồng hoàn chỉnh (redline track changes) đạt chuẩn pháp lý" },
+      { step_index: 0, title: "Tiếp nhận dự thảo hợp đồng & Kiểm tra tính pháp lý", dept: "Pháp Chế", assignee_name: "Nguyễn Thị Ngọc Huyền", sla_hours: 24, deliverables: "Biên bản thẩm tra pháp lý, rà soát điều khoản thanh toán, phạt vi phạm & bảo hành" },
+      { step_index: 1, title: "Hiệu chỉnh điều khoản & Phản hồi cho Sales", dept: "Pháp Chế", assignee_name: "Nguyễn Thị Ngọc Huyền", sla_hours: 24, deliverables: "Bản hợp đồng hoàn chỉnh (redline track changes) đạt chuẩn pháp lý" },
       { step_index: 2, title: "Trình Ban Giám Đốc phê duyệt ký kết chính thức", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Hợp đồng kinh tế có chữ ký số / con dấu pháp nhân công ty" }
-    ]
-  },
-  {
-    id: "SALES_TO_FACTORY_KIT_OLIGO",
-    code: "SALES_TO_FACTORY_KIT_OLIGO",
-    name: "Kinh Doanh ──► Sản Xuất Kit / Tổng Hợp Oligo: Đặt sản xuất theo đơn khách hàng",
-    sourceDept: "Kinh Doanh",
-    targetDept: "Sản Xuất Kit",
-    icon: "FlaskConical",
-    description: "Chuyển yêu cầu đặt hàng nội bộ từ Kinh Doanh sang Phòng Sản Xuất Kit (lô thường / chia sẵn .D.IC / Kit Demo) hoặc Phòng Tổng Hợp Oligo.",
-    sla_days: 5,
-    steps: [
-      { step_index: 0, title: "Tiếp nhận Đơn đặt hàng nội bộ & Nổ định mức BOM / Kiểm tra tồn kho NVL", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 12, deliverables: "Xác nhận lệnh sản xuất Kit / mẻ tổng hợp Oligo và cam kết ngày giao (Committed Date)" },
-      { step_index: 1, title: "Thực hiện sản xuất lô eBR / Tổng hợp CPG & Kiểm nghiệm QC nội bộ", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 72, deliverables: "Hồ sơ lô điện tử eBR hoàn chỉnh, kết quả đo OD/HPLC hoặc chạy qPCR đạt chuẩn" },
-      { step_index: 2, title: "QA/QC cấp COA xuất xưởng & Bàn giao thành phẩm về Kho / Kinh Doanh", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Chứng nhận phân tích xuất xưởng (COA) và Phiếu xuất giao hàng" }
-    ]
-  },
-  {
-    id: "RD_TO_KIT_TECH_TRANSFER",
-    code: "RD_TO_KIT_TECH_TRANSFER",
-    name: "Nghiên Cứu R&D ──► Sản Xuất Kit & QA/QC: Chuyển giao công nghệ (Design Transfer)",
-    sourceDept: "Nghiên Cứu R&D",
-    targetDept: "Sản Xuất Kit",
-    icon: "Layers",
-    description: "Bàn giao công thức gốc, định mức BOM, quy trình pha chế SOP và tiêu chuẩn QC từ đề tài R&D sang Phòng Sản Xuất Kit để sản xuất lô thẩm định.",
-    sla_days: 7,
-    steps: [
-      { step_index: 0, title: "Rà soát Hồ sơ Lịch sử Thiết kế (DHF) & Phê duyệt công thức chuyển giao", dept: "Nghiên Cứu R&D", assignee_name: "", sla_hours: 24, deliverables: "Biên bản chuyển giao công nghệ, dự thảo BOM & quy trình Routing GMP" },
-      { step_index: 1, title: "Sản xuất 03 lô thẩm định liên tiếp (Validation Batches) trên dây chuyền", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 96, deliverables: "Hồ sơ lô điện tử eBR của 03 lô thẩm định đạt độ lặp lại CV < 3%" },
-      { step_index: 2, title: "QA/QC thẩm định kết quả & Ban hành BOM / SOP EFFECTIVE chính thức", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Quyết định phê duyệt đưa sản phẩm vào sản xuất thương mại chuẩn ISO 13485" }
-    ]
-  },
-  {
-    id: "FACTORY_TO_QA_LOT_RELEASE",
-    code: "FACTORY_TO_QA_LOT_RELEASE",
-    name: "Sản Xuất (Kit/Oligo/Thiết Bị) ──► QA/QC: Thẩm định Hồ sơ Lô & Giải phóng Lô (COA)",
-    sourceDept: "Sản Xuất Kit",
-    targetDept: "QA/QC",
-    icon: "ShieldCheck",
-    description: "Trình hồ sơ lô điện tử (eBR / DHR / QC OD-HPLC) và mẫu kiểm nghiệm sang Phòng QA/QC để kiểm định OQC, cấp COA và giải phóng lô khỏi khu Biệt trữ.",
-    sla_days: 2,
-    steps: [
-      { step_index: 0, title: "Tiếp nhận mẫu kiểm nghiệm & Đối soát hồ sơ lô eBR / DHR", dept: "QA/QC", assignee_name: "", sla_hours: 12, deliverables: "Phiếu lấy mẫu kiểm nghiệm OQC và kiểm tra cân bằng nguyên liệu" },
-      { step_index: 1, title: "Thực hiện phép thử QC (pH, độ nhạy Ct qPCR / độ tinh khiết HPLC / FQC máy)", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Biên bản kết quả kiểm nghiệm QC đạt tất cả chỉ tiêu kỹ thuật" },
-      { step_index: 2, title: "Ký số 21 CFR Part 11 giải phóng lô (RELEASED) & Phát hành COA chính thức", dept: "QA/QC", assignee_name: "", sla_hours: 12, deliverables: "Chứng nhận xuất xưởng COA và mở khóa tồn kho thương mại" }
-    ]
-  },
-  {
-    id: "RD_QA_TO_LEGAL_IVD",
-    code: "RD_QA_TO_LEGAL_IVD",
-    name: "R&D & QA/QC ──► Pháp Chế: Bàn giao Hồ sơ CSDT Đăng ký Lưu hành IVD & Hồ sơ Thầu",
-    sourceDept: "Nghiên Cứu R&D",
-    targetDept: "Pháp Chế",
-    icon: "FileText",
-    description: "Tập hợp Hồ sơ Thiết kế (DHF), Hồ sơ Thiết bị Gốc (DMR), Báo cáo Độ ổn định (Stability) và COA chuẩn ISO 13485 bàn giao cho Pháp chế nộp Bộ Y Tế / Đấu thầu.",
-    sla_days: 5,
-    steps: [
-      { step_index: 0, title: "Trích xuất báo cáo thẩm định hiệu năng (LoD, Độ đặc hiệu, Độ ổn định) từ R&D", dept: "Nghiên Cứu R&D", assignee_name: "", sla_hours: 24, deliverables: "Trọn bộ tài liệu kỹ thuật DHF/DMR và kết quả nghiên cứu độ ổn định" },
-      { step_index: 1, title: "QA/QC bổ sung Chứng nhận ISO 13485, COA 03 lô liên tiếp & Quy trình SOP", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Hồ sơ chất lượng lô sản xuất và chứng chỉ quản lý chất lượng" },
-      { step_index: 2, title: "Pháp chế thẩm tra pháp lý, hoàn thiện hồ sơ CSDT & Nộp cổng dịch vụ công BYT", dept: "Pháp Chế", assignee_name: "", sla_hours: 72, deliverables: "Phiếu tiếp nhận hồ sơ công bố / đăng ký số lưu hành Bộ Y Tế hoặc Hồ sơ dự thầu" }
-    ]
-  },
-  {
-    id: "SALES_APP_TO_DEVICE_SERVICE",
-    code: "SALES_APP_TO_DEVICE_SERVICE",
-    name: "Kinh Doanh / App ──► Kỹ Thuật – Thiết Bị: Lắp đặt, Hiệu chuẩn & Bảo hành Máy (RMA)",
-    sourceDept: "Kinh Doanh",
-    targetDept: "Kỹ Thuật – Thiết Bị",
-    icon: "Wrench",
-    description: "Yêu cầu Phòng Kỹ Thuật – Thiết Bị xuất máy tách chiết tự động (EZ32), lắp đặt tận bệnh viện, hiệu chuẩn định kỳ hoặc xử lý sự cố bảo hành RMA.",
-    sla_days: 3,
-    steps: [
-      { step_index: 0, title: "Tiếp nhận yêu cầu & Kiểm tra hồ sơ máy theo số Serial (DHR)", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 8, deliverables: "Phiếu tiếp nhận ca dịch vụ (Service Ticket) và chuẩn bị linh kiện / máy" },
-      { step_index: 1, title: "Kỹ sư thực hiện lắp đặt / hiệu chuẩn / sửa chữa & Cập nhật Firmware", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 48, deliverables: "Biên bản kiểm tra an toàn điện, hiệu chuẩn nhiệt độ & chạy thử nghiệm" },
-      { step_index: 2, title: "Nghiệm thu bàn giao với Khoa Xét nghiệm & Đóng hồ sơ bảo hành", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 16, deliverables: "Biên bản nghiệm thu có chữ ký xác nhận của khách hàng" }
     ]
   }
 ];
@@ -1017,6 +692,21 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
     let list = Array.isArray(personnelList) ? [...personnelList] : [];
     if (filterDepartment && filterDepartment !== "all") {
       list = list.filter(p => isSameWorkspaceDept(p.department, filterDepartment));
+      const normDept = normalizeWorkspaceDept(filterDepartment);
+      if (normDept && DEPARTMENT_STAFF[normDept]) {
+        DEPARTMENT_STAFF[normDept].forEach(rawName => {
+          const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
+          const posMatch = rawName.match(/\((.*?)\)/);
+          if (!list.some(p => sameStaffName(p.full_name, cleanName))) {
+            list.push({
+              full_name: cleanName,
+              employee_code: "",
+              position: posMatch ? posMatch[1] : `Nhân sự ${normDept}`,
+              department: normDept
+            });
+          }
+        });
+      }
     }
     if (!search.trim()) return list;
     const q = search.toLowerCase();
@@ -1141,7 +831,7 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
                         )}
                       </div>
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
-                        {p.position || "Nhân sự ABT"} • {p.department || "ABT"}
+                        {p.position || "Nhân sự TBR"} • {p.department || "TBR"}
                       </div>
                     </div>
                     {isSelected && (
@@ -1158,27 +848,28 @@ const SearchablePersonnelSelect: React.FC<SearchablePersonnelSelectProps> = ({
   );
 };
 
-// Danh mục mẫu đã bỏ: khách hàng / nhà cung cấp / sản phẩm chỉ lấy từ CSDL
+// Danh mục mẫu đã bỏ: khách hàng / sản phẩm chỉ lấy từ CSDL
+export const DEFAULT_CUSTOMERS_LIST: any[] = [];
 
 export const DEFAULT_PRODUCTS_LIST: any[] = [];
 
 export const ALL_DEPARTMENTS_OPTIONS = [
   { value: "Kinh Doanh", label: "Kinh Doanh" },
-  { value: "Nghiên Cứu R&D", label: "Nghiên Cứu R&D (Khối Kỹ Thuật)" },
-  { value: "Sản Xuất Kit", label: "Sản Xuất Kit (Khối Kỹ Thuật)" },
-  { value: "Tổng Hợp Oligo", label: "Tổng Hợp Oligo (Khối Kỹ Thuật)" },
-  { value: "Kỹ Thuật – Thiết Bị", label: "Kỹ Thuật – Thiết Bị (Khối Kỹ Thuật)" },
-  { value: "QA/QC", label: "Đảm Bảo Chất Lượng QA/QC (ISO 13485)" },
   { value: "Application", label: "Application (Kỹ Thuật & Ứng Dụng)" },
   { value: "Kho & Vận Hành", label: "Kho & Vận Hành" },
   { value: "Cung Ứng", label: "Mua Hàng & Cung Ứng" },
   { value: "Pháp Chế", label: "Pháp Chế & Hợp Đồng Thầu" },
   { value: "Kế Toán", label: "Kế Toán - Tài Chính" },
   { value: "Ban Giám Đốc", label: "Ban Giám Đốc (BOD)" },
+  { value: "Kỹ Thuật", label: "Kỹ Thuật Thiết Bị" },
+  { value: "QA / QC", label: "Đảm Bảo Chất Lượng QA/QC" },
   { value: "Marketing", label: "Tiếp Thị & Marketing" },
   { value: "Hành Chính Nhân Sự", label: "Hành Chính Nhân Sự" }
 ];
 
+// Danh sách nhà cung cấp lấy từ CSDL (trang Nhà cung cấp, đơn mua). Trước đây trộn sẵn 15 tên viết cứng
+// (có cả tên pháp nhân sai như "ABT (Công ty TNHH Sinh Học Á Châu)").
+export const DEFAULT_KNOWN_SUPPLIERS: Array<{ id?: string; name: string; customer_code?: string; address?: string; entityType: "supplier" }> = [];
 
 interface SearchableCustomerSelectProps {
   value: string;
@@ -1222,11 +913,16 @@ const SearchableCustomerSelect: React.FC<SearchableCustomerSelectProps> = ({
         custs.push({ ...c, entityType: c.entityType || "customer" });
       }
     });
+    DEFAULT_CUSTOMERS_LIST.forEach(dc => {
+      if (!custs.some(c => (c.name || "").toLowerCase() === dc.name.toLowerCase() || (c.customer_code && c.customer_code === dc.customer_code))) {
+        custs.push({ ...dc, entityType: "customer" });
+      }
+    });
 
     if (!includeSuppliers) return custs;
 
     const sups: any[] = [];
-    const rawSups = [...supplierList];
+    const rawSups = [...supplierList, ...DEFAULT_KNOWN_SUPPLIERS];
     rawSups.forEach(s => {
       const sName = (s?.name || s?.supplier_name || "").trim();
       if (sName && !sups.some(x => (x.name || "").toLowerCase() === sName.toLowerCase())) {
@@ -1787,17 +1483,6 @@ export const renderWorkflowResultSummary = (summary: any) => {
 
 export const UnifiedWorkspace: React.FC = () => {
   const { showToast, notifyActivity, filteredNotifications, markAsRead } = useNotification();
-  // Kết quả lưu nền lên máy chủ: báo lỗi cho người dùng thay vì bỏ qua im lặng
-  const onSaveResult = (label: string) => async (res: Response) => {
-    if (res.ok) return;
-    const err = await res.json().catch(() => ({}));
-    console.error(`[workspace] Lưu "${label}" thất bại:`, res.status, err);
-    showToast(`Chưa lưu được dữ liệu (${label}) lên máy chủ: ${err?.error || `lỗi ${res.status}`}. Vui lòng tải lại trang và thử lại.`, "error");
-  };
-  const onSaveError = (label: string) => (err: any) => {
-    console.error(`[workspace] Mất kết nối khi lưu "${label}":`, err);
-    showToast(`Mất kết nối khi lưu dữ liệu (${label}). Thay đổi có thể chưa được lưu.`, "error");
-  };
   const { user, can } = useAuth();
   const warnNoTemplatePermission = () =>
     showToast("Bạn chưa có quyền tạo / sửa quy trình mẫu. Nhờ Quản trị viên cấp quyền \"Quản lý quy trình phối hợp mẫu\" (Cấu hình → Phân quyền) hoặc gửi nội dung quy trình để Quản trị viên tạo.", "warning");
@@ -1809,7 +1494,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const userRole = (user?.role || "").toLowerCase();
   const rawUserDept = (user as any)?.department || "Kinh Doanh";
   const userDept = normalizeWorkspaceDept(rawUserDept) || "Kinh Doanh";
-  const currentStaffName = user?.name || (user as any)?.full_name || "Cán bộ ABT";
+  const currentStaffName = user?.name || (user as any)?.full_name || "Cán bộ TBR";
 
   const isDirector = useMemo(() => {
     return userRole === "admin" || userRole.includes("director") || userRole.includes("giám đốc") || rawUserDept.toLowerCase().includes("giám đốc");
@@ -1824,34 +1509,21 @@ export const UnifiedWorkspace: React.FC = () => {
   const canManageTemplates = Boolean(isDirector || isManager || (can && can("workspace.manage_templates")));
 
   const isStaff = !isDirector && !isManager;
-  /** Người đang đăng nhập theo quy tắc phân quyền công việc dùng chung với máy chủ */
-  const taskActor = useMemo(() => ({
-    username: (user as any)?.username || "",
-    full_name: currentStaffName,
-    role: (can && can("workspace.approve_dept")) || isManager ? `${userRole} manager` : userRole,
-    department: rawUserDept,
-    isAdmin: isDirector,
-  }), [user, currentStaffName, can, isManager, userRole, rawUserDept, isDirector]);
   const rolePerspective = isDirector ? "director" : isManager ? "manager" : "staff";
   const managerDept = userDept && userDept !== "Ban Giám Đốc" ? userDept : "Application";
 
-  const [activeSubTab, setActiveSubTab] = useState<"tasks" | "approvals" | "workflows" | "planner" | "daily" | "announcements" | "analytics">("tasks");
-  const [pendingApprovalsCount, setPendingApprovalsCount] = useState<number>(0);
+  const [activeSubTab, setActiveSubTab] = useState<"tasks" | "workflows" | "proposals" | "planner" | "daily" | "announcements" | "analytics">("tasks");
   const [selectedDept, setSelectedDept] = useState<string>("all");
-  const factoryMe = useFactoryMe();
-
-  useEffect(() => {
-    fetch("/api/approvals", { credentials: "include" })
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (data?.stats && typeof data.stats.pendingMyAction === "number") {
-          setPendingApprovalsCount(data.stats.pendingMyAction);
-        }
-      })
-      .catch(() => {});
-  }, [currentStaffName]);
-  const [plannerView, setPlannerView] = useState<"calendar" | "lab_projects" | "sales_targets" | "work_plans" | "shift_board">("calendar");
+  const [plannerView, setPlannerView] = useState<"calendar" | "lab_projects" | "sales_targets">("calendar");
   const [loading, setLoading] = useState(true);
+
+  // State cho Tab Đề Xuất & Phê Duyệt Đa Cấp (Enterprise e-Request & e-Approval)
+  const [proposals, setProposals] = useState<ProposalItem[]>([]);
+  const [proposalCreateTrigger, setProposalCreateTrigger] = useState<number>(0);
+  const [proposalLeaveCreateTrigger, setProposalLeaveCreateTrigger] = useState<number>(0);
+  const [proposalLeaveTabTrigger, setProposalLeaveTabTrigger] = useState<number>(0);
+  const [proposalTemplateTrigger, setProposalTemplateTrigger] = useState<number>(0);
+  const [externalOpenProposalId, setExternalOpenProposalId] = useState<string | null>(null);
 
   // State cho Tab Thông Báo & Quyết Định Nội Bộ (Enterprise Announcements & Decisions)
   const [announcements, setAnnouncements] = useState<any[]>([]);
@@ -1926,8 +1598,8 @@ export const UnifiedWorkspace: React.FC = () => {
   const [workflows, setWorkflows] = useState<any[]>([]);
   const [dailyLogs, setDailyLogs] = useState<any[]>([]);
   const [personnelList, setPersonnelList] = useState<any[]>([]);
-  const [customerList, setCustomerList] = useState<any[]>([]);
-  const [supplierList, setSupplierList] = useState<any[]>([]);
+  const [customerList, setCustomerList] = useState<any[]>(DEFAULT_CUSTOMERS_LIST);
+  const [supplierList, setSupplierList] = useState<any[]>(DEFAULT_KNOWN_SUPPLIERS);
   const [productList, setProductList] = useState<any[]>(DEFAULT_PRODUCTS_LIST);
 
   // Task Filters & Search
@@ -2235,11 +1907,11 @@ export const UnifiedWorkspace: React.FC = () => {
   });
 
   // Task Form State
-  const [taskForm, setTaskForm] = useState<{ [key: string]: any; attachments: any[] }>({
+  const [taskForm, setTaskForm] = useState({
     id: null as any,
     title: "",
     department: "Kinh Doanh",
-    task_category: "",
+    task_category: "Chăm sóc KH",
     assignee_name: "",
     customer_name: "",
     priority: "MEDIUM",
@@ -2247,79 +1919,8 @@ export const UnifiedWorkspace: React.FC = () => {
     deadline: todayVN(),
     description: "",
     result: "",
-    attachments: [] as any[],
-    related_type: "",
-    related_ref: ""
+    attachments: [] as any[]
   });
-
-  // Danh mục phân loại công việc dùng chung (Quản trị viên sửa trong "Sửa danh mục")
-  const [taskCategories, setTaskCategories] = useState<string[]>(DEFAULT_TASK_CATEGORIES);
-  const [isCategoryEditorOpen, setIsCategoryEditorOpen] = useState(false);
-  const [categoryDraft, setCategoryDraft] = useState("");
-  const [isSavingCategories, setIsSavingCategories] = useState(false);
-  useEffect(() => {
-    fetch(`/api/storage?key=${TASK_CATEGORY_STORAGE_KEY}`)
-      .then(r => (r.ok ? r.json() : null))
-      .then(j => {
-        const list = Array.isArray(j?.data) ? j.data.map((x: any) => String(x || "").trim()).filter(Boolean) : [];
-        if (list.length > 0) setTaskCategories(list);
-      })
-      .catch(err => console.error("[workspace] Không tải được danh mục phân loại công việc:", err));
-  }, []);
-  const saveTaskCategories = async () => {
-    const list = Array.from(new Set(categoryDraft.split("\n").map(x => x.trim()).filter(Boolean)));
-    if (list.length === 0) {
-      showToast("Danh mục phải có ít nhất 1 phân loại.", "warning");
-      return;
-    }
-    setIsSavingCategories(true);
-    try {
-      const res = await fetch("/api/storage", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ key: TASK_CATEGORY_STORAGE_KEY, data: list })
-      });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToast(`Chưa lưu được danh mục: ${err?.error || res.status}`, "error");
-        return;
-      }
-      setTaskCategories(list);
-      setIsCategoryEditorOpen(false);
-      showToast(`Đã lưu ${list.length} phân loại công việc.`, "success");
-    } catch {
-      showToast("Mất kết nối khi lưu danh mục phân loại.", "error");
-    } finally {
-      setIsSavingCategories(false);
-    }
-  };
-
-  // Dữ liệu cho ô "Liên quan tới"
-  const [recentOrders, setRecentOrders] = useState<any[]>([]);
-  const [salesDeals, setSalesDeals] = useState<any[] | null>(null);
-
-  /** Công việc gốc (trên máy chủ) của form đang mở và quyền của người đang đăng nhập trên nó */
-  const taskFormOriginal = taskForm.id ? tasks.find((t: any) => t.id === taskForm.id) : null;
-  const taskFormAccess = taskForm.id ? getTaskAccess(taskActor, taskFormOriginal || taskForm) : "full";
-
-  /** Gợi ý cho ô "Đối tượng liên quan" theo loại đang chọn */
-  const relatedOptions = useMemo((): string[] => {
-    const uniq = (arr: any[]) => Array.from(new Set(arr.map(x => String(x || "").trim()).filter(Boolean))).slice(0, 500);
-    switch (taskForm.related_type) {
-      case "CUSTOMER": return uniq(customerList.map((c: any) => c.name));
-      case "EMPLOYEE": return uniq(personnelList.map((p: any) => p.full_name));
-      case "ORDER": return uniq(recentOrders.map((o: any) => `${o.order_code}${o.customer_name ? ` - ${o.customer_name}` : ""}`));
-      case "CONTACT": return uniq(customerList.flatMap((c: any) => {
-        let contacts: any = c.contacts;
-        if (typeof contacts === "string") { try { contacts = JSON.parse(contacts); } catch { contacts = []; } }
-        const names = Array.isArray(contacts) ? contacts.map((x: any) => x?.name ? `${x.name} (${c.name})` : "") : [];
-        return c.contact_person ? [...names, `${c.contact_person} (${c.name})`] : names;
-      }));
-      case "LEAD": return uniq((salesDeals || []).map((d: any) => d?.title ? `${d.title}${d.customerName ? ` - ${d.customerName}` : ""}` : ""));
-      case "PROJECT": return uniq(labProjects.map((p: any) => p?.name || p?.title || p?.id));
-      default: return [];
-    }
-  }, [taskForm.related_type, customerList, personnelList, recentOrders, salesDeals, labProjects]);
 
   const openEditTask = (t: any) => {
     const atts = Array.isArray(t.attachments)
@@ -2487,7 +2088,6 @@ export const UnifiedWorkspace: React.FC = () => {
         setDailyLogs(data.daily || []);
         if (data.personnel) setPersonnelList(data.personnel);
         if (Array.isArray(data.customers)) setCustomerList(data.customers);
-        if (Array.isArray(data.orders)) setRecentOrders(data.orders);
         if (Array.isArray(data.products)) setProductList(data.products);
         setWorkflowTemplates(mergeWithDefaultWorkflowTemplates(data.templates));
 
@@ -2538,17 +2138,9 @@ export const UnifiedWorkspace: React.FC = () => {
                 }))
                 .filter((s: any) => s.name)
             : [];
-          const prodSups = Array.isArray(data.products)
-            ? data.products
-                .map((pr: any) => ({
-                  name: pr.supplier_name || pr.manufacturer || pr.brand || pr.origin,
-                  customer_code: "NCC-SP",
-                  address: "Hãng sản xuất / Nhà cung cấp"
-                }))
-                .filter((s: any) => s.name && String(s.name).length >= 2)
-            : [];
-          const mergedSups: any[] = [];
-          [...apiSups, ...poSups, ...prodSups].forEach((s: any) => {
+          // Hãng sản xuất / xuất xứ của sản phẩm không phải nhà cung cấp: chỉ lấy NCC thật và NCC trên đơn mua
+          const mergedSups: any[] = [...DEFAULT_KNOWN_SUPPLIERS];
+          [...apiSups, ...poSups].forEach((s: any) => {
             const sName = String(s?.name || s?.supplier_name || s?.company_name || "").trim();
             if (sName && !mergedSups.some((m) => m.name.toLowerCase() === sName.toLowerCase())) {
               mergedSups.push({
@@ -2585,7 +2177,7 @@ export const UnifiedWorkspace: React.FC = () => {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify(cleanedSched)
-            }).then(onSaveResult("unified_weekly_schedule")).catch(onSaveError("unified_weekly_schedule"));
+            }).catch(() => {});
           }
         } catch (err) {
           console.warn("Could not load weekly schedule:", err);
@@ -2661,6 +2253,21 @@ export const UnifiedWorkspace: React.FC = () => {
           const localAnn = typeof window !== "undefined" ? localStorage.getItem("unified_announcements") : null;
           if (localAnn) setAnnouncements(JSON.parse(localAnn));
         }
+
+        // Load persistent enterprise proposals & approvals
+        try {
+          const propRes = await fetch("/api/storage?key=workspace_proposals");
+          const propData = await propRes.json();
+          if (Array.isArray(propData?.data)) {
+            setProposals(propData.data);
+          } else {
+            const localProp = typeof window !== "undefined" ? localStorage.getItem("workspace_proposals") : null;
+            if (localProp) setProposals(JSON.parse(localProp));
+          }
+        } catch (err) {
+          const localProp = typeof window !== "undefined" ? localStorage.getItem("workspace_proposals") : null;
+          if (localProp) setProposals(JSON.parse(localProp));
+        }
       }
     } catch (e) {
       console.error("Failed to load workspace data:", e);
@@ -2691,6 +2298,7 @@ export const UnifiedWorkspace: React.FC = () => {
       return personnelList || [];
     }
 
+    const normDept = normalizeWorkspaceDept(currentDept);
     const list: any[] = [];
 
     if (personnelList && personnelList.length > 0) {
@@ -2701,6 +2309,20 @@ export const UnifiedWorkspace: React.FC = () => {
       });
     }
 
+    if (normDept && normDept !== "all" && DEPARTMENT_STAFF[normDept]) {
+      DEPARTMENT_STAFF[normDept].forEach(rawName => {
+        const cleanName = rawName.replace(/\s*\(.*?\)/, "").trim();
+        const posMatch = rawName.match(/\((.*?)\)/);
+        if (!list.some((p: any) => sameStaffName(p.full_name || p, cleanName))) {
+          list.push({
+            full_name: cleanName,
+            employee_code: "",
+            position: posMatch ? posMatch[1] : `Nhân sự ${normDept}`,
+            department: normDept
+          });
+        }
+      });
+    }
 
     return list;
   }, [personnelList, selectedDept, rolePerspective, managerDept]);
@@ -3020,6 +2642,19 @@ export const UnifiedWorkspace: React.FC = () => {
       setSearchQuery("");
       setActiveSubTab("tasks");
       openEditTask(matchedTask);
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("workspace_open_task_detail");
+      }
+      return true;
+    }
+
+    if (subTab === "proposals" || extractedCode.startsWith("DX") || extractedCode.startsWith("DNTT") || extractedCode.startsWith("DNTU") || extractedCode.startsWith("TTR")) {
+      setSelectedDept("all");
+      setActiveSubTab("proposals");
+      const targetPropId = String(rawId || rawCode || extractedCode || "").trim();
+      if (targetPropId) {
+        setExternalOpenProposalId(targetPropId);
+      }
       if (typeof window !== "undefined") {
         localStorage.removeItem("workspace_open_task_detail");
       }
@@ -3373,7 +3008,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Statistics
   const stats = useMemo(() => {
-    const totalTasks = filteredTasks.filter((t) => t.status !== "CANCELLED").length;
+    const totalTasks = filteredTasks.length;
     const todoTasks = filteredTasks.filter((t) => t.status === "TODO").length;
     const inProgressTasks = filteredTasks.filter((t) => t.status === "IN_PROGRESS").length;
     const doneTasks = filteredTasks.filter((t) => t.status === "DONE").length;
@@ -3454,7 +3089,7 @@ export const UnifiedWorkspace: React.FC = () => {
     });
 
     // Task metrics
-    const totalTasks = scopeTasks.filter(t => t.status !== "CANCELLED").length;
+    const totalTasks = scopeTasks.length;
     const doneTasks = scopeTasks.filter(t => t.status === "DONE").length;
     const inProgressTasks = scopeTasks.filter(t => t.status === "IN_PROGRESS").length;
     const todoTasks = scopeTasks.filter(t => t.status === "TODO").length;
@@ -3568,10 +3203,7 @@ export const UnifiedWorkspace: React.FC = () => {
     }
 
     // Department Breakdown Scorecard (4 core depts + Khối Hành Chính / Khác nếu có task để tổng số việc luôn khớp 100% với 26/26 việc)
-    // Các phòng ban có công việc hoặc nhân sự (trong 10 phòng ban của ABT); phần còn lại gộp vào "Khối Hành Chính & Khác"
-    const coreDepts = WORKSPACE_TASK_DEPARTMENTS.map(d => d.id).filter(id =>
-      scopeTasks.some(t => isSameWorkspaceDept(t.department, id)) || scopePersonnel.some(p => isSameWorkspaceDept(p.department, id))
-    );
+    const coreDepts = ["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng"];
     const isCoreDept = (deptName: string) => coreDepts.some(c => isSameWorkspaceDept(deptName, c));
     const otherTasksCheck = scopeTasks.filter(t => !isCoreDept(t.department));
     const otherStaffCheck = scopePersonnel.filter(p => !isCoreDept(p.department));
@@ -3583,7 +3215,7 @@ export const UnifiedWorkspace: React.FC = () => {
       const isOtherGroup = dName === "Khối Hành Chính & Khác";
       const matchDeptFn = (deptVal: string) => isOtherGroup ? !isCoreDept(deptVal) : isSameWorkspaceDept(deptVal, dName);
 
-      const dTasks = scopeTasks.filter(t => matchDeptFn(t.department) && t.status !== "CANCELLED");
+      const dTasks = scopeTasks.filter(t => matchDeptFn(t.department));
       const dDone = dTasks.filter(t => t.status === "DONE").length;
       const dInProg = dTasks.filter(t => t.status === "IN_PROGRESS").length;
       const dTodo = dTasks.filter(t => t.status === "TODO").length;
@@ -3800,22 +3432,17 @@ export const UnifiedWorkspace: React.FC = () => {
     const target = tasks.find((t) => t.id === taskId);
     if (!target) return;
     try {
-      const res = await fetch("/api/workflows?action=task", {
+      await fetch("/api/workflows?action=task", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...target, status: newStatus })
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToast(err?.error || `Không đổi được trạng thái (lỗi ${res.status})`, "error");
-        return;
-      }
       setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, status: newStatus } : t)));
-      showToast(`Đã chuyển trạng thái: ${taskStatusLabel(newStatus)}`, "info");
+      showToast(`Đã chuyển trạng thái: ${newStatus}`, "info");
 
       notifyActivity({
         title: newStatus === "DONE" ? "Hoàn thành công việc" : "Cập nhật tiến độ công việc",
-        message: `${currentStaffName} đã cập nhật công việc "${target.title}" sang trạng thái: ${taskStatusLabel(newStatus)}.`,
+        message: `${currentStaffName} đã cập nhật công việc "${target.title}" sang trạng thái: ${newStatus === "DONE" ? "Đã hoàn tất (DONE)" : newStatus === "IN_PROGRESS" ? "Đang thực hiện" : "Cần làm"}.`,
         type: newStatus === "DONE" ? "success" : "info",
         category: "task",
         sender: { name: currentStaffName },
@@ -3851,9 +3478,18 @@ export const UnifiedWorkspace: React.FC = () => {
           assignee_name: sAssignee
         };
       });
-      const step0Assignee = sanitizedSteps.length > 0 ? sanitizedSteps[0].assignee_name : cleanWorkspaceAssignee(wfForm.assignee_name);
-      const step0Dept = sanitizedSteps.length > 0 && sanitizedSteps[0].dept ? sanitizedSteps[0].dept : wfForm.target_dept;
-      const effectiveTargetDept = step0Dept || wfForm.target_dept || "";
+      const isEditingExistingWf = Boolean((wfForm as any).id);
+      const rawActiveIdx = typeof (wfForm as any).current_step_index === "number" ? (wfForm as any).current_step_index : 0;
+      const activeStepIdx = sanitizedSteps.length > 0
+        ? Math.min(Math.max(0, rawActiveIdx), sanitizedSteps.length - 1)
+        : 0;
+      const activeStepAssignee = sanitizedSteps.length > 0
+        ? sanitizedSteps[activeStepIdx].assignee_name
+        : cleanWorkspaceAssignee(wfForm.assignee_name);
+      const activeStepDept = sanitizedSteps.length > 0 && sanitizedSteps[activeStepIdx].dept
+        ? sanitizedSteps[activeStepIdx].dept
+        : wfForm.target_dept;
+      const effectiveTargetDept = activeStepDept || wfForm.target_dept || "";
       const isProcurementWorkflow =
         wfForm.workflow_type === "TO_PROCUREMENT" ||
         wfForm.workflow_type === "PURCHASE_REQUEST" ||
@@ -3862,7 +3498,7 @@ export const UnifiedWorkspace: React.FC = () => {
         String(effectiveTargetDept).toLowerCase().includes("mua hàng");
 
       let structuredSummary = (wfForm as any).results_summary || "";
-      if (isProcurementWorkflow) {
+      if (isProcurementWorkflow && !isEditingExistingWf) {
         const rawProd = String(wfForm.product_info || "").trim();
         const matchedCatalogProd = productList.find((p: any) => {
           const pCode = String(p.code || "").trim();
@@ -3899,8 +3535,10 @@ export const UnifiedWorkspace: React.FC = () => {
         results_summary: structuredSummary,
         target_dept: effectiveTargetDept,
         requester_name: wfForm.requester_name || currentStaffName,
-        assignee_name: step0Assignee,
-        steps: sanitizedSteps
+        assignee_name: activeStepAssignee,
+        current_step_index: activeStepIdx,
+        steps: sanitizedSteps,
+        ...(isEditingExistingWf ? { force_rollback: true } : {})
       };
 
       const res = await fetch("/api/workflows?action=workflow", {
@@ -3910,10 +3548,9 @@ export const UnifiedWorkspace: React.FC = () => {
       });
       const data = await res.json();
       if (data.success) {
-        const isEditingExistingWf = Boolean((wfForm as any).id);
         showToast(
           isEditingExistingWf
-            ? "✅ Đã lưu cập nhật quy trình & thời gian SLA thành công!"
+            ? "✅ Đã lưu cập nhật thông tin phiếu phối hợp, các bước & SLA thành công!"
             : "Đã khởi tạo quy trình liên phòng ban thành công!",
           "success"
         );
@@ -4094,6 +3731,7 @@ export const UnifiedWorkspace: React.FC = () => {
         setIsTemplateModalOpen(false);
         const mergedTemplates = mergeWithDefaultWorkflowTemplates(data.templates);
         setWorkflowTemplates(mergedTemplates);
+        // Nếu đang mở hoặc chọn đúng mẫu quy trình này trong wfForm thì đồng bộ ngay các bước & SLA mới
         const savedCode = String(normalizedPayload.code || normalizedPayload.id || "");
         if (savedCode && String(wfForm.workflow_type) === savedCode) {
           const updatedSteps = reindexWorkflowSteps(
@@ -5571,7 +5209,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const openCreateThematicModal = (deptOverride?: string) => {
     setEditingThematicId(null);
     const targetDept = deptOverride || (rolePerspective === "manager" ? managerDept : (selectedDept === "all" ? "Application" : selectedDept));
-    const availableTypes = getThematicTypesForDept(targetDept);
+    const availableTypes = DEPARTMENT_THEMATIC_TYPES[targetDept] || DEPARTMENT_THEMATIC_TYPES["Application"] || [];
     const firstType = availableTypes[0];
     const prefix = firstType?.codePrefix || "PRJ";
     const existingCount = labProjects.filter((p: any) => p.dept === targetDept).length + 1;
@@ -5631,7 +5269,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
   // Handle Changing Department inside Modal
   const handleThematicDeptChange = (newDept: string) => {
-    const availableTypes = getThematicTypesForDept(newDept);
+    const availableTypes = DEPARTMENT_THEMATIC_TYPES[newDept] || DEPARTMENT_THEMATIC_TYPES["Application"] || [];
     const firstType = availableTypes[0];
     const prefix = firstType?.codePrefix || "PRJ";
     const existingCount = labProjects.filter((p: any) => p.dept === newDept).length + 1;
@@ -5948,6 +5586,50 @@ export const UnifiedWorkspace: React.FC = () => {
       });
     } catch {}
     showToast("Đã xóa mục tiêu doanh số", "info");
+  };
+
+  // ==================== HỆ THỐNG ĐỀ XUẤT & PHÊ DUYỆT ĐA CẤP (ENTERPRISE PROPOSALS & APPROVALS) ====================
+  const saveProposalsToStorage = async (nextList: ProposalItem[]) => {
+    setProposals(nextList);
+    try {
+      if (typeof window !== "undefined") {
+        localStorage.setItem("workspace_proposals", JSON.stringify(nextList));
+      }
+      await fetch("/api/storage?key=workspace_proposals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextList)
+      });
+    } catch (err) {
+      console.warn("Could not save proposals:", err);
+    }
+  };
+
+  const proposalsWaitingForMeCount = useMemo(() => {
+    return (proposals || []).filter((p) =>
+      isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager)
+    ).length;
+  }, [proposals, currentStaffName, userDept, isDirector, isManager]);
+
+  const handleCreateTaskFromProposal = (prop: ProposalItem) => {
+    if (!prop) return;
+    const defaultDept = prop.requesterDept || (rolePerspective === "manager" ? managerDept : "Kinh Doanh");
+    setTaskForm({
+      id: null,
+      title: `[Thực thi ${prop.proposalCode}] ${prop.title}`,
+      department: defaultDept,
+      task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
+      assignee_name: prop.executorName || currentStaffName,
+      customer_name: prop.customerName || "",
+      priority: prop.priority === "URGENT" ? "URGENT" : "HIGH",
+      status: "TODO",
+      deadline: prop.neededByDate || todayVN(),
+      description: `Thực thi theo Tờ trình / Đề xuất đã phê duyệt [${prop.proposalCode}] "${prop.title}" (Người đề xuất: ${prop.requesterName} - ${prop.requesterDept}).\n\nNội dung: ${prop.summaryReason}`,
+      result: "",
+      attachments: Array.isArray(prop.attachments) ? [...prop.attachments] : []
+    });
+    setActiveSubTab("tasks");
+    setIsTaskModalOpen(true);
   };
 
   // ==================== HỆ THỐNG BAN HÀNH THÔNG BÁO, QUYẾT ĐỊNH & QUY CHẾ (ENTERPRISE ANNOUNCEMENTS) ====================
@@ -6389,9 +6071,7 @@ export const UnifiedWorkspace: React.FC = () => {
       id: null,
       title: `[Triển khai ${ann.docCode}] ${ann.title}`,
       department: defaultDept,
-      task_category: "",
-      related_type: "",
-      related_ref: "",
+      task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
       assignee_name: currentStaffName,
       customer_name: "",
       priority: ann.priority === "URGENT" ? "URGENT" : "HIGH",
@@ -6459,31 +6139,6 @@ export const UnifiedWorkspace: React.FC = () => {
           </button>
 
           <button
-            onClick={() => setActiveSubTab("approvals")}
-            title="Trung tâm Đề xuất & Phê duyệt Đa cấp (Tờ trình, Mua sắm, Tạm ứng, Chiết khấu, Chủ trương...)"
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
-              activeSubTab === "approvals"
-                ? "bg-emerald-600 text-white shadow-sm shadow-emerald-600/25"
-                : "text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-slate-800 hover:text-emerald-700 dark:hover:text-white"
-            }`}
-          >
-            <ShieldCheck className="w-4 h-4" />
-            <span>Đề Xuất &amp; Phê Duyệt</span>
-            {pendingApprovalsCount > 0 && (
-              <span
-                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold ${
-                  activeSubTab === "approvals"
-                    ? "bg-white text-emerald-700"
-                    : "bg-amber-500 text-white animate-pulse"
-                }`}
-                title={`${pendingApprovalsCount} đề xuất đang chờ bạn phê duyệt`}
-              >
-                {pendingApprovalsCount} chờ duyệt
-              </span>
-            )}
-          </button>
-
-          <button
             onClick={() => setActiveSubTab("workflows")}
             className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 ${
               activeSubTab === "workflows"
@@ -6498,6 +6153,40 @@ export const UnifiedWorkspace: React.FC = () => {
                 {stats.pendingWf}
               </span>
             )}
+          </button>
+
+          <button
+            onClick={() => setActiveSubTab("proposals")}
+            className={`flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all shrink-0 cursor-pointer ${
+              activeSubTab === "proposals"
+                ? "bg-emerald-600 text-white shadow-sm shadow-emerald-600/25"
+                : "text-slate-600 dark:text-slate-400 hover:bg-emerald-50 dark:hover:bg-slate-800 hover:text-emerald-700 dark:hover:text-white"
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            <span>Đề Xuất &amp; Phê Duyệt</span>
+            {proposalsWaitingForMeCount > 0 ? (
+              <span
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold animate-pulse ${
+                  activeSubTab === "proposals"
+                    ? "bg-white text-emerald-700"
+                    : "bg-amber-500 text-white"
+                }`}
+                title={`${proposalsWaitingForMeCount} tờ trình / đề xuất đang chờ bạn phê duyệt`}
+              >
+                {proposalsWaitingForMeCount} chờ duyệt
+              </span>
+            ) : proposals.length > 0 ? (
+              <span
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] ${
+                  activeSubTab === "proposals"
+                    ? "bg-white/20 text-white"
+                    : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300"
+                }`}
+              >
+                {proposals.length}
+              </span>
+            ) : null}
           </button>
 
           <button
@@ -6649,7 +6338,6 @@ export const UnifiedWorkspace: React.FC = () => {
       </div>
 
       {/* ==================== LEVEL 2: UNIFIED FILTER & ACTION BAR ==================== */}
-      {activeSubTab !== "approvals" && (
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-3 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
         {/* Left: Department Dropdown + Search + Status */}
         <div className="flex flex-wrap items-center gap-2.5 flex-1">
@@ -6668,7 +6356,21 @@ export const UnifiedWorkspace: React.FC = () => {
               >
                 {DEPARTMENTS.map((d) => (
                   <option key={d.id} value={d.id} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-1">
-                    {d.id === "all" ? "🏢 Toàn công ty" : d.name}
+                    {d.id === "all"
+                      ? "🏢 Toàn công ty"
+                      : d.id === "Kinh Doanh"
+                      ? "💼 Kinh Doanh"
+                      : d.id === "Application"
+                      ? "🔬 Application (Kỹ Thuật & Ứng Dụng)"
+                      : d.id === "Kho & Vận Hành"
+                      ? "📦 Kho & Vận Hành"
+                      : d.id === "Cung Ứng"
+                      ? "🛒 Mua Hàng & Cung Ứng"
+                      : d.id === "Pháp Chế"
+                      ? "⚖️ Pháp Chế & Tuân Thủ"
+                      : d.id === "Kế Toán"
+                      ? "💰 Kế Toán - Tài Chính"
+                      : "🏛️ Ban Giám Đốc"}
                   </option>
                 ))}
               </select>
@@ -6741,9 +6443,9 @@ export const UnifiedWorkspace: React.FC = () => {
               className="text-xs px-2.5 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-700 dark:text-slate-300 font-semibold"
             >
               <option value="all">Tất cả trạng thái</option>
-              {TASK_STATUSES.map(st => (
-                <option key={st.id} value={st.id}>{st.label}</option>
-              ))}
+              <option value="TODO">Cần làm</option>
+              <option value="IN_PROGRESS">Đang làm</option>
+              <option value="DONE">Hoàn tất</option>
             </select>
           )}
 
@@ -6822,9 +6524,7 @@ export const UnifiedWorkspace: React.FC = () => {
                     id: null,
                     title: "",
                     department: defaultDept,
-                    task_category: "",
-                    related_type: "",
-                    related_ref: "",
+                    task_category: DEPARTMENT_CATEGORIES[defaultDept]?.[0] || "Chung",
                     assignee_name: currentStaffName,
                     customer_name: "",
                     priority: "MEDIUM",
@@ -6869,6 +6569,29 @@ export const UnifiedWorkspace: React.FC = () => {
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>Khởi Tạo Phiếu Phối Hợp</span>
+              </button>
+            </div>
+          )}
+
+          {/* TAB 2B: ĐỀ XUẤT & PHÊ DUYỆT -> Nút Lập Đề Xuất / Tờ Trình + Nút nhanh Xin Nghỉ Phép (DXNP) */}
+          {activeSubTab === "proposals" && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setProposalLeaveCreateTrigger((n) => n + 1)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white transition-all shadow-xs cursor-pointer"
+                title="Lập nhanh Đơn Xin Nghỉ Phép / Nghỉ Việc Riêng (DXNP)"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>🏖️ Xin Nghỉ Phép (DXNP)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setProposalCreateTrigger((n) => n + 1)}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white transition-all shadow-xs cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>📝 Lập Đề Xuất / Tờ Trình</span>
               </button>
             </div>
           )}
@@ -6942,15 +6665,42 @@ export const UnifiedWorkspace: React.FC = () => {
           )}
         </div>
       </div>
-      )}
 
       {/* ==================== LEVEL 3: TAB CONTENTS ==================== */}
 
-      {/* TAB ĐỀ XUẤT & PHÊ DUYỆT (ENTERPRISE E-APPROVAL CENTER) */}
-      {activeSubTab === "approvals" && (
-        <EnterpriseApprovalsCenter
-          selectedDeptFilter={selectedDept}
-          onPendingCountChange={setPendingApprovalsCount}
+      {/* TAB 2B: ĐỀ XUẤT & PHÊ DUYỆT ĐA CẤP (ENTERPRISE PROPOSALS & E-APPROVAL) */}
+      {activeSubTab === "proposals" && (
+        <ProposalsApprovalView
+          currentStaffName={currentStaffName}
+          userDept={userDept}
+          rolePerspective={rolePerspective}
+          isDirector={isDirector}
+          isManager={isManager}
+          selectedDept={selectedDept}
+          searchQuery={searchQuery}
+          departments={DEPARTMENTS}
+          personnelList={personnelList}
+          customerList={customerList}
+          supplierList={supplierList}
+          productList={productList}
+          proposals={proposals}
+          onSaveProposals={saveProposalsToStorage}
+          onPreviewAttachment={(att) => {
+            const url = att?.url || "";
+            if ((att?.type || "").startsWith("image/") || /\.(png|jpe?g|webp|gif|bmp)$/i.test(att?.name || url)) {
+              setPreviewImage(url);
+            } else {
+              setPreviewDoc({ url, name: att?.name, type: att?.type });
+            }
+          }}
+          onCreateTaskFromProposal={handleCreateTaskFromProposal}
+          notifyActivity={notifyActivity}
+          showToast={showToast}
+          externalCreateTrigger={proposalCreateTrigger}
+          externalLeaveCreateTrigger={proposalLeaveCreateTrigger}
+          externalLeaveTabTrigger={proposalLeaveTabTrigger}
+          externalTemplateTrigger={proposalTemplateTrigger}
+          externalOpenProposalId={externalOpenProposalId}
         />
       )}
 
@@ -7039,7 +6789,7 @@ export const UnifiedWorkspace: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />
                     <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                      Kế hoạch
+                      Cần Làm (TODO)
                     </span>
                   </div>
                   <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400">
@@ -7101,17 +6851,17 @@ export const UnifiedWorkspace: React.FC = () => {
                   <div className="flex items-center gap-2">
                     <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
                     <span className="text-xs font-extrabold uppercase tracking-wider text-slate-700 dark:text-slate-300">
-                      Hoàn tất / Hủy bỏ
+                      Đã Hoàn Tất
                     </span>
                   </div>
                   <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
-                    {filteredTasks.filter((t) => t.status === "DONE" || t.status === "CANCELLED").length}
+                    {filteredTasks.filter((t) => t.status === "DONE").length}
                   </span>
                 </div>
 
                 <div className="space-y-2.5 min-h-[300px]">
                   {filteredTasks
-                    .filter((t) => t.status === "DONE" || t.status === "CANCELLED")
+                    .filter((t) => t.status === "DONE")
                     .map((task) => (
                       <TaskCard
                         key={task.id}
@@ -7120,7 +6870,7 @@ export const UnifiedWorkspace: React.FC = () => {
                         onEdit={openEditTask}
                       />
                     ))}
-                  {filteredTasks.filter((t) => t.status === "DONE" || t.status === "CANCELLED").length === 0 && (
+                  {filteredTasks.filter((t) => t.status === "DONE").length === 0 && (
                     <div className="text-center py-12 text-xs text-slate-400 italic">Không có công việc nào</div>
                   )}
                 </div>
@@ -7187,11 +6937,10 @@ export const UnifiedWorkspace: React.FC = () => {
                       <td className="py-3 px-4">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           t.status === "DONE" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
-                          t.status === "CANCELLED" ? "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400 line-through" :
                           t.status === "IN_PROGRESS" ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" :
                           "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
                         }`}>
-                          {taskStatusLabel(t.status)}
+                          {t.status === "DONE" ? "Hoàn tất" : t.status === "IN_PROGRESS" ? "Đang làm" : "Cần làm"}
                         </span>
                       </td>
                       <td className="py-3 px-4 text-right">
@@ -7622,7 +7371,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
                           <div className="flex items-center gap-x-4 gap-y-1.5 text-xs text-slate-600 dark:text-slate-400 flex-wrap">
                             <span className="inline-flex items-center gap-1">
-                              <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ ABT"}
+                              <strong className="text-slate-700 dark:text-slate-300">Khách hàng / Đơn vị:</strong> {wf.customer_name || "Nội bộ TBR"}
                             </span>
                             {wf.product_info && (
                               <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800/90 text-slate-800 dark:text-slate-200 font-medium">
@@ -7747,10 +7496,10 @@ export const UnifiedWorkspace: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => handleEditWorkflowTicket(wf)}
-                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-indigo-200 dark:border-indigo-800 bg-indigo-50 hover:bg-indigo-100 dark:bg-indigo-950/50 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 cursor-pointer"
-                            title="Chỉnh sửa các bước quy trình, thời gian SLA và hạn chót của phiếu này"
+                            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border border-amber-300 dark:border-amber-700 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 cursor-pointer shadow-2xs"
+                            title="Chỉnh sửa toàn bộ thông tin phiếu đã khởi tạo: Tiêu đề, Khách hàng, Sản phẩm, Hạn chót, Người thực hiện, Các bước & Thời gian SLA"
                           >
-                            <span>✏️ Sửa quy trình / SLA</span>
+                            <span>✏️ Sửa Thông Tin / SLA</span>
                           </button>
 
                           <button
@@ -8014,52 +7763,12 @@ export const UnifiedWorkspace: React.FC = () => {
                 <Target className="w-3.5 h-3.5" />
                 <span>🎯 Mục Tiêu Kinh Doanh ({filteredSalesTargets.length})</span>
               </button>
-
-              <button
-                onClick={() => setPlannerView("work_plans")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  plannerView === "work_plans"
-                    ? "bg-sky-700 text-white shadow-xs"
-                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                }`}
-              >
-                <ListChecks className="w-3.5 h-3.5" />
-                <span>📝 Kế Hoạch Tuần &amp; KPI Chuyên Môn</span>
-              </button>
-
-              <button
-                onClick={() => setPlannerView("shift_board")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  plannerView === "shift_board"
-                    ? "bg-emerald-700 text-white shadow-xs"
-                    : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-                }`}
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>⏱️ Phân Công Ca / Điều Độ Lab &amp; Xưởng</span>
-              </button>
             </div>
 
             <span className="text-[11px] text-slate-400 hidden sm:inline font-medium">
               Hiển thị phân bổ theo ngữ cảnh chuyên môn
             </span>
           </div>
-
-          {/* Sub-view: Weekly Work Plans & KPI by Department */}
-          {plannerView === "work_plans" && (
-            <WorkPlansView
-              canSubmit={true}
-              departmentHint={selectedDept}
-            />
-          )}
-
-          {/* Sub-view: Daily Shift / Lab & Factory Dispatch Board by Department */}
-          {plannerView === "shift_board" && (
-            <PlannerView
-              myUserId={factoryMe.data?.profile.user_id ?? null}
-              departmentHint={selectedDept}
-            />
-          )}
 
           {/* Sub-view 1: Master Weekly Calendar */}
           {plannerView === "calendar" && (
@@ -8452,7 +8161,7 @@ export const UnifiedWorkspace: React.FC = () => {
                 const currentDept = rolePerspective === "manager" ? managerDept : selectedDept;
                 const relevantTypes = currentDept === "all" 
                   ? Object.values(DEPARTMENT_THEMATIC_TYPES).flat()
-                  : getThematicTypesForDept(currentDept);
+                  : (DEPARTMENT_THEMATIC_TYPES[currentDept] || []);
 
                 if (relevantTypes.length === 0) return null;
 
@@ -8529,25 +8238,19 @@ export const UnifiedWorkspace: React.FC = () => {
                     const totalStages = stages.length;
                     const progressPct = totalStages > 0 ? Math.round((completedStages / totalStages) * 100) : 0;
                     
-                    const isApp = prj.dept === "Application" || prj.dept === "Lab";
-                    const isTechFactory = ["Nghiên Cứu R&D", "Sản Xuất Kit", "Tổng Hợp Oligo", "Kỹ Thuật – Thiết Bị", "QA/QC"].includes(prj.dept);
-                    const isSales = ["Kinh Doanh", "Sales Admin", "PM", "Marketing"].includes(prj.dept);
+                    const isApp = prj.dept === "Application";
+                    const isSales = prj.dept === "Kinh Doanh";
                     const isWh = prj.dept === "Kho & Vận Hành";
                     const isProc = prj.dept === "Cung Ứng";
-                    const isFinAdmin = ["Kế Toán", "Pháp Chế", "Hành Chính Nhân Sự", "Ban Giám Đốc"].includes(prj.dept);
 
                     const badgeColor = isApp
                       ? "bg-purple-100 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border-purple-200 dark:border-purple-800"
-                      : isTechFactory
-                      ? "bg-cyan-100 text-cyan-800 dark:bg-cyan-950/60 dark:text-cyan-300 border-cyan-200 dark:border-cyan-800"
                       : isSales
                       ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300 border-amber-200 dark:border-amber-800"
                       : isWh
                       ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800"
                       : isProc
                       ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300 border-blue-200 dark:border-blue-800"
-                      : isFinAdmin
-                      ? "bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 border-rose-200 dark:border-rose-800"
                       : "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800";
 
                     return (
@@ -9804,7 +9507,16 @@ export const UnifiedWorkspace: React.FC = () => {
             {/* Department Breakdown Grid - Synchronized 100% with analyticsData.deptScorecards */}
             <div className={`grid grid-cols-1 gap-3 ${analyticsData.deptScorecards.length > 4 ? "md:grid-cols-5" : "md:grid-cols-4"}`}>
               {analyticsData.deptScorecards.map((ds) => {
-                const Icon = DEPARTMENT_ICONS[ds.dept] || Building2;
+                const Icon =
+                  ds.dept === "Kinh Doanh"
+                    ? Briefcase
+                    : ds.dept === "Application"
+                    ? FlaskConical
+                    : ds.dept === "Kho & Vận Hành"
+                    ? Package
+                    : ds.dept === "Cung Ứng"
+                    ? ShoppingCart
+                    : Building2;
 
                 return (
                   <div key={ds.dept} className="bg-slate-50 dark:bg-slate-800/40 border border-slate-200/80 dark:border-slate-800 rounded-xl p-3.5 space-y-2.5">
@@ -10646,16 +10358,6 @@ export const UnifiedWorkspace: React.FC = () => {
         size="md"
       >
         <form onSubmit={handleSaveTask} className="space-y-3 p-1 text-xs">
-          {taskFormAccess !== "full" && (
-            <div className={`rounded-xl px-3 py-2 font-semibold border ${taskFormAccess === "progress"
-              ? "bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-950/40 dark:border-blue-900 dark:text-blue-300"
-              : "bg-slate-100 border-slate-200 text-slate-600 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300"}`}>
-              {taskFormAccess === "progress"
-                ? `Bạn là người được giao: chỉ cập nhật được trạng thái, báo cáo kết quả, đính kèm và trao đổi. Nội dung giao việc do ${taskFormOriginal?.created_by_name || "người giao việc / quản lý phòng ban"} quản lý.`
-                : "Bạn chỉ được xem công việc này (không phải người tạo, người được giao hoặc quản lý phòng ban)."}
-            </div>
-          )}
-          <fieldset disabled={taskFormAccess !== "full"} className="space-y-3 disabled:opacity-80">
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Tiêu đề công việc *</label>
             <input
@@ -10675,43 +10377,29 @@ export const UnifiedWorkspace: React.FC = () => {
                 value={taskForm.department}
                 onChange={(e) => {
                   const newDept = e.target.value;
-                  setTaskForm({ ...taskForm, department: newDept });
+                  setTaskForm({
+                    ...taskForm,
+                    department: newDept,
+                    task_category: DEPARTMENT_CATEGORIES[newDept]?.[0] || "Chung"
+                  });
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                {taskForm.department && !WORKSPACE_TASK_DEPARTMENTS.some(d => d.id === taskForm.department) && (
-                  <option value={taskForm.department}>{taskForm.department}</option>
-                )}
-                {WORKSPACE_TASK_DEPARTMENTS.map(d => (
-                  <option key={d.id} value={d.id}>{d.label}</option>
-                ))}
+                <option value="Kinh Doanh">Kinh Doanh</option>
+                <option value="Application">Application (Lab)</option>
+                <option value="Kho & Vận Hành">Kho &amp; Vận Hành</option>
+                <option value="Cung Ứng">Cung Ứng</option>
               </select>
             </div>
 
             <div>
-              <label className="flex items-center justify-between font-bold text-slate-700 dark:text-slate-300 mb-1">
-                <span>Phân loại công việc *</span>
-                {isDirector && (
-                  <button
-                    type="button"
-                    onClick={() => { setCategoryDraft(taskCategories.join("\n")); setIsCategoryEditorOpen(true); }}
-                    className="text-[10px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
-                  >
-                    Sửa danh mục
-                  </button>
-                )}
-              </label>
+              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Phân loại nghiệp vụ</label>
               <select
-                required
                 value={taskForm.task_category}
                 onChange={(e) => setTaskForm({ ...taskForm, task_category: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                <option value="">-- Chọn phân loại --</option>
-                {taskForm.task_category && !taskCategories.includes(taskForm.task_category) && (
-                  <option value={taskForm.task_category}>{taskForm.task_category}</option>
-                )}
-                {taskCategories.map((cat) => (
+                {(DEPARTMENT_CATEGORIES[taskForm.department] || []).map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
@@ -10732,7 +10420,6 @@ export const UnifiedWorkspace: React.FC = () => {
                 personnelList={personnelList}
                 filterDepartment={rolePerspective === "manager" ? taskForm.department : undefined}
                 placeholder="Tìm & chọn nhân sự phụ trách..."
-                disabled={taskFormAccess !== "full"}
               />
             </div>
 
@@ -10753,10 +10440,9 @@ export const UnifiedWorkspace: React.FC = () => {
                     customerList={customerList}
                     supplierList={supplierList}
                     prioritizeSuppliers={isProcTask}
-                    disabled={taskFormAccess !== "full"}
                     placeholder={
                       isProcTask
-                        ? "Gõ tìm Nhà cung cấp hoặc Khách hàng..."
+                        ? "Gõ tìm Nhà cung cấp (VD: Meridian, Liferiver, SSI...) hoặc Khách hàng..."
                         : "Chọn hoặc gõ tìm khách hàng / đối tác (nếu có)"
                     }
                   />
@@ -10765,10 +10451,7 @@ export const UnifiedWorkspace: React.FC = () => {
             })()}
           </div>
 
-          </fieldset>
-
           <div className="grid grid-cols-3 gap-3">
-            <fieldset disabled={taskFormAccess !== "full"} className="contents">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Độ ưu tiên</label>
               <select
@@ -10782,23 +10465,20 @@ export const UnifiedWorkspace: React.FC = () => {
                 <option value="URGENT">Khẩn cấp</option>
               </select>
             </div>
-            </fieldset>
 
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Trạng thái</label>
               <select
                 value={taskForm.status}
-                disabled={taskFormAccess === "view"}
                 onChange={(e) => setTaskForm({ ...taskForm, status: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                {TASK_STATUSES.map(st => (
-                  <option key={st.id} value={st.id}>{st.label}</option>
-                ))}
+                <option value="TODO">Cần làm</option>
+                <option value="IN_PROGRESS">Đang làm</option>
+                <option value="DONE">Đã hoàn tất</option>
               </select>
             </div>
 
-            <fieldset disabled={taskFormAccess !== "full"} className="contents">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Hạn chót</label>
               <DateInputVN
@@ -10807,10 +10487,8 @@ export const UnifiedWorkspace: React.FC = () => {
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
               />
             </div>
-            </fieldset>
           </div>
 
-          <fieldset disabled={taskFormAccess !== "full"} className="space-y-3 disabled:opacity-80">
           <div>
             <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mô tả chi tiết</label>
             <textarea
@@ -10820,50 +10498,6 @@ export const UnifiedWorkspace: React.FC = () => {
               className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
             />
           </div>
-
-          {/* LIÊN QUAN TỚI: khách hàng / nhân viên / đơn hàng / người liên hệ / đầu mối / dự án */}
-          <div className="grid grid-cols-3 gap-3">
-            <div>
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Liên quan tới</label>
-              <select
-                value={taskForm.related_type || ""}
-                onChange={(e) => {
-                  const t = e.target.value;
-                  setTaskForm({ ...taskForm, related_type: t, related_ref: "" });
-                  if (t === "LEAD" && salesDeals === null) {
-                    fetch("/api/storage?key=sales_deals_pipeline")
-                      .then(r => (r.ok ? r.json() : null))
-                      .then(j => setSalesDeals(Array.isArray(j?.data) ? j.data : []))
-                      .catch(() => setSalesDeals([]));
-                  }
-                }}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
-              >
-                <option value="">-- Không --</option>
-                {TASK_RELATED_TYPES.map(rt => (
-                  <option key={rt.id} value={rt.id}>{rt.label}</option>
-                ))}
-              </select>
-            </div>
-            <div className="col-span-2">
-              <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Đối tượng liên quan</label>
-              <input
-                type="text"
-                list="task-related-options"
-                disabled={!taskForm.related_type}
-                value={taskForm.related_ref || ""}
-                onChange={(e) => setTaskForm({ ...taskForm, related_ref: e.target.value })}
-                placeholder={taskForm.related_type ? "Gõ để tìm hoặc nhập tên / mã..." : "Chọn loại liên quan trước"}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium disabled:opacity-60"
-              />
-              <datalist id="task-related-options">
-                {relatedOptions.map((opt, i) => (
-                  <option key={`${opt}-${i}`} value={opt} />
-                ))}
-              </datalist>
-            </div>
-          </div>
-          </fieldset>
 
           {/* KẾT QUẢ THỰC HIỆN & BÁO CÁO NGHIỆM THU */}
           <div className="bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/80 rounded-xl p-3.5 space-y-2.5">
@@ -11206,7 +10840,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
           <div className="flex items-center justify-between flex-wrap gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
             <div>
-              {taskForm.id && taskFormAccess === "full" && (
+              {taskForm.id && (
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
@@ -11305,73 +10939,116 @@ export const UnifiedWorkspace: React.FC = () => {
                   Nhân bản thành việc mới
                 </button>
               )}
-              {taskFormAccess !== "view" && (
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
-                >
-                  {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
-                </button>
-              )}
+              <button
+                type="submit"
+                className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-600/30"
+              >
+                {taskForm.id ? "Lưu Cập Nhật" : "Tạo Công Việc"}
+              </button>
             </div>
           </div>
         </form>
-      </Modal>
-
-      {/* Danh mục phân loại công việc (Quản trị viên / BGĐ) */}
-      <Modal
-        isOpen={isCategoryEditorOpen}
-        onClose={() => setIsCategoryEditorOpen(false)}
-        title="DANH MỤC PHÂN LOẠI CÔNG VIỆC"
-        size="md"
-      >
-        <div className="space-y-3 p-1 text-xs">
-          <p className="text-slate-600 dark:text-slate-400">
-            Mỗi dòng là một phân loại. Công việc cũ đang dùng phân loại đã xóa vẫn giữ nguyên tên phân loại đó.
-          </p>
-          <textarea
-            rows={16}
-            value={categoryDraft}
-            onChange={(e) => setCategoryDraft(e.target.value)}
-            className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-medium"
-          />
-          <div className="flex items-center justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => setCategoryDraft(DEFAULT_TASK_CATEGORIES.join("\n"))}
-              className="px-3 py-2 rounded-xl font-bold border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300"
-            >
-              Khôi phục danh mục mặc định
-            </button>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setIsCategoryEditorOpen(false)}
-                className="px-4 py-2 rounded-xl font-bold border border-slate-200 dark:border-slate-800 text-slate-700 dark:text-slate-300"
-              >
-                Đóng
-              </button>
-              <button
-                type="button"
-                disabled={isSavingCategories}
-                onClick={saveTaskCategories}
-                className="px-5 py-2 rounded-xl font-bold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-60"
-              >
-                {isSavingCategories ? "Đang lưu..." : "Lưu danh mục"}
-              </button>
-            </div>
-          </div>
-        </div>
       </Modal>
 
       {/* ==================== MODAL 2: CREATE / EDIT WORKFLOW ==================== */}
       <Modal
         isOpen={isWorkflowModalOpen}
         onClose={() => setIsWorkflowModalOpen(false)}
-        title={(wfForm as any).id ? `CHỈNH SỬA QUY TRÌNH & THỜI GIAN SLA (${(wfForm as any).workflow_code || "PHIẾU PHỐI HỢP"})` : "KHỞI TẠO PHIẾU PHỐI HỢP LIÊN PHÒNG BAN"}
+        title={(wfForm as any).id ? `✏️ CHỈNH SỬA THÔNG TIN PHIẾU PHỐI HỢP & SLA (${(wfForm as any).workflow_code || "ĐÃ KHỞI TẠO"})` : "KHỞI TẠO PHIẾU PHỐI HỢP LIÊN PHÒNG BAN"}
         size="6xl"
       >
         <form onSubmit={handleSaveWorkflow} className="space-y-4 p-2 text-xs">
+          {/* Banner & Điều khiển nhanh khi đang CHỈNH SỬA một phiếu phối hợp đã khởi tạo */}
+          {Boolean((wfForm as any).id) && (
+            <div className="p-3.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="px-2.5 py-1 rounded-lg font-mono font-black text-xs bg-amber-500 text-white">
+                    {(wfForm as any).workflow_code || `#${(wfForm as any).id}`}
+                  </span>
+                  <div>
+                    <div className="font-extrabold text-amber-950 dark:text-amber-200 text-xs">
+                      Chế độ chỉnh sửa Phiếu phối hợp đã khởi tạo
+                    </div>
+                    <div className="text-[11px] text-amber-800/80 dark:text-amber-300/80">
+                      Mọi thay đổi về Tiêu đề, Khách hàng, Sản phẩm, Hạn chót, Phòng ban, Người phụ trách và Thời gian SLA sẽ được cập nhật trực tiếp vào phiếu này và đồng bộ sang Bảng Công Việc.
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-2 border-t border-amber-200/80 dark:border-amber-800/60">
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Trạng thái phiếu hiện tại
+                  </label>
+                  <select
+                    value={(wfForm as any).status || "IN_PROGRESS"}
+                    onChange={(e) => setWfForm({ ...wfForm, status: e.target.value } as any)}
+                    className="w-full px-3 py-2 rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold cursor-pointer"
+                  >
+                    <option value="PENDING">⏳ Chờ tiếp nhận (PENDING)</option>
+                    <option value="ACCEPTED">🔵 Đã tiếp nhận (ACCEPTED)</option>
+                    <option value="IN_PROGRESS">🟡 Đang triển khai (IN_PROGRESS)</option>
+                    <option value="REVIEW">🟣 Đã có kết quả / Chờ nghiệm thu (REVIEW)</option>
+                    <option value="COMPLETED">🟢 Hoàn tất quy trình (COMPLETED)</option>
+                    <option value="CANCELLED">🔴 Đã hủy phiếu (CANCELLED)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Bước đang thực hiện (Stage-Gate)
+                  </label>
+                  <select
+                    value={Number((wfForm as any).current_step_index) || 0}
+                    onChange={(e) => {
+                      const nextIdx = parseInt(e.target.value, 10) || 0;
+                      const updatedSteps = (wfForm.steps || []).map((st: any, i: number) => ({
+                        ...st,
+                        status: i < nextIdx ? "COMPLETED" : i === nextIdx ? "IN_PROGRESS" : "PENDING"
+                      }));
+                      setWfForm({
+                        ...wfForm,
+                        current_step_index: nextIdx,
+                        target_dept: updatedSteps[nextIdx]?.dept || wfForm.target_dept,
+                        assignee_name: updatedSteps[nextIdx]?.assignee_name || wfForm.assignee_name,
+                        steps: updatedSteps
+                      } as any);
+                    }}
+                    className="w-full px-3 py-2 rounded-xl border border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold cursor-pointer"
+                  >
+                    {(wfForm.steps || []).map((st: any, sIdx: number) => (
+                      <option key={sIdx} value={sIdx}>
+                        Bước {sIdx + 1}: {st.title || `Bước ${sIdx + 1}`} ({st.dept || "Phòng ban"})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Phòng ban yêu cầu
+                  </label>
+                  <DepartmentDropdownSelect
+                    value={wfForm.requester_dept || "Kinh Doanh"}
+                    onChange={(val) => setWfForm({ ...wfForm, requester_dept: val })}
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Phòng ban xử lý chính
+                  </label>
+                  <DepartmentDropdownSelect
+                    value={wfForm.target_dept || "Application"}
+                    onChange={(val) => setWfForm({ ...wfForm, target_dept: val })}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Top Section: Template, Title & Priority */}
           <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
             <div className="md:col-span-8 space-y-1">
@@ -11728,6 +11405,43 @@ export const UnifiedWorkspace: React.FC = () => {
                           placeholder="Tên công việc của bước..."
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
                         />
+                        <input
+                          type="text"
+                          value={step.deliverables || ""}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            updateStepAt((cur) => ({ ...cur, deliverables: val }));
+                          }}
+                          placeholder="📋 Yêu cầu đầu ra (VD: Biên bản nghiệm thu, phiếu xuất...)"
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 text-[11px]"
+                        />
+                        {Boolean((wfForm as any).id) && (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 pt-0.5">
+                            <select
+                              value={step.status || "PENDING"}
+                              onChange={(e) => {
+                                const nextSt = e.target.value;
+                                updateStepAt((cur) => ({ ...cur, status: nextSt }));
+                              }}
+                              className="px-2 py-1 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/50 text-[10px] font-bold text-indigo-800 dark:text-indigo-200 cursor-pointer"
+                              title="Trạng thái của bước này"
+                            >
+                              <option value="PENDING">⏳ Chờ thực hiện</option>
+                              <option value="IN_PROGRESS">🔵 Đang xử lý</option>
+                              <option value="COMPLETED">✅ Đã hoàn tất</option>
+                            </select>
+                            <input
+                              type="text"
+                              value={step.deliverables_note || ""}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                updateStepAt((cur) => ({ ...cur, deliverables_note: val }));
+                              }}
+                              placeholder="Ghi chú KQ bước này..."
+                              className="px-2 py-1 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/30 text-[10px] text-emerald-800 dark:text-emerald-200"
+                            />
+                          </div>
+                        )}
                       </div>
 
                       {/* Multi-Department Selector */}
@@ -11907,7 +11621,7 @@ export const UnifiedWorkspace: React.FC = () => {
                               .filter((p: any) => p.full_name && !stepAssignees.includes(p.full_name))
                               .map((p: any) => (
                                 <option key={p.id || p.employee_code || p.full_name} value={p.full_name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                                  + {p.full_name} ({p.department || "ABT"})
+                                  + {p.full_name} ({p.department || "TBR"})
                                 </option>
                               ))}
                           </select>
@@ -12361,7 +12075,7 @@ export const UnifiedWorkspace: React.FC = () => {
                               .filter((p: any) => p.full_name && !stAssignees.includes(p.full_name))
                               .map((p: any) => (
                                 <option key={p.id || p.employee_code || p.full_name} value={p.full_name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
-                                  + {p.full_name} ({p.department || "ABT"})
+                                  + {p.full_name} ({p.department || "TBR"})
                                 </option>
                               ))}
                           </select>
@@ -12583,10 +12297,23 @@ export const UnifiedWorkspace: React.FC = () => {
           <div className="space-y-4 p-2 text-xs">
             <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
               <div className="flex items-center justify-between flex-wrap gap-2">
-                <span className="font-mono font-black text-sm text-indigo-600 dark:text-indigo-400">
-                  {selectedWorkflowDetail.workflow_code}
-                </span>
-                <WorkflowStatusBadge status={selectedWorkflowDetail.status} />
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono font-black text-sm text-indigo-600 dark:text-indigo-400">
+                    {selectedWorkflowDetail.workflow_code}
+                  </span>
+                  <WorkflowStatusBadge status={selectedWorkflowDetail.status} />
+                  <PriorityBadge priority={selectedWorkflowDetail.priority} />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsWorkflowDetailModalOpen(false);
+                    handleEditWorkflowTicket(selectedWorkflowDetail);
+                  }}
+                  className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                >
+                  <span>✏️ Chỉnh Sửa Thông Tin Phiếu &amp; SLA</span>
+                </button>
               </div>
               <h3 className="text-sm font-bold text-slate-900 dark:text-white">
                 {selectedWorkflowDetail.title}
@@ -12596,6 +12323,10 @@ export const UnifiedWorkspace: React.FC = () => {
                 <div>Phòng xử lý: <strong>{selectedWorkflowDetail.target_dept}</strong></div>
                 <div>Người yêu cầu: <strong>{selectedWorkflowDetail.requester_name}</strong></div>
                 <div>Người xử lý: <strong>{selectedWorkflowDetail.assignee_name || "Chờ phân công"}</strong></div>
+                <div>Khách hàng / ĐV: <strong>{selectedWorkflowDetail.customer_name || "Nội bộ TBR"}</strong></div>
+                <div>Sản phẩm / TB: <strong>{selectedWorkflowDetail.product_info || "—"}</strong></div>
+                <div>Hạn chót: <strong>{selectedWorkflowDetail.due_date ? formatDayVN(selectedWorkflowDetail.due_date) : "—"}</strong></div>
+                <div>Bước hiện tại: <strong>Bước {(Number(selectedWorkflowDetail.current_step_index) || 0) + 1}/{Array.isArray(selectedWorkflowDetail.steps) && selectedWorkflowDetail.steps.length > 0 ? selectedWorkflowDetail.steps.length : 1}</strong></div>
               </div>
             </div>
 
@@ -12912,7 +12643,7 @@ export const UnifiedWorkspace: React.FC = () => {
                 {selectedWorkflowForRecord.title}
               </h3>
               <div className="text-slate-500 text-[11px] mt-1 flex flex-wrap gap-3">
-                <span>Khách hàng: <strong>{selectedWorkflowForRecord.customer_name || "Nội bộ ABT"}</strong></span>
+                <span>Khách hàng: <strong>{selectedWorkflowForRecord.customer_name || "Nội bộ TBR"}</strong></span>
                 {selectedWorkflowForRecord.product_info && <span>Thiết bị / SP: <strong>{selectedWorkflowForRecord.product_info}</strong></span>}
                 <span>Người yêu cầu: <strong>{selectedWorkflowForRecord.requester_name}</strong></span>
               </div>
@@ -13302,10 +13033,7 @@ export const UnifiedWorkspace: React.FC = () => {
               : scheduleForm.title;
             const firstWithLoc = selectedObjs.find(o => o.location);
             const firstDept = selectedObjs[0]?.dept;
-            const validCategories = [
-              "Họp & Giao Ban",
-              ...WORKSPACE_TASK_DEPARTMENTS.map(d => d.id),
-            ];
+            const validCategories = ["Application", "Kinh Doanh", "Kho & Vận Hành", "Cung Ứng", "Họp & Giao Ban"];
             const matchedCat = firstDept && validCategories.includes(firstDept) ? firstDept : scheduleForm.category;
 
             setScheduleForm({
@@ -13488,29 +13216,10 @@ export const UnifiedWorkspace: React.FC = () => {
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
                     >
                       <option value="Họp & Giao Ban">🎥 Họp &amp; Giao Ban: Họp nội bộ / Họp liên phòng / Họp Ban Giám Đốc</option>
-                      <optgroup label="── Khối Kỹ Thuật, R&D & Nhà Máy ──">
-                        <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu R&amp;D: Thực nghiệm / Stage-Gate / Thẩm định DHF</option>
-                        <option value="Sản Xuất Kit">🧪 Sản Xuất Kit: Pha chế lô / Chia liều / Đóng gói EBR</option>
-                        <option value="Tổng Hợp Oligo">🔬 Tổng Hợp Oligo: Chạy máy tổng hợp / Tinh sạch HPLC/PAGE</option>
-                        <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Thiết Bị: Lắp ráp máy / Hiệu chuẩn / Bảo trì</option>
-                        <option value="QA/QC">🛡️ QA/QC: Kiểm nghiệm IQC/IPQC/OQC / Thẩm định COA &amp; ISO</option>
-                        <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Hỗ trợ Lab</option>
-                        <option value="Lab">🧫 Phòng Lab: Trực Lab / Quản lý mẫu Biobank &amp; An toàn sinh học</option>
-                      </optgroup>
-                      <optgroup label="── Khối Kinh Doanh, Dự Án & Thị Trường ──">
-                        <option value="Kinh Doanh">💼 Kinh Doanh: Đàm phán KH / Chăm sóc bệnh viện / Triển khai thầu</option>
-                        <option value="Sales Admin">📑 Sales Admin: Điều phối đơn hàng SO/PO / Hồ sơ thầu hành chính</option>
-                        <option value="PM">🎯 PM (Quản lý Sản phẩm): Đào tạo giải pháp / Spec-in cấu hình thầu</option>
-                        <option value="Marketing">📣 Marketing: Hội nghị khoa học / Sự kiện / Ấn phẩm kỹ thuật</option>
-                      </optgroup>
-                      <optgroup label="── Khối Cung Ứng, Kho Vận & Quản Trị ──">
-                        <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành: Soạn xuất hàng lớn / Nhập kho container / Kiểm kê</option>
-                        <option value="Cung Ứng">🛒 Cung Ứng: Làm việc NCC / Đặt hàng PO / Thủ tục hải quan</option>
-                        <option value="Kế Toán">💰 Kế Toán: Đối soát công nợ / Thanh toán / Quyết toán giá thành</option>
-                        <option value="Pháp Chế">⚖️ Pháp Chế: Lưu hành BYT / Rà soát hợp đồng / Hồ sơ pháp lý</option>
-                        <option value="Hành Chính Nhân Sự">👥 Hành Chính Nhân Sự: Tuyển dụng / Đào tạo nội bộ / Hành chính</option>
-                        <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc: Công tác điều hành / Làm việc đối tác chiến lược</option>
-                      </optgroup>
+                      <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Trực Lab</option>
+                      <option value="Kinh Doanh">💼 Kinh Doanh: Đàm phán KH / Chăm sóc bệnh viện / Triển khai thầu</option>
+                      <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành: Soạn xuất hàng lớn / Nhập kho container / Kiểm kê</option>
+                      <option value="Cung Ứng">🛒 Cung Ứng: Làm việc NCC / Thủ tục hải quan</option>
                     </select>
                   </div>
                 </div>
@@ -14314,35 +14023,23 @@ export const UnifiedWorkspace: React.FC = () => {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-3 bg-slate-50 dark:bg-slate-950/60 rounded-xl border border-slate-200 dark:border-slate-800">
             <div>
               <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Phòng ban áp dụng *</label>
-              <select
-                value={labProjectForm.dept}
-                onChange={(e) => handleThematicDeptChange(e.target.value)}
-                className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold cursor-pointer"
-              >
-                <optgroup label="── Khối Kỹ Thuật, R&D & Nhà Máy ──">
-                  <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu R&amp;D (R&amp;D Lab)</option>
-                  <option value="Sản Xuất Kit">🧪 Sản Xuất Kit (Kit Manufacturing)</option>
-                  <option value="Tổng Hợp Oligo">🔬 Tổng Hợp Oligo (Oligo Synthesis)</option>
-                  <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Thiết Bị (Engineering)</option>
-                  <option value="QA/QC">🛡️ QA/QC (Đảm bảo &amp; Kiểm soát Chất lượng)</option>
-                  <option value="Application">🔬 Application (Kỹ thuật &amp; Ứng dụng Lab)</option>
-                  <option value="Lab">🧫 Phòng Lab (Quản lý Lab &amp; Biobank)</option>
-                </optgroup>
-                <optgroup label="── Khối Kinh Doanh, Dự Án & Thị Trường ──">
+              {rolePerspective === "manager" ? (
+                <div className="px-3 py-2 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-bold text-slate-800 dark:text-slate-200">
+                  {managerDept}
+                </div>
+              ) : (
+                <select
+                  value={labProjectForm.dept}
+                  onChange={(e) => handleThematicDeptChange(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold cursor-pointer"
+                >
+                  <option value="Application">🔬 Application (Kỹ thuật &amp; Lab)</option>
                   <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
-                  <option value="Sales Admin">📑 Sales Admin (Điều phối Đơn hàng &amp; Thầu)</option>
-                  <option value="PM">🎯 PM (Quản lý Sản phẩm &amp; Giải pháp)</option>
-                  <option value="Marketing">📣 Marketing (Truyền thông &amp; Sự kiện)</option>
-                </optgroup>
-                <optgroup label="── Khối Cung Ứng, Kho Vận & Quản Trị ──">
-                  <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành (Warehouse &amp; Logistics)</option>
-                  <option value="Cung Ứng">🛒 Cung Ứng (Procurement &amp; Xuất nhập khẩu)</option>
-                  <option value="Kế Toán">💰 Kế Toán &amp; Tài Chính (Accounting &amp; Finance)</option>
-                  <option value="Pháp Chế">⚖️ Pháp Chế (Legal &amp; Regulatory Affairs)</option>
-                  <option value="Hành Chính Nhân Sự">👥 Hành Chính Nhân Sự (HR &amp; Admin)</option>
-                  <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc (Executive Board)</option>
-                </optgroup>
-              </select>
+                  <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành</option>
+                  <option value="Cung Ứng">🛒 Cung Ứng (Procurement)</option>
+                  <option value="Pháp Chế">⚖️ Pháp Chế (Legal)</option>
+                </select>
+              )}
             </div>
 
             <div>
@@ -14385,7 +14082,7 @@ export const UnifiedWorkspace: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {getThematicTypesForDept(labProjectForm.dept).map((typeDef) => {
+              {(DEPARTMENT_THEMATIC_TYPES[labProjectForm.dept] || DEPARTMENT_THEMATIC_TYPES["Application"] || []).map((typeDef) => {
                 const isSelected = labProjectForm.typeId === typeDef.id;
                 return (
                   <div
@@ -15341,7 +15038,7 @@ export const UnifiedWorkspace: React.FC = () => {
                         className="flex items-center justify-between px-2.5 py-1 rounded-lg bg-white dark:bg-slate-900 border border-emerald-100 dark:border-slate-800 text-[11px]"
                       >
                         <span className="font-bold text-slate-800 dark:text-slate-200">
-                          ✓ {ack.name} <span className="text-slate-400 font-normal">({ack.dept || "ABT"})</span>
+                          ✓ {ack.name} <span className="text-slate-400 font-normal">({ack.dept || "TBR"})</span>
                         </span>
                         <span className="font-mono text-[10px] text-slate-400">{ack.time}</span>
                       </div>
@@ -15528,7 +15225,7 @@ export const UnifiedWorkspace: React.FC = () => {
                     <FileText className="w-12 h-12 text-indigo-400 mx-auto" />
                     <div className="font-bold text-white text-sm">{activeName}</div>
                     <p className="text-xs text-slate-400">
-                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ ABT Portal.
+                      Tệp tin đã được số hóa và lưu trữ an toàn trên máy chủ TBR Portal.
                     </p>
                     <a
                       href={activeUrl}
@@ -15649,10 +15346,7 @@ const TaskCard: React.FC<{
             Hoàn tất ✓
           </button>
         )}
-        {task.status === "CANCELLED" && (
-          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400">Đã hủy bỏ</span>
-        )}
-        {(task.status === "DONE" || task.status === "CANCELLED") && (
+        {task.status === "DONE" && (
           <button
             onClick={() => onStatusChange(task.id, "TODO")}
             className="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 hover:bg-slate-200"
