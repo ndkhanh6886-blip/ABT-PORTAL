@@ -6472,8 +6472,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <div>
                   <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Email Liên Hệ</label>
                   <input
-                    type="email"
-                    placeholder="sales@supplier.com"
+                    type="text"
+                    inputMode="email"
+                    placeholder="sales@supplier.com, order@supplier.com"
                     value={supplierForm.email}
                     onChange={(e) => setSupplierForm({ ...supplierForm, email: e.target.value })}
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"

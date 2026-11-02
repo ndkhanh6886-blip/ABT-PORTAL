@@ -24245,6 +24245,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     {ord.customer_address}
                                                                 </div>
                                                             )}
+                                                            {(ord.vat_email || ord.rawOrder?.vat_email || ord.rawOrder?.vatEmail) && (
+                                                                <div className="text-[10px] text-sky-300 mt-0.5 break-all max-w-[240px]" title={ord.vat_email || ord.rawOrder?.vat_email || ord.rawOrder?.vatEmail}>
+                                                                    ✉️ {ord.vat_email || ord.rawOrder?.vat_email || ord.rawOrder?.vatEmail}
+                                                                </div>
+                                                            )}
                                                             {(ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes) && (
                                                                 <div className="mt-1 px-2 py-0.5 rounded bg-sky-950/80 border border-sky-700/60 text-[10px] text-sky-200 max-w-[240px]" title={ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes}>
                                                                     🧾 <strong>Ghi chú HĐ:</strong> {ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes}
@@ -24754,12 +24759,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                                 {(() => {
                                     const cust = customers.find((c: any) => c.name === ord.customer_name) as any;
-                                    const tax = ord.customer_tax_code || cust?.tax_code || cust?.taxCode || "";
-                                    const addr = ord.customer_tax_address || cust?.tax_address || cust?.taxAddress || ord.customer_address || cust?.address || "";
+                                    const tax = ord.vat_tax_code || ord.rawOrder?.vat_tax_code || ord.customer_tax_code || cust?.tax_code || cust?.taxCode || "";
+                                    const addr = ord.vat_address || ord.rawOrder?.vat_address || ord.customer_tax_address || cust?.tax_address || cust?.taxAddress || ord.customer_address || cust?.address || "";
+                                    const invEmail = ord.vat_email || ord.rawOrder?.vat_email || ord.rawOrder?.vatEmail || cust?.email || "";
                                     return (
-                                        <div className="flex flex-wrap justify-between gap-x-4 gap-y-1 text-slate-300 pt-1 border-t border-slate-800">
-                                            <span>MST: <strong className="font-mono text-amber-300">{tax || "— (chưa có)"}</strong></span>
-                                            <span className="min-w-0 text-right">Địa chỉ: <strong className="text-slate-100">{addr || "— (chưa có)"}</strong></span>
+                                        <div className="space-y-1 text-slate-300 pt-1 border-t border-slate-800">
+                                            <div className="flex flex-wrap justify-between gap-x-4 gap-y-1">
+                                                <span>MST: <strong className="font-mono text-amber-300">{tax || "— (chưa có)"}</strong></span>
+                                                <span className="min-w-0 text-right">Địa chỉ: <strong className="text-slate-100">{addr || "— (chưa có)"}</strong></span>
+                                            </div>
+                                            {invEmail && (
+                                                <div className="flex items-center justify-between gap-2 text-[11px]">
+                                                    <span>Email nhận HĐĐT: <strong className="text-sky-300 font-mono break-all">{invEmail}</strong></span>
+                                                </div>
+                                            )}
                                         </div>
                                     );
                                 })()}
@@ -27528,7 +27541,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Email *</label>
                                     <input
-                                        type="email"
+                                        type="text"
+                                        inputMode="email"
                                         required
                                         value={contractPartyAEmail}
                                         onChange={(e) => setContractPartyAEmail(e.target.value)}
@@ -27665,8 +27679,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase text-slate-400 mb-0.5">Email Bên B</label>
                                     <input
-                                        type="email"
-                                        placeholder="Email..."
+                                        type="text"
+                                        inputMode="email"
+                                        placeholder="Email (có thể nhập nhiều email cách nhau dấu phẩy)..."
                                         value={contractPartyBEmail}
                                         onChange={(e) => setContractPartyBEmail(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-1.5 text-xs text-white"
@@ -29240,10 +29255,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Email nhận hóa đơn điện tử</label>
+                                            <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                                                Email nhận hóa đơn điện tử <span className="text-[9px] font-normal normal-case text-slate-500">(nhập nhiều email cách nhau bằng dấu phẩy , hoặc chấm phẩy ;)</span>
+                                            </label>
                                             <input
-                                                type="email"
-                                                placeholder="ketoan@benhvien.vn"
+                                                type="text"
+                                                inputMode="email"
+                                                placeholder="VD: ketoan@benhvien.vn, thumua@benhvien.vn"
                                                 value={vatEmail}
                                                 onChange={(e) => setVatEmail(e.target.value)}
                                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-sky-300"
@@ -33425,7 +33443,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 <div>
                                                     <label className="block text-[9px] uppercase font-bold text-slate-500 mb-0.5">Email</label>
                                                     <input
-                                                        type="email"
+                                                        type="text"
+                                                        inputMode="email"
                                                         placeholder="Email..."
                                                         value={cust.email || ""}
                                                         onChange={(e) => {
@@ -35660,11 +35679,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Email</label>
                                 <input
-                                    type="email"
+                                    type="text"
+                                    inputMode="email"
                                     value={custEmail}
                                     onChange={(e) => setCustEmail(e.target.value)}
                                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs outline-none text-white"
-                                    placeholder="customer@example.com"
+                                    placeholder="customer@example.com (nhiều email cách nhau dấu phẩy)"
                                 />
                             </div>
                         </div>
@@ -36103,10 +36123,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 Email
                             </label>
                             <input
-                                type="email"
+                                type="text"
+                                inputMode="email"
                                 value={contactFormEmail}
                                 onChange={(e) => setContactFormEmail(e.target.value)}
-                                placeholder="Ví dụ: contact@hospital.vn"
+                                placeholder="Ví dụ: contact@hospital.vn (nhiều email cách nhau dấu phẩy)"
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-mono text-white"
                             />
                         </div>
@@ -37481,11 +37502,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Email liên hệ</label>
                             <input
-                                type="email"
+                                type="text"
+                                inputMode="email"
                                 value={nvkdCustEmail}
                                 onChange={(e) => setNvkdCustEmail(e.target.value)}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none text-white"
-                                placeholder="email@abtvn.com..."
+                                placeholder="email1@domain.com, email2@domain.com..."
                             />
                         </div>
                     </div>
