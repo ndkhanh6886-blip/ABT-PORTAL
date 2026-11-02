@@ -2172,14 +2172,17 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                           }
                           className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                         />
-                      ) : (
-                        <>
+                      ) : field.type === "date" ? (
+                        <div className="space-y-1">
                           <input
-                            type={field.type === "date" ? "date" : field.type === "number" ? "number" : "text"}
-                            list={field.key === "handover_person" ? "abt-staff-handover-datalist" : undefined}
+                            type="date"
                             required={field.required}
-                            placeholder={field.placeholder || ""}
-                            value={formData[field.key] || ""}
+                            value={formData[field.key] || vnToday()}
+                            onClick={(e) => {
+                              try {
+                                (e.currentTarget as any).showPicker?.();
+                              } catch {}
+                            }}
                             onChange={(e) => {
                               const newVal = e.target.value;
                               setFormData((prev) => {
@@ -2190,10 +2193,71 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                                   if (fd && td && td >= fd) {
                                     const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
                                     next["total_days_or_hours"] = String(Math.max(1, diff));
+                                  } else if (field.key === "from_date" && (!td || td < newVal)) {
+                                    next["to_date"] = newVal;
+                                    next["total_days_or_hours"] = "1";
                                   }
                                 }
                                 return next;
                               });
+                            }}
+                            className="w-full px-3 py-2 rounded-xl border border-teal-300 dark:border-teal-700 bg-white dark:bg-slate-900 font-semibold cursor-pointer"
+                          />
+                          <div className="flex items-center gap-1 flex-wrap">
+                            {[
+                              { label: "Hôm nay", offset: 0 },
+                              { label: "Ngày mai", offset: 1 },
+                              { label: "+2 ngày", offset: 2 },
+                              { label: "+3 ngày", offset: 3 },
+                            ].map((q) => {
+                              const d = new Date();
+                              d.setDate(d.getDate() + q.offset);
+                              const iso = d.toISOString().slice(0, 10);
+                              const isSelected = (formData[field.key] || vnToday()) === iso;
+                              return (
+                                <button
+                                  key={q.label}
+                                  type="button"
+                                  onClick={() => {
+                                    setFormData((prev) => {
+                                      const next: Record<string, string> = { ...prev, [field.key]: iso };
+                                      if (field.key === "from_date" || field.key === "to_date") {
+                                        const fd = field.key === "from_date" ? iso : next["from_date"];
+                                        const td = field.key === "to_date" ? iso : next["to_date"];
+                                        if (fd && td && td >= fd) {
+                                          const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
+                                          next["total_days_or_hours"] = String(Math.max(1, diff));
+                                        } else if (field.key === "from_date" && (!td || td < iso)) {
+                                          next["to_date"] = iso;
+                                          next["total_days_or_hours"] = "1";
+                                        }
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                  className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors cursor-pointer ${
+                                    isSelected
+                                      ? "bg-teal-600 text-white"
+                                      : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-teal-50 dark:hover:bg-teal-950/50"
+                                  }`}
+                                >
+                                  📅 {q.label}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <input
+                            type={field.type === "number" ? "number" : "text"}
+                            list={field.key === "handover_person" ? "abt-staff-handover-datalist" : undefined}
+                            required={field.required}
+                            placeholder={field.placeholder || ""}
+                            value={formData[field.key] || ""}
+                            onChange={(e) => {
+                              const newVal = e.target.value;
+                              setFormData((prev) => ({ ...prev, [field.key]: newVal }));
                             }}
                             className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
                           />
@@ -3067,6 +3131,30 @@ export const EnterpriseApprovalsCenter: React.FC<EnterpriseApprovalsCenterProps>
                           }}
                           placeholder="VD: Chuyển khoản, Tiền mặt, Công nợ"
                           className="w-full px-2.5 py-1.5 rounded-lg border border-indigo-300 dark:border-indigo-700 bg-indigo-50/40 dark:bg-slate-950"
+                        />
+                      </>
+                    ) : field.type === "date" ? (
+                      <>
+                        <label className="block text-[10px] font-bold text-teal-600">
+                          📅 Chọn ngày trên lịch (Bấm để mở lịch)
+                        </label>
+                        <input
+                          type="date"
+                          value={/^\d{4}-\d{2}-\d{2}$/.test(field.placeholder || "") ? field.placeholder! : vnToday()}
+                          onClick={(e) => {
+                            try {
+                              (e.currentTarget as any).showPicker?.();
+                            } catch {}
+                          }}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setTplForm((p) => {
+                              const next = [...p.fields_schema];
+                              next[idx] = { ...next[idx], placeholder: val };
+                              return { ...p, fields_schema: next };
+                            });
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-lg border border-teal-300 dark:border-teal-700 bg-teal-50/40 dark:bg-slate-950 font-semibold cursor-pointer"
                         />
                       </>
                     ) : (

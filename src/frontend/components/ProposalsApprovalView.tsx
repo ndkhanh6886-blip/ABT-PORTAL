@@ -3320,25 +3320,73 @@ export function ProposalsApprovalView({
                         ))}
                       </select>
                     ) : field.type === "date" ? (
-                      <DateInputVN
-                        value={formState.formValues[field.key] || ""}
-                        onChange={(e) => {
-                          const newVal = e.target.value;
-                          setFormState((prev) => {
-                            const nextFV = { ...prev.formValues, [field.key]: newVal };
-                            if (field.key === "fromDate" || field.key === "toDate") {
-                              const fd = field.key === "fromDate" ? newVal : nextFV.fromDate;
-                              const td = field.key === "toDate" ? newVal : nextFV.toDate;
-                              if (fd && td && td >= fd) {
-                                const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
-                                nextFV.totalDays = String(Math.max(1, diff));
+                      <div className="space-y-1">
+                        <DateInputVN
+                          value={formState.formValues[field.key] || todayVN()}
+                          onChange={(e) => {
+                            const newVal = e.target.value;
+                            setFormState((prev) => {
+                              const nextFV = { ...prev.formValues, [field.key]: newVal };
+                              if (field.key === "fromDate" || field.key === "toDate") {
+                                const fd = field.key === "fromDate" ? newVal : nextFV.fromDate;
+                                const td = field.key === "toDate" ? newVal : nextFV.toDate;
+                                if (fd && td && td >= fd) {
+                                  const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
+                                  nextFV.totalDays = String(Math.max(1, diff));
+                                } else if (field.key === "fromDate" && (!td || td < newVal)) {
+                                  nextFV.toDate = newVal;
+                                  nextFV.totalDays = "1";
+                                }
                               }
-                            }
-                            return { ...prev, formValues: nextFV };
-                          });
-                        }}
-                        className="w-full px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-                      />
+                              return { ...prev, formValues: nextFV };
+                            });
+                          }}
+                          className="w-full px-3 py-1.5 rounded-xl text-xs font-semibold border border-teal-300 dark:border-teal-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                        />
+                        <div className="flex items-center gap-1 flex-wrap">
+                          {[
+                            { label: "Hôm nay", offset: 0 },
+                            { label: "Ngày mai", offset: 1 },
+                            { label: "+2 ngày", offset: 2 },
+                            { label: "+3 ngày", offset: 3 }
+                          ].map((q) => {
+                            const d = new Date();
+                            d.setDate(d.getDate() + q.offset);
+                            const iso = d.toISOString().slice(0, 10);
+                            const isSelected = (formState.formValues[field.key] || todayVN()) === iso;
+                            return (
+                              <button
+                                key={q.label}
+                                type="button"
+                                onClick={() => {
+                                  setFormState((prev) => {
+                                    const nextFV = { ...prev.formValues, [field.key]: iso };
+                                    if (field.key === "fromDate" || field.key === "toDate") {
+                                      const fd = field.key === "fromDate" ? iso : nextFV.fromDate;
+                                      const td = field.key === "toDate" ? iso : nextFV.toDate;
+                                      if (fd && td && td >= fd) {
+                                        const diff = Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1;
+                                        nextFV.totalDays = String(Math.max(1, diff));
+                                      } else if (field.key === "fromDate" && (!td || td < iso)) {
+                                        nextFV.toDate = iso;
+                                        nextFV.totalDays = "1";
+                                      }
+                                    }
+                                    return { ...prev, formValues: nextFV };
+                                  });
+                                }}
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-bold transition-colors cursor-pointer ${
+                                  isSelected
+                                    ? "bg-teal-600 text-white"
+                                    : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-teal-50 dark:hover:bg-teal-950/50"
+                                }`}
+                              >
+                                📅 {q.label}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
                     ) : field.type === "textarea" ? (
                       <textarea
                         rows={2}
@@ -4479,7 +4527,11 @@ export function ProposalsApprovalView({
                     </div>
                     <div className="sm:col-span-4">
                       <label className="block text-[10px] font-bold text-slate-400">
-                        {fld.type === "select" ? "Các lựa chọn (cách nhau dấu phẩy)" : "Gợi ý nhập (Placeholder)"}
+                        {fld.type === "select"
+                          ? "Các lựa chọn (cách nhau dấu phẩy)"
+                          : fld.type === "date"
+                          ? "📅 Chọn ngày trên lịch (Bấm để mở lịch)"
+                          : "Gợi ý nhập (Placeholder)"}
                       </label>
                       {fld.type === "select" ? (
                         <input
@@ -4498,6 +4550,16 @@ export function ProposalsApprovalView({
                           }}
                           placeholder="VD: Chuyển khoản, Tiền mặt, Công nợ..."
                           className="w-full px-2 py-1 rounded border border-indigo-300 dark:border-indigo-700"
+                        />
+                      ) : fld.type === "date" ? (
+                        <DateInputVN
+                          value={/^\d{4}-\d{2}-\d{2}$/.test(fld.placeholder || "") ? fld.placeholder! : todayVN()}
+                          onChange={(e) => {
+                            const nextFields = [...editingTemplate.fields];
+                            nextFields[fIdx] = { ...nextFields[fIdx], placeholder: e.target.value };
+                            setEditingTemplate({ ...editingTemplate, fields: nextFields });
+                          }}
+                          className="w-full px-2 py-1 rounded border border-teal-300 dark:border-teal-700 bg-teal-50/30 dark:bg-teal-950/30 font-semibold text-slate-900 dark:text-white"
                         />
                       ) : (
                         <input
