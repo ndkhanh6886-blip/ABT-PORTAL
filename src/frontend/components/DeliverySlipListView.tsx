@@ -13,6 +13,7 @@ import {
   List,
   Package,
   Plus,
+  RotateCcw,
   Search,
   Truck,
   Eye,
@@ -103,6 +104,9 @@ export function DeliverySlipListView({
   onCancelSlip,
   canConfirmForOrder,
   getFinance,
+  rmaList = [],
+  onCreateRma,
+  onOpenRmaList,
 }: {
   slips: any[];
   orders?: any[];
@@ -117,6 +121,10 @@ export function DeliverySlipListView({
   canConfirmForOrder?: (ord: any) => boolean;
   /** Thành tiền phiếu (gồm VAT), số HĐ (từ Quản lý hóa đơn), số đã thu theo phiếu */
   getFinance?: (slip: any) => { amount: number; invoiceNo: string; invoiceDate?: string; paid: number };
+  /** Danh sách phiếu trả hàng (RMA) & các hàm thao tác trả hàng ngay tại Phiếu giao hàng */
+  rmaList?: any[];
+  onCreateRma?: (ord: any, slip?: any) => void;
+  onOpenRmaList?: (orderCode?: string) => void;
 }) {
   const today = todayVN();
   const [from, setFrom] = useState(addDays(today, -30));
@@ -584,13 +592,31 @@ export function DeliverySlipListView({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={exportExcel}
-          className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5 cursor-pointer shadow-xs"
-        >
-          <FileSpreadsheet className="w-4 h-4" /> Xuất Excel
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {onOpenRmaList && (
+            <button
+              type="button"
+              onClick={() => onOpenRmaList("")}
+              className="px-3 py-2 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-500 text-white flex items-center gap-1.5 cursor-pointer shadow-xs"
+              title="Quản lý danh sách Đơn Hàng Trả Bán (RMA) hoặc bấm nút ↩ Trả hàng trên từng phiếu giao hàng bên dưới"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>↩ Đơn Hàng Trả Bán / RMA ({(rmaList || []).length})</span>
+              {(rmaList || []).some((r: any) => r.status === "PENDING" || r.status === "PENDING_APPROVAL") && (
+                <span className="ml-0.5 px-1.5 py-0.5 rounded-full bg-white text-amber-800 text-[10px] font-black animate-pulse">
+                  {(rmaList || []).filter((r: any) => r.status === "PENDING" || r.status === "PENDING_APPROVAL").length} chờ duyệt
+                </span>
+              )}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={exportExcel}
+            className="px-3 py-2 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white flex items-center gap-1.5 cursor-pointer shadow-xs"
+          >
+            <FileSpreadsheet className="w-4 h-4" /> Xuất Excel
+          </button>
+        </div>
       </div>
 
       {/* Filter Toolbar */}
@@ -787,6 +813,40 @@ export function DeliverySlipListView({
                           <span>Đợt {group.activeSlips.length + 1}</span>
                         </button>
                       )}
+                      {(() => {
+                        const soRmas = (rmaList || []).filter(
+                          (r: any) => String(r.order_code || "").trim() === group.orderCode
+                        );
+                        return (
+                          <>
+                            {soRmas.length > 0 && onOpenRmaList && (
+                              <button
+                                type="button"
+                                onClick={() => onOpenRmaList(group.orderCode)}
+                                className="px-2 py-1 rounded-lg bg-amber-950/80 hover:bg-amber-900 border border-amber-600/60 text-amber-300 font-sans font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                                title="Xem danh sách phiếu trả hàng (RMA) của đơn SO này"
+                              >
+                                <span>📋 {soRmas.length} phiếu trả</span>
+                              </button>
+                            )}
+                            {onCreateRma && group.activeSlips.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  onCreateRma(
+                                    group.rawOrder,
+                                    group.activeSlips.length === 1 ? group.activeSlips[0].slip : undefined
+                                  )
+                                }
+                                className="px-2 py-1 rounded-lg bg-amber-700 hover:bg-amber-600 text-white font-sans font-bold text-[10px] flex items-center gap-1 cursor-pointer"
+                                title="Tạo phiếu trả hàng (RMA) cho đơn hàng này"
+                              >
+                                <span>↩ Trả hàng</span>
+                              </button>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
 
@@ -932,6 +992,16 @@ export function DeliverySlipListView({
                                     ✏️
                                   </button>
                                 )}
+                                {st !== "CANCELLED" && onCreateRma && (
+                                  <button
+                                    type="button"
+                                    onClick={() => onCreateRma(group.rawOrder, slip)}
+                                    className="text-[10px] font-bold bg-amber-800/90 hover:bg-amber-700 text-amber-100 border border-amber-600/50 px-1.5 py-0.5 rounded cursor-pointer flex items-center gap-1"
+                                    title={`Lập phiếu trả hàng (RMA) từ Phiếu giao hàng ${slip.id} (Đợt ${batchNo})`}
+                                  >
+                                    ↩ Trả hàng
+                                  </button>
+                                )}
                                 {st === "PENDING" && onCancelSlip && (
                                   <button
                                     type="button"
@@ -980,12 +1050,13 @@ export function DeliverySlipListView({
                 <th className="p-2.5 text-center">Còn lại của SO</th>
                 <th className="p-2.5">Người lập</th>
                 <th className="p-2.5 text-center">Trạng thái</th>
+                <th className="p-2.5 text-right">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={getFinance ? 13 : 10} className="p-6 text-center text-slate-500">
+                  <td colSpan={getFinance ? 14 : 11} className="p-6 text-center text-slate-500">
                     Không có phiếu giao nào trong khoảng đã chọn.
                   </td>
                 </tr>
@@ -1093,6 +1164,50 @@ export function DeliverySlipListView({
                         >
                           {STATUS_META[st].label}
                         </span>
+                      </td>
+                      <td className="p-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-end gap-1 flex-wrap">
+                          <button
+                            type="button"
+                            onClick={() => onView(slip)}
+                            className="text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 px-2 py-1 rounded cursor-pointer flex items-center gap-1"
+                            title="Xem chi tiết / In phiếu giao hàng"
+                          >
+                            <Eye className="w-3 h-3" /> Xem
+                          </button>
+                          {st !== "CANCELLED" && onCreateRma && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onCreateRma(
+                                  soGroup?.rawOrder || (resolveOrder ? resolveOrder(slip) : null),
+                                  slip
+                                )
+                              }
+                              className="text-[10px] font-bold bg-amber-800/90 hover:bg-amber-700 text-amber-100 border border-amber-600/50 px-2 py-1 rounded cursor-pointer flex items-center gap-1"
+                              title={`Lập phiếu trả hàng (RMA) theo Phiếu giao hàng ${slip.id}`}
+                            >
+                              ↩ Trả hàng
+                            </button>
+                          )}
+                          {(() => {
+                            const oc = String(slip.orderCode || slip.orderId || "").trim();
+                            const soRmas = oc
+                              ? (rmaList || []).filter((r: any) => String(r.order_code || "").trim() === oc)
+                              : [];
+                            if (soRmas.length === 0 || !onOpenRmaList) return null;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => onOpenRmaList(oc)}
+                                className="text-[10px] font-bold bg-amber-950/80 hover:bg-amber-900 border border-amber-600/60 text-amber-300 px-1.5 py-1 rounded cursor-pointer"
+                                title={`Xem ${soRmas.length} phiếu trả hàng của đơn ${oc}`}
+                              >
+                                📋 {soRmas.length}
+                              </button>
+                            );
+                          })()}
+                        </div>
                       </td>
                     </tr>
                   );

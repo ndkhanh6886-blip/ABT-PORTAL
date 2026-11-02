@@ -11763,11 +11763,46 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return result;
     };
 
-    // Phase 3: Create RMA Helper (Yêu cầu 15 & Slide 10: gộp đầy đủ số lượng các lô đã xuất của cùng mã hàng)
-    const handleOpenCreateRmaModal = (order: any) => {
+    // Phase 3: Create RMA Helper (Yêu cầu 15 & Slide 10: gộp đầy đủ số lượng các lô đã xuất của cùng mã hàng, hỗ trợ mở trực tiếp từ Phiếu giao hàng)
+    const handleOpenCreateRmaModal = (orderOrNull: any, slip?: any) => {
+        const resolvedFo = orderOrNull
+            ? (resolveFactoryOrder(orderOrNull) || orderOrNull)
+            : (slip ? resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode }) : null);
+        const order = resolvedFo || (slip ? {
+            id: slip.orderCode || slip.orderId || slip.id,
+            order_code: slip.orderCode || slip.orderId || slip.id,
+            customerName: slip.customerName,
+            customer_name: slip.customerName,
+            items: (slip.items || []).map((it: any) => ({
+                productCode: getItemCode(it),
+                productName: it.productName || it.name || getItemCode(it),
+                quantity: Number(it.orderedQty || it.orderQuantity || it.quantity) || 0,
+                unitPrice: Number(it.unitPrice || it.price) || 0,
+            })),
+        } : null);
+        if (!order) {
+            showToast("Không tìm thấy thông tin đơn hàng gốc để lập phiếu trả hàng!", "warning");
+            return;
+        }
         setRmaTargetOrder(order);
-        const orderCode = order.order_code || order.id;
+        const orderCode = order.order_code || order.raw_code || order.linkedSalesOrderId || order.id;
         const skuLotsInfo = getOrderSkuDeliveredLotsInfo(order);
+        // Đảm bảo các mặt hàng trên phiếu giao cũng có trong skuLotsInfo
+        if (slip && Array.isArray(slip.items)) {
+            slip.items.forEach((it: any) => {
+                const code = getItemCode(it);
+                if (!code) return;
+                const q = Number(it.quantity) || 0;
+                const cleanLot = String(it.lotNo || it.lotNumber || "").replace(/\s*\(\s*Tồn[^)]*\)/gi, "").trim();
+                if (!skuLotsInfo[code]) {
+                    skuLotsInfo[code] = {
+                        orderedQty: Number(it.orderedQty || it.orderQuantity || q) || q,
+                        deliveredQty: q,
+                        lots: cleanLot ? [{ lotNo: cleanLot, quantity: q, expDate: it.expDate || "" }] : [],
+                    };
+                }
+            });
+        }
         const returnedBefore: Record<string, number> = {};
         rmaList.filter((r: any) => r.order_code === orderCode && r.status !== "REJECTED").forEach((r: any) => {
             let its: any = r.items;
@@ -11778,6 +11813,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             });
         });
 
+        // Nếu mở từ 1 Phiếu giao hàng cụ thể, gom SL & Lô của phiếu đó để chọn sẵn
+        const slipItemMap: Record<string, { qty: number; lots: string[] }> = {};
+        if (slip && Array.isArray(slip.items)) {
+            slip.items.forEach((it: any) => {
+                const code = getItemCode(it);
+                if (!code) return;
+                const q = Number(it.quantity) || 0;
+                const cleanLot = String(it.lotNo || it.lotNumber || "").replace(/\s*\(\s*Tồn[^)]*\)/gi, "").trim();
+                if (!slipItemMap[code]) slipItemMap[code] = { qty: 0, lots: [] };
+                slipItemMap[code].qty += q;
+                if (cleanLot && !slipItemMap[code].lots.includes(cleanLot)) {
+                    slipItemMap[code].lots.push(cleanLot);
+                }
+            });
+        }
+
         const initialSelected: Record<string, { selected: boolean; quantity: number; reason: string; lotNumber?: string }> = {};
         Object.entries(skuLotsInfo).forEach(([pCode, info]) => {
             const ret = returnedBefore[pCode] || 0;
@@ -11785,18 +11836,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const lotSummary = info.lots.length > 0
                 ? info.lots.map(l => `${l.lotNo} (${l.quantity})`).join(", ")
                 : "";
+            const fromSlip = slipItemMap[pCode];
+            const defaultQty = fromSlip
+                ? (maxReturnable > 0 ? Math.min(fromSlip.qty, maxReturnable) : fromSlip.qty)
+                : (maxReturnable > 0 ? maxReturnable : info.orderedQty);
             initialSelected[pCode] = {
-                selected: false,
-                quantity: maxReturnable > 0 ? maxReturnable : info.orderedQty,
+                selected: Boolean(fromSlip && defaultQty > 0),
+                quantity: defaultQty,
                 reason: "",
-                lotNumber: lotSummary
+                lotNumber: (fromSlip && fromSlip.lots.length > 0) ? fromSlip.lots.join(", ") : lotSummary
             };
         });
         setRmaSelectedItems(initialSelected);
         setRmaReasonCategory("DEFECTIVE");
         setRmaRestockAction("RESTOCK");
         setRmaRefundType("CREDIT_OFFSET");
-        setRmaNotes("");
+        setRmaNotes(slip ? `Trả hàng theo Phiếu giao hàng ${slip.id}${slip.batchNumber ? ` (Đợt ${slip.batchNumber})` : ""}` : "");
         setIsCreateRmaModalOpen(true);
     };
 
@@ -15033,21 +15088,51 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             DELIVERED: { label: "✅ 3. Đã nhận (Hoàn tất)", cls: "bg-emerald-950/60 text-emerald-300 border-emerald-600/50" },
             CANCELLED: { label: "✖ Đã hủy", cls: "bg-slate-800 text-slate-400 border-slate-600 line-through" }
         };
+        const activeOrderSlips = slips.filter(s => getSlipStatus(s, fo) !== "CANCELLED");
+        const ordCodeForRma = String(ord?.order_code || ord?.raw_code || ord?.linkedSalesOrderId || ord?.id || fo?.linkedSalesOrderId || fo?.id || "").trim();
+        const orderRmas = ordCodeForRma ? rmaList.filter((r: any) => String(r.order_code || "").trim() === ordCodeForRma) : [];
         if (slips.length === 0 && !hasRemaining) return null;
         return (
             <div className={cn("mt-2 rounded-lg border border-slate-800 bg-slate-950/50 text-[11px]", opts?.compact ? "p-1.5" : "p-2")} onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">🚚 Phiếu giao hàng ({slips.filter(s => getSlipStatus(s, fo) !== "CANCELLED").length})</span>
-                    {hasRemaining && (
-                        <button
-                            type="button"
-                            onClick={() => handleOpenDeliveryModal(ord)}
-                            className="text-[10px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white px-2 py-0.5 rounded cursor-pointer"
-                            title="Lập phiếu giao cho phần số lượng còn lại"
-                        >
-                            + {slips.length === 0 ? "Lập phiếu giao" : "Lập phiếu đợt tiếp"}
-                        </button>
-                    )}
+                <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-300">🚚 Phiếu giao hàng ({activeOrderSlips.length})</span>
+                        {orderRmas.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setRmaListOrderCode(ordCodeForRma);
+                                    setIsRmaListModalOpen(true);
+                                }}
+                                className="text-[10px] font-bold bg-amber-950/80 hover:bg-amber-900 text-amber-300 border border-amber-600/60 px-2 py-0.5 rounded cursor-pointer flex items-center gap-1"
+                                title="Xem danh sách phiếu trả hàng (RMA) của đơn này"
+                            >
+                                📋 Phiếu trả hàng ({orderRmas.length})
+                            </button>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                        {activeOrderSlips.length > 0 && (
+                            <button
+                                type="button"
+                                onClick={() => handleOpenCreateRmaModal(fo || ord, activeOrderSlips.length === 1 ? activeOrderSlips[0] : undefined)}
+                                className="text-[10px] font-bold bg-amber-800/90 hover:bg-amber-700 text-amber-100 border border-amber-600/50 px-2 py-0.5 rounded cursor-pointer"
+                                title="Tạo phiếu trả hàng (RMA) theo phiếu giao hàng của đơn này"
+                            >
+                                ↩ Trả hàng
+                            </button>
+                        )}
+                        {hasRemaining && (
+                            <button
+                                type="button"
+                                onClick={() => handleOpenDeliveryModal(ord)}
+                                className="text-[10px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white px-2 py-0.5 rounded cursor-pointer"
+                                title="Lập phiếu giao cho phần số lượng còn lại"
+                            >
+                                + {slips.length === 0 ? "Lập phiếu giao" : "Lập phiếu đợt tiếp"}
+                            </button>
+                        )}
+                    </div>
                 </div>
                 {slips.length === 0 ? (
                     <div className="text-slate-500 italic">Chưa lập phiếu giao nào.</div>
@@ -15099,6 +15184,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         )}
                                         {step !== "CANCELLED" && (
                                             <button type="button" onClick={() => handleEditDeliverySlip(s)} className="text-[10px] font-bold bg-sky-800 hover:bg-sky-700 text-white px-1.5 py-0.5 rounded cursor-pointer" title="Sửa thông tin / điều chỉnh trạng thái phiếu">✏️ Sửa</button>
+                                        )}
+                                        {step !== "CANCELLED" && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleOpenCreateRmaModal(fo || ord, s)}
+                                                className="text-[10px] font-bold bg-amber-800/90 hover:bg-amber-700 text-amber-100 border border-amber-600/50 px-1.5 py-0.5 rounded cursor-pointer"
+                                                title={`Lập phiếu trả hàng (RMA) theo Phiếu giao hàng ${s.id} (Đợt ${s.batchNumber || i + 1})`}
+                                            >
+                                                ↩ Trả hàng
+                                            </button>
                                         )}
                                         {(step === "PENDING_DELIVERY" || step === "WAREHOUSE_DELIVERED") && (
                                             <button type="button" onClick={() => handleCancelDeliverySlip(s)} className="text-[10px] font-bold bg-rose-800 hover:bg-rose-700 text-white px-1.5 py-0.5 rounded cursor-pointer">🗑 Hủy</button>
@@ -22000,18 +22095,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <Package className="w-3.5 h-3.5 stroke-[2.5]" />
                                 <span>Tạo SO Stock (Gối Đầu)</span>
                             </button>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setRmaListOrderCode("");
-                                    setIsRmaListModalOpen(true);
-                                }}
-                                className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition-all shadow-md shadow-amber-950/30 cursor-pointer"
-                                title="Quản lý danh sách Đơn Hàng Trả Bán (RMA) hoặc chọn đơn hàng bên dưới để lập phiếu trả hàng bán"
-                            >
-                                <RotateCw className="w-3.5 h-3.5 stroke-[2.5]" />
-                                <span>↩ Đơn Hàng Trả Bán / RMA ({rmaList.length})</span>
-                            </button>
                             {canManageAllOrders && selectedFactoryOrdersForCombine.length > 0 && (
                                 <button
                                     onClick={() => handleCreateSalesOrderFromRequests(selectedFactoryOrdersForCombine)}
@@ -23216,16 +23299,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <Copy className="w-3 h-3" /> Copy
                                                                         </button>
                                                                     )}
-                                                                    {!isStockOrder && !isCancelledOrder && (
-                                                                        <button
-                                                                            type="button"
-                                                                            onClick={() => handleOpenCreateRmaModal(req)}
-                                                                            className="bg-amber-950/70 hover:bg-amber-900/90 text-amber-300 border border-amber-600/50 text-[10px] px-2 py-1 rounded font-bold cursor-pointer transition-colors flex items-center gap-1 shadow-sm"
-                                                                            title="Tạo Đơn Hàng Trả Bán (RMA) cho đơn hàng này"
-                                                                        >
-                                                                            ↩ Trả hàng
-                                                                        </button>
-                                                                    )}
                                                                     {/* 3. Nút Sửa, Nút Hủy đơn & Nút Xóa */}
                                                                     {!isCancelledOrder && canUserAct && canEditOrDelete && (
                                                                         <button
@@ -24324,6 +24397,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     onCancelSlip={(s: any) => handleCancelDeliverySlip(s)}
                     canConfirmForOrder={(ord: any) => canConfirmDeliveryForOrder(ord)}
                     getFinance={(s: any) => ({ amount: getSlipValue(s), paid: slipPaidMap[s.id] || 0, ...getSlipInvoice(s) })}
+                    rmaList={rmaList}
+                    onCreateRma={(ord: any, slip?: any) => handleOpenCreateRmaModal(ord, slip)}
+                    onOpenRmaList={(orderCode?: string) => {
+                        setRmaListOrderCode(orderCode || "");
+                        setIsRmaListModalOpen(true);
+                    }}
                 />
             )}
 
@@ -32728,6 +32807,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 title="Sửa số lượng / số lô / trạng thái phiếu (tồn kho điều chỉnh theo chênh lệch)"
                                             >
                                                 ✏️ Sửa phiếu
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const targetOrd = resolveFactoryOrder({ order_id: vs.orderId, raw_code: vs.orderCode });
+                                                    setIsViewDeliverySlipModalOpen(false);
+                                                    handleOpenCreateRmaModal(targetOrd, vs);
+                                                }}
+                                                className="bg-amber-600 hover:bg-amber-500 text-white px-3 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                                title="Lập phiếu trả hàng bán (RMA) trực tiếp từ Phiếu giao hàng này"
+                                            >
+                                                ↩ Trả hàng (RMA)
                                             </button>
                                             {step !== "DELIVERED" && (
                                                 <button
