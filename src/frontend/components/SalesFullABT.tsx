@@ -1668,7 +1668,7 @@ export function SalesFullABT() {
                 hasComm: true,
                 isStockOrder: isStock,
                 orderCategory: isStock ? "STOCK" : "COMMERCIAL",
-                priceApprovalStatus: isStock ? "APPROVED" : (autoApproved ? "APPROVED" : (o.priceApprovalStatus || (hasZero ? "PENDING_APPROVAL" : "APPROVED")))
+                priceApprovalStatus: isStock ? "APPROVED" : (autoApproved ? "APPROVED" : (o.priceApprovalStatus || o.price_approval_status || (hasZero ? "PENDING_APPROVAL" : "APPROVED")))
             });
         }
         return result;
@@ -20739,29 +20739,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-orange-950 text-orange-300 border border-orange-700 whitespace-nowrap animate-pulse">
                                                                     ⏳ Chờ duyệt giá 0đ
                                                                 </span>
-                                                                {(canApproveQuotations || canApproveZeroPriceOrders || canManageAllOrders) && (
+                                                                {(canApproveQuotations || canApproveZeroPriceOrders) && (
                                                                     <>
                                                                         <button
                                                                             type="button"
-                                                                            onClick={() => {
+                                                                            onClick={async () => {
                                                                                 const approverName = loggedInStaff?.full_name || user?.name || "Người duyệt";
-                                                                                const updated = quotations.map(q => q.id === quote.id ? { ...q, priceApprovalStatus: "APPROVED", approvedBy: approverName, approvedAt: new Date().toISOString() } : q);
-                                                                                setQuotations(updated);
-                                                                                try { localStorage.setItem("sales_quotations", JSON.stringify(updated)); } catch(e) {}
-                                                                                const approvedQuote = updated.find(q => q.id === quote.id);
-                                                                                if (approvedQuote) {
-                                                                                    fetch("/api/sales?action=quotation", {
+                                                                                const approvedQuote = { ...quote, priceApprovalStatus: "APPROVED", approvedBy: approverName, approvedAt: new Date().toISOString() };
+                                                                                try {
+                                                                                    const res = await fetch("/api/sales?action=quotation", {
                                                                                         method: "POST",
                                                                                         headers: { "Content-Type": "application/json" },
                                                                                         body: JSON.stringify(approvedQuote)
-                                                                                    }).catch(e => console.error("Failed to sync approval to DB:", e));
+                                                                                    });
+                                                                                    if (!res.ok) {
+                                                                                        const err = await res.json().catch(() => ({}));
+                                                                                        showToast(err.error || "Bạn không có quyền phê duyệt báo giá 0đ!", "error");
+                                                                                        return;
+                                                                                    }
+                                                                                    const updated = quotations.map(q => q.id === quote.id ? approvedQuote : q);
+                                                                                    setQuotations(updated);
+                                                                                    try { localStorage.setItem("sales_quotations", JSON.stringify(updated)); } catch(e) {}
                                                                                     fetch("/api/storage", {
                                                                                         method: "POST",
                                                                                         headers: { "Content-Type": "application/json" },
                                                                                         body: JSON.stringify({ key: "sales_quotations", data: updated })
                                                                                     }).catch(() => {});
+                                                                                    showToast(`Đã phê duyệt báo giá 0đ ${quote.id} thành công!`, "success");
+                                                                                } catch (e: any) {
+                                                                                    showToast("Lỗi khi phê duyệt báo giá 0đ: " + e.message, "error");
                                                                                 }
-                                                                                showToast(`Đã phê duyệt báo giá 0đ ${quote.id} thành công!`, "success");
                                                                             }}
                                                                             className="text-[10px] bg-orange-900/90 hover:bg-orange-800 border border-orange-500/70 text-orange-100 px-2.5 py-1 rounded font-bold cursor-pointer transition-colors whitespace-nowrap shadow-sm"
                                                                             title="Phê duyệt báo giá có mặt hàng 0đ / hàng tặng"
@@ -23302,7 +23309,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     )}
 
                                                                     {/* 2. Nút Phê duyệt đơn giá 0đ / Quà tặng (BGĐ hoặc nhân sự được phân quyền duyệt giá 0đ) */}
-                                                                    {isPendingBODApproval && (canApproveZeroPriceOrders || canManageAllOrders) && (
+                                                                    {isPendingBODApproval && canApproveZeroPriceOrders && (
                                                                         <div className="flex items-center gap-1">
                                                                             <button
                                                                                 type="button"
@@ -23310,15 +23317,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     const approverName = loggedInStaff?.full_name || user?.name || "Quản lý / BGĐ";
                                                                                     if (window.confirm(`Xác nhận PHÊ DUYỆT đơn hàng 0đ / quà tặng cho yêu cầu ${req.id}?`)) {
                                                                                         try {
-                                                                                            await fetch("/api/sales?action=approve_price", {
+                                                                                            const res = await fetch("/api/sales?action=approve_price", {
                                                                                                 method: "POST",
                                                                                                 headers: { "Content-Type": "application/json" },
                                                                                                 body: JSON.stringify({
                                                                                                     order_id: req.id,
+                                                                                                    order_code: req.order_code || req.id,
                                                                                                     approved_by: approverName,
                                                                                                     approval_notes: `${approverName} đã duyệt đơn giá 0đ / quà tặng khuyến mãi`
                                                                                                 })
                                                                                             });
+                                                                                            if (!res.ok) {
+                                                                                                const err = await res.json().catch(() => ({}));
+                                                                                                showToast(err.error || "Bạn không có quyền phê duyệt đơn hàng 0 đồng!", "error");
+                                                                                                return;
+                                                                                            }
                                                                                             setFactoryOrders(prev => prev.map(o => o.id === req.id ? { 
                                                                                                 ...o, 
                                                                                                 priceApprovalStatus: "APPROVED",
@@ -23343,19 +23356,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     const approverName = loggedInStaff?.full_name || user?.name || "Quản lý / BGĐ";
                                                                                     if (window.confirm(`Xác nhận TỪ CHỐI đơn hàng 0đ / quà tặng ${req.id}?`)) {
                                                                                         try {
-                                                                                            await fetch("/api/sales?action=approve_price", {
+                                                                                            const res = await fetch("/api/sales?action=approve_price", {
                                                                                                 method: "POST",
                                                                                                 headers: { "Content-Type": "application/json" },
                                                                                                 body: JSON.stringify({
                                                                                                     order_id: req.id,
+                                                                                                    order_code: req.order_code || req.id,
                                                                                                     approve: false,
                                                                                                     approved_by: approverName,
                                                                                                     approval_notes: `${approverName} đã từ chối đơn hàng 0đ / quà tặng`
                                                                                                 })
                                                                                             });
-                                                                                        } catch {}
-                                                                                        setFactoryOrders(prev => prev.map(o => o.id === req.id ? { ...o, status: "Rejected", priceApprovalStatus: "REJECTED" } : o));
-                                                                                        showToast(`Đã từ chối đơn hàng ${req.id}!`, "info");
+                                                                                            if (!res.ok) {
+                                                                                                const err = await res.json().catch(() => ({}));
+                                                                                                showToast(err.error || "Bạn không có quyền từ chối đơn hàng 0 đồng!", "error");
+                                                                                                return;
+                                                                                            }
+                                                                                            setFactoryOrders(prev => prev.map(o => o.id === req.id ? { ...o, status: "Rejected", priceApprovalStatus: "REJECTED" } : o));
+                                                                                            showToast(`Đã từ chối đơn hàng ${req.id}!`, "info");
+                                                                                        } catch (e: any) {
+                                                                                            showToast("Lỗi khi từ chối đơn: " + e.message, "error");
+                                                                                        }
                                                                                     }
                                                                                 }}
                                                                                 className="bg-slate-800 text-rose-400 hover:bg-slate-700 text-[10px] px-2 py-1 rounded font-bold cursor-pointer"

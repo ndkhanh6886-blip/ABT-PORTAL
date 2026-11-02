@@ -48,9 +48,10 @@ async function orderDecisionAllowed(item: any, prev: any, user: AuthorizedUser |
     if (!prev && item.status === "Approved" && !item.isCreditBlocked && item.priceApprovalStatus !== "PENDING_APPROVAL") return true;
     return canApproveSalesOrders(user);
   }
-  if (item.status === "Rejected") return row.approval_status === "REJECTED";
+  if (item.status === "Rejected") return row.approval_status === "REJECTED" || canApproveSalesOrders(user);
   if (row.approval_status === "APPROVED") return true;
   if (row.approval_status === "REJECTED") return false;
+  if (canApproveSalesOrders(user)) return true;
   // Orders without a credit block / pending 0đ approval are approved automatically by business rule
   return !row.is_credit_blocked && row.price_approval_status !== "PENDING_APPROVAL";
 }

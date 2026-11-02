@@ -2307,7 +2307,45 @@ export async function POST(req: NextRequest) {
          WHERE (CASE WHEN $3::text IS NOT NULL AND $3::text !~ '^[0-9]+$' THEN order_code = $3::text ELSE id = $2::int END)`,
         [notes || body.approval_notes || defaultNote, numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null, nextPriceStatus, approved_by]
       );
-      if (upd.rowCount === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
+      // Đồng bộ trực tiếp vào app_storage (sales_factory_orders) để tránh lệch trạng thái khi F5 hoặc khi đơn có mã chuẩn hóa
+      let updatedInStorage = false;
+      try {
+        const targetCode = String(body.order_code || order_id || "").trim();
+        if (targetCode) {
+          await withTransaction(async (c) => {
+            const cur = await c.query("SELECT data, version FROM app_storage WHERE key = 'sales_factory_orders' FOR UPDATE");
+            const arr = cur.rows[0]?.data;
+            if (Array.isArray(arr)) {
+              let changed = false;
+              const nextArr = arr.map((it: any) => {
+                const itCode = String(it?.order_code || it?.id || "").trim();
+                if (itCode === targetCode || String(it?.id || "") === String(order_id || "")) {
+                  changed = true;
+                  return {
+                    ...it,
+                    priceApprovalStatus: nextPriceStatus,
+                    price_approval_status: nextPriceStatus,
+                    status: isRejected ? "Rejected" : (it.isCreditBlocked ? it.status : "Approved"),
+                    approvedBy: approved_by,
+                    approvedAt: new Date().toISOString()
+                  };
+                }
+                return it;
+              });
+              if (changed) {
+                updatedInStorage = true;
+                await c.query(
+                  `UPDATE app_storage SET data = $1, version = COALESCE(version, 1) + 1, updated_at = now() WHERE key = 'sales_factory_orders'`,
+                  [JSON.stringify(nextArr)]
+                );
+              }
+            }
+          });
+        }
+      } catch {}
+      if (upd.rowCount === 0 && !updatedInStorage) {
+        return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
+      }
       await logAudit(isRejected ? "REJECT_PRICE" : "APPROVE_PRICE", "SALES_ORDER", `${isRejected ? "Từ chối" : "Duyệt"} giá/quà tặng cho đơn SO #${order_id} bởi ${approved_by}`);
       return NextResponse.json({ success: true, status: nextPriceStatus, approved_by });
     }
