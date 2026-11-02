@@ -200,150 +200,7 @@ export interface InboundLog13b {
     notes?: string;
 }
 
-const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
-    {
-        code: "SYS-PCR-96E",
-        name: "Hệ thống Realtime PCR 96 giếng Gentier 96E (4 kênh huỳnh quang)",
-        category: "Thiết bị chuyên sâu",
-        subCategory: "Máy Realtime PCR",
-        brand: "Tianlong",
-        origin: "Tianlong / CE-IVD, ISO 13485",
-        unit: "Hệ thống",
-        specification: "Gentier 96E (4 kênh huỳnh quang FAM, VIC, ROX, CY5)",
-        costPrice: 420000000,
-        price: 680000000,
-        priceDealer1: 612000000,
-        priceDealer2: 578000000,
-        warranty: "24 tháng",
-        leadTime: "Có sẵn kho",
-        supplier: "Tianlong Science and Technology",
-        isEquipment: true,
-        imageUrl: "https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?auto=format&fit=crop&w=600&q=80",
-        techSpecs: "• Công suất: 96 giếng x 0.2 ml dạng tube đơn, strip 8 giếng hoặc plate 96 giếng.\n• Hệ quang học: 4 kênh màu (FAM/SYBR Green, VIC/HEX/TET/JOE, ROX/Texas Red, CY5).\n• Bước sóng kích thích: 455 - 650 nm | Bước sóng phát xạ: 510 - 715 nm.\n• Tốc độ gia nhiệt tối đa: 6.1 °C/giây | Tốc độ làm mát tối đa: 5.0 °C/giây.\n• Độ đồng đều nhiệt độ: ±0.1 °C | Màn hình cảm ứng màu 10.4 inch điều khiển độc lập.",
-        configurations: [
-            { id: "cfg-pcr-1", name: "Thân máy chính Realtime PCR Gentier 96E", model: "Gentier 96E", origin: "Tianlong", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Mới 100%, CE-IVD, ISO 13485" },
-            { id: "cfg-pcr-2", name: "Phần mềm điều khiển & phân tích định lượng bản quyền", model: "Gentier Analysis SW", origin: "Tianlong", quantity: 1, unit: "Bản", isStandard: true, isIncluded: true, notes: "Bản quyền theo máy, miễn phí cập nhật trọn đời" },
-            { id: "cfg-pcr-3", name: "Bộ phụ kiện tiêu chuẩn (Cáp nguồn, cáp mạng, khay đỡ, adapter)", model: "Std. Pack", origin: "Tianlong", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ từ nhà sản xuất" },
-            { id: "cfg-pcr-4", name: "Bộ lưu điện trực tuyến UPS Online Santak 2kVA (Bảo vệ nguồn điện)", model: "Santak C2K-LCD", origin: "Santak", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Lưu điện và chống xung nhiễu điện áp" },
-            { id: "cfg-pcr-5", name: "Bộ máy vi tính điều khiển Core i5, RAM 16GB, SSD 512GB + Màn hình Dell 24 inch", model: "OptiPlex 7010", origin: "Dell", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Cài sẵn hệ điều hành và phần mềm Gentier" },
-            { id: "cfg-pcr-6", name: "Dịch vụ kỹ thuật: Giao hàng, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bàn giao hồ sơ thẩm định và chứng nhận đào tạo" },
-            { id: "cfg-pcr-7", name: "Gói bảo hành chính hãng 24 tháng & bảo dưỡng định kỳ 06 tháng/lần", model: "Warranty 24M", origin: "Tianlong / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong vòng 24h" }
-        ],
-        notes: "Dòng máy PCR định lượng cao cấp độ nhạy cao dùng cho phòng lab xét nghiệm đạt chuẩn ISO 15189"
-    },
-    {
-        code: "SYS-EXT-32",
-        name: "Hệ thống tách chiết axit nucleic tự động GeneRotex 96",
-        category: "Thiết bị chuyên sâu",
-        subCategory: "Máy tách chiết tự động",
-        brand: "Tianlong",
-        origin: "Tianlong / CE-IVD, ISO 13485",
-        unit: "Hệ thống",
-        specification: "GeneRotex 96 (Công suất 1 - 96 mẫu/mẻ, công nghệ từ tính xoay)",
-        costPrice: 280000000,
-        price: 450000000,
-        priceDealer1: 405000000,
-        priceDealer2: 382500000,
-        warranty: "12 tháng",
-        leadTime: "Có sẵn kho",
-        supplier: "Tianlong Science and Technology",
-        isEquipment: true,
-        imageUrl: "https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=600&q=80",
-        techSpecs: "• Công suất tách chiết: 1 đến 96 mẫu/mẻ, thời gian tách chiết cực nhanh 15-40 phút.\n• Thể tích xử lý: 30 µl - 1000 µl | Hiệu suất thu hồi hạt từ: >98%.\n• Công nghệ trộn hạt từ quay độc quyền (Rotary Mixing Technology) chống sol khí lây nhiễm chéo.\n• Khử trùng buồng máy: Tích hợp đèn cực tím UV và hệ thống lọc khí HEPA hiệu năng cao.",
-        configurations: [
-            { id: "cfg-ext-1", name: "Thân máy tách chiết tự động GeneRotex 96", model: "GeneRotex 96", origin: "Tianlong", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Mới 100%, CE-IVD" },
-            { id: "cfg-ext-2", name: "Khối thanh từ 96 mẫu (96-well Magnetic Rod)", model: "Mag-96", origin: "Tianlong", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ theo máy" },
-            { id: "cfg-ext-3", name: "Giá đỡ khay đĩa Deep-well 96 và giá đựng tip từ", model: "Plate Holder", origin: "Tianlong", quantity: 2, unit: "Cái", isStandard: true, isIncluded: true, notes: "Inox chuyên dụng kháng hóa chất" },
-            { id: "cfg-ext-4", name: "Bộ lưu điện Santak 1kVA lưu điện dự phòng", model: "TG1000", origin: "Santak", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Trang bị bảo vệ máy khi ngắt điện" },
-            { id: "cfg-ext-5", name: "Dịch vụ vận chuyển, lắp đặt, nghiệm thu & đào tạo vận hành", model: "Service", origin: "Việt Nam (ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Đào tạo kỹ thuật viên phòng xét nghiệm" },
-            { id: "cfg-ext-6", name: "Gói bảo hành chính hãng 12 tháng tận nơi", model: "Warranty 12M", origin: "Tianlong / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Linh kiện thay thế chính hãng có sẵn" }
-        ],
-        notes: "Tách chiết DNA/RNA tự động cho mẫu bệnh phẩm máu, huyết thanh, mô, dịch phết..."
-    },
-    {
-        code: "BSC-1300IIA2",
-        name: "Tủ an toàn sinh học Cấp II A2 (Rộng 1.3m) Biosafety Cabinet",
-        category: "Thiết bị cơ bản",
-        subCategory: "Tủ an toàn sinh học",
-        brand: "Haier Biomedical",
-        origin: "Haier Biomedical / EN 12469, NSF 49",
-        unit: "Hệ thống",
-        specification: "HR40-IIA2 (Rộng 1.3m, 70% tuần hoàn - 30% thải qua lọc ULPA)",
-        costPrice: 95000000,
-        price: 165000000,
-        priceDealer1: 148500000,
-        priceDealer2: 140250000,
-        warranty: "24 tháng",
-        leadTime: "Có sẵn kho",
-        supplier: "Haier Biomedical",
-        isEquipment: true,
-        imageUrl: "https://images.unsplash.com/photo-1581093458791-9f3c3900df4b?auto=format&fit=crop&w=600&q=80",
-        techSpecs: "• Tiêu chuẩn an toàn: EN 12469, NSF/ANSI 49 | Độ sạch vùng làm việc: Class 10 (ISO 4).\n• Màng lọc: 02 màng lọc ULPA hiệu suất lọc 99.9995% với các hạt kích thước 0.12 µm.\n• Tỷ lệ dòng khí: 70% tuần hoàn qua lọc ULPA, 30% khí thải qua lọc ULPA ra ngoài.\n• Cửa kính cường lực 2 lớp chống tia UV, điều chỉnh nâng hạ điện có cảm biến an toàn.",
-        configurations: [
-            { id: "cfg-bsc-1", name: "Thân tủ an toàn sinh học cấp II A2 chiều rộng 1.3m", model: "HR40-IIA2", origin: "Haier Biomedical", quantity: 1, unit: "Tủ", isStandard: true, isIncluded: true, notes: "Mặt làm việc inox 304 nguyên khối dễ vệ sinh" },
-            { id: "cfg-bsc-2", name: "Chân đế tủ chuyên dụng có bánh xe khóa vị trí và chân tăng chỉnh", model: "Base Stand", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ chính hãng" },
-            { id: "cfg-bsc-3", name: "Hệ thống đèn chiếu sáng LED và đèn UV diệt khuẩn 30W hẹn giờ", model: "Lighting & UV", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Khóa liên động an toàn đèn UV và kính" },
-            { id: "cfg-bsc-4", name: "02 ổ cắm điện chống nước chuẩn IP54 bên trong buồng làm việc", model: "Power Socket", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Cung cấp nguồn cho máy vortex/shaker nhỏ" },
-            { id: "cfg-bsc-5", name: "Dịch vụ: Lắp đặt, thẩm định tốc độ gió, kiểm tra rò rỉ màng lọc & cấp giấy kiểm định", model: "Certification Package", origin: "Việt Nam", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm chứng nhận hiệu chuẩn kiểm định độc lập" },
-            { id: "cfg-bsc-6", name: "Gói bảo hành chính hãng 24 tháng", model: "Warranty 24M", origin: "Haier Biomedical / ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bảo hành tận nơi 24 tháng" }
-        ],
-        notes: "Bảo vệ tối đa người thao tác, mẫu thử và môi trường phòng xét nghiệm"
-    },
-    {
-        code: "CEN-TGL-16M",
-        name: "Máy ly tâm lạnh vi lượng tốc độ cao TGL-16M (16.000 rpm)",
-        category: "Thiết bị cơ bản",
-        subCategory: "Máy ly tâm lạnh",
-        brand: "Dlab / Anting",
-        origin: "Đạt chuẩn ISO 13485, CE",
-        unit: "Bộ",
-        specification: "TGL-16M (Tốc độ tối đa 16.000 rpm, RCF 21.000 x g, nhiệt độ -20°C đến +40°C)",
-        costPrice: 48000000,
-        price: 85000000,
-        priceDealer1: 76500000,
-        priceDealer2: 72250000,
-        warranty: "12 tháng",
-        leadTime: "Có sẵn kho",
-        supplier: "Dlab Scientific",
-        isEquipment: true,
-        imageUrl: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=600&q=80",
-        techSpecs: "• Tốc độ ly tâm: 300 - 16.000 vòng/phút (bước tăng 100 rpm).\n• Lực ly tâm tối đa: 21.000 x g | Dải nhiệt độ làm lạnh: -20°C đến +40°C (duy trì 4°C ở tốc độ tối đa).\n• Động cơ biến tần không chổi than, không cần bảo trì, độ ồn cực thấp < 58 dB.",
-        configurations: [
-            { id: "cfg-cen-1", name: "Thân máy ly tâm lạnh TGL-16M", model: "TGL-16M", origin: "Anting / Dlab", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Mới 100%, bảo hành 12 tháng" },
-            { id: "cfg-cen-2", name: "Rotor góc bằng hợp kim nhôm 24 vị trí x 1.5/2.0ml", model: "NO.1 Angle Rotor", origin: "Chính hãng", quantity: 1, unit: "Cái", isStandard: true, isIncluded: true, notes: "Hấp tiệt trùng được ở 121°C" },
-            { id: "cfg-cen-3", name: "Bộ adapter chuyển đổi cho tube PCR 0.2ml và 0.5ml", model: "Adapter Kit", origin: "Chính hãng", quantity: 24, unit: "Cái", isStandard: true, isIncluded: true, notes: "Mỗi loại 24 cái" },
-            { id: "cfg-cen-4", name: "Dịch vụ lắp đặt, bàn giao kỹ thuật & bảo hành 12 tháng", model: "Service & Warranty", origin: "Việt Nam (ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật định kỳ" }
-        ],
-        notes: "Chuyên dụng cho ly tâm tách chiết sinh học phân tử và kết tủa mẫu"
-    },
-    {
-        code: "SPEC-NANO-100",
-        name: "Máy đo quang phổ thể tích vi lượng Micro-Spectrophotometer Nano-100",
-        category: "Thiết bị cơ bản",
-        subCategory: "Máy đo quang phổ",
-        brand: "Allsheng",
-        origin: "Chính hãng Allsheng / CE",
-        unit: "Hệ thống",
-        specification: "Nano-100 (Đo nồng độ & độ tinh sạch DNA/RNA/Protein với mẫu 0.5 - 2.0 µl)",
-        costPrice: 75000000,
-        price: 125000000,
-        priceDealer1: 112500000,
-        priceDealer2: 106250000,
-        warranty: "12 tháng",
-        leadTime: "Có sẵn kho",
-        supplier: "Hangzhou Allsheng Instruments",
-        isEquipment: true,
-        imageUrl: "https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=600&q=80",
-        techSpecs: "• Thể tích mẫu: 0.5 - 2.0 µl | Chiều dài đường truyền quang: 0.2 mm và 1.0 mm (tự động chuyển đổi).\n• Dải bước sóng: 200 - 850 nm | Độ chính xác bước sóng: 1 nm.\n• Dải đo hấp thụ: 0.04 - 300 A (tương đương 2 - 15.000 ng/µl dsDNA) không cần pha loãng.",
-        configurations: [
-            { id: "cfg-nano-1", name: "Thân máy đo quang vi lượng Nano-100 tích hợp màn hình cảm ứng", model: "Nano-100", origin: "Allsheng", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Đo trực tiếp không cần cuvette, không cần PC" },
-            { id: "cfg-nano-2", name: "Bút quang học kiểm tra chuẩn máy (Calibration Check Pen)", model: "Cal-Pen", origin: "Allsheng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Kiểm tra độ chính xác định kỳ" },
-            { id: "cfg-nano-3", name: "Dây cáp nguồn, bút cảm ứng, adapter và cổng USB sao lưu dữ liệu", model: "Acc-Nano", origin: "Allsheng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ theo máy" },
-            { id: "cfg-nano-4", name: "Dịch vụ lắp đặt, chuyển giao kỹ thuật & bảo hành 12 tháng", model: "Service", origin: "ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kỹ sư ABT hướng dẫn tận nơi" }
-        ],
-        notes: "Định lượng chuẩn xác nồng độ DNA/RNA trước khi chạy phản ứng PCR/Realtime PCR"
-    }
-];
+const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [];
 
 const DEFAULT_COMMERCIAL_PRODUCTS: CommercialProduct[] = [];
 
@@ -4178,14 +4035,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [selectedCustomerIndustryFilter, setSelectedCustomerIndustryFilter] = useState("all");
     const [selectedCustomerTypeFilter, setSelectedCustomerTypeFilter] = useState("all");
 
-    // Bộ lọc thời gian cho Báo giá (Ngày / Tháng / Khoảng thời gian tùy chọn)
+    // Bộ lọc thời gian & trạng thái duyệt cho Báo giá (Ngày / Tháng / Khoảng thời gian tùy chọn / Trạng thái duyệt)
     const [filterQuoteDateMode, setFilterQuoteDateMode] = useState<"all" | "day" | "month" | "range">("all");
     const [filterQuoteSingleDate, setFilterQuoteSingleDate] = useState("");
     const [filterQuoteMonth, setFilterQuoteMonth] = useState("");
     const [filterQuoteDateFrom, setFilterQuoteDateFrom] = useState("");
     const [filterQuoteDateTo, setFilterQuoteDateTo] = useState("");
+    const [filterQuoteApprovalStatus, setFilterQuoteApprovalStatus] = useState<"all" | "pending_approval" | "approved" | "zero_price" | "draft" | "sent">("all");
 
-    // Bộ lọc cho Đơn hàng SO (Nhân viên Sale, Khách hàng, Ngày / Tháng / Khoảng thời gian tùy chọn)
+    // Bộ lọc cho Đơn hàng SO (Nhân viên Sale, Khách hàng, Ngày / Tháng / Khoảng thời gian tùy chọn, Trạng thái duyệt)
     const [filterOrderRep, setFilterOrderRep] = useState("all");
     const [filterOrderCustomer, setFilterOrderCustomer] = useState("all");
     const [filterOrderDateMode, setFilterOrderDateMode] = useState<"all" | "day" | "month" | "range">("all");
@@ -4193,6 +4051,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [filterOrderMonth, setFilterOrderMonth] = useState("");
     const [filterOrderDateFrom, setFilterOrderDateFrom] = useState("");
     const [filterOrderDateTo, setFilterOrderDateTo] = useState("");
+    const [filterOrderApprovalStatus, setFilterOrderApprovalStatus] = useState<"all" | "pending_any" | "pending_zero_price" | "pending_credit" | "zero_price" | "approved" | "rejected">("all");
 
     // Thông tin Người liên hệ & Địa chỉ giao/nhận hàng trên Đơn hàng SO
     const [factoryOrderContactPerson, setFactoryOrderContactPerson] = useState("");
@@ -6887,16 +6746,41 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return (!isSalesDept && hasSalesPerm) || isWarehouseStaff;
     }, [user, loggedInStaff, can, isWarehouseStaff]);
 
-    // Quyền xem Báo giá & Hợp đồng toàn bộ: Chỉ Ban Giám Đốc (QL-03) và Phó trưởng phòng (KD-03), hoặc Kho Vận/Liên phòng ban để tra cứu đối soát
-    const canViewAllQuotationsAndContracts = isSalesLeader || isWarehouseStaff || isCrossDepartmentViewer;
+    // Quyền phê duyệt Báo giá & Đơn hàng 0 đồng / Hàng tặng (cho phép phân quyền cho nhân sự ngoài BGĐ)
+    const canApproveQuotations = useMemo(() => {
+        return Boolean(
+            isSalesExecutive ||
+            isSalesLeader ||
+            (can && (can("sales.approve_quotes") || can("sales.approve_zero_price") || can("sales.approve_discount")))
+        );
+    }, [isSalesExecutive, isSalesLeader, can]);
+
+    const canApproveZeroPriceOrders = useMemo(() => {
+        return Boolean(
+            isSalesExecutive ||
+            isSalesLeader ||
+            (can && (can("sales.approve_zero_price") || can("sales.approve_quotes") || can("sales.approve_discount")))
+        );
+    }, [isSalesExecutive, isSalesLeader, can]);
+
+    const canApproveSalesOrdersPerm = useMemo(() => {
+        return Boolean(
+            isManagerOrAdmin ||
+            canApproveZeroPriceOrders ||
+            (can && can("sales.approve_orders"))
+        );
+    }, [isManagerOrAdmin, canApproveZeroPriceOrders, can]);
+
+    // Quyền xem Báo giá & Hợp đồng toàn bộ: Chỉ Ban Giám Đốc (QL-03), Phó trưởng phòng (KD-03), người được phân quyền duyệt Báo giá / Đơn 0đ, hoặc Kho Vận/Liên phòng ban để tra cứu đối soát
+    const canViewAllQuotationsAndContracts = isSalesLeader || canApproveQuotations || canApproveZeroPriceOrders || isWarehouseStaff || isCrossDepartmentViewer;
 
     // Quyền xem toàn bộ hồ sơ khách hàng (bao gồm thông tin cá nhân riêng tư, sửa, xóa):
     // Chỉ Ban Giám Đốc (QL-03) và Phó trưởng phòng (KD-03) được xem toàn bộ.
     // Quản lý Admin (KD-01, KD-06), Sale Admin (KD-04, KD-05) và Kho Vận chỉ xem thông tin phục vụ giao nhận hàng (Địa chỉ, Mã KH, MST, Tên & SĐT người nhận hàng).
     const canViewAllCustomerFullDetails = isSalesLeader;
 
-    // Quyền xem và điều phối toàn bộ Đơn hàng yêu cầu (Tab 6): Cả BGĐ, Trưởng phòng, Admin Manager, Sale Admin và Kho Vận (phụ trách giao hàng toàn bộ đơn) đều được thao tác!
-    const canManageAllOrders = isManagerOrAdmin || isWarehouseStaff || isCrossDepartmentViewer;
+    // Quyền xem và điều phối toàn bộ Đơn hàng yêu cầu (Tab 6): Cả BGĐ, Trưởng phòng, Admin Manager, Sale Admin, người được phân quyền duyệt đơn/giá 0đ và Kho Vận đều được thao tác!
+    const canManageAllOrders = isManagerOrAdmin || canApproveSalesOrdersPerm || isWarehouseStaff || isCrossDepartmentViewer;
 
     // Công nợ khách hàng: Kế toán & Quản trị viên (máy chủ kiểm tra lại quyền)
     const canViewCustomerDebt = Boolean(can && can("settings.view")) ||
@@ -7148,8 +7032,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return "";
     };
 
-    // Memoized filtered lists for Quotations and Contracts (Respecting TDZ)
-    const filteredQuotationsList = useMemo(() => {
+    // Helpers phân loại trạng thái duyệt Báo giá
+    const checkQuoteHasZeroPrice = (q: any): boolean => {
+        return Boolean(q?.hasZeroPriceItems || (Array.isArray(q?.items) && q.items.some((it: any) => Number(it?.unitPrice ?? it?.price ?? 0) === 0)));
+    };
+    const checkQuotePendingApproval = (q: any): boolean => {
+        const hasZero = checkQuoteHasZeroPrice(q);
+        const needsAppr = Boolean(hasZero || q?.requiresApproval || q?.priceApprovalStatus === "PENDING_APPROVAL");
+        return Boolean(needsAppr && q?.priceApprovalStatus !== "APPROVED" && q?.status !== "Rejected");
+    };
+    const checkQuoteIsApproved = (q: any): boolean => {
+        if (q?.status === "Rejected") return false;
+        return !checkQuotePendingApproval(q);
+    };
+
+    // Danh sách báo giá cơ sở (đã lọc theo NVKD, KH, Mã, Thời gian, Từ khóa — chưa lọc theo Trạng thái duyệt để tính thống kê chính xác)
+    const baseFilteredQuotationsList = useMemo(() => {
         return quotations.filter(q => {
             const userEmpId = loggedInStaff?.employee_id || (user as any)?.employee_id || (user as any)?.employee_code || "";
             const userFullName = loggedInStaff?.full_name || user?.name || "";
@@ -7211,6 +7109,50 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return true;
         });
     }, [quotations, canViewAllQuotationsAndContracts, loggedInStaff, user, salesPersonnel, selectedAssigneeFilter, filterQuoteRep, filterQuoteCustomer, filterQuoteCode, filterQuoteDateMode, filterQuoteSingleDate, filterQuoteMonth, filterQuoteDateFrom, filterQuoteDateTo, searchQuoteContractQuery]);
+
+    const quoteApprovalStats = useMemo(() => {
+        let pendingCount = 0;
+        let pendingValue = 0;
+        let zeroPriceCount = 0;
+        let approvedCount = 0;
+        let draftCount = 0;
+        let sentCount = 0;
+        baseFilteredQuotationsList.forEach(q => {
+            const isPend = checkQuotePendingApproval(q);
+            const hasZero = checkQuoteHasZeroPrice(q);
+            const isAppr = checkQuoteIsApproved(q);
+            if (isPend) {
+                pendingCount++;
+                pendingValue += Number(q.totalAmount) || 0;
+            }
+            if (hasZero) zeroPriceCount++;
+            if (isAppr) approvedCount++;
+            if (q.status === "Draft") draftCount++;
+            if (q.status === "Sent" || q.status === "Accepted") sentCount++;
+        });
+        return {
+            total: baseFilteredQuotationsList.length,
+            pendingCount,
+            pendingValue,
+            zeroPriceCount,
+            approvedCount,
+            draftCount,
+            sentCount
+        };
+    }, [baseFilteredQuotationsList]);
+
+    // Memoized filtered lists for Quotations and Contracts (Respecting TDZ)
+    const filteredQuotationsList = useMemo(() => {
+        if (filterQuoteApprovalStatus === "all") return baseFilteredQuotationsList;
+        return baseFilteredQuotationsList.filter(q => {
+            if (filterQuoteApprovalStatus === "pending_approval") return checkQuotePendingApproval(q);
+            if (filterQuoteApprovalStatus === "approved") return checkQuoteIsApproved(q);
+            if (filterQuoteApprovalStatus === "zero_price") return checkQuoteHasZeroPrice(q);
+            if (filterQuoteApprovalStatus === "draft") return q.status === "Draft";
+            if (filterQuoteApprovalStatus === "sent") return q.status === "Sent" || q.status === "Accepted";
+            return true;
+        });
+    }, [baseFilteredQuotationsList, filterQuoteApprovalStatus]);
 
     const filteredContractsList = useMemo(() => {
         return contracts.filter(c => {
@@ -9417,9 +9359,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 paymentTerms: quotePaymentTerms,
                 noteTerms: quoteNoteTerms,
                 hasZeroPriceItems: editHasZero,
-                // Nếu không còn item 0đ → tự APPROVED; nếu BGĐ/Trưởng phòng tạo/sửa → tự động APPROVED luôn; nếu Sale thường tạo có item 0đ → PENDING_APPROVAL
+                // Nếu không còn item 0đ → tự APPROVED; nếu BGĐ/Trưởng phòng/người có quyền duyệt báo giá tạo/sửa → tự động APPROVED luôn; nếu Sale thường tạo có item 0đ → PENDING_APPROVAL
                 priceApprovalStatus: editHasZero
-                    ? ((isSalesExecutive || isSalesLeader) ? "APPROVED" : (q.priceApprovalStatus === "APPROVED" ? "PENDING_APPROVAL" : (q.priceApprovalStatus || "PENDING_APPROVAL")))
+                    ? ((isSalesExecutive || isSalesLeader || canApproveQuotations) ? "APPROVED" : (q.priceApprovalStatus === "APPROVED" ? "PENDING_APPROVAL" : (q.priceApprovalStatus || "PENDING_APPROVAL")))
                     : "APPROVED"
             } : q);
             setQuotations(updated);
@@ -9502,9 +9444,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             paymentTerms: quotePaymentTerms,
             noteTerms: quoteNoteTerms,
             hasZeroPriceItems: newHasZero,
-            // Nếu có hàng 0đ: nếu do chính BGĐ/Trưởng phòng tạo thì tự động APPROVED luôn, nếu Sale tạo thì PENDING_APPROVAL
+            // Nếu có hàng 0đ: nếu do chính BGĐ/Trưởng phòng/người có quyền duyệt báo giá tạo thì tự động APPROVED luôn, nếu Sale tạo thì PENDING_APPROVAL
             priceApprovalStatus: newHasZero
-                ? ((isSalesExecutive || isSalesLeader) ? "APPROVED" : "PENDING_APPROVAL")
+                ? ((isSalesExecutive || isSalesLeader || canApproveQuotations) ? "APPROVED" : "PENDING_APPROVAL")
                 : "APPROVED"
         };
 
@@ -20072,7 +20014,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         return (
                             <div className="space-y-3">
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                                     <div className="bg-slate-900/60 p-3.5 rounded-xl border border-slate-800">
                                         <div className="flex items-center justify-between text-slate-400 text-[10px] font-bold uppercase font-mono mb-1">
                                             <span>Doanh Số Trước VAT</span>
@@ -20124,36 +20066,125 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             Giá trị chính thức báo khách hàng
                                         </span>
                                     </div>
+
+                                    {/* Thống kê Báo giá Chờ duyệt & Có hàng 0đ (Clickable) */}
+                                    <div
+                                        onClick={() => setFilterQuoteApprovalStatus(prev => prev === "pending_approval" ? "all" : "pending_approval")}
+                                        className={cn(
+                                            "p-3.5 rounded-xl border transition-all cursor-pointer select-none",
+                                            filterQuoteApprovalStatus === "pending_approval"
+                                                ? "bg-orange-950/50 border-orange-500 ring-1 ring-orange-500/40 shadow-lg shadow-orange-950/30"
+                                                : quoteApprovalStats.pendingCount > 0
+                                                    ? "bg-orange-950/20 border-orange-700/60 hover:border-orange-500"
+                                                    : "bg-slate-900/60 border-slate-800 hover:border-slate-700"
+                                        )}
+                                        title="Nhấn để lọc nhanh các Báo giá đang chờ phê duyệt (có mặt hàng 0đ / hàng tặng)"
+                                    >
+                                        <div className="flex items-center justify-between text-orange-300 text-[10px] font-bold uppercase font-mono mb-1">
+                                            <span>Báo Giá Chờ Duyệt (0đ)</span>
+                                            <span className={cn("text-xs", quoteApprovalStats.pendingCount > 0 && "animate-pulse")}>⏳</span>
+                                        </div>
+                                        <div className="flex items-baseline gap-2">
+                                            <span className={cn("text-base sm:text-lg font-bold font-mono", quoteApprovalStats.pendingCount > 0 ? "text-orange-400" : "text-emerald-400")}>
+                                                {quoteApprovalStats.pendingCount} chờ duyệt
+                                            </span>
+                                            <span className="text-[10px] text-slate-400 font-mono">
+                                                / {quoteApprovalStats.zeroPriceCount} BG có hàng 0đ
+                                            </span>
+                                        </div>
+                                        <span className="text-[10px] text-orange-300/80 font-mono mt-0.5 block truncate">
+                                            {quoteApprovalStats.pendingCount > 0
+                                                ? `Giá trị chờ duyệt: ${new Intl.NumberFormat("vi-VN").format(quoteApprovalStats.pendingValue)}đ (Click để lọc)`
+                                                : `✅ Đã duyệt ${quoteApprovalStats.approvedCount}/${quoteApprovalStats.total} báo giá`}
+                                        </span>
+                                    </div>
                                 </div>
 
-                                {/* Quotation Subtabs Switcher */}
-                                <div className="flex items-center gap-2 border-b border-slate-800 pb-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => setQuotationSubTab("list")}
-                                        className={cn(
-                                            "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
-                                            quotationSubTab === "list"
-                                                ? "bg-indigo-600 text-white shadow-md shadow-indigo-950/40"
-                                                : "bg-slate-900/60 text-slate-400 hover:text-white hover:bg-slate-800"
-                                        )}
-                                    >
-                                        <FileText className="w-3.5 h-3.5" />
-                                        <span>Danh Sách Báo Giá ({filteredQuotationsList.length})</span>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => setQuotationSubTab("discounts")}
-                                        className={cn(
-                                            "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
-                                            quotationSubTab === "discounts"
-                                                ? "bg-amber-600 text-white shadow-md shadow-amber-950/40"
-                                                : "bg-amber-950/30 text-amber-300 hover:text-white hover:bg-amber-900/40 border border-amber-800/40"
-                                        )}
-                                    >
-                                        <Receipt className="w-3.5 h-3.5" />
-                                        <span>Theo Dõi & Quản Lý Chiết Khấu ({quotesWithDiscountCount})</span>
-                                    </button>
+                                {/* Quotation Subtabs Switcher & Quick Approval Filter Pills */}
+                                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <button
+                                            type="button"
+                                            onClick={() => setQuotationSubTab("list")}
+                                            className={cn(
+                                                "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+                                                quotationSubTab === "list"
+                                                    ? "bg-indigo-600 text-white shadow-md shadow-indigo-950/40"
+                                                    : "bg-slate-900/60 text-slate-400 hover:text-white hover:bg-slate-800"
+                                            )}
+                                        >
+                                            <FileText className="w-3.5 h-3.5" />
+                                            <span>Danh Sách Báo Giá ({filteredQuotationsList.length})</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setQuotationSubTab("discounts")}
+                                            className={cn(
+                                                "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer",
+                                                quotationSubTab === "discounts"
+                                                    ? "bg-amber-600 text-white shadow-md shadow-amber-950/40"
+                                                    : "bg-amber-950/30 text-amber-300 hover:text-white hover:bg-amber-900/40 border border-amber-800/40"
+                                            )}
+                                        >
+                                            <Receipt className="w-3.5 h-3.5" />
+                                            <span>Theo Dõi & Quản Lý Chiết Khấu ({quotesWithDiscountCount})</span>
+                                        </button>
+                                    </div>
+
+                                    {/* Nút lọc nhanh Trạng thái duyệt Báo giá */}
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                        <span className="text-[10px] font-bold text-slate-400 font-mono uppercase mr-0.5">Lọc duyệt:</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFilterQuoteApprovalStatus("all")}
+                                            className={cn(
+                                                "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                                filterQuoteApprovalStatus === "all"
+                                                    ? "bg-indigo-600 text-white border-indigo-500 shadow-sm"
+                                                    : "bg-slate-900/70 text-slate-300 border-slate-800 hover:bg-slate-800"
+                                            )}
+                                        >
+                                            Tất cả ({quoteApprovalStats.total})
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFilterQuoteApprovalStatus(prev => prev === "pending_approval" ? "all" : "pending_approval")}
+                                            className={cn(
+                                                "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border flex items-center gap-1",
+                                                filterQuoteApprovalStatus === "pending_approval"
+                                                    ? "bg-orange-600 text-white border-orange-400 shadow-sm"
+                                                    : quoteApprovalStats.pendingCount > 0
+                                                        ? "bg-orange-950/60 text-orange-300 border-orange-700/70 hover:bg-orange-900/60 animate-pulse"
+                                                        : "bg-slate-900/70 text-slate-400 border-slate-800 hover:bg-slate-800"
+                                            )}
+                                        >
+                                            <span>⏳ Chờ duyệt ({quoteApprovalStats.pendingCount})</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFilterQuoteApprovalStatus(prev => prev === "zero_price" ? "all" : "zero_price")}
+                                            className={cn(
+                                                "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                                filterQuoteApprovalStatus === "zero_price"
+                                                    ? "bg-pink-600 text-white border-pink-400 shadow-sm"
+                                                    : "bg-pink-950/30 text-pink-300 border-pink-800/50 hover:bg-pink-900/40"
+                                            )}
+                                        >
+                                            🎁 Có hàng 0đ / Tặng ({quoteApprovalStats.zeroPriceCount})
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFilterQuoteApprovalStatus(prev => prev === "approved" ? "all" : "approved")}
+                                            className={cn(
+                                                "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                                filterQuoteApprovalStatus === "approved"
+                                                    ? "bg-emerald-600 text-white border-emerald-400 shadow-sm"
+                                                    : "bg-emerald-950/30 text-emerald-300 border-emerald-800/50 hover:bg-emerald-900/40"
+                                            )}
+                                        >
+                                            ✅ Đã duyệt ({quoteApprovalStats.approvedCount})
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                         );
@@ -20164,9 +20195,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="flex items-center justify-between flex-wrap gap-2">
                             <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 font-mono flex items-center gap-1.5">
                                 <FileText className="w-3.5 h-3.5" />
-                                Bộ lọc Báo Giá (Mã, NVKD, Khách hàng, Thời gian)
+                                Bộ lọc Báo Giá (Mã, NVKD, Khách hàng, Trạng thái duyệt, Thời gian)
                             </span>
-                            {(filterQuoteCode || filterQuoteRep !== "all" || filterQuoteCustomer !== "all" || filterQuoteDateMode !== "all") && (
+                            {(filterQuoteCode || filterQuoteRep !== "all" || filterQuoteCustomer !== "all" || filterQuoteDateMode !== "all" || filterQuoteApprovalStatus !== "all") && (
                                 <button
                                     type="button"
                                     onClick={() => {
@@ -20178,6 +20209,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         setFilterQuoteMonth("");
                                         setFilterQuoteDateFrom("");
                                         setFilterQuoteDateTo("");
+                                        setFilterQuoteApprovalStatus("all");
                                     }}
                                     className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
                                 >
@@ -20185,7 +20217,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </button>
                             )}
                         </div>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                             <div className="relative">
                                 <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5 pointer-events-none" />
                                 <input
@@ -20222,6 +20254,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             {custName}
                                         </option>
                                     ))}
+                                </select>
+                            </div>
+                            <div>
+                                <select
+                                    value={filterQuoteApprovalStatus}
+                                    onChange={(e) => setFilterQuoteApprovalStatus(e.target.value as any)}
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-orange-300 font-bold outline-none focus:border-orange-500 cursor-pointer"
+                                >
+                                    <option value="all">🛡️ Trạng thái duyệt: Tất cả ({quoteApprovalStats.total})</option>
+                                    <option value="pending_approval">⏳ Chờ duyệt giá 0đ / BGĐ ({quoteApprovalStats.pendingCount})</option>
+                                    <option value="zero_price">🎁 Có hàng 0đ / Hàng tặng ({quoteApprovalStats.zeroPriceCount})</option>
+                                    <option value="approved">✅ Đã duyệt ({quoteApprovalStats.approvedCount})</option>
+                                    <option value="draft">📝 Bản nháp ({quoteApprovalStats.draftCount})</option>
+                                    <option value="sent">📤 Đã gửi khách ({quoteApprovalStats.sentCount})</option>
                                 </select>
                             </div>
                             <div>
@@ -20510,38 +20556,75 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <span>Copy</span>
                                                         </button>
 
-                                                        {quote.status === "Draft" && (
+                                                        {quoteHasZeroPrice && !quotePendingBGD && (
+                                                            <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-pink-950/80 text-pink-300 border border-pink-700/60 whitespace-nowrap" title="Báo giá có mặt hàng 0đ / hàng tặng đã được phê duyệt">
+                                                                🎁 Đã duyệt 0đ
+                                                            </span>
+                                                        )}
+
+                                                        {quotePendingBGD && (
                                                             <>
-                                                                {quotePendingBGD && (
+                                                                <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-orange-950 text-orange-300 border border-orange-700 whitespace-nowrap animate-pulse">
+                                                                    ⏳ Chờ duyệt giá 0đ
+                                                                </span>
+                                                                {(canApproveQuotations || canApproveZeroPriceOrders || canManageAllOrders) && (
                                                                     <>
-                                                                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-orange-950 text-orange-300 border border-orange-700 whitespace-nowrap animate-pulse">
-                                                                            ⏳ Chờ duyệt BGĐ
-                                                                        </span>
-                                                                        {(isSalesExecutive || isSalesLeader || canManageAllOrders) && (
-                                                                            <button
-                                                                                type="button"
-                                                                                onClick={() => {
-                                                                                    const updated = quotations.map(q => q.id === quote.id ? { ...q, priceApprovalStatus: "APPROVED" } : q);
-                                                                                    setQuotations(updated);
-                                                                                    try { localStorage.setItem("sales_quotations", JSON.stringify(updated)); } catch(e) {}
-                                                                                    const approvedQuote = updated.find(q => q.id === quote.id);
-                                                                                    if (approvedQuote) {
-                                                                                        fetch("/api/sales?action=quotation", {
-                                                                                            method: "POST",
-                                                                                            headers: { "Content-Type": "application/json" },
-                                                                                            body: JSON.stringify(approvedQuote)
-                                                                                        }).catch(e => console.error("Failed to sync approval to DB:", e));
-                                                                                    }
-                                                                                    showToast(`BGĐ đã duyệt báo giá ${quote.id}!`, "success");
-                                                                                }}
-                                                                                className="text-[10px] bg-orange-900/80 hover:bg-orange-800 border border-orange-600/60 text-orange-200 px-2 py-1 rounded font-bold cursor-pointer transition-colors whitespace-nowrap shadow-sm"
-                                                                                title="BGĐ duyệt báo giá có mặt hàng 0đ"
-                                                                            >
-                                                                                ✅ BGĐ Duyệt
-                                                                            </button>
-                                                                        )}
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                const approverName = loggedInStaff?.full_name || user?.name || "Người duyệt";
+                                                                                const updated = quotations.map(q => q.id === quote.id ? { ...q, priceApprovalStatus: "APPROVED", approvedBy: approverName, approvedAt: new Date().toISOString() } : q);
+                                                                                setQuotations(updated);
+                                                                                try { localStorage.setItem("sales_quotations", JSON.stringify(updated)); } catch(e) {}
+                                                                                const approvedQuote = updated.find(q => q.id === quote.id);
+                                                                                if (approvedQuote) {
+                                                                                    fetch("/api/sales?action=quotation", {
+                                                                                        method: "POST",
+                                                                                        headers: { "Content-Type": "application/json" },
+                                                                                        body: JSON.stringify(approvedQuote)
+                                                                                    }).catch(e => console.error("Failed to sync approval to DB:", e));
+                                                                                    fetch("/api/storage", {
+                                                                                        method: "POST",
+                                                                                        headers: { "Content-Type": "application/json" },
+                                                                                        body: JSON.stringify({ key: "sales_quotations", data: updated })
+                                                                                    }).catch(() => {});
+                                                                                }
+                                                                                showToast(`Đã phê duyệt báo giá 0đ ${quote.id} thành công!`, "success");
+                                                                            }}
+                                                                            className="text-[10px] bg-orange-900/90 hover:bg-orange-800 border border-orange-500/70 text-orange-100 px-2.5 py-1 rounded font-bold cursor-pointer transition-colors whitespace-nowrap shadow-sm"
+                                                                            title="Phê duyệt báo giá có mặt hàng 0đ / hàng tặng"
+                                                                        >
+                                                                            ✅ Duyệt Báo Giá 0đ
+                                                                        </button>
+                                                                        <button
+                                                                            type="button"
+                                                                            onClick={() => {
+                                                                                if (!window.confirm(`Xác nhận TỪ CHỐI báo giá 0đ ${quote.id}?`)) return;
+                                                                                const updated = quotations.map(q => q.id === quote.id ? { ...q, status: "Rejected", priceApprovalStatus: "REJECTED" } : q);
+                                                                                setQuotations(updated);
+                                                                                try { localStorage.setItem("sales_quotations", JSON.stringify(updated)); } catch(e) {}
+                                                                                const rejectedQuote = updated.find(q => q.id === quote.id);
+                                                                                if (rejectedQuote) {
+                                                                                    fetch("/api/sales?action=quotation", {
+                                                                                        method: "POST",
+                                                                                        headers: { "Content-Type": "application/json" },
+                                                                                        body: JSON.stringify(rejectedQuote)
+                                                                                    }).catch(e => console.error("Failed to sync reject to DB:", e));
+                                                                                }
+                                                                                showToast(`Đã từ chối báo giá ${quote.id}.`, "info");
+                                                                            }}
+                                                                            className="text-[10px] bg-slate-800 hover:bg-rose-950 border border-rose-700/50 text-rose-300 px-2 py-1 rounded font-bold cursor-pointer transition-colors whitespace-nowrap"
+                                                                            title="Từ chối báo giá 0đ"
+                                                                        >
+                                                                            ✕ Từ chối
+                                                                        </button>
                                                                     </>
                                                                 )}
+                                                            </>
+                                                        )}
+
+                                                        {quote.status === "Draft" && (
+                                                            <>
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => handleEditQuotation(quote)}
@@ -21941,13 +22024,158 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     </div>
 
                     {/* Pending Requests Table */}
+                    {(() => {
+                        // Helper phân loại trạng thái duyệt từng đơn hàng SO
+                        const classifyOrderApproval = (req: any) => {
+                            const isPureStock = checkIsPureStock(req) || Boolean(req.isStockOrder);
+                            const hasZeroOrGift = !isPureStock && Boolean(req.hasZeroPriceItems || (req.items && req.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
+                            const isCancelledOrRejected = req.status === "Cancelled" || req.status === "CANCELLED" || req.delivery_status === "CANCELLED" || req.status === "Rejected" || req.priceApprovalStatus === "REJECTED";
+                            const isPendingBODApproval = !isCancelledOrRejected && hasZeroOrGift && req.priceApprovalStatus !== "APPROVED";
+                            const isPendingCreditApproval = !isCancelledOrRejected && !isPureStock && Boolean(req.isCreditBlocked);
+                            const isPendingAny = !isCancelledOrRejected && (isPendingBODApproval || isPendingCreditApproval || req.status === "Pending");
+                            const isApproved = !isCancelledOrRejected && !isPendingAny;
+                            return {
+                                isPureStock,
+                                hasZeroOrGift,
+                                isCancelledOrRejected,
+                                isPendingBODApproval,
+                                isPendingCreditApproval,
+                                isPendingAny,
+                                isApproved
+                            };
+                        };
+
+                        // Danh sách đơn hàng cơ sở (lọc theo quyền truy cập, NVKD, KH, thời gian, từ khóa — chưa lọc theo trạng thái duyệt để hiển thị thống kê chính xác)
+                        const baseFilteredOrders = factoryOrders.filter(req => {
+                            const matchesAccess = (canManageAllOrders || isOrderOfLoggedInStaff(req));
+                            const matchesAssignee = (selectedAssigneeFilter === "all" || req.salesRepId === selectedAssigneeFilter);
+                            if (!matchesAccess || !matchesAssignee) return false;
+
+                            if (filterOrderRep !== "all") {
+                                const repObj = salesPersonnel.find(p => p.employee_id === filterOrderRep || p.employee_code === filterOrderRep);
+                                const repName = repObj?.full_name?.toLowerCase();
+                                const matchId = req.salesRepId === filterOrderRep || (req as any).sales_rep_id === filterOrderRep;
+                                const matchName = repName && req.salesRepName && String(req.salesRepName).toLowerCase().includes(repName);
+                                if (!matchId && !matchName) return false;
+                            }
+
+                            if (filterOrderCustomer !== "all") {
+                                if ((req.customerName || "").trim() !== filterOrderCustomer.trim()) return false;
+                            }
+
+                            if (filterOrderDateMode !== "all") {
+                                const rawDate = String((req as any).order_date || req.date || (req as any).created_at || "").trim();
+                                let oIso = "";
+                                if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) oIso = rawDate.slice(0, 10);
+                                else {
+                                    const m = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+                                    if (m) oIso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+                                }
+                                if (filterOrderDateMode === "day" && filterOrderSingleDate) {
+                                    if (oIso !== filterOrderSingleDate) return false;
+                                } else if (filterOrderDateMode === "month" && filterOrderMonth) {
+                                    if (!oIso.startsWith(filterOrderMonth)) return false;
+                                } else if (filterOrderDateMode === "range") {
+                                    if (filterOrderDateFrom && (!oIso || oIso < filterOrderDateFrom)) return false;
+                                    if (filterOrderDateTo && (!oIso || oIso > filterOrderDateTo)) return false;
+                                }
+                            }
+
+                            if (searchFactoryOrderQuery) {
+                                const query = searchFactoryOrderQuery.toLowerCase();
+                                const idMatch = (req.id || "").toLowerCase().includes(query);
+                                const customerMatch = (req.customerName || "").toLowerCase().includes(query);
+                                const itemMatch = (req.items || []).some((it: any) => 
+                                    (it?.productCode || "").toLowerCase().includes(query) || 
+                                    (it?.productName || "").toLowerCase().includes(query)
+                                );
+                                const staffMatch = (req.salesRepName || "").toLowerCase().includes(query);
+                                return idMatch || customerMatch || itemMatch || staffMatch;
+                            }
+                            return true;
+                        });
+
+                        // Thống kê số lượng & giá trị đơn hàng chờ duyệt
+                        const orderApprovalStats = (() => {
+                            let pendingAnyCount = 0;
+                            let pendingAnyValue = 0;
+                            let pendingZeroPriceCount = 0;
+                            let pendingZeroPriceValue = 0;
+                            let pendingCreditCount = 0;
+                            let pendingCreditValue = 0;
+                            let hasZeroOrGiftCount = 0;
+                            let approvedCount = 0;
+                            let approvedValue = 0;
+                            let rejectedCount = 0;
+
+                            baseFilteredOrders.forEach(req => {
+                                const c = classifyOrderApproval(req);
+                                const val = Number(req.totalAmount) || (req.items || []).reduce((s: number, it: any) => s + ((Number(it.quantity) || 1) * (Number(it.unitPrice ?? it.price) || 0)), 0);
+                                if (c.isPendingAny) {
+                                    pendingAnyCount++;
+                                    pendingAnyValue += val;
+                                }
+                                if (c.isPendingBODApproval) {
+                                    pendingZeroPriceCount++;
+                                    pendingZeroPriceValue += val;
+                                }
+                                if (c.isPendingCreditApproval) {
+                                    pendingCreditCount++;
+                                    pendingCreditValue += val;
+                                }
+                                if (c.hasZeroOrGift) hasZeroOrGiftCount++;
+                                if (c.isApproved) {
+                                    approvedCount++;
+                                    approvedValue += val;
+                                }
+                                if (c.isCancelledOrRejected) rejectedCount++;
+                            });
+
+                            return {
+                                total: baseFilteredOrders.length,
+                                pendingAnyCount,
+                                pendingAnyValue,
+                                pendingZeroPriceCount,
+                                pendingZeroPriceValue,
+                                pendingCreditCount,
+                                pendingCreditValue,
+                                hasZeroOrGiftCount,
+                                approvedCount,
+                                approvedValue,
+                                rejectedCount
+                            };
+                        })();
+
+                        const filteredOrders = filterOrderApprovalStatus === "all"
+                            ? baseFilteredOrders
+                            : baseFilteredOrders.filter(req => {
+                                const c = classifyOrderApproval(req);
+                                if (filterOrderApprovalStatus === "pending_any") return c.isPendingAny;
+                                if (filterOrderApprovalStatus === "pending_zero_price") return c.isPendingBODApproval;
+                                if (filterOrderApprovalStatus === "pending_credit") return c.isPendingCreditApproval;
+                                if (filterOrderApprovalStatus === "zero_price") return c.hasZeroOrGift;
+                                if (filterOrderApprovalStatus === "approved") return c.isApproved;
+                                if (filterOrderApprovalStatus === "rejected") return c.isCancelledOrRejected;
+                                return true;
+                            });
+
+                        return (
                     <div className="bg-slate-900/40 border border-slate-800 rounded-xl p-5 space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-800">
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                                 <h3 className="text-xs font-bold text-indigo-400 font-mono tracking-wider uppercase">DANH SÁCH YÊU CẦU ĐẶT HÀNG</h3>
                                 <span className="text-[10px] bg-indigo-950 text-indigo-300 border border-indigo-800/60 px-2 py-0.5 rounded-full font-mono font-bold">
-                                    {factoryOrders.filter(req => (canManageAllOrders || isOrderOfLoggedInStaff(req)) && (selectedAssigneeFilter === "all" || req.salesRepId === selectedAssigneeFilter)).length} đơn
+                                    {filteredOrders.length} / {orderApprovalStats.total} đơn
                                 </span>
+                                {orderApprovalStats.pendingAnyCount > 0 && (
+                                    <span
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "pending_any" ? "all" : "pending_any")}
+                                        className="text-[10px] bg-orange-950 text-orange-300 border border-orange-700 px-2.5 py-0.5 rounded-full font-mono font-bold cursor-pointer animate-pulse"
+                                        title="Nhấn để lọc ngay các đơn hàng đang chờ duyệt"
+                                    >
+                                        ⏳ {orderApprovalStats.pendingAnyCount} đơn chờ duyệt
+                                    </span>
+                                )}
                             </div>
                             
                             {/* Factory Orders Search Bar */}
@@ -21971,14 +22199,216 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                         </div>
 
-                        {/* BỘ LỌC ĐƠN HÀNG (SO): NHÂN VIÊN SALE, KHÁCH HÀNG, THỜI GIAN */}
+                        {/* THỐNG KÊ & LỌC NHANH ĐƠN HÀNG CHỜ DUYỆT (5 THẺ KPI CLICKABLE) */}
+                        <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+                            <div
+                                onClick={() => setFilterOrderApprovalStatus("all")}
+                                className={cn(
+                                    "p-3 rounded-xl border transition-all cursor-pointer select-none",
+                                    filterOrderApprovalStatus === "all"
+                                        ? "bg-indigo-950/50 border-indigo-500 ring-1 ring-indigo-500/40"
+                                        : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
+                                )}
+                            >
+                                <div className="flex items-center justify-between text-slate-400 text-[10px] font-bold uppercase font-mono mb-0.5">
+                                    <span>Tổng Đơn Hàng SO</span>
+                                    <span className="text-indigo-400 text-xs">📦</span>
+                                </div>
+                                <span className="text-base font-bold font-mono text-white block">
+                                    {orderApprovalStats.total} đơn
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono block truncate">
+                                    Có {orderApprovalStats.hasZeroOrGiftCount} đơn kèm hàng 0đ/tặng
+                                </span>
+                            </div>
+
+                            <div
+                                onClick={() => setFilterOrderApprovalStatus(prev => prev === "pending_any" ? "all" : "pending_any")}
+                                className={cn(
+                                    "p-3 rounded-xl border transition-all cursor-pointer select-none",
+                                    filterOrderApprovalStatus === "pending_any"
+                                        ? "bg-amber-950/60 border-amber-500 ring-1 ring-amber-500/40 shadow-md"
+                                        : orderApprovalStats.pendingAnyCount > 0
+                                            ? "bg-amber-950/20 border-amber-700/60 hover:border-amber-500"
+                                            : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
+                                )}
+                                title="Click để lọc tất cả đơn hàng đang chờ duyệt (chờ duyệt giá 0đ hoặc chờ mở khóa công nợ)"
+                            >
+                                <div className="flex items-center justify-between text-amber-300 text-[10px] font-bold uppercase font-mono mb-0.5">
+                                    <span>Tổng Đơn Chờ Duyệt</span>
+                                    <span className={cn("text-xs", orderApprovalStats.pendingAnyCount > 0 && "animate-pulse")}>⏳</span>
+                                </div>
+                                <span className={cn("text-base font-bold font-mono block", orderApprovalStats.pendingAnyCount > 0 ? "text-amber-400" : "text-slate-300")}>
+                                    {orderApprovalStats.pendingAnyCount} đơn chờ xử lý
+                                </span>
+                                <span className="text-[10px] text-amber-300/80 font-mono block truncate">
+                                    Giá trị: {new Intl.NumberFormat("vi-VN").format(orderApprovalStats.pendingAnyValue)}đ
+                                </span>
+                            </div>
+
+                            <div
+                                onClick={() => setFilterOrderApprovalStatus(prev => prev === "pending_zero_price" ? "all" : "pending_zero_price")}
+                                className={cn(
+                                    "p-3 rounded-xl border transition-all cursor-pointer select-none",
+                                    filterOrderApprovalStatus === "pending_zero_price"
+                                        ? "bg-orange-950/60 border-orange-500 ring-1 ring-orange-500/40 shadow-md"
+                                        : orderApprovalStats.pendingZeroPriceCount > 0
+                                            ? "bg-orange-950/25 border-orange-700/70 hover:border-orange-500"
+                                            : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
+                                )}
+                                title="Click để lọc các đơn hàng có sản phẩm 0đ / hàng tặng đang chờ phê duyệt"
+                            >
+                                <div className="flex items-center justify-between text-orange-300 text-[10px] font-bold uppercase font-mono mb-0.5">
+                                    <span>Chờ Duyệt Đơn 0đ / Tặng</span>
+                                    <span className="text-xs">🎁</span>
+                                </div>
+                                <span className={cn("text-base font-bold font-mono block", orderApprovalStats.pendingZeroPriceCount > 0 ? "text-orange-400" : "text-slate-300")}>
+                                    {orderApprovalStats.pendingZeroPriceCount} đơn 0đ chờ duyệt
+                                </span>
+                                <span className="text-[10px] text-orange-300/80 font-mono block truncate">
+                                    {orderApprovalStats.pendingZeroPriceCount > 0
+                                        ? `Giá trị: ${new Intl.NumberFormat("vi-VN").format(orderApprovalStats.pendingZeroPriceValue)}đ (Click lọc)`
+                                        : "Không có đơn 0đ tồn đọng"}
+                                </span>
+                            </div>
+
+                            <div
+                                onClick={() => setFilterOrderApprovalStatus(prev => prev === "pending_credit" ? "all" : "pending_credit")}
+                                className={cn(
+                                    "p-3 rounded-xl border transition-all cursor-pointer select-none",
+                                    filterOrderApprovalStatus === "pending_credit"
+                                        ? "bg-rose-950/60 border-rose-500 ring-1 ring-rose-500/40 shadow-md"
+                                        : orderApprovalStats.pendingCreditCount > 0
+                                            ? "bg-rose-950/25 border-rose-700/70 hover:border-rose-500"
+                                            : "bg-slate-950/60 border-slate-800 hover:border-slate-700"
+                                )}
+                                title="Click để lọc các đơn hàng bị khóa do quá hạn công nợ cần Kế toán mở khóa"
+                            >
+                                <div className="flex items-center justify-between text-rose-300 text-[10px] font-bold uppercase font-mono mb-0.5">
+                                    <span>Chờ Duyệt Công Nợ</span>
+                                    <span className="text-xs">🔒</span>
+                                </div>
+                                <span className={cn("text-base font-bold font-mono block", orderApprovalStats.pendingCreditCount > 0 ? "text-rose-400" : "text-slate-300")}>
+                                    {orderApprovalStats.pendingCreditCount} đơn khóa nợ
+                                </span>
+                                <span className="text-[10px] text-rose-300/80 font-mono block truncate">
+                                    {orderApprovalStats.pendingCreditCount > 0
+                                        ? `Giá trị: ${new Intl.NumberFormat("vi-VN").format(orderApprovalStats.pendingCreditValue)}đ`
+                                        : "Không có đơn bị khóa nợ"}
+                                </span>
+                            </div>
+
+                            <div
+                                onClick={() => setFilterOrderApprovalStatus(prev => prev === "approved" ? "all" : "approved")}
+                                className={cn(
+                                    "p-3 rounded-xl border transition-all cursor-pointer select-none",
+                                    filterOrderApprovalStatus === "approved"
+                                        ? "bg-emerald-950/60 border-emerald-500 ring-1 ring-emerald-500/40 shadow-md"
+                                        : "bg-emerald-950/15 border-emerald-800/40 hover:border-emerald-600"
+                                )}
+                                title="Click để lọc các đơn hàng đã được duyệt đủ điều kiện triển khai"
+                            >
+                                <div className="flex items-center justify-between text-emerald-300 text-[10px] font-bold uppercase font-mono mb-0.5">
+                                    <span>Đơn Đã Duyệt Đủ ĐK</span>
+                                    <span className="text-xs">✅</span>
+                                </div>
+                                <span className="text-base font-bold font-mono text-emerald-400 block">
+                                    {orderApprovalStats.approvedCount} đơn đã duyệt
+                                </span>
+                                <span className="text-[10px] text-emerald-300/80 font-mono block truncate">
+                                    Từ chối/Hủy: {orderApprovalStats.rejectedCount} đơn
+                                </span>
+                            </div>
+                        </div>
+
+                        {/* BỘ LỌC ĐƠN HÀNG (SO): NHÂN VIÊN SALE, KHÁCH HÀNG, TRẠNG THÁI DUYỆT, THỜI GIAN */}
                         <div className="bg-slate-950/60 p-3 rounded-xl border border-slate-850 space-y-2.5">
                             <div className="flex items-center justify-between flex-wrap gap-2">
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 font-mono flex items-center gap-1.5">
-                                    <Briefcase className="w-3.5 h-3.5" />
-                                    Bộ lọc Đơn hàng SO (Nhân viên Sale, Khách hàng, Ngày đặt hàng)
-                                </span>
-                                {(filterOrderRep !== "all" || filterOrderCustomer !== "all" || filterOrderDateMode !== "all" || searchFactoryOrderQuery) && (
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400 font-mono flex items-center gap-1.5 mr-2">
+                                        <Briefcase className="w-3.5 h-3.5" />
+                                        Bộ lọc Đơn hàng SO:
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus("all")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "all"
+                                                ? "bg-indigo-600 text-white border-indigo-400 shadow-sm"
+                                                : "bg-slate-900 text-slate-300 border-slate-800 hover:bg-slate-800"
+                                        )}
+                                    >
+                                        Tất cả ({orderApprovalStats.total})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "pending_any" ? "all" : "pending_any")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "pending_any"
+                                                ? "bg-amber-600 text-white border-amber-400 shadow-sm"
+                                                : orderApprovalStats.pendingAnyCount > 0
+                                                    ? "bg-amber-950/60 text-amber-300 border-amber-700/70 hover:bg-amber-900/60"
+                                                    : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800"
+                                        )}
+                                    >
+                                        ⏳ Chờ duyệt ({orderApprovalStats.pendingAnyCount})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "pending_zero_price" ? "all" : "pending_zero_price")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "pending_zero_price"
+                                                ? "bg-orange-600 text-white border-orange-400 shadow-sm"
+                                                : orderApprovalStats.pendingZeroPriceCount > 0
+                                                    ? "bg-orange-950/60 text-orange-300 border-orange-700/70 hover:bg-orange-900/60 animate-pulse"
+                                                    : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800"
+                                        )}
+                                    >
+                                        🎁 Chờ duyệt giá 0đ ({orderApprovalStats.pendingZeroPriceCount})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "pending_credit" ? "all" : "pending_credit")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "pending_credit"
+                                                ? "bg-rose-600 text-white border-rose-400 shadow-sm"
+                                                : orderApprovalStats.pendingCreditCount > 0
+                                                    ? "bg-rose-950/60 text-rose-300 border-rose-700/70 hover:bg-rose-900/60"
+                                                    : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800"
+                                        )}
+                                    >
+                                        🔒 Chờ duyệt nợ ({orderApprovalStats.pendingCreditCount})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "zero_price" ? "all" : "zero_price")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "zero_price"
+                                                ? "bg-pink-600 text-white border-pink-400 shadow-sm"
+                                                : "bg-pink-950/30 text-pink-300 border-pink-800/50 hover:bg-pink-900/40"
+                                        )}
+                                    >
+                                        🎉 Có hàng 0đ/Tặng ({orderApprovalStats.hasZeroOrGiftCount})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "approved" ? "all" : "approved")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "approved"
+                                                ? "bg-emerald-600 text-white border-emerald-400 shadow-sm"
+                                                : "bg-emerald-950/30 text-emerald-300 border-emerald-800/50 hover:bg-emerald-900/40"
+                                        )}
+                                    >
+                                        ✅ Đã duyệt ({orderApprovalStats.approvedCount})
+                                    </button>
+                                </div>
+                                {(filterOrderRep !== "all" || filterOrderCustomer !== "all" || filterOrderDateMode !== "all" || filterOrderApprovalStatus !== "all" || searchFactoryOrderQuery) && (
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -21989,6 +22419,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             setFilterOrderMonth("");
                                             setFilterOrderDateFrom("");
                                             setFilterOrderDateTo("");
+                                            setFilterOrderApprovalStatus("all");
                                             setSearchFactoryOrderQuery("");
                                         }}
                                         className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
@@ -21997,7 +22428,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </button>
                                 )}
                             </div>
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                                 <div>
                                     <select
                                         value={filterOrderRep}
@@ -22026,6 +22457,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     {custName}
                                                 </option>
                                             ))}
+                                    </select>
+                                </div>
+                                <div>
+                                    <select
+                                        value={filterOrderApprovalStatus}
+                                        onChange={(e) => setFilterOrderApprovalStatus(e.target.value as any)}
+                                        className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-orange-300 font-bold outline-none focus:border-orange-500 cursor-pointer"
+                                    >
+                                        <option value="all">🛡️ Trạng thái duyệt: Tất cả ({orderApprovalStats.total})</option>
+                                        <option value="pending_any">⏳ Chờ duyệt: Tất cả ({orderApprovalStats.pendingAnyCount})</option>
+                                        <option value="pending_zero_price">🎁 Chờ duyệt giá 0đ / Hàng tặng ({orderApprovalStats.pendingZeroPriceCount})</option>
+                                        <option value="pending_credit">🔒 Chờ Kế toán duyệt công nợ ({orderApprovalStats.pendingCreditCount})</option>
+                                        <option value="zero_price">🎉 Đơn có hàng 0đ / Hàng tặng ({orderApprovalStats.hasZeroOrGiftCount})</option>
+                                        <option value="approved">✅ Đã duyệt đủ điều kiện ({orderApprovalStats.approvedCount})</option>
+                                        <option value="rejected">❌ Đã từ chối / Đã hủy ({orderApprovalStats.rejectedCount})</option>
                                     </select>
                                 </div>
                                 <div>
@@ -22131,55 +22577,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         
                         <div className="overflow-x-auto">
                             {(() => {
-                                const filteredOrders = factoryOrders.filter(req => {
-                                    const matchesAccess = (canManageAllOrders || isOrderOfLoggedInStaff(req));
-                                    const matchesAssignee = (selectedAssigneeFilter === "all" || req.salesRepId === selectedAssigneeFilter);
-                                    if (!matchesAccess || !matchesAssignee) return false;
-
-                                    if (filterOrderRep !== "all") {
-                                        const repObj = salesPersonnel.find(p => p.employee_id === filterOrderRep || p.employee_code === filterOrderRep);
-                                        const repName = repObj?.full_name?.toLowerCase();
-                                        const matchId = req.salesRepId === filterOrderRep || (req as any).sales_rep_id === filterOrderRep;
-                                        const matchName = repName && req.salesRepName && String(req.salesRepName).toLowerCase().includes(repName);
-                                        if (!matchId && !matchName) return false;
-                                    }
-
-                                    if (filterOrderCustomer !== "all") {
-                                        if ((req.customerName || "").trim() !== filterOrderCustomer.trim()) return false;
-                                    }
-
-                                    if (filterOrderDateMode !== "all") {
-                                        const rawDate = String((req as any).order_date || req.date || (req as any).created_at || "").trim();
-                                        let oIso = "";
-                                        if (/^\d{4}-\d{2}-\d{2}/.test(rawDate)) oIso = rawDate.slice(0, 10);
-                                        else {
-                                            const m = rawDate.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
-                                            if (m) oIso = `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-                                        }
-                                        if (filterOrderDateMode === "day" && filterOrderSingleDate) {
-                                            if (oIso !== filterOrderSingleDate) return false;
-                                        } else if (filterOrderDateMode === "month" && filterOrderMonth) {
-                                            if (!oIso.startsWith(filterOrderMonth)) return false;
-                                        } else if (filterOrderDateMode === "range") {
-                                            if (filterOrderDateFrom && (!oIso || oIso < filterOrderDateFrom)) return false;
-                                            if (filterOrderDateTo && (!oIso || oIso > filterOrderDateTo)) return false;
-                                        }
-                                    }
-
-                                    if (searchFactoryOrderQuery) {
-                                        const query = searchFactoryOrderQuery.toLowerCase();
-                                        const idMatch = (req.id || "").toLowerCase().includes(query);
-                                        const customerMatch = (req.customerName || "").toLowerCase().includes(query);
-                                        const itemMatch = (req.items || []).some((it: any) => 
-                                            (it?.productCode || "").toLowerCase().includes(query) || 
-                                            (it?.productName || "").toLowerCase().includes(query)
-                                        );
-                                        const staffMatch = (req.salesRepName || "").toLowerCase().includes(query);
-                                        return idMatch || customerMatch || itemMatch || staffMatch;
-                                    }
-                                    return true;
-                                });
-
                                 const selectableOrders = filteredOrders.filter(req => {
                                     const isPureStock = checkIsPureStock(req) || Boolean(req.isStockOrder);
                                     const hasZeroOrGift = !isPureStock && (req.hasZeroPriceItems || (req.items && req.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
@@ -22744,45 +23141,61 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         </button>
                                                                     )}
 
-                                                                    {/* 2. Nút Ban Giám Đốc duyệt đơn giá 0đ / Quà tặng (Req 12 & 13) */}
-                                                                    {isPendingBODApproval && canManageAllOrders && (
+                                                                    {/* 2. Nút Phê duyệt đơn giá 0đ / Quà tặng (BGĐ hoặc nhân sự được phân quyền duyệt giá 0đ) */}
+                                                                    {isPendingBODApproval && (canApproveZeroPriceOrders || canManageAllOrders) && (
                                                                         <div className="flex items-center gap-1">
                                                                             <button
                                                                                 type="button"
                                                                                 onClick={async () => {
-                                                                                    if (window.confirm(`Ban Giám Đốc xác nhận DUYỆT đơn hàng 0đ / quà tặng cho yêu cầu ${req.id}?`)) {
+                                                                                    const approverName = loggedInStaff?.full_name || user?.name || "Quản lý / BGĐ";
+                                                                                    if (window.confirm(`Xác nhận PHÊ DUYỆT đơn hàng 0đ / quà tặng cho yêu cầu ${req.id}?`)) {
                                                                                         try {
                                                                                             await fetch("/api/sales?action=approve_price", {
                                                                                                 method: "POST",
                                                                                                 headers: { "Content-Type": "application/json" },
                                                                                                 body: JSON.stringify({
                                                                                                     order_id: req.id,
-                                                                                                    approved_by: loggedInStaff?.full_name || "Ban Giám Đốc",
-                                                                                                    approval_notes: "Ban Giám Đốc đã duyệt đơn giá 0đ / quà tặng khuyến mãi"
+                                                                                                    approved_by: approverName,
+                                                                                                    approval_notes: `${approverName} đã duyệt đơn giá 0đ / quà tặng khuyến mãi`
                                                                                                 })
                                                                                             });
                                                                                             setFactoryOrders(prev => prev.map(o => o.id === req.id ? { 
                                                                                                 ...o, 
                                                                                                 priceApprovalStatus: "APPROVED",
-                                                                                                status: o.isCreditBlocked ? o.status : "Approved"
+                                                                                                status: o.isCreditBlocked ? o.status : "Approved",
+                                                                                                approvedBy: approverName,
+                                                                                                approvedAt: new Date().toISOString()
                                                                                             } : o));
-                                                                                            showToast(`BGĐ đã duyệt đơn hàng 0đ ${req.id} thành công!`, "success");
+                                                                                            showToast(`Đã phê duyệt đơn hàng 0đ ${req.id} thành công!`, "success");
                                                                                         } catch (e: any) {
                                                                                             showToast("Lỗi khi duyệt giá: " + e.message, "error");
                                                                                         }
                                                                                     }
                                                                                 }}
                                                                                 className="bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] px-2 py-1 rounded font-bold cursor-pointer transition-colors flex items-center gap-1 shadow-sm"
-                                                                                title="Ban Giám Đốc duyệt đơn giá 0đ / quà tặng mẫu"
+                                                                                title="Phê duyệt đơn hàng có mặt hàng 0đ / quà tặng mẫu"
                                                                             >
-                                                                                ✓ BGĐ Duyệt giá
+                                                                                ✓ Duyệt đơn 0đ
                                                                             </button>
                                                                             <button
                                                                                 type="button"
-                                                                                onClick={() => {
-                                                                                    if (window.confirm(`Ban Giám Đốc TỪ CHỐI đơn hàng 0đ / quà tặng ${req.id}?`)) {
-                                                                                        setFactoryOrders(prev => prev.map(o => o.id === req.id ? { ...o, status: "Rejected" } : o));
-                                                                                        showToast(`BGĐ đã từ chối đơn hàng ${req.id}!`, "info");
+                                                                                onClick={async () => {
+                                                                                    const approverName = loggedInStaff?.full_name || user?.name || "Quản lý / BGĐ";
+                                                                                    if (window.confirm(`Xác nhận TỪ CHỐI đơn hàng 0đ / quà tặng ${req.id}?`)) {
+                                                                                        try {
+                                                                                            await fetch("/api/sales?action=approve_price", {
+                                                                                                method: "POST",
+                                                                                                headers: { "Content-Type": "application/json" },
+                                                                                                body: JSON.stringify({
+                                                                                                    order_id: req.id,
+                                                                                                    approve: false,
+                                                                                                    approved_by: approverName,
+                                                                                                    approval_notes: `${approverName} đã từ chối đơn hàng 0đ / quà tặng`
+                                                                                                })
+                                                                                            });
+                                                                                        } catch {}
+                                                                                        setFactoryOrders(prev => prev.map(o => o.id === req.id ? { ...o, status: "Rejected", priceApprovalStatus: "REJECTED" } : o));
+                                                                                        showToast(`Đã từ chối đơn hàng ${req.id}!`, "info");
                                                                                     }
                                                                                 }}
                                                                                 className="bg-slate-800 text-rose-400 hover:bg-slate-700 text-[10px] px-2 py-1 rounded font-bold cursor-pointer"
@@ -23125,6 +23538,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             })()}
                         </div>
                     </div>
+                        );
+                    })()}
                 </div>
             )}
 

@@ -16,7 +16,14 @@ import { itemIdentity } from "@/backend/services/storagePatch";
  */
 
 export function canApproveSalesOrders(user: AuthorizedUser | null): boolean {
-  return Boolean(user && (isAdminUser(user) || hasPermission(user, "sales.approve_orders")));
+  return Boolean(
+    user &&
+      (isAdminUser(user) ||
+        hasPermission(user, "sales.approve_orders") ||
+        hasPermission(user, "sales.approve_zero_price") ||
+        hasPermission(user, "sales.approve_quotes") ||
+        hasPermission(user, "sales.approve_discount"))
+  );
 }
 
 type GuardRule = {

@@ -62,6 +62,8 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
       "sales.edit": true,
       "sales.delete": false,
       "sales.approve_discount": false,
+      "sales.approve_quotes": false,
+      "sales.approve_zero_price": false,
       "sales.approve_orders": false,
       "sales.export_excel": false,
       "warehouse.view": true,
@@ -182,6 +184,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       { key: "sales.create", label: "Tạo Báo Giá Mới", desc: "Soạn thảo báo giá thiết bị & hóa chất gửi khách hàng" },
       { key: "sales.edit", label: "Chỉnh Sửa Thông Tin Đơn", desc: "Điều chỉnh số lượng, ghi chú, đơn giá" },
       { key: "sales.delete", label: "Hủy / Xóa Báo Giá", desc: "Quyền xóa hoặc hủy báo giá đã lập" },
+      { key: "sales.approve_quotes", label: "Phê Duyệt Báo Giá & Báo Giá 0 Đồng", desc: "Thay mặt BGĐ phê duyệt báo giá thương mại, báo giá có mặt hàng 0đ / hàng tặng trước khi gửi khách" },
+      { key: "sales.approve_zero_price", label: "Phê Duyệt Đơn Hàng 0 Đồng / Hàng Tặng", desc: "Thay mặt BGĐ phê duyệt đơn đặt hàng (SO) có sản phẩm giá 0đ, hàng tặng, hàng mẫu demo" },
       { key: "sales.approve_discount", label: "Phê Duyệt Chiết Khấu Đặc Biệt", desc: "Duyệt báo giá có chiết khấu vượt thẩm quyền" },
       { key: "sales.approve_orders", label: "Duyệt Yêu Cầu Đặt Hàng / Kế Hoạch", desc: "Duyệt hoặc từ chối yêu cầu đặt hàng (SO), kế hoạch chuyên đề và kế hoạch tuần" },
       { key: "sales.export_excel", label: "Xuất Dữ Liệu Excel / PDF", desc: "Tải file danh sách khách hàng và đơn hàng (Bảo mật data)" },
@@ -255,6 +259,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": true,
     "sales.delete": true,
     "sales.approve_discount": true,
+    "sales.approve_quotes": true,
+    "sales.approve_zero_price": true,
     "sales.approve_orders": true,
     "sales.export_excel": true,
     "warehouse.view": true,
@@ -291,6 +297,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "application.view": false,
@@ -321,6 +329,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "application.view": false,
@@ -342,6 +352,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": true,
     "sales.delete": true,
     "sales.approve_discount": true,
+    "sales.approve_quotes": true,
+    "sales.approve_zero_price": true,
     "sales.approve_orders": true,
     "sales.export_excel": true,
     "warehouse.view": true,
@@ -372,6 +384,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": true,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "warehouse.view": true,
@@ -411,6 +425,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "application.view": false,
@@ -442,6 +458,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "application.view": false,
@@ -473,6 +491,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "procurement.view": false,
@@ -504,6 +524,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "procurement.view": false,
@@ -527,6 +549,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "procurement.view": true,
@@ -558,6 +582,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "procurement.view": true,
@@ -585,6 +611,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": true,
+    "sales.approve_quotes": true,
+    "sales.approve_zero_price": true,
     "sales.approve_orders": true,
     "sales.export_excel": true,
     "warehouse.view": true,
@@ -616,6 +644,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": true,
     "warehouse.view": true,
@@ -656,6 +686,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "procurement.view": false,
@@ -687,6 +719,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "procurement.view": false,
@@ -707,6 +741,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "warehouse.view": false,
@@ -737,6 +773,8 @@ export const ROLE_PRESETS: Record<string, Record<string, boolean>> = {
     "sales.edit": false,
     "sales.delete": false,
     "sales.approve_discount": false,
+    "sales.approve_quotes": false,
+    "sales.approve_zero_price": false,
     "sales.approve_orders": false,
     "sales.export_excel": false,
     "warehouse.view": false,
@@ -770,60 +808,6 @@ ROLE_PRESETS.procurement = ROLE_PRESETS.procurement_specialist;
 ROLE_PRESETS.application = ROLE_PRESETS.app_rep;
 ROLE_PRESETS.chief_accountant = ROLE_PRESETS.accountant_head;
 
-// Các vai trò Khối Kỹ thuật & Nhà máy ABT (Nghiên Cứu R&D, Sản Xuất Kit, Tổng Hợp Oligo, Kỹ Thuật – Thiết Bị)
-ROLE_PRESETS.rd_head = {
-  ...ROLE_PRESETS.qa_qc_lead,
-  "procurement.view": true,
-  "procurement.create_pr": true,
-  "legal.view": true,
-  "application.view": true,
-  "application.create": true,
-  "application.approve": true,
-  "zalo.view": true,
-  "workspace.manage_templates": true
-};
-ROLE_PRESETS.rd_staff = {
-  ...ROLE_PRESETS.qa_qc,
-  "procurement.create_pr": true,
-  "legal.view": true,
-  "application.view": true
-};
-ROLE_PRESETS.kit_head = {
-  ...ROLE_PRESETS.qa_qc_lead,
-  "procurement.view": true,
-  "procurement.create_pr": true,
-  "warehouse.view": true,
-  "warehouse.inbound": true,
-  "warehouse.outbound": true,
-  "warehouse.print_barcode": true,
-  "zalo.view": true,
-  "workspace.manage_templates": true
-};
-ROLE_PRESETS.kit_staff = {
-  ...ROLE_PRESETS.staff,
-  "warehouse.view": true,
-  "warehouse.print_barcode": true,
-  "procurement.create_pr": true
-};
-ROLE_PRESETS.oligo_head = { ...ROLE_PRESETS.kit_head };
-ROLE_PRESETS.oligo_staff = { ...ROLE_PRESETS.kit_staff };
-ROLE_PRESETS.device_head = {
-  ...ROLE_PRESETS.app_head,
-  "warehouse.view": true,
-  "warehouse.inbound": true,
-  "warehouse.outbound": true,
-  "procurement.view": true,
-  "procurement.create_pr": true,
-  "legal.view": true,
-  "zalo.view": true,
-  "workspace.manage_templates": true
-};
-ROLE_PRESETS.device_staff = {
-  ...ROLE_PRESETS.app_rep,
-  "warehouse.view": true,
-  "procurement.create_pr": true
-};
-
 /**
  * Suy luận mã Vai trò hệ thống (System Role) chuẩn hóa từ Phòng ban, Chức vụ và Vai trò khai báo (nếu có).
  * Phân tách rõ ràng cấp Quản lý (Head / Lead) và cấp Chuyên viên / Nhân viên (Rep / Specialist / Staff).
@@ -835,7 +819,6 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
 
   const isLeaderPos =
     pos.includes("trưởng") ||
-    pos.includes("quản đốc") ||
     pos.includes("phó phòng") ||
     pos.includes("phó bộ phận") ||
     pos.includes("head") ||
@@ -861,14 +844,6 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
     "qa_qc",
     "legal_head",
     "legal",
-    "rd_head",
-    "rd_staff",
-    "kit_head",
-    "kit_staff",
-    "oligo_head",
-    "oligo_staff",
-    "device_head",
-    "device_staff",
   ]);
 
   if (canonicalRoles.has(rawRole)) {
@@ -949,20 +924,6 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
   // 5. Mua Hàng & Cung Ứng
   if (dept.includes("cung ứng") || dept.includes("mua hàng") || dept.includes("procurement") || pos.includes("mua hàng") || pos.includes("cung ứng") || rawRole.includes("procurement")) {
     return isLeaderPos || rawRole.includes("lead") || rawRole.includes("head") ? "procurement_lead" : "procurement_specialist";
-  }
-
-  // 5b. Khối Kỹ Thuật Nhà Máy (Nghiên Cứu R&D, Sản Xuất Kit, Tổng Hợp Oligo, Kỹ Thuật – Thiết Bị)
-  if (dept.includes("r&d") || dept.includes("nghiên cứu") || pos.includes("r&d") || pos.includes("nghiên cứu") || rawRole.startsWith("rd_")) {
-    return isLeaderPos || rawRole.includes("head") ? "rd_head" : "rd_staff";
-  }
-  if (dept.includes("sản xuất kit") || dept.includes("sx kit") || pos.includes("sản xuất kit") || pos.includes("pha chế") || rawRole.startsWith("kit_")) {
-    return isLeaderPos || rawRole.includes("head") ? "kit_head" : "kit_staff";
-  }
-  if (dept.includes("oligo") || pos.includes("oligo") || rawRole.startsWith("oligo_")) {
-    return isLeaderPos || rawRole.includes("head") ? "oligo_head" : "oligo_staff";
-  }
-  if (dept.includes("thiết bị") || pos.includes("cơ điện tử") || pos.includes("firmware") || pos.includes("lắp ráp") || rawRole.startsWith("device_")) {
-    return isLeaderPos || rawRole.includes("head") ? "device_head" : "device_staff";
   }
 
   // 6. Kỹ Thuật & Ứng Dụng (Application)
@@ -1057,32 +1018,6 @@ export function resolveRolePreset(roleName?: string, deptName?: string): Record<
     return ROLE_PRESETS.warehouse_specialist;
   }
 
-  // 4b. Khối Kỹ Thuật Nhà Máy (R&D, Sản Xuất Kit, Tổng Hợp Oligo, Kỹ Thuật – Thiết Bị)
-  if (role.includes("r&d") || role.includes("nghiên cứu") || dept.includes("r&d") || dept.includes("nghiên cứu")) {
-    if (role.includes("head") || role.includes("lead") || role.includes("trưởng") || role.includes("manager")) {
-      return ROLE_PRESETS.rd_head;
-    }
-    return ROLE_PRESETS.rd_staff;
-  }
-  if (role.includes("sản xuất kit") || role.includes("sx kit") || dept.includes("sản xuất kit") || dept.includes("sx kit")) {
-    if (role.includes("head") || role.includes("lead") || role.includes("trưởng") || role.includes("quản đốc") || role.includes("manager")) {
-      return ROLE_PRESETS.kit_head;
-    }
-    return ROLE_PRESETS.kit_staff;
-  }
-  if (role.includes("oligo") || dept.includes("oligo")) {
-    if (role.includes("head") || role.includes("lead") || role.includes("trưởng") || role.includes("manager")) {
-      return ROLE_PRESETS.oligo_head;
-    }
-    return ROLE_PRESETS.oligo_staff;
-  }
-  if (role.includes("thiết bị") || dept.includes("thiết bị")) {
-    if (role.includes("head") || role.includes("lead") || role.includes("trưởng") || role.includes("manager")) {
-      return ROLE_PRESETS.device_head;
-    }
-    return ROLE_PRESETS.device_staff;
-  }
-
   // 5. Application / Kỹ Thuật
   if (
     role.includes("application") || 
@@ -1171,11 +1106,13 @@ export function hasPermission(user: any, permissionKey: string): boolean {
   const dept = (user.department || "").toLowerCase().trim();
   const username = (user.username || "").toLowerCase().trim();
 
-  // 2. Ban Giám Đốc hoặc Super Admin: Toàn quyền hệ thống
+  // 2. Ban Giám Đốc hoặc Super Admin: Toàn quyền hệ thống.
+  // Chỉ dựa vào vai trò (do Quản trị viên đặt), không dựa vào tên phòng ban: phòng ban là chữ tự do
+  // ("Trợ lý Giám đốc", "Phó Giám đốc KD"...) và trước đây tự động thành toàn quyền.
   if (
-    role === "director" || 
-    role === "admin" || 
-    username === "admin" || 
+    role === "director" ||
+    role === "admin" ||
+    username === "admin" ||
     role.includes("giám đốc")
   ) {
     return true;

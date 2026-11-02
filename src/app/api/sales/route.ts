@@ -2239,21 +2239,35 @@ export async function POST(req: NextRequest) {
       const me = await getAuthorizedUser(req);
       setAuditActor(me);
       if (!me) return unauthorizedResponse();
-      if (!hasPermission(me, "sales.approve_discount") && !isAdminUser(me)) {
-        return forbiddenResponse("Chỉ Ban Giám Đốc / người được phân quyền duyệt giá mới được duyệt đơn 0đ / quà tặng.");
+      if (
+        !hasPermission(me, "sales.approve_zero_price") &&
+        !hasPermission(me, "sales.approve_quotes") &&
+        !hasPermission(me, "sales.approve_discount") &&
+        !hasPermission(me, "sales.approve_orders") &&
+        !isAdminUser(me)
+      ) {
+        return forbiddenResponse("Chỉ Ban Giám Đốc hoặc nhân sự được phân quyền duyệt báo giá / đơn hàng 0đ mới được duyệt đơn 0đ / quà tặng.");
       }
       const { order_id, notes } = body;
+      const isRejected = body.approve === false || body.status === "REJECTED";
       const approved_by = me.full_name || me.username;
+      const nextPriceStatus = isRejected ? "REJECTED" : "APPROVED";
+      const defaultNote = isRejected
+        ? `Từ chối đơn 0đ/quà tặng bởi ${approved_by || "Quản lý"}`
+        : `Duyệt giá/quà tặng bởi ${approved_by || "Quản lý"}`;
       const upd = await query(
         `UPDATE sales_orders
-         SET price_approval_status = 'APPROVED',
-             price_approval_notes = $1
+         SET price_approval_status = $4,
+             price_approval_notes = $1,
+             approval_status = CASE WHEN $4 = 'REJECTED' THEN 'REJECTED' WHEN NOT COALESCE(is_credit_blocked, FALSE) THEN 'APPROVED' ELSE approval_status END,
+             approved_by = COALESCE($5, approved_by),
+             approved_at = CURRENT_TIMESTAMP
          WHERE (CASE WHEN $3::text IS NOT NULL AND $3::text !~ '^[0-9]+$' THEN order_code = $3::text ELSE id = $2::int END)`,
-        [notes || body.approval_notes || `Duyệt giá/quà tặng bởi ${approved_by || 'Quản lý'}`, numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null]
+        [notes || body.approval_notes || defaultNote, numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null, nextPriceStatus, approved_by]
       );
       if (upd.rowCount === 0) return NextResponse.json({ error: "Không tìm thấy đơn hàng trong CSDL" }, { status: 404 });
-      await logAudit("APPROVE_PRICE", "SALES_ORDER", `Duyệt giá/quà tặng cho đơn SO #${order_id}`);
-      return NextResponse.json({ success: true });
+      await logAudit(isRejected ? "REJECT_PRICE" : "APPROVE_PRICE", "SALES_ORDER", `${isRejected ? "Từ chối" : "Duyệt"} giá/quà tặng cho đơn SO #${order_id} bởi ${approved_by}`);
+      return NextResponse.json({ success: true, status: nextPriceStatus, approved_by });
     }
 
     // 2.3 Reserve Stock for Sales with TTL Expiry - Requirement 6
