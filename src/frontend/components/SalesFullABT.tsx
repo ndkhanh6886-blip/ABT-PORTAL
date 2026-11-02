@@ -3876,7 +3876,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [deliveryCreatorName, setDeliveryCreatorName] = useState("");
     const [deliveryReceiverName, setDeliveryReceiverName] = useState("");
     const [deliveryReceiverPhone, setDeliveryReceiverPhone] = useState("");
-    const [deliveryItems, setDeliveryItems] = useState<{ productCode: string; productName: string; quantity: number; unit?: string; specification?: string; storageCondition?: string; lotNo?: string; expDate?: string; notes?: string; orderedQty?: number; prevAllocatedQty?: number; remainingQty?: number; needsInvoice?: boolean; availStock?: number; selectedLotAvail?: number; selectedLotProductCode?: string; isExtraLot?: boolean; isManualLot?: boolean }[]>([]);
+    const [deliveryItems, setDeliveryItems] = useState<{ productCode: string; productName: string; quantity: number; unit?: string; specification?: string; storageCondition?: string; lotNo?: string; expDate?: string; notes?: string; orderedQty?: number; prevAllocatedQty?: number; remainingQty?: number; needsInvoice?: boolean; availStock?: number; selectedLotAvail?: number; selectedLotProductCode?: string; isExtraLot?: boolean; isManualLot?: boolean; lineGroupKey?: string }[]>([]);
     const [openDeliveryLotDropdownIndex, setOpenDeliveryLotDropdownIndex] = useState<number | null>(null);
     const [deliveryLotSearchQueries, setDeliveryLotSearchQueries] = useState<Record<number, string>>({});
     const [selectedViewDeliverySlip, setSelectedViewDeliverySlip] = useState<any>(null);
@@ -14415,9 +14415,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     // Giao hàng & Đánh giá
+    const getDeliveryDraftStorageKey = (orderCode: any) => `tbr_delivery_slip_draft_${String(orderCode || "").trim()}`;
+
     // Bước 1 của luồng giao hàng: Lập phiếu giao (giao toàn bộ / giao từng đợt). Dùng chung cho
     // nút "Giao hàng" ở Tab Đơn hàng và nút "Xuất Phiếu Giao" / "+ Lập phiếu đợt tiếp" ở Tab Khách hàng.
-    const handleOpenDeliveryModal = (order: any, opts?: { mode?: "FULL" | "PARTIAL"; presetQtys?: Record<string, number>; slip?: any }) => {
+    const handleOpenDeliveryModal = (order: any, opts?: { mode?: "FULL" | "PARTIAL"; presetQtys?: Record<string, number>; slip?: any; ignoreDraft?: boolean }) => {
         const target = toDeliveryOrderShape(order);
         const fo = target.raw_order;
         const isStockOrder = checkIsPureStock(target) || checkIsPureStock(fo);
@@ -14471,10 +14473,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 ? { ordered, allocated: 0, delivered: Number(it.deliveredQuantity) || 0, remaining: Math.max(0, ordered - (Number(it.deliveredQuantity) || 0)) }
                 : (progress[code] || { ordered, allocated: 0, delivered: 0, remaining: ordered });
             const matchingSlipItems = editSlip
-                ? (editSlip.items || []).filter((x: any) =>
-                    getItemCode(x) === code &&
-                    (!hasDistinctLines || String(x.specification || "").trim().toLowerCase() === String(it.specification || "").trim().toLowerCase())
-                )
+                ? (editSlip.items || []).filter((x: any) => {
+                    if (getItemCode(x) !== code) return false;
+                    if (!hasDistinctLines) return true;
+                    if (x.lineGroupKey) return x.lineGroupKey === specKey;
+                    const xIsGift = Boolean(x.isGift || x.is_gift || Number(x.unitPrice ?? x.price ?? 0) === 0);
+                    return String(x.specification || "").trim().toLowerCase() === String(it.specification || "").trim().toLowerCase() && xIsGift === isGiftItem;
+                })
                 : [];
             const slipItem = matchingSlipItems[0] || null;
             if (matchingSlipItems.length === 0 && pg.remaining <= 0) return;
@@ -14521,7 +14526,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         vat: resolvedVat,
                         vatRate: resolvedVat,
                         isManualLot: false,
-                        isExtraLot: sIdx > 0
+                        isExtraLot: sIdx > 0,
+                        lineGroupKey: specKey
                     });
                 });
             } else {
@@ -14552,7 +14558,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     vat: resolvedVat,
                     vatRate: resolvedVat,
                     isManualLot: false,
-                    isExtraLot: false
+                    isExtraLot: false,
+                    lineGroupKey: specKey
                 });
             }
         });
@@ -14623,23 +14630,81 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
 
         const initStep = editSlip ? getSlipStep(editSlip, fo) : "PENDING_DELIVERY";
-        setDeliveryStepStatus(initStep === "CANCELLED" ? "PENDING_DELIVERY" : initStep);
+        let finalMode = mode;
+        let finalItems = items;
+        let finalNotes = editSlip ? (editSlip.notes || "") : String(fo?.orderNotes || fo?.order_notes || target?.orderNotes || target?.order_notes || "");
+        let finalTimeliness = editSlip?.timeliness || "On-time";
+        let finalStep = initStep === "CANCELLED" ? "PENDING_DELIVERY" : initStep;
+        let finalDispatchLoc = editSlip?.dispatchLocation || "Kho Trung Tâm";
+        let finalDispatcher = editSlip?.dispatcherName || loggedInStaff?.full_name || "";
+
+        if (!editSlip && !opts?.presetQtys && !opts?.ignoreDraft && target.order_code) {
+            try {
+                const rawDraft = localStorage.getItem(getDeliveryDraftStorageKey(target.order_code));
+                if (rawDraft) {
+                    const parsed = JSON.parse(rawDraft);
+                    if (Array.isArray(parsed?.items) && parsed.items.length > 0) {
+                        let curGroupKey = "";
+                        finalItems = parsed.items.map((dIt: any, dIdx: number) => {
+                            if (!dIt.isExtraLot) {
+                                curGroupKey = dIt.lineGroupKey || `${dIt.productCode}__line_${dIdx}`;
+                            }
+                            return {
+                                ...dIt,
+                                lineGroupKey: dIt.lineGroupKey || curGroupKey || dIt.productCode
+                            };
+                        });
+                        if (parsed.mode === "FULL" || parsed.mode === "PARTIAL") finalMode = parsed.mode;
+                        if (typeof parsed.notes === "string") finalNotes = parsed.notes;
+                        if (parsed.receiverName) setDeliveryReceiverName(parsed.receiverName);
+                        if (parsed.receiverPhone) setDeliveryReceiverPhone(parsed.receiverPhone);
+                        if (parsed.timeliness) finalTimeliness = parsed.timeliness;
+                        if (parsed.stepStatus) finalStep = parsed.stepStatus;
+                        if (parsed.dispatchLocation) finalDispatchLoc = parsed.dispatchLocation;
+                        if (parsed.dispatcherName) finalDispatcher = parsed.dispatcherName;
+                        showToast(`Đã khôi phục thao tác lập phiếu giao đang lưu tạm của đơn ${target.order_code}.`, "info");
+                    }
+                }
+            } catch {}
+        }
+
+        setDeliveryStepStatus(finalStep);
         setOpenDeliveryLotDropdownIndex(null);
         setDeliveryLotSearchQueries({});
         setDeliveryTargetOrder(target);
         setEditingDeliverySlip(editSlip);
-        setDeliverySlipMode(mode);
+        setDeliverySlipMode(finalMode);
         setDeliveryBatchNumber(batchNo);
-        setDeliveryTimeliness(editSlip?.timeliness || "On-time");
+        setDeliveryTimeliness(finalTimeliness);
         // Phiếu mới: lấy sẵn ghi chú của đơn (từ báo giá) để Kho thấy yêu cầu của khách
-        setDeliveryNotes(editSlip ? (editSlip.notes || "") : String(fo?.orderNotes || fo?.order_notes || target?.orderNotes || target?.order_notes || ""));
+        setDeliveryNotes(finalNotes);
         setDeliveryDate(editSlip ? parseSlipDateToIso(editSlip.deliveryDate) : todayVN());
-        setDeliveryDispatchLocation(editSlip?.dispatchLocation || "Kho Trung Tâm");
-        setDeliveryDispatcherName(editSlip?.dispatcherName || loggedInStaff?.full_name || "");
+        setDeliveryDispatchLocation(finalDispatchLoc);
+        setDeliveryDispatcherName(finalDispatcher);
         setDeliveryCreatorName(editSlip?.creatorName || loggedInStaff?.full_name || "");
-        setDeliveryItems(items);
+        setDeliveryItems(finalItems);
         setIsDeliveryModalOpen(true);
     };
+
+    // Tự động lưu tạm nháp phiếu giao hàng đang thao tác theo mã đơn để khi đóng modal không bị mất các lô đã tách
+    useEffect(() => {
+        if (!isDeliveryModalOpen || !deliveryTargetOrder?.order_code || editingDeliverySlip) return;
+        if (!Array.isArray(deliveryItems) || deliveryItems.length === 0) return;
+        try {
+            localStorage.setItem(getDeliveryDraftStorageKey(deliveryTargetOrder.order_code), JSON.stringify({
+                items: deliveryItems,
+                mode: deliverySlipMode,
+                notes: deliveryNotes,
+                receiverName: deliveryReceiverName,
+                receiverPhone: deliveryReceiverPhone,
+                timeliness: deliveryTimeliness,
+                stepStatus: deliveryStepStatus,
+                dispatchLocation: deliveryDispatchLocation,
+                dispatcherName: deliveryDispatcherName,
+                savedAt: Date.now()
+            }));
+        } catch {}
+    }, [isDeliveryModalOpen, deliveryTargetOrder, editingDeliverySlip, deliveryItems, deliverySlipMode, deliveryNotes, deliveryReceiverName, deliveryReceiverPhone, deliveryTimeliness, deliveryStepStatus, deliveryDispatchLocation, deliveryDispatcherName]);
 
     // Tự động nạp người nhận mặc định từ danh bạ KH nếu danh sách khách hàng tải xong sau khi mở modal lập phiếu giao
     useEffect(() => {
@@ -14785,17 +14850,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const editSlip = editingDeliverySlip;
 
             // 1. Kiểm tra số lượng giao theo hình thức Giao toàn bộ / Giao từng đợt
-            // Nhóm theo productCode để kiểm tra tổng số lượng các lô không vượt quá remainingQty
+            // Nhóm theo productCode nhưng cộng tổng remainingQty của tất cả các dòng chính (!isExtraLot) thuộc cùng mã đó
+            // (tránh lỗi khi đơn hàng có 2 dòng cùng mã, ví dụ: 20 hộp hàng bán + 2 hộp hàng tặng 0đ = 22 hộp)
             const productTotalQtys: Record<string, { totalQty: number; maxQty: number; name: string }> = {};
             const normalizedItems = deliveryItems.map(it => {
                 const code = getItemCode(it);
+                const groupKey = it.lineGroupKey || code;
                 const maxQty = it.remainingQty ?? Number.MAX_SAFE_INTEGER;
-                const isSingleRowForProduct = deliveryItems.filter(x => getItemCode(x) === code).length === 1;
-                const qty = deliverySlipMode === "FULL" && !editSlip && isSingleRowForProduct
+                const isSingleRowForGroup = deliveryItems.filter(x => (x.lineGroupKey || getItemCode(x)) === groupKey).length === 1;
+                const qty = deliverySlipMode === "FULL" && !editSlip && isSingleRowForGroup
                     ? (it.remainingQty ?? Number(it.quantity) ?? 0)
                     : (Number(it.quantity) || 0);
                 if (!productTotalQtys[code]) {
-                    productTotalQtys[code] = { totalQty: 0, maxQty, name: it.productName };
+                    productTotalQtys[code] = { totalQty: 0, maxQty: 0, name: it.productName };
+                }
+                if (!it.isExtraLot) {
+                    productTotalQtys[code].maxQty = (maxQty === Number.MAX_SAFE_INTEGER || productTotalQtys[code].maxQty === Number.MAX_SAFE_INTEGER)
+                        ? Number.MAX_SAFE_INTEGER
+                        : (productTotalQtys[code].maxQty + (Number(maxQty) || 0));
+                } else if (productTotalQtys[code].maxQty === 0) {
+                    productTotalQtys[code].maxQty = maxQty;
                 }
                 productTotalQtys[code].totalQty += qty;
                 return { item: it, qty, maxQty };
@@ -14968,6 +15042,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 ? `Đã cập nhật Phiếu giao hàng ${newSlip.id} và điều chỉnh tồn kho theo số lượng mới.`
                 : `Đã lập Phiếu giao hàng ${newSlip.id} (Đợt ${newSlip.batchNumber}) và trừ tồn kho.`, "success");
 
+            if (!editSlip && deliveryTargetOrder?.order_code) {
+                try { localStorage.removeItem(getDeliveryDraftStorageKey(deliveryTargetOrder.order_code)); } catch {}
+            }
             setIsDeliveryModalOpen(false);
             setDeliveryTargetOrder(null);
             setEditingDeliverySlip(null);
@@ -31968,15 +32045,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         const baseAvailStock = item.availStock ?? getAvailableStockForProduct(item.productCode, item.productName, ordCode);
                                         const availStock = (selectedLotAvailQty !== undefined && baseAvailStock <= 0) ? selectedLotAvailQty : baseAvailStock;
                                         const isEnough = availStock >= (item.remainingQty ?? 1);
-                                        const sameCodeItems = deliveryItems.filter(it => it.productCode === item.productCode);
+                                        const itemGroupKey = item.lineGroupKey || item.productCode;
+                                        const sameCodeItems = deliveryItems.filter(it => (it.lineGroupKey || it.productCode) === itemGroupKey);
                                         const sameCodeCount = sameCodeItems.length;
                                         const sumSameCodeQty = sameCodeItems.reduce((s, it) => s + (Number(it.quantity) || 0), 0);
                                         const lotOrderWithinSku = deliveryItems
                                             .slice(0, idx + 1)
-                                            .filter(it => it.productCode === item.productCode).length;
-                                        const distinctSkuIndex = Array.from(
-                                            new Set(deliveryItems.slice(0, idx + 1).map(it => it.productCode))
-                                        ).length;
+                                            .filter(it => (it.lineGroupKey || it.productCode) === itemGroupKey).length;
+                                        const distinctSkuIndex = deliveryItems
+                                            .slice(0, idx + 1)
+                                            .filter(it => !it.isExtraLot).length;
 
                                         return (
                                             <React.Fragment key={idx}>
@@ -32465,13 +32543,57 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <span className="text-[11px] text-slate-400 italic">
                             * Quy trình 3 bước: (1) Chờ giao → (2) Kho Đã giao hàng → (3) NVKD Xác nhận Đã nhận. Có thể điều chỉnh linh hoạt.
                         </span>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
+                            {!editingDeliverySlip && deliveryTargetOrder?.order_code && (
+                                <>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            try {
+                                                localStorage.removeItem(getDeliveryDraftStorageKey(deliveryTargetOrder.order_code));
+                                            } catch {}
+                                            handleOpenDeliveryModal(deliveryTargetOrder, { mode: deliverySlipMode, ignoreDraft: true });
+                                            showToast("Đã đặt lại danh sách lô giao về mặc định của đơn hàng.", "info");
+                                        }}
+                                        className="bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 px-3 py-2 rounded-lg font-bold text-xs cursor-pointer transition-colors"
+                                        title="Xóa bản lưu tạm và khôi phục danh sách mặt hàng gốc từ đơn hàng"
+                                    >
+                                        ↺ Đặt lại mặc định
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            try {
+                                                localStorage.setItem(getDeliveryDraftStorageKey(deliveryTargetOrder.order_code), JSON.stringify({
+                                                    items: deliveryItems,
+                                                    mode: deliverySlipMode,
+                                                    notes: deliveryNotes,
+                                                    receiverName: deliveryReceiverName,
+                                                    receiverPhone: deliveryReceiverPhone,
+                                                    timeliness: deliveryTimeliness,
+                                                    stepStatus: deliveryStepStatus,
+                                                    dispatchLocation: deliveryDispatchLocation,
+                                                    dispatcherName: deliveryDispatcherName,
+                                                    savedAt: Date.now()
+                                                }));
+                                            } catch {}
+                                            setIsDeliveryModalOpen(false);
+                                            setEditingDeliverySlip(null);
+                                            showToast(`💾 Đã lưu tạm thao tác lập phiếu giao của đơn ${deliveryTargetOrder.order_code}. Mở lại đơn sẽ tự khôi phục!`, "success");
+                                        }}
+                                        className="bg-amber-600/20 hover:bg-amber-600/30 border border-amber-500/40 text-amber-300 px-3.5 py-2 rounded-lg font-bold text-xs cursor-pointer transition-colors"
+                                        title="Lưu tạm các lô đang tách và đóng cửa sổ (khi mở lại đơn này sẽ tự động khôi phục)"
+                                    >
+                                        💾 Lưu tạm & Đóng
+                                    </button>
+                                </>
+                            )}
                             <button
                                 type="button"
                                 onClick={() => { setIsDeliveryModalOpen(false); setEditingDeliverySlip(null); }}
                                 className="bg-slate-850 hover:bg-slate-800 text-slate-300 px-4 py-2 rounded-lg font-bold text-xs cursor-pointer transition-colors"
                             >
-                                Hủy
+                                Đóng
                             </button>
                             <button
                                 type="button"
