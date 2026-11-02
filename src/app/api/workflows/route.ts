@@ -750,19 +750,26 @@ export async function POST(req: NextRequest) {
 
         // Merge steps safely so already completed steps retain completed_at and deliverables unless explicitly edited
         let safeSteps = Array.isArray(steps) && steps.length > 0 ? steps : (existing.steps || []);
-        if (Array.isArray(existing.steps) && Array.isArray(safeSteps) && !isRollback) {
+        if (Array.isArray(existing.steps) && Array.isArray(safeSteps)) {
           safeSteps = safeSteps.map((st: any, idx: number) => {
             const oldSt = existing.steps[idx];
-            if (oldSt && oldSt.status === "COMPLETED" && st.status !== "COMPLETED") {
+            const preservedStartedAt = st.started_at || oldSt?.started_at || (idx === safeStepIndex ? nowVNDateTime() : undefined);
+            if (!isRollback && oldSt && oldSt.status === "COMPLETED" && st.status !== "COMPLETED") {
               return { 
                 ...st, 
+                started_at: preservedStartedAt,
                 status: "COMPLETED", 
                 completed_at: oldSt.completed_at || st.completed_at, 
                 completed_by: oldSt.completed_by || st.completed_by, 
                 deliverables_note: st.deliverables_note || oldSt.deliverables_note 
               };
             }
-            return st;
+            return {
+              ...st,
+              ...(preservedStartedAt ? { started_at: preservedStartedAt } : {}),
+              ...(oldSt?.completed_at && !st.completed_at ? { completed_at: oldSt.completed_at } : {}),
+              ...(oldSt?.last_reminded_at && !st.last_reminded_at ? { last_reminded_at: oldSt.last_reminded_at } : {})
+            };
           });
         }
 
@@ -900,7 +907,8 @@ export async function POST(req: NextRequest) {
               dept: stepDept,
               assignee_name: stepAssignee,
               step_index: idx,
-              status: idx === 0 ? "IN_PROGRESS" : (s.status || "PENDING")
+              status: idx === 0 ? "IN_PROGRESS" : (s.status || "PENDING"),
+              ...(idx === 0 ? { started_at: s.started_at || nowVNDateTime() } : {})
             };
           });
           finalAssignee = formattedSteps[0].assignee_name || "";
@@ -1087,6 +1095,7 @@ export async function POST(req: NextRequest) {
       if (hasNextStep) {
         newCurrentStepIndex = nextIdx;
         steps[nextIdx].status = "IN_PROGRESS";
+        steps[nextIdx].started_at = nowVNDateTime();
         if (next_assignee_name) {
           steps[nextIdx].assignee_name = next_assignee_name;
         }
@@ -1226,6 +1235,7 @@ export async function POST(req: NextRequest) {
       }
       if (steps[prevIdx]) {
         steps[prevIdx].status = "IN_PROGRESS";
+        steps[prevIdx].started_at = nowVNDateTime();
         steps[prevIdx].return_reason = rollback_reason;
         steps[prevIdx].returned_at = nowVNDateTime();
         steps[prevIdx].returned_by = actor || "Quản trị viên";
@@ -1351,6 +1361,99 @@ export async function POST(req: NextRequest) {
       if (res.rows.length === 0) return NextResponse.json({ error: "Không tìm thấy phiếu" }, { status: 404 });
 
       return NextResponse.json({ success: true, comments: res.rows[0].comments });
+    }
+
+    // 4b. Send SLA / Deadline Reminder on Workflow Step (Đôn đốc & Nhắc việc SLA / Hạn chót)
+    if (action === "remind_workflow") {
+      const { id, step_index, sla_status_text, custom_note } = body;
+      const wfRes = await query("SELECT * FROM workflow_requests WHERE id = $1 LIMIT 1", [id]);
+      if (wfRes.rows.length === 0) {
+        return NextResponse.json({ error: "Không tìm thấy phiếu phối hợp" }, { status: 404 });
+      }
+      const wf = wfRes.rows[0];
+      const actorName = me.full_name || me.username || body.actor || "Quản lý";
+      const steps = Array.isArray(wf.steps) ? [...wf.steps] : [];
+      const currIdx = typeof step_index === "number"
+        ? step_index
+        : (typeof wf.current_step_index === "number" ? wf.current_step_index : 0);
+      const activeStep = steps[currIdx];
+      const stepTitle = activeStep?.title || wf.title || `Bước ${currIdx + 1}`;
+      const stepDept = activeStep?.dept || wf.target_dept || "Bộ phận xử lý";
+      const stepAssignee = cleanAssigneeName(activeStep?.assignee_name || wf.assignee_name);
+      const targetLabel = stepAssignee ? `${stepAssignee} (${stepDept})` : `Bộ phận ${stepDept} (chưa phân công nhân sự)`;
+      const nowStr = nowVNDateTime();
+
+      if (steps[currIdx]) {
+        steps[currIdx] = {
+          ...steps[currIdx],
+          last_reminded_at: nowStr,
+          last_reminded_by: actorName,
+          remind_count: (Number(steps[currIdx].remind_count) || 0) + 1
+        };
+      }
+
+      const remindMessage = [
+        `🔔 [ĐÔN ĐỐC TIẾN ĐỘ / SLA — ${steps.length > 0 ? `BƯỚC ${currIdx + 1}/${steps.length}: ${stepTitle}` : "PHIẾU PHỐI HỢP"}]`,
+        sla_status_text ? `⏰ Tình trạng thời hạn: ${sla_status_text}` : "",
+        `👉 Đầu mối nhận nhắc việc: ${targetLabel}`,
+        activeStep?.deliverables ? `📋 Yêu cầu kết quả bàn giao: ${activeStep.deliverables}` : "",
+        custom_note ? `💬 Chỉ đạo / Lời nhắn: ${custom_note}` : "Đề nghị khẩn trương phân công / xử lý và cập nhật biên bản kết quả đúng cam kết SLA."
+      ].filter(Boolean).join("\n");
+
+      const newComment = {
+        author: actorName,
+        time: nowStr,
+        text: remindMessage,
+        source: "sla_reminder",
+        attachments: []
+      };
+
+      const currentLogs = Array.isArray(wf.logs) ? [...wf.logs] : [];
+      currentLogs.push({
+        time: nowStr,
+        action: `[🔔 Đôn đốc / Nhắc việc SLA]: ${actorName} đã gửi nhắc nhở xử lý ${steps.length > 0 ? `Bước ${currIdx + 1} (${stepTitle})` : "phiếu"} tới ${targetLabel}${sla_status_text ? ` [${sla_status_text}]` : ""}`,
+        actor: actorName
+      });
+
+      const updateRes = await query(
+        `UPDATE workflow_requests
+         SET steps = $1,
+             comments = COALESCE(comments, '[]'::jsonb) || $2::jsonb,
+             logs = $3,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $4
+         RETURNING comments, logs, steps`,
+        [JSON.stringify(steps), JSON.stringify([newComment]), JSON.stringify(currentLogs), id]
+      );
+
+      if (wf.workflow_code) {
+        const taskRemindLog = {
+          time: nowStr,
+          author: actorName,
+          type: "comment",
+          role: "directive",
+          text: remindMessage,
+          attachments: []
+        };
+        await query(
+          `UPDATE company_tasks
+           SET logs = COALESCE(logs, '[]'::jsonb) || $1::jsonb
+           WHERE related_workflow_code = $2 AND status != 'DONE'`,
+          [JSON.stringify([taskRemindLog]), wf.workflow_code]
+        );
+      }
+
+      await logAudit("REMIND", "WORKFLOW", `Đôn đốc tiến độ / SLA phiếu ${wf.workflow_code} (${targetLabel})`);
+      return NextResponse.json({
+        success: true,
+        comments: updateRes.rows[0]?.comments || [],
+        logs: updateRes.rows[0]?.logs || currentLogs,
+        steps: updateRes.rows[0]?.steps || steps,
+        remindedAt: nowStr,
+        targetLabel,
+        stepAssignee,
+        stepDept
+      });
     }
 
     // 5. Update workflow status

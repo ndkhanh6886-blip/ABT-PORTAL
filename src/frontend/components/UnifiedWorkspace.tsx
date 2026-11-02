@@ -2819,13 +2819,20 @@ export const UnifiedWorkspace: React.FC = () => {
   const [templatesExpanded, setTemplatesExpanded] = useState<boolean>(() => {
     try { return typeof window !== "undefined" && localStorage.getItem("ws_templates_expanded") === "1"; } catch { return false; }
   });
-  const [wfStatusFilter, setWfStatusFilter] = useState<"open" | "PENDING" | "WORKING" | "REVIEW" | "COMPLETED" | "OVERDUE" | "all">("open");
+  const [wfStatusFilter, setWfStatusFilter] = useState<"open" | "PENDING" | "WORKING" | "REVIEW" | "COMPLETED" | "DUE_SOON" | "OVERDUE" | "all">("open");
   const [wfCategoryFilter, setWfCategoryFilter] = useState<"all" | "TENDER" | "PROCUREMENT" | "WAREHOUSE" | "LAB" | "FINANCE" | "GENERAL">("all");
   const [wfMineFilter, setWfMineFilter] = useState<"all" | "requested" | "assigned">("all");
   const [wfPriorityFilter, setWfPriorityFilter] = useState<string>("all");
   const [wfSort, setWfSort] = useState<"newest" | "deadline" | "priority">("newest");
   const [wfCompactMode, setWfCompactMode] = useState<boolean>(false);
   const [collapsedWfIds, setCollapsedWfIds] = useState<Record<number, boolean>>({});
+  const [remindingWfId, setRemindingWfId] = useState<number | null>(null);
+  const [slaTick, setSlaTick] = useState<number>(0);
+
+  useEffect(() => {
+    const t = setInterval(() => setSlaTick((n) => n + 1), 60000);
+    return () => clearInterval(t);
+  }, []);
 
   // Phân loại tự động quy trình / phiếu phối hợp theo ngữ cảnh nghiệp vụ để tách biệt màu sắc & nhãn nhận diện
   const getWorkflowCategoryMeta = (w: any): {
@@ -2978,11 +2985,239 @@ export const UnifiedWorkspace: React.FC = () => {
     };
   };
 
-  const wfIsOverdue = (w: any) => {
-    const s = String(w.status || "").toUpperCase();
-    if (!w.due_date || s === "COMPLETED" || s === "CANCELLED" || s === "REJECTED") return false;
-    return String(w.due_date).slice(0, 10) < todayVN();
+  // Phân tích mốc thời gian (hỗ trợ ISO, "YYYY-MM-DD HH:mm" giờ VN, hoặc "HH:mm DD/MM/YYYY")
+  const parseWfTimestampMs = (raw: any): number | null => {
+    if (!raw) return null;
+    if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw.getTime();
+    const s = String(raw).trim();
+    if (!s) return null;
+    // "YYYY-MM-DD HH:mm(:ss)" (nowVNDateTime format in UTC+7)
+    const vnMatch = s.match(/^(\d{4}-\d{2}-\d{2})\s+(\d{2}:\d{2}(?::\d{2})?)$/);
+    if (vnMatch) {
+      const t = Date.parse(`${vnMatch[1]}T${vnMatch[2].length === 5 ? vnMatch[2] + ":00" : vnMatch[2]}+07:00`);
+      if (!isNaN(t)) return t;
+    }
+    // "HH:mm(:ss) DD/MM/YYYY" or "DD/MM/YYYY HH:mm"
+    const dmyTimeMatch = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4}).*?(\d{1,2}):(\d{2})/) || s.match(/(\d{1,2}):(\d{2}).*?(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (dmyTimeMatch) {
+      const isTimeFirst = s.indexOf(":") < s.indexOf("/");
+      const dd = String(isTimeFirst ? dmyTimeMatch[3] : dmyTimeMatch[1]).padStart(2, "0");
+      const mm = String(isTimeFirst ? dmyTimeMatch[4] : dmyTimeMatch[2]).padStart(2, "0");
+      const yyyy = isTimeFirst ? dmyTimeMatch[5] : dmyTimeMatch[3];
+      const hh = String(isTimeFirst ? dmyTimeMatch[1] : dmyTimeMatch[4]).padStart(2, "0");
+      const min = String(isTimeFirst ? dmyTimeMatch[2] : dmyTimeMatch[5]).padStart(2, "0");
+      const t = Date.parse(`${yyyy}-${mm}-${dd}T${hh}:${min}:00+07:00`);
+      if (!isNaN(t)) return t;
+    }
+    // Date-only "YYYY-MM-DD"
+    if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      const t = Date.parse(`${s}T08:00:00+07:00`);
+      if (!isNaN(t)) return t;
+    }
+    const parsed = Date.parse(s);
+    return isNaN(parsed) ? null : parsed;
   };
+
+  const formatDurationHours = (hoursFloat: number): string => {
+    const absH = Math.abs(hoursFloat);
+    if (absH >= 48) {
+      const days = Math.floor(absH / 24);
+      const remH = Math.round(absH % 24);
+      return remH > 0 ? `${days} ngày ${remH}h` : `${days} ngày`;
+    }
+    const wholeH = Math.floor(absH);
+    const mins = Math.max(1, Math.round((absH - wholeH) * 60));
+    if (wholeH === 0) return `${mins}p`;
+    return mins >= 5 && wholeH < 12 ? `${wholeH}h ${mins}p` : `${wholeH}h`;
+  };
+
+  const formatDeadlineShortVN = (ms: number): string => {
+    try {
+      const d = new Date(ms);
+      const hm = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hour12: false }).format(d);
+      const dm = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit" }).format(d);
+      return `${hm} ${dm}`;
+    } catch {
+      return "";
+    }
+  };
+
+  // Tính toán trạng thái SLA theo giờ cho từng bước trong quy trình phối hợp
+  const getStepSlaMeta = (wf: any, st: any, sIdx: number) => {
+    const slaHours = Math.max(1, Number(st?.sla_hours) || 24);
+    const wfSteps = Array.isArray(wf?.steps) ? wf.steps : [];
+    const currentIdx = typeof wf?.current_step_index === "number" ? wf.current_step_index : 0;
+    const wfStatus = String(wf?.status || "").toUpperCase();
+    const isWfClosed = ["COMPLETED", "CANCELLED", "REJECTED"].includes(wfStatus);
+    const isDone = st?.status === "COMPLETED" || wfStatus === "COMPLETED" || sIdx < currentIdx;
+    const isCurrent = !isWfClosed && currentIdx === sIdx && !isDone;
+
+    // Xác định mốc thời gian bắt đầu bước (started_at -> bước trước completed_at -> log khởi tạo -> created_at)
+    let rawStart = st?.started_at || st?.returned_at;
+    if (!rawStart) {
+      if (sIdx === 0) {
+        rawStart = (Array.isArray(wf?.logs) && wf.logs[0]?.time) || wf?.created_at;
+      } else {
+        rawStart = wfSteps[sIdx - 1]?.completed_at || wf?.updated_at || wf?.created_at;
+      }
+    }
+    const startMs = parseWfTimestampMs(rawStart);
+    const deadlineMs = startMs ? startMs + slaHours * 3600000 : null;
+    const deadlineLabel = deadlineMs ? formatDeadlineShortVN(deadlineMs) : "";
+
+    if (isDone) {
+      const doneMs = parseWfTimestampMs(st?.completed_at || wf?.updated_at);
+      if (deadlineMs && doneMs && doneMs > deadlineMs) {
+        const lateH = (doneMs - deadlineMs) / 3600000;
+        return {
+          slaHours,
+          startMs,
+          deadlineMs,
+          deadlineLabel,
+          remainingHours: -lateH,
+          status: "COMPLETED_LATE" as const,
+          badgeText: `⚠ Xong trễ SLA (+${formatDurationHours(lateH)})`,
+          badgeClass: "bg-amber-100 text-amber-800 border-amber-300 dark:bg-amber-950/70 dark:text-amber-300 dark:border-amber-700"
+        };
+      }
+      return {
+        slaHours,
+        startMs,
+        deadlineMs,
+        deadlineLabel,
+        remainingHours: 0,
+        status: "COMPLETED_ON_TIME" as const,
+        badgeText: `✓ Đúng SLA (${slaHours}h)`,
+        badgeClass: "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/70 dark:text-emerald-300 dark:border-emerald-700"
+      };
+    }
+
+    if (!isCurrent || !deadlineMs) {
+      return {
+        slaHours,
+        startMs,
+        deadlineMs,
+        deadlineLabel,
+        remainingHours: null,
+        status: "PENDING" as const,
+        badgeText: `SLA: ${slaHours}h`,
+        badgeClass: "bg-slate-100 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-400 dark:border-slate-700"
+      };
+    }
+
+    const nowMs = Date.now();
+    const remainingHours = (deadlineMs - nowMs) / 3600000;
+    // Ngưỡng "Sắp đến hạn SLA bước": còn <= 25% thời lượng SLA (tối thiểu 1h, tối đa 6h)
+    const dueSoonThresholdHours = Math.max(1, Math.min(6, slaHours * 0.25));
+
+    if (remainingHours < 0) {
+      return {
+        slaHours,
+        startMs,
+        deadlineMs,
+        deadlineLabel,
+        remainingHours,
+        status: "OVERDUE" as const,
+        badgeText: `🔥 Trễ SLA (+${formatDurationHours(remainingHours)})`,
+        badgeClass: "bg-rose-600 text-white border-rose-700 shadow-2xs animate-pulse"
+      };
+    }
+
+    if (remainingHours <= dueSoonThresholdHours) {
+      return {
+        slaHours,
+        startMs,
+        deadlineMs,
+        deadlineLabel,
+        remainingHours,
+        status: "DUE_SOON" as const,
+        badgeText: `⏰ Sắp hết SLA (còn ${formatDurationHours(remainingHours)})`,
+        badgeClass: "bg-amber-500 text-white border-amber-600 shadow-2xs animate-pulse"
+      };
+    }
+
+    return {
+      slaHours,
+      startMs,
+      deadlineMs,
+      deadlineLabel,
+      remainingHours,
+      status: "ON_TRACK" as const,
+      badgeText: `⏱ Còn ${formatDurationHours(remainingHours)} / ${slaHours}h`,
+      badgeClass: "bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-700"
+    };
+  };
+
+  // Tổng hợp cảnh báo Hạn chót phiếu (Due Date) + SLA bước đang chạy (Step SLA)
+  const getWfDeadlineMeta = (w: any) => {
+    const s = String(w?.status || "").toUpperCase();
+    const isClosed = s === "COMPLETED" || s === "CANCELLED" || s === "REJECTED";
+    const wfSteps = Array.isArray(w?.steps) ? w.steps : [];
+    const currentIdx = typeof w?.current_step_index === "number" ? w.current_step_index : 0;
+    const activeStep = wfSteps.length > 0 ? wfSteps[currentIdx] : null;
+    const activeStepSla = activeStep ? getStepSlaMeta(w, activeStep, currentIdx) : null;
+    const currentAssignee = cleanWorkspaceAssignee(activeStep?.assignee_name || w?.assignee_name);
+    const isUnassigned = !isClosed && !currentAssignee;
+
+    let diffDays: number | null = null;
+    if (w?.due_date) {
+      const dueIso = String(w.due_date).slice(0, 10);
+      const todayIso = todayVN();
+      const dueDateMs = Date.parse(`${dueIso}T00:00:00+07:00`);
+      const todayDateMs = Date.parse(`${todayIso}T00:00:00+07:00`);
+      if (!isNaN(dueDateMs) && !isNaN(todayDateMs)) {
+        diffDays = Math.round((dueDateMs - todayDateMs) / 86400000);
+      }
+    }
+
+    const isTicketOverdue = !isClosed && diffDays !== null && diffDays < 0;
+    const isTicketDueToday = !isClosed && diffDays === 0;
+    const isTicketDueSoon = !isClosed && diffDays !== null && diffDays >= 0 && diffDays <= 1;
+    const isStepOverdue = !isClosed && activeStepSla?.status === "OVERDUE";
+    const isStepDueSoon = !isClosed && activeStepSla?.status === "DUE_SOON";
+
+    const isAnyOverdue = isTicketOverdue || isStepOverdue;
+    const isAnyDueSoon = !isAnyOverdue && (isTicketDueSoon || isStepDueSoon);
+
+    let ticketDeadlineBadge: { text: string; cls: string } | null = null;
+    if (isTicketOverdue && diffDays !== null) {
+      ticketDeadlineBadge = {
+        text: `⚠ Quá hạn chót ${Math.abs(diffDays)} ngày`,
+        cls: "bg-rose-600 text-white animate-pulse"
+      };
+    } else if (isTicketDueToday) {
+      ticketDeadlineBadge = {
+        text: "⏰ Hạn chót hôm nay",
+        cls: "bg-orange-500 text-white animate-pulse"
+      };
+    } else if (isTicketDueSoon && diffDays !== null) {
+      ticketDeadlineBadge = {
+        text: `⏳ Sắp đến hạn (còn ${diffDays} ngày)`,
+        cls: "bg-amber-100 text-amber-800 border border-amber-300 dark:bg-amber-950/80 dark:text-amber-300 dark:border-amber-700"
+      };
+    }
+
+    return {
+      isClosed,
+      diffDays,
+      isTicketOverdue,
+      isTicketDueToday,
+      isTicketDueSoon,
+      isStepOverdue,
+      isStepDueSoon,
+      isAnyOverdue,
+      isAnyDueSoon,
+      isUnassigned,
+      activeStep,
+      activeStepIdx: currentIdx,
+      activeStepSla,
+      ticketDeadlineBadge
+    };
+  };
+
+  const wfIsOverdue = (w: any) => getWfDeadlineMeta(w).isAnyOverdue;
+  const wfIsDueSoon = (w: any) => getWfDeadlineMeta(w).isAnyDueSoon;
+
   const wfStatusBucket = (w: any) => {
     const s = String(w.status || "PENDING").toUpperCase();
     if (s === "PENDING") return "PENDING";
@@ -3021,6 +3256,8 @@ export const UnifiedWorkspace: React.FC = () => {
           ? b !== "COMPLETED" && b !== "OTHER"
           : wfStatusFilter === "OVERDUE"
           ? wfIsOverdue(w)
+          : wfStatusFilter === "DUE_SOON"
+          ? wfIsDueSoon(w)
           : b === wfStatusFilter;
       if (!matchesStatus) return;
       c.all++;
@@ -3028,20 +3265,23 @@ export const UnifiedWorkspace: React.FC = () => {
       c[catKey] = (c[catKey] || 0) + 1;
     });
     return c;
-  }, [wfBase, wfStatusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wfBase, wfStatusFilter, slaTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const wfCounts = useMemo(() => {
-    const c: Record<string, number> = { all: 0, open: 0, PENDING: 0, WORKING: 0, REVIEW: 0, COMPLETED: 0, OVERDUE: 0 };
+    const c: Record<string, number> = { all: 0, open: 0, PENDING: 0, WORKING: 0, REVIEW: 0, COMPLETED: 0, DUE_SOON: 0, OVERDUE: 0, UNASSIGNED: 0 };
     wfBase.forEach((w) => {
       if (wfCategoryFilter !== "all" && getWorkflowCategoryMeta(w).key !== wfCategoryFilter) return;
       c.all++;
       const b = wfStatusBucket(w);
       if (c[b] !== undefined) c[b]++;
       if (b !== "COMPLETED" && b !== "OTHER") c.open++;
-      if (wfIsOverdue(w)) c.OVERDUE++;
+      const dlMeta = getWfDeadlineMeta(w);
+      if (dlMeta.isAnyOverdue) c.OVERDUE++;
+      if (dlMeta.isAnyDueSoon) c.DUE_SOON++;
+      if (dlMeta.isUnassigned) c.UNASSIGNED++;
     });
     return c;
-  }, [wfBase, wfCategoryFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wfBase, wfCategoryFilter, slaTick]); // eslint-disable-line react-hooks/exhaustive-deps
   const listWorkflows = useMemo(() => {
     const prio: Record<string, number> = { URGENT: 0, HIGH: 1, MEDIUM: 2, LOW: 3 };
     const rows = wfBase.filter((w) => {
@@ -3050,6 +3290,7 @@ export const UnifiedWorkspace: React.FC = () => {
       if (wfStatusFilter === "all") return true;
       if (wfStatusFilter === "open") return b !== "COMPLETED" && b !== "OTHER";
       if (wfStatusFilter === "OVERDUE") return wfIsOverdue(w);
+      if (wfStatusFilter === "DUE_SOON") return wfIsDueSoon(w);
       return b === wfStatusFilter;
     });
     return [...rows].sort((a, b) => {
@@ -3057,7 +3298,7 @@ export const UnifiedWorkspace: React.FC = () => {
       if (wfSort === "priority") return (prio[String(a.priority || "MEDIUM").toUpperCase()] ?? 2) - (prio[String(b.priority || "MEDIUM").toUpperCase()] ?? 2);
       return (Number(b.id) || 0) - (Number(a.id) || 0);
     });
-  }, [wfBase, wfStatusFilter, wfCategoryFilter, wfSort]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [wfBase, wfStatusFilter, wfCategoryFilter, wfSort, slaTick]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Statistics
   const stats = useMemo(() => {
@@ -3701,6 +3942,205 @@ export const UnifiedWorkspace: React.FC = () => {
       showToast("Lỗi kết nối máy chủ", "error");
     }
   };
+
+  // Gửi nhắc việc / Đôn đốc tiến độ SLA (Chuông thông báo + Tin nhắn Chat + Nhật ký Phiếu & Bảng công việc)
+  const handleRemindWorkflowStep = async (wf: any, silent = false) => {
+    if (!wf || !wf.id) return false;
+    const dlMeta = getWfDeadlineMeta(wf);
+    const wfSteps = Array.isArray(wf.steps) ? wf.steps : [];
+    const currentIdx = typeof wf.current_step_index === "number" ? wf.current_step_index : 0;
+    const activeStep = wfSteps[currentIdx];
+    const stepTitle = activeStep?.title || wf.title || `Bước ${currentIdx + 1}`;
+    const stepDept = activeStep?.dept || wf.target_dept || "Bộ phận xử lý";
+    const stepAssignee = cleanWorkspaceAssignee(activeStep?.assignee_name || wf.assignee_name);
+
+    const slaParts: string[] = [];
+    if (dlMeta.activeStepSla) {
+      slaParts.push(`Bước ${currentIdx + 1}: ${dlMeta.activeStepSla.badgeText}`);
+    }
+    if (dlMeta.ticketDeadlineBadge) {
+      slaParts.push(`Hạn phiếu (${wf.due_date ? formatDayVN(wf.due_date) : "—"}): ${dlMeta.ticketDeadlineBadge.text}`);
+    } else if (wf.due_date) {
+      slaParts.push(`Hạn chót phiếu: ${formatDayVN(wf.due_date)}`);
+    }
+    if (!stepAssignee) {
+      slaParts.push(`Chờ ${stepDept} phân công nhân sự`);
+    }
+    const slaStatusText = slaParts.join(" • ");
+
+    if (!silent) setRemindingWfId(wf.id);
+    try {
+      const res = await fetch("/api/workflows?action=remind_workflow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: wf.id,
+          step_index: currentIdx,
+          sla_status_text: slaStatusText,
+          actor: currentStaffName
+        })
+      });
+      const data = await res.json();
+      if (!data.success) {
+        if (!silent) showToast(data.error || "Không thể gửi nhắc việc", "error");
+        return false;
+      }
+
+      // Xác định danh sách người nhận: nếu đã có người phụ trách -> gửi cho người đó; nếu chưa gán -> gửi cho nhân sự thuộc phòng ban đó
+      const deptStaffNames = personnelList
+        .filter((p: any) => isSameWorkspaceDept(p.department, stepDept))
+        .map((p: any) => String(p.full_name || "").trim())
+        .filter(Boolean);
+      const recipients = stepAssignee
+        ? [stepAssignee]
+        : (deptStaffNames.length > 0 ? deptStaffNames : [wf.requester_name].filter(Boolean));
+
+      // 1. Phát Thông báo Chuông (Bell Notification)
+      notifyActivity({
+        title: dlMeta.isAnyOverdue
+          ? `🔥 [CẢNH BÁO TRỄ HẠN / SLA] ${wf.workflow_code}`
+          : `🔔 [NHẮC VIỆC / SLA] ${wf.workflow_code}`,
+        message: `${currentStaffName || "Hệ thống"} nhắc xử lý phiếu "${wf.title}" — Bước ${currentIdx + 1}: ${stepTitle} (${stepAssignee || `Chờ ${stepDept} phân công`}). ${slaStatusText}`,
+        type: dlMeta.isAnyOverdue ? "error" : "warning",
+        category: isSameWorkspaceDept(stepDept, "Application")
+          ? "application"
+          : isSameWorkspaceDept(stepDept, "Kho & Vận Hành")
+          ? "warehouse"
+          : "task",
+        sender: { name: currentStaffName || "Hệ thống SLA" },
+        targetEmployeeNames: recipients,
+        targetDept: stepDept,
+        workflowId: wf.id,
+        workflowCode: wf.workflow_code,
+        link: { tab: "workspace", subTab: "workflows", itemId: String(wf.workflow_code || wf.id) }
+      });
+
+      // 2. Bắn tin nhắn trực tiếp qua Chat Nội Bộ tới người phụ trách / bộ phận xử lý
+      if (recipients.length > 0) {
+        const chatLines = [
+          dlMeta.isAnyOverdue
+            ? `🔥 [ĐÔN ĐỐC KHẨN - QUÁ HẠN SLA] Phiếu ${wf.workflow_code}: ${wf.title}`
+            : `🔔 [NHẮC TIẾN ĐỘ SLA] Phiếu ${wf.workflow_code}: ${wf.title}`,
+          `📌 Bước hiện tại: Bước ${currentIdx + 1}/${Math.max(1, wfSteps.length)} — ${stepTitle}`,
+          `👤 Đầu mối xử lý (${stepDept}): ${stepAssignee || "⏳ Chưa phân công nhân sự"}`,
+          `⏰ Tình trạng SLA / Hạn chót: ${slaStatusText}`,
+          activeStep?.deliverables ? `📋 Yêu cầu đầu ra: ${activeStep.deliverables}` : "",
+          `👉 Vui lòng kiểm tra tại Tab Điều Hành -> Quy Trình Phối Hợp để cập nhật kết quả hoặc phân công xử lý ngay.`
+        ].filter(Boolean);
+
+        try {
+          await fetch("/api/chat?action=broadcast_meeting", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: `Nhắc việc ${wf.workflow_code}`,
+              content: chatLines.join("\n"),
+              attendees: recipients,
+              department: stepDept,
+              send_direct: true,
+              create_group: false
+            })
+          });
+        } catch {}
+      }
+
+      if (!silent) {
+        showToast(
+          `🔔 Đã gửi nhắc việc & cảnh báo SLA phiếu ${wf.workflow_code} tới ${stepAssignee || `bộ phận ${stepDept}`} (Chuông + Chat + Nhật ký phiếu)!`,
+          "success"
+        );
+        fetchData();
+      }
+      return true;
+    } catch (e: any) {
+      if (!silent) showToast("Lỗi kết nối khi gửi nhắc việc", "error");
+      return false;
+    } finally {
+      if (!silent) setRemindingWfId(null);
+    }
+  };
+
+  const handleBulkRemindWorkflows = async (targetWfs: any[]) => {
+    if (!Array.isArray(targetWfs) || targetWfs.length === 0) return;
+    let count = 0;
+    for (const w of targetWfs) {
+      const ok = await handleRemindWorkflowStep(w, true);
+      if (ok) count++;
+    }
+    showToast(`🔔 Đã phát lệnh đôn đốc hàng loạt cho ${count}/${targetWfs.length} phiếu đang trễ / sắp hết hạn SLA!`, "success");
+    fetchData();
+  };
+
+  // Tự động kiểm tra định kỳ các phiếu Sắp hết SLA / Quá hạn SLA / Trễ hạn chót để bật cảnh báo chủ động
+  useEffect(() => {
+    if (!Array.isArray(workflows) || workflows.length === 0) return;
+    const checkWorkflowSlaAlerts = () => {
+      const todayKey = `unified_auto_wf_sla_alerts_${todayVN()}`;
+      let alertedIds: string[] = [];
+      try {
+        const raw = typeof window !== "undefined" ? localStorage.getItem(todayKey) : null;
+        if (raw) alertedIds = JSON.parse(raw);
+      } catch {}
+
+      const myRelevantAlerts: Array<{ wf: any; dlMeta: ReturnType<typeof getWfDeadlineMeta>; alertKey: string }> = [];
+
+      workflows.forEach((wf: any) => {
+        const dlMeta = getWfDeadlineMeta(wf);
+        if (dlMeta.isClosed) return;
+        if (!dlMeta.isAnyOverdue && !dlMeta.isAnyDueSoon) return;
+
+        const stepDept = dlMeta.activeStep?.dept || wf.target_dept;
+        const isInvolved =
+          isDirector ||
+          wfInvolvesMe(wf, "assigned") ||
+          wfInvolvesMe(wf, "requested") ||
+          (userDept && isSameWorkspaceDept(userDept, stepDept));
+
+        if (!isInvolved) return;
+
+        const kind = dlMeta.isAnyOverdue ? "OVERDUE" : "DUE_SOON";
+        const alertKey = `${wf.id}-S${dlMeta.activeStepIdx}-${kind}`;
+        if (!alertedIds.includes(alertKey)) {
+          myRelevantAlerts.push({ wf, dlMeta, alertKey });
+        }
+      });
+
+      if (myRelevantAlerts.length === 0) return;
+
+      const nextAlerted = [...alertedIds, ...myRelevantAlerts.map((a) => a.alertKey)].slice(-200);
+      try {
+        if (typeof window !== "undefined") {
+          localStorage.setItem(todayKey, JSON.stringify(nextAlerted));
+        }
+      } catch {}
+
+      const overdueItems = myRelevantAlerts.filter((a) => a.dlMeta.isAnyOverdue);
+      const dueSoonItems = myRelevantAlerts.filter((a) => !a.dlMeta.isAnyOverdue && a.dlMeta.isAnyDueSoon);
+
+      if (overdueItems.length > 0) {
+        const first = overdueItems[0];
+        const stepNo = first.dlMeta.activeStepIdx + 1;
+        showToast(
+          `🔥 CẢNH BÁO TRỄ HẠN / SLA: Có ${overdueItems.length} phiếu phối hợp liên quan đến bạn đang quá hạn (VD: ${first.wf.workflow_code} — Bước ${stepNo}: ${first.dlMeta.activeStepSla?.badgeText || first.dlMeta.ticketDeadlineBadge?.text || "Quá hạn"})!`,
+          "error"
+        );
+      } else if (dueSoonItems.length > 0) {
+        const first = dueSoonItems[0];
+        const stepNo = first.dlMeta.activeStepIdx + 1;
+        showToast(
+          `⏰ NHẮC SẮP ĐẾN HẠN SLA: Có ${dueSoonItems.length} phiếu phối hợp sắp hết thời gian cam kết (VD: ${first.wf.workflow_code} — Bước ${stepNo}: ${first.dlMeta.activeStepSla?.badgeText || first.dlMeta.ticketDeadlineBadge?.text || "Sắp đến hạn"})!`,
+          "warning"
+        );
+      }
+    };
+
+    const initTimer = setTimeout(checkWorkflowSlaAlerts, 2500);
+    const intervalTimer = setInterval(checkWorkflowSlaAlerts, 60000);
+    return () => {
+      clearTimeout(initTimer);
+      clearInterval(intervalTimer);
+    };
+  }, [workflows, currentStaffName, userDept, isDirector]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Open Create Template Modal
   const handleOpenCreateTemplate = async () => {
@@ -7264,7 +7704,8 @@ export const UnifiedWorkspace: React.FC = () => {
                     ["WORKING", "Đang xử lý"],
                     ["REVIEW", "Đã có kết quả"],
                     ["COMPLETED", "Hoàn tất"],
-                    ["OVERDUE", "⚠ Quá hạn"],
+                    ["DUE_SOON", "⏰ Sắp đến hạn"],
+                    ["OVERDUE", "⚠ Quá hạn / Trễ SLA"],
                     ["all", "Tất cả"],
                   ] as const).map(([k, label]) => (
                     <button
@@ -7273,7 +7714,11 @@ export const UnifiedWorkspace: React.FC = () => {
                       onClick={() => setWfStatusFilter(k)}
                       className={`px-2.5 py-1 rounded-lg font-semibold cursor-pointer transition-colors ${
                         wfStatusFilter === k
-                          ? (k === "OVERDUE" ? "bg-rose-600 text-white" : "bg-indigo-600 text-white")
+                          ? (k === "OVERDUE"
+                              ? "bg-rose-600 text-white"
+                              : k === "DUE_SOON"
+                              ? "bg-amber-500 text-white"
+                              : "bg-indigo-600 text-white")
                           : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700"
                       }`}
                     >
@@ -7317,6 +7762,78 @@ export const UnifiedWorkspace: React.FC = () => {
 
             {/* Danh sách các Card Quy Trình / Công Việc tách biệt rõ ràng */}
             <div className="p-4 space-y-4 bg-slate-100/70 dark:bg-slate-950/60">
+              {/* Thanh Cảnh Báo & Nhắc Nhở SLA / Hạn Chót Chủ Động */}
+              {(wfCounts.OVERDUE > 0 || wfCounts.DUE_SOON > 0 || wfCounts.UNASSIGNED > 0) && (
+                <div
+                  className={`rounded-xl p-3 border flex flex-col md:flex-row md:items-center justify-between gap-2.5 shadow-2xs ${
+                    wfCounts.OVERDUE > 0
+                      ? "bg-rose-50/95 dark:bg-rose-950/40 border-rose-300 dark:border-rose-800"
+                      : wfCounts.DUE_SOON > 0
+                      ? "bg-amber-50/95 dark:bg-amber-950/40 border-amber-300 dark:border-amber-800"
+                      : "bg-indigo-50/90 dark:bg-indigo-950/30 border-indigo-200 dark:border-indigo-800"
+                  }`}
+                >
+                  <div className="flex items-start sm:items-center gap-2.5 text-xs flex-wrap">
+                    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-extrabold bg-slate-900 text-white dark:bg-white dark:text-slate-900">
+                      <Bell className="w-3.5 h-3.5" />
+                      <span>CẢNH BÁO TIẾN ĐỘ &amp; SLA</span>
+                    </span>
+                    {wfCounts.OVERDUE > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setWfStatusFilter(wfStatusFilter === "OVERDUE" ? "open" : "OVERDUE")}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-extrabold bg-rose-600 hover:bg-rose-700 text-white cursor-pointer shadow-2xs transition-colors"
+                      >
+                        <span>🔥 {wfCounts.OVERDUE} phiếu Trễ hạn / Quá hạn SLA bước</span>
+                      </button>
+                    )}
+                    {wfCounts.DUE_SOON > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setWfStatusFilter(wfStatusFilter === "DUE_SOON" ? "open" : "DUE_SOON")}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-extrabold bg-amber-500 hover:bg-amber-600 text-white cursor-pointer shadow-2xs transition-colors"
+                      >
+                        <span>⏰ {wfCounts.DUE_SOON} phiếu Sắp đến hạn / Sắp hết SLA bước</span>
+                      </button>
+                    )}
+                    {wfCounts.UNASSIGNED > 0 && (
+                      <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg font-bold bg-white/90 dark:bg-slate-900 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700">
+                        <span>⏳ {wfCounts.UNASSIGNED} phiếu đang chờ bộ phận phân công</span>
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {(wfCounts.OVERDUE > 0 || wfCounts.DUE_SOON > 0) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const urgentList = wfBase.filter((w) => {
+                            const m = getWfDeadlineMeta(w);
+                            return m.isAnyOverdue || m.isAnyDueSoon;
+                          });
+                          handleBulkRemindWorkflows(urgentList);
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-extrabold bg-rose-600 hover:bg-rose-700 text-white shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                        title="Phát thông báo Chuông + Tin nhắn Chat nội bộ + Ghi nhật ký đôn đốc cho toàn bộ các phiếu đang trễ hoặc sắp đến hạn"
+                      >
+                        <Bell className="w-3.5 h-3.5" />
+                        <span>🔔 Nhắc việc tất cả ({wfCounts.OVERDUE + wfCounts.DUE_SOON})</span>
+                      </button>
+                    )}
+                    {(wfStatusFilter === "OVERDUE" || wfStatusFilter === "DUE_SOON") && (
+                      <button
+                        type="button"
+                        onClick={() => setWfStatusFilter("open")}
+                        className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-300 dark:border-slate-700 hover:bg-slate-100 cursor-pointer"
+                      >
+                        Xem lại tất cả phiếu mở
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {workflowsPage.items.map((wf, wfIdx) => {
                 const wfSteps = Array.isArray(wf.steps) ? wf.steps : [];
                 const currentIdx = typeof wf.current_step_index === "number" ? wf.current_step_index : 0;
@@ -7329,7 +7846,11 @@ export const UnifiedWorkspace: React.FC = () => {
                 const targetDeptStaff = personnelList.filter((p: any) => isSameWorkspaceDept(p.department, currentStepDept));
                 const catMeta = getWorkflowCategoryMeta(wf);
                 const isStepsCollapsed = collapsedWfIds[wf.id] !== undefined ? collapsedWfIds[wf.id] : wfCompactMode;
-                const isOverdueWf = wfIsOverdue(wf);
+                const dlMeta = getWfDeadlineMeta(wf);
+                const isOverdueWf = dlMeta.isAnyOverdue;
+                const activeStepObj = hasSteps ? wfSteps[currentIdx] : null;
+                const lastRemindedAt = activeStepObj?.last_reminded_at || "";
+                const remindCount = Number(activeStepObj?.remind_count) || 0;
 
                 return (
                   <div
@@ -7363,9 +7884,18 @@ export const UnifiedWorkspace: React.FC = () => {
                         <WorkflowStatusBadge status={wf.status} />
                         <PriorityBadge priority={wf.priority} />
 
-                        {isOverdueWf && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-rose-600 text-white animate-pulse">
-                            ⚠ Quá hạn
+                        {dlMeta.ticketDeadlineBadge && (
+                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold ${dlMeta.ticketDeadlineBadge.cls}`}>
+                            {dlMeta.ticketDeadlineBadge.text}
+                          </span>
+                        )}
+
+                        {!dlMeta.isClosed && dlMeta.activeStepSla && (
+                          <span
+                            className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${dlMeta.activeStepSla.badgeClass}`}
+                            title={dlMeta.activeStepSla.deadlineLabel ? `Hạn hoàn thành Bước ${currentIdx + 1}: ${dlMeta.activeStepSla.deadlineLabel}` : undefined}
+                          >
+                            B{currentIdx + 1}: {dlMeta.activeStepSla.badgeText}
                           </span>
                         )}
                       </div>
@@ -7425,8 +7955,17 @@ export const UnifiedWorkspace: React.FC = () => {
                             <span>
                               <strong className="text-slate-700 dark:text-slate-300">Người yêu cầu:</strong> {wf.requester_name}
                             </span>
-                            <span className={`inline-flex items-center gap-1 font-semibold ${isOverdueWf ? "text-rose-600 dark:text-rose-400 font-bold" : ""}`}>
+                            <span className={`inline-flex items-center gap-1 font-semibold ${dlMeta.isTicketOverdue ? "text-rose-600 dark:text-rose-400 font-bold" : dlMeta.isTicketDueSoon ? "text-amber-600 dark:text-amber-400 font-bold" : ""}`}>
                               <strong className="text-slate-700 dark:text-slate-300">Hạn chót:</strong> {wf.due_date ? formatDayVN(wf.due_date) : "—"}
+                              {!dlMeta.isClosed && dlMeta.diffDays !== null && (
+                                <span className="text-[11px]">
+                                  {dlMeta.diffDays < 0
+                                    ? `(Trễ ${Math.abs(dlMeta.diffDays)} ngày)`
+                                    : dlMeta.diffDays === 0
+                                    ? "(Hôm nay)"
+                                    : `(Còn ${dlMeta.diffDays} ngày)`}
+                                </span>
+                              )}
                             </span>
                           </div>
 
@@ -7473,6 +8012,11 @@ export const UnifiedWorkspace: React.FC = () => {
                                     Nhận việc
                                   </button>
                                 )}
+                              </span>
+                            )}
+                            {lastRemindedAt && (
+                              <span className="text-[11px] text-rose-600 dark:text-rose-400 font-semibold">
+                                🔔 Đã nhắc lúc {lastRemindedAt.slice(11, 16)} ({lastRemindedAt.slice(8, 10)}/{lastRemindedAt.slice(5, 7)})
                               </span>
                             )}
                           </div>
@@ -7537,6 +8081,35 @@ export const UnifiedWorkspace: React.FC = () => {
                             </button>
                           )}
 
+                          {!dlMeta.isClosed && (
+                            <button
+                              type="button"
+                              disabled={remindingWfId === wf.id}
+                              onClick={() => handleRemindWorkflowStep(wf)}
+                              className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold border cursor-pointer shadow-2xs transition-colors ${
+                                dlMeta.isAnyOverdue
+                                  ? "border-rose-600 bg-rose-600 hover:bg-rose-700 text-white"
+                                  : dlMeta.isAnyDueSoon || dlMeta.isUnassigned
+                                  ? "border-orange-400 dark:border-orange-600 bg-orange-50 hover:bg-orange-100 dark:bg-orange-950/60 text-orange-800 dark:text-orange-300"
+                                  : "border-slate-300 dark:border-slate-700 bg-white hover:bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200"
+                              }`}
+                              title={
+                                lastRemindedAt
+                                  ? `Đã nhắc ${remindCount} lần (gần nhất: ${lastRemindedAt}). Bấm để gửi lại thông báo Chuông + Tin nhắn Chat đôn đốc người phụ trách / bộ phận xử lý.`
+                                  : "Gửi thông báo Chuông + Tin nhắn Chat nội bộ + Ghi nhật ký đôn đốc tiến độ SLA cho bước đang chạy"
+                              }
+                            >
+                              <Bell className="w-3.5 h-3.5" />
+                              <span>
+                                {remindingWfId === wf.id
+                                  ? "Đang nhắc..."
+                                  : remindCount > 0
+                                  ? `🔔 Nhắc việc (${remindCount})`
+                                  : "🔔 Nhắc việc"}
+                              </span>
+                            </button>
+                          )}
+
                           <button
                             type="button"
                             onClick={() => handleEditWorkflowTicket(wf)}
@@ -7567,13 +8140,18 @@ export const UnifiedWorkspace: React.FC = () => {
                               <Layers className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
                               <span>Tiến Trình Phối Hợp Đa Bước ({completedStepsCount}/{wfSteps.length} bước xong)</span>
                             </div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <span className="text-[11px] text-slate-500 dark:text-slate-300 bg-white dark:bg-slate-900 px-2.5 py-0.5 rounded-lg border border-slate-200 dark:border-slate-800">
                                 Bước đang chạy:{" "}
                                 <strong className="text-indigo-600 dark:text-indigo-400">
                                   Bước {currentIdx + 1} — {wfSteps[currentIdx]?.title || `Bước ${currentIdx + 1}`}
                                 </strong>{" "}
                                 ({wfSteps[currentIdx]?.dept} • {wfSteps[currentIdx]?.assignee_name || "Chưa gán"})
+                                {dlMeta.activeStepSla?.deadlineLabel && (
+                                  <span className="ml-1.5 text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                    • Hạn SLA bước: <strong>{dlMeta.activeStepSla.deadlineLabel}</strong>
+                                  </span>
+                                )}
                               </span>
                             </div>
                           </div>
@@ -7583,6 +8161,7 @@ export const UnifiedWorkspace: React.FC = () => {
                               {wfSteps.map((st: any, sIdx: number) => {
                                 const isDone = st.status === "COMPLETED";
                                 const isCurrent = currentIdx === sIdx && wf.status !== "COMPLETED";
+                                const stepSla = getStepSlaMeta(wf, st, sIdx);
 
                                 return (
                                   <div
@@ -7591,7 +8170,11 @@ export const UnifiedWorkspace: React.FC = () => {
                                       isDone
                                         ? "bg-emerald-50/80 border-emerald-200 dark:bg-emerald-950/20 dark:border-emerald-800/60 text-emerald-900 dark:text-emerald-200"
                                         : isCurrent
-                                        ? `${catMeta.stepActiveCls} shadow-xs`
+                                        ? stepSla.status === "OVERDUE"
+                                          ? "bg-rose-50/90 border-rose-400 dark:bg-rose-950/40 dark:border-rose-700 text-rose-950 dark:text-rose-100 ring-1 ring-rose-400/50 shadow-xs"
+                                          : stepSla.status === "DUE_SOON"
+                                          ? "bg-amber-50/90 border-amber-400 dark:bg-amber-950/40 dark:border-amber-700 text-amber-950 dark:text-amber-100 ring-1 ring-amber-400/50 shadow-xs"
+                                          : `${catMeta.stepActiveCls} shadow-xs`
                                         : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 opacity-75"
                                     }`}
                                   >
@@ -7622,12 +8205,28 @@ export const UnifiedWorkspace: React.FC = () => {
                                       {st.title}
                                     </div>
 
-                                    <div className="mt-1 flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400">
+                                    <div className="mt-1 flex items-center justify-between gap-1 text-[10px] text-slate-500 dark:text-slate-400">
                                       <span className="font-semibold truncate max-w-[130px]">
                                         {st.dept}: <strong>{st.assignee_name || "Chưa gán"}</strong>
                                       </span>
                                       {st.sla_hours && <span>SLA: {st.sla_hours}h</span>}
                                     </div>
+
+                                    {(isCurrent || isDone) && (
+                                      <div className="mt-1 flex items-center justify-between gap-1 flex-wrap">
+                                        <span
+                                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-extrabold border ${stepSla.badgeClass}`}
+                                          title={stepSla.deadlineLabel ? `Hạn SLA bước ${sIdx + 1}: ${stepSla.deadlineLabel}` : undefined}
+                                        >
+                                          {stepSla.badgeText}
+                                        </span>
+                                        {isCurrent && stepSla.deadlineLabel && (
+                                          <span className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold">
+                                            Hạn: {stepSla.deadlineLabel}
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
 
                                     {st.deliverables && (
                                       <div className="mt-1 text-[10px] text-slate-500 dark:text-slate-400 truncate" title={`Yêu cầu: ${st.deliverables}`}>
