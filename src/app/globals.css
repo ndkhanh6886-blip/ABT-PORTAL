@@ -971,6 +971,17 @@ html:not(.dark) {
     color: #be123c !important;
     -webkit-text-fill-color: #be123c !important;
   }
+  [class*="text-pink-400"],
+  [class*="text-pink-300"],
+  [class*="text-pink-200"],
+  [class*="text-pink-100"],
+  [class*="text-fuchsia-400"],
+  [class*="text-fuchsia-300"],
+  [class*="text-fuchsia-200"] {
+    color: #be185d !important;
+    -webkit-text-fill-color: #be185d !important;
+    font-weight: 700 !important;
+  }
 
   /* 9. Forms, Inputs & Selects */
   input:not([type="checkbox"]):not([type="radio"]),
@@ -1014,7 +1025,7 @@ html:not(.dark) {
    có nền màu đậm hoặc gradient tối đều bắt buộc hiển thị chữ sáng trắng (#ffffff)
    để đạt độ tương phản cao nhất ở cả Giao Diện Sáng và Giao Diện Tối.
    ========================================================================== */
-:is(
+html:is(.dark, :not(.dark)) :is(
   [class~="bg-indigo-500"],
   [class~="bg-indigo-600"],
   [class~="bg-indigo-600/90"],
@@ -1131,7 +1142,7 @@ html:not(.dark) {
   -webkit-text-fill-color: #ffffff !important;
 }
 
-:is(
+html:is(.dark, :not(.dark)) :is(
   [class~="bg-indigo-500"],
   [class~="bg-indigo-600"],
   [class~="bg-indigo-600/90"],
@@ -2115,12 +2126,25 @@ html.dark .theme-toggle-btn * {
 /* ==========================================================================
    ABT ORANGE MAPPING ACROSS COMPONENTS
    ========================================================================== */
-button[class*="bg-indigo-600"],
-button[class*="bg-indigo-500"],
-button[class*="bg-blue-600"],
-.btn-action {
+html:is(.dark, :not(.dark)) :is(
+  button[class*="bg-indigo-600"],
+  button[class*="bg-indigo-500"],
+  button[class*="bg-blue-600"],
+  .btn-action
+) {
   background-color: #0284c7 !important;
   color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+html:is(.dark, :not(.dark)) :is(
+  button[class*="bg-indigo-600"],
+  button[class*="bg-indigo-500"],
+  button[class*="bg-blue-600"],
+  .btn-action
+) * {
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
 }
 
 button[class*="bg-indigo-600"]:hover,
