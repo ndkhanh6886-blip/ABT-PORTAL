@@ -10887,7 +10887,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const isGiftItem = Boolean(it.isGift || it.is_gift);
                 const itPrice = isGiftItem ? 0 : (Number(it.price !== undefined ? it.price : (it.unitPrice !== undefined ? it.unitPrice : (it.unit_price !== undefined ? it.unit_price : 0))) || 0);
                 const itTotal = isGiftItem ? 0 : (Number(it.total !== undefined ? it.total : (it.amount !== undefined ? it.amount : itQty * itPrice)) || (itQty * itPrice));
-                const giftBadgeHtml = (isGiftItem || itPrice === 0)
+                const giftBadgeHtml = isGiftItem
                     ? `<span style="display: inline-block; font-size: 10px; font-weight: bold; background: #fef3c7; color: #b45309; border: 1px solid #f59e0b; padding: 1px 5px; border-radius: 3px; margin-left: 6px;">🎁 Hàng tặng / FOC</span>`
                     : '';
 
@@ -26070,7 +26070,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 onClick={() => {
                                                                                     const code = p.code;
                                                                                     const prod = allSalesProducts.find(prod => prod.code === code) || biolabProducts.find(prod => prod.code === code);
-                                                                                    const finalPrice = prod ? (prod[quotePriceTier] || prod.price) : 0;
+                                                                                    const isRowGift = Boolean((item as any).isGift || (item as any).is_gift);
+                                                                                    const finalPrice = isRowGift ? 0 : (prod ? (prod[quotePriceTier] || prod.price) : 0);
                                                                                     const finalSpec = prod ? (prod.specification || prod.unit || "") : "";
                                                                                     const finalMfg = formatSupplierShortName((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "") : "ABT");
                                                                                     const finalNotes = item.notes || (stockIntel.atp > 0 ? "Hàng có sẵn, giao ngay" : (stockIntel.incomingQty > 0 ? `Hàng đang về (${stockIntel.incomingQty} sp)` : "Hàng đặt, giao sau 2-4 tuần"));
@@ -26204,7 +26205,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <FormattedNumberInput
                                                         value={item.price}
                                                         placeholder="Giá sau VAT"
-                                                        onChangeValue={(pr) => updateQuoteItemAt(index, { price: pr })}
+                                                        onChangeValue={(pr) => updateQuoteItemAt(index, { price: pr, ...(Number(pr) > 0 ? { isGift: false } : {}) } as any)}
                                                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs text-emerald-400 text-right font-mono font-bold focus:border-emerald-500 focus:outline-none"
                                                     />
                                                 </div>
@@ -26418,7 +26419,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <label className="inline-flex items-center gap-1.5 cursor-pointer bg-pink-950/60 hover:bg-pink-900/70 px-2.5 py-1 rounded-md border border-pink-600/50 transition-colors" title="Tích chọn nếu dòng này là hàng tặng theo chính sách (Mua 10 tặng 1, Tube chạy tặng kèm...) — Đơn giá tự động về 0đ">
                                                         <input
                                                             type="checkbox"
-                                                            checked={Boolean((item as any).isGift || (Number(item.price) === 0 && item.productCode))}
+                                                            checked={Boolean((item as any).isGift || (item as any).is_gift)}
                                                             onChange={(e) => {
                                                                 const checked = e.target.checked;
                                                                 if (checked) {
@@ -28728,7 +28729,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         unitPrice: uPr,
                                                                         vatRate,
                                                                         vat: vatRate,
-                                                                        isGift: Boolean(it.isGift || uPr === 0),
+                                                                        isGift: Boolean(it.isGift || it.is_gift),
                                                                         needsInvoice: it.needsInvoice !== false
                                                                     };
                                                                 }).filter((it: any) => it.productCode);
@@ -28894,7 +28895,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             productCode: p.code,
                                                                             productName: p.name || p.code,
                                                                             specification: it.specification && it.productCode === p.code ? it.specification : (p.specification || ""),
-                                                                            unitPrice: p.price || 0
+                                                                            unitPrice: Boolean((it as any).isGift || (it as any).is_gift) ? 0 : (p.price || 0),
+                                                                            isGift: Boolean((it as any).isGift || (it as any).is_gift)
                                                                         } : it));
                                                                         setProductSearchQueries(prev => {
                                                                             const next = { ...prev };
@@ -28950,10 +28952,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         {/* Checkbox Hàng Tặng (0đ) & Xuất HĐ VAT */}
                                         <div className="flex items-center gap-1.5">
                                             {!isStockOrder && (
-                                                <label className="inline-flex items-center gap-1 cursor-pointer bg-pink-950/60 hover:bg-pink-900/70 px-2 py-1.5 rounded-lg border border-pink-700/60 transition-colors" title="Tích chọn nếu mặt hàng này là Hàng tặng theo chính sách (Mua 10 tặng 1, Tube tặng kèm...) — Đơn giá 0đ">
+                                                <label className={cn("inline-flex items-center gap-1 cursor-pointer px-2 py-1.5 rounded-lg border transition-colors", Boolean((item as any).isGift || (item as any).is_gift) ? "bg-pink-950/60 hover:bg-pink-900/70 border-pink-700/60" : "bg-slate-950 hover:border-slate-700 border-slate-800")} title="Tích chọn nếu mặt hàng này là Hàng tặng theo chính sách (Mua 10 tặng 1, Tube tặng kèm...) — Đơn giá 0đ">
                                                     <input
                                                         type="checkbox"
-                                                        checked={Boolean((item as any).isGift || (Number(uPrice) === 0 && item.productCode))}
+                                                        checked={Boolean((item as any).isGift || (item as any).is_gift)}
                                                         onChange={(e) => {
                                                             const checked = e.target.checked;
                                                             setFactoryOrderItems(prev => prev.map((it, i) => {
@@ -28962,12 +28964,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     return { ...it, isGift: true, unitPrice: 0, notes: (it as any).notes || "🎁 Hàng tặng theo chính sách (0đ)" };
                                                                 }
                                                                 const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
-                                                                return { ...it, isGift: false, unitPrice: prod?.price || 0 };
+                                                                return { ...it, isGift: false, unitPrice: prod?.price || 0, notes: (it as any).notes === "🎁 Hàng tặng theo chính sách (0đ)" ? "" : (it as any).notes };
                                                             }));
                                                         }}
                                                         className="w-3.5 h-3.5 rounded accent-pink-500 cursor-pointer"
                                                     />
-                                                    <span className={cn("text-[10px] font-bold font-mono", ((item as any).isGift || (Number(uPrice) === 0 && item.productCode)) ? "text-pink-300" : "text-slate-400")}>
+                                                    <span className={cn("text-[10px] font-bold font-mono", Boolean((item as any).isGift || (item as any).is_gift) ? "text-pink-300" : "text-slate-400")}>
                                                         🎁 Tặng
                                                     </span>
                                                 </label>
@@ -29007,7 +29009,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             placeholder="Đơn giá"
                                             onChange={(e) => {
                                                 const val = e.target.value === "" ? "" : Number(e.target.value);
-                                                setFactoryOrderItems(prev => prev.map((it, i) => i === index ? { ...it, unitPrice: val } : it));
+                                                setFactoryOrderItems(prev => prev.map((it, i) => i === index ? { ...it, unitPrice: val, ...(Number(val) > 0 ? { isGift: false } : {}) } : it));
                                             }}
                                             className="w-28 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-2 text-xs text-amber-300 font-mono text-right font-bold focus:border-indigo-500 focus:outline-none"
                                             title={isStockOrder ? "Đơn giá tham chiếu (ước tính giá trị vốn lưu kho, không áp dụng bảng giá khách)" : "Đơn giá sản phẩm (có thể chỉnh sửa)"}
