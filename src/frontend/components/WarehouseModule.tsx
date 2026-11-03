@@ -243,7 +243,7 @@ export const WarehouseModule: React.FC = () => {
         lot_number: "",
         manufacture_date: "",
         expiry_date: "",
-        storage_condition: "15–25°C (Nhiệt độ phòng - RT)",
+        storage_condition: "",
         shelf_position: "Chưa phân bổ kệ",
         qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
         item_notes: "",
@@ -2052,7 +2052,7 @@ export const WarehouseModule: React.FC = () => {
 
   // Inbound Form Item Helpers
   const handleAddInboundItem = () => {
-    const defaultProd = products[0] || { code: "", name: "", unit: "Hộp", specification: "", cost_price: 0, storage_condition: "15–25°C (Nhiệt độ phòng - RT)" };
+    const defaultProd = products[0] || { code: "", name: "", unit: "Hộp", specification: "", cost_price: 0, storage_condition: "" };
     setInboundForm((prev: any) => ({
       ...prev,
       items: [
@@ -2067,7 +2067,7 @@ export const WarehouseModule: React.FC = () => {
           lot_number: "",
           manufacture_date: "",
           expiry_date: "",
-          storage_condition: defaultProd.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
+          storage_condition: defaultProd.storage_condition || "",
           shelf_position: (defaultProd as any).shelf_position || "Chưa phân bổ kệ",
           qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
           item_notes: "",
@@ -2100,7 +2100,7 @@ export const WarehouseModule: React.FC = () => {
           updated[index].unit = prod.unit || updated[index].unit || "Hộp";
           updated[index].specification = prod.specification || updated[index].specification || "";
           updated[index].unit_price = prod.cost_price || prod.standard_price || updated[index].unit_price || 0;
-          updated[index].storage_condition = prod.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
+          updated[index].storage_condition = prod.storage_condition || "";
           updated[index].shelf_position = (prod as any).shelf_position || updated[index].shelf_position || "Chưa phân bổ kệ";
 
           // Xóa trắng số lô và hạn dùng cũ khi đổi mã sản phẩm để người dùng nhập đúng thực tế lô hàng
@@ -2191,7 +2191,7 @@ export const WarehouseModule: React.FC = () => {
         lot_number: it.lot_number || "",
         manufacture_date: it.manufacture_date || "",
         expiry_date: it.expiry_date || "",
-        storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
+        storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "",
         shelf_position: it.shelf_position || (matchedCatalogProd as any)?.shelf_position || "Chưa phân bổ kệ",
         qc_status: it.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
         item_notes: it.item_notes || "",
@@ -2239,6 +2239,10 @@ export const WarehouseModule: React.FC = () => {
       alert("Vui lòng nhập Mã Phiếu Nhập Kho");
       return;
     }
+    if (!inboundForm.supplier_name?.trim()) {
+      alert("Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Nguồn Hàng (*)");
+      return;
+    }
     if (!inboundForm.items || inboundForm.items.length === 0) {
       alert("Phiếu nhập kho phải có ít nhất 1 mặt hàng");
       return;
@@ -2251,6 +2255,14 @@ export const WarehouseModule: React.FC = () => {
       }
       if (!it.quantity || Number(it.quantity) <= 0) {
         alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) số lượng phải lớn hơn 0`);
+        return;
+      }
+      if (!it.unit_price || Number(it.unit_price) <= 0) {
+        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ)`);
+        return;
+      }
+      if (!it.storage_condition?.trim()) {
+        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải chọn Điều Kiện Nhiệt Độ Bảo Quản`);
         return;
       }
     }
@@ -2986,6 +2998,21 @@ export const WarehouseModule: React.FC = () => {
       alert("Không có dòng dữ liệu hợp lệ để nhập kho");
       return;
     }
+    if (!excelInboundDetails.supplier_name?.trim()) {
+      alert("Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Đơn vị giao (*)");
+      return;
+    }
+    for (let i = 0; i < validRows.length; i++) {
+      const r = validRows[i];
+      if (!r.unit_price || Number(r.unit_price) <= 0) {
+        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ)`);
+        return;
+      }
+      if (!r.storage_condition?.trim()) {
+        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải khai báo Điều Kiện Nhiệt Độ Bảo Quản`);
+        return;
+      }
+    }
 
     try {
       setIsSubmittingExcelInbound(true);
@@ -3375,7 +3402,7 @@ export const WarehouseModule: React.FC = () => {
                     lot_number: "",
                     manufacture_date: "",
                     expiry_date: "",
-                    storage_condition: "15–25°C (Nhiệt độ phòng - RT)",
+                    storage_condition: "",
                     shelf_position: "Chưa phân bổ kệ",
                     qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
                     item_notes: "",
@@ -7567,7 +7594,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div className="relative">
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
-                      <span>Nhà Cung Cấp / Nguồn Hàng</span>
+                      <span>Nhà Cung Cấp / Nguồn Hàng <span className="text-rose-500">*</span></span>
                       <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">
                         Chọn hoặc gõ tìm từ danh mục NCC
                       </span>
@@ -7582,8 +7609,12 @@ export const WarehouseModule: React.FC = () => {
                           setInboundForm({ ...inboundForm, supplier_name: e.target.value });
                           setIsInboundSupplierDropdownOpen(true);
                         }}
-                        placeholder="Gõ tìm nhanh hoặc bấm mũi tên chọn NCC..."
-                        className="w-full pl-9 pr-16 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                        placeholder="Gõ tìm nhanh hoặc bấm mũi tên chọn NCC (*)..."
+                        className={`w-full pl-9 pr-16 py-2.5 rounded-xl border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold focus:ring-2 focus:ring-emerald-500 outline-none ${
+                          !inboundForm.supplier_name?.trim()
+                            ? "border-rose-300 dark:border-rose-800/80"
+                            : "border-slate-200 dark:border-slate-700"
+                        }`}
                       />
                       <div className="absolute right-2 flex items-center gap-0.5">
                         {inboundForm.supplier_name && (
@@ -7929,13 +7960,19 @@ export const WarehouseModule: React.FC = () => {
 
                         <div>
                           <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Đơn Giá Nhập (VNĐ)
+                            Đơn Giá Nhập (VNĐ) <span className="text-rose-500">*</span>
                           </label>
                           <input
                             type="number"
-                            value={item.unit_price || 0}
+                            min="1"
+                            value={item.unit_price || ""}
+                            placeholder="Nhập đơn giá..."
                             onChange={(e) => handleInboundItemChange(idx, "unit_price", Math.max(0, parseInt(e.target.value) || 0))}
-                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs font-semibold"
+                            className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs font-semibold ${
+                              !(Number(item.unit_price) > 0)
+                                ? "border-rose-300 dark:border-rose-800/80"
+                                : "border-slate-200 dark:border-slate-700"
+                            }`}
                           />
                         </div>
 
@@ -7954,14 +7991,27 @@ export const WarehouseModule: React.FC = () => {
                         <div>
                           <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1 flex items-center gap-1">
                             <ThermometerSnowflake className="w-3.5 h-3.5 text-sky-500" />
-                            Điều Kiện Nhiệt Độ Bảo Quản
+                            <span>Điều Kiện Nhiệt Độ Bảo Quản <span className="text-rose-500">*</span></span>
                           </label>
                           <select
                             value={item.storage_condition || ""}
                             onChange={(e) => handleInboundItemChange(idx, "storage_condition", e.target.value)}
-                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium text-xs"
+                            className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium text-xs ${
+                              !item.storage_condition?.trim()
+                                ? "border-rose-300 dark:border-rose-800/80 text-rose-600 dark:text-rose-400"
+                                : "border-slate-200 dark:border-slate-700"
+                            }`}
                           >
-                            <option value="">-- Chưa khai báo nhiệt độ --</option>
+                            <option value="">-- Chọn điều kiện nhiệt độ bảo quản (*) --</option>
+                            {item.storage_condition &&
+                              ![
+                                "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)",
+                                "2-8°C (Kho mát - Hóa chất, Kháng thể)",
+                                "15-25°C (Nhiệt độ phòng - Vật tư, Thiết bị)",
+                                "-80°C (Âm siêu sâu - Mẫu chuẩn)"
+                              ].includes(item.storage_condition) && (
+                                <option value={item.storage_condition}>{item.storage_condition}</option>
+                              )}
                             <option value="-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)">-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme qPCR)</option>
                             <option value="2-8°C (Kho mát - Hóa chất, Kháng thể)">2-8°C (Kho mát - Hóa chất, Kháng thể, Test nhanh)</option>
                             <option value="15-25°C (Nhiệt độ phòng - Vật tư, Thiết bị)">15-25°C (Nhiệt độ phòng - Vật tư tiêu hao, Thiết bị)</option>

@@ -521,12 +521,29 @@ export async function POST(req: NextRequest) {
 
     if (action === "inbound") {
       const { transaction_code, date, performed_by, reference_code, items, notes, warehouse_name, supplier_name, vat_invoice_no, inbound_reason } = body;
+      if (!String(supplier_name || "").trim()) {
+        return NextResponse.json({ error: "Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Nguồn Hàng (bắt buộc)." }, { status: 400 });
+      }
       // M2: atomic sequence instead of Date.now().slice(-6)
       const code = transaction_code || (await generateDocumentCode({ docType: "PNK", tagMode: "GENERAL" }));
       const lines = sortByProductCode(
         (Array.isArray(items) ? items : []).filter((it: any) => it && (it.product_code || it.productCode)),
         (it: any) => it.product_code || it.productCode
       );
+      if (lines.length === 0) {
+        return NextResponse.json({ error: "Phiếu nhập kho phải có ít nhất 1 mặt hàng hợp lệ." }, { status: 400 });
+      }
+      for (const it of lines) {
+        const pCode = it.product_code || it.productCode || "SP";
+        const uPrice = Number(it.unit_price ?? it.cost_price ?? 0);
+        if (!(uPrice > 0)) {
+          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Đơn Giá Nhập (> 0 VNĐ). Đây là thông tin bắt buộc.` }, { status: 400 });
+        }
+        const sCond = String(it.storage_condition || it.storageCondition || "").trim();
+        if (!sCond) {
+          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa chọn Điều Kiện Nhiệt Độ Bảo Quản (bắt buộc).` }, { status: 400 });
+        }
+      }
 
       // H1/H2/H4: document + stock + lots + catalog in ONE transaction (all-or-nothing)
       await withTransaction(async (c) => {
@@ -618,9 +635,23 @@ export async function POST(req: NextRequest) {
       if (!targetCode && !targetId) {
         return NextResponse.json({ error: "Thiếu mã hoặc ID phiếu nhập kho cần chỉnh sửa" }, { status: 400 });
       }
+      if (!String(supplier_name || "").trim()) {
+        return NextResponse.json({ error: "Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Nguồn Hàng (bắt buộc)." }, { status: 400 });
+      }
       const newItems = (Array.isArray(items) ? items : []).filter((it: any) => it && (it.product_code || it.productCode));
       if (newItems.length === 0) {
         return NextResponse.json({ error: "Phiếu nhập kho phải có ít nhất 1 mặt hàng hợp lệ" }, { status: 400 });
+      }
+      for (const it of newItems) {
+        const pCode = it.product_code || it.productCode || "SP";
+        const uPrice = Number(it.unit_price ?? it.cost_price ?? 0);
+        if (!(uPrice > 0)) {
+          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Đơn Giá Nhập (> 0 VNĐ). Đây là thông tin bắt buộc.` }, { status: 400 });
+        }
+        const sCond = String(it.storage_condition || it.storageCondition || "").trim();
+        if (!sCond) {
+          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa chọn Điều Kiện Nhiệt Độ Bảo Quản (bắt buộc).` }, { status: 400 });
+        }
       }
 
       await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
