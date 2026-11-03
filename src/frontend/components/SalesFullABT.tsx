@@ -6613,21 +6613,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setRetailSaleItems([{ productCode: "", quantity: 1, price: 0 }]);
     };
 
+    const normalizeComparableVN = (val: any): string => {
+        if (!val) return "";
+        return String(val)
+            .normalize("NFC")
+            .toLowerCase()
+            .replace(/oà/g, "òa").replace(/oá/g, "óa").replace(/oả/g, "ỏa").replace(/oã/g, "õa").replace(/oạ/g, "ọa")
+            .replace(/oè/g, "òe").replace(/oé/g, "óe").replace(/oẻ/g, "ỏe").replace(/oẽ/g, "õe").replace(/oẹ/g, "ọe")
+            .replace(/uỳ/g, "ùy").replace(/uý/g, "úy").replace(/uỷ/g, "ủy").replace(/uỹ/g, "ũy").replace(/uỵ/g, "ụy")
+            .replace(/\s+/g, " ")
+            .trim();
+    };
+
     const loggedInStaff = useMemo(() => {
         if (!user || !salesPersonnel || salesPersonnel.length === 0) return null;
-        const uName = (user.name || "").toLowerCase().trim();
+        const uName = normalizeComparableVN(user.name || (user as any).full_name || "");
         const uEmail = (user.email || "").toLowerCase().trim();
         const uNameRaw = ((user as any).username || "").toLowerCase().trim();
         const uId = (user.id || "").toLowerCase().trim();
+        const uEmpCode = String((user as any).employee_code || "").toLowerCase().trim();
 
         return salesPersonnel.find(p => {
             const pEmail = (p.email || "").toLowerCase().trim();
-            const pName = (p.full_name || "").toLowerCase().trim();
+            const pName = normalizeComparableVN(p.full_name || "");
             const pEmpId = (p.employee_id || "").toLowerCase().trim();
+            const pEmpCode = String((p as any).employee_code || "").toLowerCase().trim();
 
             if (pEmail && uEmail && pEmail === uEmail) return true;
             if (pName && uName && pName === uName) return true;
-            if (pEmpId && (uId.includes(pEmpId) || uNameRaw.includes(pEmpId))) return true;
+            if (pEmpId && (uId.includes(pEmpId) || uNameRaw.includes(pEmpId) || (uEmpCode && pEmpId === uEmpCode))) return true;
+            if (pEmpCode && (uEmpCode === pEmpCode || uNameRaw === pEmpCode || uId.includes(pEmpCode))) return true;
             
             // Exact / specific mappings for linked accounts
             if (pEmpId === "kd-01" && (uNameRaw === "quan.kd" || uEmail.includes("phuongquan") || uName.includes("phương quân"))) return true;
@@ -6740,6 +6755,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     }, [isSalesLeader, isAdminManager, isSalesAdmin]);
 
     // Quyền đặc biệt: Nhân sự Kho Vận & Chuỗi Lạnh phụ trách giao hàng toàn bộ đơn hàng
+    // Lưu ý: Nhân sự thuộc Phòng Kinh Doanh (sales_rep, sales_head, sales_admin, sales_pm) mặc định có quyền warehouse.view
+    // để tra cứu tồn kho — tuyệt đối KHÔNG được xếp vào nhóm chỉ trực Kho Vận (isWarehouseStaff), nếu không sẽ bị ẩn nút Sửa/Copy/Hủy đơn!
     const isWarehouseStaff = useMemo(() => {
         if (!user && !loggedInStaff) return false;
         const role = (user?.role || loggedInStaff?.role || "").toLowerCase().trim();
@@ -6748,12 +6765,30 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const username = ((user as any)?.username || "").toLowerCase().trim();
         const empId = (loggedInStaff?.employee_id || "").toUpperCase();
 
+        const isSalesOrExec =
+            isSalesExecutive ||
+            isManagerOrAdmin ||
+            role.includes("sales") ||
+            role === "admin" ||
+            role === "director" ||
+            role === "vice_director" ||
+            dept.includes("kinh doanh") ||
+            dept.includes("sales") ||
+            dept.includes("ban giám đốc") ||
+            empId.startsWith("KD-") ||
+            empId.startsWith("QL-");
+        if (isSalesOrExec) return false;
+
         return role === "warehouse" || role.includes("kho") || role.includes("thủ kho") || role.includes("logistics") ||
                dept.includes("kho") || dept.includes("warehouse") || dept.includes("logistics") ||
                pos.includes("kho") || pos.includes("thủ kho") || pos.includes("warehouse") || pos.includes("logistics") ||
-               empId.startsWith("KV-") || empId.startsWith("KHO-") ||
-               Boolean(can && (can("warehouse.view") || can("warehouse.outbound") || can("warehouse.inbound")));
-    }, [user, loggedInStaff, can]);
+               empId.startsWith("KV-") || empId.startsWith("KHO-");
+    }, [user, loggedInStaff, isSalesExecutive, isManagerOrAdmin]);
+
+    // Quyền chỉnh sửa thông tin đơn hàng (PBAC: sales.edit)
+    const hasSalesEditPerm = useMemo(() => {
+        return Boolean(can && can("sales.edit")) || Boolean(user?.permissions && (user.permissions as any)["sales.edit"]);
+    }, [can, user]);
 
     // Nhân sự xem & phối hợp liên phòng ban (Kho Vận, Cung Ứng, Application, Pháp Chế được cấp quyền sales.view)
     const isCrossDepartmentViewer = useMemo(() => {
@@ -6806,13 +6841,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         String((user as any)?.department || "").toLowerCase().includes("kế toán") ||
         String(user?.role || "").toLowerCase().includes("account");
 
-    /** Đơn thuộc NVKD đang đăng nhập: theo mã nhân viên, hoặc theo họ tên NVKD lưu trên đơn (dòng CSDL chỉ có tên). */
+    /** Đơn thuộc NVKD đang đăng nhập: theo mã nhân viên, hoặc theo họ tên NVKD lưu trên đơn (chuẩn hóa dấu tiếng Việt Thuỳ/Thùy). */
     const isOrderOfLoggedInStaff = (req: any): boolean => {
         if (!loggedInStaff && !user) return false;
-        if (loggedInStaff && req?.salesRepId && req.salesRepId === loggedInStaff.employee_id) return true;
-        const repName = String(req?.salesRepName || req?.sales_rep_name || req?.sales_rep || req?.salesRep || "").trim().toLowerCase();
-        const myName = String(loggedInStaff?.full_name || (user as any)?.full_name || user?.name || "").trim().toLowerCase();
-        return Boolean(repName && myName && repName === myName);
+        const reqRepId = String(req?.salesRepId || req?.sales_rep_id || "").trim().toUpperCase();
+        const myEmpId = String(loggedInStaff?.employee_id || "").trim().toUpperCase();
+        const myEmpCode = String((loggedInStaff as any)?.employee_code || (user as any)?.employee_code || "").trim().toUpperCase();
+        const myUserId = String(user?.id || "").trim().toUpperCase();
+        const myUsername = String((user as any)?.username || "").trim().toUpperCase();
+        if (reqRepId && (reqRepId === myEmpId || reqRepId === myEmpCode || reqRepId === myUserId || reqRepId === myUsername)) {
+            return true;
+        }
+        const repName = normalizeComparableVN(req?.salesRepName || req?.sales_rep_name || req?.sales_rep || req?.salesRep || "");
+        const myStaffName = normalizeComparableVN(loggedInStaff?.full_name || "");
+        const myUserName = normalizeComparableVN((user as any)?.full_name || user?.name || "");
+        return Boolean(repName && ((myStaffName && repName === myStaffName) || (myUserName && repName === myUserName)));
     };
 
     // 5. Phân quyền Kế hoạch tuần chuyên biệt:
@@ -19984,7 +20027,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             <Truck className="w-3 h-3 text-indigo-400" />
                                                                                             <span>Tab Đơn</span>
                                                                                         </button>
-                                                                                        {!isCancelled && ord.raw_order && !isWarehouseStaff && (
+                                                                                        {!isCancelled && ord.raw_order && (!isWarehouseStaff || hasSalesEditPerm) && (
                                                                                             <button
                                                                                                 onClick={() => handleEditFactoryOrder(ord.raw_order)}
                                                                                                 className="bg-amber-950/80 hover:bg-amber-900 text-amber-200 border border-amber-500/50 text-[10px] px-2 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer transition-colors"
@@ -22329,9 +22372,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             if (filterOrderRep !== "all") {
                                 const repObj = salesPersonnel.find(p => p.employee_id === filterOrderRep || p.employee_code === filterOrderRep);
-                                const repName = repObj?.full_name?.toLowerCase();
+                                const repName = normalizeComparableVN(repObj?.full_name);
                                 const matchId = req.salesRepId === filterOrderRep || (req as any).sales_rep_id === filterOrderRep;
-                                const matchName = repName && req.salesRepName && String(req.salesRepName).toLowerCase().includes(repName);
+                                const matchName = repName && req.salesRepName && normalizeComparableVN(req.salesRepName).includes(repName);
                                 if (!matchId && !matchName) return false;
                             }
 
@@ -22981,7 +23024,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     const canEditOrDelete = (!hasMfg || (mfgStatus !== "ORDERED" && mfgStatus !== "COMPLETED")) && 
                                                                             (!hasComm || (procureStatus !== "ORDERED" && procureStatus !== "COMPLETED")) && 
                                                                             req.status !== "Delivered";
-                                                    const canUserAct = !isWarehouseStaff && (isManagerOrAdmin || canManageAllOrders || canApproveSalesOrdersPerm || canViewCustomerDebt || isOrderOfLoggedInStaff(req));
+                                                    const canUserAct = (!isWarehouseStaff || hasSalesEditPerm) && (isManagerOrAdmin || canManageAllOrders || canApproveSalesOrdersPerm || canViewCustomerDebt || hasSalesEditPerm || isOrderOfLoggedInStaff(req));
 
                                                     const stockCheck = {
                                                         hasEnough: !isStockOrder && stockAnalysis.isReadyAll,
@@ -23517,7 +23560,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <Edit3 className="w-3 h-3" /> Sửa
                                                                         </button>
                                                                     )}
-                                                                    {!isCancelledOrder && req.status !== "Delivered" && req.delivery_status !== "DELIVERED" && (canUserAct || isManagerOrAdmin) && !isWarehouseStaff && (
+                                                                    {!isCancelledOrder && req.status !== "Delivered" && req.delivery_status !== "DELIVERED" && (canUserAct || isManagerOrAdmin) && (!isWarehouseStaff || hasSalesEditPerm) && (
                                                                         <button
                                                                             type="button"
                                                                             onClick={() => handleCancelFactoryOrder(req)}
@@ -23553,7 +23596,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                         <CheckCircle2 className="w-3.5 h-3.5 text-teal-400" /> ✓ Đã hoàn tất
                                                                                     </span>
                                                                                 ) : (!req.prCode && !stockAnalysis.hasPR && !primaryPO) ? (
-                                                                                    canManageAllOrders && (
+                                                                                    (canManageAllOrders || canUserAct) && (
                                                                                         <button
                                                                                             type="button"
                                                                                             onClick={() => handleOpenSingleProcureModal(req)}
@@ -23573,7 +23616,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         ) : (
                                                                             <>
                                                                                 {/* Tách luồng 1: Đặt Hãng / Nhà cung cấp */}
-                                                                                {canManageAllOrders && hasMfg && (req.status === "Approved" || req.status === "Ordered" || req.status === "Ready") && req.status !== "Delivered" && (
+                                                                                {(canManageAllOrders || canUserAct) && hasMfg && (req.status === "Approved" || req.status === "Ordered" || req.status === "Ready") && req.status !== "Delivered" && (
                                                                                     mfgStatus !== "ORDERED" && mfgStatus !== "COMPLETED" ? (
                                                                                         <button
                                                                                             type="button"
@@ -23597,7 +23640,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 )}
 
                                                                                 {/* Tách luồng 2: Mua ngoài Cung ứng hoặc Giao hàng */}
-                                                                                {canManageAllOrders && !isFromStock && hasComm && (req.status === "Approved" || req.status === "Ordered" || req.status === "Ready") && req.status !== "Delivered" && (
+                                                                                {(canManageAllOrders || canUserAct) && !isFromStock && hasComm && (req.status === "Approved" || req.status === "Ordered" || req.status === "Ready") && req.status !== "Delivered" && (
                                                                                     procureStatus !== "ORDERED" && procureStatus !== "COMPLETED" && procureStatus !== "PR_PENDING" && procureStatus !== "PR_CREATED" && !req.prCode && !hasLinkedPO ? (
                                                                                         <div className="flex items-center gap-1">
                                                                                             <button
@@ -30752,7 +30795,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         })()}
                                     </strong>
                                 </div>
-                                {!isWarehouseStaff && viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && (
+                                {!isWarehouseStaff || hasSalesEditPerm ? (
+                                    viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && (
                                     <button
                                         type="button"
                                         onClick={() => {
@@ -30766,7 +30810,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <Edit3 className="w-3.5 h-3.5" />
                                         <span>Sửa đơn / Sửa giá</span>
                                     </button>
-                                )}
+                                    )
+                                ) : null}
                             </div>
                         </div>
                         {/* VISUAL ORDER STEPPER 5 CHẶNG & LOGISTICS (Yêu cầu 8) */}
@@ -31232,7 +31277,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-200">
                                                         {unitPrice > 0 ? (
                                                             `${unitPrice.toLocaleString('vi-VN')} đ`
-                                                        ) : !isWarehouseStaff && !Boolean(it?.isGift || it?.is_gift) ? (
+                                                        ) : (!isWarehouseStaff || hasSalesEditPerm) && !Boolean(it?.isGift || it?.is_gift) ? (
                                                             <button
                                                                 type="button"
                                                                 onClick={() => {
@@ -31268,7 +31313,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             </span>
                                                         ) : (
                                                             <div className="flex items-center justify-center gap-1.5">
-                                                                {!isWarehouseStaff && (
+                                                                {(!isWarehouseStaff || hasSalesEditPerm) && (
                                                                     <button
                                                                         type="button"
                                                                         onClick={() => {
@@ -31346,7 +31391,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </button>
                             </div>
                             <div className="flex items-center gap-2">
-                                {!isWarehouseStaff && viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && (
+                                {(!isWarehouseStaff || hasSalesEditPerm) && viewingFactoryOrderItems.status !== "Cancelled" && viewingFactoryOrderItems.status !== "CANCELLED" && (
                                     <button
                                         type="button"
                                         onClick={() => {
