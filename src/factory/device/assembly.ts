@@ -10,6 +10,7 @@ import { defineMachine, listAllowedActions, runTransition } from "../core/stateM
 import { allocate, findCandidates } from "../inv/allocation";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { getItem, toBaseQty } from "../master/service";
+import { notifyUsers, usersWithPermissionAnywhere } from "../core/notifications";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import "./permissions";
 
@@ -53,6 +54,7 @@ export interface DeviceOrderRow {
   approved_by: number | null;
   approved_at: string | null;
   cancel_reason: string | null;
+  lot_no: string | null;
   status: DeviceOrderStatus;
   version: number;
   created_by: number | null;
@@ -167,7 +169,6 @@ export const deviceOrderMachine = defineMachine<DeviceOrderStatus, DeviceOrderRo
       permission: "device.order.manage",
       effects: async ({ tx, actor, updated, payload }) => {
         await allocateOrderSerials(tx, actor, updated, {
-          serial_prefix: typeof payload?.serial_prefix === "string" ? payload.serial_prefix : null,
           serial_numbers: (payload?.serial_numbers as string[] | string | null | undefined) ?? null,
         });
       },
@@ -252,25 +253,28 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
             return (run.rowCount ?? 0) > 0;
           },
         },
+        {
+          // QT 21: the finished device goes to QC-QA on a QC task, so the model needs an effective FQC spec
+          code: "FQC_SPEC_MISSING",
+          message: "Model chưa có tiêu chuẩn kiểm tra xuất xưởng (FQC) có hiệu lực — nhờ QA/QC ban hành tiêu chuẩn trước khi chuyển thiết bị sang QC.",
+          check: async ({ tx, row }) => Boolean(row.fqc_test_id) || Boolean(await fqcSpecFor(tx, row.model_id)),
+        },
+        {
+          code: "FQC_ASSIGNEE",
+          message: "QC phụ trách được chọn phải có quyền kiểm nghiệm / ghi kết quả QC thiết bị.",
+          check: async ({ tx, payload }) => {
+            const id = Number(payload.fqc_assignee_id ?? 0);
+            if (!id) return true;
+            for (const p of ["qms.qc.analyze", "qms.qc.record", "device.unit.release"]) if ((await usersWithPermissionAnywhere(tx, p)).includes(id)) return true;
+            return false;
+          },
+        },
       ],
+      patch: ({ payload }) => (Number(payload.fqc_assignee_id) ? { fqc_assignee_id: Number(payload.fqc_assignee_id) } : {}),
       effects: async ({ tx, actor, updated }) => {
-        // Auto-create FQC test in QMS if model has fqc_spec_id configured
+        // FQC test in QMS, assigned to the chosen QC person when there is one
         if (!updated.fqc_test_id) {
-          const model = (
-            await tx.query("SELECT fqc_spec_id, item_id FROM device.device_model WHERE id = $1", [updated.model_id])
-          ).rows[0];
-          let specId: string | null = model?.fqc_spec_id ?? null;
-          if (!specId && model?.item_id) {
-            const spec = (
-              await tx.query(
-                `SELECT id FROM qms.qc_spec
-                  WHERE item_id = $1 AND status = 'EFFECTIVE'
-                  ORDER BY spec_version DESC LIMIT 1`,
-                [model.item_id]
-              )
-            ).rows[0];
-            specId = spec?.id ?? null;
-          }
+          const specId = await fqcSpecFor(tx, updated.model_id);
           if (specId) {
             const qcTest = await createQcTest(tx, actor, {
               spec_id: specId,
@@ -280,6 +284,18 @@ export const deviceUnitMachine = defineMachine<DeviceUnitStatus, DeviceUnitRow>(
             });
             await tx.query("UPDATE device.device_unit SET fqc_test_id = $2 WHERE id = $1", [updated.id, qcTest.id]);
           }
+        }
+        const assignee = Number((updated as DeviceUnitRow & { fqc_assignee_id?: number | null }).fqc_assignee_id ?? 0);
+        if (assignee) {
+          await notifyUsers(tx, [assignee], {
+            type: "DEVICE_FQC_ASSIGNED",
+            title: `Bạn được giao kiểm tra xuất xưởng (FQC) máy ${updated.serial_no}`,
+            body: "Phòng Kỹ thuật – Công nghệ đã chạy thử đạt, chuyển thiết bị sang QC-QA.",
+            entityType: "device_unit",
+            entityId: updated.id,
+            link: "/?tab=factory-device",
+            sourceKey: `device_fqc_assigned_${updated.id}_${updated.version}`,
+          });
         }
         await syncOrderStatusFromUnits(tx, updated.order_id, actor.userId);
       },
@@ -480,11 +496,85 @@ function parseCustomSerials(raw?: string[] | string | null): string[] {
     .filter(Boolean);
 }
 
+/** Effective FQC spec of a model: the one set on the model, else the latest effective spec of its finished item. */
+async function fqcSpecFor(tx: Tx, modelId: string): Promise<string | null> {
+  const r = (
+    await tx.query(
+      `SELECT COALESCE(
+                (SELECT s.id FROM qms.qc_spec s WHERE s.id = m.fqc_spec_id AND s.status = 'EFFECTIVE'),
+                (SELECT s.id FROM qms.qc_spec s WHERE s.item_id = m.item_id AND s.status = 'EFFECTIVE' ORDER BY s.spec_version DESC LIMIT 1)
+              ) AS spec_id
+         FROM device.device_model m WHERE m.id = $1`,
+      [modelId]
+    )
+  ).rows[0];
+  return r?.spec_id ?? null;
+}
+
+const pad = (n: number, width: number) => String(n).padStart(width, "0");
+
+/**
+ * Lô thiết bị (QT 21, đề xuất P.KTCN): Model-YYMMDD-Cỡ lô, ví dụ PCRWD8-261028-05 — gợi ý theo ngày phát lệnh,
+ * người lập lệnh được sửa. A taken lot gets a -B, -C… suffix.
+ */
+export async function suggestDeviceLot(tx: Tx, modelCode: string, qty: number, date = vnToday()): Promise<string> {
+  const base = `${modelCode.trim().toUpperCase()}-${date.slice(2, 4)}${date.slice(5, 7)}${date.slice(8, 10)}-${pad(qty, 2)}`;
+  for (let i = 0; i < 26; i++) {
+    const lot = i === 0 ? base : `${base}-${String.fromCharCode(65 + i)}`;
+    if (!(await tx.query("SELECT 1 FROM device.device_order WHERE lower(lot_no) = lower($1)", [lot])).rowCount) return lot;
+  }
+  throw invalid(`Đã có quá nhiều lô ${base} trong ngày. Nhập số Lô khác.`);
+}
+
+/**
+ * Serials of a lot: YYMMDD + cỡ lô, dấu gạch, số thứ tự máy trong lô — PCRWD8-261028-05 → 26102805-01 … 26102805-05.
+ * The model is not part of the serial (P.KTCN), so serials of different lots can collide: callers check uniqueness.
+ */
+export function serialsForLot(lotNo: string, qty: number, from = 1, count = qty): string[] {
+  const m = /(\d{6})-(\d{1,3})(?:-[A-Z])?$/i.exec(lotNo.trim());
+  const stem = m ? `${m[1]}${pad(Number(m[2]), 2)}` : lotNo.replace(/[^0-9A-Za-z]/g, "").toUpperCase();
+  const width = qty >= 100 ? 3 : 2;
+  return Array.from({ length: count }, (_, i) => `${stem}-${pad(from + i, width)}`);
+}
+
+/** Lot number for a new order: the one typed (must be free) or the suggestion. */
+export async function resolveLotNo(tx: Tx, modelId: string, qty: number, typed?: string | null): Promise<string> {
+  const lot = typed?.trim().toUpperCase();
+  if (!lot) {
+    const model = (await tx.query("SELECT code FROM device.device_model WHERE id = $1", [modelId])).rows[0];
+    return suggestDeviceLot(tx, model?.code ?? "TB", qty);
+  }
+  if (!/^[A-Z0-9][A-Z0-9._-]{2,49}$/.test(lot)) throw invalid("Số Lô chỉ gồm chữ, số, dấu chấm, gạch nối (3–50 ký tự), không có khoảng trắng.");
+  if ((await tx.query("SELECT 1 FROM device.device_order WHERE lower(lot_no) = lower($1)", [lot])).rowCount) {
+    throw invalid(`Số Lô ${lot} đã được dùng cho lệnh lắp ráp khác.`, undefined, "LOT_TAKEN");
+  }
+  return lot;
+}
+
+/** Serials already used elsewhere (case-insensitive): every serial on a label must be unique. */
+async function takenSerials(tx: Tx, serials: string[]): Promise<string[]> {
+  if (!serials.length) return [];
+  const res = await tx.query("SELECT serial_no FROM device.device_unit WHERE lower(serial_no) = ANY($1::text[])", [serials.map((s) => s.toLowerCase())]);
+  return res.rows.map((r) => r.serial_no);
+}
+
+/** Preview for the order form: suggested lot, the serials it gives and which of them are already used. */
+export async function previewDeviceLot(tx: Tx, actor: AuthzActor, input: { model_id: string; qty: number; lot_no?: string | null }) {
+  await authorizeAnywhere(tx, actor, "device.order.manage");
+  const qty = Math.max(1, Math.min(500, Math.round(Number(input.qty) || 1)));
+  const model = (await tx.query("SELECT code FROM device.device_model WHERE id = $1", [input.model_id])).rows[0];
+  if (!model) throw notFound("model thiết bị");
+  const lot = input.lot_no?.trim().toUpperCase() || (await suggestDeviceLot(tx, model.code, qty));
+  const serials = serialsForLot(lot, qty);
+  const lotTaken = Boolean((await tx.query("SELECT 1 FROM device.device_order WHERE lower(lot_no) = lower($1)", [lot])).rowCount);
+  return { lot_no: lot, suggested: await suggestDeviceLot(tx, model.code, qty), serials, lot_taken: lotTaken, taken_serials: await takenSerials(tx, serials) };
+}
+
 export async function allocateOrderSerials(
   tx: Tx,
   actor: AuthzActor,
   order: DeviceOrderRow,
-  opts?: { serial_prefix?: string | null; serial_numbers?: string[] | string | null }
+  opts?: { serial_numbers?: string[] | string | null }
 ) {
   const existingCount = Number(
     (await tx.query("SELECT count(*)::int AS cnt FROM device.device_unit WHERE order_id = $1", [order.id])).rows[0]?.cnt ?? 0
@@ -492,7 +582,6 @@ export async function allocateOrderSerials(
   const needed = order.qty - existingCount;
   if (needed <= 0) return [];
 
-  const model = (await tx.query("SELECT code FROM device.device_model WHERE id = $1", [order.model_id])).rows[0];
   const rev = (
     await tx.query("SELECT firmware_version, firmware_release_id FROM device.model_revision WHERE id = $1", [order.model_revision_id])
   ).rows[0];
@@ -501,19 +590,26 @@ export async function allocateOrderSerials(
   if (customList.length > 0 && customList.length !== needed) {
     throw invalid(`Danh sách Số Serial nhập tay (${customList.length} số) phải khớp với số lượng máy cần cấp (${needed} máy).`);
   }
-
-  const prefix = opts?.serial_prefix?.trim() ? opts.serial_prefix.trim().toUpperCase() : model.code;
+  let lotNo = order.lot_no;
+  if (!lotNo) {
+    // orders made before lots existed get the suggested lot now
+    lotNo = await resolveLotNo(tx, order.model_id, order.qty, null);
+    await tx.query("UPDATE device.device_order SET lot_no = $2 WHERE id = $1", [order.id, lotNo]);
+  }
+  const serials = customList.length ? customList : serialsForLot(lotNo, order.qty, existingCount + 1, needed);
+  if (new Set(serials.map((s) => s.toLowerCase())).size !== serials.length) throw invalid("Danh sách Số Serial có số bị lặp.");
+  const taken = await takenSerials(tx, serials);
+  if (taken.length) {
+    throw invalid(
+      `Số Serial đã tồn tại: ${taken.join(", ")}. Sửa số Lô (phần ngày / cỡ lô) hoặc nhập danh sách Serial thủ công.`,
+      { taken },
+      "SERIAL_TAKEN"
+    );
+  }
   const createdUnits: DeviceUnitRow[] = [];
 
   for (let i = 0; i < needed; i++) {
-    let serialNo: string;
-    if (customList[i]) {
-      serialNo = customList[i];
-      const dup = await tx.query("SELECT 1 FROM device.device_unit WHERE lower(serial_no) = lower($1) LIMIT 1", [serialNo]);
-      if (dup.rowCount) throw invalid(`Số Serial '${serialNo}' đã tồn tại trên hệ thống.`);
-    } else {
-      serialNo = await nextNumber(tx, "DEVICE_SERIAL", { params: { MODEL: prefix } });
-    }
+    const serialNo = serials[i];
     const u = await insertRecord<DeviceUnitRow>(tx, actor, "device.device_unit", "device_unit", {
       serial_no: serialNo,
       order_id: order.id,
@@ -534,7 +630,7 @@ const createOrderSchema = z.object({
   model_revision_id: z.string().uuid().optional().nullable(),
   warehouse_id: z.string().uuid("chọn kho linh kiện KT-CN"),
   qty: z.coerce.number().int().min(1, "số lượng máy ≥ 1").max(500),
-  serial_prefix: z.string().trim().max(50).optional().nullable(),
+  lot_no: z.string().trim().max(50).optional().nullable(),
   serial_numbers: z.union([z.array(z.string()), z.string()]).optional().nullable(),
   auto_assign_serials: z.boolean().optional().default(true),
   custom_specs: z.string().trim().max(2000).optional().nullable(),
@@ -559,6 +655,7 @@ export async function createDeviceOrder(tx: Tx, actor: AuthzActor, input: unknow
     model_revision_id: revId,
     warehouse_id: d.warehouse_id,
     qty: d.qty,
+    lot_no: await resolveLotNo(tx, d.model_id, d.qty, d.lot_no),
     custom_specs: d.custom_specs ?? null,
     priority: d.priority,
     due_date: d.due_date ?? null,
@@ -566,10 +663,7 @@ export async function createDeviceOrder(tx: Tx, actor: AuthzActor, input: unknow
   });
 
   if (d.auto_assign_serials !== false) {
-    await allocateOrderSerials(tx, actor, order, {
-      serial_prefix: d.serial_prefix ?? null,
-      serial_numbers: d.serial_numbers ?? null,
-    });
+    await allocateOrderSerials(tx, actor, order, { serial_numbers: d.serial_numbers ?? null });
   }
 
   return order;
@@ -983,4 +1077,12 @@ export async function getDeviceUnitDetail(tx: Tx, actor: AuthzActor, unitId: str
 
   const actions = await listAllowedActions(tx, deviceUnitMachine, actor, unit);
   return { ...unit, components, burn_in_runs: burnInRuns, bom_lines: bomLines, actions };
+}
+
+/** QC-QA people who may run a device FQC: the choices for "QC phụ trách" when devices go to FQC. */
+export async function listFqcPeople(tx: Tx, actor: AuthzActor) {
+  await authorizeAnywhere(tx, actor, "device.view");
+  const ids = new Set<number>();
+  for (const p of ["qms.qc.analyze", "qms.qc.record", "device.unit.release"]) for (const id of await usersWithPermissionAnywhere(tx, p)) ids.add(id);
+  return (await tx.query("SELECT user_id AS id, display_name AS name FROM core.user_profile WHERE user_id = ANY($1::int[]) ORDER BY display_name", [[...ids]])).rows;
 }

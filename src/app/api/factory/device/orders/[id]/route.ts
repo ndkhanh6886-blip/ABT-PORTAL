@@ -27,7 +27,6 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
     if (!order) throw notFound("lệnh lắp ráp thiết bị");
     await authorize(tx, actor, "device.order.manage", order.org_unit_id);
     await allocateOrderSerials(tx, actor, order, {
-      serial_prefix: b.serial_prefix ? String(b.serial_prefix) : null,
       serial_numbers: (b.serial_numbers as string[] | string | null | undefined) ?? null,
     });
     return getDeviceOrderDetail(tx, actor, params.id);
@@ -41,6 +40,7 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
     return progressWorkOrderStage(tx, actor, params.id, {
       stage_action: b.stage_action as any,
       customer_name: b.customer_name ? String(b.customer_name) : undefined,
+      fqc_assignee_id: b.fqc_assignee_id ? Number(b.fqc_assignee_id) : null,
       handover_accessories: Array.isArray(b.handover_accessories) ? (b.handover_accessories as string[]) : undefined,
     });
   }

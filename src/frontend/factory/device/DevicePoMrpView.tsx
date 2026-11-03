@@ -15,6 +15,7 @@ import {
 import { api, fmtDate, fmtQty, fmtVnd } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { STATION_LABELS, useDeviceOptions } from "./shared";
+import { LotSerialField } from "./LotSerialField";
 
 interface MrpLine {
   bom_line_id: string;
@@ -130,7 +131,7 @@ export function DevicePoMrpView({
     }
   }, [initialPoId]);
   const [showCreatePo, setShowCreatePo] = useState(false);
-  const [serialPrefix, setSerialPrefix] = useState("");
+  const [lotNo, setLotNo] = useState("");
   const [customSerials, setCustomSerials] = useState("");
   const [actionBanner, setActionBanner] = useState<string | null>(null);
 
@@ -184,13 +185,13 @@ export function DevicePoMrpView({
         json: {
           action: "convert_po_to_wo",
           internal_order_id: poId,
-          serial_prefix: serialPrefix.trim() || null,
+          lot_no: lotNo.trim() || null,
           serial_numbers: customSerials.trim() || null,
           priority: "HIGH",
         },
       }),
     onSuccess: (res) => {
-      setSerialPrefix("");
+      setLotNo("");
       setCustomSerials("");
       setActionBanner(
         `Đã chuyển tiếp PO sang Lệnh lắp ráp ${res.work_order.code} và cấp ${res.serial_numbers.length} số Serial: ${res.serial_numbers.join(", ")}`
@@ -452,14 +453,12 @@ export function DevicePoMrpView({
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <Field label="Tiền tố Serial khi tạo Lệnh lắp ráp (Tùy chọn)">
-                      <input
-                        className={`${inputClass} font-mono`}
-                        placeholder={`Mặc định: ${selectedPo.lines?.[0]?.model_code ?? "DEV"}`}
-                        value={serialPrefix}
-                        onChange={(e) => setSerialPrefix(e.target.value)}
-                      />
-                    </Field>
+                    <LotSerialField
+                      modelId={selectedPo.lines?.[0]?.model_id ?? ""}
+                      qty={Math.max(1, Number(selectedPo.lines?.[0]?.qty ?? 1) - Number(selectedPo.lines?.[0]?.qty_delivered ?? 0))}
+                      value={lotNo}
+                      onChange={setLotNo}
+                    />
                     <Field label="Hoặc nhập danh sách Serial cụ thể (cách dấu phẩy)">
                       <input
                         className={`${inputClass} font-mono`}

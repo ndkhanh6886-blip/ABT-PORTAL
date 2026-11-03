@@ -6,6 +6,8 @@ import { ActionBar, type AllowedAction } from "../actions";
 import { api, escHtml, fmtDate, fmtDateTime, fmtQty } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { ORDER_STATUS, STATION_LABELS, UNIT_STATUS, useDeviceOptions } from "./shared";
+import { IssueSlipPanel } from "./IssueSlipPanel";
+import { LotSerialField } from "./LotSerialField";
 
 const ORDER_ACTION_LABELS: Record<string, string> = {
   approve: "Phê duyệt lệnh lắp ráp (Ký điện tử)",
@@ -30,6 +32,7 @@ const UNIT_ACTION_LABELS: Record<string, string> = {
 interface OrderRow {
   id: string;
   code: string;
+  lot_no: string | null;
   model_id: string;
   model_code: string;
   model_name: string;
@@ -158,12 +161,15 @@ export function AssemblyDhrView() {
     }
   }, [orders.data, selectedOrderId]);
 
+  const [issueSlipFor, setIssueSlipFor] = useState<string | null>(null);
+  const [fqcAssignee, setFqcAssignee] = useState("");
+  const fqcPeople = useQuery({ queryKey: ["factory", "device", "fqc-people"], queryFn: () => api<{ id: number; name: string }[]>("/api/factory/device/fqc-people") });
   const [form, setForm] = useState({
     org_unit_id: "",
     model_id: "",
     warehouse_id: "",
     qty: "2",
-    serial_prefix: "",
+    lot_no: "",
     serial_numbers: "",
     priority: "NORMAL",
     due_date: "",
@@ -356,7 +362,7 @@ export function AssemblyDhrView() {
           model_id: form.model_id,
           warehouse_id: form.warehouse_id || opts.data?.warehouses[0]?.id,
           qty: Number(form.qty),
-          serial_prefix: form.serial_prefix.trim() || null,
+          lot_no: form.lot_no.trim() || null,
           serial_numbers: form.serial_numbers.trim() || null,
           auto_assign_serials: true,
           priority: form.priority,
@@ -366,7 +372,7 @@ export function AssemblyDhrView() {
       }),
     onSuccess: (created) => {
       setShowCreate(false);
-      setForm((s) => ({ ...s, serial_prefix: "", serial_numbers: "" }));
+      setForm((s) => ({ ...s, lot_no: "", serial_numbers: "" }));
       setSelectedOrderId(created.id);
       refreshAll();
     },
@@ -481,14 +487,7 @@ export function AssemblyDhrView() {
                       onChange={(e) => setForm({ ...form, due_date: e.target.value })}
                     />
                   </Field>
-                  <Field label="Tiền tố Lô / Serial (Để trống lấy theo Mã Model)">
-                    <input
-                      className={`${inputClass} font-mono`}
-                      placeholder="VD: CYCLER96-L2610"
-                      value={form.serial_prefix}
-                      onChange={(e) => setForm({ ...form, serial_prefix: e.target.value })}
-                    />
-                  </Field>
+                  <LotSerialField modelId={form.model_id} qty={Number(form.qty) || 1} value={form.lot_no} onChange={(lot_no) => setForm({ ...form, lot_no })} />
                   <Field label="Danh sách Số Serial nhập tay (Để trống hệ thống tự sinh ngay)">
                     <input
                       className={`${inputClass} font-mono`}
@@ -526,7 +525,7 @@ export function AssemblyDhrView() {
                         selectedOrderId === r.id ? "bg-sky-50/70 dark:bg-sky-950/30 font-semibold" : ""
                       }`}
                     >
-                      <td className="py-2 pr-3 font-mono font-bold">{r.code}</td>
+                      <td className="py-2 pr-3 font-mono font-bold">{r.code}{r.lot_no && <div className="text-[10px] font-semibold text-sky-700 dark:text-sky-300">Lô {r.lot_no}</div>}</td>
                       <td className="py-2 pr-3">
                         <div>
                           {r.model_code} <span className="text-slate-400">(Rev {r.revision_code})</span>
@@ -556,7 +555,7 @@ export function AssemblyDhrView() {
         {d && (
           <div className="lg:col-span-7 flex flex-col gap-3">
             <Card
-              title={`Chi tiết lệnh ${d.code} — ${d.model_name} (Rev ${d.revision_code})`}
+              title={`Chi tiết lệnh ${d.code}${d.lot_no ? ` · Lô ${d.lot_no}` : ""} — ${d.model_name} (Rev ${d.revision_code})`}
               actions={
                 <div className="flex flex-wrap items-center gap-2">
                   <ActionBar
@@ -620,30 +619,37 @@ export function AssemblyDhrView() {
                     >
                       📦 1. Xuất kho nguyên liệu theo BOM (Kitting FEFO/FIFO)
                     </Button>
+                    <select
+                      className={`${inputClass} !w-56`}
+                      value={fqcAssignee}
+                      onChange={(e) => setFqcAssignee(e.target.value)}
+                      aria-label="QC phụ trách FQC"
+                      title="QC-QA được giao kiểm tra xuất xưởng (nhận thông báo)"
+                    >
+                      <option value="">QC phụ trách FQC (tùy chọn)…</option>
+                      {(fqcPeople.data ?? []).map((p) => (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                        </option>
+                      ))}
+                    </select>
                     <Button
                       variant="ghost"
                       disabled={orderSerialMut.isPending || d.units.length === 0}
+                      title={`Chỉ chuyển các máy đã ghi lão hóa ĐẠT ≥ ${d.required_burn_in_hours}h; model phải có tiêu chuẩn FQC`}
                       onClick={() =>
                         orderSerialMut.mutate({
                           operation: "progress_stage",
                           stage_action: "complete_burn_in_to_fqc",
+                          fqc_assignee_id: fqcAssignee ? Number(fqcAssignee) : null,
                         })
                       }
                     >
-                      🔥 2. Hoàn tất Lão hóa ({d.required_burn_in_hours}h) ➔ Sang FQC
+                      🔥 2. Chuyển máy đã lão hóa ĐẠT ➔ QC (FQC)
                     </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={orderSerialMut.isPending || d.units.length === 0}
-                      onClick={() =>
-                        orderSerialMut.mutate({
-                          operation: "progress_stage",
-                          stage_action: "fqc_pass_and_qa_release",
-                        })
-                      }
-                    >
-                      ✅ 3. Đo kiểm FQC Đạt &amp; QA Giải phóng xuất xưởng
-                    </Button>
+                    <span className="text-[11px] text-slate-500 dark:text-slate-400 self-center">
+                      3. QC ghi kết quả FQC trên phiếu QC, QA ký giải phóng từng máy (nút trên từng máy).
+                    </span>
                     <Button
                       variant="ghost"
                       disabled={d.units.length === 0}
@@ -791,8 +797,12 @@ export function AssemblyDhrView() {
                         <Button variant="ghost" onClick={() => openKittingSlipWindow(d)}>
                           🖨 In Phiếu Soạn Linh Kiện (Kitting Slip)
                         </Button>
+                        <Button variant="ghost" onClick={() => setIssueSlipFor(d.id)}>
+                          ✍ Phiếu BM 21-01 (ký &amp; in)
+                        </Button>
                       </div>
                     </div>
+                    {issueSlipFor === d.id && <IssueSlipPanel orderId={d.id} onClose={() => setIssueSlipFor(null)} />}
                     <Table head={["Trạm", "Linh kiện / Bản vẽ", "Nguồn / Truy vết", "ĐM/máy", "Tổng cần", "Đã lắp", "Tồn kho", "Thiếu hụt"]}>
                       {d.kitting_summary.map((k) => (
                         <tr key={k.id}>

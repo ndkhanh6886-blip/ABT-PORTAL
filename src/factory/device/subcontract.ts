@@ -8,6 +8,7 @@ import { insertRecord, parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, runTransition } from "../core/stateMachine";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { createLot, lotMachine } from "../inv/lots";
+import { readAttachment, saveAttachment } from "../core/files";
 import { getItem } from "../master/service";
 import "./permissions";
 
@@ -212,6 +213,10 @@ export async function receiveSubcontractLine(tx: Tx, actor: AuthzActor, orderId:
     )
   ).rows[0];
   if (!line) throw notFound("dòng chi tiết gia công");
+  // QT 21: the drawing with the measured values written on it is the IQC record of accepted parts
+  if (d.qty_accepted > 0 && !(await lineFiles(tx, line.id)).length) {
+    throw invalid("Đính kèm bản vẽ đã ghi kết quả QC của chi tiết này trước khi nghiệm thu Đạt.", undefined, "IQC_DRAWING_REQUIRED");
+  }
 
   const remaining = Number(line.qty_ordered) - Number(line.qty_accepted) - Number(line.qty_rejected);
   if (d.qty_accepted + d.qty_rejected > remaining + 1e-9) {
@@ -541,4 +546,46 @@ export async function listVendorEvaluations(tx: Tx, actor: AuthzActor) {
         ORDER BY ve.created_at DESC LIMIT 200`
     )
   ).rows;
+}
+
+// ---------------------------------------------------------------------------
+// IQC drawings: the technical drawing with the measured values, attached to each subcontract line
+// ---------------------------------------------------------------------------
+
+const LINE_FILES = "device_subcontract_line";
+
+async function lineFiles(tx: Tx, lineId: string) {
+  return (
+    await tx.query(
+      `SELECT f.id, f.file_name, f.mime_type, f.size_bytes, f.uploaded_at, p.display_name AS uploaded_by_name
+         FROM core.attachment f LEFT JOIN core.user_profile p ON p.user_id = f.uploaded_by
+        WHERE f.entity_type = $1 AND f.entity_id = $2 AND f.voided_at IS NULL ORDER BY f.uploaded_at`,
+      [LINE_FILES, lineId]
+    )
+  ).rows;
+}
+
+async function lineScope(tx: Tx, lineId: string): Promise<string> {
+  const r = (await tx.query("SELECT o.org_unit_id FROM device.subcontract_line l JOIN device.subcontract_order o ON o.id = l.order_id WHERE l.id = $1", [lineId])).rows[0];
+  if (!r) throw notFound("dòng chi tiết gia công");
+  return r.org_unit_id;
+}
+
+/** Attaches the QC'd drawing (PDF or image / scan) to a subcontract line. */
+export async function attachLineDrawing(tx: Tx, actor: AuthzActor, lineId: string, file: { fileName: string; mimeType: string; data: Buffer }) {
+  await authorize(tx, actor, "device.subcontract.manage", await lineScope(tx, lineId));
+  return saveAttachment(tx, actor, { entityType: LINE_FILES, entityId: lineId, category: file.mimeType.startsWith("image/") ? "IMAGE" : "DOCUMENT", ...file });
+}
+
+export async function listLineDrawings(tx: Tx, actor: AuthzActor, lineId: string) {
+  await authorize(tx, actor, "device.view", await lineScope(tx, lineId));
+  return lineFiles(tx, lineId);
+}
+
+export async function readLineDrawing(tx: Tx, actor: AuthzActor, lineId: string, fileId: string) {
+  await authorize(tx, actor, "device.view", await lineScope(tx, lineId));
+  if (!(await tx.query("SELECT 1 FROM core.attachment WHERE id = $1 AND entity_type = $2 AND entity_id = $3", [fileId, LINE_FILES, lineId])).rowCount) {
+    throw notFound("bản vẽ đính kèm");
+  }
+  return readAttachment(tx, fileId);
 }

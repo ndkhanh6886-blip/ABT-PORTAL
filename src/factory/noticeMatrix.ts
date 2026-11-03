@@ -93,6 +93,7 @@ export const FACTORY_NOTICE_EVENTS: { type: string; dept: string; name: string; 
   { type: "KIT_IPC_GATE_PASSED", dept: "Sản xuất Kit", name: "IPQC đạt — được tiếp tục công đoạn", description: "QC xác nhận đạt chốt kiểm soát trung gian. Mặc định gửi Phòng Sản xuất Kit." },
   { type: "KIT_IPC_GATE_REJECTED", dept: "Sản xuất Kit", name: "IPQC không đạt — dừng công đoạn", description: "QC từ chối chốt kiểm soát trung gian. Mặc định gửi Phòng Sản xuất Kit." },
   { type: "ASSET_EVENT_REQUEST", dept: "Kỹ thuật – Thiết bị", name: "Đề xuất bảo trì / hiệu chuẩn / báo hỏng thiết bị", description: "Phòng ban đề xuất bảo trì, hiệu chuẩn, sửa chữa hoặc báo ngừng máy. Mặc định gửi Phòng Kỹ thuật – Thiết bị." },
+  { type: "DEVICE_FQC_ASSIGNED", dept: "Kỹ thuật – Thiết bị", name: "Giao QC phụ trách kiểm tra xuất xưởng (FQC)", description: "Phòng KTCN chuyển thiết bị đã lão hóa đạt sang QC-QA. Mặc định gửi QC phụ trách được chọn." },
   { type: "ASSET_EVENT_DONE", dept: "Kỹ thuật – Thiết bị", name: "Hoàn tất bảo trì / hiệu chuẩn thiết bị", description: "Phòng Kỹ thuật – Thiết bị hoàn thành phiếu. Mặc định gửi phòng sở hữu thiết bị." },
   { type: "IQC_PENDING", dept: "QA/QC", name: "Lô nhập chờ lấy mẫu kiểm nghiệm (IQC)", description: "Nguyên vật liệu vừa nhận về đang biệt trữ chờ lấy mẫu. Mặc định gửi người lấy mẫu của kho nhận." },
   { type: "QMS_DEVIATION", dept: "QA/QC", name: "Sự cố chất lượng / sai lệch mới", description: "Báo cáo sai lệch, sự cố chất lượng hoặc CAPA mới. Mặc định gửi người xem xét QC." },

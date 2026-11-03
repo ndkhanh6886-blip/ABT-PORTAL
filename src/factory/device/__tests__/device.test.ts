@@ -25,7 +25,9 @@ import {
   recordUnitFqcResult,
 } from "../assembly";
 import {
+  attachLineDrawing,
   createSubcontractOrder,
+  listLineDrawings,
   createSubcontractPart,
   createVendorEvaluation,
   receiveSubcontractLine,
@@ -49,6 +51,9 @@ import {
   proposePrFromPoShortage,
   transferDeviceRdToProduction,
 } from "../workflow";
+import { getIssueSlip, signIssueSlip } from "../issueSlip";
+import { approveSpec, createSpecDraft, specMachine } from "../../qms/specs";
+import { qcTestMachine, saveResults } from "../../qms/qcTests";
 import "../../modules";
 
 afterAll(closeFactoryPool);
@@ -69,6 +74,38 @@ async function act<S extends string, R extends { id: string; status: S; version:
   return withTransaction((tx) => runTransition(tx, machine, actor, req, { signerAuthenticated: true }));
 }
 
+/** QA issues an effective FQC spec for the model (QT 21: devices go to QC-QA only against one). */
+async function issueFqcSpec(site: Site, modelId: string) {
+  const author = await createUser("QA soạn tiêu chuẩn");
+  await grant(author, ["qms.spec.manage", "qms.qc.view"]);
+  const approver = await createUser("QA duyệt tiêu chuẩn", PIN);
+  await grant(approver, ["qms.spec.approve", "qms.qc.view"]);
+  const item = await makeItem(site, { name: "Thiết bị thành phẩm (FQC)", item_type: "FINISHED_KIT", base_uom: "pcs" });
+  const draft = await withTransaction((tx) =>
+    createSpecDraft(tx, author, { name: "FQC thiết bị", applies_to: "ITEM", item_id: item.id, parameters: [{ name: "Chạy thử chức năng", value_type: "PASS_FAIL", is_critical: true }] })
+  );
+  const row = (await getFactoryPool().query("SELECT version FROM qms.qc_spec WHERE id = $1", [draft.id])).rows[0];
+  const req = { id: draft.id, action: "approve", expectedVersion: row.version, ...signed };
+  await preAuthenticate(specMachine, "DRAFT", req, approver);
+  await withTransaction((tx) => approveSpec(tx, approver, req, true));
+  await getFactoryPool().query("UPDATE device.device_model SET fqc_spec_id = $2 WHERE id = $1", [modelId, draft.id]);
+}
+
+/** QC-QA runs the FQC test created when the device went to FQC: analyst enters PASS, another person reviews. */
+async function passFqcTest(unitId: string) {
+  const analyst = await createUser("QC kiểm nghiệm thiết bị");
+  await grant(analyst, ["qms.qc.analyze", "qms.qc.view"]);
+  const reviewer = await createUser("QC duyệt kết quả", PIN);
+  await grant(reviewer, ["qms.qc.review", "qms.qc.view"]);
+  const testId = (await getFactoryPool().query("SELECT fqc_test_id FROM device.device_unit WHERE id = $1", [unitId])).rows[0].fqc_test_id;
+  expect(testId).toBeTruthy();
+  const params = (await getFactoryPool().query("SELECT p.id FROM qms.qc_spec_parameter p JOIN qms.qc_test t ON t.spec_id = p.spec_id WHERE t.id = $1", [testId])).rows;
+  await act(qcTestMachine, analyst, testId, "start");
+  await withTransaction((tx) => saveResults(tx, analyst, testId, { results: params.map((p) => ({ parameter_id: p.id, value_text: "PASS" })) }));
+  await act(qcTestMachine, analyst, testId, "submit_results");
+  await act(qcTestMachine, reviewer, testId, "review", signed);
+}
+
 async function setupDeviceTeam(site: Site) {
   const engineer = await createUser("Kỹ sư KT-CN", PIN);
   await grant(
@@ -84,6 +121,7 @@ async function setupDeviceTeam(site: Site) {
       "work.plan.submit",
       "inv.stock.view",
       "master.data.view",
+      "purchase.pr.create",
     ],
     site.dept
   );
@@ -104,9 +142,13 @@ async function setupDeviceTeam(site: Site) {
       "work.plan.approve",
       "inv.stock.view",
       "master.data.view",
+      "purchase.pr.create",
     ],
     site.dept
   );
+
+  // R&D → production transfer creates the finished-goods item: company-wide catalogue right
+  await grant(lead, ["master.item.manage"]);
 
   const qaReleaser = await createUser("QA Giải phóng Thiết bị", PIN);
   await grant(qaReleaser, ["device.view", "device.unit.release", "device.eco.approve", "qms.qc.view"], site.dept);
@@ -131,7 +173,7 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
         required_burn_in_hours: 48,
       })
     );
-    expect(model.status).toBe("DEVELOPMENT");
+    expect(model.status).toBe("COMMERCIAL");
 
     const revA = await withTransaction((tx) =>
       createModelRevision(tx, engineer, {
@@ -326,8 +368,21 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
     const orderDetail = await withTransaction((tx) => getDeviceOrderDetail(tx, engineer, order.id));
     expect(orderDetail.units).toHaveLength(2);
     const u1 = orderDetail.units[0];
-    expect(u1.serial_no).toMatch(/^CYCLER96-\d{6}$/);
+    // lot Model-YYMMDD-Cỡ lô (suggested), serial YYMMDD + cỡ lô - STT in the lot (QT 21)
+    expect(orderDetail.lot_no).toMatch(/^CYCLER96-\d{6}-02$/);
+    expect(orderDetail.units.map((u: any) => u.serial_no)).toEqual([`${orderDetail.lot_no.split("-")[1]}02-01`, `${orderDetail.lot_no.split("-")[1]}02-02`]);
     expect(u1.status).toBe("IN_ASSEMBLY");
+
+    // another model, same day and lot size → same serials: blocked until the lot (or the serial list) is changed
+    const taken = orderDetail.units.map((u: any) => u.serial_no);
+    const other = await withTransaction((tx) =>
+      createDeviceOrder(tx, engineer, { org_unit_id: site.dept, model_id: model.id, warehouse_id: site.warehouse, qty: 2, lot_no: `TB2-${orderDetail.lot_no.split("-")[1]}-02`, auto_assign_serials: false })
+    );
+    await act(deviceOrderMachine, lead, other.id, "approve", signed);
+    await expect(act(deviceOrderMachine, engineer, other.id, "assign_serials")).rejects.toMatchObject({ code: "SERIAL_TAKEN", details: { taken } });
+    await expect(
+      withTransaction((tx) => createDeviceOrder(tx, engineer, { org_unit_id: site.dept, model_id: model.id, warehouse_id: site.warehouse, qty: 1, lot_no: other.lot_no }))
+    ).rejects.toMatchObject({ code: "LOT_TAKEN" });
 
     // Station 1: Install mechanical housing
     await withTransaction((tx) =>
@@ -363,6 +418,22 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
     ).rows[0];
     expect(Number(pcbBalance.qty)).toBe(19);
 
+    // BM 21-01: the issued lots, three different signers; issuing more afterwards voids the signatures
+    const keeper = await createUser("Thủ kho KT-CN", PIN);
+    await grant(keeper, ["device.view", "inv.document.post"], site.dept);
+    const slip = await withTransaction((tx) => getIssueSlip(tx, engineer, order.id));
+    expect(slip.form.code).toBe("BM 21-01");
+    expect(slip.order.lot_no).toBe(orderDetail.lot_no);
+    const pcbRow = slip.lines.find((l) => l.item_code === pcbItem.code && l.lot_code)!;
+    expect(pcbRow).toMatchObject({ qty_per_unit: 1, qty_lot: 2, qty_issued: 1 });
+    expect(pcbRow.received_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    await withTransaction((tx) => signIssueSlip(tx, engineer, order.id, { role: "PRODUCTION" }, "PIN"));
+    await expect(withTransaction((tx) => signIssueSlip(tx, engineer, order.id, { role: "LEAD" }, "PIN"))).rejects.toMatchObject({ code: "SAME_SIGNER" });
+    await expect(withTransaction((tx) => signIssueSlip(tx, keeper, order.id, { role: "LEAD" }, "PIN"))).rejects.toThrow(/quyền/);
+    await withTransaction((tx) => signIssueSlip(tx, lead, order.id, { role: "LEAD" }, "PIN"));
+    await withTransaction((tx) => signIssueSlip(tx, keeper, order.id, { role: "WAREHOUSE" }, "PIN"));
+    expect((await withTransaction((tx) => getIssueSlip(tx, engineer, order.id))).signatures.every((s) => s.valid)).toBe(true);
+
     // Advance unit 1 to BURN_IN
     const u1Burn = await act(deviceUnitMachine, engineer, u1.id, "start_burn_in", {
       payload: { firmware_version: "v2.0.0" },
@@ -378,6 +449,7 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
         notes: "Chạy thử 24h chưa đủ thời gian lão hóa",
       })
     );
+    await issueFqcSpec(site, model.id);
 
     await expect(act(deviceUnitMachine, engineer, u1.id, "to_fqc")).rejects.toMatchObject({
       code: "GUARD_FAILED",
@@ -400,7 +472,7 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
 
     // Record FQC FAIL -> automatically returns unit to IN_ASSEMBLY and opens QMS Deviation + NCR
     const u1Failed = await withTransaction((tx) =>
-      recordUnitFqcResult(tx, engineer, u1.id, {
+      recordUnitFqcResult(tx, qaReleaser, u1.id, {
         passed: false,
         summary: "Lệch kênh quang FAM tại giếng A1",
       })
@@ -416,7 +488,7 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
     await act(deviceUnitMachine, engineer, u1.id, "start_burn_in");
     await act(deviceUnitMachine, engineer, u1.id, "to_fqc");
     const u1PassedFqc = await withTransaction((tx) =>
-      recordUnitFqcResult(tx, engineer, u1.id, {
+      recordUnitFqcResult(tx, qaReleaser, u1.id, {
         passed: true,
         summary: "Đã hiệu chuẩn lại kênh quang FAM đạt chuẩn xuất xưởng",
       })
@@ -430,6 +502,7 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
       details: expect.arrayContaining([expect.objectContaining({ code: "SELF_RELEASE" })]),
     });
 
+    await passFqcTest(u1.id);
     // Independent QA signs qa_pass
     const u1QaPassed = await act(deviceUnitMachine, qaReleaser, u1.id, "qa_pass", signed);
     expect(u1QaPassed.status).toBe("QA_PASSED");
@@ -512,6 +585,12 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
     expect(Number(stockAfterRework.qty)).toBe(0);
 
     // Batch 2: qty_accepted = 8, qty_rejected = 2 -> posts RECEIPT for 8 units and auto-creates NCR for 2 rejected units
+    // (QT 21: accepting needs the drawing with the measured values attached first)
+    const batch2 = { line_id: lineId, qty_accepted: 8, qty_rework: 0, qty_rejected: 2, iqc_dimension_note: "8 chi tiết đạt chuẩn bản vẽ" };
+    await expect(withTransaction((tx) => receiveSubcontractLine(tx, engineer, subOrder.id, batch2))).rejects.toMatchObject({ code: "IQC_DRAWING_REQUIRED" });
+    const pdf = Buffer.from("%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n");
+    await withTransaction((tx) => attachLineDrawing(tx, engineer, lineId, { fileName: "ban-ve-QC.pdf", mimeType: "application/pdf", data: pdf }));
+    expect((await withTransaction((tx) => listLineDrawings(tx, engineer, lineId))).map((f: any) => f.file_name)).toEqual(["ban-ve-QC.pdf"]);
     const afterAccept = await withTransaction((tx) =>
       receiveSubcontractLine(tx, engineer, subOrder.id, {
         line_id: lineId,
@@ -626,13 +705,15 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
         result: "PASS",
       })
     );
+    await issueFqcSpec(site, model.id);
     await act(deviceUnitMachine, engineer, unit.id, "to_fqc");
     await withTransaction((tx) =>
-      recordUnitFqcResult(tx, engineer, unit.id, {
+      recordUnitFqcResult(tx, qaReleaser, unit.id, {
         passed: true,
         summary: "FQC đạt",
       })
     );
+    await passFqcTest(unit.id);
     await act(deviceUnitMachine, qaReleaser, unit.id, "qa_pass", signed);
     await act(deviceUnitMachine, engineer, unit.id, "deliver", {
       payload: { customer_name: "Bệnh viện Chợ Rẫy" },
@@ -808,8 +889,10 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
 
     // 5.5 Convert PO -> Work Order (for 2 units that we have stock for)
     const woRes = await withTransaction((tx) =>
+      // a lot of its own: test 2 already used today's 2-unit serials
       convertPoToWorkOrder(tx, engineer, poRes.po_id, {
         qty: 2,
+        lot_no: "E2E-990101-02",
       })
     );
     expect(woRes.work_order_code).toMatch(/^(DO|DVO|WO)/);
@@ -820,8 +903,28 @@ describe("Phase 4c — Module Phòng Kỹ thuật – Công nghệ / Thiết b�
     expect(kittingRes.installed_count).toBe(4); // 2 units * 2 BOM lines
 
     // 5.7 Progress Work Order through Burn-in -> FQC -> QA Release -> Delivery
+    await issueFqcSpec(site, rdRes.model_id);
+    await withTransaction((tx) => progressWorkOrderStage(tx, engineer, woRes.work_order_id, "start_burn_in"));
+    // no burn-in recorded yet: the batch step refuses instead of writing a PASS run itself
+    await expect(withTransaction((tx) => progressWorkOrderStage(tx, engineer, woRes.work_order_id, "complete_burn_in_to_fqc"))).rejects.toMatchObject({
+      code: "GUARD_FAILED",
+      details: expect.arrayContaining([expect.objectContaining({ code: "BURN_IN_NOT_PASSED" })]),
+    });
+    const woUnits = (await withTransaction((tx) => getDeviceOrderDetail(tx, engineer, woRes.work_order_id))).units;
+    const reqHours = Number((await getFactoryPool().query("SELECT required_burn_in_hours FROM device.device_model WHERE id = $1", [rdRes.model_id])).rows[0].required_burn_in_hours);
+    for (const u of woUnits) {
+      await withTransaction((tx) => recordBurnInRun(tx, engineer, u.id, { hours: reqHours, max_temp_c: 60, result: "PASS", notes: "Lão hóa đủ giờ" }));
+    }
     await withTransaction((tx) => progressWorkOrderStage(tx, engineer, woRes.work_order_id, "complete_burn_in_to_fqc"));
-    await withTransaction((tx) => progressWorkOrderStage(tx, qaReleaser, woRes.work_order_id, "fqc_pass_and_qa_release"));
+    // release is per device: QC records FQC on its QC test, QA signs; the batch release no longer exists
+    await expect(withTransaction((tx) => progressWorkOrderStage(tx, qaReleaser, woRes.work_order_id, "fqc_pass_and_qa_release"))).rejects.toMatchObject({
+      code: "BATCH_RELEASE_REMOVED",
+    });
+    for (const u of woUnits) {
+      await withTransaction((tx) => recordUnitFqcResult(tx, qaReleaser, u.id, { passed: true, summary: "Đạt các chỉ tiêu FQC" }));
+      await passFqcTest(u.id);
+      await act(deviceUnitMachine, qaReleaser, u.id, "qa_pass", signed);
+    }
     const delivRes = await withTransaction((tx) =>
       progressWorkOrderStage(tx, engineer, woRes.work_order_id, "deliver_order", "Bệnh viện Đại học Y Dược")
     );

@@ -6,6 +6,7 @@ import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, fmtVnd } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import { SUBCONTRACT_STATUS, useDeviceOptions } from "./shared";
+import { LineDrawings } from "./LineDrawings";
 
 const SUB_ACTION_LABELS: Record<string, string> = {
   issue: "Phát hành đơn gửi nhà cung cấp",
@@ -458,12 +459,12 @@ export function SubcontractView() {
                           <option value="AOI_MULTIMETER">Kính AOI &amp; Đồng hồ VOM (PCB)</option>
                         </select>
                       </Field>
-                      <Field label="Kích thước danh định">
+                      <Field label="Kích thước & dung sai theo bản vẽ">
                         <input
                           className={`${inputClass} font-mono`}
                           value={iqcForm.nominal_spec}
                           onChange={(e) => setIqcForm({ ...iqcForm, nominal_spec: e.target.value })}
-                          placeholder="VD: 120.00 ±0.02 mm"
+                          placeholder="Theo bản vẽ; không ghi → ISO 2768-m"
                         />
                       </Field>
                       <Field label="Giá trị đo thực tế">
@@ -491,6 +492,7 @@ export function SubcontractView() {
                         onChange={(e) => setIqcForm({ ...iqcForm, iqc_dimension_note: e.target.value })}
                       />
                     </Field>
+                    <LineDrawings key={iqcForm.line_id || d.lines[0].id} lineId={iqcForm.line_id || d.lines[0].id} />
                     <ErrorNote error={receiveMut.error} />
                     <div className="flex justify-end">
                       <Button

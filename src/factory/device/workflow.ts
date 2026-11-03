@@ -3,7 +3,7 @@ import type { Tx } from "../core/db";
 import { writeAudit } from "../core/audit";
 import { authorize, authorizeAnywhere, hasFactoryPermission, registerPermissions, SYSTEM_ACTOR, type AuthzActor } from "../core/authz";
 import { vnToday } from "../core/dates";
-import { invalid, notFound } from "../core/errors";
+import { FactoryError, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { insertRecord, parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
@@ -13,6 +13,7 @@ import { createItem, getItem, toBaseQty } from "../master/service";
 import { createRequest } from "../purchase/requests";
 import {
   allocateOrderSerials,
+  resolveLotNo,
   deviceUnitMachine,
   getDeviceOrderDetail,
   syncOrderStatusFromUnits,
@@ -1176,14 +1177,14 @@ export async function convertPoToWorkOrder(
         internal_order_id: string;
         internal_order_line_id?: string;
         qty?: number;
-        serial_prefix?: string | null;
+        lot_no?: string | null;
         serial_numbers?: string | string[] | null;
         priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
       },
   extraOpts?: {
     internal_order_line_id?: string;
     qty?: number;
-    serial_prefix?: string | null;
+    lot_no?: string | null;
     serial_numbers?: string | string[] | null;
     priority?: "LOW" | "NORMAL" | "HIGH" | "URGENT";
   }
@@ -1241,6 +1242,7 @@ export async function convertPoToWorkOrder(
     model_revision_id: model.current_revision_id,
     warehouse_id: devWh.id,
     qty,
+    lot_no: await resolveLotNo(tx, model.id, qty, input.lot_no),
     custom_specs: `Lập từ Đơn PO ${po.kd_po_code} (${po.code})${po.notes ? ` — ${po.notes}` : ""}`,
     priority: input.priority ?? "HIGH",
     due_date: po.committed_date || po.requested_date || vnToday(),
@@ -1250,10 +1252,7 @@ export async function convertPoToWorkOrder(
     status: "IN_PRODUCTION",
   });
 
-  const units = await allocateOrderSerials(tx, actor, order, {
-    serial_prefix: input.serial_prefix ?? model.code,
-    serial_numbers: input.serial_numbers ?? null,
-  });
+  const units = await allocateOrderSerials(tx, actor, order, { serial_numbers: input.serial_numbers ?? null });
 
   if (["RECEIVED", "ACCEPTED"].includes(po.status)) {
     await tx.query(
@@ -1726,6 +1725,7 @@ export async function progressWorkOrderStage(
     | {
         stage_action: "start_burn_in" | "complete_burn_in_to_fqc" | "fqc_pass_and_qa_release" | "deliver_order";
         customer_name?: string;
+        fqc_assignee_id?: number | null;
         handover_accessories?: string[];
       },
   maybeCustomerName?: string
@@ -1739,22 +1739,21 @@ export async function progressWorkOrderStage(
     | undefined;
   if (!order) throw notFound("Lệnh lắp ráp thiết bị");
   if (input.stage_action === "fqc_pass_and_qa_release") {
-    const canQaRelease =
-      (await hasFactoryPermission(tx, actor, "device.qa.release", order.org_unit_id)) ||
-      (await hasFactoryPermission(tx, actor, "device.unit.release", order.org_unit_id));
-    if (!canQaRelease) {
-      await authorize(tx, actor, "device.qa.release", order.org_unit_id);
-    }
-  } else {
-    await authorize(tx, actor, "device.order.manage", order.org_unit_id);
+    // QT 21: FQC is recorded by QC-QA on its QC test and every device is released by QA with an e-signature;
+    // a batch shortcut that writes the result and the release directly would bypass both.
+    throw invalid(
+      "Không giải phóng hàng loạt: QC ghi kết quả FQC trên phiếu QC của từng máy, sau đó QA ký điện tử giải phóng từng máy (nút “QA giải phóng” trên máy).",
+      undefined,
+      "BATCH_RELEASE_REMOVED"
+    );
   }
+  await authorize(tx, actor, "device.order.manage", order.org_unit_id);
 
   const model = (
     await tx.query("SELECT required_burn_in_hours::float AS req, warranty_months, accessories_standard FROM device.device_model WHERE id = $1", [
       order.model_id,
     ])
   ).rows[0];
-  const reqHours = Number(model?.req ?? 48);
 
   const units = (
     await tx.query("SELECT * FROM device.device_unit WHERE order_id = $1 ORDER BY serial_no ASC FOR UPDATE", [order.id])
@@ -1778,68 +1777,17 @@ export async function progressWorkOrderStage(
       }
     }
   } else if (input.stage_action === "complete_burn_in_to_fqc") {
+    // Only devices whose burn-in run was actually recorded as PASS move on (the to_fqc guards check it and the
+    // FQC spec): the burn-in record is DHR evidence and is never written here on the operator's behalf.
     for (const u of units) {
-      let cur = u;
-      if (cur.status === "IN_ASSEMBLY") {
-        cur = await runTransition(
-          tx,
-          deviceUnitMachine,
-          actor,
-          {
-            id: cur.id,
-            action: "start_burn_in",
-            expectedVersion: cur.version,
-            payload: { firmware_version: cur.firmware_version || "v1.0.0" },
-          },
-          { trusted: true }
-        );
-      }
-      if (cur.status === "BURN_IN") {
-        await tx.query(
-          `INSERT INTO device.burn_in_run (unit_id, ended_at, hours, required_hours, max_temp_c, cycles_completed, result, notes, recorded_by)
-           VALUES ($1, now(), $2, $2, 95.0, 120, 'PASS', 'Đạt chạy lão hóa liên tục ổn định nhiệt & tải', $3)`,
-          [cur.id, reqHours, actor.userId]
-        );
-        await runTransition(
-          tx,
-          deviceUnitMachine,
-          actor,
-          { id: cur.id, action: "to_fqc", expectedVersion: cur.version },
-          { trusted: true }
-        );
+      if (u.status !== "BURN_IN") continue;
+      try {
+        await runTransition(tx, deviceUnitMachine, actor, { id: u.id, action: "to_fqc", expectedVersion: u.version, payload: { fqc_assignee_id: (input as { fqc_assignee_id?: number | null }).fqc_assignee_id ?? null } });
+      } catch (e: any) {
+        if (e instanceof FactoryError) throw new FactoryError(e.status, e.code, `Máy ${u.serial_no}: ${e.message}`, e.details);
+        throw e;
       }
     }
-  } else if (input.stage_action === "fqc_pass_and_qa_release") {
-    await tx.query("ALTER TABLE device.device_unit ADD COLUMN IF NOT EXISTS assembled_by integer");
-    for (const u of units) {
-      if (u.status === "FQC") {
-        const inst = await tx.query(
-          "SELECT 1 FROM device.device_unit_component WHERE unit_id = $1 AND installed_by = $2 LIMIT 1",
-          [u.id, actor.userId]
-        );
-        if ((u as any).assembled_by === actor.userId || inst.rowCount) {
-          throw invalid(
-            `Người ký QA giải phóng xuất xưởng phải độc lập với kỹ thuật viên đã lắp ráp máy ${u.serial_no} (Segregation of Duties).`,
-            undefined,
-            "SELF_RELEASE"
-          );
-        }
-        await tx.query(
-          `UPDATE device.device_unit
-              SET fqc_passed = true,
-                  fqc_summary = 'Đạt 100% chỉ tiêu đo kiểm xuất xưởng FQC (An toàn điện IEC 61010-1, Hiệu chuẩn nhiệt/quang)',
-                  qa_released_by = $2,
-                  qa_released_at = now(),
-                  status = 'QA_PASSED',
-                  version = version + 1,
-                  updated_at = now(),
-                  updated_by = $2
-            WHERE id = $1`,
-          [u.id, actor.userId]
-        );
-      }
-    }
-    await syncOrderStatusFromUnits(tx, order.id, actor.userId);
   } else if (input.stage_action === "deliver_order") {
     let customerName = input.customer_name?.trim() || "";
     if (!customerName && order.internal_order_line_id) {
