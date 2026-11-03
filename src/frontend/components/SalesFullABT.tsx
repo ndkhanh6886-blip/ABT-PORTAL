@@ -68,8 +68,6 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { dispatchCompanyConfigUpdated, getDefaultCompanyConfig } from "@/frontend/utils/companyConfig";
 import * as XLSX from "xlsx";
 import { exportCustomerQuotationToExcel } from "@/frontend/utils/exportQuotationExcel";
-import { isLegacyMockAppTask } from "@/frontend/utils/legacyMockData";
-import { DEFAULT_VAT_RATE, preVatAmount } from "@/frontend/utils/vat";
 import { getMesApiBase } from "@/frontend/utils/mesApi";
 import { SalesEvaluationAnalytics } from "@/frontend/components/SalesEvaluationAnalytics";
 import { SalesPerformanceAnalytics } from "@/frontend/components/SalesPerformanceAnalytics";
@@ -200,7 +198,150 @@ export interface InboundLog13b {
     notes?: string;
 }
 
-const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [];
+const DEFAULT_EQUIPMENT_PRODUCTS: CommercialProduct[] = [
+    {
+        code: "SYS-PCR-96E",
+        name: "Hệ thống Realtime PCR 96 giếng Gentier 96E (4 kênh huỳnh quang)",
+        category: "Thiết bị chuyên sâu",
+        subCategory: "Máy Realtime PCR",
+        brand: "Tianlong",
+        origin: "Tianlong / CE-IVD, ISO 13485",
+        unit: "Hệ thống",
+        specification: "Gentier 96E (4 kênh huỳnh quang FAM, VIC, ROX, CY5)",
+        costPrice: 420000000,
+        price: 680000000,
+        priceDealer1: 612000000,
+        priceDealer2: 578000000,
+        warranty: "24 tháng",
+        leadTime: "Có sẵn kho",
+        supplier: "Tianlong Science and Technology",
+        isEquipment: true,
+        imageUrl: "https://images.unsplash.com/photo-1582719478250-c89cae4dc85b?auto=format&fit=crop&w=600&q=80",
+        techSpecs: "• Công suất: 96 giếng x 0.2 ml dạng tube đơn, strip 8 giếng hoặc plate 96 giếng.\n• Hệ quang học: 4 kênh màu (FAM/SYBR Green, VIC/HEX/TET/JOE, ROX/Texas Red, CY5).\n• Bước sóng kích thích: 455 - 650 nm | Bước sóng phát xạ: 510 - 715 nm.\n• Tốc độ gia nhiệt tối đa: 6.1 °C/giây | Tốc độ làm mát tối đa: 5.0 °C/giây.\n• Độ đồng đều nhiệt độ: ±0.1 °C | Màn hình cảm ứng màu 10.4 inch điều khiển độc lập.",
+        configurations: [
+            { id: "cfg-pcr-1", name: "Thân máy chính Realtime PCR Gentier 96E", model: "Gentier 96E", origin: "Tianlong", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Mới 100%, CE-IVD, ISO 13485" },
+            { id: "cfg-pcr-2", name: "Phần mềm điều khiển & phân tích định lượng bản quyền", model: "Gentier Analysis SW", origin: "Tianlong", quantity: 1, unit: "Bản", isStandard: true, isIncluded: true, notes: "Bản quyền theo máy, miễn phí cập nhật trọn đời" },
+            { id: "cfg-pcr-3", name: "Bộ phụ kiện tiêu chuẩn (Cáp nguồn, cáp mạng, khay đỡ, adapter)", model: "Std. Pack", origin: "Tianlong", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ từ nhà sản xuất" },
+            { id: "cfg-pcr-4", name: "Bộ lưu điện trực tuyến UPS Online Santak 2kVA (Bảo vệ nguồn điện)", model: "Santak C2K-LCD", origin: "Santak", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Lưu điện và chống xung nhiễu điện áp" },
+            { id: "cfg-pcr-5", name: "Bộ máy vi tính điều khiển Core i5, RAM 16GB, SSD 512GB + Màn hình Dell 24 inch", model: "OptiPlex 7010", origin: "Dell", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Cài sẵn hệ điều hành và phần mềm Gentier" },
+            { id: "cfg-pcr-6", name: "Dịch vụ kỹ thuật: Giao hàng, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bàn giao hồ sơ thẩm định và chứng nhận đào tạo" },
+            { id: "cfg-pcr-7", name: "Gói bảo hành chính hãng 24 tháng & bảo dưỡng định kỳ 06 tháng/lần", model: "Warranty 24M", origin: "Tianlong / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong vòng 24h" }
+        ],
+        notes: "Dòng máy PCR định lượng cao cấp độ nhạy cao dùng cho phòng lab xét nghiệm đạt chuẩn ISO 15189"
+    },
+    {
+        code: "SYS-EXT-32",
+        name: "Hệ thống tách chiết axit nucleic tự động GeneRotex 96",
+        category: "Thiết bị chuyên sâu",
+        subCategory: "Máy tách chiết tự động",
+        brand: "Tianlong",
+        origin: "Tianlong / CE-IVD, ISO 13485",
+        unit: "Hệ thống",
+        specification: "GeneRotex 96 (Công suất 1 - 96 mẫu/mẻ, công nghệ từ tính xoay)",
+        costPrice: 280000000,
+        price: 450000000,
+        priceDealer1: 405000000,
+        priceDealer2: 382500000,
+        warranty: "12 tháng",
+        leadTime: "Có sẵn kho",
+        supplier: "Tianlong Science and Technology",
+        isEquipment: true,
+        imageUrl: "https://images.unsplash.com/photo-1579154204601-01588f351e67?auto=format&fit=crop&w=600&q=80",
+        techSpecs: "• Công suất tách chiết: 1 đến 96 mẫu/mẻ, thời gian tách chiết cực nhanh 15-40 phút.\n• Thể tích xử lý: 30 µl - 1000 µl | Hiệu suất thu hồi hạt từ: >98%.\n• Công nghệ trộn hạt từ quay độc quyền (Rotary Mixing Technology) chống sol khí lây nhiễm chéo.\n• Khử trùng buồng máy: Tích hợp đèn cực tím UV và hệ thống lọc khí HEPA hiệu năng cao.",
+        configurations: [
+            { id: "cfg-ext-1", name: "Thân máy tách chiết tự động GeneRotex 96", model: "GeneRotex 96", origin: "Tianlong", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Mới 100%, CE-IVD" },
+            { id: "cfg-ext-2", name: "Khối thanh từ 96 mẫu (96-well Magnetic Rod)", model: "Mag-96", origin: "Tianlong", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ theo máy" },
+            { id: "cfg-ext-3", name: "Giá đỡ khay đĩa Deep-well 96 và giá đựng tip từ", model: "Plate Holder", origin: "Tianlong", quantity: 2, unit: "Cái", isStandard: true, isIncluded: true, notes: "Inox chuyên dụng kháng hóa chất" },
+            { id: "cfg-ext-4", name: "Bộ lưu điện Santak 1kVA lưu điện dự phòng", model: "TG1000", origin: "Santak", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Trang bị bảo vệ máy khi ngắt điện" },
+            { id: "cfg-ext-5", name: "Dịch vụ vận chuyển, lắp đặt, nghiệm thu & đào tạo vận hành", model: "Service", origin: "Việt Nam (TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Đào tạo kỹ thuật viên phòng xét nghiệm" },
+            { id: "cfg-ext-6", name: "Gói bảo hành chính hãng 12 tháng tận nơi", model: "Warranty 12M", origin: "Tianlong / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Linh kiện thay thế chính hãng có sẵn" }
+        ],
+        notes: "Tách chiết DNA/RNA tự động cho mẫu bệnh phẩm máu, huyết thanh, mô, dịch phết..."
+    },
+    {
+        code: "BSC-1300IIA2",
+        name: "Tủ an toàn sinh học Cấp II A2 (Rộng 1.3m) Biosafety Cabinet",
+        category: "Thiết bị cơ bản",
+        subCategory: "Tủ an toàn sinh học",
+        brand: "Haier Biomedical",
+        origin: "Haier Biomedical / EN 12469, NSF 49",
+        unit: "Hệ thống",
+        specification: "HR40-IIA2 (Rộng 1.3m, 70% tuần hoàn - 30% thải qua lọc ULPA)",
+        costPrice: 95000000,
+        price: 165000000,
+        priceDealer1: 148500000,
+        priceDealer2: 140250000,
+        warranty: "24 tháng",
+        leadTime: "Có sẵn kho",
+        supplier: "Haier Biomedical",
+        isEquipment: true,
+        imageUrl: "https://images.unsplash.com/photo-1581093458791-9f3c3900df4b?auto=format&fit=crop&w=600&q=80",
+        techSpecs: "• Tiêu chuẩn an toàn: EN 12469, NSF/ANSI 49 | Độ sạch vùng làm việc: Class 10 (ISO 4).\n• Màng lọc: 02 màng lọc ULPA hiệu suất lọc 99.9995% với các hạt kích thước 0.12 µm.\n• Tỷ lệ dòng khí: 70% tuần hoàn qua lọc ULPA, 30% khí thải qua lọc ULPA ra ngoài.\n• Cửa kính cường lực 2 lớp chống tia UV, điều chỉnh nâng hạ điện có cảm biến an toàn.",
+        configurations: [
+            { id: "cfg-bsc-1", name: "Thân tủ an toàn sinh học cấp II A2 chiều rộng 1.3m", model: "HR40-IIA2", origin: "Haier Biomedical", quantity: 1, unit: "Tủ", isStandard: true, isIncluded: true, notes: "Mặt làm việc inox 304 nguyên khối dễ vệ sinh" },
+            { id: "cfg-bsc-2", name: "Chân đế tủ chuyên dụng có bánh xe khóa vị trí và chân tăng chỉnh", model: "Base Stand", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ chính hãng" },
+            { id: "cfg-bsc-3", name: "Hệ thống đèn chiếu sáng LED và đèn UV diệt khuẩn 30W hẹn giờ", model: "Lighting & UV", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Khóa liên động an toàn đèn UV và kính" },
+            { id: "cfg-bsc-4", name: "02 ổ cắm điện chống nước chuẩn IP54 bên trong buồng làm việc", model: "Power Socket", origin: "Haier Biomedical", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Cung cấp nguồn cho máy vortex/shaker nhỏ" },
+            { id: "cfg-bsc-5", name: "Dịch vụ: Lắp đặt, thẩm định tốc độ gió, kiểm tra rò rỉ màng lọc & cấp giấy kiểm định", model: "Certification Package", origin: "Việt Nam", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm chứng nhận hiệu chuẩn kiểm định độc lập" },
+            { id: "cfg-bsc-6", name: "Gói bảo hành chính hãng 24 tháng", model: "Warranty 24M", origin: "Haier Biomedical / TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Bảo hành tận nơi 24 tháng" }
+        ],
+        notes: "Bảo vệ tối đa người thao tác, mẫu thử và môi trường phòng xét nghiệm"
+    },
+    {
+        code: "CEN-TGL-16M",
+        name: "Máy ly tâm lạnh vi lượng tốc độ cao TGL-16M (16.000 rpm)",
+        category: "Thiết bị cơ bản",
+        subCategory: "Máy ly tâm lạnh",
+        brand: "Dlab / Anting",
+        origin: "Đạt chuẩn ISO 13485, CE",
+        unit: "Bộ",
+        specification: "TGL-16M (Tốc độ tối đa 16.000 rpm, RCF 21.000 x g, nhiệt độ -20°C đến +40°C)",
+        costPrice: 48000000,
+        price: 85000000,
+        priceDealer1: 76500000,
+        priceDealer2: 72250000,
+        warranty: "12 tháng",
+        leadTime: "Có sẵn kho",
+        supplier: "Dlab Scientific",
+        isEquipment: true,
+        imageUrl: "https://images.unsplash.com/photo-1582719508461-905c673771fd?auto=format&fit=crop&w=600&q=80",
+        techSpecs: "• Tốc độ ly tâm: 300 - 16.000 vòng/phút (bước tăng 100 rpm).\n• Lực ly tâm tối đa: 21.000 x g | Dải nhiệt độ làm lạnh: -20°C đến +40°C (duy trì 4°C ở tốc độ tối đa).\n• Động cơ biến tần không chổi than, không cần bảo trì, độ ồn cực thấp < 58 dB.",
+        configurations: [
+            { id: "cfg-cen-1", name: "Thân máy ly tâm lạnh TGL-16M", model: "TGL-16M", origin: "Anting / Dlab", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Mới 100%, bảo hành 12 tháng" },
+            { id: "cfg-cen-2", name: "Rotor góc bằng hợp kim nhôm 24 vị trí x 1.5/2.0ml", model: "NO.1 Angle Rotor", origin: "Chính hãng", quantity: 1, unit: "Cái", isStandard: true, isIncluded: true, notes: "Hấp tiệt trùng được ở 121°C" },
+            { id: "cfg-cen-3", name: "Bộ adapter chuyển đổi cho tube PCR 0.2ml và 0.5ml", model: "Adapter Kit", origin: "Chính hãng", quantity: 24, unit: "Cái", isStandard: true, isIncluded: true, notes: "Mỗi loại 24 cái" },
+            { id: "cfg-cen-4", name: "Dịch vụ lắp đặt, bàn giao kỹ thuật & bảo hành 12 tháng", model: "Service & Warranty", origin: "Việt Nam (TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật định kỳ" }
+        ],
+        notes: "Chuyên dụng cho ly tâm tách chiết sinh học phân tử và kết tủa mẫu"
+    },
+    {
+        code: "SPEC-NANO-100",
+        name: "Máy đo quang phổ thể tích vi lượng Micro-Spectrophotometer Nano-100",
+        category: "Thiết bị cơ bản",
+        subCategory: "Máy đo quang phổ",
+        brand: "Allsheng",
+        origin: "Chính hãng Allsheng / CE",
+        unit: "Hệ thống",
+        specification: "Nano-100 (Đo nồng độ & độ tinh sạch DNA/RNA/Protein với mẫu 0.5 - 2.0 µl)",
+        costPrice: 75000000,
+        price: 125000000,
+        priceDealer1: 112500000,
+        priceDealer2: 106250000,
+        warranty: "12 tháng",
+        leadTime: "Có sẵn kho",
+        supplier: "Hangzhou Allsheng Instruments",
+        isEquipment: true,
+        imageUrl: "https://images.unsplash.com/photo-1532187863486-abf9dbad1b69?auto=format&fit=crop&w=600&q=80",
+        techSpecs: "• Thể tích mẫu: 0.5 - 2.0 µl | Chiều dài đường truyền quang: 0.2 mm và 1.0 mm (tự động chuyển đổi).\n• Dải bước sóng: 200 - 850 nm | Độ chính xác bước sóng: 1 nm.\n• Dải đo hấp thụ: 0.04 - 300 A (tương đương 2 - 15.000 ng/µl dsDNA) không cần pha loãng.",
+        configurations: [
+            { id: "cfg-nano-1", name: "Thân máy đo quang vi lượng Nano-100 tích hợp màn hình cảm ứng", model: "Nano-100", origin: "Allsheng", quantity: 1, unit: "Máy", isStandard: true, isIncluded: true, notes: "Đo trực tiếp không cần cuvette, không cần PC" },
+            { id: "cfg-nano-2", name: "Bút quang học kiểm tra chuẩn máy (Calibration Check Pen)", model: "Cal-Pen", origin: "Allsheng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Kiểm tra độ chính xác định kỳ" },
+            { id: "cfg-nano-3", name: "Dây cáp nguồn, bút cảm ứng, adapter và cổng USB sao lưu dữ liệu", model: "Acc-Nano", origin: "Allsheng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Đồng bộ theo máy" },
+            { id: "cfg-nano-4", name: "Dịch vụ lắp đặt, chuyển giao kỹ thuật & bảo hành 12 tháng", model: "Service", origin: "TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kỹ sư TBR hướng dẫn tận nơi" }
+        ],
+        notes: "Định lượng chuẩn xác nồng độ DNA/RNA trước khi chạy phản ứng PCR/Realtime PCR"
+    }
+];
 
 const DEFAULT_COMMERCIAL_PRODUCTS: CommercialProduct[] = [];
 
@@ -546,7 +687,9 @@ const CustomerAllocationSearchInput: React.FC<{
 
 /** Tên "khách hàng" của đơn lưu kho nội bộ (SO Stock) theo thương hiệu đang chạy. */
 const defaultStockCustomerName = () =>
-    "Công ty Cổ phần Công nghệ ABT";
+    typeof window !== "undefined" && (window.location.port === "3006" || window.location.href.includes("3006"))
+        ? "Công ty Cổ phần Công nghệ VIA"
+        : "Công ty Cổ phần Công nghệ TBR";
 
 /** Mã SO do máy chủ cấp (SO26-KH-1001, SO26-STOCK-1001, ...): không bao giờ được đổi mã phía trình duyệt. */
 /** "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT- CHI NHÁNH LONG HẬU" -> "GIẢI PHÁP Y SINH ABT" (tên đầy đủ để ở tooltip). */
@@ -572,17 +715,6 @@ const isServerIssuedOrderCode = (code: string) => /^SO\d{2}-[A-Z0-9]{2,5}-\d{4,5
 
 export function SalesFullABT() {
     const { showToast, notifyActivity } = useNotification();
-    // Kết quả lưu nền lên máy chủ: báo lỗi cho người dùng thay vì bỏ qua im lặng (trước đây `.catch(() => {})`)
-    const onSaveResult = (label: string) => async (res: Response) => {
-        if (res.ok) return;
-        const err = await res.json().catch(() => ({}));
-        console.error(`[sales] Lưu "${label}" thất bại:`, res.status, err);
-        showToast(`Chưa lưu được dữ liệu (${label}) lên máy chủ: ${err?.error || `lỗi ${res.status}`}. Vui lòng tải lại trang và thử lại.`, "error");
-    };
-    const onSaveError = (label: string) => (err: any) => {
-        console.error(`[sales] Mất kết nối khi lưu "${label}":`, err);
-        showToast(`Mất kết nối khi lưu dữ liệu (${label}). Thay đổi có thể chưa được lưu.`, "error");
-    };
     const { user, can } = useAuth();
     const getApiBase = () => getMesApiBase();
 
@@ -829,7 +961,7 @@ export function SalesFullABT() {
                         const it = fgItemsMap[code] || {};
                         const bom = bomsMap[code] || {};
                         const name = it.item_name || bom.product_name || code;
-                        const spec = it.specification || bom.specification || "";
+                        const spec = it.specification || bom.specification || "50 test/hộp";
                         const category = bom.category || it.category || "PCR Kit";
                         const subcategory = bom.subcategory || it.subcategory || "Thành phẩm";
                         const price = Number(it.standard_price || bom.standard_price) || 2800000;
@@ -1519,7 +1651,7 @@ export function SalesFullABT() {
             let orderId = o?.order_code || (typeof o?.id === "string" && o.id.startsWith("SO") ? o.id : (o?.orderCode || o?.code || (o?.id ? String(o.id) : "")));
             const custName = (o.customerName || o.customer_name || "").trim();
             const hasQuote = Boolean(o.quoteId || o.quote_code);
-            const hasRealCustomer = Boolean(custName && !String(custName).includes("Kho Tổng ABT") && !String(custName).includes("Lưu Kho Nội Bộ") && custName !== defaultStockCustomerName());
+            const hasRealCustomer = Boolean(custName && !String(custName).includes("Kho Tổng TBR") && !String(custName).includes("Lưu Kho Nội Bộ") && custName !== defaultStockCustomerName());
             const isStock = Boolean((o.isStockOrder === true || o.orderCategory === "STOCK" || o.is_stock_order === true || o.applied_price_policy === "STOCK" || String(o.notes || "").includes("STOCK")) && !hasQuote && !hasRealCustomer);
 
             const isWronglyNamedStock = Boolean(orderId.includes("STOCK") && !isStock);
@@ -1593,11 +1725,11 @@ export function SalesFullABT() {
 
             if (isStock) {
                 repName = "Bộ Phận Kho Vận";
-                repId = "";
+                repId = "NV-TBR-007";
             } else {
                 if (repName.toLowerCase().includes("nguyễn đăng khánh") || repName.toLowerCase().includes("ndkhanh")) {
                     repName = "Phòng Kinh Doanh";
-                    repId = "";
+                    repId = "NV-TBR-018";
                 }
                 if (!repId && repName) {
                     const matched = (salesPersonnel || []).find((p: any) => 
@@ -2183,22 +2315,26 @@ export function SalesFullABT() {
                 }
                 setDeliverySlips(Array.from(slipMap.values()));
 
-                // 5. Collections that only live in app_storage: the server copy is authoritative, merged with any targets created while loading
+                // 5. Collections that only live in app_storage: merge any targets created while loading so nothing is lost
                 if (Array.isArray(serverData.sales_targets)) {
                     setSalesTargets(prev => {
                         const map = new Map<string, any>();
-                        // Keep server targets first, then overlay any targets created in current session before load completed
-                        serverData!.sales_targets.forEach((t: any) => {
-                            if (t && t.salesRepId && t.month) map.set(`${t.salesRepId}__${t.month}`, t);
+                        serverData.sales_targets.forEach((t: any) => {
+                            if (!t) return;
+                            const k = `${t.salesRepId || ""}__${t.month || ""}`;
+                            map.set(k, { ...t, id: t.id || `TGT-${t.salesRepId}-${t.month}` });
                         });
-                        if (Array.isArray(prev)) {
-                            prev.forEach((t: any) => {
-                                if (t && t.salesRepId && t.month && t._savedAt) {
-                                    map.set(`${t.salesRepId}__${t.month}`, t);
-                                }
-                            });
-                        }
-                        return Array.from(map.values());
+                        // Keep any target added in memory during initial load that wasn't on the server yet
+                        (prev || []).forEach((t: any) => {
+                            if (!t) return;
+                            const k = `${t.salesRepId || ""}__${t.month || ""}`;
+                            if (!map.has(k)) {
+                                map.set(k, { ...t, id: t.id || `TGT-${t.salesRepId}-${t.month}` });
+                            }
+                        });
+                        const mergedTargets = Array.from(map.values());
+                        try { localStorage.setItem("sales_targets", JSON.stringify(mergedTargets)); } catch {}
+                        return mergedTargets;
                     });
                 }
                 if (Array.isArray(serverData.sales_specialized_plans)) setSpecializedPlans(serverData.sales_specialized_plans);
@@ -2213,6 +2349,9 @@ export function SalesFullABT() {
             }
         };
 
+        // Do not overwrite server-backed React state from localStorage on random 'storage' events:
+        // when localStorage hits the 5MB browser quota, localStorage holds stale data (e.g. only 1 old target)
+        // and reading it back here used to overwrite the server copy.
         loadServerSalesData();
         const onRevalidated = (e: any) => {
             if (e?.detail?.pathname === "/api/sales") {
@@ -2925,7 +3064,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ key: "sales_personnel_contacts", data: salesPersonnelContacts })
-                }).then(onSaveResult("sales_personnel_contacts")).catch(onSaveError("sales_personnel_contacts"));
+                }).catch(() => {});
             } catch (err) {}
         }
     }, [salesPersonnelContacts]);
@@ -2939,7 +3078,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ key: "sales_personnel_custom", data: salesPersonnel })
-                }).then(onSaveResult("sales_personnel_custom")).catch(onSaveError("sales_personnel_custom"));
+                }).catch(() => {});
             } catch (err) {}
         }
     }, [salesPersonnel]);
@@ -2956,7 +3095,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (typeof window !== "undefined") return localStorage.getItem("sales_default_quote_delivery_terms") || "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.";
         return "Giao hàng tận nơi trong vòng 3-5 ngày làm việc.";
     });
-    const TBR_DEFAULT_PAYMENT_TERMS = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ ABT – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
+    const TBR_DEFAULT_PAYMENT_TERMS = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ TBR – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
     const [quotePaymentTerms, setQuotePaymentTerms] = useState(() => {
         if (typeof window !== "undefined") {
             const saved = localStorage.getItem("sales_default_quote_payment_terms");
@@ -3167,26 +3306,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         "CH-DNA-LADDER-1KB"
     ]);
 
-    // Mã khung cho báo giá Oligo / hàng đặt riêng: chỉ là khung (tên, quy cách, đơn vị); hãng, NCC và giá do ABT tự nhập.
-    // Chỉ được tạo khi danh mục chưa từng khởi tạo: mã đã bị xóa không tự thêm lại.
     const DEFAULT_COMMERCIAL_PRODUCTS: CommercialProduct[] = [
         {
             code: "OLIGO-PRIMER",
             name: "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "",
+            brand: "IDT / Macrogen / PhuSa",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
             specification: "Nhập trình tự 5'-...-3' | Scale (25/50/100 nmol) | Tinh sạch (DSL/HPLC/PAGE)",
-            costPrice: 0,
-            price: 0,
-            priceDealer1: 0,
-            priceDealer2: 0,
+            costPrice: 120000,
+            price: 180000,
+            priceDealer1: 165000,
+            priceDealer2: 150000,
             warranty: "Theo COA từng tube",
-            leadTime: "",
+            leadTime: "Đặt tổng hợp 3-7 ngày",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "",
+            supplier: "Nhà cung cấp tổng hợp Oligo",
             notes: "Mặt hàng đặt 1 lần theo trình tự riêng từng dòng"
         },
         {
@@ -3194,18 +3331,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "",
+            brand: "IDT / Macrogen / PhuSa",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
             specification: "Nhập trình tự 5'[Reporter]-...-[Quencher]3' (VD: FAM-BHQ1 / HEX-BHQ1 / CY5-BHQ2 | HPLC)",
-            costPrice: 0,
-            price: 0,
-            priceDealer1: 0,
-            priceDealer2: 0,
+            costPrice: 950000,
+            price: 1450000,
+            priceDealer1: 1350000,
+            priceDealer2: 1250000,
             warranty: "Theo COA từng tube",
-            leadTime: "",
+            leadTime: "Đặt tổng hợp 5-10 ngày",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "",
+            supplier: "Nhà cung cấp tổng hợp Oligo",
             notes: "Mặt hàng đặt 1 lần theo trình tự huỳnh quang riêng từng dòng"
         },
         {
@@ -3213,18 +3350,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Tổng hợp chuỗi Nucleotide chuẩn theo trình tự (5'→3')",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "",
+            brand: "IDT / Macrogen / PhuSa",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Base",
             specification: "[Tên trình tự] 5'-...-3' (Số base | Scale 25/50/100 nmol)",
-            costPrice: 0,
-            price: 0,
-            priceDealer1: 0,
-            priceDealer2: 0,
+            costPrice: 5500,
+            price: 8000,
+            priceDealer1: 7500,
+            priceDealer2: 7000,
             warranty: "Theo COA từng tube",
-            leadTime: "",
+            leadTime: "Đặt tổng hợp 3-7 ngày",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "",
+            supplier: "Nhà cung cấp tổng hợp Oligo",
             notes: "Mã khung thành phần 1: Tính theo số Base của chuỗi trình tự chuẩn"
         },
         {
@@ -3232,18 +3369,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Đánh dấu biến đổi Oligo (5'/3'/Internal Modification: FAM, HEX, VIC, CY5, BHQ1/2, MGB...)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "",
+            brand: "IDT / Macrogen / PhuSa",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Nhãn",
             specification: "[Tên trình tự] Nhãn biến đổi 5'/3' (VD: 5'-FAM / 3'-BHQ1)",
-            costPrice: 0,
-            price: 0,
-            priceDealer1: 0,
-            priceDealer2: 0,
+            costPrice: 450000,
+            price: 650000,
+            priceDealer1: 600000,
+            priceDealer2: 550000,
             warranty: "Theo COA từng tube",
-            leadTime: "",
+            leadTime: "Đặt tổng hợp 5-10 ngày",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "",
+            supplier: "Nhà cung cấp tổng hợp Oligo",
             notes: "Mã khung thành phần 2: Tính theo nhãn biến đổi huỳnh quang / quencher gắn vào trình tự"
         },
         {
@@ -3251,18 +3388,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "",
+            brand: "IDT / Macrogen / PhuSa",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
             specification: "[Tên trình tự] Tinh sạch: HPLC / PAGE / Cartridge / Desalt",
-            costPrice: 0,
-            price: 0,
-            priceDealer1: 0,
-            priceDealer2: 0,
+            costPrice: 200000,
+            price: 300000,
+            priceDealer1: 280000,
+            priceDealer2: 260000,
             warranty: "Theo COA từng tube",
-            leadTime: "",
+            leadTime: "Đặt tổng hợp 3-7 ngày",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "",
+            supplier: "Nhà cung cấp tổng hợp Oligo",
             notes: "Mã khung thành phần 3: Phí dịch vụ tinh sạch Oligo (HPLC / PAGE / Cartridge / Desalt)"
         },
         {
@@ -3270,18 +3407,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Oligo / Primer & Probe",
-            brand: "",
+            brand: "IDT / Macrogen / PhuSa",
             origin: "Tổng hợp theo trình tự đặt hàng",
             unit: "Tube",
             specification: "[Tên trình tự] Dịch vụ điều chế: Đông khô / Pha sẵn chuẩn 100 µM",
-            costPrice: 0,
-            price: 0,
-            priceDealer1: 0,
-            priceDealer2: 0,
+            costPrice: 80000,
+            price: 150000,
+            priceDealer1: 135000,
+            priceDealer2: 120000,
             warranty: "Theo COA từng tube",
-            leadTime: "",
+            leadTime: "Đặt tổng hợp 3-7 ngày",
             storageCondition: "-20°C (Đông lạnh - Sinh phẩm PCR, Enzyme)",
-            supplier: "",
+            supplier: "Nhà cung cấp tổng hợp Oligo",
             notes: "Mã khung thành phần 4: Phí dịch vụ đông khô hoặc pha sẵn chuẩn nồng độ (100 µM / 10 µM)"
         },
         {
@@ -3289,7 +3426,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             name: "Hàng hóa / Sinh phẩm đặt riêng theo thông số đặc thù (Make-to-Order)",
             category: "Hóa chất & Sinh phẩm",
             subCategory: "Hàng đặt theo yêu cầu",
-            brand: "",
+            brand: "Theo đơn đặt",
             origin: "Chính hãng",
             unit: "Bộ",
             specification: "Nhập quy cách / đặc tính kỹ thuật riêng của lần đặt hàng này",
@@ -3300,7 +3437,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             warranty: "Theo tiêu chuẩn hãng",
             leadTime: "Đặt hàng theo đơn",
             storageCondition: "2-8°C (Mát - Hóa chất, Mẫu test)",
-            supplier: "",
+            supplier: "Nhà cung cấp chỉ định",
             notes: "Mặt hàng đặt 1 lần theo đặc tính riêng"
         }
     ];
@@ -3441,7 +3578,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         const filtered = parsed
                             .filter((item: any) => item && !DEMO_COMMERCIAL_CODES.has(item.code))
                             .map((item: any) => ({ ...item, category: resolveActualProductCategory(item) }));
-                        if (filtered.length > 0) return filtered;
+                        if (filtered.length > 0) {
+                            const existingCodes = new Set(filtered.map((p: any) => p.code));
+                            const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(d.code));
+                            return [...missingDefaults, ...filtered];
+                        }
                     }
                 } catch (e) {
                     console.error("Failed to parse sales_commercial_products:", e);
@@ -3599,7 +3740,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const neverInitialised = data?.data === null || data?.data === undefined;
                     if (Array.isArray(data?.data)) {
                         const cleanData = data.data.filter((item: any) => item && !DEMO_COMMERCIAL_CODES.has(item.code));
-                        const merged = enrichStorage(cleanData);
+                        const enriched = enrichStorage(cleanData);
+                        const existingCodes = new Set(enriched.map((p: any) => p.code));
+                        const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(d.code));
+                        const merged = [...missingDefaults, ...enriched];
                         setCommercialProducts(merged);
                         try { localStorage.setItem("sales_commercial_products", JSON.stringify(merged)); } catch (e) {}
                     } else if (neverInitialised) {
@@ -3628,7 +3772,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }).then(async res => {
                     if (!res.ok) {
                         const d = await res.json().catch(() => ({}));
-                        showToast(`Danh mục sản phẩm CHƯA được lưu lên máy chủ: ${d.error || `lỗi ${res.status}`}. Tải lại trang sẽ mất thay đổi vừa rồi.`, "error");
+                        if (d?.stale_epoch) return;
+                        const errMsg = String(d?.error || `lỗi ${res.status}`).replace(/\.+$/, "");
+                        showToast(`Danh mục sản phẩm CHƯA được lưu lên máy chủ: ${errMsg}. Tải lại trang sẽ mất thay đổi vừa rồi.`, "error");
                     }
                 }).catch(() => showToast("Mất kết nối: danh mục sản phẩm chưa được lưu lên máy chủ.", "error"));
             }
@@ -3724,7 +3870,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             isEquipment: p.isEquipment || (p.category ? p.category.includes("Thiết bị") : false),
             configurations: p.configurations || [],
             isCommercial: true,
-            badge: (p.brand === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC")))) ? "🧪 ABT" : `🛒 ${p.brand || "Thương mại"}`
+            badge: (p.brand === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC")))) ? "🧪 TBR / ABT" : `🛒 ${p.brand || "Thương mại"}`
         }));
         const mfg = biolabProducts
             .filter(p => !commCodes.has(p.code))
@@ -3749,13 +3895,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 isEquipment: (p as any).isEquipment || false,
                 configurations: (p as any).configurations || [],
                 isCommercial: false,
-                badge: "🧪 ABT"
+                badge: "🧪 TBR / ABT"
             }));
         const existingCodes = new Set([...comm.map(p => p.code), ...mfg.map(p => p.code)]);
         const dbItems = dbMasterProducts
             .filter(p => p.code && !existingCodes.has(p.code))
             .map(p => {
-                const isMfg = p.manufacturer === "ABT" || p.manufacturer === "ABT" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC") || p.code.startsWith("ABT")));
+                const isMfg = p.manufacturer === "ABT" || p.manufacturer === "TBR" || (p.code && (p.code.startsWith("SQH") || p.code.startsWith("EXS") || p.code.startsWith("LBC") || p.code.startsWith("TBR")));
                 // Tuyệt đối không lấy cost_price làm giá bán khi standard_price để trống (0)
                 const priceNum = Number(p.standard_price) || 0;
                 const costNum = Number(p.cost_price) || 0;
@@ -3781,7 +3927,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     isEquipment: (p.category ? p.category.includes("Thiết bị") : false) || (p.code ? p.code.startsWith("EQ-") : false),
                     configurations: [],
                     isCommercial: !isMfg,
-                    badge: isMfg ? "🧪 ABT" : `🛒 ${p.manufacturer || "Thương mại"}`
+                    badge: isMfg ? "🧪 TBR / ABT" : `🛒 ${p.manufacturer || "Thương mại"}`
                 };
             });
         return [...comm, ...mfg, ...dbItems];
@@ -3844,23 +3990,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [combineProcureItemNotes, setCombineProcureItemNotes] = useState<Record<string, string>>({});
 
     // Modal & Form states for Mục tiêu doanh số
-    const getCurrentDefaultMonth = () => {
+    const getCurrentDefaultPeriods = () => {
         const now = new Date();
-        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+        const y = now.getFullYear();
+        const m = now.getMonth() + 1;
+        const q = Math.ceil(m / 3);
+        return {
+            month: `${y}-${String(m).padStart(2, "0")}`,
+            quarter: `${y}-Q${q}`,
+            year: `${y}`
+        };
     };
-    const getCurrentDefaultQuarter = () => {
-        const now = new Date();
-        return `${now.getFullYear()}-Q${Math.floor(now.getMonth() / 3) + 1}`;
-    };
-    const getCurrentDefaultYear = () => String(new Date().getFullYear());
     const [isTargetModalOpen, setIsTargetModalOpen] = useState(false);
-    const [targetAssignMode, setTargetAssignMode] = useState<"single" | "bulk">("single");
-    const [targetBulkAmounts, setTargetBulkAmounts] = useState<Record<string, number>>({});
-    const [targetMonth, setTargetMonth] = useState(getCurrentDefaultMonth);
+    const [targetMonth, setTargetMonth] = useState(() => getCurrentDefaultPeriods().month);
     const [targetPeriodType, setTargetPeriodType] = useState<"month" | "quarter" | "year">("month");
     const [targetRepId, setTargetRepId] = useState("");
     const [targetAmount, setTargetAmount] = useState<number>(500000000);
-    const [analyticsMonthFilter, setAnalyticsMonthFilter] = useState(getCurrentDefaultMonth);
+    const [targetAssignMode, setTargetAssignMode] = useState<"single" | "bulk">("single");
+    const [bulkTargetAmounts, setBulkTargetAmounts] = useState<Record<string, number>>({});
+    const [bulkDefaultAmount, setBulkDefaultAmount] = useState<number>(500000000);
+    const [externalPeriodSync, setExternalPeriodSync] = useState<{ periodType: "month" | "quarter" | "year"; periodValue: string; seq: number } | null>(null);
+    const [analyticsMonthFilter, setAnalyticsMonthFilter] = useState(() => getCurrentDefaultPeriods().month);
     const [analyticsPeriodType, setAnalyticsPeriodType] = useState<"month" | "quarter" | "year">("month");
     const [analyticsRepFilter, setAnalyticsRepFilter] = useState("all");
 
@@ -4200,7 +4350,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [vatEmail, setVatEmail] = useState("");
     const [invoiceNotes, setInvoiceNotes] = useState("");
     const [partialInvItemVatRates, setPartialInvItemVatRates] = useState<Record<string, number>>({});
-    const [shippingMethod, setShippingMethod] = useState("Xe lạnh chuyên dụng ABT (-20°C đến 8°C)");
+    const [shippingMethod, setShippingMethod] = useState("Xe lạnh chuyên dụng TBR (-20°C đến 8°C)");
     const [trackingCode, setTrackingCode] = useState("");
 
     // Phase 3: Contract Expiry & File Attachments (Yêu cầu 3)
@@ -4259,7 +4409,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setVatTaxCode("");
         setVatAddress("");
         setVatEmail("");
-        setShippingMethod("Xe lạnh chuyên dụng ABT (-20°C đến 8°C)");
+        setShippingMethod("Xe lạnh chuyên dụng TBR (-20°C đến 8°C)");
         setTrackingCode("");
         setFactoryOrderContactPerson("");
         setFactoryOrderContactPhone("");
@@ -4469,6 +4619,34 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         };
     }, []);
 
+    const isLegacyMockAppTask = (item: any) => {
+        if (!item) return false;
+        const title = (item.title || "").toLowerCase();
+        const lot = (item.productLot || "").toLowerCase();
+        const desc = (item.desc || item.description || "").toLowerCase();
+        const id = String(item.id || "").toUpperCase();
+        return (
+            title.includes("bảo trì định kỳ & hiệu chuẩn") ||
+            title.includes("xử lý khiếu nại tín hiệu kênh fam") ||
+            title.includes("tư vấn thiết kế layout phòng xét nghiệm") ||
+            title.includes("nghiệm thu & đào tạo vận hành máy real-time pcr") ||
+            title.includes("abi 7500") ||
+            lot.includes("lot-covid-fam-99") ||
+            lot.includes("sn-tbr-abi-003") ||
+            lot.includes("service-setup") ||
+            lot.includes("sn-abi-7500-202601") ||
+            desc.includes("lot-covid-fam-99") ||
+            desc.includes("sn-tbr-abi-003") ||
+            id === "APP-TSK-001" ||
+            id === "APP-TSK-002" ||
+            id === "APP-TSK-003" ||
+            id === "APP-TSK-004" ||
+            id === "REQ-APP-001" ||
+            id === "REQ-APP-002" ||
+            id === "REQ-APP-003" ||
+            id === "REQ-APP-004"
+        );
+    };
 
     // Cross-Department Coordination States (Yêu cầu phối hợp Application)
     const [sharedAppRequests, setSharedAppRequests] = useState<any[]>(() => {
@@ -4828,8 +5006,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 .filter((p: any) => p.status === "ACTIVE" || !p.status)
                 .map((p: any) => ({
                     id: p.id,
-                    employee_id: p.employee_code || `NV-ABT-${String(p.id).padStart(3, "0")}`,
-                    employee_code: p.employee_code || `NV-ABT-${String(p.id).padStart(3, "0")}`,
+                    employee_id: p.employee_code || `NV-TBR-${String(p.id).padStart(3, "0")}`,
+                    employee_code: p.employee_code || `NV-TBR-${String(p.id).padStart(3, "0")}`,
                     full_name: p.full_name,
                     department: p.department || "Kinh Doanh",
                     position: p.position || "Chuyên Viên Kinh Doanh",
@@ -5037,7 +5215,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
+            }).catch(() => {});
         }
     };
 
@@ -5061,7 +5239,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
+            }).catch(() => {});
         }
     };
 
@@ -5085,7 +5263,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
+            }).catch(() => {});
         }
     };
 
@@ -5157,7 +5335,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
+            }).catch(() => {});
         }
 
         showToast("Đã lưu nhật ký kết quả công việc vào hệ thống!", "success");
@@ -5189,7 +5367,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_tasks", data: updatedTasks })
-            }).then(onSaveResult("sales_tasks")).catch(onSaveError("sales_tasks"));
+            }).catch(() => {});
         }
 
         showToast("Đã xóa nhật ký kết quả", "info");
@@ -5545,9 +5723,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
         const isNvkdOrPm = ["KD-02", "KD-07", "KD-08", "KD-09", "KD-10", "KD-11", "KD-12"].includes(targetRepId);
         if (isNvkdOrPm) {
-            return "Phó trưởng phòng KD";
+            return "Phó trưởng phòng KD (Huỳnh Thị Ngọc Huyền)";
         }
-        return "PGĐ Kinh doanh";
+        return "PGĐ Kinh doanh (Đỗ Ngọc Diễm Trúc)";
     };
 
     const getWeeklyApproval = (week: number, repId: string): WeeklyApprovalRecord => {
@@ -5597,7 +5775,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             type: "info",
             category: "plan",
             sender: { name: repName, id: repId },
-            targetRoles: ["admin", "sales_head"],
+            targetEmployeeIds: ["NV-TBR-002", "NV-TBR-001"],
+            targetEmployeeNames: ["Đỗ Ngọc Diễm Trúc", "Nguyễn Văn Hưng"],
             link: { tab: "sales", subTab: "planner" }
         });
     };
@@ -6810,7 +6989,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return role === "warehouse" || role.includes("kho") || role.includes("thủ kho") || role.includes("logistics") ||
                dept.includes("kho") || dept.includes("warehouse") || dept.includes("logistics") ||
                pos.includes("kho") || pos.includes("thủ kho") || pos.includes("warehouse") || pos.includes("logistics") ||
-               empId.startsWith("KV-") || empId.startsWith("KHO-");
+               empId.startsWith("KV-") || empId.startsWith("KHO-") || empId === "NV-TBR-007" || username === "khoa.dpb";
     }, [user, loggedInStaff, isSalesExecutive, isManagerOrAdmin]);
 
     // Quyền chỉnh sửa thông tin đơn hàng (PBAC: sales.edit)
@@ -7401,23 +7580,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (prod?.unit && String(prod.unit).trim()) {
             return String(prod.unit).trim();
         }
-        // Không có quy cách trong danh mục: để trống thay vì tự điền "50 test/hộp" lên chứng từ
+        const name = (it?.productName || prod?.name || it?.productCode || "").toLowerCase();
+        if (name.includes("kit") || name.includes("pcr") || name.includes("topspec") || name.includes("sqs-") || name.includes("inv-")) {
+            return "50 test/hộp";
+        }
         return "—";
     };
 
     // Chuẩn hóa tên viết tắt / thương hiệu hãng sản xuất hiển thị trên Báo giá
     const formatSupplierShortName = (rawNameOrBrand: any): string => {
-        if (!rawNameOrBrand) return "";
+        if (!rawNameOrBrand) return "ABT";
         const str = String(rawNameOrBrand).trim();
-        if (!str || str === "—" || str === "-") return "";
+        if (!str || str === "—" || str === "-") return "ABT";
 
-        // 1. Kiểm tra đối soát trực tiếp trong danh sách NCC hệ thống
+        // 1. Kiểm tra đối soát trong danh sách NCC hệ thống: chỉ khớp ĐÚNG mã / tên / tên viết tắt.
+        //    (Khớp một phần chuỗi từng biến hãng "ABT/Việt Nam" thành "Fresenius Kabi/Việt Nam" vì cùng chứa "Việt Nam".)
         if (dbSuppliers && dbSuppliers.length > 0) {
-            const found = dbSuppliers.find(s => 
+            const key = str.toLowerCase();
+            const found = dbSuppliers.find(s =>
                 (s.short_name && String(s.short_name).trim()) &&
                 (
-                    (s.supplier_code && s.supplier_code.toLowerCase() === str.toLowerCase()) ||
-                    (s.name && (s.name.toLowerCase() === str.toLowerCase() || str.toLowerCase().includes(s.name.toLowerCase()) || s.name.toLowerCase().includes(str.toLowerCase())))
+                    (s.supplier_code && String(s.supplier_code).toLowerCase() === key) ||
+                    (s.name && String(s.name).toLowerCase() === key) ||
+                    String(s.short_name).trim().toLowerCase() === key
                 )
             );
             if (found && found.short_name) {
@@ -7429,7 +7614,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         // 2. Bộ quy tắc nhận diện thương hiệu phổ biến
         if (upper.includes("ABT") || upper.includes("LONG HẬU") || upper.includes("LONG HAU") || upper.includes("Y SINH ABT")) return "ABT";
-        if (upper.includes("ABT")) return "ABT";
+        if (upper.includes("TBR")) return "TBR";
         if (upper.includes("PHÙ SA") || upper.includes("PHU SA")) return "Phù Sa";
         if (upper.includes("HOÀNG KIM") || upper.includes("HOANG KIM")) return "Hoàng Kim";
         if (upper.includes("NAM YẾN") || upper.includes("NAM YEN")) return "Nam Yến";
@@ -7492,9 +7677,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 else if ((prod as any).brand && String((prod as any).brand).trim()) raw = String((prod as any).brand).trim();
                 else if ((prod as any).supplier && String((prod as any).supplier).trim()) raw = String((prod as any).supplier).trim();
                 else if ((prod as any).manufacturer && String((prod as any).manufacturer).trim()) raw = String((prod as any).manufacturer).trim();
-                else raw = "";
+                else raw = "ABT";
             } else {
-                raw = (prod as any)?.brand || (prod as any)?.manufacturer || "";
+                raw = (prod as any)?.brand || (prod as any)?.manufacturer || "ABT";
             }
         }
         return formatSupplierShortName(raw);
@@ -7533,7 +7718,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
 
         const brand = prod?.brand || prod?.supplier || (prod?.isCommercial ? "Chính hãng" : "ABT");
-        const origin = prod?.origin || "";
+        const origin = prod?.origin || "Singapore / Mỹ / Châu Âu";
         const model = prod?.code || prod?.model || "";
         const name = prod?.name || "Thiết bị chính";
 
@@ -7547,7 +7732,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 unit: prod?.unit || "Bộ",
                 isIncluded: true,
                 isStandard: true,
-                notes: ""
+                notes: "Mới 100%, đồng bộ nguyên kiện"
             },
             {
                 id: `cfg-${Date.now()}-2`,
@@ -7597,7 +7782,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 id: `cfg-${Date.now()}-6`,
                 name: "Dịch vụ: Vận chuyển, lắp đặt, chạy thử nghiệm thu & đào tạo vận hành tận nơi (Kèm IQ/OQ/PQ)",
                 model: "Service Package",
-                origin: "Việt Nam (Kỹ sư ABT)",
+                origin: "Việt Nam (Kỹ sư TBR)",
                 quantity: 1,
                 unit: "Gói",
                 isIncluded: true,
@@ -7725,28 +7910,28 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const DEFAULT_OLIGO_PRESETS: OligoPresetItem[] = [
         // 1. Loại đánh dấu biến đổi (OLIGO-MOD)
-        { id: "mod-fam-bhq1", category: "MOD", label: "FAM-BHQ1", spec: "5'-FAM / 3'-BHQ1", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-hex-bhq1", category: "MOD", label: "HEX-BHQ1", spec: "5'-HEX / 3'-BHQ1", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-vic-bhq1", category: "MOD", label: "VIC-BHQ1", spec: "5'-VIC / 3'-BHQ1", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-cy5-bhq2", category: "MOD", label: "CY5-BHQ2", spec: "5'-CY5 / 3'-BHQ2", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-rox-bhq2", category: "MOD", label: "ROX-BHQ2", spec: "5'-ROX / 3'-BHQ2", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-fam-mgb", category: "MOD", label: "FAM-MGB (TaqMan)", spec: "5'-FAM / 3'-MGBNFQ", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-vic-mgb", category: "MOD", label: "VIC-MGB (TaqMan)", spec: "5'-VIC / 3'-MGBNFQ", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-fam-zen", category: "MOD", label: "FAM-ZEN-IBFQ", spec: "5'-6-FAM / ZEN / 3'-IBFQ", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-biotin-5", category: "MOD", label: "5'-Biotin", spec: "5'-Biotin", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-fam-single", category: "MOD", label: "5'-FAM (Đơn nhãn)", spec: "5'-6-FAM", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-phos-5", category: "MOD", label: "5'-Phosphate", spec: "5'-Phosphate (5'-P)", defaultPrice: 0, defaultQty: 1 },
-        { id: "mod-amine-c6", category: "MOD", label: "5'-Amine (C6)", spec: "5'-Amino Modifier C6", defaultPrice: 0, defaultQty: 1 },
+        { id: "mod-fam-bhq1", category: "MOD", label: "FAM-BHQ1", spec: "5'-FAM / 3'-BHQ1", defaultPrice: 650000, defaultQty: 1 },
+        { id: "mod-hex-bhq1", category: "MOD", label: "HEX-BHQ1", spec: "5'-HEX / 3'-BHQ1", defaultPrice: 650000, defaultQty: 1 },
+        { id: "mod-vic-bhq1", category: "MOD", label: "VIC-BHQ1", spec: "5'-VIC / 3'-BHQ1", defaultPrice: 750000, defaultQty: 1 },
+        { id: "mod-cy5-bhq2", category: "MOD", label: "CY5-BHQ2", spec: "5'-CY5 / 3'-BHQ2", defaultPrice: 850000, defaultQty: 1 },
+        { id: "mod-rox-bhq2", category: "MOD", label: "ROX-BHQ2", spec: "5'-ROX / 3'-BHQ2", defaultPrice: 750000, defaultQty: 1 },
+        { id: "mod-fam-mgb", category: "MOD", label: "FAM-MGB (TaqMan)", spec: "5'-FAM / 3'-MGBNFQ", defaultPrice: 1450000, defaultQty: 1 },
+        { id: "mod-vic-mgb", category: "MOD", label: "VIC-MGB (TaqMan)", spec: "5'-VIC / 3'-MGBNFQ", defaultPrice: 1550000, defaultQty: 1 },
+        { id: "mod-fam-zen", category: "MOD", label: "FAM-ZEN-IBFQ", spec: "5'-6-FAM / ZEN / 3'-IBFQ", defaultPrice: 950000, defaultQty: 1 },
+        { id: "mod-biotin-5", category: "MOD", label: "5'-Biotin", spec: "5'-Biotin", defaultPrice: 450000, defaultQty: 1 },
+        { id: "mod-fam-single", category: "MOD", label: "5'-FAM (Đơn nhãn)", spec: "5'-6-FAM", defaultPrice: 400000, defaultQty: 1 },
+        { id: "mod-phos-5", category: "MOD", label: "5'-Phosphate", spec: "5'-Phosphate (5'-P)", defaultPrice: 250000, defaultQty: 1 },
+        { id: "mod-amine-c6", category: "MOD", label: "5'-Amine (C6)", spec: "5'-Amino Modifier C6", defaultPrice: 350000, defaultQty: 1 },
         // 2. Phương pháp tinh sạch (OLIGO-PUR)
-        { id: "pur-hplc", category: "PUR", label: "HPLC", spec: "Tinh sạch HPLC", defaultPrice: 0, defaultQty: 1 },
-        { id: "pur-page", category: "PUR", label: "PAGE", spec: "Tinh sạch PAGE", defaultPrice: 0, defaultQty: 1 },
-        { id: "pur-opc", category: "PUR", label: "OPC (Cartridge)", spec: "Tinh sạch Cartridge (OPC)", defaultPrice: 0, defaultQty: 1 },
-        { id: "pur-desalt", category: "PUR", label: "Desalt (Cơ bản)", spec: "Tinh sạch Desalt", defaultPrice: 0, defaultQty: 1 },
+        { id: "pur-hplc", category: "PUR", label: "HPLC", spec: "Tinh sạch HPLC", defaultPrice: 300000, defaultQty: 1 },
+        { id: "pur-page", category: "PUR", label: "PAGE", spec: "Tinh sạch PAGE", defaultPrice: 450000, defaultQty: 1 },
+        { id: "pur-opc", category: "PUR", label: "OPC (Cartridge)", spec: "Tinh sạch Cartridge (OPC)", defaultPrice: 200000, defaultQty: 1 },
+        { id: "pur-desalt", category: "PUR", label: "Desalt (Cơ bản)", spec: "Tinh sạch Desalt", defaultPrice: 100000, defaultQty: 1 },
         // 3. Dịch vụ Đông khô / Pha sẵn (OLIGO-SVC)
-        { id: "svc-lyo", category: "SVC", label: "Đông khô", spec: "Đông khô (Lyophilized)", defaultPrice: 0, defaultQty: 1 },
-        { id: "svc-te100", category: "SVC", label: "Pha 100 µM (TE)", spec: "Pha sẵn chuẩn 100 µM (TE Buffer)", defaultPrice: 0, defaultQty: 1 },
-        { id: "svc-h2o10", category: "SVC", label: "Pha 10 µM (H2O)", spec: "Pha sẵn chuẩn 10 µM (Nuclease-free H2O)", defaultPrice: 0, defaultQty: 1 },
-        { id: "svc-aliquot", category: "SVC", label: "Đông khô + Chia tube", spec: "Đông khô + Chia 2 tube (Aliquot)", defaultPrice: 0, defaultQty: 1 },
+        { id: "svc-lyo", category: "SVC", label: "Đông khô", spec: "Đông khô (Lyophilized)", defaultPrice: 150000, defaultQty: 1 },
+        { id: "svc-te100", category: "SVC", label: "Pha 100 µM (TE)", spec: "Pha sẵn chuẩn 100 µM (TE Buffer)", defaultPrice: 150000, defaultQty: 1 },
+        { id: "svc-h2o10", category: "SVC", label: "Pha 10 µM (H2O)", spec: "Pha sẵn chuẩn 10 µM (Nuclease-free H2O)", defaultPrice: 150000, defaultQty: 1 },
+        { id: "svc-aliquot", category: "SVC", label: "Đông khô + Chia tube", spec: "Đông khô + Chia 2 tube (Aliquot)", defaultPrice: 200000, defaultQty: 1 },
     ];
 
     const [oligoPresets, setOligoPresets] = useState<OligoPresetItem[]>(() => {
@@ -7788,7 +7973,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ key: "sales_oligo_presets_v1", data: nextList })
-        }).then(onSaveResult("sales_oligo_presets_v1")).catch(onSaveError("sales_oligo_presets_v1"));
+        }).catch(() => {});
     };
 
     const handleAddOligoPreset = (cat: "MOD" | "PUR" | "SVC") => {
@@ -8194,223 +8379,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         total: fin.total,
         vatAmount: fin.vatAmount
     });
-
-    // Xuất / In Bảng kê xuất hóa đơn Oligo (Hỗ trợ cả phần Tổng hợp theo Mã hàng HĐ và Chi tiết từng dòng trình tự)
-    const handlePrintSalesOligoInvoiceStatement = (params: {
-        orderCode: string;
-        customerName: string;
-        taxCode?: string;
-        address?: string;
-        email?: string;
-        invoiceNotes?: string;
-        invoiceNo?: string;
-        invoiceDate?: string;
-        items: Array<{
-            code: string;
-            name: string;
-            specification?: string;
-            unit: string;
-            qty: number;
-            price: number;
-            vatRate: number;
-            needsInvoice?: boolean;
-        }>;
-    }) => {
-        const invItems = params.items.filter(it => it.needsInvoice !== false && it.code);
-        if (invItems.length === 0) {
-            showToast("Chưa có mặt hàng nào được chọn để xuất Bảng kê hóa đơn!", "warning");
-            return;
-        }
-        const esc = (v: unknown) =>
-            String(v ?? "")
-                .replace(/&/g, "&amp;")
-                .replace(/</g, "&lt;")
-                .replace(/>/g, "&gt;")
-                .replace(/"/g, "&quot;");
-
-        // Gộp nhóm theo Mã hàng hóa đơn + Đơn giá + VAT (Phần I: Bảng tổng hợp mã chuẩn để Kế toán nhập phần mềm HĐĐT)
-        const groupedMap = new Map<string, { code: string; name: string; unit: string; qty: number; price: number; vatRate: number; lineTotal: number; lineBeforeVat: number }>();
-        invItems.forEach(it => {
-            const key = `${it.code}::${it.price}::${it.vatRate}`;
-            const lineTotal = Math.round((Number(it.qty) || 0) * (Number(it.price) || 0));
-            const lineBeforeVat = it.vatRate > 0 ? Math.round(lineTotal / (1 + it.vatRate / 100)) : lineTotal;
-            const existing = groupedMap.get(key);
-            if (existing) {
-                existing.qty += Number(it.qty) || 0;
-                existing.lineTotal += lineTotal;
-                existing.lineBeforeVat += lineBeforeVat;
-            } else {
-                groupedMap.set(key, {
-                    code: it.code,
-                    name: it.name,
-                    unit: it.unit || "ĐV",
-                    qty: Number(it.qty) || 0,
-                    price: Number(it.price) || 0,
-                    vatRate: Number(it.vatRate) || 8,
-                    lineTotal,
-                    lineBeforeVat
-                });
-            }
-        });
-        const groupedRows = Array.from(groupedMap.values());
-        const totalWithVat = invItems.reduce((acc, it) => acc + Math.round((Number(it.qty) || 0) * (Number(it.price) || 0)), 0);
-        const totalBeforeVat = invItems.reduce((acc, it) => {
-            const lt = Math.round((Number(it.qty) || 0) * (Number(it.price) || 0));
-            return acc + (it.vatRate > 0 ? Math.round(lt / (1 + it.vatRate / 100)) : lt);
-        }, 0);
-        const totalVat = totalWithVat - totalBeforeVat;
-
-        const html = `<!doctype html>
-<html lang="vi">
-<head>
-  <meta charset="utf-8" />
-  <title>Bảng kê xuất hóa đơn - ${esc(params.orderCode)}</title>
-  <style>
-    @page { size: A4 portrait; margin: 12mm; }
-    body { font-family: "Segoe UI", Arial, sans-serif; color: #0f172a; font-size: 12px; line-height: 1.45; margin: 0; padding: 16px; }
-    .toolbar { display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 12px; }
-    .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #0284c7; background: #0284c7; color: #fff; font-weight: 700; cursor: pointer; font-size: 12px; }
-    .Header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #0f172a; padding-bottom: 10px; margin-bottom: 12px; }
-    h1 { font-size: 16px; margin: 0 0 4px 0; text-transform: uppercase; color: #0f172a; }
-    h2 { font-size: 13px; margin: 14px 0 6px 0; text-transform: uppercase; color: #0369a1; border-left: 4px solid #0284c7; padding-left: 8px; }
-    .meta-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 14px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; margin-bottom: 12px; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-    th, td { border: 1px solid #cbd5e1; padding: 5px 7px; text-align: left; vertical-align: top; }
-    th { background: #f1f5f9; font-weight: 700; font-size: 11px; text-transform: uppercase; }
-    .num { text-align: right; font-family: Consolas, monospace; }
-    .mono { font-family: Consolas, monospace; word-break: break-all; }
-    .total-row td { font-weight: 700; background: #f8fafc; }
-    .grand-row td { font-weight: 800; background: #ecfdf5; color: #065f46; font-size: 13px; }
-    .sig-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 24px; text-align: center; }
-    @media print { .toolbar { display: none; } body { padding: 0; } }
-  </style>
-</head>
-<body>
-  <div class="toolbar">
-    <button class="btn" onclick="window.print()">🖨️ In Bảng Kê Hóa Đơn (A4 / PDF)</button>
-  </div>
-  <div class="Header">
-    <div>
-      <div style="font-weight:800;font-size:13px;color:#0369a1;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOLAB)</div>
-      <div style="font-size:11px;color:#475569;">Phòng Kinh Doanh &amp; Kế Toán — Bảng kê xuất hóa đơn điện tử GTGT</div>
-    </div>
-    <div style="text-align:right;">
-      <div style="font-weight:800;font-family:Consolas,monospace;font-size:13px;">Đơn hàng: ${esc(params.orderCode)}</div>
-      <div style="font-size:11px;color:#475569;">Ngày lập: ${esc(params.invoiceDate || new Date().toLocaleDateString("vi-VN"))}</div>
-    </div>
-  </div>
-
-  <div style="text-align:center;margin-bottom:12px;">
-    <h1>PHIẾU YÊU CẦU &amp; BẢNG KÊ XUẤT HÓA ĐƠN GTGT (OLIGO &amp; SINH PHẨM)</h1>
-    ${params.invoiceNo ? `<div style="font-size:12px;color:#059669;font-weight:700;">Đính kèm Hóa đơn GTGT số: ${esc(params.invoiceNo)}</div>` : ""}
-  </div>
-
-  <div class="meta-grid">
-    <div><b>Đơn vị nhận hóa đơn:</b> ${esc(params.customerName || "—")}</div>
-    <div><b>Mã số thuế (MST):</b> <span class="mono"><b>${esc(params.taxCode || "—")}</b></span></div>
-    <div style="grid-column: span 2;"><b>Địa chỉ đăng ký thuế:</b> ${esc(params.address || "—")}</div>
-    <div><b>Email nhận HĐĐT:</b> ${esc(params.email || "—")}</div>
-    <div><b>Tổng số dòng kê khai:</b> <b>${invItems.length}</b> dòng (${groupedRows.length} nhóm mã HĐ)</div>
-    <div style="grid-column: span 2;"><b>Ghi chú xuất hóa đơn:</b> ${esc(params.invoiceNotes || "Xuất hóa đơn theo bảng kê chi tiết đính kèm")}</div>
-  </div>
-
-  <h2>Phần I. Bảng Tổng Hợp Theo Mã Hàng Chuẩn Xuất Hóa Đơn Điện Tử (Dành cho Kế toán)</h2>
-  <table>
-    <thead>
-      <tr>
-        <th style="width:34px;text-align:center;">STT</th>
-        <th style="width:110px;">Mã Hàng HĐ</th>
-        <th>Tên Hàng Hóa / Dịch Vụ Trên Hóa Đơn</th>
-        <th style="width:52px;text-align:center;">ĐVT</th>
-        <th style="width:65px;" class="num">Tổng SL</th>
-        <th style="width:95px;" class="num">Đơn giá (gồm VAT)</th>
-        <th style="width:45px;text-align:center;">VAT</th>
-        <th style="width:110px;" class="num">Thành tiền (gồm VAT)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${groupedRows.map((g, i) => `<tr>
-        <td style="text-align:center;">${i + 1}</td>
-        <td class="mono"><b>${esc(g.code)}</b></td>
-        <td>${esc(g.name)}</td>
-        <td style="text-align:center;">${esc(g.unit)}</td>
-        <td class="num">${g.qty.toLocaleString("vi-VN")}</td>
-        <td class="num">${g.price.toLocaleString("vi-VN")}</td>
-        <td style="text-align:center;">${g.vatRate}%</td>
-        <td class="num"><b>${g.lineTotal.toLocaleString("vi-VN")}</b></td>
-      </tr>`).join("")}
-      <tr class="total-row">
-        <td colspan="7" style="text-align:right;">Cộng tiền hàng (Trước thuế GTGT):</td>
-        <td class="num">${totalBeforeVat.toLocaleString("vi-VN")} đ</td>
-      </tr>
-      <tr class="total-row">
-        <td colspan="7" style="text-align:right;">Tổng tiền thuế GTGT (VAT):</td>
-        <td class="num">${totalVat.toLocaleString("vi-VN")} đ</td>
-      </tr>
-      <tr class="grand-row">
-        <td colspan="7" style="text-align:right;">TỔNG CỘNG THANH TOÁN (ĐÃ GỒM VAT):</td>
-        <td class="num">${totalWithVat.toLocaleString("vi-VN")} VNĐ</td>
-      </tr>
-    </tbody>
-  </table>
-
-  <h2>Phần II. Bảng Kê Chi Tiết Từng Trình Tự Oligo / Cấu Hình Đính Kèm Hóa Đơn (${invItems.length} dòng)</h2>
-  <table>
-    <thead>
-      <tr>
-        <th style="width:32px;text-align:center;">#</th>
-        <th style="width:95px;">Mã Hàng</th>
-        <th style="width:170px;">Tên Hàng Hóa / Dịch Vụ</th>
-        <th>Quy Cách / Trình Tự Chi Tiết (5' → 3' · Scale · Mod · Tinh Sạch)</th>
-        <th style="width:48px;text-align:center;">ĐVT</th>
-        <th style="width:55px;" class="num">SL</th>
-        <th style="width:85px;" class="num">Đơn giá</th>
-        <th style="width:100px;" class="num">Thành tiền</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${invItems.map((it, idx) => {
-          const lt = Math.round((Number(it.qty) || 0) * (Number(it.price) || 0));
-          return `<tr>
-            <td style="text-align:center;">${idx + 1}</td>
-            <td class="mono"><b>${esc(it.code)}</b></td>
-            <td>${esc(it.name)}</td>
-            <td class="mono" style="font-size:11px;">${esc(it.specification || "—")}</td>
-            <td style="text-align:center;">${esc(it.unit)}</td>
-            <td class="num">${Number(it.qty).toLocaleString("vi-VN")}</td>
-            <td class="num">${Number(it.price).toLocaleString("vi-VN")}</td>
-            <td class="num"><b>${lt.toLocaleString("vi-VN")}</b></td>
-          </tr>`;
-      }).join("")}
-    </tbody>
-  </table>
-
-  <div class="sig-grid">
-    <div>
-      <b>NHÂN VIÊN KINH DOANH</b>
-      <div style="font-size:10px;color:#64748b;margin-bottom:48px;">(Ký, ghi rõ họ tên)</div>
-    </div>
-    <div>
-      <b>PHÒNG TỔNG HỢP OLIGO / LAB</b>
-      <div style="font-size:10px;color:#64748b;margin-bottom:48px;">(Ký, ghi rõ họ tên)</div>
-    </div>
-    <div>
-      <b>KẾ TOÁN XUẤT HÓA ĐƠN</b>
-      <div style="font-size:10px;color:#64748b;margin-bottom:48px;">(Ký, ghi rõ số HĐ &amp; ngày xuất)</div>
-    </div>
-  </div>
-</body>
-</html>`;
-
-        const w = window.open("", "_blank", "width=980,height=820");
-        if (!w) {
-            showToast("Trình duyệt đã chặn Pop-up! Vui lòng cho phép mở cửa sổ để in Bảng kê hóa đơn.", "warning");
-            return;
-        }
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-    };
 
     const renderOligoBuilderPanel = (target: "QUOTE" | "ORDER") => {
         if (openOligoBuilderTarget !== target) return null;
@@ -9292,7 +9260,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return {
                 productCode: it.productCode,
                 parentCode: parentCode,
-                manufacturer: formatSupplierShortName(it.manufacturer || ((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "") : "ABT")),
+                manufacturer: formatSupplierShortName(it.manufacturer || ((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "ABT") : "ABT")),
                 specification: it.specification || prod?.specification || "",
                 quantity: qty,
                 price: price,
@@ -9640,7 +9608,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ quote_code: dq.id, id: dq.id })
-            }).then(onSaveResult("delete_quotation")).catch(onSaveError("delete_quotation"));
+            }).catch(() => {});
         });
         showToast(`Đã xóa thành công ${draftQuotes.length} báo giá nháp!`, "success");
     };
@@ -9793,7 +9761,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const rows = source.map((q, idx) => {
             const totalAmount = Number(q.totalAmount) || 0;
-            const totalBeforeVat = Number(q.totalBeforeVat) || preVatAmount(totalAmount, q.items);
+            const totalBeforeVat = Number(q.totalBeforeVat) || Math.round(totalAmount / 1.08);
             const totalVat = Number(q.totalVat) || (totalAmount - totalBeforeVat);
             const totalDiscount = Number(q.totalDiscount) || 0;
             const netBeforeVat = totalBeforeVat - totalDiscount;
@@ -10537,7 +10505,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(matchedQuote)
-                }).then(onSaveResult("quotation")).catch(onSaveError("quotation"));
+                }).catch(() => {});
             }
         }
 
@@ -10580,7 +10548,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ contract_code: cid, id: cid })
-            }).then(onSaveResult("delete_contract")).catch(onSaveError("delete_contract"));
+            }).catch(() => {});
         });
         showToast(`Đã xóa ${deletedIds.length} hợp đồng thành công!`, "success");
     };
@@ -10895,7 +10863,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const displayCode = it.parentCode || it.parent_code || (prod as any)?.parent_code || (prod as any)?.parent_item_code || itCode || "—";
                 const itName = it.productName || it.product_name || it.name || prod?.name || itCode || "Sản phẩm";
                 const spec = it.specification || prod?.specification || getProductSpecification(it) || "—";
-                const mfg = formatSupplierShortName(it.manufacturer || (prod as any)?.manufacturer || getProductManufacturer(it) || "");
+                const mfg = formatSupplierShortName(it.manufacturer || (prod as any)?.manufacturer || getProductManufacturer(it) || "ABT");
                 const rawNote = it.notes || it.note || "";
                 const note = (rawNote === prod?.notes || rawNote === "Imported from Excel") ? "" : rawNote;
 
@@ -10907,7 +10875,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     (quote.tax_rate !== undefined ? quote.tax_rate : 8)))));
                 const itemVatRate = !isNaN(Number(rawRate)) && Number(rawRate) >= 0 ? Number(rawRate) : 8;
                 const vatBadgeHtml = hasMultipleVatRates
-                    ? `<span style="display: inline-block; font-size: 10px; font-weight: bold; background: #e0f2fe; color: #075985; padding: 1px 5px; border-radius: 3px; margin-left: 6px;">VAT ${itemVatRate}%</span>`
+                    ? `<span style="display: inline-block; font-size: 10px; font-weight: bold; background: #e0e7ff; color: #3730a3; padding: 1px 5px; border-radius: 3px; margin-left: 6px;">VAT ${itemVatRate}%</span>`
                     : '';
                 const vatTagText = hasMultipleVatRates ? `VAT ${itemVatRate}%` : '';
                 const displayNote = note ? (note.toLowerCase().includes("vat") ? note : `${note}${vatTagText ? ` (${vatTagText})` : ''}`) : (vatTagText || "—");
@@ -11024,11 +10992,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 <body>
                     <div class="header">
                         <div style="display: flex; align-items: center; gap: 14px;">
-                            <img src="/logo-abt.png" alt="Logo" style="height: 54px; width: auto; object-fit: contain;" onerror="this.style.display='none'" />
+                            <img src="/logo-tbr.png" alt="Logo" style="height: 54px; width: auto; object-fit: contain;" onerror="this.style.display='none'" />
                             <div class="company-info">
                                 <div class="company-name">${companyName}</div>
                                 <div>Địa chỉ: ${companyAddress}</div>
-                                <div>Điện thoại: ${companyPhone || "028 2216 0885"} | Email: ${companyEmail || "sales@abtvn.com"}</div>
+                                <div>Điện thoại: ${companyPhone || "028.66 76 77 62"} | Email: ${companyEmail || "sales@tbr.vn - tbrtop@gmail.com"}</div>
                                 ${companyTaxCode ? `<div>Mã số thuế: ${companyTaxCode}</div>` : ""}
                             </div>
                         </div>
@@ -11167,7 +11135,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     companyPhone,
                     companyEmail,
                     companyTaxCode,
-                    companyWebsite: "www.abtvn.com"
+                    companyWebsite: "www.tbr.vn"
                 },
                 formatSupplierShortName,
                 readVietnameseCurrency,
@@ -11240,7 +11208,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div>
                                     <strong>${it.productName || it.name || it.productCode || "Sản phẩm, hàng hóa"}</strong>
                                     ${spec ? `<div style="font-size: 11px; color: #475569; margin-top: 2px;">Quy cách: ${spec}</div>` : ""}
-                                    ${hasConfig ? `<div style="font-size: 10px; color: #0369a1; font-weight: bold; margin-top: 2px;">(Hệ thống trọn gói kèm ${validConfigs.length} hạng mục cấu hình)</div>` : ''}
+                                    ${hasConfig ? `<div style="font-size: 10px; color: #4338ca; font-weight: bold; margin-top: 2px;">(Hệ thống trọn gói kèm ${validConfigs.length} hạng mục cấu hình)</div>` : ''}
                                 </div>
                             </div>
                         </td>
@@ -12289,7 +12257,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify(matchedQuote)
-                }).then(onSaveResult("quotation")).catch(onSaveError("quotation"));
+                }).catch(() => {});
             }
         }
 
@@ -12311,7 +12279,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setVatTaxCode(isVatReq ? String(req.vat_tax_code || req.vatTaxCode || "") : "");
         setVatAddress(isVatReq ? String(req.vat_address || req.vatAddress || "") : "");
         setVatEmail(isVatReq ? String(req.vat_email || req.vatEmail || "") : "");
-        setShippingMethod(String(req.shipping_method || req.shippingMethod || "Xe lạnh chuyên dụng ABT (-20°C đến 8°C)"));
+        setShippingMethod(String(req.shipping_method || req.shippingMethod || "Xe lạnh chuyên dụng TBR (-20°C đến 8°C)"));
         setTrackingCode(String(req.tracking_code || req.trackingCode || ""));
         setFactoryOrderCustomerName(req.customerName || "");
         setFactoryOrderContractId(req.contractId || "");
@@ -12569,8 +12537,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const isStock = isStockOrder || factoryOrderCustomerName === defaultStockCustomer || factoryOrderCustomerName.includes("KHO LƯU TRỮ");
         const repId = isStock 
-            ? "" 
-            : (loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "");
+            ? "NV-TBR-007" 
+            : (loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "NV-TBR-018");
         let repName = isStock 
             ? "Bộ Phận Kho Vận" 
             : (loggedInStaff?.full_name || salesPersonnel[0]?.full_name || "Phòng Kinh Doanh");
@@ -12686,11 +12654,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const priceApprovalNotes = (!isStockOrder && hasZeroPrice) ? "Đơn hàng có mặt hàng 0đ / quà tặng cần BGĐ duyệt" : "";
 
         if (editingFactoryOrderId) {
-            // Giữ bản cũ để khôi phục nếu máy chủ không lưu được (không để màn hình hiện thay đổi chưa có trên CSDL)
-            const orderBeforeEdit = factoryOrders.find(o => o.id === editingFactoryOrderId);
-            const restoreOrderBeforeEdit = () => {
-                if (orderBeforeEdit) setFactoryOrders(prev => prev.map(o => o.id === editingFactoryOrderId ? orderBeforeEdit : o));
-            };
             setFactoryOrders(prev => prev.map(order => {
                 if (order.id === editingFactoryOrderId) {
                     const isFromStockEdit = factoryOrderFulfillmentSource === "STOCK" || order.procureStatus === "STOCK_DELIVERY";
@@ -12811,11 +12774,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }).then(async res => {
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
-                    restoreOrderBeforeEdit();
                     showToast(`Không lưu được thay đổi đơn ${editingFactoryOrderId} vào CSDL: ${err.error || res.status}`, "error");
                     return;
                 }
-                showToast(`Đã cập nhật yêu cầu đặt hàng ${editingFactoryOrderId} thành công!`, "success");
                 const json = await res.json().catch(() => ({}));
                 if (json && (json.is_credit_blocked !== undefined || json.price_approval_status || json.approval_reset)) {
                     setFactoryOrders(prev => prev.map(o => o.id === editingFactoryOrderId ? {
@@ -12831,10 +12792,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }
             }).catch(err => {
                 console.error("Error updating order in PostgreSQL:", err);
-                restoreOrderBeforeEdit();
-                showToast(`Không kết nối được máy chủ khi lưu đơn ${editingFactoryOrderId}. Thay đổi chưa được lưu.`, "error");
+                showToast(`Không kết nối được máy chủ khi lưu đơn ${editingFactoryOrderId}.`, "error");
             });
 
+            showToast(`Đã cập nhật yêu cầu đặt hàng ${editingFactoryOrderId} thành công!`, "success");
             setIsFactoryOrderModalOpen(false);
             setEditingFactoryOrderId(null);
             resetFactoryOrderInvoiceAndExtraStates();
@@ -12943,12 +12904,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             tracking_code: trackingCode
         };
 
-        // Sync directly to ABT PostgreSQL backend
+        // Sync directly to TBR PostgreSQL backend
         fetch("/api/sales?action=order", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                is_new: true,
                 order_code: generatedCode,
                 customer_id: matchedCust?.id,
                 customer_code: realCustomerCode || matchedCust?.customer_code,
@@ -13109,25 +13069,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return orderCode;
     };
 
-    /** Gắn mã PR vào đơn bán trên máy chủ; báo lỗi rõ thay vì bỏ qua im lặng */
-    const persistOrderPrLink = async (payload: Record<string, any>): Promise<boolean> => {
-        try {
-            const res = await fetch("/api/sales?action=order", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-            if (res.ok) return true;
-            const err = await res.json().catch(() => ({}));
-            showToast(`Đã tạo đề xuất mua hàng nhưng chưa gắn được mã PR vào đơn ${payload.order_code}: ${err.error || res.status}`, "error");
-        } catch (err) {
-            console.error("Failed to link PR to sales order:", err);
-            showToast(`Đã tạo đề xuất mua hàng nhưng mất kết nối khi gắn mã PR vào đơn ${payload.order_code}.`, "error");
-        }
-        return false;
-    };
-
-    const handleConfirmSingleMfgOrder = async (e?: React.FormEvent | React.MouseEvent) => {
+    const handleConfirmSingleMfgOrder = (e?: React.FormEvent | React.MouseEvent) => {
         if (e && typeof e.preventDefault === "function") {
             e.preventDefault();
         }
@@ -13166,8 +13108,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const candidatePrCode = (targetReq.prCode && targetReq.prCode.startsWith("PR26-"))
             ? targetReq.prCode
             : ((targetReq.id && targetReq.id.startsWith("SO")) ? targetReq.id.replace(/^SO/, "PR") : "PR26-TB-1001");
-        let prCode = candidatePrCode;
-        const applyMfgPrToOrder = (finalPrCode: string) => setFactoryOrders(prev => prev.map(req => {
+        const prCode = candidatePrCode;
+
+        // 1. Update state immediately so UI updates in real-time
+        setFactoryOrders(prev => prev.map(req => {
             if (req.id === targetReq.id) {
                 return {
                     ...req,
@@ -13175,7 +13119,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     hasMfg: true,
                     hasComm: true,
                     mfgStatus: "PENDING",
-                    prCode: finalPrCode,
+                    prCode: prCode,
                     procureStatus: "PR_PENDING",
                     mfgNotes: newNotes,
                     mfgEstDate: formattedEstDate
@@ -13205,10 +13149,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             ? ` (Đơn SO của NVKD: ${targetReq.salesRepName})`
             : "";
 
-        let prRes: Response;
-        let prData: any = {};
-        try {
-            prRes = await fetch("/api/procurement?action=create_pr", {
+        fetch("/api/procurement?action=create_pr", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -13222,32 +13163,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 description: `[Đơn bán ${targetReq.id}]${soOwnerNote} ${newNotes}`.trim(),
                 items: prItems
             })
-            });
-            prData = await prRes.json().catch(() => ({}));
-        } catch (err) {
-            console.error("Failed to create PR:", err);
-            showToast("Không kết nối được máy chủ để gửi đề xuất mua hàng. Vui lòng thử lại.", "error");
-            return;
-        }
-        if (!prRes.ok || !prData?.code) {
-            // Không đánh dấu "đã gửi PR" khi máy chủ chưa lưu được
-            showToast(`Chưa gửi được đề xuất mua hàng: ${prData?.error || prRes.status}. Vui lòng thử lại.`, "error");
-            return;
-        }
-        prCode = prData.code;
-        applyMfgPrToOrder(prCode);
+        }).then(res => res.json()).then(data => {
+            if (data?.code) {
+                setFactoryOrders(prev => prev.map(o => o.id === targetReq.id ? { ...o, prCode: data.code } : o));
+            }
+        }).catch(err => console.warn("Auto create PR error:", err));
 
         // 3. PO do phòng Cung ứng lập từ PR (Kinh doanh không tạo PO). 4. Lưu mã PR vào đơn bán.
         void mfgCode;
-        const linkedMfg = await persistOrderPrLink({
-            id: targetReq.id,
-            order_code: targetReq.order_code || targetReq.id,
-            pr_code: prCode,
-            procure_status: "PR_PENDING",
-            fulfillment_source: targetReq.fulfillmentSource || "COMMERCIAL"
-        });
+        fetch("/api/sales?action=order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: targetReq.id,
+                order_code: targetReq.order_code || targetReq.id,
+                pr_code: prCode,
+                procure_status: "PR_PENDING",
+                fulfillment_source: targetReq.fulfillmentSource || "COMMERCIAL"
+            })
+        }).catch(e => console.warn("Background update sales order PR error:", e));
 
-        if (linkedMfg) showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng (Cung ứng sẽ lập PO với nhà cung cấp).`, "success");
+        showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng (Cung ứng sẽ lập PO với nhà cung cấp).`, "success");
         setSingleMfgTargetOrder(null);
     };
 
@@ -13285,7 +13221,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
             return req;
         }));
-        showToast(`Đơn hàng ${poCode} đã về kho ABT thành công! Có thể xuất giao cho khách.`, "success");
+        showToast(`Đơn hàng ${poCode} đã về kho TBR thành công! Có thể xuất giao cho khách.`, "success");
     };
 
     // ===== HELPER LUỒNG PHIẾU GIAO HÀNG THEO ĐỢT =====
@@ -13354,9 +13290,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const newSlips = slips.filter((s: any) => s.deliveryStatus);
         const legacySlips = slips.filter((s: any) => !s.deliveryStatus);
         const deliveredSlips = slips.filter((s: any) => getSlipStep(s, fo) === "DELIVERED");
-        const deliveries: any[] = fo?.deliveries || ord?.deliveries || [];
+        const deliveries: any[] = (fo?.deliveries || ord?.deliveries || []).filter((d: any) => !excludeSlipId || d.slipId !== excludeSlipId);
         const legacyDeliveries = deliveries.filter((d: any) => !d.slipId);
-        const isOrderDone = fo && (fo.status === "Delivered" || fo.status === "Completed" || fo.status === "COMPLETED");
+        const isOrderDone = !excludeSlipId && fo && (fo.status === "Delivered" || fo.status === "Completed" || fo.status === "COMPLETED");
         const sumQty = (arr: any[], key: string, code: string) => arr.reduce((sum: number, rec: any) =>
             sum + (rec?.[key] || []).filter((x: any) => getItemCode(x) === code).reduce((s2: number, x: any) => s2 + (Number(x.quantity) || 0), 0), 0);
         const result: Record<string, { ordered: number; allocated: number; delivered: number; remaining: number }> = {};
@@ -13397,7 +13333,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const fo = resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode });
         const st = getSlipStatus(slip, fo);
         if (st === "CANCELLED") return false;
-        const isPrivilegedSlipEditor = Boolean(isManagerOrAdmin || canApproveSalesOrdersPerm || canViewCustomerDebt || isWarehouseStaff);
+        const hasEditSlipPerm = Boolean(can && can("sales.edit_delivery_slips"));
+        const isPrivilegedSlipEditor = Boolean(isManagerOrAdmin || canApproveSalesOrdersPerm || canViewCustomerDebt || isWarehouseStaff || hasEditSlipPerm);
         if (st === "DELIVERED") {
             return isPrivilegedSlipEditor;
         }
@@ -13522,7 +13459,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return list;
     };
 
-    const defaultStockCustomer = "Công ty Cổ phần Công nghệ ABT";
+    const defaultStockCustomer = typeof window !== "undefined" && (window.location.port === "3006" || window.location.href.includes("3006"))
+        ? "Công ty Cổ phần Công nghệ VIA"
+        : "Công ty Cổ phần Công nghệ TBR";
 
     const checkIsPureStock = (o: any): boolean => {
         if (!o) return false;
@@ -13530,7 +13469,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (o.quoteId || o.quote_code) return false;
         // Nếu tên khách hàng không phải kho nội bộ / công ty chủ quản thì là đơn bán cho khách hàng
         const cName = String(o.customerName || "").trim();
-        if (cName && !cName.includes("Kho") && cName !== defaultStockCustomer && !cName.includes("ABT")) {
+        if (cName && !cName.includes("Kho") && cName !== defaultStockCustomer && !cName.includes("TBR") && !cName.includes("VIA")) {
             return false;
         }
         return Boolean(o.isStockOrder || o.orderCategory === "STOCK" || (o.id && String(o.id).includes("STOCK")));
@@ -14068,22 +14007,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
         // PO sẽ do phòng Cung ứng lập từ PR này (đơn bán được tự cập nhật mã PO khi Cung ứng lập PO)
         // Also persist pr_code & procure_status to PostgreSQL sales_orders
-        const linkedProcure = await persistOrderPrLink({
-            id: singleProcureTargetOrder.id,
-            order_code: singleProcureTargetOrder.order_code || singleProcureTargetOrder.id,
-            pr_code: prCode,
-            procure_status: "PR_PENDING",
-            fulfillment_source: singleProcureTargetOrder.fulfillmentSource || "COMMERCIAL"
-        });
+        fetch("/api/sales?action=order", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                id: singleProcureTargetOrder.id,
+                order_code: singleProcureTargetOrder.order_code || singleProcureTargetOrder.id,
+                pr_code: prCode,
+                procure_status: "PR_PENDING",
+                fulfillment_source: singleProcureTargetOrder.fulfillmentSource || "COMMERCIAL"
+            })
+        }).catch(e => console.warn("Background update sales order PR error:", e));
 
-        if (linkedProcure) showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng thành công!`, "success");
+        showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng thành công!`, "success");
         setSingleProcureTargetOrder(null);
     };
 
     const handleCompleteProcureOrder = (orderId: string) => {
         const order = factoryOrders.find(o => o.id === orderId);
         const poCode = (order?.procureOrderCode || order?.mfgOrderCode || `PO-${orderId}`).replace(/^ĐHX-/, "PO-");
-        if (!window.confirm(`Xác nhận hàng của đơn ${orderId} (${poCode}) đã về kho ABT và kiểm đếm nhập kho đầy đủ?`)) {
+        if (!window.confirm(`Xác nhận hàng của đơn ${orderId} (${poCode}) đã về kho TBR và kiểm đếm nhập kho đầy đủ?`)) {
             return;
         }
         setFactoryOrders(prev => prev.map(req => {
@@ -14473,11 +14416,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             }
             return req;
         }));
-        const linkResults = await Promise.all(selectedReqs.map(req =>
-            persistOrderPrLink({ id: req.id, order_code: req.order_code || req.id, pr_code: combinedPrCode, procure_status: "PR_PENDING" })
-        ));
+        for (const req of selectedReqs) {
+            fetch("/api/sales?action=order", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ id: req.id, order_code: req.order_code || req.id, pr_code: combinedPrCode, procure_status: "PR_PENDING" })
+            }).catch(() => {});
+        }
 
-        if (linkResults.every(Boolean)) showToast(`Đã gửi Đề xuất mua hàng gộp ${combinedPrCode} sang phòng Cung Ứng (${selectedReqs.length} đơn).`, "success");
+        showToast(`Đã gửi Đề xuất mua hàng gộp ${combinedPrCode} sang phòng Cung Ứng (${selectedReqs.length} đơn).`, "success");
 
         setIsCombineOrderModalOpen(false);
         setSelectedFactoryOrdersForCombine([]);
@@ -14576,7 +14523,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const parseSlipDateToIso = (d: any): string => {
         const s = String(d || "").trim();
         if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
         if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
         return todayVN();
     };
@@ -14636,9 +14583,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const prod = allSalesProducts.find(p => p.code === code);
             const ordered = Number(it.quantity) || 1;
             const hasDistinctLines = (sameCodeCountInOrder[code] || 0) > 1;
-            const pg = hasDistinctLines
-                ? { ordered, allocated: 0, delivered: Number(it.deliveredQuantity) || 0, remaining: Math.max(0, ordered - (Number(it.deliveredQuantity) || 0)) }
-                : (progress[code] || { ordered, allocated: 0, delivered: 0, remaining: ordered });
             const matchingSlipItems = editSlip
                 ? (editSlip.items || []).filter((x: any) => {
                     if (getItemCode(x) !== code) return false;
@@ -14648,6 +14592,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     return String(x.specification || "").trim().toLowerCase() === String(it.specification || "").trim().toLowerCase() && xIsGift === isGiftItem;
                 })
                 : [];
+            const matchingSlipQty = matchingSlipItems.reduce((s: number, x: any) => s + (Number(x.quantity) || 0), 0);
+            const pg = hasDistinctLines
+                ? {
+                    ordered,
+                    allocated: 0,
+                    delivered: Math.max(0, (Number(it.deliveredQuantity) || 0) - matchingSlipQty),
+                    remaining: Math.max(matchingSlipQty, ordered - Math.max(0, (Number(it.deliveredQuantity) || 0) - matchingSlipQty))
+                }
+                : {
+                    ...(progress[code] || { ordered, allocated: 0, delivered: 0, remaining: ordered }),
+                    remaining: Math.max(matchingSlipQty, (progress[code]?.remaining ?? ordered))
+                };
             const slipItem = matchingSlipItems[0] || null;
             if (matchingSlipItems.length === 0 && pg.remaining <= 0) return;
 
@@ -14972,7 +14928,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     transaction_code: `${isInbound ? "PNK" : "PXK"}-${cleanId}${suffix}`,
                     reference_code: slip.orderCode,
                     date: todayVN(),
-                    performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho ABT",
+                    performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho TBR",
                     warehouse_name: is13B ? "Kho Trung Tâm" : (slip.dispatchLocation || "Kho Trung Tâm"),
                     items: valid.map((it: any) => ({
                         product_code: it.selectedLotProductCode || getItemCode(it),
@@ -15091,6 +15047,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             const staffName = loggedInStaff?.full_name || user?.name || "Nhân viên";
             const chosenStep = deliveryStepStatus || "PENDING_DELIVERY";
+            const isoDeliveryDate = deliveryDate ? parseSlipDateToIso(deliveryDate) : todayVN();
+            const formattedDeliveryDateVN = `${isoDeliveryDate.slice(8, 10)}/${isoDeliveryDate.slice(5, 7)}/${isoDeliveryDate.slice(0, 4)}`;
             const newSlip: any = {
                 ...(editSlip || {}),
                 id: slipId,
@@ -15102,7 +15060,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 customerContact: deliveryReceiverName.trim() || deliveryTargetOrder.contactPerson || deliveryTargetOrder.customerContact || custRec?.contact_person || custRec?.contact_name || "",
                 receiverName: deliveryReceiverName.trim() || deliveryTargetOrder.contactPerson || deliveryTargetOrder.customerContact || custRec?.contact_person || custRec?.contact_name || "",
                 receiverPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.contactPhone || deliveryTargetOrder.customerPhone || custRec?.phone || "",
-                deliveryDate: deliveryDate ? new Date(deliveryDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : now.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+                deliveryDate: formattedDeliveryDateVN,
                 timeliness: deliveryTimeliness,
                 notes: deliveryNotes,
                 items: slipItems,
@@ -15116,7 +15074,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 isDelivered: chosenStep === "DELIVERED",
                 ...(chosenStep === "WAREHOUSE_DELIVERED" || chosenStep === "DELIVERED" ? {
                     deliveryStaff: deliveryDispatcherName.trim() || editSlip?.deliveryStaff || staffName,
-                    deliveredAt: editSlip?.deliveredAt || todayVN()
+                    deliveredAt: isoDeliveryDate
                 } : {}),
                 ...(chosenStep === "DELIVERED" ? {
                     confirmedBy: editSlip?.confirmedBy || staffName,
@@ -15175,6 +15133,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const sfx = `-E${String(Date.now()).slice(-5)}`;
                 await applySlipStockMovement(newSlip, backIn, true, sfx, `Nhập lại kho do sửa giảm Phiếu giao hàng ${newSlip.id} - Khách hàng: ${newSlip.customerName}`);
                 await applySlipStockMovement(newSlip, moreOut, false, sfx, `Xuất bổ sung do sửa Phiếu giao hàng ${newSlip.id} - Khách hàng: ${newSlip.customerName}`);
+
+                // Đồng bộ lại ngày giao trên đơn hàng gốc nếu sửa ngày giao của phiếu
+                setFactoryOrders(prev => prev.map(fo => {
+                    if (String(fo.id) === String(deliveryTargetOrder.order_id) ||
+                        fo.linkedSalesOrderId === deliveryTargetOrder.order_code ||
+                        (deliveryTargetOrder.raw_order && fo.id === deliveryTargetOrder.raw_order.id)) {
+                        const updatedDeliveries = Array.isArray(fo.deliveries)
+                            ? fo.deliveries.map((d: any) => d?.slipId === newSlip.id ? { ...d, deliveredAt: isoDeliveryDate } : d)
+                            : fo.deliveries;
+                        return {
+                            ...fo,
+                            ...(fo.deliveredAt ? { deliveredAt: isoDeliveryDate } : {}),
+                            ...(updatedDeliveries ? { deliveries: updatedDeliveries } : {})
+                        };
+                    }
+                    return fo;
+                }));
             } else {
                 const is13B = newSlip.customerName === "Kho Trung Tâm";
                 await applySlipStockMovement(newSlip, slipItems, false, "", is13B
@@ -15204,7 +15179,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     type: "info",
                     category: "delivery",
                     sender: { name: newSlip.creatorName || "Nhân viên" },
-                    targetRoles: ["admin", "warehouse_lead", "warehouse"],
+                    targetEmployeeIds: ["NV-TBR-007", "NV-TBR-002", "NV-TBR-001"],
+                    targetEmployeeNames: ["Dương Phương Bảo Khoa", "Đỗ Ngọc Diễm Trúc", "Nguyễn Văn Hưng"],
                     link: { tab: "sales", subTab: "orders" }
                 });
             }
@@ -15228,7 +15204,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     // Bước 2 (Slide 2): Kho xác nhận Đã giao hàng (hàng đã xuất ra khỏi kho & bàn giao đi giao)
     const handleConfirmWarehouseShipped = (slip: any) => {
-        const staffName = loggedInStaff?.full_name || user?.name || slip.dispatcherName || "Thủ kho ABT";
+        const staffName = loggedInStaff?.full_name || user?.name || slip.dispatcherName || "Thủ kho TBR";
         const updated = {
             ...slip,
             deliveryStatus: "WAREHOUSE_DELIVERED",
@@ -15490,7 +15466,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         // Số hóa đơn phải là số HĐ thật do Kế toán nhập (không tự đặt "HD-SO..." giả)
         const autoInv = ord.invoiceNo || linkedSlip?.invoiceNo || "";
         setConfirmDeliveryInvoiceNo(autoInv);
-        setConfirmDeliveryDate(!slip && ord.deliveredAt ? parseSlipDateToIso(ord.deliveredAt) : todayVN());
+        setConfirmDeliveryDate(
+            slip
+                ? parseSlipDateToIso(slip.deliveredAt || slip.deliveryDate || slip.delivery_date || ord.deliveredAt)
+                : (ord.deliveredAt ? parseSlipDateToIso(ord.deliveredAt) : todayVN())
+        );
         setConfirmDeliveryNotes(slip ? "" : (ord.deliveryNotes || linkedSlip?.notes || ""));
         setConfirmDeliveryInvoiceStatus(ord.invoiceStatus || (ord.invoiceNo ? "ISSUED" : "PENDING_INVOICE"));
         setConfirmDeliveryInvoiceFiles(ord.invoiceFiles || linkedSlip?.invoiceFiles || []);
@@ -15736,11 +15716,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         // 2. Update deliverySlips: chỉ đánh dấu ĐÚNG phiếu được xác nhận
         if (slip) {
+            const isoConfirm = parseSlipDateToIso(deliveredAtDate);
+            const fmtConfirmVN = `${isoConfirm.slice(8, 10)}/${isoConfirm.slice(5, 7)}/${isoConfirm.slice(0, 4)}`;
             const confirmedSlip = {
                 ...slip,
+                deliveryDate: fmtConfirmVN,
                 deliveryStatus: "DELIVERED",
                 isDelivered: true,
-                deliveredAt: deliveredAtDate,
+                deliveredAt: isoConfirm,
                 receiverName: confirmDeliveryReceiverName.trim(),
                 receiverPhone: confirmDeliveryReceiverPhone.trim(),
                 receiverRole: confirmDeliveryReceiverRole.trim(),
@@ -16185,18 +16168,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         showToast("Đã lưu cấu hình thông tin doanh nghiệp thành công và đồng bộ vĩnh viễn trên máy chủ!", "success");
     };
 
-    // Chỉ tiêu doanh số - lưu trực tiếp lên máy chủ ngay khi bấm Lưu (không phụ thuộc isSalesDataLoaded hay giới hạn 5MB của localStorage)
+    // Chỉ tiêu doanh số
     const persistSalesTargetsImmediate = (nextTargets: any[]) => {
-        try {
-            localStorage.setItem("sales_targets", JSON.stringify(nextTargets));
-        } catch (e) {
-            console.warn("localStorage quota exceeded when caching sales_targets:", e);
+        if (typeof window !== "undefined") {
+            try { localStorage.setItem("sales_targets", JSON.stringify(nextTargets)); } catch {}
+            fetch("/api/storage", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ key: "sales_targets", data: nextTargets })
+            }).catch(e => console.error("Failed to sync sales_targets:", e));
         }
-        fetch("/api/storage", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ key: "sales_targets", data: nextTargets })
-        }).catch(err => console.error("Failed to persist sales_targets immediately:", err));
     };
 
     const formatTargetPeriodLabel = (pType: "month" | "quarter" | "year", pVal: string) => {
@@ -16211,41 +16192,78 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return `năm ${pVal}`;
     };
 
+    const handleCopyTargetsToPeriod = (fromPeriod: string, toPeriod: string, toPeriodType: "month" | "quarter" | "year") => {
+        const sourceTargets = (salesTargets || []).filter(t => t && t.month === fromPeriod && Number(t.targetAmount) > 0);
+        if (sourceTargets.length === 0) return;
+
+        setSalesTargets(prev => {
+            const nextMap = new Map<string, any>();
+            (prev || []).forEach(t => {
+                if (!t) return;
+                const k = `${t.salesRepId}__${t.month}`;
+                nextMap.set(k, { ...t, id: t.id || `TGT-${t.salesRepId}-${t.month}` });
+            });
+            sourceTargets.forEach(src => {
+                const k = `${src.salesRepId}__${toPeriod}`;
+                const existing = nextMap.get(k);
+                if (!existing || !(Number(existing.targetAmount) > 0)) {
+                    nextMap.set(k, {
+                        id: `TGT-${src.salesRepId}-${toPeriod}`,
+                        month: toPeriod,
+                        periodType: toPeriodType,
+                        salesRepId: src.salesRepId,
+                        salesRepName: src.salesRepName,
+                        targetAmount: Number(src.targetAmount) || 0
+                    });
+                }
+            });
+            const nextList = Array.from(nextMap.values());
+            persistSalesTargetsImmediate(nextList);
+            return nextList;
+        });
+
+        showToast(`Đã áp dụng ${sourceTargets.length} chỉ tiêu từ kỳ ${fromPeriod} sang kỳ ${toPeriod} và lưu lên máy chủ!`, "success");
+    };
+
     const handleSetSalesTarget = (e: React.FormEvent) => {
         e.preventDefault();
         const periodLabel = formatTargetPeriodLabel(targetPeriodType, targetMonth);
 
         if (targetAssignMode === "bulk") {
-            const entries = Object.entries(targetBulkAmounts).filter(([_, amt]) => Number(amt) > 0);
-            if (entries.length === 0) {
-                showToast("Vui lòng nhập chỉ tiêu (> 0đ) cho ít nhất 1 nhân viên!", "warning");
-                return;
-            }
-            const nowTs = Date.now();
+            const staffList = (visibleSalesPersonnel && visibleSalesPersonnel.length > 0) ? visibleSalesPersonnel : salesPersonnel;
+            let updatedCount = 0;
             setSalesTargets(prev => {
-                const map = new Map<string, any>();
-                prev.forEach((t: any) => {
-                    if (t && t.salesRepId && t.month) map.set(`${t.salesRepId}__${t.month}`, t);
+                const nextMap = new Map<string, any>();
+                (prev || []).forEach(t => {
+                    if (!t) return;
+                    const k = `${t.salesRepId}__${t.month}`;
+                    nextMap.set(k, { ...t, id: t.id || `TGT-${t.salesRepId}-${t.month}` });
                 });
-                entries.forEach(([repId, amt], idx) => {
-                    const repName = salesPersonnel.find(p => p.employee_id === repId)?.full_name || repId;
-                    map.set(`${repId}__${targetMonth}`, {
-                        id: `TGT-${repId}-${targetMonth}`,
-                        month: targetMonth,
-                        periodType: targetPeriodType,
-                        salesRepId: repId,
-                        salesRepName: repName,
-                        targetAmount: Number(amt),
-                        _savedAt: nowTs + idx
-                    });
+                staffList.forEach(p => {
+                    const rId = p.employee_id || p.id || p.employee_code;
+                    if (!rId) return;
+                    const amt = Number(bulkTargetAmounts[rId] ?? 0);
+                    const k = `${rId}__${targetMonth}`;
+                    if (amt > 0) {
+                        updatedCount += 1;
+                        nextMap.set(k, {
+                            id: `TGT-${rId}-${targetMonth}`,
+                            month: targetMonth,
+                            periodType: targetPeriodType,
+                            salesRepId: rId,
+                            salesRepName: p.full_name || rId,
+                            targetAmount: amt
+                        });
+                    } else {
+                        nextMap.delete(k);
+                    }
                 });
-                const next = Array.from(map.values());
-                persistSalesTargetsImmediate(next);
-                return next;
+                const nextList = Array.from(nextMap.values());
+                persistSalesTargetsImmediate(nextList);
+                return nextList;
             });
-            setAnalyticsPeriodType(targetPeriodType);
-            setAnalyticsMonthFilter(targetMonth);
-            showToast(`Đã lưu chỉ tiêu doanh số cho ${entries.length} nhân viên (${periodLabel})!`, "success");
+            setExternalPeriodSync({ periodType: targetPeriodType, periodValue: targetMonth, seq: Date.now() });
+            showToast(`Đã lưu chỉ tiêu doanh số ${periodLabel} cho ${updatedCount} nhân sự lên máy chủ!`, "success");
             setIsTargetModalOpen(false);
             return;
         }
@@ -16254,7 +16272,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast("Vui lòng chọn nhân viên!", "warning");
             return;
         }
-        const repName = salesPersonnel.find(p => p.employee_id === targetRepId)?.full_name || targetRepId;
+        const repObj = salesPersonnel.find(p => p.employee_id === targetRepId || p.employee_code === targetRepId);
+        const repName = repObj?.full_name || targetRepId;
 
         const newTarget = {
             id: `TGT-${targetRepId}-${targetMonth}`,
@@ -16262,21 +16281,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             periodType: targetPeriodType,
             salesRepId: targetRepId,
             salesRepName: repName,
-            targetAmount: Number(targetAmount),
-            _savedAt: Date.now()
+            targetAmount: Number(targetAmount)
         };
 
         setSalesTargets(prev => {
-            const filtered = prev.filter(t => !(t.salesRepId === targetRepId && t.month === targetMonth));
-            const next = [newTarget, ...filtered];
-            persistSalesTargetsImmediate(next);
-            return next;
+            const filtered = (prev || []).filter(t => !(
+                (t.salesRepId === targetRepId || (repName && String(t.salesRepName || "").trim().toLowerCase() === String(repName).trim().toLowerCase())) &&
+                t.month === targetMonth
+            ));
+            const nextList = [newTarget, ...filtered];
+            persistSalesTargetsImmediate(nextList);
+            return nextList;
         });
 
-        // Đồng bộ bộ lọc trên bảng KPI về đúng kỳ vừa giao để số nhảy ngay lập tức
-        setAnalyticsPeriodType(targetPeriodType);
-        setAnalyticsMonthFilter(targetMonth);
-
+        setExternalPeriodSync({ periodType: targetPeriodType, periodValue: targetMonth, seq: Date.now() });
         showToast(`Đã gán chỉ tiêu doanh số ${new Intl.NumberFormat("vi-VN").format(targetAmount)}đ cho ${repName} (${periodLabel})!`, "success");
         setIsTargetModalOpen(false);
     };
@@ -16448,7 +16466,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(updated)
-            }).then(onSaveResult("shared_app_requests")).catch(onSaveError("shared_app_requests"));
+            }).catch(() => {});
 
             // Also delete corresponding task in lab_app_tasks
             const storedTasks = localStorage.getItem("lab_app_tasks");
@@ -16470,7 +16488,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify(updatedTasks)
-                        }).then(onSaveResult("lab_app_tasks")).catch(onSaveError("lab_app_tasks"));
+                        }).catch(() => {});
                     }
                 } catch (e) {}
             }
@@ -16761,7 +16779,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             // Strictly exclude any warehouse entity from customer CRM list
             const isWarehouse = c.name === "Kho Trung Tâm" || 
                 c.customer_code === "KH-01" || 
-                (c.name && (c.name.toLowerCase().includes("13b") || c.name.toLowerCase().includes("kho abt"))) ||
+                (c.name && (c.name.toLowerCase().includes("13b") || c.name.toLowerCase().includes("kho tbr"))) ||
                 (c.customer_code && c.customer_code.toLowerCase().includes("13b"));
             if (isWarehouse) return false;
 
@@ -19190,7 +19208,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         ))
                                     );
                                     const quoteRevAfterVat = custQuotes.reduce((sum, q) => sum + (Number(q.totalAmount) || 0), 0);
-                                    const quoteRevBeforeVat = custQuotes.reduce((sum, q) => sum + (Number(q.totalBeforeVat) || preVatAmount(Number(q.totalAmount) || 0, q.items)), 0);
+                                    const quoteRevBeforeVat = custQuotes.reduce((sum, q) => sum + (Number(q.totalBeforeVat) || Math.round((Number(q.totalAmount) || 0) / 1.08)), 0);
                                     const quoteDiscountTotal = custQuotes.reduce((sum, q) => sum + (Number(q.totalDiscount) || 0), 0);
 
                                     return (
@@ -19467,7 +19485,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         .reduce((sum, log) => sum + (log.total || 0), 0);
 
                                                 const totalOrderRevenue = completedSoRevenue + customerRetailRevenue;
-                                                const totalOrderRevenueBeforeVat = Math.round(totalOrderRevenue / (1 + DEFAULT_VAT_RATE / 100)); // ước tính theo thuế suất mặc định
+                                                const totalOrderRevenueBeforeVat = Math.round(totalOrderRevenue / 1.08);
 
                                                 const displayRevAfterVat = totalOrderRevenue > 0 ? totalOrderRevenue : quoteRevAfterVat;
                                                 const displayRevBeforeVat = totalOrderRevenue > 0 ? totalOrderRevenueBeforeVat : quoteRevBeforeVat;
@@ -20194,7 +20212,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         ) : (
                                                             custQuotes.map((q: any) => {
                                                                 const gross = Number(q.totalAmount) || 0;
-                                                                const preVat = Number(q.totalBeforeVat) || preVatAmount(gross, q.items);
+                                                                const preVat = Number(q.totalBeforeVat) || Math.round(gross / 1.08);
                                                                 const discAmt = Number(q.totalDiscount) || 0;
                                                                 const discRate = preVat > 0 ? ((discAmt / preVat) * 100).toFixed(1) : "0";
                                                                 return (
@@ -20367,7 +20385,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                         filteredQuotationsList.forEach(q => {
                             const gross = Number(q.totalAmount) || 0;
-                            const preVat = Number(q.totalBeforeVat) || preVatAmount(gross, q.items);
+                            const preVat = Number(q.totalBeforeVat) || Math.round(gross / 1.08);
                             const vat = Number(q.totalVat) || (gross - preVat);
                             const disc = Number(q.totalDiscount) || 0;
 
@@ -24075,49 +24093,46 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     isManagerOrAdmin={isManagerOrAdmin}
                     isViewerDirector={isViewerDirector}
                     loggedInStaff={loggedInStaff}
-                    externalPeriodSync={{ periodType: analyticsPeriodType, periodValue: analyticsMonthFilter, seq: 1 }}
-                    onCopyTargetsToPeriod={(fromPeriod: string, toPeriod: string, toPeriodType: "month" | "quarter" | "year") => {
-                        setSalesTargets(prev => {
-                            const sourceTargets = prev.filter((t: any) => t && t.month === fromPeriod && Number(t.targetAmount) > 0);
-                            if (sourceTargets.length === 0) return prev;
-                            const map = new Map<string, any>();
-                            prev.forEach((t: any) => {
-                                if (t && t.salesRepId && t.month) map.set(`${t.salesRepId}__${t.month}`, t);
-                            });
-                            const nowTs = Date.now();
-                            sourceTargets.forEach((src: any, idx: number) => {
-                                map.set(`${src.salesRepId}__${toPeriod}`, {
-                                    ...src,
-                                    id: `TGT-${src.salesRepId}-${toPeriod}`,
-                                    month: toPeriod,
-                                    periodType: toPeriodType,
-                                    _savedAt: nowTs + idx
-                                });
-                            });
-                            const next = Array.from(map.values());
-                            persistSalesTargetsImmediate(next);
-                            return next;
+                    externalPeriodSync={externalPeriodSync}
+                    onCopyTargetsToPeriod={handleCopyTargetsToPeriod}
+                    onOpenTargetModal={(repId?: string, currentPeriodType?: "month" | "quarter" | "year" | "all", currentPeriodValue?: string) => {
+                        const defPeriods = getCurrentDefaultPeriods();
+                        const nextPType: "month" | "quarter" | "year" =
+                            currentPeriodType && currentPeriodType !== "all" ? currentPeriodType : "month";
+                        const nextPVal =
+                            currentPeriodValue && currentPeriodValue !== "all"
+                                ? currentPeriodValue
+                                : nextPType === "quarter"
+                                ? defPeriods.quarter
+                                : nextPType === "year"
+                                ? defPeriods.year
+                                : defPeriods.month;
+
+                        setTargetPeriodType(nextPType);
+                        setTargetMonth(nextPVal);
+
+                        const staffList = (visibleSalesPersonnel && visibleSalesPersonnel.length > 0) ? visibleSalesPersonnel : salesPersonnel;
+                        const initBulk: Record<string, number> = {};
+                        staffList.forEach(p => {
+                            const rId = p.employee_id || p.id || p.employee_code;
+                            const rName = p.full_name || rId;
+                            const found = (salesTargets || []).find(t =>
+                                t.month === nextPVal &&
+                                (t.salesRepId === rId || (rName && String(t.salesRepName || "").trim().toLowerCase() === String(rName).trim().toLowerCase()))
+                            );
+                            initBulk[rId] = found ? Number(found.targetAmount) || 0 : 0;
                         });
-                        showToast(`Đã sao chép chỉ tiêu từ kỳ ${fromPeriod} sang kỳ ${toPeriod}!`, "success");
-                    }}
-                    onOpenTargetModal={(repId?: string, pType?: "month" | "quarter" | "year" | "all", pVal?: string) => {
-                        const activeType: "month" | "quarter" | "year" = (pType && pType !== "all") ? pType : (analyticsPeriodType || "month");
-                        const activeVal = (pVal && pVal !== "all") ? pVal : (analyticsMonthFilter || getCurrentDefaultMonth());
-                        setTargetPeriodType(activeType);
-                        setTargetMonth(activeVal);
+                        setBulkTargetAmounts(initBulk);
+
                         if (repId) {
                             setTargetAssignMode("single");
                             setTargetRepId(repId);
-                            const existing = salesTargets.find((t: any) => t.salesRepId === repId && t.month === activeVal);
-                            setTargetAmount(existing && Number(existing.targetAmount) > 0 ? Number(existing.targetAmount) : 500000000);
+                            const existingAmt = initBulk[repId];
+                            if (existingAmt && existingAmt > 0) {
+                                setTargetAmount(existingAmt);
+                            }
                         } else {
                             setTargetAssignMode("bulk");
-                            const initialBulk: Record<string, number> = {};
-                            visibleSalesPersonnel.forEach(p => {
-                                const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === activeVal);
-                                initialBulk[p.employee_id] = ex ? Number(ex.targetAmount) || 0 : 0;
-                            });
-                            setTargetBulkAmounts(initialBulk);
                         }
                         setIsTargetModalOpen(true);
                     }}
@@ -24137,7 +24152,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </span>
                             </div>
                             <p className="text-[10px] text-slate-500 mt-0.5">
-                                Danh mục thống nhất toàn bộ sản phẩm, hóa chất sinh phẩm và thiết bị phân phối của Công ty ABT.
+                                Danh mục thống nhất toàn bộ sản phẩm, hóa chất sinh phẩm và thiết bị phân phối của Công ty TBR.
                             </p>
                         </div>
 
@@ -25852,44 +25867,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <span>Mặt Hàng Trong Phiếu Giao & Chọn Xuất Hóa Đơn</span>
                                         <span className="text-sky-400 font-mono font-bold">({selectedCodesCount}/{slipItems.length} mã đã chọn)</span>
                                     </label>
-                                    <div className="flex flex-wrap items-center gap-1.5">
-                                        <button
-                                            type="button"
-                                            onClick={() => {
-                                                const cust = customers.find((c: any) => c.name === ord.customer_name) as any;
-                                                const tax = ord.customer_tax_code || cust?.tax_code || cust?.taxCode || "";
-                                                const addr = ord.customer_tax_address || cust?.tax_address || cust?.taxAddress || ord.customer_address || cust?.address || "";
-                                                const email = ord.customer_email || cust?.email || "";
-                                                const mappedItems = slipItems.map((it: any, idx: number) => {
-                                                    const d = getItemDetails(it, idx);
-                                                    return {
-                                                        code: d.code,
-                                                        name: d.name,
-                                                        specification: d.specification,
-                                                        unit: d.unit,
-                                                        qty: d.qty,
-                                                        price: d.price,
-                                                        vatRate: d.vatRate,
-                                                        needsInvoice: !!partialInvSelectedItems[d.itemKey]
-                                                    };
-                                                });
-                                                handlePrintSalesOligoInvoiceStatement({
-                                                    orderCode: `${ord.order_code} (${sl.id})`,
-                                                    customerName: ord.customer_name || "",
-                                                    taxCode: tax,
-                                                    address: addr,
-                                                    email,
-                                                    invoiceNotes: ord.invoice_notes || ord.invoiceNotes || ord.rawOrder?.invoice_notes || ord.rawOrder?.invoiceNotes || "",
-                                                    invoiceNo: partialInvNo,
-                                                    invoiceDate: partialInvDate,
-                                                    items: mappedItems
-                                                });
-                                            }}
-                                            className="px-2.5 py-1 text-[11px] font-bold bg-emerald-700 hover:bg-emerald-600 text-white border border-emerald-500/60 rounded cursor-pointer transition-colors flex items-center gap-1"
-                                            title="In Bảng kê xuất hóa đơn VAT & Phụ lục trình tự Oligo chuẩn A4 cho các mã đã chọn"
-                                        >
-                                            <span>🖨️ In Bảng Kê Xuất HĐ (A4)</span>
-                                        </button>
+                                    <div className="flex items-center gap-1.5">
                                         <button
                                             type="button"
                                             onClick={handleSelectBySale}
@@ -26364,8 +26342,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             { id: `cfg-${Date.now()}-3`, name: "Bộ phụ kiện tiêu chuẩn kết nối & vận hành chuẩn từ nhà sản xuất", model: "Std. Accessories", origin: commBrand || "Chính hãng", quantity: 1, unit: "Bộ", isStandard: true, isIncluded: true, notes: "Dây nguồn, cáp dữ liệu, khay đỡ, adapter" },
                                             { id: `cfg-${Date.now()}-4`, name: "Bộ lưu điện UPS Online chuyên dụng (Bảo vệ ổn định nguồn điện)", model: "Online 2kVA", origin: "Santak / APC", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Khuyến nghị trang bị bảo vệ thiết bị" },
                                             { id: `cfg-${Date.now()}-5`, name: "Bộ máy vi tính điều khiển Core i5, RAM 16GB, SSD 512GB + Màn hình Full HD", model: "OptiPlex", origin: "Dell / HP", quantity: 1, unit: "Bộ", isStandard: false, isIncluded: true, notes: "Trang bị đồng bộ theo yêu cầu phòng xét nghiệm" },
-                                            { id: `cfg-${Date.now()}-6`, name: "Dịch vụ: Vận chuyển, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư ABT)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm biên bản nghiệm thu & cấp chứng nhận" },
-                                            { id: `cfg-${Date.now()}-7`, name: `Gói bảo hành chính hãng ${commWarranty || "24 tháng"} & bảo dưỡng định kỳ`, model: "Warranty", origin: commBrand || "ABT", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong 24-48h" }
+                                            { id: `cfg-${Date.now()}-6`, name: "Dịch vụ: Vận chuyển, lắp đặt, thẩm định IQ/OQ/PQ & đào tạo hướng dẫn sử dụng", model: "Technical Service", origin: "Việt Nam (Kỹ sư TBR)", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Kèm biên bản nghiệm thu & cấp chứng nhận" },
+                                            { id: `cfg-${Date.now()}-7`, name: `Gói bảo hành chính hãng ${commWarranty || "24 tháng"} & bảo dưỡng định kỳ`, model: "Warranty", origin: commBrand || "TBR", quantity: 1, unit: "Gói", isStandard: true, isIncluded: true, notes: "Hỗ trợ kỹ thuật 24/7, xử lý sự cố trong 24-48h" }
                                         ];
                                         setCommConfigurations(sampleConfigs);
                                     }}
@@ -26698,7 +26676,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 {(() => {
                                     const isWarehouse = (name: string) => {
                                         const n = (name || "").toLowerCase();
-                                        return n.includes("kho abt") || n.includes("kho trung tâm") || n.includes("13b");
+                                        return n.includes("kho tbr") || n.includes("kho trung tâm") || n.includes("13b");
                                     };
                                     const uniqueList: any[] = [];
                                     const seen = new Set<string>();
@@ -27006,8 +26984,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     const prod = allSalesProducts.find(prod => prod.code === code) || biolabProducts.find(prod => prod.code === code);
                                                                                     const isRowGift = Boolean((item as any).isGift || (item as any).is_gift);
                                                                                     const finalPrice = isRowGift ? 0 : (prod ? (prod[quotePriceTier] || prod.price) : 0);
-                                                                                    const finalSpec = prod ? (prod.specification || prod.unit || "") : "";
-                                                                                    const finalMfg = formatSupplierShortName((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "") : "ABT");
+                                                                                    const finalSpec = prod ? (prod.specification || (prod.name.toLowerCase().includes("kit") ? "50 test/hộp" : prod.unit || "")) : "50 test/hộp";
+                                                                                    const finalMfg = formatSupplierShortName((prod as any)?.isCommercial ? ((prod as any).brand || (prod as any).supplier || "ABT") : "ABT");
                                                                                     const finalNotes = item.notes || (stockIntel.atp > 0 ? "Hàng có sẵn, giao ngay" : (stockIntel.incomingQty > 0 ? `Hàng đang về (${stockIntel.incomingQty} sp)` : "Hàng đặt, giao sau 2-4 tuần"));
                                                                                     const isEquip = isEquipmentProduct(prod, code);
                                                                                     const defaultConfigs = isEquip ? getDefaultEquipmentConfig(prod) : (item.configurations || []);
@@ -27941,7 +27919,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_custom", data: next })
-                                                            }).then(onSaveResult("sales_personnel_custom")).catch(onSaveError("sales_personnel_custom"));
+                                                            }).catch(() => {});
                                                             return next;
                                                         });
                                                     }}
@@ -27962,7 +27940,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_custom", data: next })
-                                                            }).then(onSaveResult("sales_personnel_custom")).catch(onSaveError("sales_personnel_custom"));
+                                                            }).catch(() => {});
                                                             return next;
                                                         });
                                                         showToast(`Đã chuyển vị trí của ${p.full_name} thành "${val}"!`, "success");
@@ -28021,7 +27999,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_contacts", data: next })
-                                                            }).then(onSaveResult("sales_personnel_contacts")).catch(onSaveError("sales_personnel_contacts"));
+                                                            }).catch(() => {});
                                                             return next;
                                                         });
                                                     }}
@@ -28050,7 +28028,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_contacts", data: next })
-                                                            }).then(onSaveResult("sales_personnel_contacts")).catch(onSaveError("sales_personnel_contacts"));
+                                                            }).catch(() => {});
                                                             return next;
                                                         });
                                                     }}
@@ -28075,7 +28053,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 method: "POST",
                                                                 headers: { "Content-Type": "application/json" },
                                                                 body: JSON.stringify({ key: "sales_personnel_custom", data: next })
-                                                            }).then(onSaveResult("sales_personnel_custom")).catch(onSaveError("sales_personnel_custom"));
+                                                            }).catch(() => {});
                                                             return next;
                                                         });
                                                         showToast(`Đã xóa nhân sự ${p.full_name}!`, "info");
@@ -28311,7 +28289,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         {(() => {
                                             const isWarehouse = (name: string) => {
                                                 const n = (name || "").toLowerCase();
-                                                return n.includes("kho abt") || n.includes("kho trung tâm") || n.includes("13b");
+                                                return n.includes("kho tbr") || n.includes("kho trung tâm") || n.includes("13b");
                                             };
                                             const uniqueList: any[] = [];
                                             const seen = new Set<string>();
@@ -29904,7 +29882,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             </span>
                                                                         ) : null}
                                                                         <span className="text-[10px] text-slate-500 font-mono">
-                                                                            {p.brand || "—"}
+                                                                            {p.brand || "ABT"}
                                                                         </span>
                                                                     </div>
                                                                 </div>
@@ -30074,7 +30052,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                             {allocList.length === 0 ? (
                                                 <div className="text-[11px] text-slate-500 italic py-1">
-                                                    Chưa gán khách hàng cụ thể (100% số lượng sẽ đưa vào Tồn kho tự do dự phòng của ABT).
+                                                    Chưa gán khách hàng cụ thể (100% số lượng sẽ đưa vào Tồn kho tự do dự phòng của TBR).
                                                 </div>
                                             ) : (
                                                 <div className="space-y-1.5">
@@ -30211,40 +30189,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 >
                                     <span>🧬 + Thêm trình tự Oligo (Tách 4 mã / Gộp 1 dòng)</span>
                                 </button>
-                                {factoryOrderItems.some(it => it.productCode) && (
-                                    <button
-                                        type="button"
-                                        onClick={() => {
-                                            const matchedCust = customers.find(c => c.name === factoryOrderCustomerName);
-                                            const matchedOrder = editingFactoryOrderId ? factoryOrders.find(o => o.id === editingFactoryOrderId) : null;
-                                            handlePrintSalesOligoInvoiceStatement({
-                                                orderCode: matchedOrder?.order_code || "SO-DU-THAO",
-                                                customerName: vatCompanyName || factoryOrderCustomerName || "Khách hàng",
-                                                taxCode: vatTaxCode || matchedCust?.tax_code || "",
-                                                address: vatAddress || matchedCust?.address || "",
-                                                email: vatEmail || matchedCust?.email || "",
-                                                invoiceNotes: invoiceNotes || "",
-                                                items: factoryOrderItems.map(it => {
-                                                    const prod = allSalesProducts.find(p => p.code === it.productCode) || biolabProducts.find(p => p.code === it.productCode);
-                                                    return {
-                                                        code: it.productCode || "",
-                                                        name: it.productName || prod?.name || it.productCode || "",
-                                                        specification: it.specification || prod?.specification || "",
-                                                        unit: it.unit || prod?.unit || "ĐV",
-                                                        qty: Number(it.quantity) || 1,
-                                                        price: Number(it.unitPrice ?? prod?.price) || 0,
-                                                        vatRate: Number(it.vatRate ?? it.vat ?? 8),
-                                                        needsInvoice: it.needsInvoice !== false
-                                                    };
-                                                })
-                                            });
-                                        }}
-                                        className="text-xs bg-sky-950/80 hover:bg-sky-900 border border-sky-600/60 text-sky-300 px-2.5 py-1 rounded-lg font-bold flex items-center gap-1.5 cursor-pointer transition-colors"
-                                        title="Xem trước & In Bảng kê yêu cầu xuất hóa đơn VAT (Tổng hợp theo mã chuẩn + Chi tiết từng dòng trình tự Oligo)"
-                                    >
-                                        <span>🖨️ Xem & In Bảng Kê Xuất Hóa Đơn Oligo (A4)</span>
-                                    </button>
-                                )}
                             </div>
                         </div>
                         {renderOligoBuilderPanel("ORDER")}
@@ -30263,7 +30207,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         onChange={(e) => setShippingMethod(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-medium"
                                     >
-                                        <option value="Xe lạnh chuyên dụng ABT (-20°C đến 8°C)">🚛 Xe lạnh chuyên dụng ABT (-20°C đến 8°C)</option>
+                                        <option value="Xe lạnh chuyên dụng TBR (-20°C đến 8°C)">🚛 Xe lạnh chuyên dụng TBR (-20°C đến 8°C)</option>
                                         <option value="Grab / Ahamove Express (Nội thành)">🛵 Grab / Ahamove Express (Nội thành hỏa tốc)</option>
                                         <option value="Chành xe liên tỉnh (Hàng khô/bảo ôn)">🚚 Chành xe liên tỉnh (Hàng khô / Thùng xốp đá gel)</option>
                                         <option value="NVKD trực tiếp giao & bàn giao">👤 NVKD trực tiếp giao & bàn giao</option>
@@ -30273,7 +30217,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Mã vận đơn / Số chuyến xe</label>
                                     <input
                                         type="text"
-                                        placeholder="VD: ABT-EXP-2026-088, Ahamove #98234..."
+                                        placeholder="VD: TBR-EXP-2026-088, Ahamove #98234..."
                                         value={trackingCode}
                                         onChange={(e) => setTrackingCode(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-mono placeholder-slate-600"
@@ -31112,8 +31056,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 else currentStep = 1;
                             }
 
-                            const shipping = viewingFactoryOrderItems.shipping_method || viewingFactoryOrderItems.shippingMethod || viewingFactoryOrderItems.rawOrder?.shipping_method || "Xe lạnh chuyên dụng ABT (-20°C đến 8°C)";
-                            const tracking = viewingFactoryOrderItems.tracking_code || viewingFactoryOrderItems.trackingCode || viewingFactoryOrderItems.rawOrder?.tracking_code || `ABT-EXP-${viewingFactoryOrderItems.id?.replace(/\D/g, '') || "2026"}`;
+                            const shipping = viewingFactoryOrderItems.shipping_method || viewingFactoryOrderItems.shippingMethod || viewingFactoryOrderItems.rawOrder?.shipping_method || "Xe lạnh chuyên dụng TBR (-20°C đến 8°C)";
+                            const tracking = viewingFactoryOrderItems.tracking_code || viewingFactoryOrderItems.trackingCode || viewingFactoryOrderItems.rawOrder?.tracking_code || `TBR-EXP-${viewingFactoryOrderItems.id?.replace(/\D/g, '') || "2026"}`;
                             const vatReq = viewingFactoryOrderItems.vat_requested || viewingFactoryOrderItems.vatRequested || viewingFactoryOrderItems.rawOrder?.vat_requested;
 
                             return (
@@ -34090,69 +34034,55 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             {/* 9. TARGET MODAL */}
             <Modal isOpen={isTargetModalOpen} onClose={() => setIsTargetModalOpen(false)} title="PHÂN BỔ CHỈ TIÊU DOANH SỐ" size="xl">
                 <form onSubmit={handleSetSalesTarget} className="space-y-4 p-2 text-slate-100">
-                    {/* Chế độ giao: Cá nhân hoặc Hàng loạt cả phòng */}
-                    <div className="flex items-center justify-between gap-2 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+                    {/* Mode Switcher: Single vs Bulk */}
+                    <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
                         <button
                             type="button"
                             onClick={() => setTargetAssignMode("single")}
                             className={cn(
-                                "flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer",
-                                targetAssignMode === "single"
-                                    ? "bg-indigo-600 text-white shadow"
-                                    : "text-slate-400 hover:text-slate-200"
+                                "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                                targetAssignMode === "single" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
                             )}
                         >
-                            👤 Giao từng nhân viên
+                            Giao từng nhân viên
                         </button>
                         <button
                             type="button"
-                            onClick={() => {
-                                setTargetAssignMode("bulk");
-                                const initialBulk: Record<string, number> = {};
-                                visibleSalesPersonnel.forEach(p => {
-                                    const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === targetMonth);
-                                    initialBulk[p.employee_id] = ex ? Number(ex.targetAmount) || 0 : (targetBulkAmounts[p.employee_id] || 0);
-                                });
-                                setTargetBulkAmounts(initialBulk);
-                            }}
+                            onClick={() => setTargetAssignMode("bulk")}
                             className={cn(
-                                "flex-1 py-2 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer",
-                                targetAssignMode === "bulk"
-                                    ? "bg-indigo-600 text-white shadow"
-                                    : "text-slate-400 hover:text-slate-200"
+                                "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all cursor-pointer",
+                                targetAssignMode === "bulk" ? "bg-indigo-600 text-white shadow" : "text-slate-400 hover:text-white"
                             )}
                         >
-                            👥 Giao hàng loạt cả phòng ({visibleSalesPersonnel.length} NV)
+                            Giao hàng loạt cả phòng ({visibleSalesPersonnel.length} NV)
                         </button>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Loại chu kỳ *</label>
                             <select
                                 value={targetPeriodType}
                                 onChange={(e) => {
                                     const type = e.target.value as "month" | "quarter" | "year";
+                                    const defPeriods = getCurrentDefaultPeriods();
                                     setTargetPeriodType(type);
-                                    const nextPeriod = type === "month"
-                                        ? getCurrentDefaultMonth()
-                                        : type === "quarter"
-                                            ? getCurrentDefaultQuarter()
-                                            : getCurrentDefaultYear();
-                                    setTargetMonth(nextPeriod);
-                                    if (targetAssignMode === "bulk") {
-                                        const updatedBulk: Record<string, number> = {};
-                                        visibleSalesPersonnel.forEach(p => {
-                                            const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === nextPeriod);
-                                            updatedBulk[p.employee_id] = ex ? Number(ex.targetAmount) || 0 : 0;
-                                        });
-                                        setTargetBulkAmounts(updatedBulk);
-                                    } else if (targetRepId) {
-                                        const ex = salesTargets.find((t: any) => t.salesRepId === targetRepId && t.month === nextPeriod);
-                                        if (ex) setTargetAmount(Number(ex.targetAmount) || 0);
-                                    }
+                                    const nextPVal = type === "month" ? defPeriods.month : type === "quarter" ? defPeriods.quarter : defPeriods.year;
+                                    setTargetMonth(nextPVal);
+                                    const staffList = (visibleSalesPersonnel && visibleSalesPersonnel.length > 0) ? visibleSalesPersonnel : salesPersonnel;
+                                    const nextBulk: Record<string, number> = {};
+                                    staffList.forEach(p => {
+                                        const rId = p.employee_id || p.id || p.employee_code;
+                                        const rName = p.full_name || rId;
+                                        const found = (salesTargets || []).find(t =>
+                                            t.month === nextPVal &&
+                                            (t.salesRepId === rId || (rName && String(t.salesRepName || "").trim().toLowerCase() === String(rName).trim().toLowerCase()))
+                                        );
+                                        nextBulk[rId] = found ? Number(found.targetAmount) || 0 : 0;
+                                    });
+                                    setBulkTargetAmounts(nextBulk);
                                 }}
-                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-bold"
                             >
                                 <option value="month">Tháng</option>
                                 <option value="quarter">Quý</option>
@@ -34160,22 +34090,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </select>
                         </div>
                         <div>
-                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Kỳ áp dụng *</label>
+                            <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Kỳ áp dụng chỉ tiêu *</label>
                             <select
                                 value={targetMonth}
                                 onChange={(e) => {
-                                    const nextVal = e.target.value;
-                                    setTargetMonth(nextVal);
-                                    if (targetAssignMode === "bulk") {
-                                        const updatedBulk: Record<string, number> = {};
-                                        visibleSalesPersonnel.forEach(p => {
-                                            const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === nextVal);
-                                            updatedBulk[p.employee_id] = ex ? Number(ex.targetAmount) || 0 : 0;
-                                        });
-                                        setTargetBulkAmounts(updatedBulk);
-                                    } else if (targetRepId) {
-                                        const ex = salesTargets.find((t: any) => t.salesRepId === targetRepId && t.month === nextVal);
-                                        if (ex) setTargetAmount(Number(ex.targetAmount) || 0);
+                                    const nextPVal = e.target.value;
+                                    setTargetMonth(nextPVal);
+                                    const staffList = (visibleSalesPersonnel && visibleSalesPersonnel.length > 0) ? visibleSalesPersonnel : salesPersonnel;
+                                    const nextBulk: Record<string, number> = {};
+                                    staffList.forEach(p => {
+                                        const rId = p.employee_id || p.id || p.employee_code;
+                                        const rName = p.full_name || rId;
+                                        const found = (salesTargets || []).find(t =>
+                                            t.month === nextPVal &&
+                                            (t.salesRepId === rId || (rName && String(t.salesRepName || "").trim().toLowerCase() === String(rName).trim().toLowerCase()))
+                                        );
+                                        nextBulk[rId] = found ? Number(found.targetAmount) || 0 : 0;
+                                    });
+                                    setBulkTargetAmounts(nextBulk);
+                                    if (targetRepId && nextBulk[targetRepId] > 0) {
+                                        setTargetAmount(nextBulk[targetRepId]);
                                     }
                                 }}
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-bold"
@@ -34275,32 +34209,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     </div>
 
                     {targetAssignMode === "single" ? (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Nhân viên kinh doanh *</label>
                                 <select
                                     value={targetRepId}
                                     onChange={(e) => {
-                                        const repId = e.target.value;
-                                        setTargetRepId(repId);
-                                        const ex = salesTargets.find((t: any) => t.salesRepId === repId && t.month === targetMonth);
-                                        if (ex && Number(ex.targetAmount) > 0) {
-                                            setTargetAmount(Number(ex.targetAmount));
+                                        const rId = e.target.value;
+                                        setTargetRepId(rId);
+                                        if (rId && bulkTargetAmounts[rId] && bulkTargetAmounts[rId] > 0) {
+                                            setTargetAmount(bulkTargetAmounts[rId]);
                                         }
                                     }}
                                     required
                                     className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
                                 >
                                     <option value="">-- Chọn nhân viên --</option>
-                                    {visibleSalesPersonnel.map(p => {
-                                        const ex = salesTargets.find((t: any) => t.salesRepId === p.employee_id && t.month === targetMonth);
-                                        const exText = ex && Number(ex.targetAmount) > 0
-                                            ? ` — Đã giao: ${new Intl.NumberFormat("vi-VN").format(Number(ex.targetAmount))}đ`
-                                            : "";
-                                        return (
-                                            <option key={p.employee_id} value={p.employee_id}>{p.full_name} ({p.employee_id}){exText}</option>
-                                        );
-                                    })}
+                                    {visibleSalesPersonnel.map(p => (
+                                        <option key={p.employee_id} value={p.employee_id}>{p.full_name} ({p.employee_id})</option>
+                                    ))}
                                 </select>
                             </div>
                             <div>
@@ -34312,72 +34239,84 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     value={targetAmount}
                                     onChange={(e) => setTargetAmount(Number(e.target.value))}
                                     required
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-bold"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white font-bold font-mono"
                                 />
-                                <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                    {[200_000_000, 300_000_000, 500_000_000, 1_000_000_000, 1_500_000_000].map(preset => (
-                                        <button
-                                            key={preset}
-                                            type="button"
-                                            onClick={() => setTargetAmount(preset)}
-                                            className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] text-slate-300 cursor-pointer"
-                                        >
-                                            {new Intl.NumberFormat("vi-VN").format(preset)}đ
-                                        </button>
-                                    ))}
-                                </div>
                             </div>
                         </div>
                     ) : (
-                        <div className="space-y-2.5">
-                            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900/80 px-3 py-2 rounded-lg border border-slate-800">
-                                <span className="text-[11px] text-slate-300 font-semibold">
-                                    Điền nhanh mức chung cho toàn bộ {visibleSalesPersonnel.length} nhân viên:
-                                </span>
-                                <div className="flex flex-wrap items-center gap-1.5">
-                                    {[200_000_000, 300_000_000, 500_000_000, 1_000_000_000, 1_500_000_000].map(preset => (
-                                        <button
-                                            key={preset}
-                                            type="button"
-                                            onClick={() => {
-                                                const next: Record<string, number> = {};
-                                                visibleSalesPersonnel.forEach(p => { next[p.employee_id] = preset; });
-                                                setTargetBulkAmounts(next);
-                                            }}
-                                            className="px-2 py-1 rounded bg-indigo-950/80 hover:bg-indigo-900 text-indigo-200 border border-indigo-700/60 text-[10px] font-bold cursor-pointer"
-                                        >
-                                            Tất cả {new Intl.NumberFormat("vi-VN").format(preset)}đ
-                                        </button>
-                                    ))}
+                        <div className="space-y-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-900/80 border border-slate-800 p-2.5 rounded-xl">
+                                <div className="text-[11px] text-slate-300">
+                                    Điền nhanh mức chỉ tiêu chung cho nhân viên chưa giao:
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="any"
+                                        value={bulkDefaultAmount}
+                                        onChange={(e) => setBulkDefaultAmount(Number(e.target.value))}
+                                        className="w-40 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-amber-400 font-bold font-mono"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const next = { ...bulkTargetAmounts };
+                                            visibleSalesPersonnel.forEach(p => {
+                                                const rId = p.employee_id || p.id || p.employee_code;
+                                                if (!next[rId] || next[rId] === 0) next[rId] = Number(bulkDefaultAmount) || 0;
+                                            });
+                                            setBulkTargetAmounts(next);
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-amber-600/80 hover:bg-amber-600 text-white text-[11px] font-bold cursor-pointer"
+                                    >
+                                        Điền cho NV = 0đ
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            const next: Record<string, number> = {};
+                                            visibleSalesPersonnel.forEach(p => {
+                                                const rId = p.employee_id || p.id || p.employee_code;
+                                                next[rId] = Number(bulkDefaultAmount) || 0;
+                                            });
+                                            setBulkTargetAmounts(next);
+                                        }}
+                                        className="px-2.5 py-1 rounded-lg bg-indigo-600/80 hover:bg-indigo-600 text-white text-[11px] font-bold cursor-pointer"
+                                    >
+                                        Áp dụng tất cả
+                                    </button>
                                 </div>
                             </div>
-                            <div className="max-h-[340px] overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800/70 bg-slate-950/60">
+
+                            <div className="max-h-80 overflow-y-auto border border-slate-800 rounded-xl divide-y divide-slate-800/70 bg-slate-950/60">
                                 {visibleSalesPersonnel.map((p, idx) => {
-                                    const val = targetBulkAmounts[p.employee_id] ?? 0;
+                                    const rId = p.employee_id || p.id || p.employee_code;
+                                    const val = bulkTargetAmounts[rId] ?? 0;
                                     return (
-                                        <div key={p.employee_id} className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-slate-900/50">
-                                            <div className="min-w-0">
-                                                <div className="text-xs font-bold text-white truncate">
-                                                    {idx + 1}. {p.full_name} <span className="text-[10px] font-mono text-slate-400">({p.employee_id})</span>
+                                        <div key={rId} className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-slate-900/60">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                <span className="text-[10px] font-mono text-slate-500 w-5">{idx + 1}.</span>
+                                                <div className="truncate">
+                                                    <span className="text-xs font-bold text-white">{p.full_name}</span>
+                                                    <span className="text-[10px] font-mono text-slate-400 ml-1.5">({rId})</span>
                                                 </div>
-                                                {val > 0 && (
-                                                    <div className="text-[10px] text-emerald-400 font-mono">
-                                                        {new Intl.NumberFormat("vi-VN").format(val)}đ
-                                                    </div>
-                                                )}
                                             </div>
-                                            <input
-                                                type="number"
-                                                min="0"
-                                                step="any"
-                                                placeholder="Nhập chỉ tiêu (VNĐ)..."
-                                                value={val || ""}
-                                                onChange={(e) => {
-                                                    const num = Number(e.target.value) || 0;
-                                                    setTargetBulkAmounts(prev => ({ ...prev, [p.employee_id]: num }));
-                                                }}
-                                                className="w-48 bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-lg px-2.5 py-1.5 text-xs text-right text-white font-mono font-bold"
-                                            />
+                                            <div className="flex items-center gap-2 shrink-0">
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="any"
+                                                    value={val}
+                                                    onChange={(e) => {
+                                                        const num = Number(e.target.value) || 0;
+                                                        setBulkTargetAmounts(prev => ({ ...prev, [rId]: num }));
+                                                    }}
+                                                    className="w-44 bg-slate-900 border border-slate-700 focus:border-indigo-500 rounded-lg px-2.5 py-1 text-right text-xs font-mono font-bold text-amber-400"
+                                                    placeholder="0"
+                                                />
+                                                <span className="text-[10px] text-slate-500 font-mono w-6">VNĐ</span>
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -34397,7 +34336,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             type="submit"
                             className="bg-indigo-650 hover:bg-indigo-600 text-white px-4 py-2 rounded-lg font-bold text-xs cursor-pointer"
                         >
-                            {targetAssignMode === "bulk" ? "Lưu Chỉ Tiêu Cả Phòng" : "Giao Chỉ Tiêu"}
+                            {targetAssignMode === "bulk" ? `Lưu Chỉ Tiêu Kỳ ${targetMonth}` : "Giao Chỉ Tiêu"}
                         </button>
                     </div>
                 </form>
@@ -35125,7 +35064,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Địa điểm thực hiện</label>
                                     <textarea
                                         rows={2}
-                                        placeholder="Ví dụ: Khách sạn Rex, Quận 1 hoặc Phòng Lab ABT"
+                                        placeholder="Ví dụ: Khách sạn Rex, Quận 1 hoặc Phòng Lab TBR"
                                         value={planLocation}
                                         onChange={(e) => setPlanLocation(e.target.value)}
                                         className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y"
@@ -36849,7 +36788,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="text-xs font-bold text-white flex items-center gap-1.5">
                                 <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
                                 {loggedInStaff?.full_name || user?.name || "Cán bộ phụ trách"}
-                                <span className="text-[10px] text-indigo-400 font-mono">({loggedInStaff?.employee_id || loggedInStaff?.employee_code || "KD-ABT"})</span>
+                                <span className="text-[10px] text-indigo-400 font-mono">({loggedInStaff?.employee_id || loggedInStaff?.employee_code || "KD-TBR"})</span>
                             </div>
                         </div>
                         <span className="text-[10px] font-mono bg-slate-950 text-slate-400 px-2.5 py-1 rounded border border-slate-850 font-semibold">
@@ -38440,7 +38379,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none font-bold text-center"
                             />
                             <span className="text-[10px] text-slate-400 mt-1 block">
-                                Tồn kho trung tâm ABT Trung Tâm khả dụng: <strong className="text-emerald-400 font-mono">{stock13b[giveStockProductCode] || 0}</strong>
+                                Tồn kho trung tâm TBR Trung Tâm khả dụng: <strong className="text-emerald-400 font-mono">{stock13b[giveStockProductCode] || 0}</strong>
                             </span>
                         </div>
                     </div>
@@ -38547,7 +38486,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     {(() => {
                                         const isWarehouse = (name: string) => {
                                             const n = (name || "").toLowerCase();
-                                            return n.includes("kho abt") || n.includes("kho trung tâm") || n.includes("13b");
+                                            return n.includes("kho tbr") || n.includes("kho trung tâm") || n.includes("13b");
                                         };
                                         const repId = isManagerOrAdmin ? retailSaleEmployee : (loggedInStaff?.employee_id || "");
                                         const repCustomers = salesNvkdCustomers.filter(c => !c.salesRepId || c.salesRepId === repId);
@@ -39640,7 +39579,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="bg-indigo-950/40 border border-indigo-500/30 rounded-lg p-2.5 flex items-center gap-2 text-xs text-indigo-200">
                             <Package className="w-4 h-4 text-indigo-400 shrink-0" />
                             <span>
-                                <strong>Nguyên tắc Quản lý Kho ABT:</strong> Nghiệp vụ cài đặt giữ chỗ gắn liền với <strong>Số Lô (LOT)</strong>, <strong>Hạn dùng (EXP)</strong> và <strong>Tồn kho thực tế</strong>, do đó được thực hiện tập trung tại <strong>Tab Quản lý kho</strong>. Sổ theo dõi dưới đây hiển thị dữ liệu giữ chỗ phục vụ Sales tra cứu đối chiếu.
+                                <strong>Nguyên tắc Quản lý Kho TBR:</strong> Nghiệp vụ cài đặt giữ chỗ gắn liền với <strong>Số Lô (LOT)</strong>, <strong>Hạn dùng (EXP)</strong> và <strong>Tồn kho thực tế</strong>, do đó được thực hiện tập trung tại <strong>Tab Quản lý kho</strong>. Sổ theo dõi dưới đây hiển thị dữ liệu giữ chỗ phục vụ Sales tra cứu đối chiếu.
                             </span>
                         </div>
 

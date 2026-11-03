@@ -65,9 +65,22 @@ import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 export const WarehouseModule: React.FC = () => {
   const companyConfig = useCompanyConfig();
   const { notifyActivity } = useNotification();
-  const { user: authUser } = useAuth();
+  const { user: authUser, can } = useAuth();
   // Người thực hiện mặc định = người đang đăng nhập (không điền sẵn tên một nhân viên cố định)
   const currentUserName = String((authUser as any)?.full_name || (authUser as any)?.name || "");
+  const canEditInboundTx = (tx: any): boolean => {
+    if (!tx || tx.transaction_type !== "INBOUND") return false;
+    const uRole = String((authUser as any)?.role || "").toLowerCase();
+    const uDept = String((authUser as any)?.department || "").toLowerCase();
+    const isMgr = uRole.includes("director") || uRole.includes("admin") || uRole.includes("manager") || uRole.includes("lead") || uDept.includes("ban giám đốc");
+    if (isMgr || Boolean(can && can("warehouse.edit_inbound"))) return true;
+    if (can && can("warehouse.inbound")) {
+      const perf = String(tx.performed_by || "").trim().toLowerCase();
+      const me = currentUserName.trim().toLowerCase();
+      if (!perf || (me && perf === me)) return true;
+    }
+    return false;
+  };
   const [subTab, setSubTab] = useState<"stock" | "lot_stock" | "movement_report" | "transactions" | "reservations" | "valuation" | "lot_trace" | "excel_center" | "bom_kits" | "rfid_hub">("stock");
   // Mở tab Tồn theo lô đã lọc sẵn một mã (bấm "N lô" ở bảng Tồn kho)
   const [lotStockQuery, setLotStockQuery] = useState("");
@@ -148,6 +161,10 @@ export const WarehouseModule: React.FC = () => {
   const [reservations, setReservations] = useState<any[]>([]);
   const [personnelList, setPersonnelList] = useState<any[]>([]);
   const [customerList, setCustomerList] = useState<any[]>([]);
+  const [supplierList, setSupplierList] = useState<any[]>([]);
+  const [editingInboundTxId, setEditingInboundTxId] = useState<number | null>(null);
+  const [isInboundSupplierDropdownOpen, setIsInboundSupplierDropdownOpen] = useState(false);
+  const [isExcelSupplierDropdownOpen, setIsExcelSupplierDropdownOpen] = useState(false);
 
   // Reservation filter & modal states
   const [selectedRepFilter, setSelectedRepFilter] = useState<string>("all");
@@ -155,7 +172,7 @@ export const WarehouseModule: React.FC = () => {
   const [selectedReserveItem, setSelectedReserveItem] = useState<any>(null);
   const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
   const [reserveFormData, setReserveFormData] = useState({
-    sales_rep_name: "",
+    sales_rep_name: "Lê Hữu Nhân (Chuyên Viên Kinh Doanh)",
     customer_name: "",
     quantity_reserved: 1,
     hold_until_date: toVNDateString(new Date(Date.now() + 7 * 86400000)),
@@ -184,7 +201,7 @@ export const WarehouseModule: React.FC = () => {
   const [prFormData, setPRFormData] = useState({
     requestedQty: 50,
     urgentLevel: "CAO - Cần gấp phòng ngừa đứt gãy hàng cung ứng",
-    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức ABT."
+    notes: "Đề xuất phòng Cung Ứng lập PO khẩn cấp bổ sung tồn an toàn theo quy chuẩn định mức TBR."
   });
 
   const [isPushSalesModalOpen, setIsPushSalesModalOpen] = useState(false);
@@ -311,6 +328,9 @@ export const WarehouseModule: React.FC = () => {
         if (data.customers) {
           setCustomerList(data.customers);
         }
+        if (data.suppliers) {
+          setSupplierList(data.suppliers);
+        }
       }
     } catch (e) {
       console.error("Failed to load inventory:", e);
@@ -319,24 +339,55 @@ export const WarehouseModule: React.FC = () => {
     }
   };
 
-  // Real ABT Staff Mappings
+  // Real TBR Staff Mappings
   const salesStaff = useMemo(() => {
     const list = personnelList.filter(p => 
       p.department === "Kinh Doanh" || 
       p.department === "Ban Giám Đốc" || 
       p.department === "Marketing"
     );
-    return list;
+    if (list.length > 0) return list;
+    return [
+      { employee_code: "NV-TBR-023", full_name: "Lê Hữu Nhân", position: "Chuyên Viên Kinh Doanh", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-024", full_name: "K' Trọng Nghĩa", position: "Quản Lý Sản Phẩm (PM)", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-025", full_name: "Đỗ Phạm Bảo Ngọc", position: "Chuyên Viên Kinh Doanh", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-026", full_name: "Nguyễn Ánh Nhựt", position: "Chuyên Viên Kinh Doanh", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-027", full_name: "Phạm Nguyễn Minh Châu", position: "Chuyên Viên Kinh Doanh", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-018", full_name: "Phan Minh Nghĩa", position: "Sales Admin", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-019", full_name: "Phạm Thị Thu Thủy", position: "Sales Admin", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-020", full_name: "Lê Thị Thuỳ Trang", position: "Sales Admin", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-021", full_name: "Trần Thị Mỹ Linh", position: "Sales Admin", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-022", full_name: "Ngô Thị Yến Nhi", position: "Sales Admin", department: "Kinh Doanh" },
+      { employee_code: "NV-TBR-017", full_name: "Bùi Thị Hồng Tâm", position: "Chuyên viên Marketing", department: "Marketing" },
+      { employee_code: "NV-TBR-002", full_name: "Đỗ Ngọc Diễm Trúc", position: "Phó Giám Đốc", department: "Ban Giám Đốc" },
+      { employee_code: "NV-TBR-003", full_name: "Võ Thị Cẩm Giang", position: "Phó Giám Đốc", department: "Ban Giám Đốc" },
+      { employee_code: "NV-TBR-001", full_name: "Nguyễn Văn Hưng", position: "Tổng Giám Đốc (CEO)", department: "Ban Giám Đốc" }
+    ];
   }, [personnelList]);
 
   const warehouseStaff = useMemo(() => {
     const list = personnelList.filter(p => p.department === "Kho Vận");
-    return list;
+    if (list.length > 0) return list;
+    return [
+      { employee_code: "NV-TBR-008", full_name: "Trần Thị Minh Hậu", position: "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", department: "Kho Vận" },
+      { employee_code: "NV-TBR-007", full_name: "Dương Phương Bảo Khoa", position: "Trưởng Bộ Phận Kho Vận", department: "Kho Vận" },
+      { employee_code: "NV-TBR-009", full_name: "Hoàng Thị Huệ", position: "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", department: "Kho Vận" }
+    ];
   }, [personnelList]);
 
   // Real Hospital & Customer Mappings (Requirement: Searchable combobox + Click to pick)
   const allAvailableCustomers = useMemo(() => {
-    return customerList || [];
+    if (customerList && customerList.length > 0) return customerList;
+    return [
+      { id: 1, customer_code: "KH-BV-001", name: "Bệnh Viện Chợ Rẫy", classification: "Bệnh Viện Tuyến Trung Ương", province: "TP. Hồ Chí Minh" },
+      { id: 2, customer_code: "KH-BV-002", name: "Viện Pasteur TP.HCM", classification: "Viện Nghiên Cứu & Xét Nghiệm", province: "TP. Hồ Chí Minh" },
+      { id: 3, customer_code: "KH-BV-003", name: "Bệnh Viện Bạch Mai - Hà Nội", classification: "Bệnh Viện Hạng Đặc Biệt", province: "Hà Nội" },
+      { id: 4, customer_code: "KH-BV-004", name: "Bệnh Viện Đa Khoa Quốc Tế Vinmec", classification: "Bệnh Viện Quốc Tế JCI", province: "Hà Nội" },
+      { id: 5, customer_code: "KH-DL-005", name: "Công Ty Cổ Phần Thiết Bị Y Tế Đại Nam", classification: "Đại Lý Cấp 1", province: "TP. Hồ Chí Minh" },
+      { id: 6, customer_code: "KH-TT-006", name: "Trung Tâm Kiểm Chuẩn Xét Nghiệm TP.HCM", classification: "Cơ Quan Kiểm Chuẩn Nhà Nước", province: "TP. Hồ Chí Minh" },
+      { id: 7, customer_code: "KH-BV-007", name: "Bệnh Viện Đại Học Y Dược TP.HCM", classification: "Bệnh Viện Đa Khoa Hạng 1", province: "TP. Hồ Chí Minh" },
+      { id: 8, customer_code: "KH-BV-008", name: "Bệnh Viện Bệnh Nhiệt Đới TP.HCM", classification: "Bệnh Viện Chuyên Khoa Truyền Nhiễm", province: "TP. Hồ Chí Minh" }
+    ];
   }, [customerList]);
 
   const filteredCustomers = useMemo(() => {
@@ -349,6 +400,71 @@ export const WarehouseModule: React.FC = () => {
       (c.classification && c.classification.toLowerCase().includes(q))
     );
   }, [allAvailableCustomers, reserveFormData.customer_name]);
+
+  // Danh mục Nhà Cung Cấp / Nguồn Hàng (từ procurement_suppliers + hãng sản xuất trong danh mục hàng hóa)
+  const allAvailableSuppliers = useMemo(() => {
+    const seen = new Set<string>();
+    const list: any[] = [];
+    for (const s of supplierList || []) {
+      const name = String(s.name || "").trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({
+        id: s.id || list.length + 1,
+        supplier_code: s.supplier_code || `NCC-${String(list.length + 1).padStart(3, "0")}`,
+        name,
+        product_lines: s.product_lines || "Vật tư & Sinh phẩm",
+        contact_person: s.contact_person || "",
+        status: s.status || "Active",
+      });
+    }
+    for (const p of products || []) {
+      const mfg = String(p.manufacturer || "").trim();
+      if (!mfg || mfg === "—" || mfg === "N/A") continue;
+      const key = mfg.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push({
+        id: `mfg-${list.length + 1}`,
+        supplier_code: "HÃNG-SX",
+        name: mfg,
+        product_lines: p.category || "Hãng sản xuất / Nguồn hàng",
+        contact_person: "",
+        status: "Active",
+      });
+    }
+    if (list.length > 0) return list;
+    return [
+      { id: 1, supplier_code: "NCC-ABT-001", name: "Công Ty Cổ Phần Kỹ Thuật Và Sinh Học Ứng Dụng Việt Nam (ABT)", product_lines: "Kit tách chiết, Sinh phẩm PCR/qPCR, Hóa chất", contact_person: "Phòng Kinh Doanh ABT" },
+      { id: 2, supplier_code: "NCC-BIO-002", name: "Meridian Bioscience / Bioline", product_lines: "Enzyme PCR, Master Mix, Sinh phẩm phân tử", contact_person: "Đại diện phân phối" },
+      { id: 3, supplier_code: "NCC-SIG-003", name: "Sigma-Aldrich / Merck Life Science", product_lines: "Hóa chất tinh khiết, Chuẩn phân tích", contact_person: "Merck Vietnam" },
+      { id: 4, supplier_code: "NCC-THM-004", name: "Thermo Fisher Scientific", product_lines: "Thiết bị & Hóa chất sinh học phân tử", contact_person: "Thermo Fisher VN" },
+    ];
+  }, [supplierList, products]);
+
+  const filteredInboundSuppliers = useMemo(() => {
+    const q = String(inboundForm.supplier_name || "").toLowerCase().trim();
+    if (!q) return allAvailableSuppliers;
+    return allAvailableSuppliers.filter((s: any) =>
+      (s.name && s.name.toLowerCase().includes(q)) ||
+      (s.supplier_code && s.supplier_code.toLowerCase().includes(q)) ||
+      (s.product_lines && s.product_lines.toLowerCase().includes(q)) ||
+      (s.contact_person && s.contact_person.toLowerCase().includes(q))
+    );
+  }, [allAvailableSuppliers, inboundForm.supplier_name]);
+
+  const filteredExcelSuppliers = useMemo(() => {
+    const q = String(excelInboundDetails.supplier_name || "").toLowerCase().trim();
+    if (!q) return allAvailableSuppliers;
+    return allAvailableSuppliers.filter((s: any) =>
+      (s.name && s.name.toLowerCase().includes(q)) ||
+      (s.supplier_code && s.supplier_code.toLowerCase().includes(q)) ||
+      (s.product_lines && s.product_lines.toLowerCase().includes(q)) ||
+      (s.contact_person && s.contact_person.toLowerCase().includes(q))
+    );
+  }, [allAvailableSuppliers, excelInboundDetails.supplier_name]);
 
   useEffect(() => {
     fetchData();
@@ -529,8 +645,11 @@ export const WarehouseModule: React.FC = () => {
       const standardPrice = Number(item.standard_price) > 0 
         ? Number(item.standard_price) 
         : (Number(matchedCatalogProd?.standard_price) > 0 ? Number(matchedCatalogProd.standard_price) : costPrice);
-      // Hãng sản xuất lấy từ tồn kho / danh mục; không tự đoán theo tiền tố mã hàng
-      const manufacturer = item.manufacturer || matchedCatalogProd?.manufacturer || "";
+      const manufacturer = item.manufacturer || matchedCatalogProd?.manufacturer || (
+        item.product_code?.startsWith("HI") || item.product_code?.startsWith("HM") || item.product_code?.startsWith("HE") ? "TopPURE (ABT)" :
+        item.product_code?.startsWith("SQH") ? "TopSPEC (ABT)" :
+        item.product_code?.startsWith("EQ") ? "Bioer Technology" : "TBR Phân Phối"
+      );
 
       return {
         ...item,
@@ -678,7 +797,7 @@ export const WarehouseModule: React.FC = () => {
       totalListVal += lVal;
 
       // 1. By Brand
-      const brand = it.manufacturer || "ABT Phân Phối";
+      const brand = it.manufacturer || "TBR Phân Phối";
       if (!byBrandMap[brand]) {
         byBrandMap[brand] = { brand, count: 0, totalQty: 0, costVal: 0, listVal: 0 };
       }
@@ -831,7 +950,7 @@ export const WarehouseModule: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          product_code: targetProd.product_code || "ABT-GENERIC",
+          product_code: targetProd.product_code || "TBR-GENERIC",
           product_name: targetProd.product_name || "Sản phẩm thu hồi",
           lot_number: targetLot,
           reason: recallReason,
@@ -905,7 +1024,7 @@ export const WarehouseModule: React.FC = () => {
       const wb = XLSX.utils.book_new();
       const ws = XLSX.utils.json_to_sheet(rows);
       XLSX.utils.book_append_sheet(wb, ws, "Danh_Sach_Thu_Hoi");
-      XLSX.writeFile(wb, `Danh_Sach_Thu_Hoi_Lo_${traceResult.lot_number || "ABT"}_${todayVN()}.xlsx`);
+      XLSX.writeFile(wb, `Danh_Sach_Thu_Hoi_Lo_${traceResult.lot_number || "TBR"}_${todayVN()}.xlsx`);
       setActionNotice("✅ Đã xuất thành công Bảng liên hệ thu hồi khách hàng ra file Excel!");
     } catch (e) {
       alert("Lỗi khi xuất file Excel thu hồi");
@@ -919,42 +1038,42 @@ export const WarehouseModule: React.FC = () => {
     const customerData = [
       {
         "Mã khách hàng (*)": "KH-BV-001",
-        "Tên khách hàng / Đơn vị (*)": "Bệnh viện Mẫu A (dòng minh họa - xóa trước khi nhập)",
+        "Tên khách hàng / Đơn vị (*)": "Bệnh viện Đa khoa Quốc tế Vinmec",
         "Nhóm khách hàng": "Bệnh viện Quốc tế & Tư nhân",
         "Khu vực (*)": "Miền Bắc",
         "Tỉnh / Thành phố (*)": "Hà Nội",
-        "Mã số thuế": "0100000001",
-        "Địa chỉ": "Số 1, Đường A, Quận B, Hà Nội",
+        "Mã số thuế": "0106899988",
+        "Địa chỉ": "458 Minh Khai, Hai Bà Trưng, Hà Nội",
         "Hạn mức công nợ (VNĐ)": 500000000,
         "Thời hạn nợ tối đa (Ngày)": 45,
-        "NVKD phụ trách": "Nguyễn Văn A",
-        "Ghi chú chung": "Ví dụ ghi chú khách hàng"
+        "NVKD phụ trách": "Đỗ Ngọc Diễm Trúc",
+        "Ghi chú chung": "Bệnh viện đa khoa quốc tế tiêu chuẩn JCI, đối tác trọng điểm"
       },
       {
         "Mã khách hàng (*)": "KH-DL-002",
-        "Tên khách hàng / Đơn vị (*)": "Công ty TNHH Mẫu B (dòng minh họa - xóa trước khi nhập)",
+        "Tên khách hàng / Đơn vị (*)": "Công ty TNHH Thiết Bị Y Tế Đại Nam",
         "Nhóm khách hàng": "Đại lý phân phối cấp 1",
         "Khu vực (*)": "Miền Nam",
         "Tỉnh / Thành phố (*)": "TP. Hồ Chí Minh",
-        "Mã số thuế": "0300000002",
-        "Địa chỉ": "Số 2, Đường C, Quận D, TP.HCM",
+        "Mã số thuế": "0312567890",
+        "Địa chỉ": "120 Nguyễn Đình Chiểu, Q3, TP.HCM",
         "Hạn mức công nợ (VNĐ)": 300000000,
         "Thời hạn nợ tối đa (Ngày)": 30,
-        "NVKD phụ trách": "Trần Thị B",
-        "Ghi chú chung": "Ví dụ ghi chú đại lý"
+        "NVKD phụ trách": "Huỳnh Hồng Hạnh",
+        "Ghi chú chung": "Đại lý phân phối cấp 1 khu vực miền Nam"
       },
       {
         "Mã khách hàng (*)": "KH-BV-003",
-        "Tên khách hàng / Đơn vị (*)": "Bệnh viện Mẫu C (dòng minh họa - xóa trước khi nhập)",
+        "Tên khách hàng / Đơn vị (*)": "Bệnh viện Chợ Rẫy (Khoa Vi sinh - Sinh học phân tử)",
         "Nhóm khách hàng": "Bệnh viện Công lập",
         "Khu vực (*)": "Miền Nam",
         "Tỉnh / Thành phố (*)": "TP. Hồ Chí Minh",
-        "Mã số thuế": "0300000003",
-        "Địa chỉ": "Số 3, Đường E, Quận F, TP.HCM",
+        "Mã số thuế": "0301140023",
+        "Địa chỉ": "201B Nguyễn Chí Thanh, Phường 12, Quận 5, TP.HCM",
         "Hạn mức công nợ (VNĐ)": 800000000,
         "Thời hạn nợ tối đa (Ngày)": 60,
-        "NVKD phụ trách": "Lê Văn C",
-        "Ghi chú chung": "Ví dụ ghi chú bệnh viện"
+        "NVKD phụ trách": "Cao Văn Đức Hinh",
+        "Ghi chú chung": "Bệnh viện tuyến trung ương hạng đặc biệt"
       }
     ];
 
@@ -962,77 +1081,77 @@ export const WarehouseModule: React.FC = () => {
     const contactsData = [
       {
         "Mã khách hàng (*)": "KH-BV-001",
-        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 1",
+        "Họ và tên người liên hệ (*)": "TS. BS. Nguyễn Văn An",
         "Chức vụ / Vị trí": "Trưởng Khoa Xét Nghiệm",
         "Khoa / Phòng ban": "Khoa Sinh học phân tử",
         "Số điện thoại (*)": "0912345678",
-        "Email": "lienhe1@example.com",
+        "Email": "an.nv@vinmec.com",
         "Vai trò quyết định": "Kỹ thuật chuyên môn / Quyết định mua",
         "Đầu mối liên hệ chính?": "Có",
         "Ghi chú cá nhân": "Trao đổi kỹ thuật và chạy thử kit PCR buổi chiều"
       },
       {
         "Mã khách hàng (*)": "KH-BV-001",
-        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 2",
+        "Họ và tên người liên hệ (*)": "ThS. Trần Thị Mai",
         "Chức vụ / Vị trí": "Kỹ thuật viên trưởng",
         "Khoa / Phòng ban": "Khoa Vi sinh",
         "Số điện thoại (*)": "0987654321",
-        "Email": "lienhe2@example.com",
+        "Email": "mai.tt@vinmec.com",
         "Vai trò quyết định": "Kỹ thuật vận hành",
         "Đầu mối liên hệ chính?": "Không",
         "Ghi chú cá nhân": "Người trực tiếp nhận hàng và kiểm tra ngoại quan tại Lab"
       },
       {
         "Mã khách hàng (*)": "KH-BV-001",
-        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 3",
+        "Họ và tên người liên hệ (*)": "Nguyễn Hoàng Long",
         "Chức vụ / Vị trí": "Chuyên viên Mua hàng",
         "Khoa / Phòng ban": "Phòng Vật tư - TBYT",
         "Số điện thoại (*)": "0903112233",
-        "Email": "lienhe3@example.com",
+        "Email": "long.nh@vinmec.com",
         "Vai trò quyết định": "Thu mua / Báo giá",
         "Đầu mối liên hệ chính?": "Không",
         "Ghi chú cá nhân": "Đầu mối nhận báo giá và đàm phán hợp đồng"
       },
       {
         "Mã khách hàng (*)": "KH-DL-002",
-        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 4",
+        "Họ và tên người liên hệ (*)": "Lê Văn Thắng",
         "Chức vụ / Vị trí": "Giám đốc Điều hành",
         "Khoa / Phòng ban": "Ban Giám Đốc",
         "Số điện thoại (*)": "0938112233",
-        "Email": "lienhe4@example.com",
+        "Email": "thang.le@dainam-med.vn",
         "Vai trò quyết định": "Ban Giám đốc / Ký hợp đồng",
         "Đầu mối liên hệ chính?": "Có",
         "Ghi chú cá nhân": "Ký duyệt hợp đồng nguyên tắc đại lý"
       },
       {
         "Mã khách hàng (*)": "KH-DL-002",
-        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 5",
+        "Họ và tên người liên hệ (*)": "Vũ Bích Hạnh",
         "Chức vụ / Vị trí": "Kế toán trưởng",
         "Khoa / Phòng ban": "Phòng Tài chính Kế toán",
         "Số điện thoại (*)": "0909887766",
-        "Email": "lienhe5@example.com",
+        "Email": "hanh.vu@dainam-med.vn",
         "Vai trò quyết định": "Kế toán thanh toán",
         "Đầu mối liên hệ chính?": "Không",
         "Ghi chú cá nhân": "Đối soát công nợ & hóa đơn điện tử hàng tháng"
       },
       {
         "Mã khách hàng (*)": "KH-BV-003",
-        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 6",
+        "Họ và tên người liên hệ (*)": "TS. BS. Lê Quốc Cường",
         "Chức vụ / Vị trí": "Trưởng khoa Vi sinh",
         "Khoa / Phòng ban": "Khoa Vi sinh",
-        "Số điện thoại (*)": "0900000006",
-        "Email": "lienhe6@example.com",
+        "Số điện thoại (*)": "028.3855.4137",
+        "Email": "cuong.le@choray.vn",
         "Vai trò quyết định": "Kỹ thuật chuyên môn / Quyết định mua",
         "Đầu mối liên hệ chính?": "Có",
         "Ghi chú cá nhân": "Đầu mối chuyên môn trọng điểm phía Nam"
       },
       {
         "Mã khách hàng (*)": "KH-BV-003",
-        "Họ và tên người liên hệ (*)": "Người liên hệ mẫu 7",
+        "Họ và tên người liên hệ (*)": "CN. Phạm Minh Tuấn",
         "Chức vụ / Vị trí": "Kỹ thuật viên xét nghiệm",
         "Khoa / Phòng ban": "Phòng PCR",
         "Số điện thoại (*)": "0918776655",
-        "Email": "lienhe7@example.com",
+        "Email": "tuan.pm@choray.vn",
         "Vai trò quyết định": "Kỹ thuật vận hành",
         "Đầu mối liên hệ chính?": "Không",
         "Ghi chú cá nhân": "Kiểm tra Lot và hạn dùng khi nhận kit"
@@ -1070,7 +1189,7 @@ export const WarehouseModule: React.FC = () => {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, wsCustomers, "Thong_Tin_Khach_Hang");
     XLSX.utils.book_append_sheet(wb, wsContacts, "Danh_Sach_Nguoi_Lien_He");
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Khach_Hang_Va_Nguoi_Lien_He_ABT.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Khach_Hang_Va_Nguoi_Lien_He_TBR.xlsx");
   };
 
   const handleDownloadProductTemplate = () => {
@@ -1078,7 +1197,8 @@ export const WarehouseModule: React.FC = () => {
     const productsData = products.length > 0 ? products.slice(0, 10).map((p) => ({
       "Mã SKU (*)": p.code,
       "Tên sản phẩm (*)": p.name,
-      "Hãng sản xuất (*)": p.manufacturer || "",
+      "Hãng sản xuất (*)": p.manufacturer || (p.code?.startsWith("HI") || p.code?.startsWith("HM") || p.code?.startsWith("HE") ? "TopPURE (ABT)" : p.code?.startsWith("SQH") ? "TopSPEC (ABT)" : "TBR"),
+      "Nhà cung cấp": "",
       "Nhóm ngành hàng (*)": p.category || "Hóa chất / Sinh phẩm",
       "Quy cách đóng gói": p.specification || "Tiêu chuẩn",
       "Đơn vị tính": p.unit || "Hộp",
@@ -1094,6 +1214,7 @@ export const WarehouseModule: React.FC = () => {
         "Mã SKU (*)": "HI-007.A (B32)",
         "Tên sản phẩm (*)": "TopPURE Maga Quick Genomic DNA/RNA Extraction Kit",
         "Hãng sản xuất (*)": "TopPURE (ABT)",
+        "Nhà cung cấp": "",
         "Nhóm ngành hàng (*)": "Kit tách chiết",
         "Quy cách đóng gói": "32 tests/hộp",
         "Đơn vị tính": "Hộp",
@@ -1135,6 +1256,18 @@ export const WarehouseModule: React.FC = () => {
     // Sheet 3: Hướng dẫn quy định
     const guideData = [
       {
+        "Tên Cột": "Hãng sản xuất (*)",
+        "Vị trí Sheet": "Sheet 1: Danh_Muc_SanPham_Va_Gia",
+        "Bắt Buộc": "Bắt buộc",
+        "Mô Tả Quy Định": "Đơn vị LÀM RA sản phẩm (VD: TopPURE (ABT), Roche, Qiagen). Chỉ là thông tin của sản phẩm (in trên báo giá, dùng để lọc danh mục). Hệ thống KHÔNG tạo nhà cung cấp từ cột này."
+      },
+      {
+        "Tên Cột": "Nhà cung cấp",
+        "Vị trí Sheet": "Sheet 1: Danh_Muc_SanPham_Va_Gia",
+        "Bắt Buộc": "Tùy chọn",
+        "Mô Tả Quy Định": "Đơn vị BÁN hàng cho công ty (nhà phân phối / đại lý nơi đặt PO), có thể khác hãng sản xuất. Ghi tên ở cột này thì sản phẩm được gắn vào nhà cung cấp đó (tạo mới ở trang Nhà cung cấp nếu chưa có) kèm Giá vốn nhập làm giá mua. Để trống = sản phẩm chưa gắn nhà cung cấp; có thể gắn sau ở trang Nhà cung cấp."
+      },
+      {
         "Tên Cột": "Điều kiện bảo quản chuẩn",
         "Vị trí Sheet": "Sheet 1: Danh_Muc_SanPham_Va_Gia",
         "Bắt Buộc": "Khuyến nghị",
@@ -1171,6 +1304,7 @@ export const WarehouseModule: React.FC = () => {
       { wch: 18 }, // Mã SKU
       { wch: 45 }, // Tên sản phẩm
       { wch: 26 }, // Hãng sản xuất
+      { wch: 30 }, // Nhà cung cấp
       { wch: 22 }, // Nhóm ngành hàng
       { wch: 22 }, // Quy cách
       { wch: 12 }, // ĐVT
@@ -1208,14 +1342,14 @@ export const WarehouseModule: React.FC = () => {
     XLSX.utils.book_append_sheet(wb, wsProducts, "Danh_Muc_SanPham_Va_Gia");
     XLSX.utils.book_append_sheet(wb, wsComponents, "Dinh_Muc_Phu_Kien_BOM");
     XLSX.utils.book_append_sheet(wb, wsGuide, "Huong_Dan_Quy_Dinh");
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_SanPham_BangGia_Kem_BOM_ABT.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_SanPham_BangGia_Kem_BOM_TBR.xlsx");
   };
 
   const handleDownloadPOTemplate = () => {
     const firstProd = products[0] || { code: "HI-007.A (B32)", name: "TopPURE Maga Quick Genomic DNA/RNA Extraction Kit", cost_price: 1800000 };
     const sampleData = [
       {
-        "Mã đơn PO (*)": `PO-ABT-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+        "Mã đơn PO (*)": `PO-TBR-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
         "Nhà cung cấp (*)": "Công ty TNHH Giải pháp Y Sinh ABT",
         "Ngày đặt hàng (*)": todayVN(),
         "Hạn giao dự kiến (*)": toVNDateString(new Date(Date.now() + 10 * 86400000)),
@@ -1229,29 +1363,29 @@ export const WarehouseModule: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Mau_Don_Hang_PO");
-    XLSX.writeFile(wb, "Mau_Don_Dat_Hang_PO_ABT.xlsx");
+    XLSX.writeFile(wb, "Mau_Don_Dat_Hang_PO_TBR.xlsx");
   };
 
   const handleDownloadSupplierTemplate = () => {
     const sampleData = [
       {
-        "Mã NCC (*)": "NCC-ABT-001",
-        "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 1 (dòng minh họa - xóa trước khi nhập)",
-        "Người liên hệ": "Người liên hệ NCC 1",
+        "Mã NCC (*)": "NCC-TBR-001",
+        "Tên nhà cung cấp (*)": "Bioer Technology Co., Ltd (Đại Diện VN)",
+        "Người liên hệ": "Trần Văn Nam",
         "Số điện thoại": "0901234567",
-        "Email": "ncc1@example.com",
-        "Địa chỉ": "Số 10, Đường G, Hà Nội",
+        "Email": "contact@bioer.vn",
+        "Địa chỉ": "Tầng 5, Tòa nhà Meditech, Cầu Giấy, Hà Nội",
         "Ngành hàng cung ứng": "Hệ thống PCR, Máy Real-time PCR",
         "Điều khoản thanh toán": "Công nợ 30 ngày",
         "Đánh giá": 5
       },
       {
-        "Mã NCC (*)": "NCC-ABT-002",
-        "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 2 (dòng minh họa - xóa trước khi nhập)",
-        "Người liên hệ": "Người liên hệ NCC 2",
+        "Mã NCC (*)": "NCC-TBR-002",
+        "Tên nhà cung cấp (*)": "Corning Scientific SEA Pte Ltd",
+        "Người liên hệ": "Nguyễn Hoàng Oanh",
         "Số điện thoại": "0987654321",
-        "Email": "ncc2@example.com",
-        "Địa chỉ": "Singapore",
+        "Email": "sea.sales@corning.com",
+        "Địa chỉ": "Marina Bay Financial Centre, Singapore",
         "Ngành hàng cung ứng": "Vật tư tiêu hao, Đầu côn, Đĩa PCR",
         "Điều khoản thanh toán": "Thanh toán 100% khi phát hành BL",
         "Đánh giá": 5
@@ -1260,56 +1394,56 @@ export const WarehouseModule: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Mau_Nha_Cung_Cap");
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_ABT.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_TBR.xlsx");
   };
 
   const handleDownloadUserPersonnelTemplate = () => {
     const sampleData = [
       {
-        "Mã nhân viên (*)": "NV-ABT-001",
-        "Họ và tên (*)": "Nguyễn Văn A",
-        "Tên đăng nhập (*)": "a.nv",
+        "Mã nhân viên (*)": "NV-TBR-010",
+        "Họ và tên (*)": "Nguyễn Hoàng Nam",
+        "Tên đăng nhập (*)": "nam.nh",
         "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kinh Doanh",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Kinh Doanh Thiết Bị",
         "Vai trò hệ thống (*)": "sales_rep",
-        "Email (*)": "a.nv@abtvn.com",
+        "Email (*)": "nam.nh@tbr.vn",
         "Số điện thoại": "0912345670",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-ABT-002",
-        "Họ và tên (*)": "Trần Thị B",
-        "Tên đăng nhập (*)": "b.tt",
+        "Mã nhân viên (*)": "NV-TBR-011",
+        "Họ và tên (*)": "Trần Thị Mai Phương",
+        "Tên đăng nhập (*)": "phuong.ttm",
         "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kho Vận",
         "Chức vụ / Vị trí (*)": "Thủ Kho Vật Tư Sinh Phẩm",
         "Vai trò hệ thống (*)": "warehouse",
-        "Email (*)": "b.tt@abtvn.com",
+        "Email (*)": "phuong.ttm@tbr.vn",
         "Số điện thoại": "0987654320",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-ABT-003",
-        "Họ và tên (*)": "Lê Văn C",
-        "Tên đăng nhập (*)": "c.lv",
+        "Mã nhân viên (*)": "NV-TBR-012",
+        "Họ và tên (*)": "Lê Văn Thắng",
+        "Tên đăng nhập (*)": "thang.lv",
         "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Mua Hàng & Cung Ứng",
         "Chức vụ / Vị trí (*)": "Chuyên Viên Mua Hàng Quốc Tế",
         "Vai trò hệ thống (*)": "procurement_specialist",
-        "Email (*)": "c.lv@abtvn.com",
+        "Email (*)": "thang.lv@tbr.vn",
         "Số điện thoại": "0933221100",
         "Trạng thái": "ACTIVE"
       },
       {
-        "Mã nhân viên (*)": "NV-ABT-004",
-        "Họ và tên (*)": "Phạm Văn D",
-        "Tên đăng nhập (*)": "d.pv",
+        "Mã nhân viên (*)": "NV-TBR-013",
+        "Họ và tên (*)": "Vũ Đình Trọng",
+        "Tên đăng nhập (*)": "trong.vd",
         "Mật khẩu khởi tạo": "",
         "Phòng ban (*)": "Kỹ Thuật & Ứng Dụng",
         "Chức vụ / Vị trí (*)": "Kỹ Sư Ứng Dụng PCR",
         "Vai trò hệ thống (*)": "app_rep",
-        "Email (*)": "d.pv@abtvn.com",
+        "Email (*)": "trong.vd@tbr.vn",
         "Số điện thoại": "0944556677",
         "Trạng thái": "ACTIVE"
       }
@@ -1370,7 +1504,7 @@ export const WarehouseModule: React.FC = () => {
         "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận",
         "Vai Trò Hệ Thống": "warehouse_lead",
         "Tên Tiếng Anh": "Warehouse Manager",
-        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho ABT, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
+        "Quyền Hạn & Phạm Vi Truy Cập": "Quản lý toàn diện kho TBR, ký duyệt phiếu xuất nhập kho, xem giá vốn lô nhập, điều chuyển vị trí kho lạnh, tạo PR mua bù tồn kho và quản lý cảnh báo HSD."
       },
       {
         "Phòng Ban": "Kho Vận",
@@ -1493,7 +1627,7 @@ export const WarehouseModule: React.FC = () => {
       { wch: 70 }  // Quyền hạn
     ];
 
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_TaiKhoan_NhanSu_ABT.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_TaiKhoan_NhanSu_TBR.xlsx");
   };
 
   // ==========================================
@@ -1637,6 +1771,10 @@ export const WarehouseModule: React.FC = () => {
       const data = await res.json();
       if (res.ok && data.success) {
         setActionNotice(`✅ ${data.message || "Đã nạp thành công dữ liệu Excel vào hệ thống!"}`);
+        if (Array.isArray(data.warnings) && data.warnings.length > 0) {
+          const shown = data.warnings.slice(0, 25).join("\n");
+          alert(`⚠️ Đã nạp xong, có ${data.warnings.length} điểm cần kiểm tra:\n\n${shown}${data.warnings.length > 25 ? `\n... và ${data.warnings.length - 25} điểm khác` : ""}`);
+        }
         if (Array.isArray(data.initial_credentials) && data.initial_credentials.length > 0) {
           const lines = data.initial_credentials.map((c: any) => `${c.username} (${c.full_name || ""}): ${c.password}`).join("\n");
           alert(`🔑 Mật khẩu tạm của ${data.initial_credentials.length} tài khoản mới — hãy lưu lại và giao riêng cho từng người (chỉ hiển thị một lần, phải đổi ở lần đăng nhập đầu):\n\n${lines}`);
@@ -1810,7 +1948,7 @@ export const WarehouseModule: React.FC = () => {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(storageRows), "Định Giá Theo Nhiệt Độ");
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(riskRows), "Định Giá Theo Hạn Dùng");
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(skuRows), "Chi Tiết Từng SKU");
-      XLSX.writeFile(wb, `Bao_Cao_Dinh_Gia_Ton_Kho_ABT_${todayVN()}.xlsx`);
+      XLSX.writeFile(wb, `Bao_Cao_Dinh_Gia_Ton_Kho_TBR_${todayVN()}.xlsx`);
       setActionNotice("✅ Đã xuất báo cáo định giá tồn kho thành công ra file Excel với đầy đủ các chỉ tiêu!");
     } catch (e) {
       alert("Lỗi khi xuất file Excel báo cáo định giá tồn kho");
@@ -1872,6 +2010,27 @@ export const WarehouseModule: React.FC = () => {
     });
   }, [enrichedItems, debouncedSearch, riskFilter, tempFilter, categoryFilter]);
   // Bảng tồn kho chỉ vẽ một trang (3.000 dòng vẽ cùng lúc làm màn hình đứng nhiều giây)
+  // Phụ kiện của một dòng tồn: số thực nhận ghi trên phiếu nhập kho; chưa có phiếu nào ghi phụ kiện thì hiện theo
+  // định mức (BOM) và để trống số lô / hạn dùng / vị trí (trước đây tự dựng "<lô>-C1", "2028-12-31" và kệ theo nhiệt độ).
+  const componentsForStockItem = (item: any): any[] => {
+    if (Array.isArray(item.received_components) && item.received_components.length > 0) return item.received_components;
+    if (Array.isArray(item.components) && item.components.length > 0) return item.components;
+    const baseComps = componentsByParentMap.get(item.product_code) || [];
+    return baseComps.map((c) => ({
+      component_code: c.component_code,
+      component_name: c.component_name,
+      specification: c.specification || "",
+      unit: c.unit || "",
+      quantity_per_kit: Number(c.quantity_per_kit) || 1,
+      total_quantity: (Number(c.quantity_per_kit) || 1) * Number(item.quantity_on_hand || 0),
+      lot_number: "",
+      expiry_date: "",
+      storage_condition: c.storage_condition,
+      shelf_position: "",
+      from_bom: true
+    }));
+  };
+
   const stockPage = usePaged(filteredItems, 50, `${debouncedSearch}|${riskFilter}|${tempFilter}|${categoryFilter}`);
   // Danh sách sản phẩm ở tab BOM: lọc sau khi ngừng gõ, đếm thành phần một lần, vẽ từng trang
   const bomSearchDebounced = useDebouncedValue(bomSearchQuery, 300);
@@ -1996,6 +2155,85 @@ export const WarehouseModule: React.FC = () => {
     return { count: itms.length, totalQty, totalAmount };
   }, [inboundForm.items]);
 
+  const handleOpenEditInboundTx = (tx: any) => {
+    if (!tx) return;
+    const rawNotes = String(tx.notes || "");
+    const firstItem = Array.isArray(tx.items) && tx.items.length > 0 ? tx.items[0] : {};
+    let inboundType = firstItem?.inbound_type || "Nhập mua hàng theo Đơn PO từ NCC";
+    let shippingUnit = firstItem?.shipping_unit || "";
+    let vatInvoiceNo = firstItem?.vat_invoice_no || "";
+    let supplierName = firstItem?.supplier_name || firstItem?.manufacturer || "";
+    let cleanNotes = rawNotes;
+
+    const noteMatch = rawNotes.match(/^(.*?)\.\s*Vận chuyển:\s*(.*?)\.\s*HĐ:\s*(.*?)\.(?:\s*NCC:\s*(.*?)\.)?\s*(.*)$/);
+    if (noteMatch) {
+      if (noteMatch[1]?.trim()) inboundType = noteMatch[1].trim();
+      if (!shippingUnit && noteMatch[2] && noteMatch[2].trim() !== "N/A") shippingUnit = noteMatch[2].trim();
+      if (!vatInvoiceNo && noteMatch[3] && noteMatch[3].trim() !== "N/A") vatInvoiceNo = noteMatch[3].trim();
+      if (!supplierName && noteMatch[4] && noteMatch[4].trim() !== "N/A") supplierName = noteMatch[4].trim();
+      cleanNotes = (noteMatch[5] || "").trim();
+    }
+
+    const txDateStr = tx.date ? toVNDateString(tx.date) : todayVN();
+    const mappedItems = (Array.isArray(tx.items) && tx.items.length > 0 ? tx.items : []).map((it: any) => {
+      const code = String(it.product_code || it.productCode || "").trim();
+      const matchedCatalogProd = products.find((p) => p.code === code);
+      return {
+        _orig_product_code: code,
+        _orig_lot_number: String(it.lot_number || "").trim(),
+        _orig_qty: Number(it.quantity) || 0,
+        product_code: code,
+        product_name: it.product_name || it.name || matchedCatalogProd?.name || "",
+        specification: it.specification || matchedCatalogProd?.specification || "",
+        unit: it.unit || matchedCatalogProd?.unit || "Hộp",
+        quantity: Number(it.quantity) || 1,
+        unit_price: Number(it.unit_price ?? it.cost_price ?? matchedCatalogProd?.cost_price ?? 0) || 0,
+        lot_number: it.lot_number || "",
+        manufacture_date: it.manufacture_date || "",
+        expiry_date: it.expiry_date || "",
+        storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
+        shelf_position: it.shelf_position || (matchedCatalogProd as any)?.shelf_position || "Chưa phân bổ kệ",
+        qc_status: it.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+        item_notes: it.item_notes || "",
+        components: Array.isArray(it.components) ? it.components : [],
+      };
+    });
+
+    setEditingInboundTxId(Number(tx.id));
+    setInboundForm({
+      transaction_code: tx.transaction_code || "",
+      date: txDateStr,
+      inbound_type: inboundType,
+      reference_code: tx.reference_code && tx.reference_code !== "N/A" ? tx.reference_code : "",
+      vat_invoice_no: vatInvoiceNo,
+      supplier_name: supplierName === "TBR Phân Phối" ? "" : supplierName,
+      warehouse_name: tx.warehouse_name || "Kho Trung Tâm",
+      performed_by: tx.performed_by || currentUserName,
+      shipping_unit: shippingUnit,
+      notes: cleanNotes,
+      items: mappedItems.length > 0 ? mappedItems : [
+        {
+          product_code: "",
+          product_name: "",
+          specification: "",
+          unit: "Hộp",
+          quantity: 1,
+          unit_price: 0,
+          lot_number: "",
+          manufacture_date: "",
+          expiry_date: "",
+          storage_condition: "15–25°C (Nhiệt độ phòng - RT)",
+          shelf_position: "Chưa phân bổ kệ",
+          qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+          item_notes: "",
+          components: []
+        }
+      ],
+    });
+    setIsTxDetailModalOpen(false);
+    setIsInboundModalOpen(true);
+  };
+
   const handleInboundSubmit = async () => {
     if (!inboundForm.transaction_code?.trim()) {
       alert("Vui lòng nhập Mã Phiếu Nhập Kho");
@@ -2017,13 +2255,16 @@ export const WarehouseModule: React.FC = () => {
       }
     }
 
+    const isEditing = Boolean(editingInboundTxId);
     try {
       setIsSubmittingInbound(true);
+      const supplierPart = inboundForm.supplier_name?.trim() ? ` NCC: ${inboundForm.supplier_name.trim()}.` : "";
       const payload = {
         ...inboundForm,
+        id: editingInboundTxId || undefined,
         transaction_code: inboundForm.transaction_code.trim(),
         reference_code: inboundForm.reference_code?.trim() || inboundForm.vat_invoice_no?.trim() || "N/A",
-        notes: `${inboundForm.inbound_type}. Vận chuyển: ${inboundForm.shipping_unit || "N/A"}. HĐ: ${inboundForm.vat_invoice_no || "N/A"}. ${inboundForm.notes || ""}`.trim(),
+        notes: `${inboundForm.inbound_type}. Vận chuyển: ${inboundForm.shipping_unit || "N/A"}. HĐ: ${inboundForm.vat_invoice_no || "N/A"}.${supplierPart} ${inboundForm.notes || ""}`.trim(),
         items: inboundForm.items.map((it: any) => {
           // Bảo lưu danh sách thành phần con nếu có
           const comps = it.components && it.components.length > 0 
@@ -2038,10 +2279,17 @@ export const WarehouseModule: React.FC = () => {
 
           const matchedCatalogProd = products.find((p) => p.code === it.product_code.trim());
           return {
+            _orig_product_code: it._orig_product_code,
+            _orig_lot_number: it._orig_lot_number,
+            _orig_qty: it._orig_qty,
             product_code: it.product_code.trim(),
             product_name: it.product_name.trim(),
             category: it.category || matchedCatalogProd?.category || "Hàng Thương Mại",
-            manufacturer: it.manufacturer || matchedCatalogProd?.manufacturer || inboundForm.supplier_name || "ABT Phân Phối",
+            manufacturer: inboundForm.supplier_name?.trim() || it.manufacturer || matchedCatalogProd?.manufacturer || "TBR Phân Phối",
+            supplier_name: inboundForm.supplier_name?.trim() || "",
+            vat_invoice_no: inboundForm.vat_invoice_no?.trim() || "",
+            shipping_unit: inboundForm.shipping_unit?.trim() || "",
+            inbound_type: inboundForm.inbound_type || "",
             specification: it.specification || matchedCatalogProd?.specification || "",
             unit: it.unit || matchedCatalogProd?.unit || "Hộp",
             quantity: Number(it.quantity) || 1,
@@ -2061,7 +2309,8 @@ export const WarehouseModule: React.FC = () => {
         })
       };
 
-      const res = await fetch("/api/inventory?action=inbound", {
+      const endpoint = isEditing ? "/api/inventory?action=update_inbound" : "/api/inventory?action=inbound";
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -2069,21 +2318,28 @@ export const WarehouseModule: React.FC = () => {
       const data = await res.json();
       if (data.success) {
         notifyActivity({
-          title: "Phiếu Nhập Kho Mới (Inbound)",
-          message: `Thủ kho đã hoàn tất nhập kho lô hàng: ${payload.transaction_code} (${payload.items.length} mặt hàng).`,
+          title: isEditing ? "Cập Nhật Phiếu Nhập Kho" : "Phiếu Nhập Kho Mới (Inbound)",
+          message: isEditing
+            ? `Đã cập nhật / bổ sung thông tin phiếu nhập kho: ${payload.transaction_code} (${payload.items.length} mặt hàng).`
+            : `Thủ kho đã hoàn tất nhập kho lô hàng: ${payload.transaction_code} (${payload.items.length} mặt hàng).`,
           category: "warehouse",
           type: "success",
           eventKey: "warehouse_inbound",
           link: { tab: "warehouse", subTab: "transactions" }
         });
-        setActionNotice(`✅ Lập phiếu nhập kho ${payload.transaction_code} thành công (${payload.items.length} mặt hàng, đã lưu trữ cấu trúc phụ kiện)!`);
+        setActionNotice(
+          isEditing
+            ? `✅ Đã cập nhật & đồng bộ phiếu nhập kho ${payload.transaction_code} thành công (${payload.items.length} mặt hàng)!`
+            : `✅ Lập phiếu nhập kho ${payload.transaction_code} thành công (${payload.items.length} mặt hàng, đã lưu trữ cấu trúc phụ kiện)!`
+        );
         setIsInboundModalOpen(false);
+        setEditingInboundTxId(null);
         fetchData();
       } else {
-        alert(data.error || "Lỗi khi lập phiếu nhập kho");
+        alert(data.error || (isEditing ? "Lỗi khi cập nhật phiếu nhập kho" : "Lỗi khi lập phiếu nhập kho"));
       }
     } catch (e) {
-      alert("Lỗi kết nối máy chủ khi lập phiếu nhập kho");
+      alert("Lỗi kết nối máy chủ khi lưu phiếu nhập kho");
     } finally {
       setIsSubmittingInbound(false);
     }
@@ -2273,7 +2529,7 @@ export const WarehouseModule: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(exportRows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "DinhMuc_BOM_Kit");
-    const fileName = parentCode ? `BOM_${parentCode}_ABT.xlsx` : `Danh_Muc_BOM_Toan_Bo_Kit_ABT.xlsx`;
+    const fileName = parentCode ? `BOM_${parentCode}_TBR.xlsx` : `Danh_Muc_BOM_Toan_Bo_Kit_TBR.xlsx`;
     XLSX.writeFile(wb, fileName);
   };
 
@@ -2300,7 +2556,7 @@ export const WarehouseModule: React.FC = () => {
       order_code: outboundForm.reference_code || "SO-2026-088",
       customer_name: outboundForm.customer_name || "Bệnh viện Đa Khoa / Viện Nghiên Cứu",
       warehouse_name: outboundForm.warehouse_name || "Kho Trung Tâm",
-      performed_by: outboundForm.performed_by || "Thủ kho ABT",
+      performed_by: outboundForm.performed_by || "Thủ kho TBR",
       product_code: selectedProdCode,
       product_name: selectedProd?.name || outboundForm.items[0]?.product_name,
       quantity: qty,
@@ -2391,39 +2647,72 @@ export const WarehouseModule: React.FC = () => {
         "Tên Cột Trên Excel": "Khu vực / Vị trí kho",
         "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
         "Quy Định & Giá Trị Hợp Lệ": "Khu vực kho hoặc kệ lưu trữ (VD: Kho Mát - Kệ B1). Nếu để trống hệ thống ghi nhận 'Chưa phân bổ kệ' (có thể chỉnh sửa trực tiếp trên dòng tồn kho sau)."
+      },
+      {
+        "Nhóm Thông Tin": "LƯU Ý TRANG 1",
+        "Tên Cột Trên Excel": "(Các dòng mẫu)",
+        "Bắt Buộc / Tùy Chọn": "XÓA TRƯỚC KHI NẠP",
+        "Quy Định & Giá Trị Hợp Lệ": "Các dòng có sẵn ở trang 'Phieu_Nhap_Kho_Chinh' chỉ là ví dụ (số lô, hạn dùng, số lượng minh họa). Xóa hoặc thay bằng số liệu thật trước khi nạp, nếu không hệ thống sẽ nhập kho đúng các số liệu mẫu đó."
+      },
+      {
+        "Nhóm Thông Tin": "PHỤ KIỆN – CÁCH HOẠT ĐỘNG",
+        "Tên Cột Trên Excel": "Trang 'Chi_Tiet_Thanh_Phan_Dinh_Kem'",
+        "Bắt Buộc / Tùy Chọn": "Tùy chọn",
+        "Quy Định & Giá Trị Hợp Lệ": "Ghi phụ kiện / thành phần đi kèm từng lô sản phẩm chính để truy xuất (số lượng, số lô hoặc S/N, hạn dùng, QC). Phụ kiện KHÔNG có tồn kho riêng: chỉ sản phẩm chính ở trang 1 được cộng tồn. Trang này liệt kê sẵn phụ kiện theo định mức (BOM) của mọi sản phẩm có BOM; dòng của sản phẩm không nhập lần này được bỏ qua."
+      },
+      {
+        "Nhóm Thông Tin": "PHỤ KIỆN – GHÉP VỚI LÔ CHÍNH",
+        "Tên Cột Trên Excel": "Mã sản phẩm chính (*) + Số Lô chính (*)",
+        "Bắt Buộc / Tùy Chọn": "BẮT BUỘC Mã SP chính",
+        "Quy Định & Giá Trị Hợp Lệ": "Mỗi dòng phụ kiện được gắn vào dòng ở trang 1 có cùng Mã SP và Số lô. Để trống 'Số Lô chính' = áp dụng cho MỌI lô của mã đó trong file. Nếu một mã nhập nhiều lô với phụ kiện khác nhau, ghi rõ Số lô chính cho từng dòng. Dòng ghi Số lô chính không có ở trang 1 sẽ được cảnh báo và không ghi."
+      },
+      {
+        "Nhóm Thông Tin": "PHỤ KIỆN – ĐỊNH MỨC",
+        "Tên Cột Trên Excel": "Định mức theo bộ",
+        "Bắt Buộc / Tùy Chọn": "Có sẵn theo BOM",
+        "Quy Định & Giá Trị Hợp Lệ": "Số phụ kiện trong MỘT bộ sản phẩm chính (VD: 1 bộ HI-002 kèm 1 Deep plate). Số lượng phụ kiện dự kiến = Định mức × Số lượng của lô chính ở trang 1."
+      },
+      {
+        "Nhóm Thông Tin": "PHỤ KIỆN – SỐ LƯỢNG THỰC NHẬN",
+        "Tên Cột Trên Excel": "Số lượng thực nhận",
+        "Bắt Buộc / Tùy Chọn": "Tùy chọn",
+        "Quy Định & Giá Trị Hợp Lệ": "Tổng số phụ kiện thực tế nhận về cho lô chính đó (không phải số trên một bộ). Để trống = hệ thống tự tính Định mức × Số lượng lô chính. Nếu ghi khác số đó (giao thiếu, thừa, tặng kèm, về chuyến sau) hệ thống vẫn nhập và hiện cảnh báo thiếu / thừa. Phải là số ≥ 0, nếu sai cả file sẽ không được nạp."
+      },
+      {
+        "Nhóm Thông Tin": "PHỤ KIỆN – SỐ LÔ / SERIAL",
+        "Tên Cột Trên Excel": "Hình thức quản lý (LOT/SERIAL) + Số Lô (LOT) / Serial (S/N)",
+        "Bắt Buộc / Tùy Chọn": "BẮT BUỘC với SERIAL",
+        "Quy Định & Giá Trị Hợp Lệ": "LOT: ghi số lô in trên phụ kiện; để trống = cùng số lô với sản phẩm chính. SERIAL: ghi số S/N thật in trên thiết bị; để trống sẽ bị cảnh báo 'Thiếu S/N' (hệ thống không tự sinh số S/N)."
+      },
+      {
+        "Nhóm Thông Tin": "PHỤ KIỆN – HẠN DÙNG, BẢO QUẢN, QC",
+        "Tên Cột Trên Excel": "Hạn dùng (EXP), Nhiệt độ bảo quản riêng, Tình trạng QC",
+        "Bắt Buộc / Tùy Chọn": "Cho phép để trống",
+        "Quy Định & Giá Trị Hợp Lệ": "Hạn dùng định dạng YYYY-MM-DD. Để trống = lấy theo lô sản phẩm chính ở trang 1. Chỉ ghi khi phụ kiện có hạn dùng / điều kiện bảo quản / kết quả QC riêng."
       }
     ];
 
     // Sheet 2: Danh sách phụ kiện & thành phần cấu thành đính kèm (BOM & Multi-Unit Components)
-    const componentsData = productComponents.length > 0 ? productComponents.map((c) => ({
+    // Số lô / hạn dùng / QC để trống: điền theo hàng thật (trước đây điền sẵn "L260901", "2027-12-31", "Đạt chuẩn 100%"
+    // nên dễ bị nạp nguyên giá trị mẫu). Xem trang Huong_Dan_Quy_Dinh.
+    const componentRow = (c: { parent_product_code: string; component_code: string; component_name: string; quantity_per_kit?: any; unit?: string; tracking_type?: string; storage_condition?: string; notes?: string }) => ({
       "Mã sản phẩm chính (*)": c.parent_product_code,
-      "Số Lô chính (*)": "L260901",
+      "Số Lô chính (*)": "",
       "Mã thành phần / Phụ kiện (*)": c.component_code,
       "Tên thành phần / Phụ kiện (*)": c.component_name,
       "Định mức theo bộ": Number(c.quantity_per_kit) || 1,
+      "Số lượng thực nhận": "",
       "Đơn vị tính": c.unit || "Hộp",
       "Hình thức quản lý (LOT/SERIAL)": c.tracking_type || "LOT",
-      "Số Lô (LOT) / Serial (S/N)": "L260901",
-      "Hạn dùng (EXP)": "2027-12-31",
-      "Nhiệt độ bảo quản riêng": c.storage_condition || "2-8°C (Lạnh mát)",
-      "Tình trạng QC": "Đạt chuẩn 100% (COA đạt chuẩn)",
+      "Số Lô (LOT) / Serial (S/N)": "",
+      "Hạn dùng (EXP)": "",
+      "Nhiệt độ bảo quản riêng": c.storage_condition || "",
+      "Tình trạng QC": "",
       "Ghi chú": c.notes || ""
-    })) : [
-      {
-        "Mã sản phẩm chính (*)": "HI-612",
-        "Số Lô chính (*)": "L260901",
-        "Mã thành phần / Phụ kiện (*)": "HI-612 (1)",
-        "Tên thành phần / Phụ kiện (*)": "Proteninase K - Magbead",
-        "Định mức theo bộ": 1,
-        "Đơn vị tính": "Hộp",
-        "Hình thức quản lý (LOT/SERIAL)": "LOT",
-        "Số Lô (LOT) / Serial (S/N)": "L260901",
-        "Hạn dùng (EXP)": "2027-12-31",
-        "Nhiệt độ bảo quản riêng": "2-8°C (Lạnh mát)",
-        "Tình trạng QC": "Đạt chuẩn 100% (COA đạt chuẩn)",
-        "Ghi chú": "Bảo quản tránh ánh sáng"
-      }
-    ];
+    });
+    const componentsData = productComponents.length > 0
+      ? productComponents.map((c) => componentRow(c))
+      : [componentRow({ parent_product_code: "HI-612", component_code: "HI-612 (1)", component_name: "Proteninase K - Magbead", quantity_per_kit: 1, unit: "Hộp", tracking_type: "LOT" })];
 
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wsComps = XLSX.utils.json_to_sheet(componentsData);
@@ -2450,6 +2739,7 @@ export const WarehouseModule: React.FC = () => {
       { wch: 22 }, // Mã thành phần (*)
       { wch: 45 }, // Tên thành phần (*)
       { wch: 16 }, // Định mức
+      { wch: 20 }, // Số lượng thực nhận
       { wch: 14 }, // ĐVT
       { wch: 24 }, // Hình thức quản lý
       { wch: 22 }, // Số Lô/Serial
@@ -2562,7 +2852,7 @@ export const WarehouseModule: React.FC = () => {
           const manufacturer =
             String(r["Nhãn hiệu"] || r["Hãng SX"] || r["Hãng sản xuất"] || r["manufacturer"] || r["brand"] || "").trim() ||
             matchedProd?.manufacturer ||
-            "ABT Phân Phối";
+            "TBR Phân Phối";
 
           const quantity =
             Number(
@@ -2785,7 +3075,7 @@ export const WarehouseModule: React.FC = () => {
 
     const ws = XLSX.utils.json_to_sheet(exportData);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Ton_Kho_ABT");
+    XLSX.utils.book_append_sheet(wb, ws, "Ton_Kho_TBR");
     XLSX.writeFile(wb, `TBR_Bao_Cao_Ton_Kho_${todayVN()}.xlsx`);
   };
 
@@ -2924,7 +3214,7 @@ export const WarehouseModule: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          order_code: `RES-ABT-${Date.now().toString().slice(-5)}`,
+          order_code: `RES-TBR-${Date.now().toString().slice(-5)}`,
           customer_name: reserveFormData.customer_name,
           sales_rep_name: reserveFormData.sales_rep_name,
           product_code: selectedReserveItem.product_code,
@@ -2963,7 +3253,7 @@ export const WarehouseModule: React.FC = () => {
           reservation_id: reservation.id,
           product_code: reservation.product_code,
           quantity_reserved: reservation.quantity_reserved,
-          actor: "Thủ kho ABT",
+          actor: "Thủ kho TBR",
           reason: "Thủ kho giải phóng lại cho tồn khả dụng chung"
         })
       });
@@ -3032,11 +3322,11 @@ export const WarehouseModule: React.FC = () => {
           <div className="flex items-center gap-2 text-orange-600 dark:text-orange-400">
             <Package className="w-6 h-6" />
             <h2 className="text-xl font-black tracking-tight text-slate-900 dark:text-white">
-              HỆ THỐNG QUẢN LÝ KHO ABT
+              HỆ THỐNG QUẢN LÝ KHO TBR
             </h2>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) ABT.
+            Phân hệ độc lập quản lý xuất nhập tồn hàng hóa, theo dõi rủi ro lô hạn và giữ chỗ tồn kho (ATP) TBR.
           </p>
         </div>
 
@@ -3062,11 +3352,37 @@ export const WarehouseModule: React.FC = () => {
 
           <button
             onClick={() => {
-              setInboundForm((prev: any) => ({
-                ...prev,
+              setEditingInboundTxId(null);
+              setInboundForm({
                 transaction_code: `PNK-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}`,
                 date: todayVN(),
-              }));
+                inbound_type: "Nhập mua hàng theo Đơn PO từ NCC",
+                reference_code: "",
+                vat_invoice_no: "",
+                supplier_name: "",
+                warehouse_name: "Kho Trung Tâm",
+                performed_by: currentUserName,
+                shipping_unit: "",
+                notes: "",
+                items: [
+                  {
+                    product_code: "",
+                    product_name: "",
+                    specification: "",
+                    unit: "Hộp",
+                    quantity: 1,
+                    unit_price: 0,
+                    lot_number: "",
+                    manufacture_date: "",
+                    expiry_date: "",
+                    storage_condition: "15–25°C (Nhiệt độ phòng - RT)",
+                    shelf_position: "Chưa phân bổ kệ",
+                    qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+                    item_notes: "",
+                    components: []
+                  }
+                ]
+              });
               setIsInboundModalOpen(true);
             }}
             className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white shadow-xs transition-all"
@@ -3552,20 +3868,7 @@ export const WarehouseModule: React.FC = () => {
           <div className="block md:hidden space-y-3 p-2">
             {stockPage.items.map((item) => {
               const itemKey = String(item.id || `${item.product_code}-${item.lot_number || 'default'}`);
-              const itemComponents: any[] = (item.components && Array.isArray(item.components) && item.components.length > 0)
-                ? item.components
-                : productComponents.filter((c) => c.parent_product_code === item.product_code).map((c, idx) => ({
-                    component_code: c.component_code,
-                    component_name: c.component_name,
-                    specification: c.specification || 'Phụ kiện kèm theo bộ Kit',
-                    unit: c.unit || 'Đơn vị',
-                    quantity_per_kit: Number(c.quantity_per_kit) || 1,
-                    total_quantity: (Number(c.quantity_per_kit) || 1) * Number(item.quantity_on_hand),
-                    lot_number: item.lot_number ? `${item.lot_number}-C${idx + 1}` : `L-C${idx + 1}`,
-                    expiry_date: item.expiry_date || '2028-12-31',
-                    storage_condition: c.storage_condition,
-                    shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát ABT (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
-                  }));
+              const itemComponents: any[] = componentsForStockItem(item);
 
               return (
                 <div
@@ -3678,7 +3981,7 @@ export const WarehouseModule: React.FC = () => {
                         type="button"
                         onClick={() => {
                           setSelectedReserveItem(item);
-                          const initialRep = salesStaff[0] ? `${salesStaff[0].full_name} (${salesStaff[0].position})` : "";
+                          const initialRep = salesStaff[0] ? `${salesStaff[0].full_name} (${salesStaff[0].position})` : "Lê Hữu Nhân (Chuyên Viên Kinh Doanh)";
                           setReserveFormData({
                             sales_rep_name: initialRep,
                             customer_name: "",
@@ -3811,20 +4114,7 @@ export const WarehouseModule: React.FC = () => {
                 {stockPage.items.map((item) => {
                   const itemKey = String(item.id || `${item.product_code}-${item.lot_number || 'default'}`);
                   const isExpanded = !!expandedItemComponents[itemKey];
-                  const itemComponents: any[] = (item.components && Array.isArray(item.components) && item.components.length > 0)
-                    ? item.components
-                    : productComponents.filter((c) => c.parent_product_code === item.product_code).map((c, idx) => ({
-                        component_code: c.component_code,
-                        component_name: c.component_name,
-                        specification: c.specification || 'Phụ kiện kèm theo bộ Kit',
-                        unit: c.unit || 'Đơn vị',
-                        quantity_per_kit: Number(c.quantity_per_kit) || 1,
-                        total_quantity: (Number(c.quantity_per_kit) || 1) * Number(item.quantity_on_hand),
-                        lot_number: item.lot_number ? `${item.lot_number}-C${idx + 1}` : `L-C${idx + 1}`,
-                        expiry_date: item.expiry_date || '2028-12-31',
-                        storage_condition: c.storage_condition,
-                        shelf_position: c.storage_condition?.includes('2-8') ? 'Tủ Mát ABT (Kệ TM-02)' : c.storage_condition?.includes('-20') ? 'Tủ Lạnh Âm (Ngăn F-01)' : 'Kho Thường (Kệ K-01)'
-                      }));
+                  const itemComponents: any[] = componentsForStockItem(item);
 
                   return (
                     <React.Fragment key={itemKey}>
@@ -3894,7 +4184,7 @@ export const WarehouseModule: React.FC = () => {
                       {isAtpViewMode && (
                         <td className="py-3 px-3">
                           <div className="font-bold text-indigo-600 dark:text-indigo-400">
-                            {item.manufacturer || "ABT"}
+                            {item.manufacturer || "TBR"}
                           </div>
                           <div className="text-[10px] text-slate-500 mt-0.5">
                             {item.category || "Sinh phẩm"}
@@ -4160,7 +4450,7 @@ export const WarehouseModule: React.FC = () => {
                               <button
                                 onClick={() => {
                                   setSelectedReserveItem(item);
-                                  const initialRep = salesStaff[0] ? `${salesStaff[0].full_name} (${salesStaff[0].position})` : "";
+                                  const initialRep = salesStaff[0] ? `${salesStaff[0].full_name} (${salesStaff[0].position})` : "Lê Hữu Nhân (Chuyên Viên Kinh Doanh)";
                                   setReserveFormData({
                                     sales_rep_name: initialRep,
                                     customer_name: "",
@@ -4297,7 +4587,7 @@ export const WarehouseModule: React.FC = () => {
                                     <th className="py-2 px-2.5">Tên Phụ Kiện / Thành Phần</th>
                                     <th className="py-2 px-2.5">Quy Cách &amp; ĐVT</th>
                                     <th className="py-2 px-2.5 text-center">Định Mức / Kit</th>
-                                    <th className="py-2 px-2.5 text-right font-bold text-purple-700 dark:text-purple-300">Tổng Thực Tồn</th>
+                                    <th className="py-2 px-2.5 text-right font-bold text-purple-700 dark:text-purple-300">Theo Định Mức (Tồn Hiện Tại)</th>
                                     <th className="py-2 px-2.5">Số LOT Phụ Kiện</th>
                                     <th className="py-2 px-2.5">Hạn Dùng (EXP)</th>
                                     <th className="py-2 px-2.5">ĐK Bảo Quản Riêng</th>
@@ -4329,14 +4619,19 @@ export const WarehouseModule: React.FC = () => {
                                         </td>
                                         <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                                           {comp.total_quantity !== undefined ? comp.total_quantity : compQtyOnHand} {comp.unit || ""}
+                                          {comp.received_quantity !== undefined && (
+                                            <span className="block text-[10px] font-normal text-slate-500 dark:text-slate-400">
+                                              Thực nhận{comp.parent_lot ? ` (lô ${comp.parent_lot})` : ""}: {comp.received_quantity}
+                                            </span>
+                                          )}
                                         </td>
                                         <td className="py-2 px-2.5 font-mono">
                                           <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-800 dark:text-slate-200">
-                                            {comp.lot_number || item.lot_number || "LOT-THEO-KIT"}
+                                            {comp.serial_number || comp.lot_number || (comp.needs_serial ? "Thiếu S/N" : "—")}
                                           </span>
                                         </td>
                                         <td className="py-2 px-2.5 font-mono text-slate-700 dark:text-slate-300 text-[11px]">
-                                          {comp.expiry_date || item.expiry_date || "—"}
+                                          {comp.expiry_date || "—"}
                                         </td>
                                         <td className="py-2 px-2.5">
                                           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${
@@ -4481,22 +4776,35 @@ export const WarehouseModule: React.FC = () => {
                         </div>
                       </td>
                       <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
-                        {tx.performed_by || "Thủ kho ABT"}
+                        {tx.performed_by || "Thủ kho TBR"}
                       </td>
                       <td className="py-3.5 px-4 font-mono text-slate-500">
                         {tx.date ? formatDayVN(tx.date) : ""}
                       </td>
                       <td className="py-3.5 px-4 text-right">
-                        <button
-                          onClick={() => {
-                            setSelectedTxDetail(tx);
-                            setIsTxDetailModalOpen(true);
-                          }}
-                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 hover:text-emerald-600 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 transition-colors"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>Chi Tiết</span>
-                        </button>
+                        <div className="inline-flex items-center justify-end gap-1.5">
+                          {canEditInboundTx(tx) && (
+                            <button
+                              type="button"
+                              onClick={() => handleOpenEditInboundTx(tx)}
+                              title="Chỉnh sửa hoặc bổ sung thông tin phiếu nhập kho (PO, Hóa đơn, Nhà cung cấp, Hạn dùng, Vị trí kệ...)"
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800 transition-colors cursor-pointer"
+                            >
+                              <Edit3 className="w-3 h-3" />
+                              <span>Sửa / Bổ Sung</span>
+                            </button>
+                          )}
+                          <button
+                            onClick={() => {
+                              setSelectedTxDetail(tx);
+                              setIsTxDetailModalOpen(true);
+                            }}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 hover:text-emerald-600 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 transition-colors"
+                          >
+                            <Eye className="w-3 h-3" />
+                            <span>Chi Tiết</span>
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -5015,7 +5323,7 @@ export const WarehouseModule: React.FC = () => {
               </div>
               <p className="text-[10px] text-slate-500 mt-1.5 flex items-center justify-between">
                 <span>Biên lợi nhuận trung bình</span>
-                <span className="font-bold text-cyan-600">Đạt định mức ABT</span>
+                <span className="font-bold text-cyan-600">Đạt định mức TBR</span>
               </p>
             </div>
           </div>
@@ -5662,7 +5970,7 @@ export const WarehouseModule: React.FC = () => {
                           <div className="grid grid-cols-2 gap-2 text-[11px] pt-2 border-t border-slate-100 dark:border-slate-800/80">
                             <div>
                               <span className="text-slate-400 block text-[10px]">Hãng sản xuất:</span>
-                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "—"}</strong>
+                              <strong className="text-slate-800 dark:text-slate-200">{itm.manufacturer || "ABT / TBR"}</strong>
                             </div>
                             <div>
                               <span className="text-slate-400 block text-[10px]">Quy cách:</span>
@@ -5877,7 +6185,7 @@ export const WarehouseModule: React.FC = () => {
                               x{c.quantity}
                             </td>
                             <td className="py-3 px-3 text-[11px]">
-                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng ABT"}</div>
+                              <div className="text-slate-300">{c.shipping_method || "Xe lạnh chuyên dụng TBR"}</div>
                               <div className="text-[10px] font-mono text-sky-400 mt-0.5">{c.tracking_code || "—"}</div>
                             </td>
                             <td className="py-3 px-3 text-[11px] text-slate-300 font-sans">
@@ -5924,14 +6232,14 @@ export const WarehouseModule: React.FC = () => {
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-base font-bold text-white tracking-wide uppercase">
-                    TRUNG TÂM BIỂU MẪU EXCEL CHUẨN HÓA &amp; NHẬP LIỆU HÀNG LOẠT (KHỐI KINH DOANH &amp; KHO VẬN)
+                    TRUNG TÂM BIỂU MẪU EXCEL CHUẨN HÓA &amp; NHẬP LIỆU HÀNG LOẠT
                   </h2>
                   <span className="text-[10px] bg-teal-950 text-teal-300 border border-teal-700/60 px-2 py-0.5 rounded-full font-mono font-bold">
                     Standardized Excel Master
                   </span>
                 </div>
                 <p className="text-xs text-slate-400 mt-1">
-                  Cung cấp 5 bộ biểu mẫu Excel chuẩn hóa cho Khách hàng CRM, Sản phẩm &amp; Bảng giá, Nhập kho theo Lô, Đơn đặt hàng PO, và Nhà cung cấp; hỗ trợ import trực tiếp vào cơ sở dữ liệu. (Chức năng nhập Tài khoản &amp; Nhân sự toàn công ty được quản lý tập trung tại mục Quản Trị Hệ Thống).
+                  Cung cấp 6 bộ biểu mẫu Excel chuẩn hóa cho Khách hàng, Sản phẩm &amp; Bảng giá, Nhập kho theo Lô, Đơn đặt hàng PO, Nhà cung cấp, và Tài khoản &amp; Nhân sự; hỗ trợ import trực tiếp vào cơ sở dữ liệu.
                 </p>
               </div>
             </div>
@@ -6053,6 +6361,29 @@ export const WarehouseModule: React.FC = () => {
                 <span>Tải Mẫu Nhà Cung Cấp (.xlsx)</span>
               </button>
             </div>
+
+            {/* Card 6: Tài Khoản & Nhân Sự Liên Kết */}
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between space-y-4 hover:border-rose-500/50 transition-colors">
+              <div className="space-y-2">
+                <div className="w-10 h-10 rounded-xl bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+                  <UserCheck className="w-5 h-5" />
+                </div>
+                <h3 className="font-bold text-slate-900 dark:text-white text-sm">
+                  6. Tài Khoản &amp; Nhân Sự Liên Kết
+                </h3>
+                <p className="text-slate-500 text-xs leading-relaxed">
+                  Bao gồm: Mã NV, Họ tên, Tên đăng nhập, Mật khẩu khởi tạo, Phòng ban, Chức danh, Vai trò (Role), Email, SĐT.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleDownloadUserPersonnelTemplate}
+                className="w-full py-2.5 rounded-xl font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white flex items-center justify-center gap-1.5 shadow-sm transition-all cursor-pointer"
+              >
+                <Download className="w-4 h-4" />
+                <span>Tải Mẫu Tài Khoản &amp; Nhân Sự (.xlsx)</span>
+              </button>
+            </div>
           </div>
 
           {/* Smart Excel File Importer */}
@@ -6126,7 +6457,7 @@ export const WarehouseModule: React.FC = () => {
               <p className="text-[11px] text-slate-500 mb-3">
                 {isDraggingGeneralExcel
                   ? "Hệ thống sẽ tự động phân tích và nhận diện cấu trúc cột"
-                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu ABT"}
+                  : "Tự động nhận diện cấu trúc cột theo chuẩn biểu mẫu TBR"}
               </p>
               <button
                 type="button"
@@ -6257,9 +6588,11 @@ export const WarehouseModule: React.FC = () => {
 
       {/* ==================== TAB 7: CẤU TRÚC ĐỊNH MỨC BỘ / KIT & PHỤ KIỆN (BOM) ==================== */}
       {subTab === "bom_kits" && (() => {
-        const activeParentCode = products.some(p => p.code === selectedBomParent)
+        const activeParentCode = productByCodeMap.has(selectedBomParent)
           ? selectedBomParent
-          : (products.find(p => productComponents.some(c => c.parent_product_code === p.code))?.code || products[0]?.code || "HI-612");
+          : (products.find(p => componentsByParentMap.has(p.code))?.code || products[0]?.code || "HI-612");
+        const kitsCount = products.reduce((acc, p) => acc + (componentsByParentMap.has(p.code) ? 1 : 0), 0);
+        const singleCount = products.length - kitsCount;
 
         return (
         <div className="space-y-6 animate-fade-in">
@@ -6367,7 +6700,7 @@ export const WarehouseModule: React.FC = () => {
                   }`}
                   title="Chỉ hiển thị các sản phẩm dạng Bộ / Kit có cấu trúc linh kiện phụ kèm theo"
                 >
-                  🧩 Bộ/Kit ({products.reduce((acc, p) => acc + (componentsByParentMap.has(p.code) ? 1 : 0), 0)})
+                  🧩 Bộ/Kit ({kitsCount})
                 </button>
                 <button
                   type="button"
@@ -6391,7 +6724,7 @@ export const WarehouseModule: React.FC = () => {
                   }`}
                   title="Các sản phẩm đơn chiếc (chưa khai báo BOM)"
                 >
-                  Đơn chiếc ({products.reduce((acc, p) => acc + (!componentsByParentMap.has(p.code) ? 1 : 0), 0)})
+                  Đơn chiếc ({singleCount})
                 </button>
               </div>
 
@@ -6456,11 +6789,8 @@ export const WarehouseModule: React.FC = () => {
             {/* Cột Phải (8 cols): Chi tiết cây cấu trúc BOM của sản phẩm được chọn */}
             <div className="lg:col-span-8 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 shadow-xs space-y-4">
               {(() => {
-                const activeParentCode = products.some(p => p.code === selectedBomParent)
-                  ? selectedBomParent
-                  : (products.find(p => productComponents.some(c => c.parent_product_code === p.code))?.code || products[0]?.code || "HI-612");
-                const currentProduct = products.find((p) => p.code === activeParentCode);
-                const currentComponents = productComponents.filter((c) => c.parent_product_code === activeParentCode);
+                const currentProduct = productByCodeMap.get(activeParentCode);
+                const currentComponents = componentsByParentMap.get(activeParentCode) || [];
                 const lotCount = currentComponents.filter((c) => c.tracking_type === "LOT").length;
                 const serialCount = currentComponents.filter((c) => c.tracking_type === "SERIAL").length;
                 const genericCount = currentComponents.filter((c) => c.tracking_type !== "LOT" && c.tracking_type !== "SERIAL").length;
@@ -6483,7 +6813,7 @@ export const WarehouseModule: React.FC = () => {
                           {currentProduct?.name || activeParentCode}
                         </h3>
                         <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                          Quy cách: <strong>{currentProduct?.specification || "Tiêu chuẩn"}</strong> • ĐVT: <strong>{currentProduct?.unit || "Bộ"}</strong> • Hãng SX: <strong>{currentProduct?.manufacturer || "ABT"}</strong>
+                          Quy cách: <strong>{currentProduct?.specification || "Tiêu chuẩn"}</strong> • ĐVT: <strong>{currentProduct?.unit || "Bộ"}</strong> • Hãng SX: <strong>{currentProduct?.manufacturer || "TBR"}</strong>
                         </div>
                       </div>
 
@@ -6795,7 +7125,7 @@ export const WarehouseModule: React.FC = () => {
               <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/60 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                   <strong className="text-emerald-900 dark:text-emerald-300 block mb-0.5">
-                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn ABT:
+                    Tải mẫu Excel nhập kho rút gọn 7 cột chuẩn TBR:
                   </strong>
                   <p className="text-emerald-800 dark:text-emerald-400 text-[11px] leading-relaxed">
                     Chỉ cần nhập <strong>7 cột cốt lõi</strong>: <code>Mã SP</code>, <code>Số Lô (Lot)</code>, <code>Hạn dùng (Date)</code>, <code>Số lượng</code>, <code>Giá trị / Đơn giá đầu kỳ</code>, <code>Nhiệt độ bảo quản</code>, <code>Khu vực / Vị trí kho</code>. <br />
@@ -6886,14 +7216,83 @@ export const WarehouseModule: React.FC = () => {
                 </span>
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div>
-                    <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1">Nhà cung cấp / Đơn vị giao *</label>
-                    <input
-                      type="text"
-                      value={excelInboundDetails.supplier_name}
-                      onChange={(e) => setExcelInboundDetails({ ...excelInboundDetails, supplier_name: e.target.value })}
-                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium"
-                    />
+                  <div className="relative">
+                    <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1 flex items-center justify-between">
+                      <span>Nhà cung cấp / Đơn vị giao *</span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">Chọn hoặc gõ tìm</span>
+                    </label>
+                    <div className="relative flex items-center">
+                      <Building2 className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={excelInboundDetails.supplier_name}
+                        onFocus={() => setIsExcelSupplierDropdownOpen(true)}
+                        onChange={(e) => {
+                          setExcelInboundDetails({ ...excelInboundDetails, supplier_name: e.target.value });
+                          setIsExcelSupplierDropdownOpen(true);
+                        }}
+                        placeholder="Gõ tìm hoặc chọn từ danh mục NCC..."
+                        className="w-full pl-8 pr-14 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-medium focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                      <div className="absolute right-1.5 flex items-center gap-0.5">
+                        {excelInboundDetails.supplier_name && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExcelInboundDetails({ ...excelInboundDetails, supplier_name: "" });
+                              setIsExcelSupplierDropdownOpen(true);
+                            }}
+                            className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            title="Xóa lựa chọn"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setIsExcelSupplierDropdownOpen(!isExcelSupplierDropdownOpen)}
+                          className="p-1 rounded-md text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                          title="Mở danh mục Nhà Cung Cấp"
+                        >
+                          <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExcelSupplierDropdownOpen ? "rotate-180 text-emerald-600" : ""}`} />
+                        </button>
+                      </div>
+                    </div>
+                    {isExcelSupplierDropdownOpen && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setIsExcelSupplierDropdownOpen(false)} />
+                        <div className="absolute left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl z-50 divide-y divide-slate-100 dark:divide-slate-800">
+                          {filteredExcelSuppliers.length > 0 ? (
+                            filteredExcelSuppliers.map((sup: any) => (
+                              <button
+                                key={sup.id || sup.name}
+                                type="button"
+                                onClick={() => {
+                                  setExcelInboundDetails({ ...excelInboundDetails, supplier_name: sup.name });
+                                  setIsExcelSupplierDropdownOpen(false);
+                                }}
+                                className="w-full px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors flex items-center justify-between gap-2 cursor-pointer"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-900 dark:text-white text-xs truncate">{sup.name}</div>
+                                  <div className="flex items-center gap-1.5 text-[10px] text-slate-500 mt-0.5 truncate">
+                                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{sup.supplier_code}</span>
+                                    {sup.product_lines && <span>• {sup.product_lines}</span>}
+                                  </div>
+                                </div>
+                                {excelInboundDetails.supplier_name === sup.name && (
+                                  <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                                )}
+                              </button>
+                            ))
+                          ) : (
+                            <div className="p-3 text-center text-slate-500 text-[11px]">
+                              Không tìm thấy NCC khớp trong danh mục. Nhấn bên ngoài để dùng tên vừa gõ: <strong className="text-slate-900 dark:text-white">"{excelInboundDetails.supplier_name}"</strong>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                   <div>
                     <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1">Mã đơn mua hàng (PO)</label>
@@ -7069,18 +7468,29 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
-                    Lập Phiếu Nhập Kho Sản Phẩm & Sinh Phẩm (Inbound Receipt)
-                    <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-mono font-bold">
+                    {editingInboundTxId
+                      ? "Chỉnh Sửa / Bổ Sung Phiếu Nhập Kho (Edit Inbound Receipt)"
+                      : "Lập Phiếu Nhập Kho Sản Phẩm & Sinh Phẩm (Inbound Receipt)"}
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+                      editingInboundTxId
+                        ? "bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300"
+                        : "bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300"
+                    }`}>
                       {inboundForm.transaction_code}
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Ghi nhận đầy đủ thông tin: Số Lô (LOT), Hạn dùng (EXP), Quy cách, Điều kiện bảo quản và Kiểm tra QC
+                    {editingInboundTxId
+                      ? "Bổ sung hoặc điều chỉnh Mã PO, Số hóa đơn, Nhà cung cấp, Số Lô (LOT), Hạn dùng (EXP), Vị trí kệ và Số lượng thực nhận"
+                      : "Ghi nhận đầy đủ thông tin: Số Lô (LOT), Hạn dùng (EXP), Quy cách, Điều kiện bảo quản và Kiểm tra QC"}
                   </p>
                 </div>
               </div>
               <button
-                onClick={() => setIsInboundModalOpen(false)}
+                onClick={() => {
+                  setIsInboundModalOpen(false);
+                  setEditingInboundTxId(null);
+                }}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700"
               >
                 <X className="w-5 h-5" />
@@ -7155,15 +7565,100 @@ export const WarehouseModule: React.FC = () => {
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
                     />
                   </div>
-                  <div>
-                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Nhà Cung Cấp / Nguồn Hàng</label>
-                    <input
-                      type="text"
-                      value={inboundForm.supplier_name}
-                      onChange={(e) => setInboundForm({ ...inboundForm, supplier_name: e.target.value })}
-                      placeholder="Tên nhà cung cấp hoặc xưởng sản xuất"
-                      className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
-                    />
+                  <div className="relative">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                      <span>Nhà Cung Cấp / Nguồn Hàng</span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">
+                        Chọn hoặc gõ tìm từ danh mục NCC
+                      </span>
+                    </label>
+                    <div className="relative flex items-center">
+                      <Building2 className="w-4 h-4 text-slate-400 absolute left-3 pointer-events-none" />
+                      <input
+                        type="text"
+                        value={inboundForm.supplier_name}
+                        onFocus={() => setIsInboundSupplierDropdownOpen(true)}
+                        onChange={(e) => {
+                          setInboundForm({ ...inboundForm, supplier_name: e.target.value });
+                          setIsInboundSupplierDropdownOpen(true);
+                        }}
+                        placeholder="Gõ tìm nhanh hoặc bấm mũi tên chọn NCC..."
+                        className="w-full pl-9 pr-16 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                      <div className="absolute right-2 flex items-center gap-0.5">
+                        {inboundForm.supplier_name && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInboundForm({ ...inboundForm, supplier_name: "" });
+                              setIsInboundSupplierDropdownOpen(true);
+                            }}
+                            className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            title="Xóa lựa chọn"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setIsInboundSupplierDropdownOpen(!isInboundSupplierDropdownOpen)}
+                          className="p-1.5 rounded-lg text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                          title="Bấm để mở danh mục Nhà Cung Cấp"
+                        >
+                          <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isInboundSupplierDropdownOpen ? "rotate-180 text-emerald-600" : ""}`} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {isInboundSupplierDropdownOpen && (
+                      <>
+                        <div
+                          className="fixed inset-0 z-40"
+                          onClick={() => setIsInboundSupplierDropdownOpen(false)}
+                        />
+                        <div className="absolute left-0 right-0 mt-1.5 max-h-60 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl z-50 divide-y divide-slate-100 dark:divide-slate-800 animate-fade-in">
+                          <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/80 text-[10px] font-bold text-slate-500 uppercase tracking-wider flex items-center justify-between sticky top-0">
+                            <span>Danh mục Nhà Cung Cấp / Hãng ({filteredInboundSuppliers.length})</span>
+                            <span>Click để chọn</span>
+                          </div>
+                          {filteredInboundSuppliers.length > 0 ? (
+                            filteredInboundSuppliers.map((sup: any) => (
+                              <button
+                                key={sup.id || sup.name}
+                                type="button"
+                                onClick={() => {
+                                  setInboundForm({ ...inboundForm, supplier_name: sup.name });
+                                  setIsInboundSupplierDropdownOpen(false);
+                                }}
+                                className="w-full px-3.5 py-2.5 text-left hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors flex items-center justify-between gap-2 group cursor-pointer"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 text-xs truncate">
+                                    {sup.name}
+                                  </div>
+                                  <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 truncate">
+                                    <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{sup.supplier_code}</span>
+                                    {sup.product_lines && (
+                                      <>
+                                        <span>•</span>
+                                        <span className="truncate">{sup.product_lines}</span>
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                                {inboundForm.supplier_name === sup.name && (
+                                  <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+                                )}
+                              </button>
+                            ))
+                          ) : (
+                            <div className="p-3 text-center text-slate-500 text-xs">
+                              Không có trong danh mục sẵn. Hệ thống sẽ ghi nhận theo tên bạn vừa nhập: <strong className="text-slate-900 dark:text-white">"{inboundForm.supplier_name}"</strong>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </div>
                 </div>
 
@@ -7261,7 +7756,7 @@ export const WarehouseModule: React.FC = () => {
                           </label>
                           <div className="flex gap-1.5">
                             <select
-                              value={products.some((p) => p.code === item.product_code) ? item.product_code : "__custom__"}
+                              value={productByCodeMap.has(item.product_code) ? item.product_code : "__custom__"}
                               onChange={(e) => {
                                 if (e.target.value === "__custom__") {
                                   handleInboundItemChange(idx, "product_code", "");
@@ -7331,7 +7826,7 @@ export const WarehouseModule: React.FC = () => {
                       </div>
 
                       {/* On-The-Fly Master Data Product Creation (Requirement 2) */}
-                      {(!products.some((p) => p.code === item.product_code) || item.is_new_master_product) && (
+                      {(!productByCodeMap.has(item.product_code) || item.is_new_master_product) && (
                         <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/40 rounded-xl border border-emerald-200 dark:border-emerald-800/80 space-y-2">
                           <div className="flex items-center justify-between">
                             <span className="text-[11px] font-bold text-emerald-700 dark:text-emerald-300 flex items-center gap-1.5 uppercase">
@@ -7508,7 +8003,7 @@ export const WarehouseModule: React.FC = () => {
 
                       {/* Line 4: Cấu trúc thành phần con / phụ kiện đính kèm (BOM & Component Tracking) */}
                       {(() => {
-                        const matchedComps = productComponents.filter((c) => c.parent_product_code === item.product_code);
+                        const matchedComps = componentsByParentMap.get(item.product_code) || [];
                         if (matchedComps.length === 0) return null;
                         const isExpanded = expandedInboundComponents[idx] !== false;
                         const curItemComps = item.components && item.components.length > 0 ? item.components : matchedComps;
@@ -7679,7 +8174,10 @@ export const WarehouseModule: React.FC = () => {
               <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                 <button
                   type="button"
-                  onClick={() => setIsInboundModalOpen(false)}
+                  onClick={() => {
+                    setIsInboundModalOpen(false);
+                    setEditingInboundTxId(null);
+                  }}
                   className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
                 >
                   Hủy Bỏ
@@ -7695,7 +8193,11 @@ export const WarehouseModule: React.FC = () => {
                   ) : (
                     <>
                       <CheckCircle2 className="w-4 h-4" />
-                      <span>Xác Nhận Nhập Kho ({inboundSummary.count} mặt hàng)</span>
+                      <span>
+                        {editingInboundTxId
+                          ? `Lưu Cập Nhật Phiếu Nhập (${inboundSummary.count} mặt hàng)`
+                          : `Xác Nhận Nhập Kho (${inboundSummary.count} mặt hàng)`}
+                      </span>
                     </>
                   )}
                 </button>
@@ -7755,7 +8257,7 @@ export const WarehouseModule: React.FC = () => {
                   <select
                     value={outboundForm.items[0]?.product_code}
                     onChange={(e) => {
-                      const sel = products.find((p) => p.code === e.target.value);
+                      const sel = productByCodeMap.get(e.target.value);
                       setOutboundForm({
                         ...outboundForm,
                         items: [{ product_code: e.target.value, product_name: sel?.name || "", quantity: outboundForm.items[0]?.quantity || 1 }]
@@ -7794,7 +8296,7 @@ export const WarehouseModule: React.FC = () => {
               {/* BẢNG SOẠN HÀNG & PHỤ KIỆN ĐI KÈM (PICKING & PACKING CHECKLIST) */}
               {(() => {
                 const curCode = outboundForm.items[0]?.product_code;
-                const comps = productComponents.filter((c) => c.parent_product_code === curCode);
+                const comps = componentsByParentMap.get(curCode) || [];
                 const outQty = Number(outboundForm.items[0]?.quantity) || 1;
 
                 if (comps.length === 0) return null;
@@ -8165,7 +8667,7 @@ export const WarehouseModule: React.FC = () => {
                     </span>
                   </h3>
                   <p className="text-xs text-slate-500">
-                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho ABT"}
+                    Giao dịch thực hiện ngày {selectedTxDetail.date ? formatDayVN(selectedTxDetail.date) : ""} bởi {selectedTxDetail.performed_by || "Thủ kho TBR"}
                   </p>
                 </div>
               </div>
@@ -8190,7 +8692,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Thủ Kho / Người Thực Hiện</span>
-                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho ABT"}</strong>
+                  <strong className="text-slate-900 dark:text-white text-xs">{selectedTxDetail.performed_by || "Thủ kho TBR"}</strong>
                 </div>
                 <div>
                   <span className="text-[10px] text-slate-500 font-bold block uppercase">Ngày Lập Chứng Từ</span>
@@ -8253,22 +8755,36 @@ export const WarehouseModule: React.FC = () => {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2 bg-slate-50 dark:bg-slate-900/80">
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1.5"
-              >
-                <Printer className="w-4 h-4" />
-                <span>In Phiếu</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsTxDetailModalOpen(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 dark:bg-slate-800 text-white hover:bg-slate-800"
-              >
-                Đóng
-              </button>
+            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between gap-2 bg-slate-50 dark:bg-slate-900/80">
+              <div>
+                {canEditInboundTx(selectedTxDetail) && (
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditInboundTx(selectedTxDetail)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-amber-500 hover:bg-amber-600 text-white shadow-sm shadow-amber-500/20 flex items-center gap-1.5 cursor-pointer transition-colors"
+                  >
+                    <Edit3 className="w-4 h-4" />
+                    <span>Chỉnh Sửa / Bổ Sung Thông Tin Phiếu</span>
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => window.print()}
+                  className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1.5"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>In Phiếu</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsTxDetailModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-slate-900 dark:bg-slate-800 text-white hover:bg-slate-800"
+                >
+                  Đóng
+                </button>
+              </div>
             </div>
           </div>
         </div>
@@ -8834,7 +9350,7 @@ export const WarehouseModule: React.FC = () => {
                   <span className="font-bold uppercase text-purple-700 dark:text-purple-400 block text-xs">
                     I. ĐẠI DIỆN BÊN GIAO ({companyConfig.companyName ? companyConfig.companyName.toUpperCase() : "BÊN GIAO"})
                   </span>
-                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI ABT"}</strong></div>
+                  <div>Đơn vị: <strong>{companyConfig.companyName || "CÔNG TY TNHH THƯƠNG MẠI & PHÂN PHỐI TBR"}</strong></div>
                   <div>Kho xuất hàng: <strong>{handoverData.warehouse_name}</strong></div>
                   <div>Người thực hiện bàn giao: <strong>{handoverData.performed_by}</strong></div>
                 </div>
@@ -9068,7 +9584,7 @@ export const WarehouseModule: React.FC = () => {
                         <th className="py-2.5 px-3">Mã Phụ Kiện</th>
                         <th className="py-2.5 px-3">Tên Thành Phần / Phụ Kiện</th>
                         <th className="py-2.5 px-3 text-center">Định Mức / Kit</th>
-                        <th className="py-2.5 px-3 text-right font-bold text-purple-700 dark:text-purple-300">Tổng Thực Tồn</th>
+                        <th className="py-2.5 px-3 text-right font-bold text-purple-700 dark:text-purple-300">Theo Định Mức (Tồn Hiện Tại)</th>
                         <th className="py-2.5 px-3">Số LOT Phụ Kiện</th>
                         <th className="py-2.5 px-3">Hạn Dùng (EXP)</th>
                         <th className="py-2.5 px-3">Bảo Quản & Vị Trí Lưu Kho</th>
@@ -9102,14 +9618,19 @@ export const WarehouseModule: React.FC = () => {
                             </td>
                             <td className="py-3 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400 text-sm">
                               {comp.total_quantity !== undefined ? comp.total_quantity : compQtyOnHand} {comp.unit || ""}
+                              {comp.received_quantity !== undefined && (
+                                <span className="block text-[10px] font-normal text-slate-500 dark:text-slate-400">
+                                  Thực nhận{comp.parent_lot ? ` (lô ${comp.parent_lot})` : ""}: {comp.received_quantity}
+                                </span>
+                              )}
                             </td>
                             <td className="py-3 px-3 font-mono">
                               <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 font-semibold text-slate-800 dark:text-slate-200 text-xs">
-                                {comp.lot_number || selectedKitModalItem.lot_number || "LOT-THEO-KIT"}
+                                {comp.serial_number || comp.lot_number || (comp.needs_serial ? "Thiếu S/N" : "—")}
                               </span>
                             </td>
                             <td className="py-3 px-3 font-mono text-slate-700 dark:text-slate-300 text-xs">
-                              {comp.expiry_date || selectedKitModalItem.expiry_date || "—"}
+                              {comp.expiry_date || "—"}
                             </td>
                             <td className="py-3 px-3">
                               <div className="flex items-center gap-1.5">
@@ -9124,7 +9645,7 @@ export const WarehouseModule: React.FC = () => {
                                 </span>
                               </div>
                               <div className="text-[10px] text-slate-500 mt-1">
-                                📍 {comp.shelf_position || "Kho ABT"}
+                                📍 {comp.shelf_position || "Kho TBR"}
                               </div>
                               {isDiffTemp && (
                                 <span className="inline-block text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">

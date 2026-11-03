@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, ensurePersonnelTable, withTransaction, httpErrorStatus, HttpError } from "@/backend/db/db";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
-import { setImportedLoginName } from "@/backend/services/accountImport";
 import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
@@ -10,8 +9,9 @@ import { todayVN, toVNDateString, normalizeExcelDateToISO } from "@/backend/serv
 /** Stock-changing actions and the permissions allowed to run them. */
 const WRITE_PERMISSIONS: Record<string, string[]> = {
   inbound: ["warehouse.inbound"],
+  update_inbound: ["warehouse.edit_inbound", "warehouse.inbound"],
   outbound: ["warehouse.outbound"],
-  update_item: ["warehouse.inbound", "warehouse.outbound"],
+  update_item: ["warehouse.inbound", "warehouse.edit_inbound", "warehouse.outbound"],
   reserve_stock: ["warehouse.reserve"],
   release_reservation: ["warehouse.reserve"],
   lot_recall: ["warehouse.inbound", "warehouse.outbound"],
@@ -33,7 +33,6 @@ import {
   ensureProduct,
   appendCommercialCatalogEntry,
   sortByProductCode,
-  sweepExpiredReservations,
   LOT_EXPIRY_ISO_SQL
 } from "@/backend/services/inventoryLedger";
 
@@ -46,27 +45,12 @@ export async function GET(req: NextRequest) {
     if (!authUser) return unauthorizedResponse();
     setAuditActor(authUser);
     const canSeeCost = isAdminUser(authUser) || hasPermission(authUser, "warehouse.view_cost_price");
-    await sweepExpiredReservations(fn => withTransaction(fn));
     await ensurePersonnelTable();
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action") || "overview";
 
     // Tồn kho theo từng lô (số lô, HSD, vị trí) kèm hãng sản xuất / nhóm hàng / điều kiện bảo quản
     if (action === "lot_stock") {
-      await query(`
-        INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, is_quarantined, quarantine_reason)
-        SELECT i.product_code,
-               COALESCE(NULLIF(TRIM(i.lot_number), ''), 'NO-LOT'),
-               i.expiry_date,
-               COALESCE(NULLIF(i.warehouse_location, ''), 'Kho Trung Tâm'),
-               GREATEST(COALESCE(i.quantity_on_hand, 0), 0),
-               COALESCE(i.is_quarantined, false),
-               i.quarantine_reason
-          FROM inventory_items i
-         WHERE COALESCE(i.quantity_on_hand, 0) > 0
-           AND NOT EXISTS (SELECT 1 FROM inventory_lots l WHERE l.product_code = i.product_code)
-        ON CONFLICT DO NOTHING
-      `).catch(() => {});
       const r = await query(`
         SELECT l.id, l.product_code, l.lot_number, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} AS expiry_date, l.expiry_date AS expiry_raw,
                l.warehouse_location, l.quantity_on_hand,
@@ -260,8 +244,8 @@ export async function GET(req: NextRequest) {
                 lot_number: itLot || lot || "LOT-TIÊU-CHUẨN",
                 quantity: Number(it.quantity) || 1,
                 unit_price: Number(it.unitPrice || it.unit_price) || 0,
-                shipping_method: ord.shipping_method || "Xe lạnh chuyên dụng ABT",
-                tracking_code: ord.tracking_code || "ABT-EXP-01"
+                shipping_method: ord.shipping_method || "Xe lạnh chuyên dụng TBR",
+                tracking_code: ord.tracking_code || "TBR-EXP-01"
               });
             }
           });
@@ -291,59 +275,52 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "overview") {
-      if (Date.now() - lastOverviewSyncAt > 5 * 60 * 1000) {
+      // Đồng bộ tự động 2 chiều giữa products / inventory_lots và inventory_items:
+      // Chỉ chạy tối đa 5 phút / lần trên GET (và reset ngay khi có POST nhập/xuất kho) để tránh ghi bảng trên mọi lần mở trang
+      if (Date.now() - lastOverviewSyncAt > 5 * 60_000) {
         lastOverviewSyncAt = Date.now();
         await query(`
-        INSERT INTO inventory_items (product_code, product_name, lot_number, expiry_date, warehouse_location, shelf_position, storage_temp, quantity_on_hand, quantity_allocated)
-        SELECT p.code, p.name, '', '', 'Kho Trung Tâm', 'Kệ tiêu chuẩn', COALESCE(NULLIF(p.storage_condition, ''), '15-25°C'), 0, 0
-          FROM products p
-         WHERE p.code IS NOT NULL AND TRIM(p.code) <> ''
-           AND NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = p.code)
-        ON CONFLICT (product_code) DO NOTHING
-      `).catch(() => {});
+          INSERT INTO inventory_items (product_id, product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position)
+          SELECT p.id, p.code, p.name, 0, 0, 'Kho Trung Tâm', 'Chưa phân bổ kệ'
+            FROM products p
+           WHERE NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = p.code)
+          ON CONFLICT (product_code) DO NOTHING
+        `).catch(() => {});
 
-      await query(`
-        INSERT INTO inventory_items (product_code, product_name, lot_number, expiry_date, warehouse_location, shelf_position, storage_temp, quantity_on_hand, quantity_allocated)
-        SELECT l.product_code,
-               COALESCE(MAX(p.name), l.product_code),
-               COALESCE((ARRAY_AGG(l.lot_number ORDER BY ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC) FILTER (WHERE l.quantity_on_hand > 0))[1], ''),
-               COALESCE((ARRAY_AGG(l.expiry_date ORDER BY ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC) FILTER (WHERE l.quantity_on_hand > 0))[1], ''),
-               COALESCE(MAX(l.warehouse_location), 'Kho Trung Tâm'),
-               'Kệ tiêu chuẩn',
-               COALESCE(MAX(p.storage_condition), '15-25°C'),
-               COALESCE(SUM(GREATEST(l.quantity_on_hand, 0)), 0)::int,
-               0
-          FROM inventory_lots l
-          LEFT JOIN products p ON p.code = l.product_code
-         WHERE l.product_code IS NOT NULL AND TRIM(l.product_code) <> ''
-           AND NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = l.product_code)
-         GROUP BY l.product_code
-        ON CONFLICT (product_code) DO NOTHING
-      `).catch(() => {});
+        await query(`
+          INSERT INTO inventory_items (product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position)
+          SELECT l.product_code, MAX(COALESCE(p.name, l.product_code)), COALESCE(SUM(l.quantity_on_hand), 0)::int, 0,
+                 COALESCE(MAX(l.warehouse_location), 'Kho Trung Tâm'), 'Chưa phân bổ kệ'
+            FROM inventory_lots l
+            LEFT JOIN products p ON p.code = l.product_code
+           WHERE l.quantity_on_hand > 0
+             AND NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = l.product_code)
+           GROUP BY l.product_code
+          ON CONFLICT (product_code) DO NOTHING
+        `).catch(() => {});
 
-      await query(`
-        WITH lot_totals AS (
-          SELECT product_code,
-                 COALESCE(SUM(GREATEST(quantity_on_hand, 0)), 0)::int AS total_qty,
-                 (ARRAY_AGG(lot_number ORDER BY ${LOT_EXPIRY_ISO_SQL("expiry_date")} ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS first_lot,
-                 (ARRAY_AGG(expiry_date ORDER BY ${LOT_EXPIRY_ISO_SQL("expiry_date")} ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS first_exp
-            FROM inventory_lots
-           GROUP BY product_code
-        )
-        UPDATE inventory_items i
-           SET quantity_on_hand = lt.total_qty,
-               lot_number = COALESCE(lt.first_lot, i.lot_number),
-               expiry_date = COALESCE(lt.first_exp, i.expiry_date)
-          FROM lot_totals lt
-         WHERE i.product_code = lt.product_code
-           AND (COALESCE(i.quantity_on_hand, 0) <> lt.total_qty
-                OR (COALESCE(i.lot_number, '') = '' AND lt.first_lot IS NOT NULL))
-      `).catch(() => {});
+        await query(`
+          UPDATE inventory_items i
+             SET quantity_on_hand = s.total_qty,
+                 lot_number = COALESCE(s.earliest_lot, i.lot_number),
+                 expiry_date = COALESCE(s.earliest_exp, i.expiry_date)
+            FROM (
+              SELECT product_code,
+                     COALESCE(SUM(quantity_on_hand), 0)::int AS total_qty,
+                     (ARRAY_AGG(NULLIF(lot_number, 'NO-LOT') ORDER BY ${LOT_EXPIRY_ISO_SQL("expiry_date")} ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_lot,
+                     (ARRAY_AGG(expiry_date ORDER BY ${LOT_EXPIRY_ISO_SQL("expiry_date")} ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_exp
+                FROM inventory_lots
+               GROUP BY product_code
+            ) s
+           WHERE i.product_code = s.product_code
+             AND (COALESCE(i.quantity_on_hand, -1) <> s.total_qty OR (i.lot_number IS NULL AND s.earliest_lot IS NOT NULL))
+        `).catch(() => {});
       }
 
+      // Chạy theo 2 đợt nhỏ thay vì bắn 12 câu lệnh song song cùng lúc để tránh nghẽn connection pool (max 25)
       const [items, transactions, products, reservations, openPOs] = await Promise.all([
         query(`
-          SELECT i.*, p.category, p.unit, p.specification, p.standard_price, p.cost_price, p.min_stock_level, p.manufacturer, p.origin, p.storage_condition
+          SELECT i.*, p.category, p.unit, p.specification, p.standard_price, p.cost_price, p.min_stock_level, p.manufacturer, p.origin, p.storage_condition 
           FROM inventory_items i
           LEFT JOIN products p ON p.code = i.product_code
           ORDER BY (COALESCE(i.quantity_on_hand, 0) > 0) DESC, i.id ASC
@@ -365,7 +342,7 @@ export async function GET(req: NextRequest) {
           ) pc ON pc.parent_product_code = p.code
           ORDER BY
             COALESCE(pc.component_count, 0) DESC,
-            CASE
+            CASE 
               WHEN p.category ILIKE '%TÁCH CHIẾT%' THEN 1
               WHEN p.category ILIKE '%SHPT%' THEN 2
               WHEN p.category ILIKE '%PCR%' THEN 3
@@ -376,15 +353,25 @@ export async function GET(req: NextRequest) {
             END,
             p.name ASC
         `),
-        query("SELECT * FROM inventory_reservations ORDER BY id DESC LIMIT 500"),
+        query("SELECT * FROM inventory_reservations ORDER BY id DESC"),
         query("SELECT id, po_code, supplier_name, expected_delivery_date, status, items FROM procurement_orders WHERE status NOT IN ('COMPLETED', 'CANCELLED')"),
       ]);
 
-      const [recallsRes, componentsRes, personnelRes, customersRes] = await Promise.all([
+      const [recallsRes, componentsRes, personnelRes, customersRes, suppliersRes, lotSummary] = await Promise.all([
         query("SELECT * FROM lot_recalls ORDER BY id DESC"),
         query("SELECT * FROM product_components ORDER BY parent_product_code ASC, id ASC"),
         query("SELECT employee_code, full_name, department, position, email, phone FROM personnel WHERE status = 'ACTIVE' ORDER BY id ASC"),
         query("SELECT id, customer_code, name, contact_person, phone, email, address, classification, region, province FROM sales_customers ORDER BY name ASC"),
+        query("SELECT id, supplier_code, name, contact_person, phone, email, address, product_lines, payment_terms, rating FROM procurement_suppliers ORDER BY name ASC").catch(() => ({ rows: [] as any[] })),
+        query(`
+          SELECT product_code,
+                 COUNT(*) FILTER (WHERE quantity_on_hand > 0)::int AS lot_count,
+                 COALESCE(SUM(quantity_on_hand), 0)::numeric AS lots_qty,
+                 (ARRAY_AGG(lot_number ORDER BY exp ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_lot,
+                 (ARRAY_AGG(exp ORDER BY exp ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_expiry
+            FROM (SELECT l.*, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} AS exp FROM inventory_lots l) x
+           GROUP BY product_code
+        `).catch(() => ({ rows: [] as any[] })),
       ]);
 
       // Calculate incoming PO quantities per product code (Req 7: ATP calculation)
@@ -413,17 +400,55 @@ export async function GET(req: NextRequest) {
         }
       });
 
-      // Mỗi mã: số lô còn tồn, lô hết hạn sớm nhất (FEFO), tổng tồn các lô (đối chiếu với tồn của mã)
-      const lotSummary = await query(`
-        SELECT product_code,
-               COUNT(*) FILTER (WHERE quantity_on_hand > 0)::int AS lot_count,
-               COALESCE(SUM(quantity_on_hand), 0)::numeric AS lots_qty,
-               (ARRAY_AGG(lot_number ORDER BY exp ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_lot,
-               (ARRAY_AGG(exp ORDER BY exp ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_expiry
-          FROM (SELECT l.*, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} AS exp FROM inventory_lots l) x
-         GROUP BY product_code
-      `).catch(() => ({ rows: [] as any[] }));
       const lotsByProduct = new Map<string, any>(lotSummary.rows.map((r: any) => [r.product_code, r]));
+
+      // Phụ kiện thực nhận theo từng lô chính còn tồn, lấy từ các phiếu nhập kho có chứa components
+      const [compRes, lotQtyRes] = await Promise.all([
+        query(`
+          SELECT el->>'product_code' AS product_code, el->>'lot_number' AS parent_lot, c AS comp
+            FROM inventory_transactions t
+            CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(t.items) = 'array' THEN t.items ELSE '[]'::jsonb END) el
+            CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(el->'components') = 'array' THEN el->'components' ELSE '[]'::jsonb END) c
+           WHERE t.transaction_type = 'INBOUND'
+             AND jsonb_typeof(t.items) = 'array'
+             AND t.items::text LIKE '%"components":[{%'
+        `).catch(() => ({ rows: [] as any[] })),
+        query("SELECT product_code, lot_number, SUM(quantity_on_hand)::numeric AS qty FROM inventory_lots WHERE quantity_on_hand > 0 GROUP BY product_code, lot_number")
+          .catch(() => ({ rows: [] as any[] })),
+      ]);
+      const lotQty = new Map<string, number>(lotQtyRes.rows.map((r: any) => [`${r.product_code}|${r.lot_number}`, Number(r.qty) || 0]));
+      const receivedComponents = new Map<string, Map<string, any>>();
+      for (const r of compRes.rows) {
+        const comp = r.comp || {};
+        const parentLot = String(r.parent_lot || "");
+        const onHand = lotQty.get(`${r.product_code}|${parentLot}`);
+        if (onHand === undefined) continue; // lô chính đã xuất hết
+        const perKit = Number(comp.quantity_per_kit) || 1;
+        const received = Number(comp.received_qty ?? comp.total_qty);
+        const key = `${comp.component_code}|${parentLot}|${comp.lot_number || ""}|${comp.serial_number || ""}`;
+        const byProduct = receivedComponents.get(r.product_code) || new Map<string, any>();
+        const prev = byProduct.get(key);
+        byProduct.set(key, {
+          component_code: comp.component_code,
+          component_name: comp.component_name,
+          specification: comp.specification || "",
+          unit: comp.unit || "",
+          quantity_per_kit: perKit,
+          parent_lot: parentLot,
+          // theo định mức của lượng lô chính còn tồn (phụ kiện không có sổ tồn riêng)
+          total_quantity: perKit * onHand,
+          received_quantity: (prev?.received_quantity || 0) + (Number.isFinite(received) ? received : 0),
+          tracking_type: comp.tracking_type || "LOT",
+          lot_number: comp.lot_number || "",
+          serial_number: comp.serial_number || "",
+          needs_serial: Boolean(comp.needs_serial),
+          expiry_date: comp.expiry_date || "",
+          storage_condition: comp.storage_condition || "",
+          qc_status: comp.qc_status || "",
+          notes: comp.notes || "",
+        });
+        receivedComponents.set(r.product_code, byProduct);
+      }
       const itemQtyByProduct = new Map<string, number>();
       for (const it of items.rows) itemQtyByProduct.set(it.product_code, (itemQtyByProduct.get(it.product_code) || 0) + (Number(it.quantity_on_hand) || 0));
 
@@ -440,6 +465,7 @@ export async function GET(req: NextRequest) {
           earliest_lot: ls?.earliest_lot || null,
           earliest_expiry: ls?.earliest_expiry || null,
           lots_qty: lotsQty,
+          received_components: Array.from(receivedComponents.get(it.product_code)?.values() || []),
           // chỉ so khi mã có sổ lô: tồn của mã phải bằng tổng tồn các lô
           lot_mismatch: ls && lotsQty !== itemQtyByProduct.get(it.product_code) ? { product_qty: itemQtyByProduct.get(it.product_code), lots_qty: lotsQty } : null,
         };
@@ -455,6 +481,7 @@ export async function GET(req: NextRequest) {
         product_components: componentsRes.rows,
         personnel: personnelRes.rows,
         customers: customersRes.rows,
+        suppliers: suppliersRes.rows,
       };
       return NextResponse.json(canSeeCost ? overviewPayload : stripCostFields(overviewPayload));
     }
@@ -512,7 +539,7 @@ export async function POST(req: NextRequest) {
             "INBOUND",
             reference_code || vat_invoice_no || "N/A",
             normalizeExcelDateToISO(date, todayVN()),
-            performed_by || "Thủ kho ABT",
+            performed_by || "Thủ kho TBR",
             warehouse_name || "Kho Trung Tâm",
             JSON.stringify(items || []),
             notes || (supplier_name ? `Nhà cung cấp: ${supplier_name}` : "")
@@ -536,7 +563,7 @@ export async function POST(req: NextRequest) {
             specification: item.specification || "",
             standard_price: Number(item.standard_price) || 0, // ĐỂ TRỐNG GIÁ BÁN (0) NẾU CHƯA THIẾT LẬP ĐỂ QUẢN LÝ ĐỊNH GIÁ
             cost_price: Number(item.cost_price) || Number(item.unit_price) || 0,
-            manufacturer: item.manufacturer || item.brand || item.supplier_name || "ABT Phân Phối",
+            manufacturer: item.manufacturer || item.brand || "TBR Phân Phối", // nhà cung cấp của phiếu nhập không phải hãng sản xuất
             origin: item.origin || "Nhập khẩu / Chính hãng",
             min_stock_level: item.min_stock_level || 10,
             storage_condition: item.storage_condition || item.storageCondition || null
@@ -547,7 +574,7 @@ export async function POST(req: NextRequest) {
             code: pCode,
             name: item.product_name || item.name || pCode,
             category: resolvedItemCat,
-            brand: item.manufacturer || item.brand || supplier_name || "ABT Phân Phối",
+            brand: item.manufacturer || item.brand || "TBR Phân Phối",
             origin: item.origin || "Chính hãng",
             unit: item.unit || "Hộp",
             specification: item.specification || "",
@@ -584,6 +611,245 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true, transaction_code: code });
     }
 
+    if (action === "update_inbound") {
+      const { id, transaction_code, date, performed_by, reference_code, items, notes, warehouse_name, supplier_name, vat_invoice_no } = body;
+      const targetCode = String(transaction_code || "").trim();
+      const targetId = id ? Number(id) : null;
+      if (!targetCode && !targetId) {
+        return NextResponse.json({ error: "Thiếu mã hoặc ID phiếu nhập kho cần chỉnh sửa" }, { status: 400 });
+      }
+      const newItems = (Array.isArray(items) ? items : []).filter((it: any) => it && (it.product_code || it.productCode));
+      if (newItems.length === 0) {
+        return NextResponse.json({ error: "Phiếu nhập kho phải có ít nhất 1 mặt hàng hợp lệ" }, { status: 400 });
+      }
+
+      await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
+
+      let finalTxCode = targetCode;
+      await withTransaction(async (c) => {
+        const txRes = await c.query(
+          `SELECT * FROM inventory_transactions
+            WHERE ($1::int IS NOT NULL AND id = $1::int)
+               OR ($2::text != '' AND transaction_code = $2::text)
+            ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+          [Number.isFinite(targetId) ? targetId : null, targetCode]
+        );
+        const existingTx = txRes.rows[0];
+        if (!existingTx) {
+          throw new HttpError(404, "Không tìm thấy phiếu nhập kho cần chỉnh sửa");
+        }
+        if (existingTx.transaction_type !== "INBOUND") {
+          throw new HttpError(400, "Chỉ hỗ trợ chỉnh sửa/bổ sung chứng từ Phiếu Nhập Kho (INBOUND)");
+        }
+        finalTxCode = targetCode || existingTx.transaction_code;
+
+        let oldItems: any[] = [];
+        try {
+          oldItems = typeof existingTx.items === "string" ? JSON.parse(existingTx.items || "[]") : (Array.isArray(existingTx.items) ? existingTx.items : []);
+        } catch {
+          oldItems = [];
+        }
+
+        const matchedOldIndices = new Set<number>();
+
+        for (const item of newItems) {
+          const pCode = String(item.product_code || item.productCode || "").trim();
+          const pName = String(item.product_name || item.name || pCode).trim();
+          const newQty = Number(item.quantity) || 0;
+          const newLot = String(item.lot_number || item.lotNumber || "").trim();
+          const rawExp = item.expiry_date || item.expiryDate || "";
+          const newExp = rawExp ? (normalizeExcelDateToISO(rawExp, String(rawExp).trim()) || null) : null;
+          const newLoc = String(item.storage_location || warehouse_name || existingTx.warehouse_name || "Kho Trung Tâm").trim();
+          const newShelf = String(item.shelf_position || "Chưa phân bổ kệ").trim();
+          const newStorageCond = String(item.storage_condition || item.storageCondition || "").trim();
+          const newUnitCost = Number(item.cost_price ?? item.unit_price ?? 0) || 0;
+
+          const resolvedItemCat = resolveActualProductCategory({
+            code: pCode,
+            name: pName,
+            category: item.category || "",
+          });
+
+          const { id: prodId } = await ensureProduct(c, {
+            code: pCode,
+            name: pName,
+            category: resolvedItemCat,
+            unit: item.unit || "Hộp",
+            specification: item.specification || "",
+            standard_price: Number(item.standard_price) || 0,
+            cost_price: newUnitCost,
+            manufacturer: item.manufacturer || item.brand || "TBR Phân Phối",
+            origin: item.origin || "Nhập khẩu / Chính hãng",
+            min_stock_level: item.min_stock_level || 10,
+            storage_condition: newStorageCond || undefined
+          });
+
+          if (newStorageCond || newUnitCost > 0) {
+            await c.query(
+              `UPDATE products
+                  SET storage_condition = CASE WHEN $1::text != '' THEN $1::text ELSE storage_condition END,
+                      cost_price = CASE WHEN $2::numeric > 0 THEN $2::numeric ELSE cost_price END
+                WHERE code = $3`,
+              [newStorageCond, newUnitCost, pCode]
+            );
+          }
+
+          // Match with an old item line (by _orig_product_code + _orig_lot_number or product_code)
+          const origCode = String(item._orig_product_code || pCode).trim();
+          const origLot = String(item._orig_lot_number ?? "").trim();
+          let matchedOldIdx = oldItems.findIndex((o, idx) =>
+            !matchedOldIndices.has(idx) &&
+            String(o.product_code || o.productCode || "").trim() === origCode &&
+            String(o.lot_number || o.lotNumber || "").trim() === origLot
+          );
+          if (matchedOldIdx === -1) {
+            matchedOldIdx = oldItems.findIndex((o, idx) =>
+              !matchedOldIndices.has(idx) &&
+              String(o.product_code || o.productCode || "").trim() === origCode
+            );
+          }
+
+          if (matchedOldIdx !== -1) {
+            matchedOldIndices.add(matchedOldIdx);
+            const oldItem = oldItems[matchedOldIdx];
+            const oldQty = Number(oldItem.quantity) || 0;
+            const oldLot = String(oldItem.lot_number || oldItem.lotNumber || "").trim() || "NO-LOT";
+            const targetLot = newLot || "NO-LOT";
+            const qtyDiff = newQty - oldQty;
+
+            await c.query(
+              `UPDATE inventory_items
+                  SET quantity_on_hand = GREATEST(0, COALESCE(quantity_on_hand, 0) + $1),
+                      shelf_position = COALESCE($2, shelf_position),
+                      warehouse_location = COALESCE($3, warehouse_location),
+                      lot_number = CASE WHEN $4::text != '' THEN $4::text ELSE lot_number END,
+                      expiry_date = CASE WHEN $5::text IS NOT NULL THEN $5::text ELSE expiry_date END,
+                      storage_temp = CASE WHEN $6::text != '' THEN $6::text ELSE storage_temp END,
+                      last_updated = CURRENT_TIMESTAMP
+                WHERE product_code = $7`,
+              [qtyDiff, newShelf || null, newLoc || null, newLot, newExp, newStorageCond, pCode]
+            );
+
+            const lotRows = await c.query(
+              `SELECT id, lot_number, warehouse_location, quantity_on_hand FROM inventory_lots WHERE product_code = $1 ORDER BY id ASC FOR UPDATE`,
+              [pCode]
+            );
+            const matchedLotRow =
+              lotRows.rows.find((r: any) => String(r.lot_number || "").trim().toLowerCase() === oldLot.toLowerCase()) ||
+              lotRows.rows.find((r: any) => String(r.lot_number || "").trim().toLowerCase() === targetLot.toLowerCase()) ||
+              lotRows.rows[0];
+
+            if (matchedLotRow) {
+              const conflictRow = lotRows.rows.find(
+                (r: any) => r.id !== matchedLotRow.id && r.lot_number === targetLot && r.warehouse_location === newLoc
+              );
+              if (conflictRow) {
+                await c.query(
+                  `UPDATE inventory_lots
+                      SET quantity_on_hand = GREATEST(0, COALESCE(quantity_on_hand, 0) + $1),
+                          expiry_date = COALESCE($2, expiry_date),
+                          unit_cost = CASE WHEN $3::numeric > 0 THEN $3::numeric ELSE unit_cost END,
+                          last_updated = CURRENT_TIMESTAMP
+                    WHERE id = $4`,
+                  [Number(matchedLotRow.quantity_on_hand || 0) + qtyDiff, newExp, newUnitCost, conflictRow.id]
+                );
+                await c.query(`DELETE FROM inventory_lots WHERE id = $1`, [matchedLotRow.id]);
+              } else {
+                await c.query(
+                  `UPDATE inventory_lots
+                      SET lot_number = $1,
+                          expiry_date = COALESCE($2, expiry_date),
+                          warehouse_location = COALESCE($3, warehouse_location),
+                          quantity_on_hand = GREATEST(0, COALESCE(quantity_on_hand, 0) + $4),
+                          unit_cost = CASE WHEN $5::numeric > 0 THEN $5::numeric ELSE unit_cost END,
+                          last_updated = CURRENT_TIMESTAMP
+                    WHERE id = $6`,
+                  [targetLot, newExp, newLoc, qtyDiff, newUnitCost, matchedLotRow.id]
+                );
+              }
+            } else if (newQty > 0) {
+              await addStock(c, {
+                productCode: pCode,
+                productName: pName,
+                productId: prodId,
+                qty: newQty,
+                lotNumber: newLot || null,
+                expiryDate: newExp,
+                location: newLoc,
+                shelf: newShelf,
+                unitCost: newUnitCost,
+              });
+            }
+          } else {
+            // Newly added line on existing Inbound Slip
+            await addStock(c, {
+              productCode: pCode,
+              productName: pName,
+              productId: prodId,
+              qty: newQty,
+              lotNumber: newLot || null,
+              expiryDate: newExp,
+              location: newLoc,
+              shelf: newShelf,
+              unitCost: newUnitCost,
+            });
+          }
+        }
+
+        // If any old item was removed during editing, deduct its old quantity safely
+        for (let idx = 0; idx < oldItems.length; idx++) {
+          if (matchedOldIndices.has(idx)) continue;
+          const removed = oldItems[idx];
+          const rCode = String(removed.product_code || removed.productCode || "").trim();
+          const rQty = Number(removed.quantity) || 0;
+          const rLot = String(removed.lot_number || removed.lotNumber || "").trim();
+          if (rCode && rQty > 0) {
+            await removeStock(c, {
+              productCode: rCode,
+              productName: removed.product_name || rCode,
+              qty: rQty,
+              lotNumber: rLot || null,
+              allowInsufficient: true,
+            });
+          }
+        }
+
+        // Clean internal _orig_* tracking fields before saving items JSON
+        const cleanItems = newItems.map((it: any) => {
+          const copy = { ...it };
+          delete copy._orig_product_code;
+          delete copy._orig_lot_number;
+          delete copy._orig_qty;
+          return copy;
+        });
+
+        await c.query(
+          `UPDATE inventory_transactions
+              SET transaction_code = $1,
+                  reference_code = $2,
+                  date = $3,
+                  performed_by = $4,
+                  warehouse_name = $5,
+                  items = $6,
+                  notes = $7
+            WHERE id = $8`,
+          [
+            finalTxCode,
+            reference_code || vat_invoice_no || existingTx.reference_code || "N/A",
+            normalizeExcelDateToISO(date, existingTx.date || todayVN()),
+            performed_by || existingTx.performed_by || "Thủ kho TBR",
+            warehouse_name || existingTx.warehouse_name || "Kho Trung Tâm",
+            JSON.stringify(cleanItems),
+            notes ?? existingTx.notes ?? (supplier_name ? `Nhà cung cấp: ${supplier_name}` : ""),
+            existingTx.id
+          ]
+        );
+      });
+
+      await logAudit("UPDATE_INBOUND", "WAREHOUSE", `Chỉnh sửa / bổ sung thông tin Phiếu Nhập Kho ${finalTxCode} (Tham chiếu: ${reference_code || vat_invoice_no || "N/A"}, NCC: ${supplier_name || "—"})`);
+      return NextResponse.json({ success: true, transaction_code: finalTxCode });
+    }
+
     if (action === "outbound") {
       const { transaction_code, date, performed_by, reference_code, items, notes, warehouse_name, allow_insufficient_stock } = body;
       const code = transaction_code || (await generateDocumentCode({ docType: "PXK", tagMode: "GENERAL" }));
@@ -614,7 +880,7 @@ export async function POST(req: NextRequest) {
         await c.query(
           `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-          [code, "OUTBOUND", reference_code, normalizeExcelDateToISO(date, todayVN()), performed_by || "Thủ kho ABT", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
+          [code, "OUTBOUND", reference_code, normalizeExcelDateToISO(date, todayVN()), performed_by || "Thủ kho TBR", warehouse_name || "Kho Trung Tâm", JSON.stringify(items || []), finalNotes]
         );
       });
 
@@ -636,6 +902,7 @@ export async function POST(req: NextRequest) {
       if (!product_code) {
         return NextResponse.json({ error: "Thiếu mã sản phẩm (product_code)" }, { status: 400 });
       }
+      await query("ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0").catch(() => {});
       await withTransaction(async (c) => {
         await c.query(
           `UPDATE inventory_items
@@ -752,7 +1019,7 @@ export async function POST(req: NextRequest) {
       const { reservation_id, reason, actor } = body;
       // H5: CAS on status = 'ACTIVE'; quantity comes from the DB, never from the client. Double-click = no-op.
       const result = await withTransaction((c) =>
-        releaseReservation(c, Number(reservation_id), actor || "Thủ kho ABT", reason || "Giải phóng lại cho kho")
+        releaseReservation(c, Number(reservation_id), actor || "Thủ kho TBR", reason || "Giải phóng lại cho kho")
       );
 
       if (result.released) {
@@ -1000,7 +1267,7 @@ export async function POST(req: NextRequest) {
           const custRes = await query(
             `INSERT INTO sales_customers (customer_code, name, classification, industry, tax_code, contact_person, contact_position, phone, email, address, credit_limit, credit_term_days, sales_rep_name, notes, contacts, region, province)
              VALUES ($1, COALESCE($2, 'Khách hàng mới'), COALESCE($3, 'Bệnh viện / Viện nghiên cứu'), $4, $5, $6, $7, $8, $9, $10,
-                     COALESCE($11, 500000000), COALESCE($12, 30), COALESCE($13, 'NVKD'), $14, $15::jsonb, $16, $17)
+                     COALESCE($11::numeric, 500000000), COALESCE($12::int, 30), COALESCE($13, 'NVKD'), $14, $15::jsonb, $16, $17)
              ON CONFLICT (customer_code) DO UPDATE
              SET name = COALESCE($2, sales_customers.name),
                  classification = COALESCE($3, sales_customers.classification),
@@ -1046,19 +1313,55 @@ export async function POST(req: NextRequest) {
           message: `Nạp thành công ${importedCount} khách hàng với tổng cộng ${totalContactsCount} đầu mối liên hệ!`
         });
       } else if (detectedType === "PRODUCTS") {
+        // Ô trống -> null: sản phẩm đã có giữ nguyên giá / thông tin cũ (trước đây bị ghi đè thành 0 / mặc định)
+        const orNull = (v: string) => (v === "" ? null : v);
+        const numOrNull = (v: string) => {
+          if (v === "") return null;
+          const s = String(v).trim();
+          // Số Excel đọc ra (265000000 hoặc 265000000.5) giữ nguyên; chữ có dấu phân cách hàng nghìn
+          // (265.000.000 / 265,000,000) thì bỏ dấu. Trước đây luôn bỏ mọi dấu, nên "26500000.0" thành 265000000.
+          const n = /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : Number(s.replace(/[^\d-]/g, ""));
+          return Number.isFinite(n) ? n : null;
+        };
+        const MAX_MIN_STOCK = 1_000_000;
+        const PRICE_COLS = ["Giá vốn nhập (VNĐ)", "Giá vốn", "cost_price", "Giá vốn (VNĐ)"];
+        const STD_PRICE_COLS = ["Giá niêm yết End-User (VNĐ)", "Giá niêm yết", "standard_price", "Giá bán"];
+        const MIN_STOCK_COLS = ["Mức tồn tối thiểu", "min_stock_level", "Tồn tối thiểu"];
+
+        // Kiểm tra cả file trước khi ghi: một ô sai (ví dụ dán nhầm giá 2.650.000.000 vào "Mức tồn tối thiểu")
+        // trước đây làm lệnh ghi lỗi giữa chừng ("out of range for type integer"), các dòng trước đã ghi, các dòng
+        // sau thì không, và không biết dòng nào sai.
+        const rowErrors: string[] = [];
+        rows.forEach((r: any, i: number) => {
+          const getVal = createGetVal(r);
+          const sku = getVal(["Mã SKU (*)", "Mã SKU", "code", "Mã hàng", "SKU"]) || "(không mã)";
+          const where = `Dòng ${i + 2} (${sku})`; // dòng 1 của sheet là tiêu đề
+          const minRaw = getVal(MIN_STOCK_COLS);
+          const minStock = numOrNull(minRaw);
+          if (minRaw !== "" && (minStock === null || !Number.isInteger(minStock) || minStock < 0 || minStock > MAX_MIN_STOCK)) {
+            rowErrors.push(`${where}: "Mức tồn tối thiểu" = ${minRaw} không hợp lệ (phải là số nguyên từ 0 đến ${MAX_MIN_STOCK.toLocaleString("vi-VN")})`);
+          }
+          for (const [label, cols] of [["Giá vốn nhập", PRICE_COLS], ["Giá niêm yết", STD_PRICE_COLS]] as [string, string[]][]) {
+            const raw = getVal(cols);
+            const n = numOrNull(raw);
+            if (raw !== "" && (n === null || n < 0)) rowErrors.push(`${where}: "${label}" = ${raw} không phải số tiền hợp lệ`);
+          }
+        });
+        if (rowErrors.length > 0) {
+          const shown = rowErrors.slice(0, 20);
+          return NextResponse.json({
+            error: `File có ${rowErrors.length} ô dữ liệu không hợp lệ, CHƯA nhập dòng nào. Sửa các dòng sau rồi nạp lại:\n${shown.join("\n")}${rowErrors.length > shown.length ? `\n... và ${rowErrors.length - shown.length} lỗi khác` : ""}`,
+            row_errors: rowErrors,
+          }, { status: 400 });
+        }
+
         for (const r of rows) {
           const getVal = createGetVal(r);
           const pCode = getVal(["Mã SKU (*)", "Mã SKU", "code", "Mã hàng", "SKU"]) || autoCode("SKU");
-          // Ô trống -> null: sản phẩm đã có giữ nguyên giá / thông tin cũ (trước đây bị ghi đè thành 0 / mặc định)
-          const orNull = (v: string) => (v === "" ? null : v);
-          const numOrNull = (v: string) => {
-            if (v === "") return null;
-            const n = Number(String(v).replace(/[^\d-]/g, "")); // giá VNĐ là số nguyên: bỏ dấu phân cách hàng nghìn
-            return Number.isFinite(n) ? n : null;
-          };
           const pName = orNull(getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "Tên Hàng Hóa Thương Mại", "name", "Tên hàng", "Tên hàng hóa, dịch vụ"]));
           const supplierCol = orNull(getVal(["Nhà cung cấp (*)", "Nhà cung cấp", "Nhà Cung Cấp", "supplier", "Đơn vị cung cấp"]));
-          const brand = orNull(getVal(["Hãng sản xuất (*)", "Hãng sản xuất", "Hãng Sản Xuất", "manufacturer", "Hãng SX", "Hãng", "Brand"])) || supplierCol;
+          // Hãng sản xuất và Nhà cung cấp là hai thông tin khác nhau: không lấy cái này điền cho cái kia
+          const brand = orNull(getVal(["Hãng sản xuất (*)", "Hãng sản xuất", "Hãng Sản Xuất", "manufacturer", "Hãng SX", "Hãng", "Brand"]));
           const rawCat = orNull(getVal([
             "Nhóm ngành hàng (*)", "Nhóm ngành hàng", "Phân Loại Chính", "Phân loại ngành hàng",
             "Phân loại", "category", "Category", "Ngành hàng", "Nhóm hàng", "Danh mục",
@@ -1067,9 +1370,9 @@ export async function POST(req: NextRequest) {
           const cat = resolveActualProductCategory({ code: pCode, name: pName || pCode, category: rawCat || "" });
           const spec = orNull(getVal(["Quy cách đóng gói", "specification", "Quy cách"]));
           const unit = orNull(getVal(["Đơn vị tính", "unit", "ĐVT"]));
-          const cost = numOrNull(getVal(["Giá vốn nhập (VNĐ)", "Giá vốn", "cost_price", "Giá vốn (VNĐ)"]));
-          const stdPrice = numOrNull(getVal(["Giá niêm yết End-User (VNĐ)", "Giá niêm yết", "standard_price", "Giá bán"]));
-          const minStock = numOrNull(getVal(["Mức tồn tối thiểu", "min_stock_level", "Tồn tối thiểu"]));
+          const cost = numOrNull(getVal(PRICE_COLS));
+          const stdPrice = numOrNull(getVal(STD_PRICE_COLS));
+          const minStock = numOrNull(getVal(MIN_STOCK_COLS));
           const storageCondition = getVal([
             "Điều kiện bảo quản chuẩn (*)", 
             "Điều kiện bảo quản chuẩn", 
@@ -1080,10 +1383,12 @@ export async function POST(req: NextRequest) {
             "storage_condition"
           ]) || null;
 
+          // Giá phải ép kiểu ::numeric: "COALESCE($8, 0)" khiến PostgreSQL suy tham số là integer theo số 0,
+          // nên giá từ 2.147.483.648 đ trở lên (ví dụ 2.650.000.000) báo "out of range for type integer".
           await query(
             `INSERT INTO products (code, name, manufacturer, category, specification, unit, cost_price, standard_price, min_stock_level, storage_condition)
-             VALUES ($1::text, COALESCE($2::text, $1::text), COALESCE($3, 'ABT'), COALESCE($4, 'Vật tư y tế'), $5, COALESCE($6, 'Hộp'),
-                     COALESCE($7, 0), COALESCE($8, 0), COALESCE($9, 10), $10::text)
+             VALUES ($1::text, COALESCE($2::text, $1::text), COALESCE($3, 'TBR'), COALESCE($4, 'Vật tư y tế'), $5, COALESCE($6, 'Hộp'),
+                     COALESCE($7::numeric, 0), COALESCE($8::numeric, 0), COALESCE($9::int, 10), $10::text)
              ON CONFLICT (code) DO UPDATE
              SET name = COALESCE($2, products.name),
                  manufacturer = COALESCE($3, products.manufacturer),
@@ -1110,8 +1415,8 @@ export async function POST(req: NextRequest) {
             code: pCode,
             name: pName || pCode,
             category: cat || "Hàng Thương Mại",
-            brand: brand || supplierCol || "ABT Phân Phối",
-            supplier: supplierCol || brand || "",
+            brand: brand || "TBR Phân Phối",
+            supplier: supplierCol || "",
             origin: "Chính hãng",
             unit: unit || "Hộp",
             specification: spec || "",
@@ -1184,6 +1489,13 @@ export async function POST(req: NextRequest) {
         });
       } else if (detectedType === "INBOUND_LOT") {
         const parsedInbound: any[] = [];
+        // Trang phụ kiện (sheet 2): mỗi dòng gắn với dòng ở trang 1 có cùng Mã SP chính + Số lô chính
+        const compRows: any[] = Array.isArray(contact_rows) ? contact_rows : [];
+        const usedComponentRows = new Set<number>();
+        const componentErrors: string[] = [];
+        const COMP_PARENT_CODE = ["Mã sản phẩm chính (*)", "Mã sản phẩm chính", "Mã hàng chính", "Mã sản phẩm", "parent_product_code"];
+        const COMP_PARENT_LOT = ["Số Lô chính (*)", "Số Lô chính", "parent_lot_number"];
+        const COMP_RECEIVED = ["Số lượng thực nhận", "received_quantity"];
         // M2: one atomic code for rows without an explicit "Mã Phiếu Nhập" (was Date.now().slice(-6) per row)
         let batchInboundCode: string | null = null;
         const [allProductsRes, allBomRes] = await Promise.all([
@@ -1234,9 +1546,11 @@ export async function POST(req: NextRequest) {
           const inboundReason = getVal(["Loại hình / Lý do nhập", "Lý do nhập"], "Nhập mua hàng theo PO từ NCC");
           const poCode = getVal(["Mã Đơn Đặt Hàng (PO)", "Mã Đơn Đặt Hàng (PO) Tham Chiếu", "Mã PO", "reference_code"]);
           const vatInvoice = getVal(["Số Hóa Đơn VAT / Tờ khai HQ", "Số Hóa Đơn VAT / Tờ Khai Hải Quan", "Số Hóa Đơn VAT", "vat_invoice_no"]);
-          const supplier = getVal(["Nhà Cung Cấp", "Nhà cung cấp / Nguồn hàng", "Nhãn hiệu", "Hãng sản xuất", "supplier_name"], catalogProd?.manufacturer || "");
+          // Nhà cung cấp chỉ ghi lên phiếu nhập; Nhãn hiệu / Hãng sản xuất là thông tin của sản phẩm
+          const supplier = getVal(["Nhà Cung Cấp", "Nhà cung cấp / Nguồn hàng", "supplier_name"]);
+          const brandName = getVal(["Nhãn hiệu", "Hãng sản xuất", "manufacturer"], catalogProd?.manufacturer || "");
           const warehouse = getVal(["Kho Tiếp Nhận", "Kho lưu trữ", "Khu vực kho"], "Kho Trung Tâm");
-          const performedBy = getVal(["Thủ Kho / Người Tiếp Nhận", "Người tiếp nhận"], "Thủ kho ABT");
+          const performedBy = getVal(["Thủ Kho / Người Tiếp Nhận", "Người tiếp nhận"], "Thủ kho TBR");
           const shippingUnit = getVal(["Đơn vị vận chuyển / Giao hàng", "Đơn vị vận chuyển"]);
           const notes = getVal(["Ghi chú", "Ghi chú chứng từ / Chất lượng", "notes"]);
 
@@ -1244,57 +1558,93 @@ export async function POST(req: NextRequest) {
             // Product master, catalog sync and stock are written in the transaction below (H1/H2/H4)
             // Resolve child components (BOM) from Sheet 2 or database
             let itemComponents: any[] = [];
-            if (Array.isArray(contact_rows) && contact_rows.length > 0) {
-              const matched = contact_rows.filter((cr: any) => {
-                const parentCode = String(cr["Mã sản phẩm chính (*)"] || cr["Mã SKU cha (*)"] || cr["Mã hàng chính"] || cr["Mã sản phẩm"] || cr["parent_product_code"] || "").trim().toUpperCase();
-                const parentLot = String(cr["Số Lô chính (*)"] || cr["Số Lô"] || cr["parent_lot_number"] || "").trim();
-                return parentCode === pCode.toUpperCase() && (!parentLot || parentLot === lot);
-              });
-              if (matched.length > 0) {
-                itemComponents = matched.map((cr: any) => {
-                  const rawCompExp = cr["Hạn dùng (EXP)"] || cr["expiry_date"] || expDate;
-                  return {
-                    component_code: cr["Mã thành phần / Phụ kiện (*)"] || cr["Mã phụ kiện / Thành phần (*)"] || cr["Mã thành phần"] || cr["Mã phụ kiện"] || cr["component_code"],
-                    component_name: cr["Tên thành phần / Phụ kiện (*)"] || cr["Tên phụ kiện / Thành phần (*)"] || cr["Tên thành phần"] || cr["Tên phụ kiện"] || cr["component_name"],
-                    specification: cr["Quy cách"] || cr["specification"] || "",
-                    unit: cr["Đơn vị tính"] || cr["ĐVT"] || cr["unit"] || "Cái",
-                    quantity_per_kit: Number(cr["Định mức theo bộ (*)"] || cr["Định mức theo bộ"] || cr["quantity_per_kit"]) || 1,
-                    tracking_type: cr["Hình thức quản lý (LOT/SERIAL)"] || cr["Hình thức quản lý"] || cr["tracking_type"] || "LOT",
-                    lot_number: cr["Số Lô (LOT) / Serial (S/N)"] || cr["Số Lô"] || cr["lot_number"] || lot,
-                    serial_number: cr["Số Serial (S/N)"] || cr["Số Lô (LOT) / Serial (S/N)"] || cr["serial_number"] || "",
-                    expiry_date: normalizeExcelDateToISO(rawCompExp, String(rawCompExp || "")),
-                    storage_condition: cr["Nhiệt độ bảo quản riêng"] || cr["Điều kiện bảo quản tiêu chuẩn"] || cr["Điều kiện bảo quản"] || cr["storage_condition"] || storageCondition,
-                    qc_status: cr["Tình trạng QC"] || cr["qc_status"] || qcStatus,
-                    notes: cr["Ghi chú"] || cr["notes"] || ""
-                  };
-                });
+            const label = `${pCode} lô ${lot}`;
+            compRows.forEach((cr: any, idx: number) => {
+              const g = createGetVal(cr);
+              const parentLot = g(COMP_PARENT_LOT);
+              if (g(COMP_PARENT_CODE).toUpperCase() !== pCode.toUpperCase() || (parentLot && parentLot !== lot)) return;
+              const compCode = g(["Mã thành phần / Phụ kiện (*)", "Mã thành phần / Phụ kiện", "Mã thành phần", "component_code"]);
+              if (!compCode) return;
+              usedComponentRows.add(idx);
+              // Số lượng phụ kiện = Định mức theo bộ × Số lượng của lô chính, trừ khi file ghi số thực nhận khác
+              const perKit = Number(g(["Định mức theo bộ", "Định mức theo bộ (*)", "quantity_per_kit"])) || 1;
+              const expected = perKit * qty;
+              const receivedRaw = g(COMP_RECEIVED);
+              let received = expected;
+              if (receivedRaw !== "") {
+                const n = Number(String(receivedRaw).replace(",", "."));
+                if (!Number.isFinite(n) || n < 0) {
+                  componentErrors.push(`Trang phụ kiện dòng ${idx + 2} (${compCode} của ${label}): "Số lượng thực nhận" = ${receivedRaw} không hợp lệ`);
+                  return;
+                }
+                received = n;
+                if (n !== expected) {
+                  importWarnings.push(`${compCode} của ${label}: thực nhận ${n}, định mức ${perKit} × ${qty} = ${expected} (${n > expected ? "thừa" : "thiếu"} ${Math.abs(n - expected)})`);
+                }
               }
-            }
+              const tracking = g(["Hình thức quản lý (LOT/SERIAL)", "Hình thức quản lý", "tracking_type"]).toUpperCase().includes("SERIAL") ? "SERIAL" : "LOT";
+              const lotOrSerial = g(["Số Lô (LOT) / Serial (S/N)", "Số Serial (S/N)", "lot_number", "serial_number"]);
+              if (tracking === "SERIAL" && !lotOrSerial) {
+                importWarnings.push(`${compCode} của ${label}: quản lý theo Serial nhưng chưa có số S/N, cần bổ sung`);
+              }
+              itemComponents.push({
+                component_code: compCode,
+                component_name: g(["Tên thành phần / Phụ kiện (*)", "Tên thành phần / Phụ kiện", "Tên thành phần", "component_name"], compCode),
+                specification: g(["Quy cách", "specification"]),
+                unit: g(["Đơn vị tính", "ĐVT", "unit"], "Cái"),
+                quantity_per_kit: perKit,
+                expected_qty: expected,
+                received_qty: received,
+                total_qty: received,
+                deviation_qty: received - expected,
+                tracking_type: tracking,
+                // để trống Số lô phụ kiện = cùng lô với sản phẩm chính
+                lot_number: tracking === "LOT" ? (lotOrSerial || lot) : "",
+                serial_number: tracking === "SERIAL" ? lotOrSerial : "",
+                needs_serial: tracking === "SERIAL" && !lotOrSerial,
+                expiry_date: normalizeExcelDateToISO(g(["Hạn dùng (EXP)", "Hạn dùng", "expiry_date"]), g(["Hạn dùng (EXP)", "Hạn dùng", "expiry_date"])) || expDate,
+                storage_condition: g(["Nhiệt độ bảo quản riêng", "storage_condition"]) || storageCondition,
+                qc_status: g(["Tình trạng QC", "qc_status"]) || qcStatus,
+                notes: g(["Ghi chú", "notes"]),
+              });
+            });
 
-            // Fallback: If no components provided in Sheet 2, check if pCode has BOM in product_components table
+            // Không có dòng nào ở trang phụ kiện cho lô này: lấy theo định mức (BOM), số lượng = định mức × SL lô chính.
+            // Phụ kiện quản lý theo Serial để trống S/N (trước đây hệ thống tự sinh số giả "SN-<mã>-<lô>-1").
             if (itemComponents.length === 0) {
               const bomComps = bomByParentMap.get(pCode.toUpperCase()) || [];
-              if (bomComps.length > 0) {
-                itemComponents = bomComps.map((bc: any, bIdx: number) => ({
+              itemComponents = bomComps.map((bc: any) => {
+                const perKit = Number(bc.quantity_per_kit) || 1;
+                const tracking = String(bc.tracking_type || "").toUpperCase() === "SERIAL" ? "SERIAL" : "LOT";
+                if (tracking === "SERIAL") {
+                  importWarnings.push(`${bc.component_code} của ${label}: lấy theo định mức, quản lý theo Serial nên cần bổ sung số S/N`);
+                }
+                return {
                   component_code: bc.component_code,
                   component_name: bc.component_name,
                   specification: bc.specification || "",
                   unit: bc.unit || "Cái",
-                  quantity_per_kit: Number(bc.quantity_per_kit) || 1,
-                  tracking_type: bc.tracking_type || "LOT",
-                  lot_number: bc.tracking_type === "LOT" ? lot : "",
-                  serial_number: bc.tracking_type === "SERIAL" ? `SN-${bc.component_code.replace(/[^a-zA-Z0-9]/g, '')}-${lot.replace(/[^a-zA-Z0-9]/g, '')}-${bIdx + 1}` : "",
+                  quantity_per_kit: perKit,
+                  expected_qty: perKit * qty,
+                  received_qty: perKit * qty,
+                  total_qty: perKit * qty,
+                  deviation_qty: 0,
+                  tracking_type: tracking,
+                  lot_number: tracking === "LOT" ? lot : "",
+                  serial_number: "",
+                  needs_serial: tracking === "SERIAL",
+                  from_bom: true,
                   expiry_date: expDate,
                   storage_condition: bc.storage_condition || storageCondition,
                   qc_status: qcStatus,
                   notes: bc.notes || ""
-                }));
-              }
+                };
+              });
             }
 
             // Collected first; all writes happen below in ONE transaction, sorted by product code
             parsedInbound.push({
-              pCode, pName, spec, unit, lot, expDate, qty, unitCost, storageCondition, shelf, warehouse, supplier, r,
+              pCode, pName, spec, unit, lot, expDate, qty, unitCost, storageCondition, shelf, warehouse, supplier, brandName, r,
               inboundCode, inboundDate, performedBy,
               reference: poCode || vatInvoice || lot,
               txNote: `Nhập kho theo Lô ${lot} (HSD: ${expDate})${supplier ? ` - NCC: ${supplier}` : ""}${inboundReason ? ` - Lý do: ${inboundReason}` : ""}${notes ? ` - Ghi chú: ${notes}` : ""}`,
@@ -1321,6 +1671,22 @@ export async function POST(req: NextRequest) {
           }
         }
 
+        // Dòng phụ kiện đã điền Số lô chính / Số lượng thực nhận nhưng không khớp lô nào ở trang 1: báo để kiểm tra
+        compRows.forEach((cr: any, idx: number) => {
+          if (usedComponentRows.has(idx)) return;
+          const g = createGetVal(cr);
+          const parentLot = g(COMP_PARENT_LOT);
+          if (parentLot || g(COMP_RECEIVED) !== "") {
+            importWarnings.push(`Trang phụ kiện dòng ${idx + 2} (${g(COMP_PARENT_CODE)} lô ${parentLot || "?"}): không khớp lô nào ở trang 1 nên không được ghi`);
+          }
+        });
+        if (componentErrors.length > 0) {
+          return NextResponse.json({
+            error: `Trang phụ kiện có ${componentErrors.length} ô không hợp lệ, CHƯA nhập dòng nào:\n${componentErrors.slice(0, 20).join("\n")}`,
+            row_errors: componentErrors,
+          }, { status: 400 });
+        }
+
         // H1/H2/H4/M2: whole file is imported atomically. Rows sharing a "Mã Phiếu Nhập" become ONE document
         // (the unique index on transaction_code would otherwise reject the 2nd row); re-importing the same
         // file is rejected with 409 instead of doubling stock.
@@ -1343,7 +1709,7 @@ export async function POST(req: NextRequest) {
                 specification: p.spec,
                 standard_price: Number(p.r["Giá niêm yết"]) || Number(p.r["Giá bán"]) || 0, // Để trống (0) nếu chưa có giá
                 cost_price: p.unitCost,
-                manufacturer: p.supplier || "ABT Phân Phối",
+                manufacturer: p.brandName || "TBR Phân Phối",
                 origin: "Chính hãng / Tiêu chuẩn ISO",
                 min_stock_level: 10,
                 storage_condition: p.storageCondition
@@ -1354,7 +1720,7 @@ export async function POST(req: NextRequest) {
                 code: p.pCode,
                 name: p.pName,
                 category: resolvedInboundCat,
-                brand: p.supplier || "ABT Phân Phối",
+                brand: p.brandName || "TBR Phân Phối",
                 origin: "Chính hãng",
                 unit: p.unit || "Hộp",
                 specification: p.spec || "",
@@ -1386,12 +1752,15 @@ export async function POST(req: NextRequest) {
               docs.set(p.inboundCode, doc);
             }
 
-            // Log Inbound transaction(s) with comprehensive metadata
+            // Log Inbound transaction(s) with comprehensive metadata (truncate joined notes so 1000-row imports don't create 150KB note blobs)
             for (const [docCode, doc] of docs) {
+              const summaryNote = doc.notes.length > 10
+                ? `${doc.notes.slice(0, 10).join(" | ")} ... (và ${doc.notes.length - 10} lô hàng khác trong phiếu ${docCode})`
+                : doc.notes.join(" | ");
               await c.query(
                 `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
                  VALUES ($1, 'INBOUND', $2, $3, $4, $5, $6, $7)`,
-                [docCode, doc.reference, normalizeExcelDateToISO(doc.date, todayVN()), doc.performedBy, doc.warehouse, JSON.stringify(doc.items), doc.notes.length > 10 ? `${doc.notes.slice(0, 10).join(" | ")} ... (+${doc.notes.length - 10} lô khác)` : doc.notes.join(" | ")]
+                [docCode, doc.reference, normalizeExcelDateToISO(doc.date, todayVN()), doc.performedBy, doc.warehouse, JSON.stringify(doc.items), summaryNote]
               );
             }
             for (const entry of catalogEntries) {
@@ -1453,7 +1822,7 @@ export async function POST(req: NextRequest) {
           const pName = getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "product_name"], pCode);
           const qty = Number(getVal(["Số lượng đặt mua (*)", "Số lượng", "quantity"])) || 1;
           const uPrice = Number(getVal(["Đơn giá mua (VNĐ)", "Đơn giá", "unit_price"])) || 0;
-          const note = getVal(["Ghi chú giao hàng", "Ghi chú", "notes"], "Nhập từ file Excel PO ABT");
+          const note = getVal(["Ghi chú giao hàng", "Ghi chú", "notes"], "Nhập từ file Excel PO TBR");
 
           const items = [{ product_code: pCode, product_name: pName, quantity: qty, unit_price: uPrice, total: qty * uPrice }];
           const totalAmt = qty * uPrice;
@@ -1507,7 +1876,13 @@ export async function POST(req: NextRequest) {
         await syncCatalogSuppliersAndProducts();
         await logAudit("IMPORT_EXCEL", "SUPPLIERS", `Nạp thành công ${importedCount} nhà cung cấp từ Excel`);
       } else if (detectedType === "USERS_PERSONNEL") {
-        // Giữ nguyên ràng buộc UNIQUE trên users.email để tránh nhân bản tài khoản trùng email
+        try {
+          await query("ALTER TABLE users DROP CONSTRAINT IF EXISTS users_email_key");
+          await query("DROP INDEX IF EXISTS users_email_key");
+        } catch (e: any) {
+          console.warn("Could not drop users_email_key:", e?.message);
+        }
+
         for (const r of rows) {
           // Helper to get value matching keys flexibly
           const getVal = (candidates: string[]): string => {
@@ -1530,11 +1905,10 @@ export async function POST(req: NextRequest) {
             return "";
           };
 
-          const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-ABT");
-          const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên ABT";
+          const empCode = getVal(["Mã nhân viên (*)", "Mã nhân viên", "employee_code", "MaNV", "Mã NV"]) || autoCode("NV-TBR");
+          const fullName = getVal(["Họ và tên (*)", "Họ và tên", "full_name", "name", "Họ tên"]) || "Nhân viên TBR";
           let username = getVal(["Tên đăng nhập (*)", "Tên đăng nhập", "username", "TenDangNhap"]);
-          const providedLoginName = username;
-          const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@abtvn.com` : "");
+          const email = getVal(["Email (*)", "Email", "email"]) || (username ? `${username}@tbr.vn` : "");
           if (!username) {
             const emailPart = email.split("@")[0];
             username = emailPart || empCode.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -1595,16 +1969,17 @@ export async function POST(req: NextRequest) {
             console.error("Warning: personnel upsert failed, continuing:", persErr.message);
           }
 
-          // 2. Upsert into users table (account, with username matching employee_code)
+          // 2. Upsert into users table (account, with username matching employee_code).
           // New accounts get the file's password or a random temporary one (never the shared "123456");
-          // any password set here must be changed at first login. An existing account only takes the file's
-          // password while its user has never changed it (re-importing an old file must not reset real passwords).
+          // any password set here must be changed at first login.
           const initialPassword = providedPassword || generateTemporaryPassword();
           const userRes = await query(
             `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
              VALUES ($1, $2, $3, $4, $5, $6, $7, true)
              ON CONFLICT (username) DO UPDATE
-             SET password_hash = CASE WHEN $8::boolean AND COALESCE(users.must_change_password, false) THEN EXCLUDED.password_hash ELSE users.password_hash END,
+             SET password_hash = CASE WHEN $8::boolean THEN EXCLUDED.password_hash ELSE users.password_hash END,
+                 must_change_password = CASE WHEN $8::boolean THEN true ELSE users.must_change_password END,
+                 session_version = CASE WHEN $8::boolean THEN COALESCE(users.session_version, 0) + 1 ELSE users.session_version END,
                  full_name = EXCLUDED.full_name,
                  role = EXCLUDED.role,
                  department = EXCLUDED.department,
@@ -1616,8 +1991,6 @@ export async function POST(req: NextRequest) {
           if (userRes.rows[0]?.inserted && !providedPassword) {
             initialCredentials.push({ username: empCode, full_name: fullName, password: initialPassword });
           }
-          const loginWarning = await setImportedLoginName(empCode, providedLoginName);
-          if (loginWarning) importWarnings.push(loginWarning);
 
           importedCount++;
         }
@@ -1627,7 +2000,7 @@ export async function POST(req: NextRequest) {
 
         await logAudit("IMPORT_EXCEL", "USERS_PERSONNEL", `Nạp thành công ${importedCount} tài khoản & hồ sơ nhân sự liên kết từ Excel`);
       } else {
-        return NextResponse.json({ error: "Không nhận diện được định dạng file Excel phù hợp với các mẫu chuẩn ABT." }, { status: 400 });
+        return NextResponse.json({ error: "Không nhận diện được định dạng file Excel phù hợp với các mẫu chuẩn TBR." }, { status: 400 });
       }
 
       return NextResponse.json({
@@ -1636,7 +2009,9 @@ export async function POST(req: NextRequest) {
         imported_count: importedCount,
         initial_credentials: initialCredentials,
         warnings: importWarnings,
-        message: `Đã nhập thành công ${importedCount} bản ghi (${detectedType}) vào hệ thống!${importWarnings.length ? `\n\nLưu ý:\n${importWarnings.join("\n")}` : ""}`
+        message: `Đã nhập thành công ${importedCount} bản ghi (${detectedType}) vào hệ thống!` + (detectedType === "USERS_PERSONNEL"
+          ? " Tên đăng nhập là Mã nhân viên (ví dụ NV-TBR-001, gõ TBR001 cũng được); lần đăng nhập đầu phải đổi mật khẩu."
+          : "")
       });
     }
 
