@@ -1603,6 +1603,19 @@ export async function POST(req: NextRequest) {
         const isRollback = Boolean(body.force_rollback) && canRollback;
         // Đơn đang có: loại đơn theo dữ liệu đã lưu, không theo cờ client gửi lên
         isStockOrder = String(existing.order_code || "").includes("STOCK") || String(existing.applied_price_policy || "").toUpperCase() === "STOCK";
+        if (has("items") && !isStockOrder) {
+          for (const it of itemsArr) {
+            if (it?.status === "CANCELLED") continue;
+            const p = orderLinePrice(it);
+            const isGiftItem = Boolean(it?.isGift || it?.is_gift || it?.isSample || it?.is_sample);
+            if (!(p > 0) && !isGiftItem) {
+              const pLabel = it?.productName || it?.product_name || it?.productCode || it?.product_code || "Sản phẩm";
+              return NextResponse.json({
+                error: `Mặt hàng "${pLabel}" chưa nhập đơn giá (> 0đ). Nếu là hàng tặng 0 đồng, bắt buộc phải tích vào nút "🎁 Tặng" trước khi lưu đơn SO!`
+              }, { status: 400 });
+            }
+          }
+        }
         const sets: string[] = [];
         const params: any[] = [];
         const set = (col: string, val: any, cast = "") => { params.push(val); sets.push(`${col} = $${params.length}${cast}`); };
@@ -1723,6 +1736,19 @@ export async function POST(req: NextRequest) {
       // ---- New order ----
       if (stockRequested && !isStockOrder) {
         return forbiddenResponse("Chỉ Trưởng/Phó phòng Kinh doanh hoặc Quản trị viên được tạo đơn STOCK (lưu kho gối đầu, không kiểm tra công nợ).");
+      }
+      if (!isStockOrder) {
+        for (const it of itemsArr) {
+          if (it?.status === "CANCELLED") continue;
+          const p = orderLinePrice(it);
+          const isGiftItem = Boolean(it?.isGift || it?.is_gift || it?.isSample || it?.is_sample);
+          if (!(p > 0) && !isGiftItem) {
+            const pLabel = it?.productName || it?.product_name || it?.productCode || it?.product_code || "Sản phẩm";
+            return NextResponse.json({
+              error: `Mặt hàng "${pLabel}" chưa nhập đơn giá (> 0đ). Nếu là hàng tặng 0 đồng, bắt buộc phải tích vào nút "🎁 Tặng" trước khi lưu đơn SO!`
+            }, { status: 400 });
+          }
+        }
       }
       let isCreditBlocked = false;
       let creditBlockReason = "";
@@ -2285,10 +2311,10 @@ export async function POST(req: NextRequest) {
         : `Duyệt giá/quà tặng bởi ${approved_by || "Quản lý"}`;
       const upd = await query(
         `UPDATE sales_orders
-         SET price_approval_status = $4,
-             price_approval_notes = $1,
-             approval_status = CASE WHEN $4 = 'REJECTED' THEN 'REJECTED' WHEN NOT COALESCE(is_credit_blocked, FALSE) THEN 'APPROVED' ELSE approval_status END,
-             approved_by = COALESCE($5, approved_by),
+         SET price_approval_status = $4::text,
+             price_approval_notes = $1::text,
+             approval_status = CASE WHEN $4::text = 'REJECTED' THEN 'REJECTED' WHEN NOT COALESCE(is_credit_blocked, FALSE) THEN 'APPROVED' ELSE approval_status END,
+             approved_by = COALESCE($5::text, approved_by),
              approved_at = CURRENT_TIMESTAMP
          WHERE (CASE WHEN $3::text IS NOT NULL AND $3::text !~ '^[0-9]+$' THEN order_code = $3::text ELSE id = $2::int END)`,
         [notes || body.approval_notes || defaultNote, numericIdOrNull(order_id), String(body.order_code || order_id || "").trim() || null, nextPriceStatus, approved_by]

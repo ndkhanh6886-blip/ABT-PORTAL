@@ -12584,6 +12584,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             };
         });
 
+        // Chốt chặn bắt buộc: Khi tạo/sửa SO thương mại (trừ SO Stock), bắt buộc phải nhập giá (> 0đ) hoặc nếu 0 đồng thì phải tích vào nút "🎁 Tặng"
+        if (!isStock) {
+            const invalidPriceItem = items.find((it: any) => !(Number(it.unitPrice) > 0) && !Boolean(it.isGift));
+            if (invalidPriceItem) {
+                showToast(
+                    `⚠️ Mặt hàng "${invalidPriceItem.productName}" (${invalidPriceItem.productCode}) chưa nhập đơn giá (> 0đ). Nếu là hàng tặng 0 đồng, bắt buộc phải tích vào nút "🎁 Tặng" trước khi lưu SO!`,
+                    "warning"
+                );
+                return;
+            }
+        }
+
         const totalAmount = items.reduce((sum, it) => sum + (it.totalPrice || 0), 0);
         const hasMfg = items.some(it => it.sourceType === "MANUFACTURED");
         const hasComm = items.some(it => it.sourceType === "COMMERCIAL");
@@ -29967,11 +29979,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             }}
                                             className={cn(
                                                 "w-32 bg-slate-950 border rounded-lg px-2.5 py-2 text-xs text-amber-300 font-mono text-right font-bold focus:border-indigo-500 focus:outline-none",
-                                                (!isStockOrder && !Boolean((item as any).isGift || (item as any).is_gift) && Number(uPrice) === 0)
-                                                    ? "border-amber-500/80 ring-1 ring-amber-500/40"
+                                                (!isStockOrder && !Boolean((item as any).isGift || (item as any).is_gift) && !(Number(uPrice) > 0))
+                                                    ? "border-rose-500 ring-1 ring-rose-500/50 text-rose-300"
                                                     : "border-slate-800"
                                             )}
-                                            title={isStockOrder ? "Đơn giá tham chiếu (ước tính giá trị vốn lưu kho, không áp dụng bảng giá khách)" : "Đơn giá sản phẩm (VNĐ) — nhập trực tiếp để sửa giá"}
+                                            title={isStockOrder ? "Đơn giá tham chiếu (ước tính giá trị vốn lưu kho, không áp dụng bảng giá khách)" : "Đơn giá sản phẩm (VNĐ) — bắt buộc nhập giá > 0đ hoặc tích nút 🎁 Tặng"}
                                         />
                                         <div className="w-28 bg-slate-950/70 border border-slate-800/80 rounded-lg px-2 py-2 text-xs text-emerald-400 font-mono text-right font-bold truncate">
                                             {lineTotal.toLocaleString('vi-VN')} đ
@@ -29984,6 +29996,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             ✕
                                         </button>
                                     </div>
+                                    {!isStockOrder && item.productCode && !Boolean((item as any).isGift || (item as any).is_gift) && !(Number(uPrice) > 0) && (
+                                        <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-rose-950/60 border border-rose-500/50 text-[11px] text-rose-200">
+                                            <span>⚠️ Chưa nhập đơn giá (&gt; 0đ). Nếu là quà tặng 0 đồng, bắt buộc phải tích vào nút <strong>🎁 Tặng</strong> mới lưu được SO.</span>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setFactoryOrderItems(prev => prev.map((it, i) => i === index ? {
+                                                        ...it,
+                                                        isGift: true,
+                                                        unitPrice: 0,
+                                                        notes: (it as any).notes || "🎁 Hàng tặng theo chính sách (0đ)"
+                                                    } : it));
+                                                }}
+                                                className="px-2 py-0.5 rounded bg-pink-600 hover:bg-pink-500 text-white text-[10px] font-bold shrink-0 cursor-pointer"
+                                            >
+                                                🎁 Tích Quà Tặng 0đ
+                                            </button>
+                                        </div>
+                                    )}
 
                                     {/* ── Live Stock Intelligence Badge & Allocation Trigger ── */}
                                     <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/60 text-[10px]">
