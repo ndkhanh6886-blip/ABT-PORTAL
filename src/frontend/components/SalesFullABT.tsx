@@ -1646,6 +1646,19 @@ export function SalesFullABT() {
                 }
             }
 
+            const normOrderIsoDate = (raw: any): string => {
+                if (!raw) return "";
+                const s = String(raw).trim();
+                if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+                const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+                if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+                return "";
+            };
+            const reqDelivRaw = o.requestedDeliveryDate || o.requested_delivery_date || "";
+            const reqDelivIso = normOrderIsoDate(reqDelivRaw);
+            const estDelivRaw = o.estimatedDeliveryDate || o.estimated_delivery_date || o.expectedDeliveryDate || o.expected_delivery_date || "";
+            const estDelivIso = normOrderIsoDate(estDelivRaw) || reqDelivIso;
+
             result.push({
                 ...o,
                 id: orderId,
@@ -1656,6 +1669,8 @@ export function SalesFullABT() {
                 salesRepId: repId || "NV-001",
                 totalAmount: Number(o.totalAmount !== undefined ? o.totalAmount : (o.total_amount || 0)),
                 date: o.date || (o.order_date ? (typeof o.order_date === 'string' && o.order_date.includes('T') ? new Date(o.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : o.order_date) : (o.created_at ? new Date(o.created_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }))),
+                requestedDeliveryDate: reqDelivIso || reqDelivRaw || undefined,
+                estimatedDeliveryDate: estDelivIso || estDelivRaw || reqDelivIso || reqDelivRaw || undefined,
                 items: items,
                 quoteId: quoteId,
                 prCode: prCode,
@@ -4083,7 +4098,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [filterOrderMonth, setFilterOrderMonth] = useState("");
     const [filterOrderDateFrom, setFilterOrderDateFrom] = useState("");
     const [filterOrderDateTo, setFilterOrderDateTo] = useState("");
-    const [filterOrderApprovalStatus, setFilterOrderApprovalStatus] = useState<"all" | "pending_any" | "pending_zero_price" | "pending_credit" | "zero_price" | "approved" | "rejected">("all");
+    const [filterOrderApprovalStatus, setFilterOrderApprovalStatus] = useState<"all" | "pending_any" | "pending_zero_price" | "pending_credit" | "zero_price" | "approved" | "ready_to_deliver" | "overdue_delivery" | "rejected">("all");
 
     // Thông tin Người liên hệ & Địa chỉ giao/nhận hàng trên Đơn hàng SO
     const [factoryOrderContactPerson, setFactoryOrderContactPerson] = useState("");
@@ -12695,6 +12710,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         date: factoryOrderOrderDate || order.date,
                         order_date: factoryOrderOrderDate || (order as any).order_date,
                         requestedDeliveryDate: factoryOrderDeliveryDate || order.requestedDeliveryDate,
+                        estimatedDeliveryDate: (!order.estimatedDeliveryDate || order.estimatedDeliveryDate === order.requestedDeliveryDate)
+                            ? (factoryOrderDeliveryDate || order.requestedDeliveryDate)
+                            : order.estimatedDeliveryDate,
                         items: items,
                         totalAmount: totalAmount,
                         hasMfg,
@@ -12886,7 +12904,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             customerPhone: resolvedContactPhone,
             customerAddress: resolvedDeliveryAddress,
             requestedDeliveryDate: factoryOrderDeliveryDate || new Date(Date.now() + 7*24*60*60*1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-            estimatedDeliveryDate: undefined,
+            estimatedDeliveryDate: factoryOrderDeliveryDate || new Date(Date.now() + 7*24*60*60*1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
             items: items,
             totalAmount: totalAmount,
             status: initialStatus,
@@ -13518,6 +13536,30 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return Boolean(o.isStockOrder || o.orderCategory === "STOCK" || (o.id && String(o.id).includes("STOCK")));
     };
 
+    // Tiền tính toán tồn giữ chỗ lũy kế 1 lượt O(N) để phân tích tồn kho / lọc nhanh toàn bộ đơn hàng tức thì (0ms)
+    const precomputedOrderReservationData = useMemo(() => {
+        const progressMap = new Map<string, Record<string, { ordered: number; allocated: number; delivered: number; remaining: number }>>();
+        const priorReservedMap = new Map<string, Record<string, number>>();
+        const runningReserved: Record<string, number> = {};
+        for (const o of factoryOrders) {
+            if (!o || !o.id) continue;
+            priorReservedMap.set(o.id, { ...runningReserved });
+            const isOStock = checkIsPureStock(o);
+            if (!isOStock && o.status !== "Delivered" && o.status !== "COMPLETED" && o.status !== "Rejected" && o.status !== "Cancelled") {
+                const prog = getOrderQtyProgress(o);
+                progressMap.set(o.id, prog);
+                (o.items || []).forEach((it: any) => {
+                    const code = it.productCode || it.product_code || it.code;
+                    if (!code) return;
+                    const oQty = Number(it.quantity) || 1;
+                    const dQty = Math.max(Number(it.deliveredQuantity || 0), Number(prog[String(code).trim()]?.allocated || 0));
+                    runningReserved[code] = (runningReserved[code] || 0) + Math.max(0, oQty - dQty);
+                });
+            }
+        }
+        return { progressMap, priorReservedMap };
+    }, [factoryOrders, deliverySlips]);
+
     // HÀM TÍNH TOÁN TỒN KHO KHẢ DỤNG (TRỪ GIỮ CHỖ) & HÀNG SẮP VỀ TỪ PO CHO TỪNG DÒNG HÀNG (Yêu cầu 1 & 2)
     const computeOrderStockAnalysis = (order: any) => {
         const items = order.items || [];
@@ -13542,26 +13584,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const isStockOrder = checkIsPureStock(order);
 
         // 1. Tính lượng tồn kho giữ chỗ cho các đơn hàng active khác (trừ đơn hiện tại, và không tính các đơn stock vì đơn stock không giữ chỗ kho xuất)
-        const orderIdx = factoryOrders.findIndex(o => o.id === order.id);
-        const priorOrders = orderIdx > 0 ? factoryOrders.slice(0, orderIdx) : [];
-        const reservedMap: Record<string, number> = {};
-        priorOrders.forEach(o => {
-            const isOStock = checkIsPureStock(o);
-            if (!isOStock && o.status !== "Delivered" && o.status !== "COMPLETED" && o.status !== "Rejected" && o.status !== "Cancelled") {
-                const priorProgress = getOrderQtyProgress(o);
-                (o.items || []).forEach((it: any) => {
-                    const code = it.productCode || it.product_code || it.code;
-                    if (!code) return;
-                    const oQty = Number(it.quantity) || 1;
-                    // Hàng đã lập phiếu giao thì đã trừ kho -> không còn giữ chỗ
-                    const dQty = Math.max(Number(it.deliveredQuantity || 0), Number(priorProgress[String(code).trim()]?.allocated || 0));
-                    reservedMap[code] = (reservedMap[code] || 0) + Math.max(0, oQty - dQty);
-                });
-            }
-        });
+        const reservedMap: Record<string, number> = precomputedOrderReservationData.priorReservedMap.get(order.id) || {};
 
         // 2. Chi tiết từng dòng hàng (line-item stock check)
-        const orderProgress = getOrderQtyProgress(order);
+        const orderProgress = precomputedOrderReservationData.progressMap.get(order.id) || getOrderQtyProgress(order);
         const orderSlipsActive = getOrderSlips(order, false);
         const pendingSlipCount = orderSlipsActive.filter((s: any) => getSlipStatus(s, order) === "PENDING").length;
         const itemsBreakdown = items.map((it: any) => {
@@ -14491,13 +14517,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     const handleUpdateEstimatedDeliveryDate = (reqId: string, estDate: string) => {
-        setFactoryOrders(prev => prev.map(req => {
-            if (req.id === reqId) {
-                return { ...req, estimatedDeliveryDate: estDate };
-            }
-            return req;
-        }));
-        showToast("Đã ghi nhận thời gian giao hàng dự kiến!", "success");
+        setFactoryOrders(prev => {
+            const updated = prev.map(req => {
+                if (req.id === reqId) {
+                    const fallbackReqDate = req.requestedDeliveryDate || "";
+                    return { ...req, estimatedDeliveryDate: estDate || fallbackReqDate };
+                }
+                return req;
+            });
+            try { localStorage.setItem("sales_factory_orders", JSON.stringify(updated)); } catch {}
+            return updated;
+        });
+        showToast(estDate ? "Đã cập nhật ngày giao hàng dự kiến!" : "Đã khôi phục ngày giao dự kiến theo ngày giao mong muốn!", "success");
     };
 
     // Chuẩn hóa đơn (Tab Đơn hàng hoặc lịch sử KH) về cùng 1 dạng dùng chung cho modal Lập phiếu giao / Xác nhận đã giao
@@ -22357,7 +22388,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     {/* Pending Requests Table */}
                     {(() => {
-                        // Helper phân loại trạng thái duyệt từng đơn hàng SO
+                        const todayOrderIso = todayVN();
+                        const toIsoOrderDate = (raw: any): string => {
+                            if (!raw) return "";
+                            const s = String(raw).trim();
+                            if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+                            const m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
+                            if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+                            return "";
+                        };
+
+                        // Helper phân loại trạng thái duyệt & tiến độ giao hàng từng đơn hàng SO
                         const classifyOrderApproval = (req: any) => {
                             const isPureStock = checkIsPureStock(req) || Boolean(req.isStockOrder);
                             const hasZeroOrGift = !isPureStock && Boolean(req.hasZeroPriceItems || (req.items && req.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0)));
@@ -22366,6 +22407,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             const isPendingCreditApproval = !isCancelledOrRejected && !isPureStock && Boolean(req.isCreditBlocked);
                             const isPendingAny = !isCancelledOrRejected && (isPendingBODApproval || isPendingCreditApproval || req.status === "Pending");
                             const isApproved = !isCancelledOrRejected && !isPendingAny;
+
+                            const stockAnalysis = !isCancelledOrRejected ? computeOrderStockAnalysis(req) : null;
+                            const isFullyDelivered = Boolean(
+                                req.status === "Delivered" ||
+                                req.status === "COMPLETED" ||
+                                req.delivery_status === "DELIVERED" ||
+                                stockAnalysis?.isFullyDelivered
+                            );
+                            const isReadyToDeliver = Boolean(
+                                isApproved &&
+                                !isPureStock &&
+                                !isFullyDelivered &&
+                                (stockAnalysis?.isReadyAll || req.status === "IN_STOCK" || req.status === "ALLOCATED")
+                            );
+                            const effectiveEstIso = toIsoOrderDate(req.estimatedDeliveryDate || req.requestedDeliveryDate);
+                            const isOverdueDelivery = Boolean(
+                                !isCancelledOrRejected &&
+                                !isPureStock &&
+                                !isFullyDelivered &&
+                                effectiveEstIso &&
+                                effectiveEstIso < todayOrderIso
+                            );
+
                             return {
                                 isPureStock,
                                 hasZeroOrGift,
@@ -22373,7 +22437,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 isPendingBODApproval,
                                 isPendingCreditApproval,
                                 isPendingAny,
-                                isApproved
+                                isApproved,
+                                isFullyDelivered,
+                                isReadyToDeliver,
+                                isOverdueDelivery,
+                                effectiveEstIso
                             };
                         };
 
@@ -22427,7 +22495,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             return true;
                         });
 
-                        // Thống kê số lượng & giá trị đơn hàng chờ duyệt
+                        // Thống kê số lượng & giá trị đơn hàng chờ duyệt + đủ hàng + trễ hạn giao
                         const orderApprovalStats = (() => {
                             let pendingAnyCount = 0;
                             let pendingAnyValue = 0;
@@ -22438,6 +22506,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             let hasZeroOrGiftCount = 0;
                             let approvedCount = 0;
                             let approvedValue = 0;
+                            let readyToDeliverCount = 0;
+                            let readyToDeliverValue = 0;
+                            let overdueDeliveryCount = 0;
+                            let overdueDeliveryValue = 0;
                             let rejectedCount = 0;
 
                             baseFilteredOrders.forEach(req => {
@@ -22460,6 +22532,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     approvedCount++;
                                     approvedValue += val;
                                 }
+                                if (c.isReadyToDeliver) {
+                                    readyToDeliverCount++;
+                                    readyToDeliverValue += val;
+                                }
+                                if (c.isOverdueDelivery) {
+                                    overdueDeliveryCount++;
+                                    overdueDeliveryValue += val;
+                                }
                                 if (c.isCancelledOrRejected) rejectedCount++;
                             });
 
@@ -22474,6 +22554,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 hasZeroOrGiftCount,
                                 approvedCount,
                                 approvedValue,
+                                readyToDeliverCount,
+                                readyToDeliverValue,
+                                overdueDeliveryCount,
+                                overdueDeliveryValue,
                                 rejectedCount
                             };
                         })();
@@ -22487,6 +22571,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 if (filterOrderApprovalStatus === "pending_credit") return c.isPendingCreditApproval;
                                 if (filterOrderApprovalStatus === "zero_price") return c.hasZeroOrGift;
                                 if (filterOrderApprovalStatus === "approved") return c.isApproved;
+                                if (filterOrderApprovalStatus === "ready_to_deliver") return c.isReadyToDeliver;
+                                if (filterOrderApprovalStatus === "overdue_delivery") return c.isOverdueDelivery;
                                 if (filterOrderApprovalStatus === "rejected") return c.isCancelledOrRejected;
                                 return true;
                             });
@@ -22506,6 +22592,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         title="Nhấn để lọc ngay các đơn hàng đang chờ duyệt"
                                     >
                                         ⏳ {orderApprovalStats.pendingAnyCount} đơn chờ duyệt
+                                    </span>
+                                )}
+                                {orderApprovalStats.readyToDeliverCount > 0 && (
+                                    <span
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "ready_to_deliver" ? "all" : "ready_to_deliver")}
+                                        className="text-[10px] bg-emerald-950 text-emerald-300 border border-emerald-700 px-2.5 py-0.5 rounded-full font-mono font-bold cursor-pointer hover:bg-emerald-900"
+                                        title="Nhấn để lọc các đơn đã có đủ hàng, sẵn sàng giao ngay"
+                                    >
+                                        🟢 {orderApprovalStats.readyToDeliverCount} đơn sẵn sàng giao
+                                    </span>
+                                )}
+                                {orderApprovalStats.overdueDeliveryCount > 0 && (
+                                    <span
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "overdue_delivery" ? "all" : "overdue_delivery")}
+                                        className="text-[10px] bg-rose-950 text-rose-300 border border-rose-700 px-2.5 py-0.5 rounded-full font-mono font-bold cursor-pointer hover:bg-rose-900 animate-pulse"
+                                        title="Nhấn để lọc các đơn trễ hạn giao so với ngày giao dự kiến"
+                                    >
+                                        🚨 {orderApprovalStats.overdueDeliveryCount} đơn trễ hạn giao
                                     </span>
                                 )}
                             </div>
@@ -22739,6 +22843,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     >
                                         ✅ Đã duyệt ({orderApprovalStats.approvedCount})
                                     </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "ready_to_deliver" ? "all" : "ready_to_deliver")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "ready_to_deliver"
+                                                ? "bg-teal-600 text-white border-teal-400 shadow-sm"
+                                                : orderApprovalStats.readyToDeliverCount > 0
+                                                    ? "bg-teal-950/50 text-teal-300 border-teal-700/70 hover:bg-teal-900/60"
+                                                    : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800"
+                                        )}
+                                        title="Lọc các đơn hàng đã có đủ hàng trong kho, sẵn sàng xuất phiếu giao ngay"
+                                    >
+                                        🟢 Đủ hàng / Sẵn sàng giao ({orderApprovalStats.readyToDeliverCount})
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFilterOrderApprovalStatus(prev => prev === "overdue_delivery" ? "all" : "overdue_delivery")}
+                                        className={cn(
+                                            "px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer border",
+                                            filterOrderApprovalStatus === "overdue_delivery"
+                                                ? "bg-red-600 text-white border-red-400 shadow-sm"
+                                                : orderApprovalStats.overdueDeliveryCount > 0
+                                                    ? "bg-red-950/60 text-red-300 border-red-700/80 hover:bg-red-900/60 animate-pulse"
+                                                    : "bg-slate-900 text-slate-400 border-slate-800 hover:bg-slate-800"
+                                        )}
+                                        title="Lọc các đơn hàng chưa giao hoàn tất và đã trễ hạn so với ngày giao dự kiến"
+                                    >
+                                        🚨 Trễ hạn giao ({orderApprovalStats.overdueDeliveryCount})
+                                    </button>
                                 </div>
                                 {(filterOrderRep !== "all" || filterOrderCustomer !== "all" || filterOrderDateMode !== "all" || filterOrderApprovalStatus !== "all" || searchFactoryOrderQuery) && (
                                     <button
@@ -22797,7 +22931,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         onChange={(e) => setFilterOrderApprovalStatus(e.target.value as any)}
                                         className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-orange-300 font-bold outline-none focus:border-orange-500 cursor-pointer"
                                     >
-                                        <option value="all">🛡️ Trạng thái duyệt: Tất cả ({orderApprovalStats.total})</option>
+                                        <option value="all">🛡️ Trạng thái duyệt & giao: Tất cả ({orderApprovalStats.total})</option>
+                                        <option value="ready_to_deliver">🟢 Đủ hàng / Sẵn sàng giao ({orderApprovalStats.readyToDeliverCount})</option>
+                                        <option value="overdue_delivery">🚨 Trễ hạn giao so với dự kiến ({orderApprovalStats.overdueDeliveryCount})</option>
                                         <option value="pending_any">⏳ Chờ duyệt: Tất cả ({orderApprovalStats.pendingAnyCount})</option>
                                         <option value="pending_zero_price">🎁 Chờ duyệt giá 0đ / Hàng tặng ({orderApprovalStats.pendingZeroPriceCount})</option>
                                         <option value="pending_credit">🔒 Chờ Kế toán duyệt công nợ ({orderApprovalStats.pendingCreditCount})</option>
@@ -23206,23 +23342,63 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             </td>
                                                             <td className="p-3 text-slate-400 font-mono whitespace-nowrap">{req.requestedDeliveryDate || "—"}</td>
                                                             <td className="p-3 whitespace-nowrap">
-                                                                {canManageAllOrders ? (
-                                                                    <div className="flex items-center gap-1.5">
-                                                                        <DateInputVN
-                                                                            value={req.estimatedDeliveryDate || ""}
-                                                                            onChange={(e) => handleUpdateEstimatedDeliveryDate(req.id, e.target.value)}
-                                                                            className="bg-slate-950 border border-slate-750 hover:border-indigo-500 rounded px-2 py-1 text-xs text-amber-300 font-mono font-bold focus:border-indigo-500 focus:outline-none cursor-pointer"
-                                                                            title="Sale admin cập nhật thời gian giao hàng dự kiến"
-                                                                        />
-                                                                        {req.estimatedDeliveryDate && (
-                                                                            <span className="text-[10px] text-emerald-400 font-bold" title="Đã có ngày hẹn giao">✓</span>
-                                                                        )}
-                                                                    </div>
-                                                                ) : (
-                                                                    <span className={cn("font-mono text-xs font-bold", req.estimatedDeliveryDate ? "text-amber-300" : "text-slate-500")}>
-                                                                        {req.estimatedDeliveryDate ? `📅 ${req.estimatedDeliveryDate}` : "Chờ hẹn"}
-                                                                    </span>
-                                                                )}
+                                                                {(() => {
+                                                                    const reqIso = toIsoOrderDate(req.requestedDeliveryDate);
+                                                                    const estIso = toIsoOrderDate(req.estimatedDeliveryDate) || reqIso;
+                                                                    const isAdjusted = Boolean(estIso && reqIso && estIso !== reqIso);
+                                                                    const isOrderNotDelivered = !stockAnalysis.isFullyDelivered && !isCancelledOrder && req.status !== "Rejected" && !isStockOrder;
+                                                                    const overdueDeliveryDays = (isOrderNotDelivered && estIso && estIso < todayOrderIso)
+                                                                        ? Math.max(1, Math.round((new Date(todayOrderIso).getTime() - new Date(estIso).getTime()) / 86400000))
+                                                                        : 0;
+                                                                    const isDueToday = isOrderNotDelivered && Boolean(estIso && estIso === todayOrderIso);
+                                                                    const canEditEstDate = canManageAllOrders || hasSalesEditPerm || isOrderOfLoggedInStaff(req) || isWarehouseStaff;
+
+                                                                    return (
+                                                                        <div className="flex flex-col gap-1">
+                                                                            {canEditEstDate ? (
+                                                                                <div className="flex items-center gap-1.5">
+                                                                                    <DateInputVN
+                                                                                        value={estIso}
+                                                                                        onChange={(e) => handleUpdateEstimatedDeliveryDate(req.id, e.target.value)}
+                                                                                        className={cn(
+                                                                                            "bg-slate-950 border rounded px-2 py-1 text-xs font-mono font-bold focus:outline-none cursor-pointer",
+                                                                                            overdueDeliveryDays > 0
+                                                                                                ? "border-rose-500/80 text-rose-300 hover:border-rose-400 focus:border-rose-400"
+                                                                                                : isAdjusted
+                                                                                                    ? "border-amber-500/70 text-amber-300 hover:border-amber-400 focus:border-indigo-500"
+                                                                                                    : "border-slate-750 text-slate-200 hover:border-indigo-500 focus:border-indigo-500"
+                                                                                        )}
+                                                                                        title={isAdjusted ? `Đã điều chỉnh (Ngày giao mong muốn: ${req.requestedDeliveryDate || reqIso})` : "Mặc định theo ngày giao mong muốn — bấm để điều chỉnh nếu thay đổi"}
+                                                                                    />
+                                                                                    {isAdjusted && (
+                                                                                        <button
+                                                                                            type="button"
+                                                                                            onClick={() => handleUpdateEstimatedDeliveryDate(req.id, reqIso)}
+                                                                                            className="text-[10px] text-amber-400 hover:text-amber-200 px-1 py-0.5 rounded bg-amber-950/60 border border-amber-700/50 cursor-pointer"
+                                                                                            title={`Khôi phục về ngày giao mong muốn (${req.requestedDeliveryDate || reqIso})`}
+                                                                                        >
+                                                                                            ↺
+                                                                                        </button>
+                                                                                    )}
+                                                                                </div>
+                                                                            ) : (
+                                                                                <span className={cn("font-mono text-xs font-bold", overdueDeliveryDays > 0 ? "text-rose-300" : estIso ? "text-amber-300" : "text-slate-500")}>
+                                                                                    {estIso ? `📅 ${estIso}` : "—"}
+                                                                                </span>
+                                                                            )}
+                                                                            {overdueDeliveryDays > 0 && (
+                                                                                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-rose-950/90 text-rose-300 border border-rose-500/50 w-fit">
+                                                                                    🚨 Trễ hẹn {overdueDeliveryDays} ngày
+                                                                                </span>
+                                                                            )}
+                                                                            {isDueToday && (
+                                                                                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-500/50 w-fit">
+                                                                                    ⏰ Hạn giao hôm nay
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                    );
+                                                                })()}
                                                             </td>
                                                             <td className="p-3 text-slate-300 font-semibold whitespace-nowrap">{req.salesRepName}</td>
                                                             <td className="p-3 whitespace-nowrap">
