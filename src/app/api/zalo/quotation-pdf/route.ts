@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Thông tin pháp lý của công ty phải lấy từ Cấu hình. Trước đây thiếu cấu hình thì in mã số thuế, địa chỉ
-    // (và một số tài khoản ngân hàng không có thật) cố định trong code lên chứng từ gửi khách hàng.
+    // (và số tài khoản ngân hàng trên hợp đồng) cố định trong code lên chứng từ gửi khách hàng.
     const missingCompanyFields = ([["Tên công ty", companyName], ["Mã số thuế", companyTaxCode], ["Địa chỉ", companyAddress]] as [string, string][]).filter(([, v]) => !String(v || "").trim()).map(([label]) => label);
     if (missingCompanyFields.length > 0) {
       return new NextResponse(
@@ -165,7 +165,6 @@ export async function GET(req: NextRequest) {
 
   <div class="totals">
     <div><span>Cộng tiền hàng:</span> <span>${subtotalFmt} đ</span></div>
-    ${q.discount_amount > 0 ? `<div><span>Chiết khấu (${q.discount_rate}%):</span> <span style="color: #dc2626;">-${discountFmt} đ</span></div>` : ''}
     <div><span>Thuế VAT (${q.tax_rate || 8}%):</span> <span>${vatFmt} đ</span></div>
     <div class="grand-total"><span>TỔNG CỘNG:</span> <span>${totalFmt} đ</span></div>
   </div>

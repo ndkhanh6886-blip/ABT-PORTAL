@@ -80,17 +80,17 @@ export async function exportCustomerQuotationToExcel({
     const repFullName = quote.salesRepName || repObj?.full_name || "Nhân viên kinh doanh";
     const cleanRepName = stripVietnameseHonorifics(repFullName);
     const repPhone = quote.salesRepPhone || salesPersonnelContacts[quote.salesRepId]?.phone || companyConfig.phone || "0987 875 934";
-    const repEmail = quote.salesRepEmail || salesPersonnelContacts[quote.salesRepId]?.email || repObj?.email || companyConfig.email || "sales@abtvn.com";
+    const repEmail = quote.salesRepEmail || salesPersonnelContacts[quote.salesRepId]?.email || repObj?.email || companyConfig.email || "sales@tbr.vn";
 
-    const compName = companyConfig.companyName || "Công ty TNHH Giải pháp Y sinh ABT";
-    const compAddress = companyConfig.companyAddress || "Xưởng 6.07 và 5.02, Lô L2, Đường Long Hậu-Hiệp Phước, KCN Long Hậu, Xã Cần Giuộc, Tỉnh Tây Ninh, Việt Nam";
-    const compPhone = companyConfig.companyPhone || "028 2216 0885";
-    const compEmail = companyConfig.companyEmail || "sales@abtvn.com";
-    const compTaxCode = companyConfig.companyTaxCode || "0315562387";
-    const compWebsite = companyConfig.companyWebsite || "www.abtvn.com";
+    const compName = companyConfig.companyName || "CÔNG TY CỔ PHẦN CÔNG NGHỆ TBR";
+    const compAddress = companyConfig.companyAddress || "51 Đường số 26, Phường An Lạc, Quận Bình Tân, TP. Hồ Chí Minh";
+    const compPhone = companyConfig.companyPhone || "028.66 76 77 62";
+    const compEmail = companyConfig.companyEmail || "sales@tbr.vn - tbrtop@gmail.com";
+    const compTaxCode = companyConfig.companyTaxCode || "0313576759";
+    const compWebsite = companyConfig.companyWebsite || "www.tbr.vn";
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "ABT Portal Enterprise";
+    workbook.creator = "TBR Portal Enterprise";
     workbook.lastModifiedBy = cleanRepName;
     workbook.created = new Date();
     workbook.modified = new Date();
@@ -163,14 +163,13 @@ export async function exportCustomerQuotationToExcel({
 
         if (isItemsPricePreVat) {
             itemDisc = Math.round(lineSubtotal * (itDiscRate / 100));
-            itemTaxable = lineSubtotal - itemDisc;
+            itemTaxable = lineSubtotal;
             itemVat = itemVatRate > 0 ? Math.round(itemTaxable * (itemVatRate / 100)) : 0;
         } else {
             const linePreVat = itemVatRate > 0 ? Math.round(lineSubtotal / (1 + itemVatRate / 100)) : lineSubtotal;
-            const itemFinal = lineSubtotal - Math.round(lineSubtotal * (itDiscRate / 100));
-            itemTaxable = itemVatRate > 0 ? Math.round(itemFinal / (1 + (itemVatRate / 100))) : itemFinal;
-            itemVat = itemFinal - itemTaxable;
-            itemDisc = Math.max(0, linePreVat - itemTaxable);
+            itemTaxable = linePreVat;
+            itemVat = lineSubtotal - itemTaxable;
+            itemDisc = Math.round(linePreVat * (itDiscRate / 100));
         }
 
         lineItemsPreVatSum += itemTaxable;
@@ -192,27 +191,26 @@ export async function exportCustomerQuotationToExcel({
 
     let finalTotalAmountVal: number;
     let rawSubtotal: number;
-    let rawDiscount: number = rawDiscountStored || lineItemsDiscSum;
     let effectiveTotalVat: number;
 
     if (hasItems) {
         if (isItemsPricePreVat) {
             rawSubtotal = itemsSum;
             effectiveTotalVat = totalComputedVat;
-            finalTotalAmountVal = rawSubtotal - rawDiscount + effectiveTotalVat;
+            finalTotalAmountVal = rawSubtotal + effectiveTotalVat;
         } else {
             effectiveTotalVat = totalComputedVat;
             if (rawTotalStored > 0 && Math.abs(rawTotalStored - itemsSum) <= 50) {
                 finalTotalAmountVal = rawTotalStored;
             } else {
-                finalTotalAmountVal = itemsSum - (rawDiscount > 0 ? Math.round(rawDiscount * (1 + (taxRateVal / 100))) : 0);
+                finalTotalAmountVal = itemsSum;
             }
             rawSubtotal = finalTotalAmountVal - effectiveTotalVat;
         }
     } else {
         rawSubtotal = rawSubtotalStored || itemsSum;
         effectiveTotalVat = rawVatStored;
-        finalTotalAmountVal = rawTotalStored || (rawVatStored > 0 ? (rawSubtotal - rawDiscount + rawVatStored) : rawSubtotal);
+        finalTotalAmountVal = rawTotalStored || (rawVatStored > 0 ? (rawSubtotal + rawVatStored) : rawSubtotal);
     }
     const rawVat = effectiveTotalVat;
 
@@ -248,7 +246,7 @@ export async function exportCustomerQuotationToExcel({
     let hasLogoImage = false;
     if (typeof window !== "undefined") {
         try {
-            const logoUrl = companyConfig.companyLogo || "/logo-abt.png";
+            const logoUrl = companyConfig.companyLogo || "/logo-tbr.png";
             const resp = await fetch(logoUrl);
             if (resp.ok) {
                 const arrBuf = await resp.arrayBuffer();
@@ -443,7 +441,7 @@ export async function exportCustomerQuotationToExcel({
         const displayCode = it.parentCode || it.parent_code || (prod as any)?.parent_code || (prod as any)?.parent_item_code || itCode || "—";
         const itName = it.productName || it.product_name || it.name || prod?.name || itCode || "Sản phẩm";
         const spec = it.specification || prod?.specification || it.spec || "—";
-        const mfg = formatSupplierShortName(it.manufacturer || (prod as any)?.manufacturer || (prod as any)?.brand || "");
+        const mfg = formatSupplierShortName(it.manufacturer || (prod as any)?.manufacturer || (prod as any)?.brand || "ABT");
         const rawNote = it.notes || it.note || "";
         const note = (rawNote === prod?.notes || rawNote === "Imported from Excel") ? "" : rawNote;
         
@@ -619,7 +617,7 @@ export async function exportCustomerQuotationToExcel({
     // ==========================================
     // 6. TOTAL AMOUNT & FINANCIAL BREAKDOWN
     // ==========================================
-    if (rawDiscount > 0 || effectiveTotalVat > 0) {
+    if (effectiveTotalVat > 0 || isItemsPricePreVat) {
         // Row: Cộng tiền hàng (chưa VAT)
         sheet.mergeCells(`A${currentRowIdx}:G${currentRowIdx}`);
         const cSubLabel = sheet.getCell(`A${currentRowIdx}`);
@@ -639,28 +637,6 @@ export async function exportCustomerQuotationToExcel({
             cell.border = thinBorder;
         }
         currentRowIdx++;
-
-        // Row: Chiết khấu (nếu có)
-        if (rawDiscount > 0) {
-            sheet.mergeCells(`A${currentRowIdx}:G${currentRowIdx}`);
-            const cDiscLabel = sheet.getCell(`A${currentRowIdx}`);
-            cDiscLabel.value = `Chiết khấu (${quote.discountRate || quote.discount_rate || 0}%):`;
-            cDiscLabel.font = { name: "Segoe UI", size: 10, color: { argb: "FFDC2626" } };
-            cDiscLabel.alignment = { vertical: "middle", horizontal: "right" };
-
-            const cDiscVal = sheet.getCell(`H${currentRowIdx}`);
-            cDiscVal.value = -rawDiscount;
-            cDiscVal.numFmt = "#,##0";
-            cDiscVal.font = { name: "Segoe UI", size: 10, bold: true, color: { argb: "FFDC2626" } };
-            cDiscVal.alignment = { vertical: "middle", horizontal: "right" };
-            sheet.getRow(currentRowIdx).height = 24;
-
-            for (let c = 1; c <= 9; c++) {
-                const cell = sheet.getRow(currentRowIdx).getCell(c);
-                cell.border = thinBorder;
-            }
-            currentRowIdx++;
-        }
 
         // Row: Thuế VAT (hỗ trợ nhiều mức thuế suất 5%, 8%, 10%...)
         if (effectiveTotalVat > 0) {
@@ -790,7 +766,7 @@ export async function exportCustomerQuotationToExcel({
 
     const defaultValidity = "Báo giá có hiệu lực trong vòng 30 ngày kể từ ngày ban hành.";
     const defaultDelivery = "Giao hàng tận nơi trong vòng 3-5 ngày làm việc kể từ khi xác nhận đơn hàng/hợp đồng.";
-    const defaultPayment = "Thanh toán 100% bằng chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT.";
+    const defaultPayment = "Thanh toán 100% bằng tiền mặt hoặc chuyển khoản trong vòng 15-30 ngày kể từ ngày nhận đủ hàng hóa và hóa đơn GTGT. Thông tin tài khoản: Công ty Cổ Phần Công nghệ TBR – STK: 170 270 499 tại Ngân hàng Á Châu (ACB) – Chi nhánh TP. Hồ Chí Minh.";
     const defaultNote = isItemsPricePreVat
         ? "Đơn giá chưa bao gồm thuế Giá Trị Gia Tăng (VAT). Chi phí vận chuyển, hướng dẫn sử dụng theo thỏa thuận."
         : "Đơn giá đã bao gồm thuế Giá Trị Gia Tăng (VAT) và chi phí vận chuyển, hướng dẫn sử dụng tại cơ sở.";

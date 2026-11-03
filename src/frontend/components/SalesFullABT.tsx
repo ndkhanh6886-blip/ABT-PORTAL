@@ -1523,7 +1523,7 @@ export function SalesFullABT() {
                     }
                 });
 
-                const expectedTotal = isPreVat ? (itemsSum - calcTotalDiscount + totalComputedVat) : itemsSum;
+                const expectedTotal = isPreVat ? (itemsSum + totalComputedVat) : itemsSum;
                 if (Math.abs(calcTotalAmount - expectedTotal) > 50 || calcTotalAmount === 0 || Math.abs(calcTotalVat - totalComputedVat) > 50) {
                     calcTotalAmount = expectedTotal;
                     calcTotalVat = totalComputedVat;
@@ -7816,14 +7816,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const grossAfterVat = safeQty * safePrice;
         // Thành tiền trước VAT = tổng sau VAT / (1 + VAT%)
         const totalBeforeVat = safeVat > 0 ? Math.round(grossAfterVat / (1 + safeVat / 100)) : grossAfterVat;
-        // Tiền chiết khấu tính trên giá trước thuế
+        // Tiền chiết khấu tính trên giá trước thuế (chỉ để nội bộ nắm thông tin, không hiển thị và không trừ vào báo giá gửi khách)
         const discountAmount = Math.round(totalBeforeVat * (safeDiscountRate / 100));
-        // Thuần trước VAT sau chiết khấu
+        // Thuần trước VAT sau chiết khấu (nội bộ)
         const netBeforeVat = totalBeforeVat - discountAmount;
-        // Thành tiền sau VAT thực tế báo khách (đã trừ chiết khấu); không chiết khấu thì đúng bằng SL x giá sau VAT
-        const total = discountAmount > 0 ? (safeVat > 0 ? Math.round(netBeforeVat * (1 + safeVat / 100)) : netBeforeVat) : grossAfterVat;
+        // Thành tiền sau VAT thực tế báo khách luôn bằng SL x giá sau VAT (chiết khấu chỉ nội bộ nắm thông tin)
+        const total = grossAfterVat;
         // Tiền thuế VAT = sau VAT - trước VAT (cộng lại luôn khớp tổng)
-        const vatAmount = total - netBeforeVat;
+        const vatAmount = grossAfterVat - totalBeforeVat;
 
         return {
             vatRate: safeVat,
@@ -10804,13 +10804,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                 if (isItemsPricePreVat) {
                     itemDisc = Math.round(lineSubtotal * (itDiscRate / 100));
-                    itemTaxable = lineSubtotal - itemDisc;
+                    itemTaxable = lineSubtotal;
                     itemVat = itemVatRate > 0 ? Math.round(itemTaxable * (itemVatRate / 100)) : 0;
                 } else {
-                    const pricePreVat = itemVatRate > 0 ? Math.round(itPrice / (1 + itemVatRate / 100)) : itPrice;
                     const linePreVat = itemVatRate > 0 ? Math.round(lineSubtotal / (1 + itemVatRate / 100)) : lineSubtotal;
                     itemDisc = Math.round(linePreVat * (itDiscRate / 100));
-                    itemTaxable = linePreVat - itemDisc;
+                    itemTaxable = linePreVat;
                     itemVat = itemVatRate > 0 ? (lineSubtotal - linePreVat) : 0;
                 }
 
@@ -10833,27 +10832,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             let finalTotal: number;
             let rawSubtotal: number;
-            let rawDiscount: number = rawDiscountStored || lineItemsDiscSum;
             let effectiveTotalVat: number;
 
             if (hasItems) {
                 if (isItemsPricePreVat) {
                     rawSubtotal = itemsSum;
                     effectiveTotalVat = totalComputedVat;
-                    finalTotal = rawSubtotal - rawDiscount + effectiveTotalVat;
+                    finalTotal = rawSubtotal + effectiveTotalVat;
                 } else {
                     effectiveTotalVat = totalComputedVat;
                     if (rawTotalStored > 0 && Math.abs(rawTotalStored - itemsSum) <= 50) {
                         finalTotal = rawTotalStored;
                     } else {
-                        finalTotal = itemsSum - (rawDiscount > 0 ? Math.round(rawDiscount * (1 + (taxRate / 100))) : 0);
+                        finalTotal = itemsSum;
                     }
                     rawSubtotal = finalTotal - effectiveTotalVat;
                 }
             } else {
                 rawSubtotal = rawSubtotalStored || itemsSum;
                 effectiveTotalVat = rawVatStored;
-                finalTotal = rawTotalStored || (rawVatStored > 0 ? (rawSubtotal - rawDiscount + rawVatStored) : rawSubtotal);
+                finalTotal = rawTotalStored || (rawVatStored > 0 ? (rawSubtotal + rawVatStored) : rawSubtotal);
             }
             const rawVat = effectiveTotalVat;
 
@@ -11030,18 +11028,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </thead>
                         <tbody>
                             ${itemsRows}
-                            ${(rawDiscount > 0 || effectiveTotalVat > 0 || isItemsPricePreVat) ? `
+                            ${(effectiveTotalVat > 0 || isItemsPricePreVat) ? `
                                 <tr>
                                     <td colspan="7" style="text-align: right; color: #475569;">Cộng tiền hàng (chưa VAT):</td>
                                     <td style="text-align: right; color: #475569;">${new Intl.NumberFormat("vi-VN").format(rawSubtotal || itemsSum)}đ</td>
                                     <td></td>
                                 </tr>
-                                ${rawDiscount > 0 ? `
-                                <tr>
-                                    <td colspan="7" style="text-align: right; color: #dc2626;">Chiết khấu (${quote.discountRate || quote.discount_rate || 0}%):</td>
-                                    <td style="text-align: right; color: #dc2626;">-${new Intl.NumberFormat("vi-VN").format(rawDiscount)}đ</td>
-                                    <td></td>
-                                </tr>` : ''}
                                 ${effectiveTotalVat > 0 ? (
                                     activeVatBuckets.length > 1 ? `
                                         ${activeVatBuckets.map(b => `
