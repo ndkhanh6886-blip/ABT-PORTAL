@@ -755,10 +755,9 @@ export async function POST(req: NextRequest) {
                       warehouse_location = COALESCE($3, warehouse_location),
                       lot_number = CASE WHEN $4::text != '' THEN $4::text ELSE lot_number END,
                       expiry_date = CASE WHEN $5::text IS NOT NULL THEN $5::text ELSE expiry_date END,
-                      storage_temp = CASE WHEN $6::text != '' THEN $6::text ELSE storage_temp END,
                       last_updated = CURRENT_TIMESTAMP
-                WHERE product_code = $7`,
-              [qtyDiff, newShelf || null, newLoc || null, newLot, newExp, newStorageCond, pCode]
+                WHERE product_code = $6`,
+              [qtyDiff, newShelf || null, newLoc || null, newLot, newExp, pCode]
             );
 
             const lotRows = await c.query(
