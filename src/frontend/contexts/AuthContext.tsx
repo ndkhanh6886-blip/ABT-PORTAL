@@ -87,7 +87,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return null;
     });
 
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState<boolean>(() => {
+        if (typeof window !== "undefined") {
+            try {
+                const stored = localStorage.getItem("tbr_current_user") || localStorage.getItem("current_user");
+                if (stored) {
+                    const parsed = JSON.parse(stored);
+                    if (parsed && (parsed.email || parsed.username || parsed.name)) return false;
+                }
+            } catch (e) {}
+        }
+        return true;
+    });
     const router = useRouter();
     const pathname = usePathname();
     const sessionCheckedRef = useRef(false);

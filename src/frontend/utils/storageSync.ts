@@ -51,8 +51,68 @@ function withoutDemoRows(key: string, value: any): any {
   return isDemo && Array.isArray(value) ? value.filter(item => !isDemo(item)) : value;
 }
 
-/** Keys kept when the cache is cleared at logout (UI preferences only). */
-const PRESERVED_LOCAL_PREFIXES = ["tbr_theme", "theme", "tbr_clean_slate_"];
+/** Keys kept when the cache is cleared at logout (UI preferences, and the data-reset epoch this browser applied). */
+const PRESERVED_LOCAL_PREFIXES = ["tbr_theme", "theme", "tbr_clean_slate_", "tbr_data_epoch"];
+
+/**
+ * Every write to /api/storage carries the data-reset epoch this browser applied. After a server reset a tab
+ * opened earlier still holds the old rows in memory and its next save would push them back (seen with the
+ * activity notifications); the server rejects such writes with 409 { stale_epoch } and the page reloads.
+ */
+const EPOCH_HEADER = "X-Tbr-Data-Epoch";
+let memoryEpoch = "";
+
+function knownEpoch(): string {
+  if (memoryEpoch) return memoryEpoch;
+  try {
+    const stored = window.localStorage.getItem("tbr_data_epoch") || "";
+    if (stored) memoryEpoch = stored;
+    return stored;
+  } catch {
+    return "";
+  }
+}
+
+function setKnownEpoch(epoch: string): void {
+  const clean = String(epoch || "").trim();
+  if (!clean) return;
+  memoryEpoch = clean;
+  try {
+    window.localStorage.setItem("tbr_data_epoch", clean);
+    if (window.localStorage.getItem("tbr_data_epoch") !== clean) {
+      for (const heavyKey of ["sales_cached_biolab_products", "sales_commercial_products", "inventoryItems", "tbr_activity_notifications"]) {
+        window.localStorage.removeItem(heavyKey);
+      }
+      window.localStorage.setItem("tbr_data_epoch", clean);
+    }
+  } catch {}
+}
+
+function storageWriteHeaders(): Record<string, string> {
+  return { "Content-Type": "application/json", [EPOCH_HEADER]: knownEpoch() };
+}
+
+async function handleStaleEpoch(res: Response): Promise<void> {
+  if (res.status !== 409) return;
+  const json = await res.clone().json().catch(() => ({}));
+  if (!json?.stale_epoch) return;
+  const hadEpoch = Boolean(knownEpoch());
+  if (json.epoch) setKnownEpoch(String(json.epoch));
+  // tải lại tối đa 1 lần / phút để không lặp vô hạn nếu có sự cố
+  try {
+    const last = Number(window.sessionStorage.getItem("tbr_epoch_reload_at") || 0);
+    if (Date.now() - last < 60_000) {
+      await applyDataResetEpoch();
+      window.dispatchEvent(new CustomEvent("tbr:storage-conflict", { detail: { stale_epoch: true } }));
+      return;
+    }
+    window.sessionStorage.setItem("tbr_epoch_reload_at", String(Date.now()));
+  } catch {}
+  // báo cho tab đã mở trước lần reset; lần mở đầu tiên sau reset (chưa biết mốc) thì tải lại âm thầm
+  if (hadEpoch) alert(json.error || "Dữ liệu trên máy chủ vừa được làm mới. Trang sẽ tải lại.");
+  await applyDataResetEpoch();
+  window.location.reload();
+}
 
 function clone<T>(v: T): T {
   return v === undefined ? v : JSON.parse(JSON.stringify(v));
@@ -86,8 +146,14 @@ async function recordFromGet(url: URL, res: Response) {
   if (!res.ok) return;
   try {
     const json = await res.json();
+    if (json && typeof json.epoch === "string" && json.epoch && !knownEpoch()) {
+      setKnownEpoch(json.epoch);
+    }
     const key = url.searchParams.get("key");
     if (key) {
+      if (key === "data_reset_epoch" && json?.data?.epoch && !knownEpoch()) {
+        setKnownEpoch(String(json.data.epoch));
+      }
       if (json && "data" in json) recordBase(key, json.data, json.version);
       return;
     }
@@ -123,12 +189,14 @@ async function saveKey(key: string, nextData: any): Promise<Response> {
     }
     const res = await f("/api/storage", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: storageWriteHeaders(),
       body: JSON.stringify({ key, patch }),
     });
     if (res.ok) {
       const json = await res.clone().json().catch(() => ({}));
       recordBase(key, nextData, json.version);
+    } else if (res.status === 409) {
+      await handleStaleEpoch(res);
     } else if (res.status === 401) {
       window.dispatchEvent(new Event("tbr:unauthorized"));
     }
@@ -140,13 +208,14 @@ async function saveKey(key: string, nextData: any): Promise<Response> {
   if (base && base.version !== null) body.expectedVersion = base.version;
   const res = await f("/api/storage", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: storageWriteHeaders(),
     body: JSON.stringify(body),
   });
   if (res.ok) {
     const json = await res.clone().json().catch(() => ({}));
     recordBase(key, nextData, json.version);
   } else if (res.status === 409) {
+    await handleStaleEpoch(res);
     console.error(`[storageSync] Xung đột khi lưu "${key}": dữ liệu đã được người khác cập nhật.`);
     notifyConflict(key);
   } else if (res.status === 401) {
@@ -168,13 +237,151 @@ function parseStorageBody(url: URL, rawBody: string): { key: string; data: any }
 }
 
 export function saveStorageKey(key: string, data: any): Promise<Response> {
+  markCacheMutated("/api/storage");
   return enqueue(key, () => saveKey(key, clone(data)));
+}
+
+/* ---------------- Instant Stale-While-Revalidate (SWR) Cache (RAM + IndexedDB) ---------------- */
+
+interface CachedApiEntry {
+  key: string;
+  epoch: string;
+  userKey: string;
+  url: string;
+  bodyText: string;
+  updatedAt: number;
+}
+
+const IDB_NAME = "tbr_instant_api_cache_v1";
+const IDB_STORE = "responses";
+const apiMemoryCache = new Map<string, CachedApiEntry>();
+const inFlightGets = new Map<string, Promise<{ status: number; bodyText: string; ok: boolean }>>();
+let bypassCacheUntil = 0;
+let idbPromise: Promise<IDBDatabase | null> | null = null;
+let idbWarmPromise: Promise<void> | null = null;
+
+function currentUserKey(): string {
+  if (typeof window === "undefined") return "anon";
+  try {
+    const raw = window.localStorage.getItem("tbr_current_user") || window.localStorage.getItem("current_user");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return String(parsed?.username || parsed?.id || parsed?.email || "anon").toLowerCase();
+    }
+  } catch {}
+  return "anon";
+}
+
+function openCacheIdb(): Promise<IDBDatabase | null> {
+  if (typeof window === "undefined" || !("indexedDB" in window)) return Promise.resolve(null);
+  if (idbPromise) return idbPromise;
+  idbPromise = new Promise<IDBDatabase | null>((resolve) => {
+    try {
+      const req = window.indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE, { keyPath: "key" });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+  return idbPromise;
+}
+
+function warmMemoryCacheFromIdb(): Promise<void> {
+  if (idbWarmPromise) return idbWarmPromise;
+  idbWarmPromise = (async () => {
+    const db = await openCacheIdb();
+    if (!db) return;
+    await new Promise<void>((resolve) => {
+      try {
+        const tx = db.transaction(IDB_STORE, "readonly");
+        const store = tx.objectStore(IDB_STORE);
+        const req = store.getAll();
+        req.onsuccess = () => {
+          const rows: CachedApiEntry[] = Array.isArray(req.result) ? req.result : [];
+          for (const row of rows) {
+            if (row && row.key && typeof row.bodyText === "string" && !apiMemoryCache.has(row.key)) {
+              apiMemoryCache.set(row.key, row);
+            }
+          }
+          resolve();
+        };
+        req.onerror = () => resolve();
+      } catch {
+        resolve();
+      }
+    });
+  })();
+  return idbWarmPromise;
+}
+
+function putIdbEntry(entry: CachedApiEntry): void {
+  openCacheIdb().then((db) => {
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).put(entry);
+    } catch {}
+  });
+}
+
+function clearInstantApiCache(): void {
+  apiMemoryCache.clear();
+  openCacheIdb().then((db) => {
+    if (!db) return;
+    try {
+      const tx = db.transaction(IDB_STORE, "readwrite");
+      tx.objectStore(IDB_STORE).clear();
+    } catch {}
+  });
+}
+
+function markCacheMutated(pathname?: string): void {
+  bypassCacheUntil = Date.now() + 8000;
+  if (pathname) {
+    for (const [k, v] of apiMemoryCache.entries()) {
+      if (v.url.startsWith(pathname)) {
+        apiMemoryCache.delete(k);
+      }
+    }
+  }
+}
+
+function isCacheableApiGet(url: URL): boolean {
+  const p = url.pathname;
+  const action = url.searchParams.get("action") || "overview";
+  if (p === "/api/inventory") {
+    return action === "overview" || action === "lot_stock" || action === "lot_stock_page" || action === "product_components";
+  }
+  if (p === "/api/sales") {
+    return action === "overview" || action === "reservations" || action === "customers";
+  }
+  if (p === "/api/workflows") {
+    return action === "overview" || action === "templates" || action === "workflows" || action === "tasks";
+  }
+  if (p === "/api/procurement") {
+    return action === "overview" || action === "po_payments" || !url.searchParams.has("action");
+  }
+  if (p === "/api/storage") {
+    return url.searchParams.get("key") !== "data_reset_epoch";
+  }
+  if (p === "/api/portal/customer") {
+    return action === "list_incidents";
+  }
+  return false;
 }
 
 export function installStorageSync() {
   if (typeof window === "undefined" || originalFetch) return;
   originalFetch = window.fetch.bind(window);
   const f = originalFetch;
+  warmMemoryCacheFromIdb();
 
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = toUrl(input);
@@ -183,20 +390,112 @@ export function installStorageSync() {
     }
     const method = (init?.method || (typeof input === "object" && "method" in (input as any) ? (input as Request).method : "GET")).toUpperCase();
 
-    if (url.pathname === "/api/storage") {
-      if (method === "GET") {
-        const res = await f(input as any, init);
-        await recordFromGet(url, res.clone());
-        if (res.status === 401) window.dispatchEvent(new Event("tbr:unauthorized"));
-        return res;
-      }
-      if (method === "POST" && typeof init?.body === "string") {
-        const parsed = parseStorageBody(url, init.body);
-        if (parsed) return saveStorageKey(parsed.key, parsed.data);
+    if (method !== "GET") {
+      const isHeartbeat = url.pathname === "/api/auth" && typeof init?.body === "string" && init.body.includes('"heartbeat"');
+      if (!isHeartbeat) {
+        markCacheMutated(url.pathname);
       }
     }
 
+    if (url.pathname === "/api/storage" && method === "POST" && typeof init?.body === "string") {
+      const parsed = parseStorageBody(url, init.body);
+      if (parsed) return saveStorageKey(parsed.key, parsed.data);
+    }
+
+    if (method === "GET" && isCacheableApiGet(url)) {
+      if (idbWarmPromise) {
+        await Promise.race([idbWarmPromise, new Promise((r) => setTimeout(r, 45))]);
+      }
+      const uKey = currentUserKey();
+      const ep = knownEpoch() || "init";
+      const relUrl = url.pathname + url.search;
+      const cacheKey = `${uKey}|${ep}|${relUrl}`;
+      const reqHeaders = new Headers(init?.headers || (typeof input === "object" && "headers" in (input as any) ? (input as Request).headers : undefined));
+      const forceNetwork = Date.now() <= bypassCacheUntil || reqHeaders.get("x-no-cache") === "1";
+
+      const fetchAndStore = (): Promise<{ status: number; bodyText: string; ok: boolean }> => {
+        const existingInFlight = inFlightGets.get(cacheKey);
+        if (existingInFlight) return existingInFlight;
+
+        const run = (async () => {
+          const netRes = await f(input as any, init);
+          const bodyText = await netRes.text();
+          if (netRes.status === 401 && url.pathname !== "/api/auth") {
+            window.dispatchEvent(new Event("tbr:unauthorized"));
+          } else if (netRes.status === 403) {
+            try {
+              const j = JSON.parse(bodyText);
+              if (j && j.must_change_password) window.dispatchEvent(new Event("tbr:must-change-password"));
+            } catch {}
+          }
+          if (netRes.ok) {
+            if (url.pathname === "/api/storage") {
+              await recordFromGet(url, new Response(bodyText, { status: 200, headers: { "Content-Type": "application/json" } }));
+            }
+            const prevEntry = apiMemoryCache.get(cacheKey);
+            const changed = !prevEntry || prevEntry.bodyText !== bodyText;
+            const entry: CachedApiEntry = {
+              key: cacheKey,
+              epoch: knownEpoch() || ep,
+              userKey: uKey,
+              url: relUrl,
+              bodyText,
+              updatedAt: Date.now(),
+            };
+            apiMemoryCache.set(cacheKey, entry);
+            putIdbEntry(entry);
+            if (prevEntry && changed) {
+              window.dispatchEvent(
+                new CustomEvent("tbr:api-revalidated", {
+                  detail: { url: relUrl, pathname: url.pathname, search: url.search },
+                })
+              );
+            }
+          }
+          return { status: netRes.status, bodyText, ok: netRes.ok };
+        })().finally(() => {
+          inFlightGets.delete(cacheKey);
+        });
+
+        inFlightGets.set(cacheKey, run);
+        return run;
+      };
+
+      const cached = !forceNetwork ? apiMemoryCache.get(cacheKey) : undefined;
+      if (cached) {
+        if (url.pathname === "/api/storage") {
+          await recordFromGet(url, new Response(cached.bodyText, { status: 200, headers: { "Content-Type": "application/json" } }));
+        }
+        if (Date.now() - cached.updatedAt > 2500) {
+          fetchAndStore().catch(() => {});
+        }
+        return new Response(cached.bodyText, {
+          status: 200,
+          headers: { "Content-Type": "application/json", "X-Tbr-Cache": "HIT" },
+        });
+      }
+
+      const net = await fetchAndStore();
+      return new Response(net.bodyText, {
+        status: net.status,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (url.pathname === "/api/storage" && method === "GET") {
+      const res = await f(input as any, init);
+      await recordFromGet(url, res.clone());
+      if (res.status === 401) window.dispatchEvent(new Event("tbr:unauthorized"));
+      return res;
+    }
+
+    if (url.pathname === "/api/storage" && method !== "GET") {
+      const headers = new Headers(init?.headers || (typeof input === "object" && "headers" in (input as any) ? (input as Request).headers : undefined));
+      headers.set(EPOCH_HEADER, knownEpoch());
+      init = { ...(init || {}), headers };
+    }
     const res = await f(input as any, init);
+    if (url.pathname === "/api/storage" && res.status === 409) await handleStaleEpoch(res);
     if (res.status === 401 && url.pathname !== "/api/auth") {
       window.dispatchEvent(new Event("tbr:unauthorized"));
     } else if (res.status === 403) {
@@ -318,6 +617,47 @@ export async function hydrateServerBackedKeys(): Promise<boolean> {
   }
 }
 
+/**
+ * After the server data was reset (scripts/reset_for_production.js writes app_storage "data_reset_epoch"),
+ * drops every cached business row in this browser once, without uploading anything, so old test data
+ * cannot be pushed back to the server. Call before hydrateServerBackedKeys.
+ */
+export async function applyDataResetEpoch(): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 15000);
+    const res = await fetch("/api/storage?key=data_reset_epoch", { signal: ctrl.signal }).finally(() => clearTimeout(t));
+    if (!res.ok) return;
+    const json = await res.json();
+    const epoch = String(json?.data?.epoch || json?.epoch || "").trim();
+    if (!epoch) return;
+    if (window.localStorage.getItem("tbr_data_epoch") === epoch) {
+      memoryEpoch = epoch;
+      return;
+    }
+    for (const timer of mirrorTimers.values()) clearTimeout(timer);
+    mirrorTimers.clear();
+    // Cấu hình được giữ lại (một số máy chỉ có bản cấu hình trong trình duyệt)
+    const keepPrefixes = [
+      ...PRESERVED_LOCAL_PREFIXES, "tbr_org_", "org_", "sales_company_", "system_notification_matrix", "finance_payment_methods",
+      "customer_industry_groups", "sales_customer_industry_groups", "settings_", "user_permissions_", "ws_templates_expanded",
+    ];
+    const keys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const k = window.localStorage.key(i);
+      if (k && !keepPrefixes.some(p => k.startsWith(p)) && !k.endsWith("_config")) keys.push(k);
+    }
+    keys.forEach(k => window.localStorage.removeItem(k));
+    bases.clear();
+    lastValues.clear();
+    clearInstantApiCache();
+    setKnownEpoch(epoch);
+  } catch {
+    // máy chủ không trả lời: giữ nguyên bộ nhớ đệm, lần mở sau sẽ kiểm tra lại
+  }
+}
+
 /** Clears cached business data from this browser (called at logout so the next user never sees or re-uploads it). */
 export function clearLocalDataCache() {
   if (typeof window === "undefined") return;
@@ -341,6 +681,7 @@ export function clearLocalDataCache() {
   keys.forEach(k => window.localStorage.removeItem(k));
   bases.clear();
   lastValues.clear();
+  clearInstantApiCache();
   mirrorEnabled = false;
 }
 

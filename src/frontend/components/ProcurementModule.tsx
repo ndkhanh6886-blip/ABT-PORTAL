@@ -832,9 +832,9 @@ export const ProcurementModule: React.FC = () => {
     };
   };
 
-  const fetchData = async () => {
+  const fetchData = async (opts?: { silent?: boolean }) => {
     try {
-      setLoading(true);
+      if (!opts?.silent && orders.length === 0 && suppliers.length === 0) setLoading(true);
       const res = await fetch("/api/procurement?action=overview");
       const data = await res.json();
       if (data) {
@@ -858,6 +858,13 @@ export const ProcurementModule: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+    const onRevalidated = (e: any) => {
+      if (e?.detail?.pathname === "/api/procurement") {
+        fetchData({ silent: true });
+      }
+    };
+    window.addEventListener("tbr:api-revalidated", onRevalidated);
+    return () => window.removeEventListener("tbr:api-revalidated", onRevalidated);
   }, []);
 
   const supplierFileInputRef = useRef<HTMLInputElement>(null);

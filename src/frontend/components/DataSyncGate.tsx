@@ -8,7 +8,18 @@ import { hydrateServerBackedKeys } from "@/frontend/utils/storageSync";
  * mount, and warns the user when a save was rejected because someone else changed the same data.
  */
 export function DataSyncGate({ children }: { children: React.ReactNode }) {
-  const [ready, setReady] = useState(false);
+  const [ready, setReady] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return Boolean(
+          window.localStorage.getItem("tbr_data_epoch") ||
+          window.localStorage.getItem("tbr_current_user") ||
+          window.localStorage.getItem("current_user")
+        );
+      } catch {}
+    }
+    return false;
+  });
   const [offline, setOffline] = useState(false);
   const [conflictKey, setConflictKey] = useState<string | null>(null);
 

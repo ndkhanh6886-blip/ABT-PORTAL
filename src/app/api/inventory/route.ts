@@ -37,6 +37,8 @@ import {
   LOT_EXPIRY_ISO_SQL
 } from "@/backend/services/inventoryLedger";
 
+let lastOverviewSyncAt = 0;
+
 export async function GET(req: NextRequest) {
   try {
     // Phiên phải còn hiệu lực (tài khoản chưa bị khóa, mật khẩu chưa đổi): proxy chỉ kiểm tra chữ ký cookie
@@ -289,7 +291,9 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "overview") {
-      await query(`
+      if (Date.now() - lastOverviewSyncAt > 5 * 60 * 1000) {
+        lastOverviewSyncAt = Date.now();
+        await query(`
         INSERT INTO inventory_items (product_code, product_name, lot_number, expiry_date, warehouse_location, shelf_position, storage_temp, quantity_on_hand, quantity_allocated)
         SELECT p.code, p.name, '', '', 'Kho Trung Tâm', 'Kệ tiêu chuẩn', COALESCE(NULLIF(p.storage_condition, ''), '15-25°C'), 0, 0
           FROM products p
@@ -335,6 +339,7 @@ export async function GET(req: NextRequest) {
            AND (COALESCE(i.quantity_on_hand, 0) <> lt.total_qty
                 OR (COALESCE(i.lot_number, '') = '' AND lt.first_lot IS NOT NULL))
       `).catch(() => {});
+      }
 
       const [items, transactions, products, reservations, openPOs] = await Promise.all([
         query(`
@@ -462,6 +467,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    lastOverviewSyncAt = 0;
     const { searchParams } = new URL(req.url);
     const body = await req.json();
     const action = searchParams.get("action") || body?.action;

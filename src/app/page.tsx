@@ -46,6 +46,7 @@ export default function Home() {
   });
   const { user, loading, can } = useAuth();
   const [mounted, setMounted] = useState(false);
+  const [visitedTabs, setVisitedTabs] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     setMounted(true);
@@ -56,11 +57,33 @@ export default function Home() {
         "factory-warehouse", "factory-settings", "factory-qa", "factory-purchase", "factory-orders",
         "factory-oligo", "factory-rd", "factory-device", "factory-kit", "factory-analytics", "factory-import"
       ];
-      if (p && validTabs.includes(p as MainTab)) {
-        setActiveTab(p as MainTab);
-      }
+      const initialTab = p && validTabs.includes(p as MainTab) ? (p as MainTab) : "workspace";
+      setActiveTab(initialTab);
+      setVisitedTabs((prev) => ({ ...prev, [initialTab]: true }));
     }
   }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
+    setVisitedTabs((prev) => (prev[activeTab] ? prev : { ...prev, [activeTab]: true }));
+  }, [activeTab, mounted]);
+
+  useEffect(() => {
+    if (!mounted || !user || user.mustChangePassword) return;
+    const timer = setTimeout(() => {
+      const endpoints: string[] = [];
+      if (activeTab !== "workspace") endpoints.push("/api/workflows?action=overview");
+      if (activeTab !== "warehouse" && can("warehouse.view")) endpoints.push("/api/inventory?action=overview");
+      if (activeTab !== "sales" && can("sales.view")) endpoints.push("/api/sales?action=overview");
+      if (activeTab !== "procurement" && can("procurement.view")) endpoints.push("/api/procurement?action=overview");
+      endpoints.forEach((ep, idx) => {
+        setTimeout(() => {
+          fetch(ep).catch(() => {});
+        }, idx * 350);
+      });
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [mounted, user, activeTab, can]);
 
   // Đồng bộ URL query ?tab=... khi chuyển phân hệ để hỗ trợ mở nhiều tab trình duyệt độc lập
   useEffect(() => {
@@ -165,12 +188,24 @@ export default function Home() {
         {BUSINESS_TABS.includes(activeTab) && <BusinessTabs active={activeTab} onChange={setActiveTab} />}
         {TECHNICAL_TABS.includes(activeTab) && <TechnicalTabs active={activeTab} onChange={setActiveTab} />}
         {SETTINGS_TABS.includes(activeTab) && <SettingsTabs active={activeTab} onChange={setActiveTab} />}
-        {activeTab === "workspace" && <UnifiedWorkspace />}
-        {activeTab === "sales" && can("sales.view") && <SalesFullABT />}
-        {activeTab === "warehouse" && can("warehouse.view") && <WarehouseModule />}
-        {activeTab === "application" && can("application.view") && <ApplicationFullABT />}
-        {activeTab === "procurement" && can("procurement.view") && <ProcurementModule />}
-        {activeTab === "legal" && can("legal.view") && <LegalModule />}
+        {(activeTab === "workspace" || visitedTabs["workspace"]) && (
+          <div className={activeTab === "workspace" ? "block" : "hidden"}><UnifiedWorkspace /></div>
+        )}
+        {can("sales.view") && (activeTab === "sales" || visitedTabs["sales"]) && (
+          <div className={activeTab === "sales" ? "block" : "hidden"}><SalesFullABT /></div>
+        )}
+        {can("warehouse.view") && (activeTab === "warehouse" || visitedTabs["warehouse"]) && (
+          <div className={activeTab === "warehouse" ? "block" : "hidden"}><WarehouseModule /></div>
+        )}
+        {can("application.view") && (activeTab === "application" || visitedTabs["application"]) && (
+          <div className={activeTab === "application" ? "block" : "hidden"}><ApplicationFullABT /></div>
+        )}
+        {can("procurement.view") && (activeTab === "procurement" || visitedTabs["procurement"]) && (
+          <div className={activeTab === "procurement" ? "block" : "hidden"}><ProcurementModule /></div>
+        )}
+        {can("legal.view") && (activeTab === "legal" || visitedTabs["legal"]) && (
+          <div className={activeTab === "legal" ? "block" : "hidden"}><LegalModule /></div>
+        )}
         {activeTab === "chat" && <EnterpriseChatModule />}
         {activeTab === "zalo" && can("zalo.view") && <ZaloOperationsHub />}
         {activeTab === "settings" && can("settings.view") && <SettingsModule initialSubTab={settingsSubTab} />}

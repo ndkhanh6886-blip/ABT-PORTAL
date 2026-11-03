@@ -2103,11 +2103,23 @@ export const UnifiedWorkspace: React.FC = () => {
   });
 
   // Fetch Data from API
-  const fetchData = async () => {
+  const fetchData = async (opts?: { silent?: boolean }) => {
     try {
-      setLoading(true);
-      const res = await fetch("/api/workflows?action=overview");
+      if (!opts?.silent && workflows.length === 0 && tasks.length === 0) setLoading(true);
+      const wsStorageKeys = [
+        "unified_weekly_schedule",
+        "unified_thematic_projects",
+        "unified_sales_targets",
+        "unified_announcements",
+        "workspace_proposals"
+      ];
+      const [res, batchStorageRes] = await Promise.all([
+        fetch("/api/workflows?action=overview"),
+        fetch(`/api/storage?keys=${wsStorageKeys.join(",")}`).catch(() => null)
+      ]);
       const data = await res.json();
+      const batchStorageJson = batchStorageRes && batchStorageRes.ok ? await batchStorageRes.json().catch(() => null) : null;
+      const batchStorageData: Record<string, any> = batchStorageJson?.data || {};
       if (data) {
         const fetchedTasks: any[] = data.tasks || [];
         setTasks(fetchedTasks);
@@ -2144,78 +2156,11 @@ export const UnifiedWorkspace: React.FC = () => {
           updateUser({ permissions: { ...(user?.permissions || {}), ...mergedMyPerms } });
         }
 
-        // Load suppliers from procurement API & product manufacturers
+        // Load persistent weekly schedule & auto-deduplicate (từ batch request đã tải song song)
         try {
-          const procRes = await fetch("/api/procurement");
-          const procData = await procRes.json();
-          if (procData) {
-            const procProducts = Array.isArray(procData.products) ? procData.products : [];
-            const supProducts = Array.isArray(procData.allSupplierProducts) ? procData.allSupplierProducts : [];
-            const mergedProdMap = new Map<string, any>();
-            for (const p of (Array.isArray(data.products) ? data.products : [])) {
-              const k = String(p.code || p.name || "").trim().toUpperCase();
-              if (k) mergedProdMap.set(k, p);
-            }
-            for (const p of procProducts) {
-              const k = String(p.code || "").trim().toUpperCase();
-              if (k) mergedProdMap.set(k, p);
-            }
-            for (const sp of supProducts) {
-              const k = String(sp.product_code || "").trim().toUpperCase();
-              if (k && !mergedProdMap.has(k)) {
-                mergedProdMap.set(k, {
-                  code: sp.product_code,
-                  name: sp.product_name || sp.product_code,
-                  specification: sp.specification || "",
-                  unit: sp.unit || "Hộp",
-                  category: sp.supplier_short_name || sp.supplier_name || "Danh mục NCC",
-                  cost_price: parseFloat(sp.purchase_price) || 0
-                });
-              }
-            }
-            if (mergedProdMap.size > 0) {
-              setProductList(Array.from(mergedProdMap.values()));
-            }
-          }
-          const apiSups = Array.isArray(procData?.suppliers)
-            ? procData.suppliers
-            : Array.isArray(procData?.data?.suppliers)
-            ? procData.data.suppliers
-            : [];
-          const poSups = Array.isArray(procData?.purchaseOrders)
-            ? procData.purchaseOrders
-                .map((po: any) => ({
-                  name: po.supplier_name || po.vendor_name,
-                  customer_code: po.supplier_code || "NCC",
-                  address: po.country || "Nhà cung cấp PO"
-                }))
-                .filter((s: any) => s.name)
-            : [];
-          // Hãng sản xuất / xuất xứ của sản phẩm không phải nhà cung cấp: chỉ lấy NCC thật và NCC trên đơn mua
-          const mergedSups: any[] = [...DEFAULT_KNOWN_SUPPLIERS];
-          [...apiSups, ...poSups].forEach((s: any) => {
-            const sName = String(s?.name || s?.supplier_name || s?.company_name || "").trim();
-            if (sName && !mergedSups.some((m) => m.name.toLowerCase() === sName.toLowerCase())) {
-              mergedSups.push({
-                id: s.id || `sup-${sName}`,
-                name: sName,
-                customer_code: s.customer_code || s.supplier_code || s.code || "NCC",
-                address: s.address || s.country || "Nhà cung cấp / Đối tác",
-                entityType: "supplier"
-              });
-            }
-          });
-          setSupplierList(mergedSups);
-        } catch (supErr) {
-          console.warn("Could not load procurement suppliers:", supErr);
-        }
-        // Load persistent weekly schedule & auto-deduplicate
-        try {
-          const schedRes = await fetch("/api/storage?key=unified_weekly_schedule");
-          const schedData = await schedRes.json();
           let rawSched: any[] = [];
-          if (Array.isArray(schedData?.data)) {
-            rawSched = schedData.data;
+          if (Array.isArray(batchStorageData.unified_weekly_schedule)) {
+            rawSched = batchStorageData.unified_weekly_schedule;
           } else {
             const local = typeof window !== "undefined" ? localStorage.getItem("unified_weekly_schedule") : null;
             if (local) rawSched = JSON.parse(local);
@@ -2240,11 +2185,9 @@ export const UnifiedWorkspace: React.FC = () => {
 
         // Load persistent thematic projects & sync stage progress with linked company_tasks
         try {
-          const prjRes = await fetch("/api/storage?key=unified_thematic_projects");
-          const prjData = await prjRes.json();
           let rawPrjs: any[] = [];
-          if (Array.isArray(prjData?.data)) {
-            rawPrjs = prjData.data;
+          if (Array.isArray(batchStorageData.unified_thematic_projects)) {
+            rawPrjs = batchStorageData.unified_thematic_projects;
           } else {
             const local = typeof window !== "undefined" ? localStorage.getItem("unified_thematic_projects") : null;
             if (local) rawPrjs = JSON.parse(local);
@@ -2279,10 +2222,8 @@ export const UnifiedWorkspace: React.FC = () => {
 
         // Load persistent sales targets
         try {
-          const stRes = await fetch("/api/storage?key=unified_sales_targets");
-          const stData = await stRes.json();
-          if (Array.isArray(stData?.data)) {
-            setSalesTargets(stData.data);
+          if (Array.isArray(batchStorageData.unified_sales_targets)) {
+            setSalesTargets(batchStorageData.unified_sales_targets);
           } else {
             const localSt = typeof window !== "undefined" ? localStorage.getItem("unified_sales_targets") : null;
             if (localSt) setSalesTargets(JSON.parse(localSt));
@@ -2294,10 +2235,8 @@ export const UnifiedWorkspace: React.FC = () => {
 
         // Load persistent enterprise announcements & decisions
         try {
-          const annRes = await fetch("/api/storage?key=unified_announcements");
-          const annData = await annRes.json();
-          if (Array.isArray(annData?.data)) {
-            setAnnouncements(annData.data);
+          if (Array.isArray(batchStorageData.unified_announcements)) {
+            setAnnouncements(batchStorageData.unified_announcements);
           } else {
             const localAnn = typeof window !== "undefined" ? localStorage.getItem("unified_announcements") : null;
             if (localAnn) setAnnouncements(JSON.parse(localAnn));
@@ -2309,10 +2248,8 @@ export const UnifiedWorkspace: React.FC = () => {
 
         // Load persistent enterprise proposals & approvals
         try {
-          const propRes = await fetch("/api/storage?key=workspace_proposals");
-          const propData = await propRes.json();
-          if (Array.isArray(propData?.data)) {
-            setProposals(propData.data);
+          if (Array.isArray(batchStorageData.workspace_proposals)) {
+            setProposals(batchStorageData.workspace_proposals);
           } else {
             const localProp = typeof window !== "undefined" ? localStorage.getItem("workspace_proposals") : null;
             if (localProp) setProposals(JSON.parse(localProp));
@@ -2321,6 +2258,75 @@ export const UnifiedWorkspace: React.FC = () => {
           const localProp = typeof window !== "undefined" ? localStorage.getItem("workspace_proposals") : null;
           if (localProp) setProposals(JSON.parse(localProp));
         }
+
+        // Bỏ chặn hiển thị giao diện ngay lập tức trước khi tải bổ sung danh mục NCC từ /api/procurement
+        setLoading(false);
+
+        // Load suppliers from procurement API & product manufacturers (non-blocking)
+        fetch("/api/procurement")
+          .then(procRes => procRes.json())
+          .then(procData => {
+            if (procData) {
+              const procProducts = Array.isArray(procData.products) ? procData.products : [];
+              const supProducts = Array.isArray(procData.allSupplierProducts) ? procData.allSupplierProducts : [];
+              const mergedProdMap = new Map<string, any>();
+              for (const p of (Array.isArray(data.products) ? data.products : [])) {
+                const k = String(p.code || p.name || "").trim().toUpperCase();
+                if (k) mergedProdMap.set(k, p);
+              }
+              for (const p of procProducts) {
+                const k = String(p.code || "").trim().toUpperCase();
+                if (k) mergedProdMap.set(k, p);
+              }
+              for (const sp of supProducts) {
+                const k = String(sp.product_code || "").trim().toUpperCase();
+                if (k && !mergedProdMap.has(k)) {
+                  mergedProdMap.set(k, {
+                    code: sp.product_code,
+                    name: sp.product_name || sp.product_code,
+                    specification: sp.specification || "",
+                    unit: sp.unit || "Hộp",
+                    category: sp.supplier_short_name || sp.supplier_name || "Danh mục NCC",
+                    cost_price: parseFloat(sp.purchase_price) || 0
+                  });
+                }
+              }
+              if (mergedProdMap.size > 0) {
+                setProductList(Array.from(mergedProdMap.values()));
+              }
+            }
+            const apiSups = Array.isArray(procData?.suppliers)
+              ? procData.suppliers
+              : Array.isArray(procData?.data?.suppliers)
+              ? procData.data.suppliers
+              : [];
+            const poSups = Array.isArray(procData?.purchaseOrders)
+              ? procData.purchaseOrders
+                  .map((po: any) => ({
+                    name: po.supplier_name || po.vendor_name,
+                    customer_code: po.supplier_code || "NCC",
+                    address: po.country || "Nhà cung cấp PO"
+                  }))
+                  .filter((s: any) => s.name)
+              : [];
+            const mergedSups: any[] = [...DEFAULT_KNOWN_SUPPLIERS];
+            [...apiSups, ...poSups].forEach((s: any) => {
+              const sName = String(s?.name || s?.supplier_name || s?.company_name || "").trim();
+              if (sName && !mergedSups.some((m) => m.name.toLowerCase() === sName.toLowerCase())) {
+                mergedSups.push({
+                  id: s.id || `sup-${sName}`,
+                  name: sName,
+                  customer_code: s.customer_code || s.supplier_code || s.code || "NCC",
+                  address: s.address || s.country || "Nhà cung cấp / Đối tác",
+                  entityType: "supplier"
+                });
+              }
+            });
+            setSupplierList(mergedSups);
+          })
+          .catch(supErr => {
+            console.warn("Could not load procurement suppliers:", supErr);
+          });
       }
     } catch (e) {
       console.error("Failed to load workspace data:", e);
@@ -2332,6 +2338,13 @@ export const UnifiedWorkspace: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+    const onRevalidated = (e: any) => {
+      if (e?.detail?.pathname === "/api/workflows") {
+        fetchData({ silent: true });
+      }
+    };
+    window.addEventListener("tbr:api-revalidated", onRevalidated);
+    return () => window.removeEventListener("tbr:api-revalidated", onRevalidated);
   }, []);
 
   // Sync plannerView when selectedDept changes

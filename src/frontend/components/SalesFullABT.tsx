@@ -1934,31 +1934,37 @@ export function SalesFullABT() {
             const getSlipKey = (s: any): string => String(s?.slip_code || s?.slipCode || s?.code || s?.id || "").trim();
 
             let overviewData: any = null;
-            let serverData: Record<string, any> | null = null;
-            try {
-                const overviewRes = await fetch("/api/sales?action=overview");
-                if (overviewRes.ok) overviewData = await overviewRes.json();
-                if (overviewData && Array.isArray(overviewData.slip_payments)) {
-                    const m: Record<string, number> = {};
-                    overviewData.slip_payments.forEach((r: any) => { if (r.delivery_slip_code) m[r.delivery_slip_code] = (m[r.delivery_slip_code] || 0) + (Number(r.paid) || 0); });
-                    setSlipPaidMap(m);
-                }
-            } catch (err) {
-                console.error("Failed to load overview from /api/sales:", err);
-            }
-            try {
-                const storageKeys = [
-                    "sales_quotations", "sales_contracts", "sales_factory_orders", "sales_targets",
-                    "sales_delivery_slips", "sales_specialized_plans", "sales_tasks", "sales_plans", "sales_daily_logs"
-                ];
-                const res = await fetch(`/api/storage?keys=${storageKeys.join(",")}`);
-                if (res.ok) {
-                    const json = await res.json();
-                    serverData = json.data || {};
-                }
-            } catch (err) {
-                console.error("Failed to load sales data from app_storage:", err);
-            }
+            let serverData: any = null;
+            const storageKeys = [
+                "sales_quotations", "sales_contracts", "sales_factory_orders", "sales_targets",
+                "sales_delivery_slips", "sales_specialized_plans", "sales_tasks", "sales_plans", "sales_daily_logs"
+            ];
+            await Promise.all([
+                (async () => {
+                    try {
+                        const overviewRes = await fetch("/api/sales?action=overview");
+                        if (overviewRes.ok) overviewData = await overviewRes.json();
+                        if (overviewData && Array.isArray(overviewData.slip_payments)) {
+                            const m: Record<string, number> = {};
+                            overviewData.slip_payments.forEach((r: any) => { if (r.delivery_slip_code) m[r.delivery_slip_code] = (m[r.delivery_slip_code] || 0) + (Number(r.paid) || 0); });
+                            setSlipPaidMap(m);
+                        }
+                    } catch (err) {
+                        console.error("Failed to load overview from /api/sales:", err);
+                    }
+                })(),
+                (async () => {
+                    try {
+                        const res = await fetch(`/api/storage?keys=${storageKeys.join(",")}`);
+                        if (res.ok) {
+                            const json = await res.json();
+                            serverData = json.data || {};
+                        }
+                    } catch (err) {
+                        console.error("Failed to load sales data from app_storage:", err);
+                    }
+                })()
+            ]);
 
             if (!overviewData || !serverData) {
                 showToast("Không tải được dữ liệu Kinh doanh từ máy chủ. Đang hiển thị bản lưu tạm trên máy, các thay đổi sẽ KHÔNG được lưu. Vui lòng tải lại trang.", "error");
@@ -2193,6 +2199,13 @@ export function SalesFullABT() {
         };
 
         loadServerSalesData();
+        const onRevalidated = (e: any) => {
+            if (e?.detail?.pathname === "/api/sales") {
+                loadServerSalesData();
+            }
+        };
+        window.addEventListener("tbr:api-revalidated", onRevalidated);
+        return () => window.removeEventListener("tbr:api-revalidated", onRevalidated);
     }, []);
 
     // Filter and search states

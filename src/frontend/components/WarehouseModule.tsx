@@ -292,9 +292,9 @@ export const WarehouseModule: React.FC = () => {
   const [expandedItemComponents, setExpandedItemComponents] = useState<Record<string, boolean>>({});
   const [selectedKitModalItem, setSelectedKitModalItem] = useState<any>(null);
 
-  const fetchData = async () => {
+  const fetchData = async (opts?: { silent?: boolean }) => {
     try {
-      setLoading(true);
+      if (!opts?.silent && items.length === 0) setLoading(true);
       const res = await fetch("/api/inventory?action=overview");
       const data = await res.json();
       if (data) {
@@ -352,6 +352,13 @@ export const WarehouseModule: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+    const onRevalidated = (e: any) => {
+      if (e?.detail?.pathname === "/api/inventory") {
+        fetchData({ silent: true });
+      }
+    };
+    window.addEventListener("tbr:api-revalidated", onRevalidated);
+    return () => window.removeEventListener("tbr:api-revalidated", onRevalidated);
   }, []);
 
   useEffect(() => {
@@ -3791,6 +3798,16 @@ export const WarehouseModule: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
+                {loading && items.length === 0 && (
+                  <tr>
+                    <td colSpan={8} className="py-10 text-center text-slate-500">
+                      <div className="inline-flex items-center gap-2.5 text-xs font-mono">
+                        <div className="w-4 h-4 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                        <span>Đang tải dữ liệu tồn kho...</span>
+                      </div>
+                    </td>
+                  </tr>
+                )}
                 {stockPage.items.map((item) => {
                   const itemKey = String(item.id || `${item.product_code}-${item.lot_number || 'default'}`);
                   const isExpanded = !!expandedItemComponents[itemKey];
