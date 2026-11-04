@@ -169,6 +169,64 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ payments: r.rows });
     }
 
+    // Nhu cầu giao hàng: từng dòng SO còn chờ giao (SL đặt − SL đã lập phiếu giao chưa hủy), bỏ đơn đã giao xong /
+    // đã hủy / từ chối và đơn SO Stock (lưu kho nội bộ)
+    if (action === "so_demand") {
+      const arr = (v: any): any[] => {
+        if (Array.isArray(v)) return v;
+        if (typeof v === "string") { try { const x = JSON.parse(v); return Array.isArray(x) ? x : []; } catch { return []; } }
+        return [];
+      };
+      const codeOf = (it: any) => String(it?.productCode || it?.product_code || it?.code || "").trim().toUpperCase();
+      const orders = (await query(
+        `SELECT order_code, customer_name, sales_rep_name, order_date, items, delivery_status, approval_status, applied_price_policy
+           FROM sales_orders WHERE order_code IS NOT NULL ORDER BY id DESC`
+      )).rows;
+      const slips = (await query("SELECT order_code, items, status, extra_data FROM sales_delivery_slips WHERE order_code IS NOT NULL")).rows;
+      const shipped = new Map<string, number>();
+      for (const sl of slips) {
+        const ex = sl.extra_data && typeof sl.extra_data === "object" ? sl.extra_data : {};
+        if (String(ex.deliveryStatus || sl.status || "").toUpperCase() === "CANCELLED") continue;
+        for (const it of arr(sl.items)) {
+          const code = codeOf(it);
+          if (!code) continue;
+          const k = `${sl.order_code}|${code}`;
+          shipped.set(k, (shipped.get(k) || 0) + (Number(it?.quantity) || 0));
+        }
+      }
+      const rows: any[] = [];
+      const seen = new Set<string>();
+      for (const o of orders) {
+        if (seen.has(o.order_code)) continue;
+        seen.add(o.order_code);
+        const ds = String(o.delivery_status || "").toUpperCase();
+        const ap = String(o.approval_status || "").toUpperCase();
+        if (["DELIVERED", "COMPLETED", "CANCELLED"].includes(ds) || ["CANCELLED", "REJECTED"].includes(ap)) continue;
+        if (String(o.applied_price_policy || "").toUpperCase() === "STOCK" || /STOCK/i.test(String(o.order_code))) continue;
+        const need = new Map<string, number>();
+        for (const it of arr(o.items)) {
+          if (String(it?.status || "").toUpperCase() === "CANCELLED") continue;
+          const code = codeOf(it);
+          if (!code) continue;
+          need.set(code, (need.get(code) || 0) + (Number(it?.quantity) || 0));
+        }
+        for (const [code, qty] of need) {
+          const rem = qty - (shipped.get(`${o.order_code}|${code}`) || 0);
+          if (rem > 0) {
+            rows.push({
+              order_code: o.order_code,
+              customer_name: o.customer_name,
+              sales_rep_name: o.sales_rep_name,
+              order_date: o.order_date ? toVNDateString(o.order_date) : null,
+              product_code: code,
+              quantity: rem,
+            });
+          }
+        }
+      }
+      return NextResponse.json({ rows });
+    }
+
     if (action === "overview") {
       await syncCatalogSuppliersAndProducts();
 
@@ -1806,6 +1864,14 @@ export async function POST(req: NextRequest) {
       const existing = prId
         ? await query("SELECT id, workflow_code, status, results_summary, logs FROM workflow_requests WHERE id = $1 OR workflow_code = $2", [Number(prId) || 0, code])
         : await query("SELECT id, workflow_code, status, results_summary, logs FROM workflow_requests WHERE workflow_code = $1", [code]);
+      // Mã PR này đã bị hủy / từ chối: không sửa phiếu cũ (nó vẫn giữ trạng thái đã hủy) mà cấp mã mới, giữ phiếu cũ làm lịch sử
+      if (existing.rows.length > 0 && ["CANCELLED", "REJECTED"].includes(String(existing.rows[0].status || "").toUpperCase())) {
+        const base = String(existing.rows[0].workflow_code || code).replace(/-R\d+$/, "");
+        let n = 1;
+        while ((await query("SELECT 1 FROM workflow_requests WHERE workflow_code = $1", [`${base}-R${n}`])).rows.length > 0) n++;
+        code = `${base}-R${n}`;
+        existing.rows.length = 0;
+      }
       if (existing.rows.length > 0) {
         const existingRow = existing.rows[0];
         code = existingRow.workflow_code || code;
@@ -1945,6 +2011,10 @@ export async function POST(req: NextRequest) {
         } catch {}
 
         let computedStatus = status || "COMPLETED";
+        const isDropping = !po_code && ["CANCELLED", "REJECTED"].includes(upperReqStatus);
+        if (isDropping && parsedItems.some((it: any) => it?.po_code)) {
+          throw new HttpError(409, `PR ${pr.workflow_code || id} đã có mặt hàng lên PO (${Array.from(new Set(parsedItems.filter((it: any) => it?.po_code).map((it: any) => it.po_code))).join(", ")}): hủy / điều chỉnh PO trước.`);
+        }
         if (po_code && parsedItems.length > 0) {
           parsedItems.forEach((it: any, idx: number) => {
             if (!converted_indices || converted_indices.includes(idx)) {
@@ -1969,6 +2039,14 @@ export async function POST(req: NextRequest) {
           "UPDATE workflow_requests SET status = $1, results_summary = $2, logs = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4",
           [computedStatus, parsedItems.length > 0 ? JSON.stringify(parsedItems) : pr.results_summary, JSON.stringify(logs), id]
         );
+        // PR bị hủy / từ chối: gỡ liên kết khỏi đơn bán để Kinh doanh lập PR mới (trước đây đơn vẫn "Đã gửi PR / Chờ gom PO")
+        if (isDropping && pr.workflow_code) {
+          await c.query(
+            `UPDATE sales_orders SET pr_code = NULL, procure_status = NULL
+              WHERE pr_code = $1 AND COALESCE(procure_status, '') NOT IN ('ORDERED', 'RECEIVED', 'COMPLETED')`,
+            [pr.workflow_code]
+          );
+        }
         return computedStatus;
       });
 
@@ -1979,8 +2057,18 @@ export async function POST(req: NextRequest) {
     // 10. Consolidate Multiple PRs into a Unified PO (Requirement 4 - H3)
     if (action === "consolidate_prs_to_po") {
       const { supplier_id, supplier_name, pr_ids, selected_item_keys, items, expected_delivery_date, notes, created_by } = body;
+      // Một PO gửi đúng một NCC đã có trong danh bạ; dòng hàng phải có số lượng > 0 và giá ≥ 0
+      if (!Array.isArray(items) || items.length === 0) throw new HttpError(400, "PO phải có ít nhất 1 dòng hàng.");
+      for (const it of items) {
+        const q = Number(it?.quantity), pr = Number(it?.unit_price ?? 0);
+        if (!String(it?.product_code || "").trim()) throw new HttpError(400, "Có dòng hàng thiếu mã hàng.");
+        if (!Number.isFinite(q) || q <= 0) throw new HttpError(400, `Mã ${it.product_code}: số lượng phải lớn hơn 0.`);
+        if (!Number.isFinite(pr) || pr < 0) throw new HttpError(400, `Mã ${it.product_code}: đơn giá không hợp lệ.`);
+      }
+      const supRow = supplier_id ? (await query("SELECT id, name FROM procurement_suppliers WHERE id = $1", [supplier_id])).rows[0] : null;
+      if (!supRow) throw new HttpError(400, "Chưa chọn nhà cung cấp hợp lệ cho PO.");
       const poCode = await generateDocumentCode({ docType: "PO", customPrefix: "ABT", tagMode: "GENERAL" });
-      const totalAmount = (items || []).reduce((acc: number, it: any) => acc + (parseFloat(it.quantity) || 1) * (parseFloat(it.unit_price) || 0), 0);
+      const totalAmount = items.reduce((acc: number, it: any) => acc + Number(it.quantity) * (Number(it.unit_price) || 0), 0);
 
       const result = await withTransaction(async (c) => {
         // The UI sends PR codes (PR26-CR-1004); older callers sent numeric ids — accept both
@@ -1994,13 +2082,13 @@ export async function POST(req: NextRequest) {
             po_code, supplier_id, supplier_name, order_date, expected_delivery_date,
             items, total_amount, status, notes, created_by
           ) VALUES ($1, $2, $3, $4::date, $5, $6, $7, 'PENDING', $8, $9) RETURNING id`,
-          [poCode, supplier_id, supplier_name, todayVN(), expected_delivery_date || toVNDateString(new Date(Date.now() + 14 * 86400000)), JSON.stringify(items || []), totalAmount, notes || `Gom từ các PR: ${ids.join(", ")}`, poCreator]
+          [poCode, supRow.id, supplier_name || supRow.name, todayVN(), expected_delivery_date || toVNDateString(new Date(Date.now() + 14 * 86400000)), JSON.stringify(items), totalAmount, notes || `Gom từ các PR: ${[...prCodesIn, ...ids].join(", ")}`, poCreator]
         );
         const newPoId = insRes.rows[0]?.id;
 
         if (ids.length > 0 || prCodesIn.length > 0) {
           const prs = await c.query(
-            `SELECT id, workflow_code, results_summary, logs FROM workflow_requests
+            `SELECT id, workflow_code, status, results_summary, logs FROM workflow_requests
              WHERE id = ANY($1::int[]) OR workflow_code = ANY($2::text[]) ORDER BY id FOR UPDATE`,
             [ids, prCodesIn]
           );
@@ -2009,6 +2097,9 @@ export async function POST(req: NextRequest) {
           for (const row of prs.rows) {
             const logs = Array.isArray(row.logs) ? row.logs : [];
             const prKey = row.workflow_code || String(row.id);
+            if (["CANCELLED", "REJECTED"].includes(String(row.status || "").toUpperCase())) {
+              throw new HttpError(409, `${prKey} đã bị hủy / từ chối, không thể lập PO.`);
+            }
 
             let parsedItems: any[] = [];
             try {
@@ -2027,6 +2118,9 @@ export async function POST(req: NextRequest) {
 
               if (selectedIndices.length > 0) {
                 for (const idx of selectedIndices) {
+                  if (!Number.isInteger(idx) || !parsedItems[idx]) {
+                    throw new HttpError(409, `${prKey}: không tìm thấy mặt hàng #${idx + 1} (PR có thể vừa được sửa). Tải lại trang rồi chọn lại.`);
+                  }
                   if (parsedItems[idx]) {
                     if (parsedItems[idx].po_code) {
                       throw new HttpError(409, `${prKey}: Mặt hàng #${idx + 1} (${parsedItems[idx].product_code || ''}) đã thuộc PO ${parsedItems[idx].po_code}`);

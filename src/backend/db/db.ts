@@ -171,6 +171,24 @@ async function runIntegrityMigrations() {
     );
 
     // M2/C2: widen code columns (deterministic codes like PNK-<po_code>, TRK-<rma_code>)
+    // PR: product_info holds the one-line summary of every item ("CODE: name (spec) - SL: n | ..."), which passes
+    // 255 characters from ~5 items -> 'value too long for type character varying(255)' and the PR cannot be sent.
+    await step("widen_workflow_text_columns", () =>
+      client.query(`
+        DO $$
+        DECLARE col record;
+        BEGIN
+          FOR col IN
+            SELECT column_name FROM information_schema.columns
+             WHERE table_schema = 'public' AND table_name = 'workflow_requests'
+               AND column_name IN ('title', 'product_info', 'customer_name')
+               AND data_type = 'character varying'
+          LOOP
+            EXECUTE format('ALTER TABLE workflow_requests ALTER COLUMN %I TYPE TEXT', col.column_name);
+          END LOOP;
+        END $$;
+      `)
+    );
     await step("widen_code_columns", () =>
       client.query(`
         DO $$

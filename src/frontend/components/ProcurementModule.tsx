@@ -2,6 +2,7 @@
 
 import { FactoryBridgePanel } from "./procurement/FactoryBridgePanel";
 import React, { useState, useEffect, useMemo, useRef } from "react";
+import { ItemStockHover, type ItemDemandInfo } from "@/frontend/components/procurement/ItemStockHover";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import {
   ShoppingCart,
@@ -57,6 +58,7 @@ import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString } from "@/backend/services/dates";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
 import { Pager, usePaged } from "@/frontend/components/Pager";
+import { PRLineItemsView } from "@/frontend/components/procurement/PRLineItemsView";
 
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
@@ -88,8 +90,7 @@ export const PO_STATUS_CONFIG: Record<string, { label: string; bg: string; text:
     bg: "bg-indigo-50 dark:bg-indigo-950/50",
     text: "text-indigo-700 dark:text-indigo-400",
     border: "border-indigo-200 dark:border-indigo-800",
-    icon: Package,
-    isImport: true
+    icon: Package
   },
   SHIPPED: {
     label: "Đang vận chuyển",
@@ -234,6 +235,8 @@ export const ProcurementModule: React.FC = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [allSupplierProducts, setAllSupplierProducts] = useState<any[]>([]);
+  // Tab PR: xem theo phiếu PR, hoặc theo từng dòng mặt hàng (chọn dòng cùng NCC để lập PO)
+  const [prViewMode, setPRViewMode] = useState<"pr" | "lines">("pr");
   const [restockAlerts, setRestockAlerts] = useState<any[]>([]);
   const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({
@@ -342,6 +345,9 @@ export const ProcurementModule: React.FC = () => {
   // Real-time Stock Intelligence & Customer Stock Allocation states
   const [inventoryItems, setInventoryItems] = useState<any[]>([]);
   const [inventoryReservations, setInventoryReservations] = useState<any[]>([]);
+  // Dòng SO đang chờ giao (để xem nhu cầu theo mã hàng khi rê chuột)
+  const [soDemand, setSoDemand] = useState<any[]>([]);
+  const [soDemandLoaded, setSoDemandLoaded] = useState(false);
   const [salesCustomers, setSalesCustomers] = useState<any[]>([]);
 
   // Consolidate PRs to Unified PO Modal State (Requirement 4 - Line-Item Level Consolidation)
@@ -782,6 +788,73 @@ export const ProcurementModule: React.FC = () => {
     });
   };
 
+  /** Tồn kho & nhu cầu của một mã hàng (thẻ hiện khi rê chuột vào mã hàng trong PR). */
+  const getItemDemandInfo = (productCode: string): ItemDemandInfo | null => {
+    const key = String(productCode || "").trim().toUpperCase();
+    if (!key) return null;
+    const same = (v: any) => String(v || "").trim().toUpperCase() === key;
+    const invRows = inventoryItems.filter((it: any) => same(it.product_code));
+    const onHand = invRows.reduce((s: number, it: any) => s + (Number(it.quantity_on_hand) || 0), 0);
+    const resRows = inventoryReservations.filter((r: any) => same(r.product_code) && String(r.status || "ACTIVE").toUpperCase() === "ACTIVE");
+    const reservations = resRows.map((r: any) => ({
+      order_code: r.order_code || r.reference_code || "",
+      customer: r.customer_name || "",
+      sales_rep: r.sales_rep_name || "",
+      qty: Number(r.quantity_reserved) || 0,
+    })).filter((r: any) => r.qty > 0);
+    const reserved = Math.max(
+      reservations.reduce((s: number, r: any) => s + r.qty, 0),
+      invRows.reduce((s: number, it: any) => s + (Number(it.quantity_reserved) || 0), 0)
+    );
+    const incomingPOs: any[] = [];
+    for (const po of orders) {
+      const st = String(po.status || "").toUpperCase();
+      if (["COMPLETED", "CANCELLED", "RECEIVED"].includes(st)) continue;
+      const items = Array.isArray(po.items) ? po.items : [];
+      items.forEach((it: any, idx: number) => {
+        if (!same(it.product_code || it.code)) return;
+        const rem = Math.max(0, (Number(it.quantity) || 0) - receivedOf(po, idx));
+        if (rem <= 0) return;
+        const sup = suppliers.find((x: any) => String(x.id) === String(po.supplier_id));
+        incomingPOs.push({
+          po_code: po.po_code,
+          supplier: String(sup?.short_name || "").trim() || po.supplier_name || "",
+          qty: rem,
+          eta: po.expected_delivery_date ? String(po.expected_delivery_date).slice(0, 10).split("-").reverse().join("/") : "",
+        });
+      });
+    }
+    const incoming = incomingPOs.reduce((s, p) => s + p.qty, 0);
+    const soPendingOrders = soDemand
+      .filter((r: any) => same(r.product_code))
+      .map((r: any) => ({ order_code: r.order_code, customer: r.customer_name || "", qty: Number(r.quantity) || 0, order_date: r.order_date }));
+    const prOpenLines: any[] = [];
+    for (const pr of purchaseRequests) {
+      const st = String(pr.status || "").toUpperCase();
+      if (["CANCELLED", "REJECTED", "CONVERTED", "COMPLETED"].includes(st)) continue;
+      getPRItems(pr).forEach((it: any, idx: number) => {
+        if (!same(it.product_code) || it.po_code) return;
+        if (getItemPOInfo(pr, it, idx).hasPO) return;
+        prOpenLines.push({ pr_code: pr.workflow_code || String(pr.id), qty: Number(it.quantity) || 0 });
+      });
+    }
+    return {
+      code: key,
+      unit: invRows[0]?.unit || "",
+      onHand,
+      reserved,
+      reservations,
+      available: Math.max(0, onHand - reserved),
+      incoming,
+      incomingPOs,
+      soPending: soPendingOrders.reduce((s, o) => s + o.qty, 0),
+      soPendingOrders,
+      prOpen: prOpenLines.reduce((s, p) => s + p.qty, 0),
+      prOpenLines,
+      soLoaded: soDemandLoaded,
+    };
+  };
+
   const getProductStockIntelligence = (productCode: string) => {
     if (!productCode) return null;
     const cleanCode = productCode.trim().toLowerCase();
@@ -833,6 +906,10 @@ export const ProcurementModule: React.FC = () => {
   };
 
   const fetchData = async (opts?: { silent?: boolean }) => {
+    fetch("/api/procurement?action=so_demand")
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d && Array.isArray(d.rows)) { setSoDemand(d.rows); setSoDemandLoaded(true); } })
+      .catch(() => {});
     try {
       if (!opts?.silent && orders.length === 0 && suppliers.length === 0) setLoading(true);
       const res = await fetch("/api/procurement?action=overview");
@@ -1347,6 +1424,26 @@ export const ProcurementModule: React.FC = () => {
       if (matchedPr?.requester_name) return matchedPr.requester_name;
     }
     return po?.created_by || user?.full_name || user?.name || "Chuyên viên Cung ứng";
+  };
+
+  /** Mã PR nguồn của một dòng PO (dòng gộp có thể đến từ nhiều PR), bấm để mở PR. */
+  const renderItemPRChips = (it: any) => {
+    const codes = Array.from(new Set(String(itemSourcePR(it) || "").split(/[,;]\s*/).map((x: string) => x.trim()).filter(Boolean)));
+    if (codes.length === 0) return null;
+    return codes.map((prc: string) => (
+      <button
+        key={prc}
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          openPRByCode(prc);
+        }}
+        title={`PR nguồn của dòng này – bấm để mở ${prc}`}
+        className="px-1 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[9px] font-mono font-bold hover:bg-indigo-100 hover:underline cursor-pointer whitespace-nowrap"
+      >
+        {prc}
+      </button>
+    ));
   };
 
   const openPRByCode = (prCode: string) => {
@@ -2268,13 +2365,29 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const rawName = cleanItemName(String(rawIt?.product_name || "").trim());
       const isFakeCode = !rawCode || rawCode.toUpperCase() === "ABT-ITEM" || rawCode.toUpperCase() === "MÃ MỚI";
 
-      const catalogMatch = mergedCatalogProducts.find((p: any) => {
-        const pCode = String(p.code || "").trim();
-        const pName = String(p.name || "").trim();
-        if (!isFakeCode && pCode && pCode.toUpperCase() === rawCode.toUpperCase()) return true;
-        if (rawName && pName && pName.toLowerCase() === rawName.toLowerCase()) return true;
-        return false;
-      });
+      // Mã hàng trên PR là chuẩn: khớp ĐÚNG mã trước. Chỉ dòng chưa có mã thật mới tra theo tên, và chỉ khi tên đó
+      // thuộc đúng một mã. (Trước đây "trùng mã HOẶC trùng tên" lấy mã đầu tiên cùng tên trong danh mục: BIO-41026 thành
+      // BIO-41025 vì hai mã cùng tên "Polyme tự nhiên Agarose" — PO lập từ đó đặt nhầm mã.)
+      let catalogMatch: any = !isFakeCode
+        ? mergedCatalogProducts.find((p: any) => String(p.code || "").trim().toUpperCase() === rawCode.toUpperCase())
+        : undefined;
+      if (!catalogMatch && isFakeCode && rawName) {
+        const sameName = mergedCatalogProducts.filter((p: any) => String(p.name || "").trim().toLowerCase() === rawName.toLowerCase());
+        if (sameName.length === 1) {
+          catalogMatch = sameName[0];
+        } else if (sameName.length > 1) {
+          // tên thuộc nhiều mã: không tự chọn, để người dùng xác định mã
+          normalizedItems.push({
+            ...rawIt,
+            product_code: "",
+            product_name: rawName,
+            is_missing_catalog_product: true,
+            ambiguous_codes: sameName.map((p: any) => p.code),
+            raw_request_text: `${rawName} (trùng tên ${sameName.length} mã: ${sameName.map((p: any) => p.code).join(", ")} — cần chọn đúng mã)`,
+          });
+          continue;
+        }
+      }
 
       if (catalogMatch) {
         normalizedItems.push({
@@ -2304,11 +2417,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     // Fallback check if product_info matches a catalog product directly
     if (normalizedItems.length === 0 && pr.product_info) {
       const infoStr = String(pr.product_info).trim();
-      const matchedProd = mergedCatalogProducts.find(
-        (p: any) =>
-          (p.code && infoStr.toUpperCase().includes(String(p.code).trim().toUpperCase())) ||
-          (p.name && infoStr.toLowerCase().includes(String(p.name).trim().toLowerCase()))
+      // mã hàng trước; tên chỉ dùng khi đúng một sản phẩm mang tên đó
+      const byInfoCode = mergedCatalogProducts.find(
+        (p: any) => p.code && infoStr.toUpperCase().includes(String(p.code).trim().toUpperCase())
       );
+      const byInfoName = byInfoCode ? [] : mergedCatalogProducts.filter(
+        (p: any) => p.name && infoStr.toLowerCase().includes(String(p.name).trim().toLowerCase())
+      );
+      const matchedProd = byInfoCode || (byInfoName.length === 1 ? byInfoName[0] : undefined);
       if (matchedProd) {
         normalizedItems.push({
           product_code: matchedProd.code,
@@ -3730,22 +3846,30 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 )
                               );
                               if (prCodes.length === 0) return null;
-                              return (
-                                <div className="mt-1 flex flex-wrap gap-1 font-sans">
-                                  {prCodes.map((prc: string) => (
+                              // Mã PR hiển thị cạnh từng mặt hàng (cột Chi tiết hàng hóa); ở đây chỉ tóm tắt
+                              if (prCodes.length === 1) {
+                                return (
+                                  <div className="mt-1 font-sans">
                                     <button
-                                      key={prc}
                                       type="button"
                                       onClick={(e) => {
                                         e.stopPropagation();
-                                        openPRByCode(prc);
+                                        openPRByCode(prCodes[0]);
                                       }}
-                                      title={`Bấm để mở xem chi tiết Phiếu PR ${prc}`}
+                                      title={`Bấm để mở xem chi tiết Phiếu PR ${prCodes[0]}`}
                                       className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] font-mono font-bold hover:bg-indigo-100 hover:underline cursor-pointer"
                                     >
-                                      🔗 {prc}
+                                      🔗 {prCodes[0]}
                                     </button>
-                                  ))}
+                                  </div>
+                                );
+                              }
+                              return (
+                                <div
+                                  className="mt-1 inline-block px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] font-sans font-bold cursor-help"
+                                  title={`Gom từ ${prCodes.length} PR:\n${prCodes.join("\n")}\n(mã PR hiện cạnh từng mặt hàng)`}
+                                >
+                                  🔗 Gom {prCodes.length} PR
                                 </div>
                               );
                             })()}
@@ -3812,6 +3936,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                           <span className="font-mono font-bold text-slate-700 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-700/60 px-1.5 py-0.5 rounded text-[10px]">
                                             {it.product_code || "---"}
                                           </span>
+                                          {renderItemPRChips(it)}
                                           <span className="font-semibold text-slate-900 dark:text-slate-100">
                                             {cleanItemName(it.product_name)}
                                           </span>
@@ -3846,6 +3971,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                             <span className="font-mono font-bold text-slate-700 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-700/60 px-1.5 py-0.5 rounded text-[10px]">
                                               {it.product_code || "---"}
                                             </span>
+                                            {renderItemPRChips(it)}
                                             <span className="font-semibold text-slate-900 dark:text-slate-100 truncate max-w-xs">
                                               {cleanItemName(it.product_name)}
                                             </span>
@@ -3902,6 +4028,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                             <span className="font-mono font-bold text-slate-700 dark:text-slate-300 bg-slate-200/70 dark:bg-slate-700/60 px-1.5 py-0.5 rounded text-[10px]">
                                               {it.product_code || "---"}
                                             </span>
+                                            {renderItemPRChips(it)}
                                             <span className="font-semibold text-slate-900 dark:text-slate-100">
                                               {cleanItemName(it.product_name)}
                                             </span>
@@ -4204,6 +4331,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             </div>
 
             <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
+                {([["pr", "Theo phiếu PR"], ["lines", "Theo mặt hàng"]] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setPRViewMode(mode)}
+                    className={`px-3 py-1 rounded-lg font-semibold cursor-pointer ${prViewMode === mode ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs" : "text-slate-600 dark:text-slate-400"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              {prViewMode === "pr" && (
               <div className="relative">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
@@ -4214,6 +4354,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   className="pl-9 pr-4 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
                 />
               </div>
+              )}
               <button
                 onClick={handleOpenNewPRModal}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs cursor-pointer"
@@ -4238,6 +4379,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             </div>
           </div>
 
+          {prViewMode === "lines" ? (
+            <PRLineItemsView
+              purchaseRequests={purchaseRequests}
+              orders={orders}
+              suppliers={suppliers}
+              supplierProducts={allSupplierProducts}
+              getPRItems={getPRItems}
+              getItemPOInfo={getItemPOInfo}
+              getItemInfo={getItemDemandInfo}
+              onOpenPO={(po) => setSelectedPODetail(po)}
+              onCreated={() => fetchData({ silent: true })}
+              actorName={user?.full_name || user?.name || "Phòng Cung Ứng"}
+            />
+          ) : (<>
           {/* PR Filter Tabs */}
           <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-slate-100 dark:border-slate-800">
             <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
@@ -4671,6 +4826,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             </table>
             <Pager p={prsPage} unit="đề xuất mua hàng (PR)" />
           </div>
+          </>)}
         </div>
       )}
 
@@ -7966,6 +8122,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <th className="p-2 border-r border-slate-200 dark:border-slate-700">Qui Cách</th>
                             <th className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">ĐVT</th>
                             <th className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">Số Lượng</th>
+                            <th className="p-2 border-r border-slate-200 dark:border-slate-700 text-center" title="Ảnh chụp lúc Kinh doanh lập PR: tồn kho / chờ giao cho các đơn trước / khả dụng (rê chuột để xem đơn)">Kho lúc lập PR</th>
                             <th className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">Trạng Thái PO</th>
                             <th className="p-2 text-center">Mã PO Liên Kết</th>
                           </tr>
@@ -7977,7 +8134,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               <tr key={i} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-center">{i + 1}</td>
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                                  {it.product_code}
+                                  <ItemStockHover code={it.product_code} getInfo={getItemDemandInfo}>{it.product_code}</ItemStockHover>
                                 </td>
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 font-medium">
                                   <div>{it.product_name}</div>
@@ -7995,6 +8152,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 </td>
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-center font-bold text-orange-600 font-mono">
                                   {it.quantity}
+                                </td>
+                                <td
+                                  className="p-2 border-r border-slate-200 dark:border-slate-700 text-center font-mono text-[11px] whitespace-nowrap cursor-help"
+                                  title={Array.isArray(it.pending_delivery_orders) && it.pending_delivery_orders.length > 0
+                                    ? `Chờ giao cho:\n${it.pending_delivery_orders.map((p: any) => `• ${p.order}${p.customer ? ` – ${p.customer}` : ""}: ${p.qty}`).join("\n")}`
+                                    : (it.stock_on_hand !== undefined ? "Không có đơn trước nào chờ giao mã này" : "PR lập trước khi có ghi nhận tồn kho")}
+                                >
+                                  {it.stock_on_hand !== undefined ? (
+                                    <span>
+                                      Tồn <strong>{it.stock_on_hand}</strong>
+                                      {" • "}<span className="text-amber-600 dark:text-amber-400">Chờ giao <strong>{it.pending_delivery_qty || 0}</strong></span>
+                                      {" • "}<span className="text-emerald-600 dark:text-emerald-400">KD <strong>{it.stock_available ?? 0}</strong></span>
+                                    </span>
+                                  ) : <span className="text-slate-400">—</span>}
                                 </td>
                                 <td className="p-2 border-r border-slate-200 dark:border-slate-700 text-center whitespace-nowrap">
                                   {itemPO.hasPO ? (
