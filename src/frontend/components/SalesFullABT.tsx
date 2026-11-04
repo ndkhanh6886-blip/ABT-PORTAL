@@ -3628,8 +3628,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 });
             };
 
+            // Danh mục luôn đọc thẳng từ máy chủ (bỏ qua bộ nhớ đệm trình duyệt): bản đệm cũ trước đây giữ
+            // danh mục như trước lần nhập Excel mới nhất, và trang này không tự tải lại khi bản đệm được làm mới
+            const noCache = { headers: { "x-no-cache": "1" } };
             // 1. Fetch inventory overview to get master product_components and products
-            fetch("/api/inventory?action=overview")
+            fetch("/api/inventory?action=overview", noCache)
                 .then(res => res.json())
                 .then(overview => {
                     if (overview.product_components && Array.isArray(overview.product_components)) {
@@ -3743,7 +3746,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             // The server copy is authoritative. Defaults are only seeded when the catalogue was never
             // initialised (key absent). A failed request must NOT be treated as "empty": that used to
             // push the defaults or a stale local copy over the whole catalogue.
-            fetch("/api/storage?key=sales_commercial_products")
+            fetch("/api/storage?key=sales_commercial_products", noCache)
                 .then(async res => {
                     if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     return res.json();
