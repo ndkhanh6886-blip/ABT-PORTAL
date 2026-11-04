@@ -415,45 +415,37 @@ export const WarehouseModule: React.FC = () => {
         id: s.id || list.length + 1,
         supplier_code: s.supplier_code || `NCC-${String(list.length + 1).padStart(3, "0")}`,
         name,
+        short_name: String(s.short_name || "").trim(),
         product_lines: s.product_lines || "Vật tư & Sinh phẩm",
         contact_person: s.contact_person || "",
         status: s.status || "Active",
       });
     }
-    for (const p of products || []) {
-      const mfg = String(p.manufacturer || "").trim();
-      if (!mfg || mfg === "—" || mfg === "N/A") continue;
-      const key = mfg.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      list.push({
-        id: `mfg-${list.length + 1}`,
-        supplier_code: "HÃNG-SX",
-        name: mfg,
-        product_lines: p.category || "Hãng sản xuất / Nguồn hàng",
-        contact_person: "",
-        status: "Active",
-      });
-    }
-    if (list.length > 0) return list;
-    return [
-      { id: 1, supplier_code: "NCC-ABT-001", name: "Công Ty Cổ Phần Kỹ Thuật Và Sinh Học Ứng Dụng Việt Nam (ABT)", product_lines: "Kit tách chiết, Sinh phẩm PCR/qPCR, Hóa chất", contact_person: "Phòng Kinh Doanh ABT" },
-      { id: 2, supplier_code: "NCC-BIO-002", name: "Meridian Bioscience / Bioline", product_lines: "Enzyme PCR, Master Mix, Sinh phẩm phân tử", contact_person: "Đại diện phân phối" },
-      { id: 3, supplier_code: "NCC-SIG-003", name: "Sigma-Aldrich / Merck Life Science", product_lines: "Hóa chất tinh khiết, Chuẩn phân tích", contact_person: "Merck Vietnam" },
-      { id: 4, supplier_code: "NCC-THM-004", name: "Thermo Fisher Scientific", product_lines: "Thiết bị & Hóa chất sinh học phân tử", contact_person: "Thermo Fisher VN" },
-    ];
-  }, [supplierList, products]);
+    // Chỉ NCC trong danh mục: hãng sản xuất không phải NCC, không dùng danh sách NCC mẫu
+    return list;
+  }, [supplierList]);
 
   const filteredInboundSuppliers = useMemo(() => {
     const q = String(inboundForm.supplier_name || "").toLowerCase().trim();
     if (!q) return allAvailableSuppliers;
     return allAvailableSuppliers.filter((s: any) =>
       (s.name && s.name.toLowerCase().includes(q)) ||
+      (s.short_name && s.short_name.toLowerCase().includes(q)) ||
       (s.supplier_code && s.supplier_code.toLowerCase().includes(q)) ||
       (s.product_lines && s.product_lines.toLowerCase().includes(q)) ||
       (s.contact_person && s.contact_person.toLowerCase().includes(q))
     );
   }, [allAvailableSuppliers, inboundForm.supplier_name]);
+  /** NCC trong danh mục khớp đúng tên đầy đủ / tên viết tắt / mã NCC. */
+  const findDirectorySupplier = (raw: any) => {
+    const k = String(raw || "").trim().toLowerCase();
+    if (!k) return null;
+    return allAvailableSuppliers.find((s: any) =>
+      String(s.name || "").trim().toLowerCase() === k ||
+      String(s.short_name || "").trim().toLowerCase() === k ||
+      String(s.supplier_code || "").trim().toLowerCase() === k
+    ) || null;
+  };
 
   const filteredExcelSuppliers = useMemo(() => {
     const q = String(excelInboundDetails.supplier_name || "").toLowerCase().trim();
@@ -2052,7 +2044,8 @@ export const WarehouseModule: React.FC = () => {
 
   // Inbound Form Item Helpers
   const handleAddInboundItem = () => {
-    const defaultProd = products[0] || { code: "", name: "", unit: "Hộp", specification: "", cost_price: 0, storage_condition: "" };
+    // Dòng mới để trống: không tự gán sản phẩm đầu danh mục (trước đây luôn nhảy HI-612)
+    const defaultProd: any = { code: "", name: "", unit: "Hộp", specification: "", cost_price: 0, storage_condition: "" };
     setInboundForm((prev: any) => ({
       ...prev,
       items: [
@@ -2243,6 +2236,16 @@ export const WarehouseModule: React.FC = () => {
       alert("Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Nguồn Hàng (*)");
       return;
     }
+    // Nhập mua hàng: NCC phải có trong danh mục (gõ tự do như "abt" không được ghi nhận làm NCC)
+    if (/mua/i.test(String(inboundForm.inbound_type || "")) && !editingInboundTxId) {
+      const sup = findDirectorySupplier(inboundForm.supplier_name);
+      if (!sup) {
+        alert(`"${inboundForm.supplier_name}" không có trong danh mục Nhà cung cấp.\nHãy chọn NCC trong danh sách (gõ tên / tên viết tắt / mã NCC để tìm), hoặc tạo NCC mới ở phân hệ Cung ứng trước.`);
+        setIsInboundSupplierDropdownOpen(true);
+        return;
+      }
+      if (sup.name !== inboundForm.supplier_name) inboundForm.supplier_name = sup.name;
+    }
     if (!inboundForm.items || inboundForm.items.length === 0) {
       alert("Phiếu nhập kho phải có ít nhất 1 mặt hàng");
       return;
@@ -2320,6 +2323,56 @@ export const WarehouseModule: React.FC = () => {
           };
         })
       };
+
+      // Mã tham chiếu là một PO có thật: nhập kho theo PO (cộng số đã nhận từng dòng PO, cập nhật trạng thái PO,
+      // giữ hàng cho đơn bán) thay vì phiếu nhập rời không liên kết
+      const refPo = String(inboundForm.reference_code || "").trim();
+      if (!isEditing && /^PO/i.test(refPo)) {
+        const poRes = await fetch("/api/procurement?action=receive_to_inventory", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            po_code: refPo,
+            request_id: payload.transaction_code,
+            received_by: inboundForm.performed_by || undefined,
+            receipt_date: inboundForm.date || undefined,
+            warehouse_name: inboundForm.warehouse_name || undefined,
+            vat_invoice_no: inboundForm.vat_invoice_no || undefined,
+            shipping_unit: inboundForm.shipping_unit || undefined,
+            inbound_type: inboundForm.inbound_type || undefined,
+            receipt_notes: inboundForm.notes || undefined,
+            lines: payload.items.map((it: any) => ({
+              product_code: it.product_code,
+              product_name: it.product_name,
+              specification: it.specification,
+              unit: it.unit,
+              quantity: it.quantity,
+              unit_price: it.unit_price,
+              lot_number: it.lot_number,
+              expiry_date: it.expiry_date,
+              no_expiry: !it.expiry_date,
+              manufacture_date: it.manufacture_date,
+              storage_condition: it.storage_condition,
+              shelf_position: it.shelf_position,
+              qc_status: it.qc_status,
+              notes: it.item_notes,
+            })),
+          }),
+        });
+        const poData = await poRes.json().catch(() => ({}));
+        if (poRes.ok && poData.success) {
+          setActionNotice(`✅ Đã nhập kho theo PO ${refPo}: phiếu ${poData.inbound_code} (${payload.items.length} mặt hàng) — PO ${poData.status === "COMPLETED" ? "đã nhận đủ" : "nhận một phần"}.`);
+          setIsInboundModalOpen(false);
+          setEditingInboundTxId(null);
+          fetchData();
+          return;
+        }
+        if (poRes.status !== 404) {
+          alert(`Không nhập kho theo PO ${refPo} được: ${poData.error || `Lỗi ${poRes.status}`}`);
+          return;
+        }
+        if (!window.confirm(`Không tìm thấy PO "${refPo}". Vẫn lập phiếu nhập kho thường (không liên kết PO)?`)) return;
+      }
 
       const endpoint = isEditing ? "/api/inventory?action=update_inbound" : "/api/inventory?action=inbound";
       const res = await fetch(endpoint, {
@@ -7665,7 +7718,7 @@ export const WarehouseModule: React.FC = () => {
                               >
                                 <div className="min-w-0">
                                   <div className="font-bold text-slate-900 dark:text-white group-hover:text-emerald-600 dark:group-hover:text-emerald-400 text-xs truncate">
-                                    {sup.name}
+                                    {sup.short_name ? <span className="text-emerald-600 dark:text-emerald-400">{sup.short_name} – </span> : null}{sup.name}
                                   </div>
                                   <div className="flex items-center gap-2 text-[10px] text-slate-500 mt-0.5 truncate">
                                     <span className="font-mono text-emerald-600 dark:text-emerald-400 font-semibold">{sup.supplier_code}</span>
@@ -7684,7 +7737,7 @@ export const WarehouseModule: React.FC = () => {
                             ))
                           ) : (
                             <div className="p-3 text-center text-slate-500 text-xs">
-                              Không có trong danh mục sẵn. Hệ thống sẽ ghi nhận theo tên bạn vừa nhập: <strong className="text-slate-900 dark:text-white">"{inboundForm.supplier_name}"</strong>
+                              Không tìm thấy NCC "<strong className="text-slate-900 dark:text-white">{inboundForm.supplier_name}</strong>" trong danh mục. Nhập mua hàng cần chọn NCC có trong danh mục (tạo NCC mới ở phân hệ Cung ứng).
                             </div>
                           )}
                         </div>

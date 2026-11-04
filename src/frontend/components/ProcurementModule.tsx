@@ -1470,10 +1470,16 @@ export const ProcurementModule: React.FC = () => {
       const res = await fetch("/api/procurement?action=order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...poForm,
-          created_by: poForm.created_by || user?.full_name || user?.name || user?.username || "Chuyên viên Cung ứng"
-        })
+        body: JSON.stringify((() => {
+          // Tiền đồng không có phần lẻ: làm tròn đơn giá khi lưu (giá quy đổi ngoại tệ thường còn số lẻ dài)
+          const items = (poForm.items || []).map((it: any) => ({ ...it, unit_price: Math.round(Number(it.unit_price) || 0) }));
+          return {
+            ...poForm,
+            items,
+            total_amount: items.reduce((s2: number, it: any) => s2 + (Number(it.quantity) || 0) * (Number(it.unit_price) || 0), 0),
+            created_by: poForm.created_by || user?.full_name || user?.name || user?.username || "Chuyên viên Cung ứng"
+          };
+        })())
       });
       const data = await res.json();
       if (data.success) {
@@ -5762,6 +5768,23 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       const srcPR = itemSourcePR(item);
                       const rowQuery = poItemSearchQueries[idx] || "";
                       const filteredCatalogForPO = filterCatalogItemsByQuery(rowQuery);
+                      // Chọn mã hàng cho dòng PO (dùng chung cho ô chọn và ô gõ tìm)
+                      const applyPOLineProduct = (val: string) => {
+                        const prod = mergedCatalogProducts.find((pp: any) => pp.code === val) || products.find((pp: any) => pp.code === val);
+                        const resolved = resolveItemSupplierAndPrice({
+                          product_code: val,
+                          product_name: prod?.name || item.product_name,
+                          manufacturer: prod?.manufacturer || prod?.brand || "",
+                          cost_price: prod?.cost_price || 0
+                        });
+                        updatePOLine(idx, {
+                          product_code: val,
+                          product_name: prod?.name || item.product_name,
+                          specification: item.specification && item.product_code === val ? item.specification : (prod?.specification || ""),
+                          unit: prod?.unit || item.unit || "Hộp",
+                          unit_price: Math.round(resolved.unitPrice > 0 ? resolved.unitPrice : (prod ? parseFloat(prod.cost_price) || 0 : Number(item.unit_price) || 0))
+                        });
+                      };
                       const stockTitle = stockIntel
                         ? `Tồn thực tế: ${stockIntel.onHand} • Đang giữ chỗ: ${stockIntel.reserved} • Khả dụng: ${stockIntel.available} • Đang về: ${stockIntel.incoming}` +
                           (stockIntel.reservations.length > 0 ? `\nGiữ chỗ: ${stockIntel.reservations.map((r: any) => `${r.customer_name}${r.order_code ? ` (${r.order_code})` : ""}: ${r.quantity_reserved}`).join("; ")}` : "")
@@ -5776,8 +5799,24 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <input
                                   type="text"
                                   value={rowQuery}
-                                  onChange={(e) => setPoItemSearchQueries(prev => ({ ...prev, [idx]: e.target.value }))}
-                                  placeholder="Gõ tìm nhanh mã hàng (VD: hd-, meridian, ssi, bioer...)"
+                                  onChange={(e) => {
+                                    const q = e.target.value;
+                                    setPoItemSearchQueries(prev => ({ ...prev, [idx]: q }));
+                                    // Gõ đúng mã, hoặc chỉ còn 1 mã khớp: chọn luôn (không phải bấm thêm vào ô chọn)
+                                    const qt = q.trim().toUpperCase();
+                                    if (!qt) return;
+                                    const hits = filterCatalogItemsByQuery(q);
+                                    const exact = hits.find((pp: any) => String(pp.code || "").trim().toUpperCase() === qt);
+                                    const pick = exact || (hits.length === 1 ? hits[0] : null);
+                                    if (pick && pick.code !== item.product_code) applyPOLineProduct(pick.code);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key !== "Enter") return;
+                                    e.preventDefault();
+                                    const first = filteredCatalogForPO[0];
+                                    if (first) applyPOLineProduct(first.code);
+                                  }}
+                                  placeholder="Gõ mã / tên hàng (gõ đúng mã hoặc Enter để chọn)"
                                   className="w-full pl-6 pr-2 py-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/90 text-slate-900 dark:text-white text-[11px]"
                                 />
                               </div>
@@ -5785,23 +5824,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <select
                               value={item.product_code}
                               disabled={receivedQty > 0}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                const prod = mergedCatalogProducts.find((pp: any) => pp.code === val) || products.find((pp: any) => pp.code === val);
-                                const resolved = resolveItemSupplierAndPrice({
-                                  product_code: val,
-                                  product_name: prod?.name || item.product_name,
-                                  manufacturer: prod?.manufacturer || prod?.brand || "",
-                                  cost_price: prod?.cost_price || 0
-                                });
-                                updatePOLine(idx, {
-                                  product_code: val,
-                                  product_name: prod?.name || item.product_name,
-                                  specification: item.specification && item.product_code === val ? item.specification : (prod?.specification || ""),
-                                  unit: prod?.unit || item.unit || "Hộp",
-                                  unit_price: resolved.unitPrice > 0 ? resolved.unitPrice : (prod ? parseFloat(prod.cost_price) || 0 : item.unit_price)
-                                });
-                              }}
+                              onChange={(e) => applyPOLineProduct(e.target.value)}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold cursor-pointer disabled:opacity-70"
                             >
                               <option value="">
@@ -5863,8 +5886,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <input
                               type="number"
                               min={0}
-                              value={item.unit_price}
-                              onChange={(e) => updatePOLine(idx, { unit_price: Math.max(0, parseFloat(e.target.value) || 0) })}
+                              step={1}
+                              value={Number.isFinite(Number(item.unit_price)) ? Math.round(Number(item.unit_price)) : item.unit_price}
+                              onChange={(e) => updatePOLine(idx, { unit_price: Math.max(0, Math.round(parseFloat(e.target.value) || 0)) })}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-xs"
                             />
                           </td>

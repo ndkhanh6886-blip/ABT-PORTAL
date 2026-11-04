@@ -1598,8 +1598,24 @@ export async function POST(req: NextRequest) {
         const thisReceipt: Record<string, number> = {};
         const pMasterTemp: Record<string, string> = {};
         const clean: any[] = [];
+        // Dòng gửi lên không có số dòng PO (phiếu nhập kho lập ở phân hệ Kho): tìm dòng PO cùng mã hàng còn thiếu
+        const autoPlanned: Record<number, number> = {};
+        const resolveLineIndex = (ln: any): number => {
+          const raw = ln?.line_index;
+          if (raw !== undefined && raw !== null && raw !== "" && Number.isInteger(Number(raw))) return Number(raw);
+          const code = String(ln?.product_code || ln?.productCode || "").trim().toUpperCase();
+          if (!code) return -1;
+          const cands = poItems.map((_: any, i: number) => i).filter((i: number) => String(poItems[i]?.product_code || "").trim().toUpperCase() === code);
+          if (cands.length === 0) return -1;
+          const q = Number(ln?.quantity) || 0;
+          const pick = cands.find((i: number) => (Number(poItems[i]?.quantity) || 0) - (Number(received[i]) || 0) - (autoPlanned[i] || 0) >= q)
+            ?? cands.find((i: number) => (Number(poItems[i]?.quantity) || 0) - (Number(received[i]) || 0) - (autoPlanned[i] || 0) > 0)
+            ?? cands[0];
+          autoPlanned[pick] = (autoPlanned[pick] || 0) + q;
+          return pick;
+        };
         for (const ln of lines) {
-          const idx = Number(ln?.line_index);
+          const idx = resolveLineIndex(ln);
           const poIt = Number.isInteger(idx) && idx >= 0 ? poItems[idx] : undefined;
           const fallbackIt = poIt || {
             product_code: ln?.product_code || ln?.productCode || "",

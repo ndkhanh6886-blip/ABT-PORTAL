@@ -23,6 +23,7 @@ import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { syncCatalogSuppliersAndProducts, unmarkSupplierDeleted } from "@/backend/services/supplierCatalogSync";
 import { resolveActualProductCategory } from "@/backend/services/catalogStore";
+import { applyPOReceipt } from "@/backend/services/poReceipt";
 import {
   addStock,
   removeStock,
@@ -362,7 +363,9 @@ export async function GET(req: NextRequest) {
         query("SELECT * FROM product_components ORDER BY parent_product_code ASC, id ASC"),
         query("SELECT employee_code, full_name, department, position, email, phone FROM personnel WHERE status = 'ACTIVE' ORDER BY id ASC"),
         query("SELECT id, customer_code, name, contact_person, phone, email, address, classification, region, province FROM sales_customers ORDER BY name ASC"),
-        query("SELECT id, supplier_code, name, contact_person, phone, email, address, product_lines, payment_terms, rating FROM procurement_suppliers ORDER BY name ASC").catch(() => ({ rows: [] as any[] })),
+        query("SELECT id, supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating FROM procurement_suppliers ORDER BY name ASC")
+          .catch(() => query("SELECT id, supplier_code, name, contact_person, phone, email, address, product_lines, payment_terms, rating FROM procurement_suppliers ORDER BY name ASC"))
+          .catch(() => ({ rows: [] as any[] })),
         query(`
           SELECT product_code,
                  COUNT(*) FILTER (WHERE quantity_on_hand > 0)::int AS lot_count,
@@ -1675,7 +1678,7 @@ export async function POST(req: NextRequest) {
             // Collected first; all writes happen below in ONE transaction, sorted by product code
             parsedInbound.push({
               pCode, pName, spec, unit, lot, expDate, qty, unitCost, storageCondition, shelf, warehouse, supplier, brandName, r,
-              inboundCode, inboundDate, performedBy,
+              inboundCode, inboundDate, performedBy, poCode,
               reference: poCode || vatInvoice || lot,
               txNote: `Nhập kho theo Lô ${lot} (HSD: ${expDate})${supplier ? ` - NCC: ${supplier}` : ""}${inboundReason ? ` - Lý do: ${inboundReason}` : ""}${notes ? ` - Ghi chú: ${notes}` : ""}`,
               txItem: {
@@ -1795,6 +1798,18 @@ export async function POST(req: NextRequest) {
             }
             for (const entry of catalogEntries) {
               await appendCommercialCatalogEntry(c, entry);
+            }
+            // Dòng có Mã PO: cộng số thực nhận vào đúng dòng của PO đó (trước đây chỉ ghi mã PO làm tham chiếu)
+            const byPo = new Map<string, { inboundCode: string; lines: { product_code: string; quantity: number }[] }>();
+            for (const p of parsedInbound) {
+              const pc = String(p.poCode || "").trim();
+              if (!pc) continue;
+              const g = byPo.get(pc) || { inboundCode: p.inboundCode, lines: [] as { product_code: string; quantity: number }[] };
+              g.lines.push({ product_code: p.pCode, quantity: Number(p.qty) || 0 });
+              byPo.set(pc, g);
+            }
+            for (const [pc, g] of byPo) {
+              await applyPOReceipt(c, pc, g.lines, g.inboundCode);
             }
             if (Array.isArray(contact_rows) && contact_rows.length > 0) {
               for (const cr of contact_rows) {

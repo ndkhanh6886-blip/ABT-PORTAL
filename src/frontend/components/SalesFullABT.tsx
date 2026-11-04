@@ -2686,13 +2686,12 @@ export function SalesFullABT() {
             const lParent = String(l.parent_code || "").trim().toLowerCase();
             const lName = String(l.product_name || "").trim().toLowerCase();
 
-            if (clean && lCode === clean) return true;
-            if (normCode.length >= 3 && lNorm === normCode) return true;
-            if (targetParent && (lCode === targetParent || lParent === targetParent)) return true;
-            if (clean && lParent === clean) return true;
-            if (baseCode.length >= 4 && (lCode === baseCode || lBase === baseCode) && resolvedName && lName === resolvedName) return true;
-            if (resolvedName.length >= 5 && lName === resolvedName) return true;
-            return false;
+            // Chỉ lô của ĐÚNG mã hàng (bỏ qua khác biệt chữ hoa / dấu gạch). Không ghép mã cha, mã phân rã đơn vị
+            // (CFT000500 ≠ CFT000500.1: Thùng ≠ Cái) hay mã khác trùng tên — kho xuất nhầm lô / nhầm đơn vị.
+            if (clean) return lCode === clean || (normCode.length >= 3 && lNorm === normCode);
+            // Dòng không có mã: chỉ khớp theo tên
+            void targetParent; void lParent; void baseCode; void lBase;
+            return resolvedName.length >= 5 && lName === resolvedName;
         });
     };
 
@@ -2703,12 +2702,11 @@ export function SalesFullABT() {
         const matchingLots = getAvailableLotsForProduct(prodCode, prodName, forOrderCode);
         const lotsAvailSum = matchingLots.reduce((s: number, l: any) => s + (Number(l.available_qty ?? l.quantity_on_hand) || 0), 0);
 
-        const agg = (warehouseInventoryItems || []).find((it: any) => {
-            const itCode = String(it.product_code || it.code || "").trim().toLowerCase();
-            if (itCode === clean) return true;
-            if (prodName && String(it.product_name || it.name || "").trim().toLowerCase() === prodName.trim().toLowerCase()) return true;
-            return false;
-        });
+        // Khớp đúng mã trước; chỉ dòng không có mã mới tra theo tên (mã phân rã thường trùng tên với mã chính)
+        const agg = clean
+            ? (warehouseInventoryItems || []).find((it: any) => String(it.product_code || it.code || "").trim().toLowerCase() === clean)
+            : (warehouseInventoryItems || []).find((it: any) =>
+                Boolean(prodName) && String(it.product_name || it.name || "").trim().toLowerCase() === String(prodName).trim().toLowerCase());
         if (agg) {
             const today = todayVN();
             const aggCode = String(agg.product_code || agg.code || clean).trim().toLowerCase();
@@ -3834,6 +3832,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return [];
     };
 
+    /** Thành phần / phụ kiện của bộ kit theo mã (danh mục thành phần, hoặc cấu hình BOM của thiết bị). */
+    const getKitComponentsForCode = (code: any): any[] => {
+        const c = String(code || "").trim();
+        if (!c) return [];
+        const prod: any = (allSalesProducts || []).find((x: any) => String(x.code || "").trim() === c) || { code: c };
+        return getProductComponentsList(prod);
+    };
+    /** So sánh điều kiện bảo quản theo phần nhiệt độ (bỏ phần chú thích trong ngoặc). */
+    const storageKey = (v: any) => String(v || "").replace(/\(.*$/, "").replace(/\s+/g, "").toLowerCase();
+    /** Đơn giá dòng phiếu giao khi in: giá lưu trên phiếu, thiếu thì lấy giá của dòng SO. */
+    const slipLinePrice = (it: any): number => {
+        const own = Number(it?.unitPrice ?? it?.price ?? 0);
+        if (own > 0) return own;
+        const oc = String(selectedViewDeliverySlip?.orderCode || "").trim();
+        const ord: any = oc ? factoryOrders.find((o: any) => o.id === oc || o.order_code === oc) : null;
+        const code = String(it?.productCode || "").trim();
+        const line: any = (ord?.items || []).find((x: any) => String(x.productCode || x.product_code || "").trim() === code);
+        return Number(line?.unitPrice ?? line?.price ?? 0) || 0;
+    };
+
     const [commercialPage, setCommercialPage] = useState<number>(1);
     const [commercialPageSize, setCommercialPageSize] = useState<number | "all">(50);
 
@@ -4094,7 +4112,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [openDeliveryLotDropdownIndex, setOpenDeliveryLotDropdownIndex] = useState<number | null>(null);
     const [deliveryLotSearchQueries, setDeliveryLotSearchQueries] = useState<Record<number, string>>({});
     const [selectedViewDeliverySlip, setSelectedViewDeliverySlip] = useState<any>(null);
-    const [slipPrintWithPrice, setSlipPrintWithPrice] = useState(false);
+    // "In có giá" nhớ theo trình duyệt cho các lần in sau
+    const [slipPrintWithPrice, setSlipPrintWithPriceState] = useState<boolean>(() => {
+        if (typeof window === "undefined") return false;
+        try { return localStorage.getItem("tbr_slip_print_with_price") === "1"; } catch { return false; }
+    });
+    const setSlipPrintWithPrice = (v: boolean) => {
+        setSlipPrintWithPriceState(v);
+        try { localStorage.setItem("tbr_slip_print_with_price", v ? "1" : "0"); } catch {}
+    };
     const [slipPrintLandscape, setSlipPrintLandscape] = useState(false);
     const [isViewDeliverySlipModalOpen, setIsViewDeliverySlipModalOpen] = useState(false);
     // Luồng giao hàng mới: Lập phiếu giao (toàn bộ / từng đợt) -> NVKD xác nhận đã giao theo từng phiếu
@@ -14865,7 +14891,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         let finalDispatchLoc = editSlip?.dispatchLocation || "Kho Trung Tâm";
         let finalDispatcher = editSlip?.dispatcherName || loggedInStaff?.full_name || "";
 
-        if (!editSlip && !opts?.presetQtys && !opts?.ignoreDraft && target.order_code) {
+        // Bản nháp đang làm dở được khôi phục cả khi mở từ "Giao trước đợt (có sẵn 1 phần)"
+        if (!editSlip && !opts?.ignoreDraft && target.order_code) {
             try {
                 const rawDraft = localStorage.getItem(getDeliveryDraftStorageKey(target.order_code));
                 if (rawDraft) {
@@ -32646,8 +32673,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         const allWarehouseLots = getAllAvailableWarehouseLots(ordCode);
                                         const cleanTypedLot = String(item.lotNo || "").trim().toLowerCase();
                                         const matchedWarehouseLot = cleanTypedLot
-                                            ? (availLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot) ||
-                                               allWarehouseLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot))
+                                            ? availLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot)
+                                            : null;
+                                        // Số lô gõ tay thuộc mã KHÁC: cảnh báo, không lấy tồn của lô đó
+                                        const typedLotOtherProduct = cleanTypedLot && !matchedWarehouseLot
+                                            ? allWarehouseLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot)
                                             : null;
                                         const selectedLotAvailQty = matchedWarehouseLot
                                             ? (Number(matchedWarehouseLot.available_qty ?? matchedWarehouseLot.quantity_on_hand) || 0)
@@ -32676,9 +32706,38 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-950 text-indigo-300 border border-indigo-700/60">
                                                             SP #{distinctSkuIndex}
                                                         </span>
-                                                        <span className="font-bold text-white text-xs">{item.productName}</span>
-                                                        <span className="text-[10px] text-slate-400 font-mono">{item.productCode}{item.specification ? ` • ${item.specification}` : ""}</span>
+                                                        {/* Kho quản lý theo MÃ HÀNG: mã đứng trước, chữ lớn, nổi bật; tên hàng phụ */}
+                                                        <span className="font-mono font-black text-sm text-amber-300 bg-amber-950/70 border border-amber-600/70 px-2 py-0.5 rounded tracking-wide">{item.productCode}</span>
+                                                        <span className="font-semibold text-slate-200 text-xs">{item.productName}</span>
+                                                        {item.specification && <span className="text-[10px] text-slate-400">{item.specification}</span>}
                                                         {item.storageCondition && <span className="text-[10px] text-cyan-400">🌡 {item.storageCondition}</span>}
+                                                        {(() => {
+                                                            const comps = getKitComponentsForCode(item.productCode);
+                                                            if (comps.length === 0) return null;
+                                                            const kitQty = sumSameCodeQty || Number(item.quantity) || 0;
+                                                            const mainStorage = item.storageCondition || getStorageConditionForProduct(item.productCode);
+                                                            return (
+                                                                <div className="basis-full mt-1 px-2 py-1.5 rounded-md bg-slate-950/70 border border-slate-700/70 space-y-0.5">
+                                                                    <div className="text-[10px] font-bold text-slate-300">📦 Bộ gồm {comps.length} thành phần (đóng gói & bảo quản theo từng thành phần):</div>
+                                                                    {comps.map((c: any, ci: number) => {
+                                                                        const per = Number(c.quantity_per_kit) || 1;
+                                                                        const differs = c.storage_condition && storageKey(c.storage_condition) !== storageKey(mainStorage);
+                                                                        return (
+                                                                            <div key={ci} className="text-[10px] flex flex-wrap gap-x-2">
+                                                                                <span className="font-mono font-bold text-indigo-300">{c.component_code}</span>
+                                                                                <span className="text-slate-200">{c.component_name}</span>
+                                                                                <span className="text-slate-400 font-mono">× {per}{kitQty ? ` = ${per * kitQty}` : ""} {c.unit || ""}</span>
+                                                                                {c.storage_condition && (
+                                                                                    <span className={differs ? "font-bold text-amber-300" : "text-cyan-400"}>
+                                                                                        🌡 {c.storage_condition}{differs ? " ⚠ khác bảo quản của bộ" : ""}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                        );
+                                                                    })}
+                                                                </div>
+                                                            );
+                                                        })()}
                                                         {sameCodeCount > 1 && (
                                                             <span className={cn(
                                                                 "text-[10px] font-mono font-bold px-2 py-0.5 rounded border",
@@ -32845,6 +32904,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             </button>
                                                         </div>
 
+                                                        {typedLotOtherProduct && (
+                                                            <div className="mt-1 px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-700/60 text-[10px] text-rose-300 font-bold">
+                                                                ⚠ Lô này thuộc mã {typedLotOtherProduct.product_code}, không phải {item.productCode}
+                                                            </div>
+                                                        )}
                                                         {matchedWarehouseLot && (
                                                             <div className="mt-1 flex items-center justify-between gap-1 px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-800 text-[10px]">
                                                                 <span className="text-slate-400">Khả dụng lô này:</span>
@@ -32888,9 +32952,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             availLots.map((l: any) => `${String(l.product_code || "").toLowerCase()}__${String(l.lot_number || "").toLowerCase()}`)
                                                                         );
                                                                         const filteredProductLots = availLots.filter(filterLotFn);
-                                                                        const filteredOtherLots = allWarehouseLots
-                                                                            .filter((l: any) => !productLotKeys.has(`${String(l.product_code || "").toLowerCase()}__${String(l.lot_number || "").toLowerCase()}`))
-                                                                            .filter(filterLotFn);
+                                                                        // Chỉ chọn lô của đúng mã đang xuất (không đưa lô của mã khác vào danh sách chọn)
+                                                                        void productLotKeys;
+                                                                        const filteredOtherLots: any[] = [];
 
                                                                         const handleSelectLotOption = (l: any) => {
                                                                             const lotAvail = Number(l.available_qty ?? Math.max(0, (Number(l.quantity_on_hand) || 0) - (Number(l.quantity_allocated) || 0)));
@@ -32967,7 +33031,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     </div>
                                                                                 ) : (
                                                                                     <div className="px-3 py-2 bg-amber-950/20 text-[10px] text-amber-300/90">
-                                                                                        ℹ️ Mã <strong className="font-mono">{item.productCode}</strong> chưa có lô khớp trực tiếp — bạn có thể chọn từ danh sách các lô đang có trong kho bên dưới hoặc gõ trực tiếp số lô vào ô nhập.
+                                                                                        ℹ️ Mã <strong className="font-mono">{item.productCode}</strong> hiện không có lô tồn khả dụng trong kho. Kiểm tra lại nhập kho của mã này (không xuất lô của mã khác).
                                                                                     </div>
                                                                                 )}
 
@@ -33370,8 +33434,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                             return groupedBySku.map((it: any, i: number) => {
                                                 const hasMultiLots = (it.lotsDetail?.length || 0) > 1;
+                                                const kitComps = getKitComponentsForCode(it.productCode);
+                                                const mainStorage = it.storageCondition || getStorageConditionForProduct(it.productCode);
                                                 return (
-                                                    <tr key={i} className="hover:bg-slate-50">
+                                                    <React.Fragment key={i}>
+                                                    <tr className="hover:bg-slate-50">
                                                         <td className="p-2 text-center border-r border-slate-200 font-mono">{i + 1}</td>
                                                         <td className="p-2 border-r border-slate-200 font-mono font-bold text-indigo-950">{it.productCode}</td>
                                                         <td className="p-2 border-r border-slate-200">
@@ -33407,10 +33474,30 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             )}
                                                         </td>
                                                         <td className="p-2 text-center border-r border-slate-200 font-bold text-slate-900 font-mono text-xs">{it.quantity}</td>
-                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono">{Number(it.unitPrice ?? it.price ?? 0).toLocaleString("vi-VN")}</td>}
-                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono font-bold">{((Number(it.unitPrice ?? it.price ?? 0)) * (Number(it.quantity) || 0)).toLocaleString("vi-VN")}</td>}
+                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono">{slipLinePrice(it).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>}
+                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono font-bold">{(slipLinePrice(it) * (Number(it.quantity) || 0)).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>}
                                                         <td className="p-2 text-center text-slate-700 text-[10px]">{it.notesList?.length > 0 ? it.notesList.join("; ") : (it.notes || "-")}</td>
                                                     </tr>
+                                                    {kitComps.length > 0 && (
+                                                        <tr className="bg-slate-50/60">
+                                                            <td className="border-r border-slate-200"></td>
+                                                            <td colSpan={slipPrintWithPrice ? 9 : 7} className="px-2 pb-2 pt-0.5 text-[10px] text-slate-700">
+                                                                <div className="font-bold text-slate-800">Bộ gồm {kitComps.length} thành phần:</div>
+                                                                {kitComps.map((c: any, ci: number) => {
+                                                                    const per = Number(c.quantity_per_kit) || 1;
+                                                                    const differs = c.storage_condition && storageKey(c.storage_condition) !== storageKey(mainStorage);
+                                                                    return (
+                                                                        <div key={ci}>
+                                                                            • <span className="font-mono font-bold">{c.component_code}</span> {c.component_name}
+                                                                            {" "}– SL: {per * (Number(it.quantity) || 0)} {c.unit || ""}
+                                                                            {c.storage_condition ? <span className={differs ? "font-bold" : ""}> – Bảo quản: {c.storage_condition}{differs ? " (khác bộ)" : ""}</span> : null}
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </td>
+                                                        </tr>
+                                                    )}
+                                                    </React.Fragment>
                                                 );
                                             });
                                         })()}
@@ -33420,7 +33507,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <tr className="bg-slate-50 font-bold border-t border-slate-300">
                                                 <td colSpan={8} className="p-2 text-right uppercase">Tổng tiền hàng (chưa VAT):</td>
                                                 <td className="p-2 text-right font-mono">
-                                                    {(selectedViewDeliverySlip.items || []).reduce((s: number, it: any) => s + (Number(it.unitPrice ?? it.price ?? 0)) * (Number(it.quantity) || 0), 0).toLocaleString("vi-VN")}
+                                                    {(selectedViewDeliverySlip.items || []).reduce((s: number, it: any) => s + slipLinePrice(it) * (Number(it.quantity) || 0), 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}
                                                 </td>
                                                 <td></td>
                                             </tr>
