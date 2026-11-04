@@ -2055,6 +2055,119 @@ export async function POST(req: NextRequest) {
     }
 
     // 10. Consolidate Multiple PRs into a Unified PO (Requirement 4 - H3)
+    // Bổ sung dòng PR vào một PO sẵn có (cùng NCC, CHƯA đặt hàng: Chờ xác nhận / Đã xác nhận)
+    if (action === "append_prs_to_po") {
+      const { po_id, supplier_id, pr_ids, selected_item_keys, items, created_by } = body;
+      if (!Array.isArray(items) || items.length === 0) throw new HttpError(400, "Chưa chọn dòng hàng để bổ sung vào PO.");
+      if (!Array.isArray(selected_item_keys) || selected_item_keys.length === 0) throw new HttpError(400, "Chưa chọn dòng PR.");
+      for (const it of items) {
+        const q = Number(it?.quantity), pr = Number(it?.unit_price ?? 0);
+        if (!String(it?.product_code || "").trim()) throw new HttpError(400, "Có dòng hàng thiếu mã hàng.");
+        if (!Number.isFinite(q) || q <= 0) throw new HttpError(400, `Mã ${it.product_code}: số lượng phải lớn hơn 0.`);
+        if (!Number.isFinite(pr) || pr < 0) throw new HttpError(400, `Mã ${it.product_code}: đơn giá không hợp lệ.`);
+      }
+      const actor = String(created_by || me.full_name || me.username || "Phòng Cung Ứng").trim();
+      const APPENDABLE = ["DRAFT", "PENDING", "APPROVED", "CONFIRMED"];
+      const lineKey = (x: any) => [x?.product_code, x?.unit, x?.specification].map((v: any) => String(v || "").trim().toLowerCase()).join("|");
+      const splitCodes = (v: any) => String(v || "").split(/[,;]\s*/).map((x: string) => x.trim()).filter(Boolean);
+
+      const result = await withTransaction(async (c) => {
+        const poRes = await c.query("SELECT id, po_code, supplier_id, supplier_name, status, items FROM procurement_orders WHERE id = $1 FOR UPDATE", [Number(po_id) || 0]);
+        const po = poRes.rows[0];
+        if (!po) throw new HttpError(404, "Không tìm thấy PO cần bổ sung.");
+        const st = String(po.status || "").toUpperCase();
+        if (!APPENDABLE.includes(st)) {
+          throw new HttpError(409, `PO ${po.po_code} đã chuyển sang "${po.status}" (đã đặt hàng / đang xử lý), không bổ sung được. Hãy lập PO mới.`);
+        }
+        if (supplier_id !== undefined && supplier_id !== null && String(po.supplier_id) !== String(supplier_id)) {
+          throw new HttpError(409, `PO ${po.po_code} thuộc NCC khác (${po.supplier_name}).`);
+        }
+        const poItems: any[] = Array.isArray(po.items) ? po.items : (typeof po.items === "string" ? (() => { try { return JSON.parse(po.items) || []; } catch { return []; } })() : []);
+        let merged = 0, added = 0;
+        for (const it of items) {
+          const q = Number(it.quantity) || 0;
+          const price = Number(it.unit_price) || 0;
+          const target = poItems.find((x: any) => lineKey(x) === lineKey(it));
+          if (target) {
+            target.quantity = (Number(target.quantity) || 0) + q;
+            if (!(Number(target.unit_price) > 0) && price > 0) target.unit_price = price;
+            if (target.total !== undefined) target.total = (Number(target.quantity) || 0) * (Number(target.unit_price) || 0);
+            target.source_pr_code = Array.from(new Set([...splitCodes(target.source_pr_code), ...splitCodes(it.source_pr_code)])).join(", ");
+            merged++;
+          } else {
+            poItems.push({
+              product_code: it.product_code,
+              product_name: it.product_name,
+              specification: it.specification || "",
+              unit: it.unit || "Hộp",
+              quantity: q,
+              unit_price: price,
+              total: q * price,
+              notes: it.notes || "",
+              source_pr_code: it.source_pr_code || "",
+            });
+            added++;
+          }
+        }
+        const totalAmount = poItems.reduce((s: number, x: any) => s + (Number(x.quantity) || 0) * (Number(x.unit_price) || 0), 0);
+
+        // Dòng PR được chọn: gắn mã PO
+        const codesIn = (pr_ids || []).map((x: any) => String(x).trim()).filter(Boolean);
+        const prs = await c.query(
+          `SELECT id, workflow_code, status, results_summary, logs FROM workflow_requests
+            WHERE workflow_code = ANY($1::text[]) OR id::text = ANY($1::text[]) ORDER BY id FOR UPDATE`,
+          [codesIn]
+        );
+        if (prs.rows.length === 0) throw new HttpError(404, "Không tìm thấy đề xuất mua hàng (PR).");
+        for (const row of prs.rows) {
+          const prKey = row.workflow_code || String(row.id);
+          if (["CANCELLED", "REJECTED"].includes(String(row.status || "").toUpperCase())) {
+            throw new HttpError(409, `${prKey} đã bị hủy / từ chối, không thể đưa vào PO.`);
+          }
+          let parsed: any[] = [];
+          try {
+            parsed = Array.isArray(row.results_summary) ? row.results_summary
+              : (typeof row.results_summary === "string" && row.results_summary.trim().startsWith("[") ? JSON.parse(row.results_summary) : []);
+          } catch {}
+          const idxs = selected_item_keys
+            .filter((k: string) => String(k).startsWith(prKey + "___"))
+            .map((k: string) => parseInt(String(k).split("___")[1]));
+          if (idxs.length === 0) continue;
+          for (const idx of idxs) {
+            if (!Number.isInteger(idx) || !parsed[idx]) {
+              throw new HttpError(409, `${prKey}: không tìm thấy mặt hàng #${idx + 1} (PR có thể vừa được sửa). Tải lại trang rồi chọn lại.`);
+            }
+            if (parsed[idx].po_code) {
+              throw new HttpError(409, `${prKey}: mặt hàng #${idx + 1} (${parsed[idx].product_code || ""}) đã thuộc PO ${parsed[idx].po_code}.`);
+            }
+            parsed[idx].po_code = po.po_code;
+            parsed[idx].status = "CONVERTED";
+          }
+          const open = parsed.filter((x: any) => !x.po_code).length;
+          const logs = Array.isArray(row.logs) ? row.logs : [];
+          logs.push({ time: nowVNDateTime(), actor, action: `Bổ sung ${idxs.length} mặt hàng vào PO sẵn có ${po.po_code} (NCC: ${po.supplier_name})` });
+          await c.query(
+            "UPDATE workflow_requests SET status = $1, results_summary = $2, logs = $3, updated_at = CURRENT_TIMESTAMP WHERE id = $4",
+            [open > 0 ? "PARTIAL_CONVERTED" : "CONVERTED", JSON.stringify(parsed), JSON.stringify(logs), row.id]
+          );
+        }
+
+        const noteLine = `[${nowVNDateTime()}] ${actor}: bổ sung ${items.length} dòng từ ${codesIn.join(", ")} (cộng dồn ${merged}, thêm mới ${added})`;
+        await c.query(
+          `UPDATE procurement_orders SET items = $1, total_amount = $2,
+                  notes = CASE WHEN COALESCE(notes, '') = '' THEN $3 ELSE notes || E'\n' || $3 END,
+                  version = COALESCE(version, 0) + 1
+            WHERE id = $4`,
+          [JSON.stringify(poItems), totalAmount, noteLine, po.id]
+        );
+        await linkSalesOrdersToPO(c, prs.rows.map((r: any) => r.workflow_code), po.po_code);
+        return { po_code: po.po_code, merged, added };
+      });
+
+      await logAudit("APPEND_PO", "PROCUREMENT", `Bổ sung ${items.length} dòng từ PR (${(pr_ids || []).join(", ")}) vào PO ${result.po_code}`);
+      return NextResponse.json({ success: true, ...result });
+    }
+
     if (action === "consolidate_prs_to_po") {
       const { supplier_id, supplier_name, pr_ids, selected_item_keys, items, expected_delivery_date, notes, created_by } = body;
       // Một PO gửi đúng một NCC đã có trong danh bạ; dòng hàng phải có số lượng > 0 và giá ≥ 0

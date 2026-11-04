@@ -331,6 +331,59 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
     }
   };
 
+  // PO sẵn có của cùng NCC, chưa đặt hàng (Chờ xác nhận / Đã xác nhận): có thể bổ sung dòng vào
+  const APPENDABLE_PO = ["DRAFT", "PENDING", "APPROVED", "CONFIRMED"];
+  const appendTargets = useMemo(
+    () => (orders || []).filter((po: any) =>
+      poSupplier && String(po.supplier_id) === String(poSupplier.id) && APPENDABLE_PO.includes(String(po.status || "").toUpperCase())
+    ),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [orders, poSupplier?.id]
+  );
+  const [appendPoId, setAppendPoId] = useState("");
+  const appendPO = appendTargets.find((po: any) => String(po.id) === appendPoId) || null;
+
+  const appendToPO = async () => {
+    if (submitting || selectedLines.length === 0 || !poSupplier || !appendPO) return;
+    const prCodes = Array.from(new Set(selectedLines.map(l => l.prKey)));
+    const summary =
+      `Bổ sung vào PO ${appendPO.po_code} (${supShort(poSupplier)}):\n` +
+      `• ${poItems.length} dòng hàng từ ${prCodes.length} PR (${prCodes.join(", ")})\n` +
+      `• Mã đã có trong PO (cùng ĐVT, quy cách) được cộng thêm số lượng; mã mới thêm dòng mới\n` +
+      `• Tiền hàng bổ sung dự kiến: ${fmtMoney(poTotal)} đ` +
+      (zeroPriceItems.length ? `\n\n⚠️ ${zeroPriceItems.length} mã chưa có giá mua từ NCC này (ghi 0 đ): ${zeroPriceItems.map(i => i.product_code).join(", ")}` : "") +
+      `\n\nXác nhận bổ sung?`;
+    if (!window.confirm(summary)) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch("/api/procurement?action=append_prs_to_po", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          po_id: appendPO.id,
+          supplier_id: poSupplier.id,
+          pr_ids: prCodes,
+          selected_item_keys: selectedLines.map(l => l.key),
+          items: poItems,
+          created_by: actorName,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.success) {
+        alert(`❌ Không bổ sung được vào PO: ${data.error || `Lỗi ${res.status}`}`);
+        return;
+      }
+      alert(`✅ Đã bổ sung vào PO ${data.po_code}: cộng dồn ${data.merged} dòng, thêm mới ${data.added} dòng.`);
+      clearSelection();
+      setAppendPoId("");
+      await onCreated();
+    } catch {
+      alert("❌ Không kết nối được máy chủ, PO chưa được bổ sung.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const pendingCount = lines.filter(l => !l.poInfo.hasPO).length;
 
   return (
@@ -515,6 +568,31 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
             <PackageCheck className="w-3.5 h-3.5" />
             {submitting ? "Đang tạo PO..." : `Tạo PO cho ${supShort(poSupplier)}`}
           </button>
+          {appendTargets.length > 0 && (
+            <div className="flex items-center gap-1.5 pl-3 border-l border-slate-200 dark:border-slate-700">
+              <select
+                value={appendPoId}
+                onChange={(e) => setAppendPoId(e.target.value)}
+                className="px-2 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800"
+                title="PO cùng NCC chưa đặt hàng (Chờ xác nhận / Đã xác nhận)"
+              >
+                <option value="">Hoặc thêm vào PO sẵn có…</option>
+                {appendTargets.map((po: any) => (
+                  <option key={po.id} value={String(po.id)}>
+                    {po.po_code} • {(Array.isArray(po.items) ? po.items.length : 0)} dòng • {fmtMoney(Number(po.total_amount) || 0)} đ
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={appendToPO}
+                disabled={submitting || !appendPO}
+                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40 cursor-pointer disabled:cursor-not-allowed"
+              >
+                {submitting ? "Đang bổ sung..." : "Thêm vào PO"}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
