@@ -355,7 +355,7 @@ export async function GET(req: NextRequest) {
             p.name ASC
         `),
         query("SELECT * FROM inventory_reservations ORDER BY id DESC"),
-        query("SELECT id, po_code, supplier_name, expected_delivery_date, status, items FROM procurement_orders WHERE status NOT IN ('COMPLETED', 'CANCELLED')"),
+        query("SELECT id, po_code, supplier_id, supplier_name, order_date, expected_delivery_date, status, items, received_qty FROM procurement_orders WHERE status NOT IN ('COMPLETED', 'CANCELLED') ORDER BY id DESC"),
       ]);
 
       const [recallsRes, componentsRes, personnelRes, customersRes, suppliersRes, lotSummary] = await Promise.all([
@@ -485,6 +485,40 @@ export async function GET(req: NextRequest) {
         personnel: personnelRes.rows,
         customers: customersRes.rows,
         suppliers: suppliersRes.rows,
+        // PO đang chờ nhập kho (đã xác nhận trở đi, còn dòng chưa nhận đủ) để chọn trên phiếu nhập kho
+        pending_pos: openPOs.rows
+          .filter((po: any) => !["DRAFT", "PENDING"].includes(String(po.status || "").toUpperCase()))
+          .map((po: any) => {
+            let its: any = po.items;
+            if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
+            const rq = po.received_qty || {};
+            const lines = (Array.isArray(its) ? its : []).map((it: any, i: number) => {
+              const ordered = Number(it?.quantity) || 0;
+              const received = Number(rq[i] ?? rq[String(i)]) || 0;
+              return {
+                line_index: i,
+                product_code: it?.product_code || "",
+                product_name: String(it?.product_name || "").replace(/^\[[A-Z]{2}\d{2}-[^\]]+\]\s*/, ""),
+                specification: it?.specification || "",
+                unit: it?.unit || "Hộp",
+                ordered,
+                received,
+                remaining: Math.max(0, ordered - received),
+                unit_price: Number(it?.unit_price) || 0,
+              };
+            });
+            return {
+              id: po.id,
+              po_code: po.po_code,
+              supplier_id: po.supplier_id,
+              supplier_name: po.supplier_name,
+              status: po.status,
+              order_date: po.order_date,
+              expected_delivery_date: po.expected_delivery_date,
+              lines,
+            };
+          })
+          .filter((po: any) => po.lines.some((l: any) => l.remaining > 0)),
       };
       return NextResponse.json(canSeeCost ? overviewPayload : stripCostFields(overviewPayload));
     }

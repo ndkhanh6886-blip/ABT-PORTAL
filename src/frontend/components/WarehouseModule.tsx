@@ -164,6 +164,9 @@ export const WarehouseModule: React.FC = () => {
   const [supplierList, setSupplierList] = useState<any[]>([]);
   const [editingInboundTxId, setEditingInboundTxId] = useState<number | null>(null);
   const [isInboundSupplierDropdownOpen, setIsInboundSupplierDropdownOpen] = useState(false);
+  // PO đang chờ nhập kho (chọn trên phiếu nhập)
+  const [pendingPOs, setPendingPOs] = useState<any[]>([]);
+  const [isInboundPODropdownOpen, setIsInboundPODropdownOpen] = useState(false);
   const [isExcelSupplierDropdownOpen, setIsExcelSupplierDropdownOpen] = useState(false);
 
   // Reservation filter & modal states
@@ -331,6 +334,7 @@ export const WarehouseModule: React.FC = () => {
         if (data.suppliers) {
           setSupplierList(data.suppliers);
         }
+        setPendingPOs(Array.isArray(data.pending_pos) ? data.pending_pos : []);
       }
     } catch (e) {
       console.error("Failed to load inventory:", e);
@@ -7626,14 +7630,88 @@ export const WarehouseModule: React.FC = () => {
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Mã Đơn Đặt Hàng (PO) Tham Chiếu</label>
-                    <input
-                      type="text"
-                      value={inboundForm.reference_code}
-                      onChange={(e) => setInboundForm({ ...inboundForm, reference_code: e.target.value })}
-                      placeholder="VD: PO-2026-001 hoặc PO-2026-042"
-                      className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
-                    />
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1 flex items-center justify-between">
+                      <span>Mã Đơn Đặt Hàng (PO) Tham Chiếu</span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">{pendingPOs.length} PO chờ nhập kho</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={inboundForm.reference_code}
+                        onFocus={() => setIsInboundPODropdownOpen(true)}
+                        onChange={(e) => { setInboundForm({ ...inboundForm, reference_code: e.target.value }); setIsInboundPODropdownOpen(true); }}
+                        placeholder="Gõ mã PO / tên NCC / mã hàng để tìm..."
+                        className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
+                      />
+                      {isInboundPODropdownOpen && !editingInboundTxId && (() => {
+                        const q = String(inboundForm.reference_code || "").trim().toLowerCase();
+                        const list = pendingPOs.filter((po: any) => !q ||
+                          String(po.po_code || "").toLowerCase().includes(q) ||
+                          String(po.supplier_name || "").toLowerCase().includes(q) ||
+                          (po.lines || []).some((l: any) => String(l.product_code || "").toLowerCase().includes(q) || String(l.product_name || "").toLowerCase().includes(q))
+                        );
+                        const pickPO = (po: any) => {
+                          const sup = findDirectorySupplier(po.supplier_name);
+                          const openLines = (po.lines || []).filter((l: any) => l.remaining > 0);
+                          const formEmpty = (inboundForm.items || []).every((it: any) => !String(it.product_code || "").trim());
+                          const fillItems = formEmpty || window.confirm(`Thay danh sách hàng hiện tại bằng ${openLines.length} dòng còn chờ nhận của ${po.po_code}?`);
+                          setInboundForm((prev: any) => ({
+                            ...prev,
+                            reference_code: po.po_code,
+                            supplier_name: sup?.name || po.supplier_name || prev.supplier_name,
+                            inbound_type: "Nhập mua hàng theo Đơn PO từ NCC",
+                            items: fillItems && openLines.length > 0
+                              ? openLines.map((l: any) => {
+                                  const cat: any = products.find((p: any) => p.code === l.product_code);
+                                  return {
+                                    product_code: l.product_code,
+                                    product_name: l.product_name || cat?.name || l.product_code,
+                                    specification: l.specification || cat?.specification || "",
+                                    unit: l.unit || cat?.unit || "Hộp",
+                                    quantity: l.remaining,
+                                    unit_price: Math.round(Number(l.unit_price) || Number(cat?.cost_price) || 0),
+                                    lot_number: "",
+                                    manufacture_date: "",
+                                    expiry_date: "",
+                                    storage_condition: cat?.storage_condition || "",
+                                    shelf_position: cat?.shelf_position || "Chưa phân bổ kệ",
+                                    qc_status: "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
+                                    item_notes: "",
+                                    components: []
+                                  };
+                                })
+                              : prev.items
+                          }));
+                          setIsInboundPODropdownOpen(false);
+                        };
+                        return (
+                          <>
+                            <div className="fixed inset-0 z-40" onClick={() => setIsInboundPODropdownOpen(false)} />
+                            <div className="absolute left-0 mt-1.5 w-[min(520px,90vw)] max-h-72 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl z-50 divide-y divide-slate-100 dark:divide-slate-800">
+                              <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/80 text-[10px] font-bold text-slate-500 uppercase tracking-wider sticky top-0 flex justify-between">
+                                <span>PO chờ nhập kho ({list.length})</span>
+                                <span>Click để chọn</span>
+                              </div>
+                              {list.length === 0 ? (
+                                <div className="p-3 text-center text-xs text-slate-500">Không có PO chờ nhập kho khớp "{inboundForm.reference_code}".</div>
+                              ) : list.slice(0, 50).map((po: any) => {
+                                const open = (po.lines || []).filter((l: any) => l.remaining > 0);
+                                return (
+                                  <button key={po.id} type="button" onClick={() => pickPO(po)} className="w-full px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <span className="font-mono font-bold text-xs text-orange-600 dark:text-orange-400">{po.po_code}</span>
+                                      <span className="text-[10px] text-slate-500">{po.expected_delivery_date ? `Hẹn ${String(po.expected_delivery_date).slice(0, 10).split("-").reverse().join("/")}` : ""} • {open.length} dòng chờ nhận</span>
+                                    </div>
+                                    <div className="text-[11px] text-slate-700 dark:text-slate-200 truncate">{po.supplier_name}</div>
+                                    <div className="text-[10px] text-slate-500 truncate">{open.slice(0, 4).map((l: any) => `${l.product_code} ×${l.remaining}`).join(" • ")}{open.length > 4 ? ` … +${open.length - 4}` : ""}</div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
                   <div>
                     <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số Hóa Đơn VAT / Tờ Khai Hải Quan</label>
