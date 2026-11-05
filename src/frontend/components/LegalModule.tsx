@@ -55,7 +55,7 @@ interface LegalContract {
   code: string;
   title: string;
   partnerName: string;
-  type: "Bán hàng Bệnh Viện" | "Mua hàng Quốc Tế" | "Đại Lý Phân Phối" | "Thỏa thuận NDA" | "Thuê kho / Dịch vụ";
+  type: "Bán hàng Bệnh Viện" | "Bán hàng: Tư nhân" | "Bán hàng: Công" | "Mua hàng Quốc Tế" | "Nhà cung cấp" | "Đại Lý Phân Phối" | "Thỏa thuận NDA" | "Thuê kho / Dịch vụ";
   value: string;
   requester: string;
   department: string;
@@ -1992,7 +1992,10 @@ export const LegalModule: React.FC = () => {
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
                 >
                   <option value="Bán hàng Bệnh Viện">Bán hàng Bệnh Viện</option>
+                  <option value="Bán hàng: Tư nhân">Bán hàng: Tư nhân</option>
+                  <option value="Bán hàng: Công">Bán hàng: Công</option>
                   <option value="Mua hàng Quốc Tế">Mua hàng Quốc Tế</option>
+                  <option value="Nhà cung cấp">Nhà cung cấp</option>
                   <option value="Đại Lý Phân Phối">Đại Lý Phân Phối</option>
                   <option value="Thỏa thuận NDA">Thỏa thuận NDA</option>
                   <option value="Thuê kho / Dịch vụ">Thuê kho / Dịch vụ</option>
