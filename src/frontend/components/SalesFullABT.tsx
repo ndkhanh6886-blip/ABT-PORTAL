@@ -11153,7 +11153,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         if (termRows.length === 0) return "";
                         return `<div class="terms-section">
                             <div class="terms-title">ĐIỀU KHOẢN & CHI TIẾT BÁO GIÁ:</div>
-                            ${termRows.map((tr, i) => `<p style="margin: 4px 0;"><strong>${i + 1}. ${tr.label}:</strong> ${tr.text}</p>`).join("\n")}
+                            ${termRows.map((tr, i) => {
+                                // giữ các chỗ xuống dòng người dùng gõ trong ô điều khoản (ký tự HTML được thoát)
+                                const html = tr.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\r?\n/g, "<br/>");
+                                return `<p style="margin: 4px 0;"><strong>${i + 1}. ${tr.label}:</strong> ${html.includes("<br/>") ? "<br/>" : ""}${html}</p>`;
+                            }).join("\n")}
                         </div>`;
                     })()}
                     <p style="margin-top: 25px; font-style: italic; font-size: 12px; margin-bottom: 6px;">Trân trọng cảm ơn sự quan tâm của Quý khách hàng!</p>
@@ -21433,7 +21437,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <div className="text-[10px] text-slate-400 bg-slate-900/40 p-2 rounded border border-slate-850 space-y-1">
                                                             <div><strong>Hiệu lực:</strong> {quote.validityTerms || "30 ngày kể từ ngày báo giá"}</div>
                                                             <div><strong>Giao hàng:</strong> {quote.deliveryTerms || "Tận nơi 3-5 ngày làm việc"}</div>
-                                                            <div><strong>Thanh toán:</strong> {quote.paymentTerms || "Chuyển khoản trong vòng 15 ngày"}</div>
+                                                            <div className="whitespace-pre-line"><strong>Thanh toán:</strong> {quote.paymentTerms || "Chuyển khoản trong vòng 15 ngày"}</div>
                                                         </div>
 
                                                         {/* Action bar inside expanded quote */}
@@ -27861,11 +27865,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="md:col-span-2">
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán</label>
-                                <input
-                                    type="text"
+                                {/* Mỗi thông tin (thời hạn, số tài khoản, ngân hàng...) một dòng: Enter để xuống dòng */}
+                                <textarea
+                                    rows={3}
                                     value={quotePaymentTerms}
                                     onChange={(e) => setQuotePaymentTerms(e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y leading-relaxed"
                                 />
                             </div>
                             <div className="md:col-span-2">
@@ -34729,12 +34734,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán mặc định *</label>
-                                    <input
-                                        type="text"
+                                    <textarea
+                                        rows={3}
                                         value={defaultQuotePaymentTerms}
                                         onChange={(e) => setDefaultQuotePaymentTerms(e.target.value)}
                                         required
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y leading-relaxed"
                                     />
                                 </div>
                                 <div>

@@ -789,7 +789,9 @@ export async function exportCustomerQuotationToExcel({
         cTerm.value = t;
         cTerm.font = { name: "Segoe UI", size: 9.5, color: { argb: "FF334155" } };
         cTerm.alignment = { vertical: "middle", horizontal: "left", wrapText: true };
-        sheet.getRow(currentRowIdx).height = t.length > 115 ? 34 : 20;
+        // mỗi chỗ xuống dòng trong điều khoản là một dòng trong ô; dòng dài (> ~115 ký tự) gói thành nhiều dòng
+        const lineCount = t.split(/\r?\n/).reduce((n, line) => n + Math.max(1, Math.ceil(line.length / 115)), 0);
+        sheet.getRow(currentRowIdx).height = lineCount > 1 ? lineCount * 15 + 4 : 20;
         currentRowIdx++;
     });
 
