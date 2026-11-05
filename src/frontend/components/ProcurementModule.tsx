@@ -274,6 +274,23 @@ export const ProcurementModule: React.FC = () => {
 
   // Interactive Status & Payment Dropdown Popovers
   const [activeStatusDropdownId, setActiveStatusDropdownId] = useState<number | null>(null);
+  // Menu trạng thái PO đặt theo màn hình (position: fixed): đặt "absolute" trong bảng thì bị khung cuộn của bảng
+  // cắt mất các dòng đầu khi menu mở lên trên (bảng chỉ có 1-2 PO)
+  const [statusMenuPos, setStatusMenuPos] = useState<React.CSSProperties | null>(null);
+  useEffect(() => {
+    if (activeStatusDropdownId === null) return;
+    // trang / bảng cuộn thì menu (đặt theo màn hình) lệch khỏi nút: đóng lại; cuộn bên trong menu thì giữ
+    const close = (e: Event) => {
+      if (e.type === "scroll" && (e.target as Element)?.closest?.("[data-po-status-menu]")) return;
+      setActiveStatusDropdownId(null);
+    };
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [activeStatusDropdownId]);
   const [activePaymentDropdownId, setActivePaymentDropdownId] = useState<number | null>(null);
 
   // Non-blocking supplier price notice inside PO modal (Bug 4a fix)
@@ -4256,9 +4273,22 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             )}
                             <div className="inline-block text-left relative" onClick={(e) => e.stopPropagation()}>
                               <button
-                                onClick={() => {
+                                onClick={(e) => {
                                   setActivePaymentDropdownId(null);
-                                  setActiveStatusDropdownId(activeStatusDropdownId === po.id ? null : po.id);
+                                  if (activeStatusDropdownId === po.id) {
+                                    setActiveStatusDropdownId(null);
+                                    return;
+                                  }
+                                  // mở xuống dưới nếu đủ chỗ (hoặc dưới rộng hơn trên), ngược lại mở lên trên; luôn nằm trọn trong màn hình
+                                  const r = e.currentTarget.getBoundingClientRect();
+                                  const below = window.innerHeight - r.bottom - 12;
+                                  const above = r.top - 12;
+                                  const openDown = below >= 420 || below >= above;
+                                  const left = Math.min(Math.max(8, r.left + r.width / 2 - 120), window.innerWidth - 248);
+                                  setStatusMenuPos(openDown
+                                    ? { top: r.bottom + 6, left, maxHeight: Math.max(160, below) }
+                                    : { bottom: window.innerHeight - r.top + 6, left, maxHeight: Math.max(160, above) });
+                                  setActiveStatusDropdownId(po.id);
                                 }}
                                 className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1.5 border transition-all cursor-pointer shadow-2xs hover:scale-105 ${statusCfg.bg} ${statusCfg.text} ${statusCfg.border}`}
                                 title="Bấm để thay đổi trạng thái đơn hàng"
@@ -4271,9 +4301,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               {/* Dropdown Menu of All Statuses in Logical XNK Order */}
                               {activeStatusDropdownId === po.id && (
                                 <div
-                                  className={`absolute z-[100] left-1/2 -translate-x-1/2 w-60 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
-                                    idx >= 1 && idx >= ordersPage.items.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
-                                  }`}
+                                  data-po-status-menu
+                                  style={statusMenuPos || undefined}
+                                  className="fixed z-[100] w-60 overflow-y-auto bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs"
                                 >
                                   <div className="px-3 py-1.5 font-bold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
                                     Cập nhật tiến độ đơn PO (XNK):
