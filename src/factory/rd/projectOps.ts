@@ -148,17 +148,31 @@ export interface RdStaffMember {
   user_id?: number | null;
 }
 
-export async function listRdStaffRoster(tx: Tx): Promise<RdStaffMember[]> {
+/**
+ * Staff of one department (R&D by default; DEVICE = KTCN) for the "phụ trách" pickers and filters: people whose
+ * department is that unit or one of its sub-units, or who hold an active role scoped there. (The former query had
+ * `OR display_name IS NOT NULL`, true for everyone, so the whole company appeared — cut at 30 names.)
+ */
+export async function listRdStaffRoster(tx: Tx, moduleKey: "RD" | "DEVICE" = "RD"): Promise<RdStaffMember[]> {
   await ensureRdProjectOpsSchema(tx);
   const roster: RdStaffMember[] = [];
 
   const dbUsers = (
     await tx.query(
-      `SELECT DISTINCT up.user_id, up.display_name, coalesce(ou.name, 'Phòng R&D') AS dept_name
+      `WITH RECURSIVE dept AS (
+         SELECT id, name FROM core.org_unit WHERE module_key = $1 AND status = 'ACTIVE'
+         UNION ALL
+         SELECT c.id, d.name FROM core.org_unit c JOIN dept d ON c.parent_id = d.id
+       )
+       SELECT DISTINCT up.user_id, up.display_name, d.name AS dept_name
          FROM core.user_profile up
-         LEFT JOIN core.org_unit ou ON ou.id = up.org_unit_id
-        WHERE ou.module_key = 'RD' OR up.display_name IS NOT NULL
-        ORDER BY up.display_name LIMIT 30`
+         JOIN dept d ON d.id = up.org_unit_id
+               OR EXISTS (SELECT 1 FROM core.user_role ur
+                           WHERE ur.user_id = up.user_id AND ur.scope_org_unit_id = d.id AND ur.revoked_at IS NULL
+                             AND (ur.valid_to IS NULL OR ur.valid_to > now()))
+        WHERE up.status = 'ACTIVE' AND up.display_name IS NOT NULL
+        ORDER BY up.display_name LIMIT 300`,
+      [moduleKey]
     )
   ).rows;
 

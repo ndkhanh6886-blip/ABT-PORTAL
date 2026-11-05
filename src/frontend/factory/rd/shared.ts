@@ -13,6 +13,7 @@ export interface RdContextData {
   locations: { id: string; warehouse_id: string; code: string; name: string; temperature_condition: string; is_quarantine: boolean }[];
   items: { id: string; code: string; name: string; item_type: string; base_uom: string }[];
   rd_staff?: { name: string; role: string; specialty: string; user_id?: number | null }[];
+  device_staff?: { name: string; role: string; specialty: string; user_id?: number | null }[];
 }
 
 export function useRdContext(perm = "rd.view") {
@@ -38,3 +39,9 @@ export const IVD_CLASS_LABEL: Record<string, string> = {
   RUO: "RUO (Chỉ dùng nghiên cứu)",
   NA: "Không áp dụng",
 };
+
+/** Staff of the department running a project: KTCN staff for a KTCN (DEVICE) unit, else R&D staff. */
+export function staffOfUnit(ctx: RdContextData | undefined, unitId?: string | null) {
+  const moduleKey = [...(ctx?.units ?? []), ...(ctx?.targetUnits ?? [])].find((u) => u.id === unitId)?.module_key;
+  return (moduleKey === "DEVICE" ? ctx?.device_staff : ctx?.rd_staff) ?? [];
+}

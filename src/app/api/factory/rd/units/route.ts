@@ -23,7 +23,9 @@ export const GET = factoryRoute(async (tx, { actor, url }) => {
   const goals = await listStrategicGoals(tx, actor);
   const criteria = await listEvaluationCriteria(tx, actor);
   const templates = await listGateTemplates(tx, actor);
-  const rd_staff = await listRdStaffRoster(tx);
+  const rd_staff = await listRdStaffRoster(tx, "RD");
+  // KTCN runs its own software / device projects: its pickers list KTCN staff
+  const device_staff = await listRdStaffRoster(tx, "DEVICE");
   const warehouses = (
     await tx.query(
       "SELECT id, code, name, owner_org_unit_id, purpose FROM master.warehouse WHERE status = 'ACTIVE' ORDER BY CASE purpose WHEN 'RD' THEN 0 ELSE 1 END, code"
@@ -35,7 +37,7 @@ export const GET = factoryRoute(async (tx, { actor, url }) => {
   const items = (
     await tx.query("SELECT id, code, name, item_type, base_uom FROM master.item WHERE status = 'ACTIVE' ORDER BY code LIMIT 500")
   ).rows;
-  return { units, targetUnits, goals, criteria, templates, warehouses, locations, items, rd_staff };
+  return { units, targetUnits, goals, criteria, templates, warehouses, locations, items, rd_staff, device_staff };
 });
 
 export const POST = factoryRoute(async (tx, ctx) => {

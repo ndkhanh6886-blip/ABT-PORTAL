@@ -134,3 +134,29 @@ describe("KTCN software lifecycle (IEC 62304)", () => {
     expect((await getFactoryPool().query("SELECT 1 FROM core.e_signature WHERE entity_type = 'rd_sw_validation' AND entity_id = $1", [v.id])).rowCount).toBe(1);
   });
 });
+
+describe("department staff pickers", () => {
+  it("list only the people of the department (profile or role there), not the whole company", async () => {
+    const { listRdStaffRoster } = await import("../projectOps");
+    const { ktcn, dev } = await setupKtcn();
+    const rd = await createOrgUnit("RD");
+    const researcher = await createUser("NCV phòng R&D");
+    await grant(researcher, ["rd.view"], rd);
+    const sales = await createUser("NV Kinh doanh không thuộc R&D");
+    const kitUnit = await createOrgUnit("KIT");
+    await grant(sales, ["inv.stock.view"], kitUnit);
+    // real departments carry their module key (P-RD → RD, KTCN → DEVICE)
+    await getFactoryPool().query("UPDATE core.org_unit SET module_key = 'RD' WHERE id = $1", [rd]);
+    await getFactoryPool().query("UPDATE core.org_unit SET module_key = 'DEVICE' WHERE id = $1", [ktcn]);
+    await getFactoryPool().query("UPDATE core.user_profile SET org_unit_id = $2 WHERE user_id = $1", [researcher.userId, rd]);
+
+    const rdNames = (await withTransaction((tx) => listRdStaffRoster(tx, "RD"))).map((s) => s.user_id);
+    const ktcnNames = (await withTransaction((tx) => listRdStaffRoster(tx, "DEVICE"))).map((s) => s.user_id);
+    expect(rdNames).toContain(researcher.userId);
+    expect(rdNames).not.toContain(sales.userId);
+    expect(rdNames).not.toContain(dev.userId);
+    expect(ktcnNames).toContain(dev.userId);
+    expect(ktcnNames).not.toContain(researcher.userId);
+    expect(ktcnNames).not.toContain(sales.userId);
+  });
+});
