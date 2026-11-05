@@ -734,12 +734,18 @@ export function ProposalsApprovalView({
       if (typeof window !== "undefined") {
         localStorage.setItem("workspace_proposal_templates", JSON.stringify(nextTemplates));
       }
-      await fetch("/api/storage?key=workspace_proposal_templates", {
+      const res = await fetch("/api/storage?key=workspace_proposal_templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nextTemplates)
       });
-    } catch {}
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(`Mẫu đề xuất CHƯA được lưu lên máy chủ: ${err?.error || `lỗi ${res.status}`}`, "error");
+      }
+    } catch {
+      showToast("Mất kết nối: mẫu đề xuất chưa được lưu lên máy chủ.", "error");
+    }
   };
 
   // Danh sách nhân sự chuẩn hóa để chọn người duyệt / người theo dõi

@@ -6100,13 +6100,19 @@ export const UnifiedWorkspace: React.FC = () => {
       if (typeof window !== "undefined") {
         localStorage.setItem("workspace_proposals", JSON.stringify(nextList));
       }
-      await fetch("/api/storage?key=workspace_proposals", {
+      const res = await fetch("/api/storage?key=workspace_proposals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nextList)
       });
+      // lưu thất bại thì báo ngay: đề xuất chưa lên máy chủ thì người duyệt không thấy (chỉ có thông báo)
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        showToast(`Đề xuất CHƯA được lưu lên máy chủ: ${err?.error || `lỗi ${res.status}`}. Người duyệt sẽ không thấy đề xuất này.`, "error");
+      }
     } catch (err) {
       console.warn("Could not save proposals:", err);
+      showToast("Mất kết nối: đề xuất chưa được lưu lên máy chủ.", "error");
     }
   };
 
