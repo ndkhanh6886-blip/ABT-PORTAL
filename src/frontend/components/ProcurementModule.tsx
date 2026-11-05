@@ -1043,6 +1043,49 @@ export const ProcurementModule: React.FC = () => {
     return "UNPAID";
   };
 
+  /**
+   * Công nợ NCC theo hàng ĐÃ NHẬN KHO (nguyên tắc: nợ phải trả phát sinh khi nhận hàng):
+   *  - Giá trị đã nhận = Tổng PO × (Σ SL đã nhận × đơn giá / Σ SL đặt × đơn giá)
+   *  - Còn nợ = Giá trị đã nhận − Đã trả (> 0); Trả trước NCC = Đã trả − Giá trị đã nhận (> 0)
+   */
+  const poDebt = (po: any) => {
+    const total = parseFloat(po?.total_amount) || 0;
+    const rawPaid = parseFloat(po?.amount_paid) || 0;
+    const paid = String(po?.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? total : rawPaid;
+    let its: any = po?.items;
+    if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
+    its = Array.isArray(its) ? its : [];
+    let orderedVal = 0, recVal = 0, orderedQty = 0, recQty = 0;
+    its.forEach((it: any, i: number) => {
+      const q = Number(it?.quantity) || 0;
+      const r = Math.min(receivedOf({ ...po, items: its }, i), q);
+      const pr = Number(it?.unit_price) || 0;
+      orderedVal += q * pr; recVal += r * pr; orderedQty += q; recQty += r;
+    });
+    const ratio = orderedVal > 0 ? recVal / orderedVal : (orderedQty > 0 ? recQty / orderedQty : 0);
+    const received = Math.round(total * ratio);
+    const payable = Math.max(0, received - paid);
+    const prepaid = Math.max(0, paid - received);
+    const unreceived = Math.max(0, total - received);
+    let status: "NO_PRICE" | "NOT_INCURRED" | "DEBT" | "PARTIAL_PAID" | "PREPAID" | "PAID_RECEIVED_PART" | "SETTLED";
+    if (total <= 0.5) status = "NO_PRICE";
+    else if (payable > 0.5) status = paid > 0.5 ? "PARTIAL_PAID" : "DEBT";
+    else if (prepaid > 0.5) status = "PREPAID";
+    else if (received <= 0.5) status = "NOT_INCURRED";
+    else if (unreceived > 0.5) status = "PAID_RECEIVED_PART";
+    else status = "SETTLED";
+    return { total, paid, received, payable, prepaid, unreceived, status, canPay: total > 0.5 && paid < total - 0.5 };
+  };
+  const DEBT_BADGE: Record<string, { label: string; cls: string }> = {
+    NO_PRICE: { label: "Chưa có giá", cls: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200" },
+    NOT_INCURRED: { label: "Chưa phát sinh nợ", cls: "bg-slate-50 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border-slate-200" },
+    DEBT: { label: "Còn nợ", cls: "bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-400 border-rose-200" },
+    PARTIAL_PAID: { label: "Nợ một phần", cls: "bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 border-blue-200" },
+    PREPAID: { label: "Trả trước NCC", cls: "bg-violet-50 dark:bg-violet-950 text-violet-700 dark:text-violet-300 border-violet-200" },
+    PAID_RECEIVED_PART: { label: "Đã trả phần đã nhận", cls: "bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border-teal-200" },
+    SETTLED: { label: "✓ Đã tất toán", cls: "bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border-emerald-200" },
+  };
+
   // Quick Change PO Payment Status directly from row (Requirement 6 / 4d)
   const handleQuickChangePaymentStatus = async (po: any, newPayStatus: string) => {
     setActivePaymentDropdownId(null);
@@ -3290,12 +3333,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       if (getPOPaymentStatus(o) === "PAID") return a + (parseFloat(o.total_amount) || 0);
       return a + (parseFloat(o.amount_paid) || 0);
     }, 0);
-    const totalPayable = live.reduce((a, o) => {
-      if (getPOPaymentStatus(o) === "PAID") return a;
-      const tot = parseFloat(o.total_amount) || 0;
-      const paid = parseFloat(o.amount_paid) || 0;
-      return a + Math.max(0, tot - paid);
-    }, 0);
+    // Công nợ phải trả = phần hàng đã nhận kho chưa trả (PO chưa nhập kho chưa là nợ)
+    const totalPayable = live.reduce((a, o) => a + poDebt(o).payable, 0);
     return {
       total_spend: totalSpend,
       total_paid: totalPaid,
@@ -3339,12 +3378,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const filteredPayables = useMemo(() => {
     const kw = normSearch(payableSearch);
     return orders.filter(po => {
-      const total = parseFloat(po.total_amount) || 0;
-      const paid = getPOPaymentStatus(po) === "PAID" ? total : (parseFloat(po.amount_paid) || 0);
-      const remaining = Math.max(0, total - paid);
+      const dbt = poDebt(po);
+      const paid = dbt.paid;
       if (String(po.status || "").toUpperCase() === "CANCELLED" && paid <= 0) return false;
-      if (payableFilter === "debt" && !(remaining > 0.5)) return false;
-      if (payableFilter === "paid" && remaining > 0.5) return false;
+      if (payableFilter === "debt" && !(dbt.payable > 0.5)) return false;
+      if (payableFilter === "paid" && dbt.status !== "SETTLED") return false;
       if (payableSupplier !== "all" && String(po.supplier_name || "").trim() !== payableSupplier) return false;
       const d = po.order_date ? String(po.order_date).slice(0, 10) : "";
       if (payableFrom && (!d || d < payableFrom)) return false;
@@ -5082,7 +5120,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   payableFilter === "debt" ? "bg-rose-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600"
                 }`}
               >
-                Còn nợ phải trả ({orders.filter(o => (parseFloat(o.total_amount) || 0) > (parseFloat(o.amount_paid) || 0)).length})
+                Còn nợ phải trả ({orders.filter(o => String(o.status || "").toUpperCase() !== "CANCELLED" && poDebt(o).payable > 0.5).length})
               </button>
               <button
                 onClick={() => setPayableFilter("paid")}
@@ -5127,15 +5165,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           {(() => {
             const sel = filteredPayables.filter(po => selectedPayPOs.includes(po.id));
             const sum = filteredPayables.reduce((acc, po) => {
-              const t = parseFloat(po.total_amount) || 0; const pd = parseFloat(po.amount_paid) || 0;
-              return { total: acc.total + t, paid: acc.paid + pd, remaining: acc.remaining + Math.max(0, t - pd) };
-            }, { total: 0, paid: 0, remaining: 0 });
+              const d = poDebt(po);
+              return { total: acc.total + d.total, received: acc.received + d.received, paid: acc.paid + d.paid, remaining: acc.remaining + d.payable, prepaid: acc.prepaid + d.prepaid };
+            }, { total: 0, received: 0, paid: 0, remaining: 0, prepaid: 0 });
             return (
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
                 <div className="flex flex-wrap gap-4">
                   <span>Tổng PO: <b className="font-mono">{formatCurrency(sum.total)}</b></span>
+                  <span title="Giá trị phần hàng đã nhập kho">Đã nhận: <b className="font-mono">{formatCurrency(sum.received)}</b></span>
                   <span>Đã trả: <b className="font-mono text-emerald-600">{formatCurrency(sum.paid)}</b></span>
-                  <span>Còn nợ: <b className="font-mono text-rose-600">{formatCurrency(sum.remaining)}</b></span>
+                  <span title="Phần hàng đã nhận chưa trả tiền">Còn nợ: <b className="font-mono text-rose-600">{formatCurrency(sum.remaining)}</b></span>
+                  {sum.prepaid > 0.5 && <span title="Đã chi vượt giá trị hàng đã nhận (đặt cọc / trả trước)">Trả trước: <b className="font-mono text-violet-600">{formatCurrency(sum.prepaid)}</b></span>}
                 </div>
                 <button
                   type="button"
@@ -5160,6 +5200,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   <th className="py-3 px-4">Ngày Đặt Hàng</th>
                   <th className="py-3 px-4">HĐ Đầu Vào</th>
                   <th className="py-3 px-4 text-right">Tổng Tiền PO</th>
+                  <th className="py-3 px-4 text-right" title="Giá trị phần hàng đã nhập kho — công nợ phát sinh trên phần này">Giá Trị Đã Nhận</th>
                   <th className="py-3 px-4 text-right">Đã Thanh Toán</th>
                   <th className="py-3 px-4 text-right">Còn Nợ Phải Trả</th>
                   <th className="py-3 px-4 text-center">Trạng Thái Công Nợ</th>
@@ -5168,13 +5209,16 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredPayables.length === 0 && (
-                  <tr><td colSpan={10} className="py-8 text-center text-slate-400">Không có PO nào phù hợp bộ lọc.</td></tr>
+                  <tr><td colSpan={11} className="py-8 text-center text-slate-400">Không có PO nào phù hợp bộ lọc.</td></tr>
                 )}
                 {payablesPage.items.map((po) => {
-                  const total = parseFloat(po.total_amount) || 0;
-                  const paid = parseFloat(po.amount_paid) || 0;
-                  const remaining = Math.max(0, total - paid);
-                  const isPaid = remaining <= 0.5;
+                  const dbt = poDebt(po);
+                  const total = dbt.total;
+                  const paid = dbt.paid;
+                  const remaining = dbt.payable;
+                  // Vẫn chi được khi chưa trả đủ tổng PO (gồm cả đặt cọc / trả trước khi hàng chưa về)
+                  const isPaid = !dbt.canPay;
+                  const badge = DEBT_BADGE[dbt.status] || DEBT_BADGE.NOT_INCURRED;
                   const checked = selectedPayPOs.includes(po.id);
                   let invs: any[] = po.supplier_invoices;
                   if (typeof invs === "string") { try { invs = JSON.parse(invs); } catch { invs = []; } }
@@ -5207,26 +5251,21 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       <td className="py-3.5 px-4 font-mono font-bold text-right text-slate-900 dark:text-white">
                         {formatCurrency(total)}
                       </td>
+                      <td className="py-3.5 px-4 font-mono text-right text-slate-700 dark:text-slate-200" title={dbt.unreceived > 0.5 ? `Chưa nhận: ${formatCurrency(dbt.unreceived)}` : "Đã nhận đủ hàng"}>
+                        {formatCurrency(dbt.received)}
+                        {dbt.unreceived > 0.5 && dbt.received > 0.5 && <div className="text-[9px] text-slate-400">chưa nhận {formatCurrency(dbt.unreceived)}</div>}
+                      </td>
                       <td className="py-3.5 px-4 font-mono font-bold text-right text-emerald-600 dark:text-emerald-400">
                         {formatCurrency(paid)}
                       </td>
                       <td className="py-3.5 px-4 font-mono font-bold text-right text-rose-600 dark:text-rose-400">
-                        {formatCurrency(remaining)}
+                        {remaining > 0.5 ? formatCurrency(remaining) : <span className="text-slate-400 font-normal">—</span>}
+                        {dbt.prepaid > 0.5 && <div className="text-[9px] text-violet-600 font-normal">trả trước {formatCurrency(dbt.prepaid)}</div>}
                       </td>
                       <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        {isPaid ? (
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-400 border border-emerald-200">
-                            ✓ Đã tất toán
-                          </span>
-                        ) : paid > 0 ? (
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-400 border border-blue-200">
-                            Thanh toán 1 phần
-                          </span>
-                        ) : (
-                          <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-400 border border-rose-200">
-                            Chưa thanh toán
-                          </span>
-                        )}
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${badge.cls}`}>
+                          {badge.label}
+                        </span>
                       </td>
                       <td className="py-3.5 px-4 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1.5">

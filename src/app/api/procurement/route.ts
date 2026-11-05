@@ -433,11 +433,25 @@ export async function GET(req: NextRequest) {
         }
         return acc + (parseFloat(o.amount_amount || o.amount_paid) || 0);
       }, 0);
+      // Công nợ phải trả chỉ phát sinh trên phần hàng ĐÃ NHẬN KHO (giá trị nhận − đã trả); PO chưa nhập kho chưa là nợ
       const totalPayable = liveOrders.reduce((acc: number, o: any) => {
-        if (String(o.payment_status || "").toUpperCase() === "PAID") return acc;
         const tot = parseFloat(o.total_amount) || 0;
-        const paid = parseFloat(o.amount_amount || o.amount_paid) || 0;
-        return acc + Math.max(0, tot - paid);
+        const rawPaid = parseFloat(o.amount_amount || o.amount_paid) || 0;
+        const paid = String(o.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? tot : rawPaid;
+        let its: any = o.items;
+        if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
+        its = Array.isArray(its) ? its : [];
+        const rq = o.received_qty || {};
+        const legacyFull = String(o.status || "").toUpperCase() === "COMPLETED" && Object.keys(rq).length === 0;
+        let orderedVal = 0, recVal = 0, orderedQty = 0, recQty = 0;
+        its.forEach((it: any, i: number) => {
+          const q = Number(it?.quantity) || 0;
+          const r = legacyFull ? q : (Number(rq[i] ?? rq[String(i)]) || 0);
+          const pr = Number(it?.unit_price) || 0;
+          orderedVal += q * pr; recVal += Math.min(r, q) * pr; orderedQty += q; recQty += Math.min(r, q);
+        });
+        const ratio = orderedVal > 0 ? recVal / orderedVal : (orderedQty > 0 ? recQty / orderedQty : 0);
+        return acc + Math.max(0, tot * ratio - paid);
       }, 0);
       const activeOrders = orders.filter((o: any) => o.status !== "COMPLETED" && o.status !== "CANCELLED").length;
       const pendingPRs = purchaseRequests.filter((pr: any) => pr.status === "PENDING" || pr.status === "APPROVED").length;
