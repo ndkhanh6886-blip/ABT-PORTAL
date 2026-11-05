@@ -45,57 +45,39 @@ async function nextEmployeeCode(): Promise<string> {
   }
 }
 
+/**
+ * Personnel → users. An existing account keeps its role (set from the import's "Vai trò hệ thống" column or by
+ * an administrator; re-guessing it from the department here overwrote both). A new account gets the role
+ * inferred from its department and position (`inferSystemRoleFromPosition`, the same rule as the import).
+ */
 async function syncPersonnelToUsers(): Promise<InitialCredential[]> {
   const res = await query(`
     INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
-    SELECT 
+    SELECT
       p.employee_code AS username,
       $1 AS password_hash,
       p.full_name,
-      CASE 
-        WHEN p.department = 'Ban Giám Đốc' THEN 'admin'
-        WHEN p.department = 'Kế Toán' OR LOWER(p.department) LIKE '%kế toán%' THEN 
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%chief%' THEN 'accountant_head' ELSE 'accountant' END
-        WHEN p.department = 'Kho Vận' OR LOWER(p.department) LIKE '%kho%' THEN 
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%phụ trách%' OR LOWER(p.position) LIKE '%manager%' THEN 'warehouse_lead' ELSE 'warehouse' END
-        WHEN p.department = 'Pháp Chế' OR LOWER(p.department) LIKE '%pháp chế%' THEN 
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'legal_head' ELSE 'legal' END
-        WHEN p.department = 'Mua Hàng & Cung Ứng' OR LOWER(p.department) LIKE '%cung ứng%' OR LOWER(p.department) LIKE '%mua hàng%' THEN 
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%head%' THEN 'procurement_lead' ELSE 'procurement_specialist' END
-        WHEN p.department = 'Quản Lý Chất Lượng' OR p.department = 'QA/QC' OR p.department = 'QA / QC' OR LOWER(p.department) LIKE '%chất lượng%' THEN 
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%lead%' OR LOWER(p.position) LIKE '%manager%' THEN 'qa_qc_lead' ELSE 'qa_qc' END
-        WHEN LOWER(p.department) LIKE '%r&d%' OR LOWER(p.department) LIKE '%nghiên cứu%' THEN
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' OR LOWER(p.position) LIKE '%lead%' THEN 'rd_head' ELSE 'rd_staff' END
-        WHEN LOWER(p.department) LIKE '%sản xuất kit%' OR LOWER(p.department) LIKE '%sx kit%' THEN
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%quản đốc%' OR LOWER(p.position) LIKE '%head%' THEN 'kit_head' ELSE 'kit_staff' END
-        WHEN LOWER(p.department) LIKE '%oligo%' THEN
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' OR LOWER(p.position) LIKE '%lead%' THEN 'oligo_head' ELSE 'oligo_staff' END
-        WHEN LOWER(p.department) LIKE '%thiết bị%' THEN
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' OR LOWER(p.position) LIKE '%lead%' THEN 'device_head' ELSE 'device_staff' END
-        WHEN p.department LIKE '%Ứng Dụng%' OR p.department LIKE '%Application%' OR p.department LIKE '%Kỹ Thuật%' THEN 
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%head%' THEN 'app_head' ELSE 'app_rep' END
-        WHEN p.department = 'Kinh Doanh' OR p.department = 'Marketing' THEN 
-          CASE WHEN LOWER(p.position) LIKE '%trưởng%' OR LOWER(p.position) LIKE '%phó%' OR LOWER(p.position) LIKE '%giám đốc%' THEN 'sales_head' ELSE 'sales_rep' END
-        ELSE 'sales_rep'
-      END AS role,
+      'staff' AS role,
       p.department,
       p.email,
       CASE WHEN p.status = 'INACTIVE' THEN false ELSE true END AS is_active,
       true AS must_change_password
     FROM personnel p
-    WHERE p.employee_code IS NOT NULL 
-      AND p.employee_code != '' 
+    WHERE p.employee_code IS NOT NULL
+      AND p.employee_code != ''
       AND p.employee_code != 'admin'
     ON CONFLICT (username) DO UPDATE SET
       full_name = EXCLUDED.full_name,
       department = EXCLUDED.department,
-      role = CASE WHEN users.role = 'admin' THEN 'admin' ELSE EXCLUDED.role END,
       email = COALESCE(EXCLUDED.email, users.email)
-    RETURNING username, full_name, (xmax = 0) AS inserted;
+    RETURNING username, full_name, department, (xmax = 0) AS inserted;
   `, [unusablePasswordHash()]);
   const created: InitialCredential[] = [];
   for (const r of res.rows) {
-    if (r.inserted) created.push(await assignTemporaryPassword(r.username, r.full_name));
+    if (!r.inserted) continue;
+    const position = (await query("SELECT position FROM personnel WHERE employee_code = $1", [r.username])).rows[0]?.position ?? "";
+    await query("UPDATE users SET role = $2 WHERE username = $1", [r.username, inferSystemRoleFromPosition(r.department, position)]);
+    created.push(await assignTemporaryPassword(r.username, r.full_name));
   }
   await ensureFactoryRolesAndSyncAllUsers().catch((e) => console.warn("Factory sync warning:", e?.message));
   return created;

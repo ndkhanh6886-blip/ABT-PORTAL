@@ -63,7 +63,7 @@ import {
 import { formatDate } from "@/backend/services/utils";
 import { FactoryAccessSection, FactoryFeatureGroups } from "@/frontend/factory/settings/FactoryAccessSection";
 import { FACTORY_NOTICE_EVENTS, TECHNICAL_MATRIX_ROLES } from "@/factory/noticeMatrix";
-import { PERMISSION_GROUPS, ROLE_PRESETS, DEPARTMENT_MODULES, DepartmentModule, resolveRolePreset, getDefaultDepartmentPermissions, getEffectivePermissions, hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
+import { PERMISSION_GROUPS, ROLE_PRESETS, DEPARTMENT_MODULES, DepartmentModule, resolveRolePreset, getDefaultDepartmentPermissions, getEffectivePermissions, hasPermission, inferSystemRoleFromPosition, canonicalDepartment, COMPANY_BLOCKS, COMPANY_DEPARTMENTS } from "@/backend/services/permissions";
 import { useNotification, NotificationMatrixEvent } from "@/frontend/contexts/NotificationContext";
 import { PaymentMethodsSettings } from "@/frontend/components/PaymentMethodsSettings";
 
@@ -106,7 +106,10 @@ const ROLE_LABELS: Record<string, { label: string; color: string; desc: string }
   oligo_head: { label: "Trưởng Phòng Tổng Hợp Oligo", color: "bg-violet-100 dark:bg-violet-950/60 text-violet-800 dark:text-violet-300 border-violet-300 dark:border-violet-700", desc: "Tiếp nhận đơn Oligo, lập mẻ tổng hợp cột CPG, phê duyệt QC OD/HPLC/PAGE & xuất giao hàng" },
   oligo_staff: { label: "Kỹ Thuật Viên Tổng Hợp Oligo & HPLC", color: "bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-400 border-violet-200 dark:border-violet-800", desc: "Vận hành máy tổng hợp CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE/OPC, đo OD & chia lọ" },
   device_head: { label: "Trưởng Phòng Kỹ Thuật – Thiết Bị", color: "bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-300 dark:border-amber-700", desc: "Quản lý dòng máy xét nghiệm, hồ sơ DMR, phát hành lệnh lắp ráp DHR, nghiệm thu FQC & bảo hành RMA" },
-  device_staff: { label: "Kỹ Sư Cơ Điện Tử / Lắp Ráp DHR & FSE", color: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Lắp ráp cơ khí CNC, mạch điện tử PCB, nạp Firmware, chạy già hóa Burn-in & bảo hành thiết bị" }
+  device_staff: { label: "Kỹ Sư Cơ Điện Tử / Lắp Ráp DHR & FSE", color: "bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800", desc: "Lắp ráp cơ khí CNC, mạch điện tử PCB, nạp Firmware, chạy già hóa Burn-in & bảo hành thiết bị" },
+  marketing: { label: "Nhân Viên Marketing", color: "bg-pink-50 dark:bg-pink-950/40 text-pink-700 dark:text-pink-400 border-pink-200 dark:border-pink-800", desc: "Xem danh mục và đơn hàng kinh doanh, nội dung truyền thông sản phẩm" },
+  sales_admin: { label: "Sales Admin (Đơn hàng, Kho & Cung ứng KD)", color: "bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 border-blue-300 dark:border-blue-700", desc: "Đơn hàng kinh doanh, nhập / xuất Kho hàng kinh doanh, đề nghị mua và theo dõi hàng về; không có quyền phê duyệt" },
+  staff: { label: "Nhân Viên (quyền cơ bản)", color: "bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700", desc: "Chat nội bộ và công việc được giao; không truy cập phân hệ nghiệp vụ" }
 };
 
 export const DEPARTMENT_POSITIONS: Record<string, {
@@ -117,188 +120,173 @@ export const DEPARTMENT_POSITIONS: Record<string, {
   borderTheme: string;
   positions: { title: string; defaultRole: string; level: "Director" | "Manager" | "Specialist" | "Staff"; desc: string }[];
 }> = {
+  // 11 phòng ban và vị trí thực tế theo danh sách nhân sự toàn công ty (11/2026); khóa = tên phòng trong hồ sơ nhân sự
   "Ban Giám Đốc": {
     name: "Ban Giám Đốc (Board of Directors)",
     code: "BOD",
-    desc: "Hoạch định chiến lược kinh doanh, quản trị rủi ro và chỉ đạo điều hành toàn bộ bộ máy công ty ABT",
+    desc: "Hoạch định chiến lược, điều hành toàn công ty; Phó Giám đốc phụ trách khối Kinh doanh và khối Kỹ thuật",
     badgeColor: "bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-950/50 dark:text-orange-400 dark:border-orange-800",
     borderTheme: "border-orange-500",
     positions: [
-      { title: "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)", defaultRole: "admin", level: "Director", desc: "Chịu trách nhiệm tối cao về kết quả kinh doanh, quan hệ đối tác chiến lược và phê duyệt ngân sách" },
-      { title: "Phó Giám Đốc", defaultRole: "admin", level: "Director", desc: "Quản trị vận hành chuỗi cung ứng, hạ tầng kỹ thuật và điều phối hoạt động liên phòng ban" },
-      { title: "Trợ Lý Ban Giám Đốc (Executive Assistant)", defaultRole: "admin", level: "Specialist", desc: "Tổng hợp báo cáo quản trị, thư ký các cuộc họp điều hành và theo dõi tiến độ công việc trọng tâm" }
+      { title: "Giám đốc", defaultRole: "admin", level: "Director", desc: "Chịu trách nhiệm cao nhất về kết quả kinh doanh, phê duyệt chiến lược và ngân sách" },
+      { title: "Phó Giám đốc Kinh doanh", defaultRole: "admin", level: "Director", desc: "Phụ trách khối Kinh doanh: Kinh doanh, Marketing, APP, Cung ứng Kho" },
+      { title: "Phó Giám đốc Kỹ Thuật", defaultRole: "admin", level: "Director", desc: "Phụ trách khối Kỹ thuật – Nhà máy: R&D, Sản xuất, Tổng hợp Oligo, KTCN, QC/QA" }
     ]
   },
-  "Kinh Doanh": {
-    name: "Phòng Kinh Doanh & Tiếp Thị (Sales & Marketing)",
-    code: "SALES",
-    desc: "Phát triển thị trường xét nghiệm y tế, quản trị kênh bệnh viện, phòng khám, CDC và chỉ tiêu doanh số",
-    badgeColor: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-400 dark:border-indigo-800",
-    borderTheme: "border-indigo-500",
-    positions: [
-      { title: "Trưởng Phòng Kinh Doanh (Head of Sales)", defaultRole: "sales_head", level: "Manager", desc: "Quản lý đội ngũ kinh doanh, phê duyệt báo giá thương mại, hợp đồng và giám sát KPI tuần/tháng" },
-      { title: "Phó Phòng Kinh Doanh", defaultRole: "sales_head", level: "Manager", desc: "Phụ trách nhóm khách hàng bệnh viện tuyến đầu, cố vấn giải pháp kỹ thuật thương mại cho NVKD" },
-      { title: "Quản Lý Sản Phẩm (Product Manager - PM)", defaultRole: "sales_rep", level: "Specialist", desc: "Chuyên sâu dải sản phẩm HPV, vi sinh, sinh học phân tử; đào tạo tính năng sản phẩm cho đội ngũ sales" },
-      { title: "Chuyên Viên Kinh Doanh (Senior/Junior)", defaultRole: "sales_rep", level: "Staff", desc: "Tiếp cận khách hàng mới, tư vấn kit chẩn đoán qPCR, gửi báo giá và theo dõi đơn hàng định kỳ" },
-      { title: "Admin Kinh Doanh (Sales Admin)", defaultRole: "sales_rep", level: "Staff", desc: "Tạo đơn hàng trên hệ thống, theo dõi tiến độ giao hàng, xuất hóa đơn VAT và đối chiếu công nợ" }
-    ]
-  },
-  "Kỹ Thuật & Ứng Dụng": {
-    name: "Phòng Kỹ Thuật & Ứng Dụng Lâm Sàng (Application / App)",
-    code: "APP",
-    desc: "Chạy thử nghiệm mẫu, kiểm định sinh phẩm, demo máy xét nghiệm PCR và hỗ trợ kỹ thuật tại phòng lab bệnh viện",
-    badgeColor: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-400 dark:border-purple-800",
-    borderTheme: "border-purple-500",
-    positions: [
-      { title: "Trưởng Phòng Kỹ Thuật & Ứng Dụng", defaultRole: "app_head", level: "Manager", desc: "Chỉ đạo demo lâm sàng, phân công kỹ sư (assign) và phê duyệt nghiệm thu & tài liệu kỹ thuật thầu (approve)" },
-      { title: "Kỹ Sư Ứng Dụng PCR / Sinh Học Phân Tử", defaultRole: "app_rep", level: "Specialist", desc: "Tối ưu hóa protocol chạy máy Real-time PCR, thẩm định độ nhạy/độ đặc hiệu và hỗ trợ kỹ thuật khách hàng" },
-      { title: "Kỹ Sư Dịch Vụ Thiết Bị (Service Engineer)", defaultRole: "app_rep", level: "Specialist", desc: "Lắp đặt, hiệu chuẩn (calibration), bảo dưỡng định kỳ và sửa chữa máy Real-time PCR, máy tách chiết tự động" },
-      { title: "Chuyên Viên Quản Lý Hồ Sơ Thầu Kỹ Thuật", defaultRole: "app_rep", level: "Specialist", desc: "Chuẩn bị đầy đủ hồ sơ pháp lý & kỹ thuật thầu: COA, ISO 13485, CFS, kết quả thử nghiệm lâm sàng" }
-    ]
-  },
-  "Mua Hàng & Cung Ứng": {
-    name: "Phòng Mua Hàng & Cung Ứng (Procurement)",
-    code: "PROC",
-    desc: "Đàm phán nhà sản xuất nước ngoài, nhập khẩu ủy thác sinh phẩm IVD, quản lý PR/PO và chuỗi cung ứng",
-    badgeColor: "bg-cyan-100 text-cyan-700 border-cyan-200 dark:bg-cyan-950/50 dark:text-cyan-400 dark:border-cyan-800",
-    borderTheme: "border-cyan-500",
-    positions: [
-      { title: "Trưởng Bộ Phận Cung Ứng", defaultRole: "procurement_lead", level: "Manager", desc: "Đàm phán hợp đồng phân phối độc quyền, giá nhập FOB/CIF, phê duyệt đơn đặt hàng PO (approve_po)" },
-      { title: "Chuyên Viên Mua Hàng Quốc Tế / Trong Nước", defaultRole: "procurement_specialist", level: "Specialist", desc: "Lập đề xuất PR & dự thảo đơn PO, thực hiện thủ tục hải quan, kiểm soát giấy phép lưu hành IVD và CO/CQ" },
-      { title: "Chuyên Viên Mua Hàng Quốc Tế (Import Specialist)", defaultRole: "procurement_specialist", level: "Specialist", desc: "Thực hiện thủ tục hải quan, mở L/C, kiểm soát giấy phép lưu hành IVD và chứng chỉ CO/CQ sinh phẩm" },
-      { title: "Chuyên Viên Mua Hàng Trong Nước", defaultRole: "procurement_specialist", level: "Staff", desc: "Tìm kiếm và mua sắm vật tư tiêu hao, hóa chất phụ trợ, thiết bị văn phòng và dịch vụ logistics nội địa" },
-      { title: "Chuyên Viên Điều Phối Chuỗi Cung Ứng", defaultRole: "procurement_specialist", level: "Specialist", desc: "Hoạch định nhu cầu dự trữ tồn kho an toàn, theo dõi tiến độ giao hàng và giảm thiểu rủi ro đứt gãy" }
-    ]
-  },
-  "Kho Vận": {
-    name: "Bộ Phận Kho Vận & Chuỗi Lạnh (Warehouse & Logistics)",
-    code: "WH",
-    desc: "Bảo quản âm sâu sinh phẩm (-20°C, 2-8°C), kiểm soát hạn dùng FEFO và điều vận giao nhận y tế",
-    badgeColor: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800",
-    borderTheme: "border-amber-500",
-    positions: [
-      { title: "Trưởng Bộ Phận Kho Vận", defaultRole: "warehouse_lead", level: "Manager", desc: "Chịu trách nhiệm tiêu chuẩn GSP, ký duyệt phiếu xuất/nhập kho, xem giá vốn lô nhập và tạo PR mua bù tồn kho" },
-      { title: "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", defaultRole: "warehouse", level: "Specialist", desc: "Thực hiện nhập xuất kho vật lý, lập phiếu xuất kho (PXK), ghi chép thẻ kho điện tử và đối soát tồn kho" },
-      { title: "Nhân Viên Giao Nhận & Vận Chuyển Lạnh", defaultRole: "warehouse", level: "Staff", desc: "Đóng gói thùng xốp đá gel chuẩn y tế, kiểm soát thiết bị nhiệt độ và bàn giao tận khoa xét nghiệm bệnh viện" },
-      { title: "Nhân Viên Quản Lý Chuỗi Lạnh & FEFO", defaultRole: "warehouse", level: "Staff", desc: "Theo dõi nhật ký nhiệt độ tủ âm sâu 24/7, kích hoạt cảnh báo cận date FEFO (<90 ngày) để đẩy bán" }
-    ]
-  },
-  "Kế Toán": {
-    name: "Phòng Tài Chính - Kế Toán (Finance & Accounting)",
-    code: "ACC",
-    desc: "Kiểm soát sổ sách kế toán, phát hành hóa đơn VAT điện tử, đối soát công nợ bệnh viện và báo cáo tài chính",
+  "Hành chính": {
+    name: "Phòng Hành Chính (Kế toán – Pháp chế – Nhân sự)",
+    code: "HC",
+    desc: "Kế toán, hóa đơn VAT, công nợ, pháp chế hợp đồng & hồ sơ lưu hành, hành chính nhân sự",
     badgeColor: "bg-rose-100 text-rose-700 border-rose-200 dark:bg-rose-950/50 dark:text-rose-400 dark:border-rose-800",
     borderTheme: "border-rose-500",
     positions: [
-      { title: "Kế Toán Trưởng", defaultRole: "accountant_head", level: "Manager", desc: "Tổ chức công tác tài chính kế toán, phê duyệt hạn mức tín dụng/công nợ, duyệt ngân sách PO và chốt kỳ kế toán" },
-      { title: "Chuyên Viên Kế Toán Kho & Công Nợ", defaultRole: "accountant", level: "Specialist", desc: "Đối soát giá trị kho, định giá tồn kho theo FIFO, theo dõi tuổi nợ khách hàng và nhắc nợ theo kỳ hạn thanh toán" },
-      { title: "Kế Toán Tổng Hợp", defaultRole: "accountant", level: "Specialist", desc: "Kiểm tra định khoản, đối chiếu sổ phụ ngân hàng, tổng hợp doanh thu - chi phí và hạch toán sổ cái" },
-      { title: "Kế Toán Bán Hàng & Hóa Đơn VAT", defaultRole: "accountant", level: "Staff", desc: "Xuất hóa đơn điện tử GTGT cho đơn hàng bệnh viện, đính kèm file PDF hóa đơn đối soát tức thì" },
-      { title: "Thủ Quỹ (Cashier)", defaultRole: "accountant", level: "Staff", desc: "Quản lý thu chi tiền mặt, thanh toán tạm ứng công tác phí cho chuyên viên demo và kinh doanh" }
+      { title: "Trưởng phòng Hành chính", defaultRole: "accountant_head", level: "Manager", desc: "Điều hành phòng, phê duyệt công nợ vượt hạn mức, chốt kỳ kế toán" },
+      { title: "Phó Trưởng phòng Hành chính", defaultRole: "accountant_head", level: "Manager", desc: "Phụ trách pháp chế, hợp đồng và hồ sơ pháp lý; thay Trưởng phòng khi vắng" },
+      { title: "Nhân viên Kế toán", defaultRole: "accountant", level: "Staff", desc: "Hạch toán, xuất hóa đơn VAT, đối soát kho và theo dõi công nợ" }
     ]
   },
-  "Pháp Chế": {
-    name: "Bộ Phận Pháp Chế & Tuân Thủ (Legal & Compliance)",
-    code: "LEGAL",
-    desc: "Tư vấn pháp lý doanh nghiệp, thẩm định hợp đồng mua bán, đại lý phân phối và tuân thủ quy chế ngành y tế",
-    badgeColor: "bg-emerald-100 text-emerald-800 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800",
-    borderTheme: "border-emerald-500",
+  "Kinh Doanh": {
+    name: "Phòng Kinh Doanh (Sales)",
+    code: "SALES",
+    desc: "Bán hàng bệnh viện, phòng khám, CDC; quản lý sản phẩm; Sales Admin phụ trách Kho và Cung ứng hàng kinh doanh (Quản Lý Kho, Cung Ứng)",
+    badgeColor: "bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-950/50 dark:text-indigo-400 dark:border-indigo-800",
+    borderTheme: "border-indigo-500",
     positions: [
-      { title: "Trưởng Bộ Phận Pháp Chế", defaultRole: "legal_head", level: "Manager", desc: "Chỉ đạo công tác pháp lý công ty, phê duyệt hợp đồng kinh tế (legal.approve) và xử lý tranh chấp pháp lý" },
-      { title: "Chuyên Viên Pháp Chế & Tuân Thủ", defaultRole: "legal", level: "Specialist", desc: "Soạn thảo hợp đồng, kiểm soát hồ sơ pháp lý lưu hành sản phẩm IVD, thủ tục công bố tiêu chuẩn chất lượng" },
-      { title: "Chuyên Viên Pháp Lý & Tuân Thủ (Compliance)", defaultRole: "legal", level: "Specialist", desc: "Kiểm soát tuân thủ quy định y tế, thẩm định tính hợp lệ hồ sơ dự thầu và quản lý giấy phép lưu hành" }
+      { title: "Trưởng phòng Kinh doanh", defaultRole: "sales_head", level: "Manager", desc: "Quản lý đội kinh doanh, duyệt báo giá, chiết khấu, hợp đồng" },
+      { title: "Phó Trưởng phòng Kinh doanh", defaultRole: "sales_head", level: "Manager", desc: "Điều hành đội kinh doanh, duyệt báo giá và đơn hàng" },
+      { title: "Quản lý sản phẩm", defaultRole: "sales_rep", level: "Specialist", desc: "Quản lý dòng sản phẩm, làm việc với hãng, đào tạo sản phẩm cho đội sales" },
+      { title: "Trưởng nhóm Sales Admin", defaultRole: "sales_admin", level: "Specialist", desc: "Điều phối Sales Admin: đơn hàng, Kho và Cung ứng hàng kinh doanh, giao hàng, hóa đơn" },
+      { title: "Nhân viên Sales Admin", defaultRole: "sales_admin", level: "Staff", desc: "Đơn hàng; Kho hàng kinh doanh (nhập / xuất, lô & HSD) và Cung ứng (PR, PO, hàng về)" },
+      { title: "Nhân viên Sales", defaultRole: "sales_rep", level: "Staff", desc: "Phát triển khách hàng, báo giá, theo dõi đơn hàng" },
+      { title: "Nhân viên giao nhận", defaultRole: "warehouse", level: "Staff", desc: "Giao nhận hàng, chuỗi lạnh, bàn giao chứng từ cho khách" },
+      { title: "Nhân viên lái xe", defaultRole: "staff", level: "Staff", desc: "Vận chuyển hàng và nhân sự" }
     ]
   },
   "Marketing": {
-    name: "Bộ Phận Marketing & Tiếp Thị (Marketing)",
+    name: "Bộ Phận Marketing",
     code: "MKT",
-    desc: "Hoạch định chiến lược thương hiệu, tổ chức hội thảo khoa học y khoa, quảng bá hệ thống sinh phẩm chẩn đoán",
+    desc: "Truyền thông, hội thảo khoa học, tài liệu sản phẩm",
     badgeColor: "bg-pink-100 text-pink-700 border-pink-200 dark:bg-pink-950/50 dark:text-pink-400 dark:border-pink-800",
     borderTheme: "border-pink-500",
     positions: [
-      { title: "Trưởng Bộ Phận Marketing", defaultRole: "sales_head", level: "Manager", desc: "Hoạch định chiến lược thương hiệu, tổ chức hội nghị khoa học, quảng bá dải sản phẩm qPCR & IVD" },
-      { title: "Chuyên viên Marketing", defaultRole: "sales_rep", level: "Specialist", desc: "Quản trị nội dung số, thiết kế brochure giải pháp xét nghiệm, tài liệu hội thảo và truyền thông số" }
+      { title: "Nhân viên Marketing", defaultRole: "marketing", level: "Staff", desc: "Nội dung số, brochure, hội thảo và truyền thông sản phẩm" }
     ]
   },
-  "QA / QC": {
-    name: "Phòng Quản Lý Chất Lượng & ISO 13485 (QA / QC)",
-    code: "QAQC",
-    desc: "Kiểm soát hồ sơ COA, kiểm nghiệm đạt chuẩn sinh phẩm, giám sát CAPA và phát lệnh thu hồi Lô khẩn cấp theo ISO 13485",
-    badgeColor: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-950/50 dark:text-teal-400 dark:border-teal-800",
-    borderTheme: "border-teal-500",
+  "APP": {
+    name: "Phòng Ứng Dụng (Application – APP)",
+    code: "APP",
+    desc: "Ứng dụng lâm sàng, demo & lắp đặt máy tại khách hàng, kỹ thuật thiết bị, phần mềm và IT",
+    badgeColor: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-400 dark:border-purple-800",
+    borderTheme: "border-purple-500",
     positions: [
-      { title: "Trưởng Bộ Phận QA/QC (QA/QC Manager)", defaultRole: "qa_qc_lead", level: "Manager", desc: "Chỉ đạo hệ thống quản lý chất lượng ISO 13485, phê duyệt thẩm định lô và lệnh cách ly / thu hồi khẩn cấp" },
-      { title: "Chuyên Viên Quản Lý Chất Lượng & ISO 13485", defaultRole: "qa_qc", level: "Specialist", desc: "Kiểm soát hồ sơ COA, kiểm nghiệm đạt chuẩn sinh phẩm, giám sát CAPA và ghi nhận sự cố chất lượng" },
-      { title: "Chuyên Viên Đảm Bảo Chất Lượng (QA Specialist)", defaultRole: "qa_qc", level: "Specialist", desc: "Xây dựng quy trình SOP, hồ sơ kiểm soát thay đổi, giám sát tuân thủ quy chuẩn nhà xưởng và kho lạnh" }
+      { title: "Phó Trưởng phòng Ứng dụng", defaultRole: "app_head", level: "Manager", desc: "Điều hành phòng, phân công kỹ sư, ký nghiệm thu kỹ thuật" },
+      { title: "Trưởng nhóm Công nghiệp", defaultRole: "app_rep", level: "Specialist", desc: "Phụ trách nhóm khách hàng công nghiệp" },
+      { title: "Nhân viên Ứng dụng", defaultRole: "app_rep", level: "Staff", desc: "Chạy mẫu, demo, hỗ trợ kỹ thuật tại phòng xét nghiệm" },
+      { title: "Nhân viên Kỹ thuật thiết bị", defaultRole: "app_rep", level: "Staff", desc: "Lắp đặt, bảo trì, sửa chữa thiết bị tại khách hàng" },
+      { title: "Nhân viên nghiên cứu phần mềm", defaultRole: "app_rep", level: "Staff", desc: "Phát triển phần mềm phân tích và điều khiển thiết bị" },
+      { title: "Nhân viên IT", defaultRole: "staff", level: "Staff", desc: "Hạ tầng CNTT, máy tính, mạng nội bộ" }
     ]
   },
-  "Hành Chính Nhân Sự": {
-    name: "Phòng Hành Chính - Nhân Sự (HR & Administration)",
-    code: "HR",
-    desc: "Hoạch định nguồn nhân lực, tuyển dụng chuyên ngành công nghệ sinh học/y tế, chính sách lương thưởng KPI",
-    badgeColor: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800",
-    borderTheme: "border-emerald-500",
+  "Cung ứng Kho": {
+    name: "Phòng Cung Ứng – Kho Nhà Máy (P-KHO)",
+    code: "P-KHO",
+    desc: "Khối Kỹ thuật: mua NVL sản xuất (Mua hàng Nhà máy) và Kho Nhà Máy — NVL, bán thành phẩm, thành phẩm, lô / HSD FEFO, cấp phát cho các phòng sản xuất. Quyền làm việc cấp qua vai trò nhà máy (Kho & Cung ứng Nhà máy).",
+    badgeColor: "bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800",
+    borderTheme: "border-amber-500",
     positions: [
-      { title: "Trưởng Phòng Hành Chính Nhân Sự", defaultRole: "admin", level: "Manager", desc: "Xây dựng sơ đồ tổ chức, mô tả công việc (JD), thang bảng lương thưởng KPI và văn hóa doanh nghiệp" },
-      { title: "Chuyên Viên Tuyển Dụng & Đào Tạo", defaultRole: "admin", level: "Specialist", desc: "Tìm kiếm ứng viên ngành sinh học/xét nghiệm y tế, tổ chức chương trình đào tạo hội nhập cho nhân viên mới" },
-      { title: "Chuyên Viên C&B & Pháp Chế Lao Động", defaultRole: "admin", level: "Specialist", desc: "Soạn thảo hợp đồng lao động, chấm công, tính lương thưởng KPI, bảo hiểm xã hội và tuân thủ pháp luật" }
+      { title: "Trưởng bộ phận Cung ứng Kho", defaultRole: "staff", level: "Manager", desc: "Duyệt cấp phát FEFO, phiếu kho và đề nghị mua NVL nhà máy (vai trò nhà máy WH_HEAD)" },
+      { title: "Nhân viên Cung ứng Kho", defaultRole: "staff", level: "Specialist", desc: "Đề nghị mua PR, đơn PO NVL sản xuất, theo dõi hàng về, hồ sơ CO/CQ (vai trò nhà máy WH_STAFF)" },
+      { title: "Nhân viên Kho", defaultRole: "staff", level: "Staff", desc: "Nhập, xuất cấp phát NVL theo lô FEFO, thẻ kho, chuỗi lạnh Kho Nhà Máy (WH_STAFF)" },
+      { title: "Nhân viên Admin Kho", defaultRole: "staff", level: "Staff", desc: "Lập phiếu nhập / xuất / chuyển kho nhà máy, đối soát tồn kho (WH_STAFF)" }
     ]
   },
-  "Nghiên Cứu R&D": {
-    name: "Phòng Nghiên Cứu & Phát Triển (R&D - P-RD)",
+  "R&D": {
+    name: "Phòng Nghiên Cứu & Phát Triển (R&D – P-RD)",
     code: "P-RD",
-    desc: "Nghiên cứu phát triển bộ Kit IVD chẩn đoán phân tử, thiết kế mồi/probe, thẩm định độ nhạy/độ đặc hiệu, theo dõi độ ổn định & lập hồ sơ DHF",
+    desc: "Nghiên cứu phát triển Kit IVD, thiết kế mồi/probe, thẩm định, hồ sơ DHF và chuyển giao sản xuất",
     badgeColor: "bg-sky-100 text-sky-700 border-sky-200 dark:bg-sky-950/50 dark:text-sky-400 dark:border-sky-800",
     borderTheme: "border-sky-500",
     positions: [
-      { title: "Trưởng Phòng R&D", defaultRole: "rd_head", level: "Manager", desc: "Chỉ đạo đề tài nghiên cứu, phê duyệt hồ sơ thiết kế DHF, công thức gốc và chuyển giao công nghệ sang Sản xuất Kit" },
-      { title: "Chuyên Viên R&D Sinh Học Phân Tử", defaultRole: "rd_staff", level: "Specialist", desc: "Thiết kế mồi/probe qPCR, thực hiện thí nghiệm tối ưu hóa phản ứng, ghi nhật ký điện tử ELN và đánh giá độ ổn định" },
-      { title: "Kỹ Sư R&D Thiết Bị & Phần Mềm Y Sinh", defaultRole: "rd_staff", level: "Specialist", desc: "Nghiên cứu nguyên mẫu máy xét nghiệm tự động, thuật toán phân tích tín hiệu huỳnh quang và hồ sơ kỹ thuật" }
+      { title: "Trưởng phòng R&D", defaultRole: "rd_head", level: "Manager", desc: "Chỉ đạo đề tài, phê duyệt DHF, công thức và chuyển giao công nghệ" },
+      { title: "Nhân viên R&D", defaultRole: "rd_staff", level: "Staff", desc: "Thí nghiệm, nhật ký ELN, pha chế mẫu thử, đánh giá độ ổn định" }
     ]
   },
-  "Sản Xuất Kit": {
-    name: "Phòng Sản Xuất Kit Chẩn Đoán (Kit Manufacturing - P-KIT)",
+  "Sản xuất": {
+    name: "Phòng Sản Xuất Kit (P-KIT)",
     code: "P-KIT",
-    desc: "Sản xuất bộ Kit IVD & hóa chất tách chiết theo chuẩn ISO 13485 / GMP: quản lý định mức BOM, pha chế MasterMix, chia chuẩn .D.IC và hồ sơ lô điện tử eBR",
+    desc: "Sản xuất Kit IVD và hóa chất tách chiết theo ISO 13485 / GMP: pha mix, tách chiết, chiết rót, đóng gói, hồ sơ lô eBR",
     badgeColor: "bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:border-emerald-800",
     borderTheme: "border-emerald-500",
     positions: [
-      { title: "Trưởng Phòng / Quản Đốc Sản Xuất Kit", defaultRole: "kit_head", level: "Manager", desc: "Quản lý định mức BOM, phát hành lệnh sản xuất Kit (Thường / Chia sẵn .D.IC / Demo), ký duyệt hồ sơ lô eBR" },
-      { title: "Tổ Trưởng Pha Chế & Chiết Rót Phòng Sạch", defaultRole: "kit_staff", level: "Specialist", desc: "Giám sát điều kiện phòng sạch, cân đong pha chế bán thành phẩm, kiểm soát chênh lệch hao hụt và lấy mẫu lưu QC" },
-      { title: "Kỹ Thuật Viên Sản Xuất & Đóng Gói Kit GMP", defaultRole: "kit_staff", level: "Staff", desc: "Thực hiện chiết rót, dán nhãn UDI/QR, đóng gói hộp Kit hoàn chỉnh và ghi nhận thông số công đoạn eBR" }
+      { title: "Phó Trưởng phòng Sản xuất", defaultRole: "kit_head", level: "Manager", desc: "Điều hành sản xuất, phát lệnh sản xuất, ký duyệt hồ sơ lô" },
+      { title: "Trưởng nhóm Sản xuất tách chiết", defaultRole: "kit_staff", level: "Specialist", desc: "Phụ trách nhóm sản xuất hóa chất tách chiết" },
+      { title: "Trưởng nhóm Sản xuất mix", defaultRole: "kit_staff", level: "Specialist", desc: "Phụ trách nhóm pha chế MasterMix" },
+      { title: "Nhân viên sản xuất", defaultRole: "kit_staff", level: "Staff", desc: "Thực hiện công đoạn sản xuất, ghi hồ sơ lô eBR" }
     ]
   },
-  "Tổng Hợp Oligo": {
-    name: "Phòng Tổng Hợp Oligo & Tinh Sạch (Oligo Synthesis - P-OLIGO)",
+  "Tổng hợp Oligo": {
+    name: "Phòng Tổng Hợp Oligo (P-OLIGO)",
     code: "P-OLIGO",
-    desc: "Tổng hợp mồi (Primer) và mẫu dò huỳnh quang (Probe) trên hệ thống cột CPG, cắt khử bảo vệ, tinh sạch HPLC/PAGE/OPC và đo kiểm OD",
+    desc: "Tổng hợp mồi và probe, cắt khử bảo vệ, tinh sạch HPLC/PAGE/OPC, đo OD và giao hàng",
     badgeColor: "bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-950/50 dark:text-violet-400 dark:border-violet-800",
     borderTheme: "border-violet-500",
     positions: [
-      { title: "Trưởng Phòng Tổng Hợp Oligo", defaultRole: "oligo_head", level: "Manager", desc: "Điều phối đơn hàng Oligo, phê duyệt mẻ tổng hợp cột CPG, thẩm định kết quả OD/HPLC/PAGE và duyệt xuất giao" },
-      { title: "Kỹ Thuật Viên Vận Hành Máy Tổng Hợp CPG", defaultRole: "oligo_staff", level: "Specialist", desc: "Khai báo chai hóa chất Amidite/Activator, gán cột CPG vào giàn tổng hợp, theo dõi chu kỳ coupling & trityl" },
-      { title: "Kỹ Thuật Viên Tinh Sạch HPLC / PAGE & QC OD", defaultRole: "oligo_staff", level: "Specialist", desc: "Thực hiện cắt khử bảo vệ, tinh sạch sắc ký HPLC/PAGE, đo quang phổ OD260, cô quay chân không & chia lọ" }
+      { title: "Trưởng phòng Tổng hợp Oligo", defaultRole: "oligo_head", level: "Manager", desc: "Điều phối đơn Oligo, duyệt mẻ tổng hợp và kết quả QC, duyệt giao hàng" },
+      { title: "Trưởng nhóm Sản xuất", defaultRole: "oligo_staff", level: "Specialist", desc: "Phụ trách nhóm vận hành máy tổng hợp và hậu xử lý" },
+      { title: "Nhân viên Tổng hợp Oligo", defaultRole: "oligo_staff", level: "Staff", desc: "Vận hành máy tổng hợp, hậu xử lý, tinh sạch, đo OD, chia lọ" }
     ]
   },
-  "Kỹ Thuật – Thiết Bị": {
-    name: "Phòng Kỹ Thuật – Công Nghệ Thiết Bị (Device Engineering - P-DEVICE)",
+  "KTCN": {
+    name: "Phòng Kỹ Thuật Công Nghệ (KTCN – P-DEVICE)",
     code: "P-DEVICE",
-    desc: "Thiết kế chế tạo máy tách chiết tự động (EZ32), máy lắc nhiệt, đèn đọc quang học; quản lý hồ sơ thiết bị gốc DMR, lắp ráp DHR, chạy già hóa Burn-in & bảo hành RMA",
+    desc: "Thiết kế, sản xuất và lắp ráp thiết bị (DMR/DHR), lắp đặt – bảo trì – sửa chữa, hành chính kỹ thuật, khoa học công nghệ",
     badgeColor: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800",
     borderTheme: "border-amber-500",
     positions: [
-      { title: "Trưởng Phòng Kỹ Thuật – Thiết Bị", defaultRole: "device_head", level: "Manager", desc: "Quản lý danh mục dòng máy, phê duyệt bản phát hành DMR, lệnh lắp ráp DHR, nghiệm thu FQC và cấp phát máy Demo/RMA" },
-      { title: "Kỹ Sư Cơ Điện Tử & Firmware Thiết Bị Y Sinh", defaultRole: "device_staff", level: "Specialist", desc: "Thiết kế bản vẽ gia công CNC, mạch PCB, lập trình Firmware điều khiển nhiệt/từ tính và hiệu chuẩn thiết bị" },
-      { title: "Kỹ Thuật Viên Lắp Ráp DHR & Bảo Hành RMA", defaultRole: "device_staff", level: "Staff", desc: "Lắp ráp trạm cơ khí/điện tử, chạy già hóa Burn-in 48h, kiểm tra an toàn điện FQC và sửa chữa bảo hành" }
+      { title: "Trưởng nhóm Sản xuất thiết bị", defaultRole: "device_staff", level: "Specialist", desc: "Phụ trách lắp ráp thiết bị theo lệnh sản xuất, ký phiếu BM 21-01" },
+      { title: "Trưởng nhóm Lắp đặt – Bảo trì – Sửa chữa thiết bị", defaultRole: "device_staff", level: "Specialist", desc: "Phụ trách lắp đặt, bảo trì, hiệu chuẩn và sửa chữa thiết bị" },
+      { title: "Trưởng nhóm Hành Chính Kỹ Thuật Công Nghệ", defaultRole: "device_staff", level: "Specialist", desc: "Hồ sơ kỹ thuật, kế hoạch và hành chính của phòng" },
+      { title: "Nhân viên Sản xuất thiết bị", defaultRole: "device_staff", level: "Staff", desc: "Lắp ráp, chạy lão hóa, ghi hồ sơ DHR" },
+      { title: "Nhân viên Thiết kế và phát triển thiết bị", defaultRole: "device_staff", level: "Staff", desc: "Thiết kế cơ khí, điện tử, firmware; bản vẽ gia công" },
+      { title: "Nhân viên Kỹ thuật", defaultRole: "device_staff", level: "Staff", desc: "Kỹ thuật thiết bị, gia công và QC chi tiết" },
+      { title: "Chuyên viên Khoa học Công nghệ", defaultRole: "device_staff", level: "Specialist", desc: "Đề tài khoa học công nghệ, hồ sơ sở hữu trí tuệ" },
+      { title: "Nhân viên IT", defaultRole: "staff", level: "Staff", desc: "Hạ tầng CNTT và phần mềm nội bộ" }
+    ]
+  },
+  "QC/QA": {
+    name: "Phòng Đảm Bảo & Kiểm Soát Chất Lượng (QC/QA – P-QA)",
+    code: "P-QA",
+    desc: "Kiểm nghiệm nguyên liệu – bán thành phẩm – thành phẩm, giải phóng lô, COA, sai lệch/CAPA, hệ thống ISO 13485",
+    badgeColor: "bg-teal-100 text-teal-700 border-teal-200 dark:bg-teal-950/50 dark:text-teal-400 dark:border-teal-800",
+    borderTheme: "border-teal-500",
+    positions: [
+      { title: "Phó Trưởng phòng QC-QA", defaultRole: "qa_qc_lead", level: "Manager", desc: "Điều hành phòng, duyệt kết quả QC, giải phóng lô, thu hồi" },
+      { title: "Nhân viên QC", defaultRole: "qa_qc", level: "Staff", desc: "Lấy mẫu, kiểm nghiệm, ghi kết quả QC" },
+      { title: "Nhân viên ISO", defaultRole: "qa_qc", level: "Staff", desc: "Kiểm soát tài liệu, đào tạo, đánh giá nội bộ ISO 13485" }
     ]
   }
 };
 
-// Aliases for seamless backward compatibility
-DEPARTMENT_POSITIONS["Application"] = DEPARTMENT_POSITIONS["Kỹ Thuật & Ứng Dụng"];
-DEPARTMENT_POSITIONS["Cung Ứng"] = DEPARTMENT_POSITIONS["Mua Hàng & Cung Ứng"];
-DEPARTMENT_POSITIONS["Pháp chế"] = DEPARTMENT_POSITIONS["Pháp Chế"];
-DEPARTMENT_POSITIONS["QA/QC"] = DEPARTMENT_POSITIONS["QA / QC"];
+// Tên phòng cũ / viết tắt vẫn tra được (hồ sơ và tài khoản tạo trước khi đổi sang tên phòng thực tế)
+for (const [alias, key] of Object.entries({
+  "Nghiên Cứu R&D": "R&D",
+  "Sản Xuất Kit": "Sản xuất",
+  "Tổng Hợp Oligo": "Tổng hợp Oligo",
+  "Kỹ Thuật – Thiết Bị": "KTCN",
+  "QA / QC": "QC/QA",
+  "QA/QC": "QC/QA",
+  "Kỹ Thuật & Ứng Dụng": "APP",
+  "Application": "APP",
+  "Mua Hàng & Cung Ứng": "Kinh Doanh",
+  "Cung Ứng": "Kinh Doanh",
+  "Kho Vận": "Kinh Doanh",
+  "Kế Toán": "Hành chính",
+  "Pháp Chế": "Hành chính",
+  "Pháp chế": "Hành chính",
+  "Hành Chính Nhân Sự": "Hành chính",
+})) {
+  DEPARTMENT_POSITIONS[alias] = DEPARTMENT_POSITIONS[key];
+}
 
 /** Portal department modules grouped by khối in "Phân Quyền Chi Tiết Cá Nhân" (Khối Kỹ thuật – Nhà máy has its own section). */
 const PORTAL_BLOCKS: { title: string; keys: string[] }[] = [
@@ -306,83 +294,18 @@ const PORTAL_BLOCKS: { title: string; keys: string[] }[] = [
   { title: "Khối Văn Phòng & Điều Hành", keys: ["legal.view", "chat.view", "zalo.view", "settings.view"] },
 ];
 
-export const PRIMARY_DEPT_KEYS = [
-  "Ban Giám Đốc",
-  "Kinh Doanh",
-  "Nghiên Cứu R&D",
-  "Sản Xuất Kit",
-  "Tổng Hợp Oligo",
-  "Kỹ Thuật – Thiết Bị",
-  "QA / QC",
-  "Kỹ Thuật & Ứng Dụng",
-  "Mua Hàng & Cung Ứng",
-  "Kho Vận",
-  "Kế Toán",
-  "Pháp Chế",
-  "Marketing",
-  "Hành Chính Nhân Sự"
-];
+/** Phòng ban thực tế, theo thứ tự hiển thị (sơ đồ tổ chức, bộ lọc, chọn phòng). */
+export const PRIMARY_DEPT_KEYS = COMPANY_DEPARTMENTS.map((d) => d.key);
 
+/** Phòng ban gom theo khối, theo thứ tự hiển thị (bộ lọc, chọn phòng, sơ đồ tổ chức). */
+export const DEPT_KEYS_BY_BLOCK = COMPANY_BLOCKS.map((block) => ({ block, keys: COMPANY_DEPARTMENTS.filter((d) => d.block === block).map((d) => d.key) }));
+
+/** Hai tên phòng cùng chỉ một phòng thực tế (tên mới, tên cũ, viết tắt đều quy về `canonicalDepartment`). */
 export const matchDepartment = (dept1?: string, dept2?: string): boolean => {
   if (!dept1 || !dept2) return false;
-  const d1 = dept1.toLowerCase().trim();
-  const d2 = dept2.toLowerCase().trim();
-  if (d1 === d2) return true;
-
-  // Khối Kỹ thuật Nhà máy (kiểm tra chuyên biệt trước để không lẫn với Kỹ Thuật & Ứng Dụng)
-  const isRd = (s: string) => s.includes("r&d") || s.includes("nghiên cứu");
-  if (isRd(d1) || isRd(d2)) return isRd(d1) && isRd(d2);
-
-  const isKit = (s: string) => s.includes("sản xuất kit") || s.includes("sx kit") || s === "p-kit";
-  if (isKit(d1) || isKit(d2)) return isKit(d1) && isKit(d2);
-
-  const isOligo = (s: string) => s.includes("oligo") || s === "p-oligo";
-  if (isOligo(d1) || isOligo(d2)) return isOligo(d1) && isOligo(d2);
-
-  const isDevice = (s: string) => s.includes("thiết bị") || s === "p-device";
-  if (isDevice(d1) || isDevice(d2)) return isDevice(d1) && isDevice(d2);
-
-  // Application / Kỹ Thuật & Ứng Dụng / App
-  const isApp = (s: string) => s.includes("ứng dụng") || s.includes("kỹ thuật") || s.includes("application") || s === "app";
-  if (isApp(d1) && isApp(d2)) return true;
-
-  // Procurement / Mua Hàng & Cung Ứng / Cung Ứng
-  const isProc = (s: string) => s.includes("mua hàng") || s.includes("cung ứng") || s.includes("procurement") || s.includes("purchasing");
-  if (isProc(d1) && isProc(d2)) return true;
-
-  // Warehouse / Kho Vận / Kho & Vận Hành
-  const isWh = (s: string) => s.includes("kho");
-  if (isWh(d1) && isWh(d2)) return true;
-
-  // Accounting / Kế Toán / Tài Chính
-  const isAcc = (s: string) => s.includes("kế toán") || s.includes("tài chính");
-  if (isAcc(d1) && isAcc(d2)) return true;
-
-  // Board of Directors / Ban Giám Đốc
-  const isBod = (s: string) => s.includes("giám đốc") || s.includes("bod");
-  if (isBod(d1) && isBod(d2)) return true;
-
-  // Sales / Kinh Doanh
-  const isSales = (s: string) => (s.includes("kinh doanh") || s.includes("sales")) && !s.includes("admin kinh doanh");
-  if (isSales(d1) && isSales(d2)) return true;
-
-  // Legal / Pháp Chế
-  const isLegal = (s: string) => s.includes("pháp chế") || s.includes("legal");
-  if (isLegal(d1) && isLegal(d2)) return true;
-
-  // Marketing / Tiếp thị
-  const isMkt = (s: string) => s.includes("marketing") || s.includes("mkt") || s.includes("tiếp thị");
-  if (isMkt(d1) && isMkt(d2)) return true;
-
-  // QA / QC / Chất lượng
-  const isQa = (s: string) => s.includes("qa") || s.includes("qc") || s.includes("chất lượng") || s.includes("iso");
-  if (isQa(d1) && isQa(d2)) return true;
-
-  // HR / Hành chính nhân sự
-  const isHr = (s: string) => s.includes("hành chính") || s.includes("nhân sự") || s.includes("hr");
-  if (isHr(d1) && isHr(d2)) return true;
-
-  return false;
+  if (dept1.toLowerCase().trim() === dept2.toLowerCase().trim()) return true;
+  const c1 = canonicalDepartment(dept1);
+  return c1 !== null && c1 === canonicalDepartment(dept2);
 };
 
 export const getDeptInfo = (deptName?: string) => {
@@ -729,106 +652,23 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
   const handleDownloadPersonnelTemplate = () => {
     const sampleData = [
-      {
-        "Mã nhân viên (*)": "NV-ABT-001",
-        "Họ và tên (*)": "Nguyễn Văn A",
-        "Tên đăng nhập (*)": "NV-ABT-001",
-        "Mật khẩu khởi tạo": "",
-        "Phòng ban (*)": "Ban Giám Đốc",
-        "Chức vụ / Vị trí (*)": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)",
-        "Vai trò hệ thống (*)": "admin",
-        "Email (*)": "a.nv@abtvn.com",
-        "Số điện thoại": "0900000001",
-        "Trạng thái": "ACTIVE"
-      },
-      {
-        "Mã nhân viên (*)": "NV-ABT-002",
-        "Họ và tên (*)": "Trần Thị B",
-        "Tên đăng nhập (*)": "NV-ABT-002",
-        "Mật khẩu khởi tạo": "",
-        "Phòng ban (*)": "Kinh Doanh",
-        "Chức vụ / Vị trí (*)": "Trưởng Phòng Kinh Doanh (Head of Sales)",
-        "Vai trò hệ thống (*)": "sales_head",
-        "Email (*)": "b.tt@abtvn.com",
-        "Số điện thoại": "0900000002",
-        "Trạng thái": "ACTIVE"
-      },
-      {
-        "Mã nhân viên (*)": "NV-ABT-003",
-        "Họ và tên (*)": "Lê Minh Khoa",
-        "Tên đăng nhập (*)": "NV-ABT-003",
-        "Mật khẩu khởi tạo": "",
-        "Phòng ban (*)": "Nghiên Cứu R&D",
-        "Chức vụ / Vị trí (*)": "Trưởng Phòng R&D",
-        "Vai trò hệ thống (*)": "rd_head",
-        "Email (*)": "khoa.lm@abtvn.com",
-        "Số điện thoại": "0900000003",
-        "Trạng thái": "ACTIVE"
-      },
-      {
-        "Mã nhân viên (*)": "NV-ABT-004",
-        "Họ và tên (*)": "Phạm Hoàng Lan",
-        "Tên đăng nhập (*)": "NV-ABT-004",
-        "Mật khẩu khởi tạo": "",
-        "Phòng ban (*)": "Sản Xuất Kit",
-        "Chức vụ / Vị trí (*)": "Trưởng Phòng / Quản Đốc Sản Xuất Kit",
-        "Vai trò hệ thống (*)": "kit_head",
-        "Email (*)": "lan.ph@abtvn.com",
-        "Số điện thoại": "0900000004",
-        "Trạng thái": "ACTIVE"
-      },
-      {
-        "Mã nhân viên (*)": "NV-ABT-005",
-        "Họ và tên (*)": "Vũ Quốc Tuấn",
-        "Tên đăng nhập (*)": "NV-ABT-005",
-        "Mật khẩu khởi tạo": "",
-        "Phòng ban (*)": "Tổng Hợp Oligo",
-        "Chức vụ / Vị trí (*)": "Kỹ Thuật Viên Vận Hành Máy Tổng Hợp CPG",
-        "Vai trò hệ thống (*)": "oligo_staff",
-        "Email (*)": "tuan.vq@abtvn.com",
-        "Số điện thoại": "0900000005",
-        "Trạng thái": "ACTIVE"
-      },
-      {
-        "Mã nhân viên (*)": "NV-ABT-006",
-        "Họ và tên (*)": "Đặng Thu Hà",
-        "Tên đăng nhập (*)": "NV-ABT-006",
-        "Mật khẩu khởi tạo": "",
-        "Phòng ban (*)": "QA / QC",
-        "Chức vụ / Vị trí (*)": "Trưởng Bộ Phận QA/QC (QA/QC Manager)",
-        "Vai trò hệ thống (*)": "qa_qc_lead",
-        "Email (*)": "ha.dt@abtvn.com",
-        "Số điện thoại": "0900000006",
-        "Trạng thái": "ACTIVE"
-      }
+      { "Mã nhân viên (*)": "NV-ABT-001", "Họ và tên (*)": "Nguyễn Văn A", "Tên đăng nhập (*)": "NV-ABT-001", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Ban Giám Đốc", "Chức vụ / Vị trí (*)": "Giám đốc", "Vai trò hệ thống (*)": "admin", "Email (*)": "a.nv@abt-vn.net", "Số điện thoại": "0900000001", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-002", "Họ và tên (*)": "Trần Thị B", "Tên đăng nhập (*)": "NV-ABT-002", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Kinh Doanh", "Chức vụ / Vị trí (*)": "Nhân viên Sales", "Vai trò hệ thống (*)": "sales_rep", "Email (*)": "b.tt@abt-vn.net", "Số điện thoại": "0900000002", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-003", "Họ và tên (*)": "Lê Minh C", "Tên đăng nhập (*)": "NV-ABT-003", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "R&D", "Chức vụ / Vị trí (*)": "Trưởng phòng R&D", "Vai trò hệ thống (*)": "rd_head", "Email (*)": "c.lm@abt-vn.net", "Số điện thoại": "0900000003", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-004", "Họ và tên (*)": "Phạm Hoàng D", "Tên đăng nhập (*)": "NV-ABT-004", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "Sản xuất", "Chức vụ / Vị trí (*)": "Nhân viên sản xuất", "Vai trò hệ thống (*)": "kit_staff", "Email (*)": "d.ph@abt-vn.net", "Số điện thoại": "0900000004", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-005", "Họ và tên (*)": "Vũ Quốc E", "Tên đăng nhập (*)": "NV-ABT-005", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "KTCN", "Chức vụ / Vị trí (*)": "Nhân viên Sản xuất thiết bị", "Vai trò hệ thống (*)": "device_staff", "Email (*)": "e.vq@abt-vn.net", "Số điện thoại": "0900000005", "Trạng thái": "Đang làm việc" },
+      { "Mã nhân viên (*)": "NV-ABT-006", "Họ và tên (*)": "Đặng Thu F", "Tên đăng nhập (*)": "NV-ABT-006", "Mật khẩu khởi tạo": "", "Phòng ban (*)": "QC/QA", "Chức vụ / Vị trí (*)": "Nhân viên QC", "Vai trò hệ thống (*)": "qa_qc", "Email (*)": "f.dt@abt-vn.net", "Số điện thoại": "0900000006", "Trạng thái": "Đang làm việc" }
     ];
 
-    const roleMappingData = [
-      { "Phòng Ban": "Ban Giám Đốc", "Chức Vụ / Vị Trí Công Việc": "Tổng Giám Đốc / Giám Đốc Điều Hành (CEO)", "Vai Trò Hệ Thống": "admin", "Khối": "Điều Hành" },
-      { "Phòng Ban": "Ban Giám Đốc", "Chức Vụ / Vị Trí Công Việc": "Phó Giám Đốc", "Vai Trò Hệ Thống": "admin", "Khối": "Điều Hành" },
-      { "Phòng Ban": "Nghiên Cứu R&D", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng R&D", "Vai Trò Hệ Thống": "rd_head", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-RD)" },
-      { "Phòng Ban": "Nghiên Cứu R&D", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên R&D Sinh Học Phân Tử", "Vai Trò Hệ Thống": "rd_staff", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-RD)" },
-      { "Phòng Ban": "Sản Xuất Kit", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng / Quản Đốc Sản Xuất Kit", "Vai Trò Hệ Thống": "kit_head", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-KIT)" },
-      { "Phòng Ban": "Sản Xuất Kit", "Chức Vụ / Vị Trí Công Việc": "Kỹ Thuật Viên Sản Xuất & Đóng Gói Kit GMP", "Vai Trò Hệ Thống": "kit_staff", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-KIT)" },
-      { "Phòng Ban": "Tổng Hợp Oligo", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Tổng Hợp Oligo", "Vai Trò Hệ Thống": "oligo_head", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-OLIGO)" },
-      { "Phòng Ban": "Tổng Hợp Oligo", "Chức Vụ / Vị Trí Công Việc": "Kỹ Thuật Viên Vận Hành Máy Tổng Hợp CPG", "Vai Trò Hệ Thống": "oligo_staff", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-OLIGO)" },
-      { "Phòng Ban": "Kỹ Thuật – Thiết Bị", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kỹ Thuật – Thiết Bị", "Vai Trò Hệ Thống": "device_head", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-DEVICE)" },
-      { "Phòng Ban": "Kỹ Thuật – Thiết Bị", "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Cơ Điện Tử & Firmware Thiết Bị Y Sinh", "Vai Trò Hệ Thống": "device_staff", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-DEVICE)" },
-      { "Phòng Ban": "QA / QC", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận QA/QC (QA/QC Manager)", "Vai Trò Hệ Thống": "qa_qc_lead", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-QA)" },
-      { "Phòng Ban": "QA / QC", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Quản Lý Chất Lượng & ISO 13485", "Vai Trò Hệ Thống": "qa_qc", "Khối": "Khối Kỹ Thuật – Nhà Máy (P-QA)" },
-      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kinh Doanh", "Vai Trò Hệ Thống": "sales_head", "Khối": "Khối Kinh Doanh" },
-      { "Phòng Ban": "Kinh Doanh", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kinh Doanh (Senior/Junior)", "Vai Trò Hệ Thống": "sales_rep", "Khối": "Khối Kinh Doanh" },
-      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Kho Vận", "Vai Trò Hệ Thống": "warehouse_lead", "Khối": "Khối Kinh Doanh" },
-      { "Phòng Ban": "Kho Vận", "Chức Vụ / Vị Trí Công Việc": "Thủ Kho Vật Tư Sinh Phẩm & Hóa Chất", "Vai Trò Hệ Thống": "warehouse", "Khối": "Khối Kinh Doanh" },
-      { "Phòng Ban": "Mua Hàng & Cung Ứng", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Cung Ứng", "Vai Trò Hệ Thống": "procurement_lead", "Khối": "Khối Kinh Doanh" },
-      { "Phòng Ban": "Mua Hàng & Cung Ứng", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Mua Hàng Quốc Tế / Trong Nước", "Vai Trò Hệ Thống": "procurement_specialist", "Khối": "Khối Kinh Doanh" },
-      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Trưởng Phòng Kỹ Thuật & Ứng Dụng", "Vai Trò Hệ Thống": "app_head", "Khối": "Khối Kinh Doanh" },
-      { "Phòng Ban": "Kỹ Thuật & Ứng Dụng", "Chức Vụ / Vị Trí Công Việc": "Kỹ Sư Ứng Dụng PCR / Sinh Học Phân Tử", "Vai Trò Hệ Thống": "app_rep", "Khối": "Khối Kinh Doanh" },
-      { "Phòng Ban": "Kế Toán", "Chức Vụ / Vị Trí Công Việc": "Kế Toán Trưởng", "Vai Trò Hệ Thống": "accountant_head", "Khối": "Khối Văn Phòng" },
-      { "Phòng Ban": "Kế Toán", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Kế Toán Kho & Công Nợ", "Vai Trò Hệ Thống": "accountant", "Khối": "Khối Văn Phòng" },
-      { "Phòng Ban": "Pháp Chế", "Chức Vụ / Vị Trí Công Việc": "Trưởng Bộ Phận Pháp Chế", "Vai Trò Hệ Thống": "legal_head", "Khối": "Khối Văn Phòng" },
-      { "Phòng Ban": "Pháp Chế", "Chức Vụ / Vị Trí Công Việc": "Chuyên Viên Pháp Chế & Tuân Thủ", "Vai Trò Hệ Thống": "legal", "Khối": "Khối Văn Phòng" }
-    ];
+    // Bảng tham chiếu = cấu hình phòng ban thực tế (mỗi vị trí, vai trò mặc định, khối)
+    const roleMappingData = COMPANY_DEPARTMENTS.flatMap((d) =>
+      (DEPARTMENT_POSITIONS[d.key]?.positions ?? []).map((p) => ({
+        "Phòng Ban": d.key,
+        "Chức Vụ / Vị Trí Công Việc": p.title,
+        "Vai Trò Hệ Thống": p.defaultRole,
+        "Khối": d.factory ? `${d.block} (${d.code})` : d.block,
+      }))
+    );
 
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wsRoles = XLSX.utils.json_to_sheet(roleMappingData);
@@ -1543,7 +1383,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
       });
     } else {
       const dept = presetDept || "Kinh Doanh";
-      const defaultPos = presetPosition || getDeptInfo(dept)?.positions[0]?.title || "Chuyên Viên Kinh Doanh (Senior/Junior)";
+      const defaultPos = presetPosition || getDeptInfo(dept)?.positions[0]?.title || "Nhân viên Sales";
       const maxSeq = personnel.reduce((max: number, p: any) => {
         const m = String(p?.employee_code || "").match(/^NV-ABT-(\d+)$/);
         return m ? Math.max(max, Number(m[1])) : max;
@@ -1934,8 +1774,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 className="bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 text-xs text-slate-700 dark:text-slate-300 focus:outline-hidden focus:border-orange-500"
               >
                 <option value="all">-- Tất cả phòng ban --</option>
-                {PRIMARY_DEPT_KEYS.map((dept) => (
-                  <option key={dept} value={dept}>{dept}</option>
+                {DEPT_KEYS_BY_BLOCK.map(({ block, keys }) => (
+                  <optgroup key={block} label={block}>
+                    {keys.map((dept) => (
+                      <option key={dept} value={dept}>{dept}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
 
@@ -2292,14 +2136,18 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
               >
                 <option value="all">-- Tất cả phòng ban ({personnel.length}) --</option>
-                {PRIMARY_DEPT_KEYS.map((dept) => {
-                  const count = personnel.filter(p => matchDepartment(p.department, dept)).length;
-                  return (
-                    <option key={dept} value={dept}>
-                      {dept} ({count})
-                    </option>
-                  );
-                })}
+                {DEPT_KEYS_BY_BLOCK.map(({ block, keys }) => (
+                  <optgroup key={block} label={block}>
+                    {keys.map((dept) => {
+                      const count = personnel.filter(p => matchDepartment(p.department, dept)).length;
+                      return (
+                        <option key={dept} value={dept}>
+                          {dept} ({count})
+                        </option>
+                      );
+                    })}
+                  </optgroup>
+                ))}
               </select>
             </div>
           </div>
@@ -2442,7 +2290,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                 >
                   Tất Cả ({PRIMARY_DEPT_KEYS.length})
                 </button>
-                {PRIMARY_DEPT_KEYS.map((deptKey) => {
+                {DEPT_KEYS_BY_BLOCK.map(({ block, keys }) => (
+                <div key={block} className="w-full flex flex-wrap items-center gap-1.5">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 w-full sm:w-auto sm:min-w-44">{block}</span>
+                {keys.map((deptKey) => {
                   const d = DEPARTMENT_POSITIONS[deptKey];
                   return (
                     <button
@@ -2458,6 +2309,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     </button>
                   );
                 })}
+                </div>
+                ))}
               </div>
             </div>
 
@@ -2817,7 +2670,10 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               ) : (
                 /* MODE 2: When "Tất Cả" is selected, render all 7 department cards + 1 executive summary card to fill the 8th slot evenly! */
                 <>
-                  {PRIMARY_DEPT_KEYS.map((deptKey) => {
+                  {DEPT_KEYS_BY_BLOCK.map(({ block, keys }) => (
+                  <React.Fragment key={block}>
+                  <h3 className="lg:col-span-2 -mb-3 text-xs font-extrabold uppercase tracking-wider text-slate-500 dark:text-slate-400 border-b border-slate-200 dark:border-slate-800 pb-1.5">{block}</h3>
+                  {keys.map((deptKey) => {
                     const deptInfo = getDeptInfoData(deptKey);
                     if (!deptInfo) return null;
                     const staffInDept = personnel.filter(p => matchDepartment(p.department, deptKey));
@@ -2974,6 +2830,8 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                       </div>
                     );
                   })}
+                  </React.Fragment>
+                  ))}
 
                   {/* 8th Slot: Executive Workforce & Organization Summary Card to fill the grid evenly! */}
                   <div className="bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900 text-white rounded-2xl border border-indigo-800/60 p-6 space-y-5 flex flex-col justify-between shadow-xl">
@@ -3580,8 +3438,12 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                     onChange={(e) => setFormData({ ...formData, department: e.target.value })}
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
                   >
-                    {PRIMARY_DEPT_KEYS.map((dept) => (
-                      <option key={dept} value={dept}>{dept}</option>
+                    {DEPT_KEYS_BY_BLOCK.map(({ block, keys }) => (
+                      <optgroup key={block} label={block}>
+                        {keys.map((dept) => (
+                          <option key={dept} value={dept}>{dept}</option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 </div>
@@ -3766,16 +3628,20 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                         setPersonnelFormData({
                           ...personnelFormData,
                           department: newDept,
-                          position: availablePos[0]?.title || "Chuyên Viên Kinh Doanh (Senior/Junior)"
+                          position: availablePos[0]?.title || "Nhân viên Sales"
                         });
                       }}
                       className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-900 dark:text-white"
                       required
                     >
-                      {PRIMARY_DEPT_KEYS.map((dept) => (
-                        <option key={dept} value={dept}>
-                          {dept} ({DEPARTMENT_POSITIONS[dept]?.code || "DEPT"})
-                        </option>
+                      {DEPT_KEYS_BY_BLOCK.map(({ block, keys }) => (
+                        <optgroup key={block} label={block}>
+                          {keys.map((dept) => (
+                            <option key={dept} value={dept}>
+                              {dept} ({DEPARTMENT_POSITIONS[dept]?.code || "DEPT"})
+                            </option>
+                          ))}
+                        </optgroup>
                       ))}
                     </select>
                   </div>

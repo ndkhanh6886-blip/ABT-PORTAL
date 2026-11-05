@@ -1,28 +1,34 @@
 import { query, ensurePersonnelTable } from "@/backend/db/db";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
-import { inferSystemRoleFromPosition } from "@/backend/services/permissions";
+import { canonicalDepartment, COMPANY_DEPARTMENTS, inferSystemRoleFromPosition, isDepartmentLeaderPosition } from "@/backend/services/permissions";
 import { grantablePermissions, syncPermissions } from "./core/authz";
 import { getFactoryPool, type Tx } from "./core/db";
 import "./modules";
 
 export const FACTORY_MODULE_TO_PORTAL_DEPT: Record<string, string> = {
-  RD: "Nghiên Cứu R&D",
-  KIT: "Sản Xuất Kit",
-  OLIGO: "Tổng Hợp Oligo",
-  DEVICE: "Kỹ Thuật – Thiết Bị",
-  QA: "QA/QC",
-  WH: "Kho Vận",
+  RD: "R&D",
+  KIT: "Sản xuất",
+  OLIGO: "Tổng hợp Oligo",
+  DEVICE: "KTCN",
+  QA: "QC/QA",
+  WH: "Cung ứng Kho",
 };
 
+/** Factory department of a portal department (names as in the company personnel list, old names included). */
 export function inferFactoryModuleFromDept(dept?: string | null, role?: string | null): string | null {
-  const d = (dept || "").toLowerCase().trim();
   const r = (role || "").toLowerCase().trim();
-  if (d.includes("r&d") || d.includes("nghiên cứu") || r.startsWith("rd_")) return "RD";
-  if (d.includes("sản xuất kit") || d.includes("sx kit") || r.startsWith("kit_")) return "KIT";
-  if (d.includes("oligo") || r.startsWith("oligo_")) return "OLIGO";
-  if (d.includes("thiết bị") || d.includes("ứng dụng") || d.includes("application") || r.startsWith("device_") || r.startsWith("app_")) return "DEVICE";
-  if (d.includes("qa") || d.includes("qc") || d.includes("chất lượng") || r.startsWith("qa_qc")) return "QA";
-  if (d.includes("kho") || d.includes("warehouse") || d.includes("cung ứng") || d.includes("mua hàng") || r.startsWith("warehouse") || r.startsWith("procurement")) return "WH";
+  const canonical = canonicalDepartment(dept);
+  const fromDept = COMPANY_DEPARTMENTS.find((d) => d.key === canonical)?.factory;
+  if (fromDept) return fromDept;
+  // Khối Kinh doanh / Văn phòng departments (APP, and the business warehouse / purchasing staff of Kinh Doanh) get no
+  // factory department by default: factory rights are granted per person in Phân quyền Nhà máy.
+  if (canonical) return null;
+  if (r.startsWith("rd_")) return "RD";
+  if (r.startsWith("kit_")) return "KIT";
+  if (r.startsWith("oligo_")) return "OLIGO";
+  if (r.startsWith("device_")) return "DEVICE";
+  if (r.startsWith("qa_qc")) return "QA";
+  if (r.startsWith("warehouse") || r.startsWith("procurement")) return "WH";
   return null;
 }
 
@@ -30,15 +36,8 @@ export function inferFactoryRoleCode(moduleKey: string | null, portalRole?: stri
   if (!moduleKey) return null;
   const r = (portalRole || "").toLowerCase();
   const p = (position || "").toLowerCase();
-  const isHead =
-    r.includes("head") ||
-    r.includes("lead") ||
-    r.includes("admin") ||
-    r.includes("director") ||
-    p.includes("trưởng") ||
-    p.includes("quản đốc") ||
-    p.includes("phó phòng") ||
-    p.includes("giám đốc");
+  // team leaders ("Trưởng nhóm") get the staff role; department heads, deputies, directors the head role
+  const isHead = r.includes("head") || r.includes("lead") || r.includes("admin") || r.includes("director") || isDepartmentLeaderPosition(p) || p.includes("giám đốc");
   return `${moduleKey}_${isHead ? "HEAD" : "STAFF"}`;
 }
 

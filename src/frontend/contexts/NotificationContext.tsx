@@ -701,9 +701,10 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 } else if (rLower === "sales_rep" || rLower === "sales") {
                     if (deptLower.includes("kinh doanh") || uRoleLower.includes("sale")) return true;
                 } else if (rLower === "warehouse" || rLower === "warehouse_lead" || rLower === "warehouse_specialist") {
-                    if (deptLower.includes("kho") || uRoleLower.includes("warehouse")) return true;
+                    // Kho hàng kinh doanh: Sales Admin / nhân viên kho kinh doanh (không phải phòng Cung ứng Kho của nhà máy)
+                    if (uRoleLower.includes("warehouse") || uRoleLower === "sales_admin" || deptLower === "kho vận") return true;
                 } else if (rLower === "procurement" || rLower === "procurement_lead" || rLower === "procurement_specialist") {
-                    if (deptLower.includes("cung ứng") || deptLower.includes("mua hàng") || deptLower.includes("xnk") || uRoleLower.includes("procurement")) return true;
+                    if (uRoleLower.includes("procurement") || uRoleLower === "sales_admin" || deptLower.includes("xnk") || deptLower === "mua hàng & cung ứng") return true;
                 } else if (rLower === "app_head") {
                     if ((deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab")) && (posLower.includes("trưởng") || posLower.includes("head"))) return true;
                 } else if (rLower === "app_rep" || rLower === "application") {
