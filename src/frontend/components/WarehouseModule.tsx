@@ -62,6 +62,28 @@ import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDates } from "@/backend/services/dates";
 import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 
+/** NCC, số HĐ / tờ khai, loại hình, vận chuyển và tổng tiền của một phiếu kho (từ dòng hàng, hoặc ghi chú phiếu). */
+function txFinanceMeta(tx: any) {
+  const its: any[] = Array.isArray(tx?.items) ? tx.items : [];
+  const first: any = its.find((i: any) => i?.supplier_name || i?.vat_invoice_no) || its[0] || {};
+  const notes = String(tx?.notes || "");
+  // Phiếu nhập theo PO: "Nhập kho theo PO X • NCC: … • HĐ/Tờ khai: … • Vận chuyển: …"
+  const seg = (label: string) => {
+    const part = notes.split(/\s*[•|]\s*/).find((x) => x.trim().toLowerCase().startsWith(label.toLowerCase()));
+    return part ? part.trim().slice(label.length).trim() : "";
+  };
+  // Phiếu nhập trên form (bản cũ chỉ ghi vào ghi chú): "… HĐ: 123. NCC: ABC."
+  const rx = (re: RegExp) => (notes.match(re)?.[1] || "").trim();
+  const supplier = String(first.supplier_name || seg("NCC:") || rx(/NCC:\s*(.+?)\.\s*(?:$|\S+:)/) || rx(/Nhà cung cấp:\s*(.+)$/) || "").trim();
+  const rawInv = String(first.vat_invoice_no || seg("HĐ/Tờ khai:") || rx(/HĐ:\s*([^.\s][^.]*)\./) || "").trim();
+  const invoice = rawInv && rawInv !== "N/A" ? rawInv : "";
+  const inboundType = String(first.inbound_type || seg("Loại hình:") || "").trim();
+  const shipping = String(first.shipping_unit || seg("Vận chuyển:") || "").trim();
+  const hasPrice = its.some((i: any) => i?.unit_price !== undefined && i?.unit_price !== null);
+  const total = its.reduce((a: number, i: any) => a + (Number(i?.quantity) || 0) * (Number(i?.unit_price ?? i?.cost_price) || 0), 0);
+  return { supplier, invoice, inboundType, shipping: shipping === "N/A" ? "" : shipping, hasPrice, total };
+}
+
 export const WarehouseModule: React.FC = () => {
   const companyConfig = useCompanyConfig();
   const { notifyActivity } = useNotification();
@@ -4859,8 +4881,19 @@ export const WarehouseModule: React.FC = () => {
                 {transactionsPage.items.map((tx) => {
                   const isInbound = tx.transaction_type === "INBOUND";
                   const itemsList = Array.isArray(tx.items) ? tx.items : [];
+                  const fin = txFinanceMeta(tx);
                   return (
-                    <tr key={tx.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors">
+                    <tr
+                      key={tx.id}
+                      onClick={(e) => {
+                        // bấm vào bất kỳ chỗ nào trên dòng để xem chi tiết (trừ các nút / ô nhập)
+                        if ((e.target as HTMLElement).closest("button, a, input, select, textarea")) return;
+                        setSelectedTxDetail(tx);
+                        setIsTxDetailModalOpen(true);
+                      }}
+                      title="Bấm để xem chi tiết phiếu (NCC, số HĐ, đơn giá, lô…)"
+                      className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
+                    >
                       <td className="py-3.5 px-4 font-mono font-bold text-slate-900 dark:text-white">
                         <button
                           onClick={() => {
@@ -4886,6 +4919,12 @@ export const WarehouseModule: React.FC = () => {
                       </td>
                       <td className="py-3.5 px-4 font-mono font-semibold text-slate-700 dark:text-slate-300">
                         {tx.reference_code || "—"}
+                        {isInbound && (fin.supplier || fin.invoice) && (
+                          <div className="mt-0.5 font-sans font-normal text-[10px] text-slate-500 dark:text-slate-400 space-y-0.5 max-w-[220px]">
+                            {fin.supplier && <div className="truncate" title={fin.supplier}>NCC: <span className="text-slate-700 dark:text-slate-200">{fin.supplier}</span></div>}
+                            {fin.invoice && <div>HĐ: <span className="font-mono text-slate-700 dark:text-slate-200">{fin.invoice}</span></div>}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 text-slate-600 dark:text-slate-400">
                         {tx.warehouse_name || "Kho Trung Tâm"}
@@ -8935,6 +8974,46 @@ export const WarehouseModule: React.FC = () => {
                 </div>
               </div>
 
+              {(() => {
+                const fin = txFinanceMeta(selectedTxDetail);
+                const isIn = selectedTxDetail.transaction_type === "INBOUND";
+                if (!isIn && !fin.hasPrice) return null;
+                return (
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-indigo-50/60 dark:bg-indigo-950/20 p-3.5 rounded-xl border border-indigo-200 dark:border-indigo-800/60">
+                    {isIn && (
+                      <div className="col-span-2">
+                        <span className="text-[10px] text-slate-500 font-bold block uppercase">Nhà Cung Cấp / Nguồn Hàng</span>
+                        <strong className="text-slate-900 dark:text-white text-xs">{fin.supplier || "—"}</strong>
+                      </div>
+                    )}
+                    {isIn && (
+                      <div>
+                        <span className="text-[10px] text-slate-500 font-bold block uppercase">Số HĐ VAT / Tờ khai HQ</span>
+                        <strong className="font-mono text-slate-900 dark:text-white text-xs">{fin.invoice || "—"}</strong>
+                      </div>
+                    )}
+                    <div>
+                      <span className="text-[10px] text-slate-500 font-bold block uppercase">Tổng giá trị phiếu</span>
+                      <strong className="font-mono text-emerald-700 dark:text-emerald-400 text-xs">
+                        {fin.hasPrice ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(fin.total)} đ` : "— (không có quyền xem giá)"}
+                      </strong>
+                    </div>
+                    {isIn && fin.inboundType && (
+                      <div className="col-span-2">
+                        <span className="text-[10px] text-slate-500 font-bold block uppercase">Loại hình nhập</span>
+                        <strong className="text-slate-900 dark:text-white text-xs">{fin.inboundType}</strong>
+                      </div>
+                    )}
+                    {isIn && fin.shipping && (
+                      <div className="col-span-2">
+                        <span className="text-[10px] text-slate-500 font-bold block uppercase">Đơn vị vận chuyển</span>
+                        <strong className="text-slate-900 dark:text-white text-xs">{fin.shipping}</strong>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
               {selectedTxDetail.notes && (
                 <div className="bg-amber-50 dark:bg-amber-950/30 p-3 rounded-xl border border-amber-200 dark:border-amber-800/60 text-amber-900 dark:text-amber-200 text-xs">
                   <strong className="font-bold">Ghi chú chứng từ:</strong> {selectedTxDetail.notes}
@@ -8958,6 +9037,8 @@ export const WarehouseModule: React.FC = () => {
                         <th className="py-2.5 px-3">Hạn Dùng (EXP)</th>
                         <th className="py-2.5 px-3 text-right">SL</th>
                         <th className="py-2.5 px-3">ĐVT</th>
+                        <th className="py-2.5 px-3 text-right">Đơn Giá</th>
+                        <th className="py-2.5 px-3 text-right">Thành Tiền</th>
                         <th className="py-2.5 px-3">Nhiệt Độ / Vị Trí</th>
                         <th className="py-2.5 px-3">Tình Trạng QC</th>
                       </tr>
@@ -8972,6 +9053,12 @@ export const WarehouseModule: React.FC = () => {
                           <td className="py-2 px-3 font-mono text-emerald-600 dark:text-emerald-400 font-bold">{it.expiry_date || "—"}</td>
                           <td className="py-2 px-3 text-right font-mono font-black text-slate-900 dark:text-white">{it.quantity}</td>
                           <td className="py-2 px-3 text-slate-500">{it.unit || "Hộp"}</td>
+                          <td className="py-2 px-3 text-right font-mono">
+                            {it.unit_price !== undefined && it.unit_price !== null ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(it.unit_price) || 0) : "—"}
+                          </td>
+                          <td className="py-2 px-3 text-right font-mono font-bold">
+                            {it.unit_price !== undefined && it.unit_price !== null ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format((Number(it.unit_price) || 0) * (Number(it.quantity) || 0)) : "—"}
+                          </td>
                           <td className="py-2 px-3 text-slate-600 dark:text-slate-400">
                             <div>{it.storage_condition || it.storage_location || "Kho thường"}</div>
                             {it.shelf_position && <div className="text-[10px] text-slate-400 font-mono">[{it.shelf_position}]</div>}
