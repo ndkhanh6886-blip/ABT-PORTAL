@@ -129,6 +129,8 @@ export interface MedicalLicense {
   status: "CON_HAN" | "SAP_HET_HAN" | "DA_GIA_HAN";
   agency: string;
   notes?: string;
+  /** Link hồ sơ lưu hành trên cổng Bộ Y tế (dmec.moh.gov.vn / trang tra cứu) */
+  mohUrl?: string;
   attachments?: AttachedFile[];
   createdBy?: string;
   updatedAt?: string;
@@ -274,6 +276,7 @@ export const LegalModule: React.FC = () => {
     issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
     expiryDate: "",
     notes: "",
+    mohUrl: "",
     attachments: [] as AttachedFile[]
   });
 
@@ -500,7 +503,7 @@ export const LegalModule: React.FC = () => {
     setNewLicenseForm({
       licenseNumber: l.licenseNumber, productName: l.productName, deviceClass: l.deviceClass,
       manufacturer: l.manufacturer, origin: l.origin, agency: l.agency, issueDate: l.issueDate,
-      expiryDate: l.expiryDate, notes: l.notes || "", attachments: l.attachments || []
+      expiryDate: l.expiryDate, notes: l.notes || "", mohUrl: l.mohUrl || "", attachments: l.attachments || []
     });
     setEditing({ kind: "license", id: l.id });
     setIsNewLicenseModalOpen(true);
@@ -523,7 +526,7 @@ export const LegalModule: React.FC = () => {
     setEditing(null);
     if (kind === "contract") setNewContractForm({ code: `HD-ABT-${Date.now().toString().slice(-4)}`, title: "", partnerName: "", type: "Bán hàng Bệnh Viện", value: "", requester: myName, department: user?.department || "Pháp Chế", riskNotes: "", riskLevel: "THAP", expiryDate: "", attachments: [] });
     if (kind === "tender") setNewTenderForm({ code: `THAU-ABT-${Date.now().toString().slice(-4)}`, hospitalName: "", packageName: "", bidValue: "", submissionDeadline: "", assignedLawyer: legalLeadName, notes: "", checklist: { circulationLicense: false, loaAuthorization: false, iso13485: false, financialReport: false, gdpGspColdChain: false }, attachments: [] });
-    if (kind === "license") setNewLicenseForm({ licenseNumber: "", productName: "", deviceClass: "Loại C", manufacturer: "", origin: "", agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế", issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), expiryDate: "", notes: "", attachments: [] });
+    if (kind === "license") setNewLicenseForm({ licenseNumber: "", productName: "", deviceClass: "Loại C", manufacturer: "", origin: "", agency: "Bộ Y Tế - Cục Cơ Sở Hạ Tầng & Thiết Bị Y Tế", issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), expiryDate: "", notes: "", mohUrl: "", attachments: [] });
     if (kind === "doc") setNewDocForm({ code: "", title: "", category: "Nghị Định & Luật", issuingBody: "", effectiveDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }), summary: "", attachments: [] });
   };
   const editStamp = () => ({ updatedAt: new Date().toISOString(), updatedBy: myName || "Người dùng" });
@@ -872,12 +875,17 @@ export const LegalModule: React.FC = () => {
       showToast("error", "Vui lòng nhập đúng Số lưu hành và Ngày hết hạn theo giấy phép của Bộ Y Tế.");
       return;
     }
+    const mohUrl = String(newLicenseForm.mohUrl || "").trim();
+    if (mohUrl && !/^https?:\/\//i.test(mohUrl)) {
+      showToast("error", "Link hồ sơ trên cổng Bộ Y tế phải bắt đầu bằng http:// hoặc https://");
+      return;
+    }
     if (editing?.kind === "license") {
       saveLicenses(licenses.map(l => l.id === editing.id ? {
         ...l, licenseNumber: newLicenseForm.licenseNumber, productName: newLicenseForm.productName,
         deviceClass: newLicenseForm.deviceClass, manufacturer: newLicenseForm.manufacturer, origin: newLicenseForm.origin,
         agency: newLicenseForm.agency, issueDate: newLicenseForm.issueDate, expiryDate: newLicenseForm.expiryDate,
-        notes: newLicenseForm.notes, attachments: newLicenseForm.attachments, ...editStamp()
+        notes: newLicenseForm.notes, mohUrl: mohUrl || undefined, attachments: newLicenseForm.attachments, ...editStamp()
       } : l));
       closeEditor("license");
       showToast("success", `Đã cập nhật giấy phép ${newLicenseForm.licenseNumber}.`);
@@ -895,6 +903,7 @@ export const LegalModule: React.FC = () => {
       expiryDate: newLicenseForm.expiryDate,
       status: "CON_HAN",
       notes: newLicenseForm.notes,
+      mohUrl: mohUrl || undefined,
       attachments: newLicenseForm.attachments,
       createdBy: myName || undefined
     };
@@ -911,6 +920,7 @@ export const LegalModule: React.FC = () => {
       issueDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
       expiryDate: "",
       notes: "",
+      mohUrl: "",
       attachments: []
     });
     showToast("success", `Đã đăng ký số lưu hành ${created.licenseNumber} thành công!`);
@@ -1514,6 +1524,17 @@ export const LegalModule: React.FC = () => {
                     <tr key={lic.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
                       <td className="py-3 px-4 font-mono font-bold text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                         {lic.licenseNumber}
+                        {lic.mohUrl && (
+                          <a
+                            href={lic.mohUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="mt-0.5 flex items-center gap-1 font-sans font-semibold text-[10px] text-blue-600 dark:text-blue-400 hover:underline"
+                            title={lic.mohUrl}
+                          >
+                            <ExternalLink className="w-3 h-3" /> Hồ sơ trên cổng BYT
+                          </a>
+                        )}
                       </td>
                       <td className="py-3 px-4 font-bold text-slate-900 dark:text-white max-w-xs">
                         <div>{lic.productName}</div>
@@ -2834,6 +2855,33 @@ export const LegalModule: React.FC = () => {
                   placeholder="dd/mm/yyyy"
                   className="w-full px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
                 />
+              </div>
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                <ExternalLink className="w-3.5 h-3.5 text-blue-600" />
+                <span>Link hồ sơ lưu hành trên cổng Bộ Y tế</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="url"
+                  value={newLicenseForm.mohUrl}
+                  onChange={(e) => setNewLicenseForm({ ...newLicenseForm, mohUrl: e.target.value })}
+                  placeholder="Dán link trang hồ sơ, ví dụ: https://dmec.moh.gov.vn/..."
+                  className="flex-1 px-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-mono text-slate-900 dark:text-white"
+                />
+                {/^https?:\/\//i.test(String(newLicenseForm.mohUrl || "").trim()) && (
+                  <a
+                    href={String(newLicenseForm.mohUrl).trim()}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="shrink-0 px-3 py-2 rounded-xl text-xs font-bold bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800 hover:bg-blue-100"
+                    title="Mở link để kiểm tra"
+                  >
+                    Mở thử ↗
+                  </a>
+                )}
               </div>
             </div>
 
