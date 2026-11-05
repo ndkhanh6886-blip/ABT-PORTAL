@@ -502,14 +502,14 @@ export function FactoryAnalyticsModule() {
                           )}
                         </td>
                         <td className="py-2.5 pr-3 text-right font-mono text-slate-600 dark:text-slate-400">
-                          {Number(b.costing?.std_unit_cost ?? 0).toLocaleString("vi-VN")} đ
+                          {Number(b.costing?.std_unit_cost ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                         </td>
                         <td className="py-2.5 pr-3 text-right font-mono">
                           <div className="font-bold text-slate-900 dark:text-white">
-                            {Number(b.costing?.actual_unit_cost ?? 0).toLocaleString("vi-VN")} đ
+                            {Number(b.costing?.actual_unit_cost ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                           </div>
                           <div className="text-[10px] text-slate-400">
-                            Tổng lô: {Number(b.costing?.actual_total_cost ?? 0).toLocaleString("vi-VN")} đ
+                            Tổng lô: {Number(b.costing?.actual_total_cost ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                           </div>
                         </td>
                         <td className="py-2.5 pr-3 text-right font-mono">
@@ -1082,7 +1082,7 @@ export function FactoryAnalyticsModule() {
                     <div>
                       <div className="text-[11px] text-slate-500">Dự Toán Chi Phí Sản Xuất Lô</div>
                       <div className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
-                        {Number(simResult.estimated_total_cost).toLocaleString("vi-VN")} đ
+                        {Number(simResult.estimated_total_cost).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                       </div>
                     </div>
                     {simResult.shortage_count > 0 && (

@@ -1247,19 +1247,19 @@ export const ZaloOperationsHub: React.FC = () => {
                             <div className="bg-white dark:bg-slate-800 p-2 rounded-xl border border-slate-200 dark:border-slate-700">
                               <div className="text-[10px] text-slate-400">Tiền hàng:</div>
                               <div className="font-bold text-slate-800 dark:text-slate-200">
-                                {new Intl.NumberFormat("vi-VN").format(parseFloat(q.subtotal as any || 0))} đ
+                                {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(parseFloat(q.subtotal as any || 0))} đ
                               </div>
                             </div>
                             <div className="bg-rose-50 dark:bg-rose-950/40 p-2 rounded-xl border border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300">
                               <div className="text-[10px] text-rose-400">Giảm trừ ({q.discount_rate}%):</div>
                               <div className="font-bold">
-                                -{new Intl.NumberFormat("vi-VN").format(parseFloat(q.discount_amount as any || 0))} đ
+                                -{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(parseFloat(q.discount_amount as any || 0))} đ
                               </div>
                             </div>
                             <div className="bg-emerald-50 dark:bg-emerald-950/40 p-2 rounded-xl border border-emerald-200 dark:border-emerald-900 text-emerald-700 dark:text-emerald-300">
                               <div className="text-[10px] text-emerald-500 font-bold">Thực thu (Gồm VAT):</div>
                               <div className="font-black">
-                                {new Intl.NumberFormat("vi-VN").format(parseFloat(q.total_amount as any || 0))} đ
+                                {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(parseFloat(q.total_amount as any || 0))} đ
                               </div>
                             </div>
                           </div>
@@ -1333,7 +1333,7 @@ export const ZaloOperationsHub: React.FC = () => {
                           </div>
                           <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap">
                             <span>NVKD: <strong>{o.sales_rep_name || "Kinh doanh"}</strong></span>
-                            <span>Tổng giá trị đơn: <strong className="text-emerald-700 dark:text-emerald-400">{new Intl.NumberFormat("vi-VN").format(Number(o.total_amount || 0))} đ</strong></span>
+                            <span>Tổng giá trị đơn: <strong className="text-emerald-700 dark:text-emerald-400">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(o.total_amount || 0))} đ</strong></span>
                           </div>
                         </div>
 
@@ -1411,7 +1411,7 @@ export const ZaloOperationsHub: React.FC = () => {
                           <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap">
                             <span>Người trình: <strong>{p.requester}</strong> ({p.department})</span>
                             {Number(p.amount || 0) > 0 && (
-                              <span>Ngân sách: <strong className="text-rose-600">{new Intl.NumberFormat("vi-VN").format(Number(p.amount))} đ</strong></span>
+                              <span>Ngân sách: <strong className="text-rose-600">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(p.amount))} đ</strong></span>
                             )}
                           </div>
                         </div>
@@ -1465,7 +1465,7 @@ export const ZaloOperationsHub: React.FC = () => {
                             NCC: {po.supplier_name}
                           </div>
                           <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap">
-                            <span>Tổng tiền PO: <strong className="text-emerald-700 dark:text-emerald-400">{new Intl.NumberFormat("vi-VN").format(Number(po.total_amount || 0))} đ</strong></span>
+                            <span>Tổng tiền PO: <strong className="text-emerald-700 dark:text-emerald-400">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(po.total_amount || 0))} đ</strong></span>
                             {po.expected_date && <span>Dự kiến về: <strong>{po.expected_date}</strong></span>}
                           </div>
                         </div>
@@ -1519,7 +1519,7 @@ export const ZaloOperationsHub: React.FC = () => {
                             KH: {r.customer_name}
                           </div>
                           <div className="text-xs text-slate-600 dark:text-slate-300 flex items-center gap-4 flex-wrap">
-                            <span>Giá trị hoàn trả: <strong className="text-rose-600">{new Intl.NumberFormat("vi-VN").format(Number(r.refund_amount || 0))} đ</strong></span>
+                            <span>Giá trị hoàn trả: <strong className="text-rose-600">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(r.refund_amount || 0))} đ</strong></span>
                             <span>Lý do: <strong>{r.reason || "Đổi trả hàng"}</strong></span>
                           </div>
                         </div>

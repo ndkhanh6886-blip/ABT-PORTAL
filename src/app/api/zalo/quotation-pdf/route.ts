@@ -77,8 +77,8 @@ export async function GET(req: NextRequest) {
         <td style="border: 1px solid #cbd5e1; padding: 10px; font-weight: bold; color: #1e293b;">${pName}<br/><span style="font-size: 11px; color: #64748b; font-family: monospace;">Mã SKU: ${pCode}</span></td>
         <td style="text-align: center; border: 1px solid #cbd5e1; padding: 10px;">${pUnit}</td>
         <td style="text-align: center; border: 1px solid #cbd5e1; padding: 10px; font-weight: bold;">${pQty}</td>
-        <td style="text-align: right; border: 1px solid #cbd5e1; padding: 10px;">${new Intl.NumberFormat("vi-VN").format(pPrice)} đ</td>
-        <td style="text-align: right; border: 1px solid #cbd5e1; padding: 10px; font-weight: bold; color: #2563eb;">${new Intl.NumberFormat("vi-VN").format(pTotal)} đ</td>
+        <td style="text-align: right; border: 1px solid #cbd5e1; padding: 10px;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pPrice)} đ</td>
+        <td style="text-align: right; border: 1px solid #cbd5e1; padding: 10px; font-weight: bold; color: #2563eb;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pTotal)} đ</td>
       </tr>
       `;
     }).join("");

@@ -123,7 +123,7 @@ const PRIORITY_META: Record<string, { label: string; cls: string }> = {
 
 const fmtMoney = (v: number | string | null | undefined) => {
   const n = Number(v || 0);
-  return `${n.toLocaleString("vi-VN")} đ`;
+  return `${n.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ`;
 };
 
 interface EnterpriseApprovalsCenterProps {

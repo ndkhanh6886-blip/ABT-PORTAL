@@ -235,10 +235,10 @@ export function PricingConfigView({ canManage }: { canManage: boolean }) {
               </div>
               <div className="flex items-center gap-4">
                 <div>
-                  Đơn giá Base chuẩn: <b className="text-slate-900 dark:text-white">{Number(quoteMut.data.unit_price).toLocaleString("vi-VN")} đ/nt</b>
+                  Đơn giá Base chuẩn: <b className="text-slate-900 dark:text-white">{Number(quoteMut.data.unit_price).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ/nt</b>
                 </div>
                 <div className="px-3 py-1 rounded-xl bg-emerald-600 text-white font-extrabold text-sm">
-                  Thành tiền: {Number(quoteMut.data.total_price).toLocaleString("vi-VN")} VNĐ
+                  Thành tiền: {Number(quoteMut.data.total_price).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} VNĐ
                 </div>
               </div>
             </div>
@@ -250,9 +250,9 @@ export function PricingConfigView({ canManage }: { canManage: boolean }) {
                   <td className="py-1.5 pr-3 font-medium">{l.name}</td>
                   <td className="py-1.5 pr-3 text-slate-500">{l.unit}</td>
                   <td className="py-1.5 pr-3 text-right font-mono">{l.qty}</td>
-                  <td className="py-1.5 pr-3 text-right font-mono">{Number(l.unit_price).toLocaleString("vi-VN")} đ</td>
+                  <td className="py-1.5 pr-3 text-right font-mono">{Number(l.unit_price).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</td>
                   <td className="py-1.5 pr-3 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                    {Number(l.amount).toLocaleString("vi-VN")} đ
+                    {Number(l.amount).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                   </td>
                 </tr>
               ))}

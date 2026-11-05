@@ -332,7 +332,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
   }, [filteredTransactions, salesTargets, selectedRepId, periodType, periodValue, visibleSalesPersonnel, salesPersonnel]);
 
   // Format currency helper
-  const fmtCurrency = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0)) + "đ";
+  const fmtCurrency = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(n || 0)) + "đ";
 
   const matchRepTargetRecord = (t: any, repId: string, repName?: string, repCode?: string): boolean => {
     const tRepId = String(t?.salesRepId || "").trim();

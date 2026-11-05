@@ -2124,7 +2124,7 @@ ${sampleSkus}
       const totalFmt = new Intl.NumberFormat("vi-VN").format(totalAmount);
 
       const itemsText = itemsList
-        .map((it, idx) => `  ${idx + 1}. ${it.name}\n     • Mã SKU: ${it.sku} | Số lượng: ${it.qty} ${it.unit}\n     • Đơn giá: ${new Intl.NumberFormat("vi-VN").format(it.price)} đ ➔ ${new Intl.NumberFormat("vi-VN").format(it.total)} đ`)
+        .map((it, idx) => `  ${idx + 1}. ${it.name}\n     • Mã SKU: ${it.sku} | Số lượng: ${it.qty} ${it.unit}\n     • Đơn giá: ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(it.price)} đ ➔ ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(it.total)} đ`)
         .join("\n\n");
 
       let notExistNotice = "";

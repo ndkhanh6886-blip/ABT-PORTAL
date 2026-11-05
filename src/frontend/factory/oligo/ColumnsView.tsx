@@ -25,7 +25,7 @@ interface Col {
   last_run_at: string | null;
 }
 
-const vnd = (v: number) => `${Math.round(v || 0).toLocaleString("vi-VN")} VND`;
+const vnd = (v: number) => `${Math.round(v || 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} VND`;
 
 function Runs({ id }: { id: string }) {
   const runs = useQuery({

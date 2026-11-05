@@ -603,8 +603,8 @@ export function AssemblyDhrView() {
                     </span>
                   </div>
                   <div className="font-mono text-[11px] text-slate-600 dark:text-slate-300">
-                    💰 Giá vốn DHR ước tính: <b>{(18500000).toLocaleString("vi-VN")} đ/máy</b> (Tổng lệnh:{" "}
-                    <b>{(Math.max(1, d.qty) * 18500000).toLocaleString("vi-VN")} đ</b>)
+                    💰 Giá vốn DHR ước tính: <b>{(18500000).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ/máy</b> (Tổng lệnh:{" "}
+                    <b>{(Math.max(1, d.qty) * 18500000).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</b>)
                   </div>
                 </div>
 

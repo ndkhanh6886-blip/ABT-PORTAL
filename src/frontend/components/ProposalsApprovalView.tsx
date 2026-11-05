@@ -515,7 +515,7 @@ export function isSamePerson(a: any, b: any): boolean {
 export function formatMoneyVND(val: any): string {
   const n = Number(val) || 0;
   if (n <= 0) return "0 đ";
-  return n.toLocaleString("vi-VN") + " đ";
+  return n.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) + " đ";
 }
 
 export function getStatusMeta(status: ProposalStatus) {

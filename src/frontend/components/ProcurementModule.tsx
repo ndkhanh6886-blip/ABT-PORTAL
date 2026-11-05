@@ -59,6 +59,7 @@ import { todayVN, toVNDateString } from "@/backend/services/dates";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 import { PRLineItemsView } from "@/frontend/components/procurement/PRLineItemsView";
+import { POLineItemsView } from "@/frontend/components/procurement/POLineItemsView";
 
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
 
@@ -237,6 +238,8 @@ export const ProcurementModule: React.FC = () => {
   const [allSupplierProducts, setAllSupplierProducts] = useState<any[]>([]);
   // Tab PR: xem theo phiếu PR, hoặc theo từng dòng mặt hàng (chọn dòng cùng NCC để lập PO)
   const [prViewMode, setPRViewMode] = useState<"pr" | "lines">("pr");
+  // Tab PO: xem theo đơn PO, hoặc theo từng dòng mặt hàng của các PO đang lọc
+  const [poViewMode, setPOViewMode] = useState<"po" | "lines">("po");
   const [restockAlerts, setRestockAlerts] = useState<any[]>([]);
   const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({
@@ -1351,8 +1354,8 @@ export const ProcurementModule: React.FC = () => {
                 <td style="font-weight: 500;">${esc(cleanItemName(it.product_name))}</td>
                 <td class="text-center">${esc(it.unit || '')}</td>
                 <td class="text-center font-bold">${it.quantity || 1}</td>
-                <td class="text-right font-mono">${Number(it.unit_price || 0).toLocaleString('vi-VN')} đ</td>
-                <td class="text-right font-mono font-bold">${Number((it.quantity || 1) * (it.unit_price || 0)).toLocaleString('vi-VN')} đ</td>
+                <td class="text-right font-mono">${Number(it.unit_price || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-right font-mono font-bold">${Number((it.quantity || 1) * (it.unit_price || 0)).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
                 ${hasLineNotes ? `<td style="font-size: 11px;">${esc(it.notes || '')}</td>` : ''}
               </tr>
             `).join('')}
@@ -1361,7 +1364,7 @@ export const ProcurementModule: React.FC = () => {
             <tr class="total-row">
               <td colspan="6" class="text-right uppercase">TỔNG CỘNG TIỀN HÀNG (CHƯA VAT):</td>
               <td class="text-right font-mono font-bold" style="color: #ea580c; font-size: 13px;">
-                ${Number(totalAmount).toLocaleString('vi-VN')} đ
+                ${Number(totalAmount).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
               </td>
               ${hasLineNotes ? '<td></td>' : ''}
             </tr>
@@ -3698,6 +3701,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               >
                 <FileSpreadsheet className="w-4 h-4" /> Excel
               </button>
+              <div className="shrink-0 flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
+                {([["po", "Theo đơn PO"], ["lines", "Theo mặt hàng"]] as const).map(([mode, label]) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setPOViewMode(mode)}
+                    className={`px-3 py-1 rounded-lg font-semibold whitespace-nowrap cursor-pointer ${poViewMode === mode ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs" : "text-slate-600 dark:text-slate-400"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Filter Buttons including Customs and All Lifecycle Statuses (in logical XNK order) */}
@@ -3750,6 +3765,21 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <span className="text-slate-400">{filteredOrders.length} PO</span>
           </div>
 
+          {poViewMode === "lines" ? (
+            <POLineItemsView
+              orders={filteredOrders}
+              suppliers={suppliers}
+              onOpenPO={(po) => setSelectedPODetail(po)}
+              receivedOf={receivedOf}
+              cleanItemName={cleanItemName}
+              itemSourcePR={itemSourcePR}
+              statusLabel={(st) => {
+                const cfg = PO_STATUS_CONFIG[String(st || "").toUpperCase()];
+                return { label: cfg?.label || st || "—", className: `font-semibold ${cfg?.text || "text-slate-500"}` };
+              }}
+              paymentStatus={getPOPaymentStatus}
+            />
+          ) : (<>
           {/* Table */}
           <div className="overflow-x-auto min-h-[380px] pb-24">
             <table className="w-full text-left text-xs">
@@ -4318,6 +4348,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             </table>
           </div>
           <Pager p={ordersPage} unit="đơn đặt mua (PO)" />
+          </>)}
         </div>
       )}
 

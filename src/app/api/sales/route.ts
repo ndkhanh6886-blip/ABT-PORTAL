@@ -160,7 +160,7 @@ async function evaluateCredit(cust: any, _orderTotal: number, excludeOrderId: nu
   let reason = "";
   if (currentDebt > limit) {
     blocked = true;
-    reason = `Vượt hạn mức công nợ (tính theo Phiếu giao hàng đã giao): Dư nợ đã giao (${currentDebt.toLocaleString('vi-VN')} đ) vượt trần ${limit.toLocaleString('vi-VN')} đ`;
+    reason = `Vượt hạn mức công nợ (tính theo Phiếu giao hàng đã giao): Dư nợ đã giao (${currentDebt.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ) vượt trần ${limit.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ`;
   }
   for (const uo of openOrders) {
     const late = overdueDays(uo, termDays);
@@ -724,7 +724,7 @@ export async function GET(req: NextRequest) {
 
       if (currentDebt > limit) {
         isBlocked = true;
-        blockedReasons.push(`Tổng nợ theo phiếu giao hàng (${currentDebt.toLocaleString('vi-VN')} đ) đã vượt hạn mức cho phép (${limit.toLocaleString('vi-VN')} đ)`);
+        blockedReasons.push(`Tổng nợ theo phiếu giao hàng (${currentDebt.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ) đã vượt hạn mức cho phép (${limit.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ)`);
       }
 
       if (overdueOrders.length > 0) {
@@ -2104,7 +2104,7 @@ export async function POST(req: NextRequest) {
 
         // Chốt chặn logic an toàn: Tránh xuất hóa đơn vượt quá giá trị đơn hàng
         if (orderTotal > 0 && projectedInvoicedTotal > Math.round(orderTotal * 1.05)) {
-          throw new HttpError(400, `Tổng tiền hóa đơn lũy kế (${projectedInvoicedTotal.toLocaleString('vi-VN')} đ) vượt quá tổng giá trị đơn hàng (${orderTotal.toLocaleString('vi-VN')} đ)! Vui lòng đối soát lại số tiền phiếu giao.`);
+          throw new HttpError(400, `Tổng tiền hóa đơn lũy kế (${projectedInvoicedTotal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ) vượt quá tổng giá trị đơn hàng (${orderTotal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ)! Vui lòng đối soát lại số tiền phiếu giao.`);
         }
 
         const newRecord = {
@@ -2147,7 +2147,7 @@ export async function POST(req: NextRequest) {
         result.prevRec ? "EDIT_INVOICE" : "PARTIAL_INVOICE",
         "SALES_ORDER",
         result.prevRec
-          ? `Sửa HĐ phiếu ${delivery_slip_id} (Đơn ${result.ord.order_code}): ${result.prevRec.invoice_no} -> ${invNoClean}, ${Number(result.prevRec.invoice_amount || 0).toLocaleString("vi-VN")} -> ${(Number(invoice_amount) || 0).toLocaleString("vi-VN")} đ`
+          ? `Sửa HĐ phiếu ${delivery_slip_id} (Đơn ${result.ord.order_code}): ${result.prevRec.invoice_no} -> ${invNoClean}, ${Number(result.prevRec.invoice_amount || 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} -> ${(Number(invoice_amount) || 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ`
           : `Xuất HĐ ${invNoClean} cho Phiếu Giao Hàng ${delivery_slip_id} (Đơn ${result.ord.order_code})`
       );
       return NextResponse.json({ success: true, invoiced_delivery_slips: result.updatedSlips, invoice_status: result.newStatus });
@@ -2180,7 +2180,7 @@ export async function POST(req: NextRequest) {
         const total = Number(ord.total_amount) || 0;
         const paidBefore = Number(ord.amount_paid) || 0;
         if (total > 0 && paidBefore + amount > total + 0.5) {
-          throw new HttpError(409, `Đơn ${ord.order_code}: giá trị ${total.toLocaleString("vi-VN")} đ, đã thu ${paidBefore.toLocaleString("vi-VN")} đ — khoản thu ${amount.toLocaleString("vi-VN")} đ vượt số còn phải thu.`);
+          throw new HttpError(409, `Đơn ${ord.order_code}: giá trị ${total.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ, đã thu ${paidBefore.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ — khoản thu ${amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ vượt số còn phải thu.`);
         }
         // Phân bổ khoản thu theo phiếu giao (Kế toán chọn phiếu nào được thanh toán). Không gửi -> khoản thu chung của đơn.
         const rawAlloc: any[] = Array.isArray(body.allocations) && body.allocations.length > 0
@@ -2206,7 +2206,7 @@ export async function POST(req: NextRequest) {
             }, 0));
             const paidSlip = Number((await c.query("SELECT COALESCE(SUM(amount), 0) AS s FROM sales_payments WHERE order_id = $1 AND delivery_slip_code = $2 AND voided_at IS NULL", [ord.id, a.slip])).rows[0]?.s) || 0;
             if (value > 0 && paidSlip + a.amount > value + 0.5) {
-              throw new HttpError(409, `Phiếu ${a.slip}: giá trị ${value.toLocaleString("vi-VN")} đ, đã thu ${paidSlip.toLocaleString("vi-VN")} đ — không thu vượt.`);
+              throw new HttpError(409, `Phiếu ${a.slip}: giá trị ${value.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ, đã thu ${paidSlip.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ — không thu vượt.`);
             }
           }
         }
@@ -2224,7 +2224,7 @@ export async function POST(req: NextRequest) {
         return { ord, duplicate: false, paid, status };
       });
       if (!result.duplicate) {
-        await logAudit("CUSTOMER_PAYMENT", "SALES_ORDER", `Thu ${amount.toLocaleString("vi-VN")} đ đơn ${result.ord.order_code} (${result.status})`, me.username, me.full_name);
+        await logAudit("CUSTOMER_PAYMENT", "SALES_ORDER", `Thu ${amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ đơn ${result.ord.order_code} (${result.status})`, me.username, me.full_name);
         notifyZaloProactiveEvent({
           eventType: "INVOICE_OR_PAYMENT_RECORDED",
           code: result.ord.order_code,
@@ -2259,7 +2259,7 @@ export async function POST(req: NextRequest) {
         await c.query("UPDATE sales_orders SET amount_paid = $1, payment_status = $2 WHERE id = $3", [paid, status, pay.order_id]);
         return { order_code: pay.order_code, amount: Number(pay.amount) || 0, paid, status };
       });
-      await logAudit("VOID_CUSTOMER_PAYMENT", "SALES_ORDER", `Hủy khoản thu ${result.amount.toLocaleString("vi-VN")} đ đơn ${result.order_code}: ${reason}`, me.username, me.full_name);
+      await logAudit("VOID_CUSTOMER_PAYMENT", "SALES_ORDER", `Hủy khoản thu ${result.amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ đơn ${result.order_code}: ${reason}`, me.username, me.full_name);
       return NextResponse.json({ success: true, amount_paid: result.paid, payment_status: result.status, order_code: result.order_code });
     }
 
@@ -3026,7 +3026,7 @@ export async function POST(req: NextRequest) {
              SET total_amount = GREATEST(0, COALESCE(total_amount, 0) - $1),
                  notes = COALESCE(notes, '') || $2
              WHERE order_code = $3`,
-            [rmaAmount, ` • [Giảm trừ công nợ RMA ${rma.rma_code}: -${rmaAmount.toLocaleString("vi-VN")} đ]`, rma.order_code]
+            [rmaAmount, ` • [Giảm trừ công nợ RMA ${rma.rma_code}: -${rmaAmount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ]`, rma.order_code]
           );
         }
 
@@ -3174,7 +3174,7 @@ export async function POST(req: NextRequest) {
             [code, cust?.id || null, custName, fo.salesRepName || fo.sales_rep_name || null, JSON.stringify(items), total,
              slipsDelivered ? "DELIVERED" : "PENDING", "[Khôi phục từ bản sao màn hình — kiểm tra lại ngày đơn, giá]"]
           );
-          return `Khôi phục đơn ${code} (${custName}, ${total.toLocaleString("vi-VN")} đ) từ bản sao màn hình`;
+          return `Khôi phục đơn ${code} (${custName}, ${total.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ) từ bản sao màn hình`;
         }
         throw new HttpError(400, "Loại sửa không hợp lệ");
       });

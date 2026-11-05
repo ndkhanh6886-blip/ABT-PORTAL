@@ -17,7 +17,7 @@ interface AssetOpt { id: string; code: string; name: string; status: string }
 const KIND: Record<string, string> = { MAINTENANCE: "Bảo trì định kỳ", CALIBRATION: "Hiệu chuẩn", REPAIR: "Sửa chữa", CLEANING: "Vệ sinh / rửa máy", QUALIFICATION: "Thẩm định (IQ/OQ/PQ)" };
 const SIGNED = ["CALIBRATION", "REPAIR", "QUALIFICATION"];
 const ST: Record<string, [string, string]> = { PLANNED: ["QUARANTINE", "Kế hoạch"], DONE: ["RELEASED", "Đã thực hiện"], CANCELLED: ["EXPIRED", "Đã hủy"] };
-const vnd = (v: number | null) => (v == null ? "—" : `${v.toLocaleString("vi-VN")} đ`);
+const vnd = (v: number | null) => (v == null ? "—" : `${v.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ`);
 const today = () => new Date(Date.now() + 7 * 3600_000).toISOString().slice(0, 10);
 
 function PlanForm({ assets, preset, onDone }: { assets: AssetOpt[]; preset?: { asset_id: string; kind: string }; onDone: () => void }) {

@@ -183,8 +183,8 @@ export async function GET(req: NextRequest) {
         <td style="border: 1px solid #334155; padding: 7px 8px; font-weight: bold; color: #0f172a;">${pName}</td>
         <td style="text-align: center; border: 1px solid #334155; padding: 7px 6px;">${pUnit}</td>
         <td style="text-align: center; border: 1px solid #334155; padding: 7px 6px; font-weight: bold;">${pQty}</td>
-        <td style="text-align: right; border: 1px solid #334155; padding: 7px 8px;">${new Intl.NumberFormat("vi-VN").format(pPrice)} đ</td>
-        <td style="text-align: right; border: 1px solid #334155; padding: 7px 8px; font-weight: bold; color: #1e3a8a;">${new Intl.NumberFormat("vi-VN").format(pTotal)} đ</td>
+        <td style="text-align: right; border: 1px solid #334155; padding: 7px 8px;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pPrice)} đ</td>
+        <td style="text-align: right; border: 1px solid #334155; padding: 7px 8px; font-weight: bold; color: #1e3a8a;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pTotal)} đ</td>
       </tr>
       `;
     }).join("");

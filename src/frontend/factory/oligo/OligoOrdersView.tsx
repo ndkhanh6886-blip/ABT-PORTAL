@@ -459,7 +459,7 @@ export function OligoOrdersView({
                   </td>
                   <td className="py-2 pr-3 whitespace-nowrap text-right">
                     <div className="font-mono font-bold text-emerald-700 dark:text-emerald-400 text-xs">
-                      {Number(o.total_price ?? 0).toLocaleString("vi-VN")} đ
+                      {Number(o.total_price ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                     </div>
                     <div className="text-[10px] text-slate-500">
                       {o.pricing_type === "percentage"

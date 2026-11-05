@@ -799,7 +799,7 @@ function ProjectPanel({
                   {o.scorecard.material_tx_count} lượt lĩnh / PR / ELN
                 </div>
                 <div className="text-[11px] text-slate-400">
-                  Chi phí ước tính: {o.estimated_spent.toLocaleString("vi-VN")} / {o.budget_amount.toLocaleString("vi-VN")} đ
+                  Chi phí ước tính: {o.estimated_spent.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} / {o.budget_amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                 </div>
               </div>
             </div>

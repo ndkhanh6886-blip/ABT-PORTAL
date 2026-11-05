@@ -217,15 +217,15 @@ function printOligoInvoiceSchedule(
       }
       <tr class="total-row">
         <td colspan="6" style="text-align:right;">Cộng tiền hàng (Trước thuế GTGT):</td>
-        <td class="num">${subtotalVnd.toLocaleString("vi-VN")} đ</td>
+        <td class="num">${subtotalVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</td>
       </tr>
       <tr class="total-row">
         <td colspan="6" style="text-align:right;">Thuế suất GTGT (VAT ${vatRate}%):</td>
-        <td class="num">${vatAmountVnd.toLocaleString("vi-VN")} đ</td>
+        <td class="num">${vatAmountVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</td>
       </tr>
       <tr class="grand-row">
         <td colspan="6" style="text-align:right;">TỔNG CỘNG THANH TOÁN (ĐÃ GỒM VAT):</td>
-        <td class="num">${grandTotalVnd.toLocaleString("vi-VN")} VNĐ</td>
+        <td class="num">${grandTotalVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} VNĐ</td>
       </tr>
     </tbody>
   </table>
@@ -1044,13 +1044,13 @@ export function OligoOrderPanel({
                     : "Giá End (100%)"}
                 </span>
                 <span>
-                  Trước VAT: <b className="font-mono">{subtotalVnd.toLocaleString("vi-VN")} đ</b>
+                  Trước VAT: <b className="font-mono">{subtotalVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</b>
                 </span>
                 <span>
-                  VAT ({vatRate}%): <b className="font-mono">{vatAmountVnd.toLocaleString("vi-VN")} đ</b>
+                  VAT ({vatRate}%): <b className="font-mono">{vatAmountVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</b>
                 </span>
                 <span className="px-2.5 py-0.5 rounded-lg bg-emerald-600 text-white font-extrabold font-mono">
-                  Tổng cộng: {grandTotalVnd.toLocaleString("vi-VN")} VNĐ
+                  Tổng cộng: {grandTotalVnd.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} VNĐ
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
@@ -1164,9 +1164,9 @@ export function OligoOrderPanel({
                         <td className="py-1 pr-3">{l.name}</td>
                         <td className="py-1 pr-3 text-slate-500">{l.unit}</td>
                         <td className="py-1 pr-3 text-right font-mono">{l.qty}</td>
-                        <td className="py-1 pr-3 text-right font-mono">{Number(l.unit_price).toLocaleString("vi-VN")} đ</td>
+                        <td className="py-1 pr-3 text-right font-mono">{Number(l.unit_price).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</td>
                         <td className="py-1 pr-3 text-right font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                          {Number(l.amount).toLocaleString("vi-VN")} đ
+                          {Number(l.amount).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                         </td>
                       </tr>
                     ))}
@@ -1205,10 +1205,10 @@ export function OligoOrderPanel({
                 <td className="py-2 pr-3 text-right">{s.nmol_per_od.toLocaleString("vi-VN")}</td>
                 <td className="py-2 pr-3 text-right whitespace-nowrap">
                   <div className="font-mono font-bold text-emerald-700 dark:text-emerald-400">
-                    {Number(s.price ?? 0).toLocaleString("vi-VN")} đ
+                    {Number(s.price ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                   </div>
                   <div className="font-mono text-[10px] text-slate-500">
-                    {Number(s.unit_price ?? 0).toLocaleString("vi-VN")} đ/nt
+                    {Number(s.unit_price ?? 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ/nt
                   </div>
                 </td>
                 <td className="py-2 pr-3 whitespace-nowrap">

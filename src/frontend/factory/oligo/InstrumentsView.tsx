@@ -80,7 +80,7 @@ const KINDS: Record<string, string> = {
   LOSS: "Hao hụt / Bay hơi",
 };
 const EVENTS: Record<string, string> = { INSTALL: "Lắp chai", REMOVE: "Tháo chai", USAGE: "Tiêu hao" };
-const vnd = (v: number | null | undefined) => `${Math.round(Number(v || 0)).toLocaleString("vi-VN")} đ`;
+const vnd = (v: number | null | undefined) => `${Math.round(Number(v || 0)).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ`;
 
 function NewInstrument() {
   const qc = useQueryClient();

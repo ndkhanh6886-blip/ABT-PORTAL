@@ -1052,7 +1052,7 @@ export function ModelsEcoView({
                       </div>
 
                       <div className="mt-1.5 text-xs font-bold text-emerald-400">
-                        Giá niêm yết: {priceVal.toLocaleString("vi-VN")} đ
+                        Giá niêm yết: {priceVal.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                       </div>
                     </div>
                   </div>
@@ -1167,7 +1167,7 @@ export function ModelsEcoView({
                 <p className="text-[11px] text-slate-400">
                   Xuất xứ: <strong className="text-slate-200">{activeBomModel.origin || "Việt Nam"}</strong> • Bảo hành:{" "}
                   <strong className="text-cyan-400">{activeBomModel.warranty_months} tháng</strong> • Giá niêm yết:{" "}
-                  <strong className="text-emerald-400">{(Number(activeBomModel.price) || 0).toLocaleString("vi-VN")} đ</strong>
+                  <strong className="text-emerald-400">{(Number(activeBomModel.price) || 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</strong>
                 </p>
               </div>
 
@@ -1627,11 +1627,11 @@ export function ModelsEcoView({
                           Chi phí mua bổ sung / Giá vốn BOM 1 máy
                         </p>
                         <p className="text-sm font-black text-amber-400 mt-1">
-                          Cần mua thiếu: {mrpStats.totalShortageCost.toLocaleString("vi-VN")} đ
+                          Cần mua thiếu: {mrpStats.totalShortageCost.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                         </p>
                         <p className="text-[10px] text-slate-400 mt-0.5">
                           Giá vốn định mức / 1 máy:{" "}
-                          <strong className="text-emerald-400">{mrpStats.totalUnitBomCost.toLocaleString("vi-VN")} đ</strong>
+                          <strong className="text-emerald-400">{mrpStats.totalUnitBomCost.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</strong>
                         </p>
                       </div>
                     </div>
@@ -1861,11 +1861,11 @@ export function ModelsEcoView({
                                     className="w-24 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-right text-emerald-400"
                                   />
                                 ) : (
-                                  `${(item.unitCost || 0).toLocaleString("vi-VN")} đ`
+                                  `${(item.unitCost || 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ`
                                 )}
                               </td>
                               <td className="p-2.5 text-right font-bold text-emerald-400">
-                                {((item.quantity || 0) * (item.unitCost || 0)).toLocaleString("vi-VN")} đ
+                                {((item.quantity || 0) * (item.unitCost || 0)).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                               </td>
                               {isEditingBom && (
                                 <td className="p-2.5 text-center">
@@ -1888,7 +1888,7 @@ export function ModelsEcoView({
                             Tổng chi phí vật tư định mức / 01 máy (BOM Cost):
                           </td>
                           <td className="p-3 text-right text-emerald-400 text-sm">
-                            {mrpStats.totalUnitBomCost.toLocaleString("vi-VN")} đ
+                            {mrpStats.totalUnitBomCost.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ
                           </td>
                           {isEditingBom && <td />}
                         </tr>
@@ -2161,7 +2161,7 @@ export function ModelsEcoView({
                                     className="w-28 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-right text-emerald-400"
                                   />
                                 ) : (
-                                  `${(opt.price || 0).toLocaleString("vi-VN")} đ`
+                                  `${(opt.price || 0).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ`
                                 )}
                               </td>
                               {isEditingBom && (
@@ -2560,7 +2560,7 @@ export function ModelsEcoView({
                           <td className="p-2 text-white">{p.name}</td>
                           <td className="p-2 text-slate-400">{p.category}</td>
                           <td className="p-2 text-center font-bold text-emerald-400">{p.stock_qty} {p.unit}</td>
-                          <td className="p-2 text-right text-slate-300">{p.unit_cost.toLocaleString("vi-VN")} đ</td>
+                          <td className="p-2 text-right text-slate-300">{p.unit_cost.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</td>
                         </tr>
                       );
                     })}

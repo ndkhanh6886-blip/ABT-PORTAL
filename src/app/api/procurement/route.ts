@@ -833,7 +833,7 @@ export async function POST(req: NextRequest) {
       await logAudit(
         "PRICE_ADJUST",
         "PROCUREMENT",
-        `Điều chỉnh giá mã ${prod.product_code}: ${oldPrice.toLocaleString('vi-VN')} đ -> ${newPrice.toLocaleString('vi-VN')} đ. Lý do: ${reason || 'Không ghi'}`,
+        `Điều chỉnh giá mã ${prod.product_code}: ${oldPrice.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ -> ${newPrice.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ. Lý do: ${reason || 'Không ghi'}`,
         actor_name || me.full_name || me.username || "system"
       );
       return NextResponse.json({ success: true });
@@ -1417,7 +1417,7 @@ export async function POST(req: NextRequest) {
           if (String(po.status || "").toUpperCase() === "CANCELLED") throw new HttpError(400, `PO ${po.po_code} đã hủy`);
           const remaining = Number(po.total_amount) - Number(po.amount_paid);
           if (a.amount > remaining + 0.5) {
-            throw new HttpError(400, `PO ${po.po_code}: số chi ${a.amount.toLocaleString("vi-VN")} đ vượt công nợ còn lại ${remaining.toLocaleString("vi-VN")} đ`);
+            throw new HttpError(400, `PO ${po.po_code}: số chi ${a.amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ vượt công nợ còn lại ${remaining.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ`);
           }
           await c.query(
             `INSERT INTO procurement_payments (po_id, request_id, amount, method, reference_doc, payment_date, notes, created_by, voucher_code)
@@ -1425,7 +1425,7 @@ export async function POST(req: NextRequest) {
             [a.po_id, `${reqBase}_${a.po_id}`, a.amount, payment_method || "CK", reference_doc || null, payment_date || null,
              payment_notes || null, me.full_name || me.username, todayVN(), voucher]
           );
-          const note = `[Thanh toán ${payment_date || todayVN()}: +${a.amount.toLocaleString("vi-VN")} đ (${payment_method || "CK"}) - Phiếu chi ${voucher}${reference_doc ? ` - UNC: ${reference_doc}` : ""}]`;
+          const note = `[Thanh toán ${payment_date || todayVN()}: +${a.amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ (${payment_method || "CK"}) - Phiếu chi ${voucher}${reference_doc ? ` - UNC: ${reference_doc}` : ""}]`;
           await c.query(
             `UPDATE procurement_orders SET amount_paid = amount_paid + $1, payment_status = NULL, notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text), version = COALESCE(version, 0) + 1 WHERE id = $3`,
             [a.amount, note, a.po_id]
@@ -1435,7 +1435,7 @@ export async function POST(req: NextRequest) {
       });
       if (!result.duplicate) {
         const sum = alloc.reduce((s: number, a: any) => s + a.amount, 0);
-        await logAudit("PAYMENT", "PROCUREMENT", `Phiếu chi ${result.voucher}: ${sum.toLocaleString("vi-VN")} đ cho ${alloc.length} PO (${result.rows.map((r: any) => r.po_code).join(", ")})`);
+        await logAudit("PAYMENT", "PROCUREMENT", `Phiếu chi ${result.voucher}: ${sum.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ cho ${alloc.length} PO (${result.rows.map((r: any) => r.po_code).join(", ")})`);
       }
       return NextResponse.json({ success: true, voucher_code: result.voucher, duplicate: result.duplicate });
     }
@@ -1477,11 +1477,11 @@ export async function POST(req: NextRequest) {
         const amt = Number(pay.amount) || 0;
         await c.query(
           `UPDATE procurement_orders SET amount_paid = GREATEST(0, amount_paid - $1), payment_status = NULL, notes = CONCAT_WS(' | ', NULLIF(notes, ''), $2::text), version = COALESCE(version, 0) + 1 WHERE id = $3`,
-          [amt, `[Hủy khoản chi ${amt.toLocaleString("vi-VN")} đ: ${reason.slice(0, 200)}]`, pay.po_id]
+          [amt, `[Hủy khoản chi ${amt.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ: ${reason.slice(0, 200)}]`, pay.po_id]
         );
         return { po_code: po?.po_code, amount: amt };
       });
-      await logAudit("VOID_PAYMENT", "PROCUREMENT", `Hủy khoản chi ${r.amount.toLocaleString("vi-VN")} đ của PO ${r.po_code}: ${reason}`);
+      await logAudit("VOID_PAYMENT", "PROCUREMENT", `Hủy khoản chi ${r.amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ của PO ${r.po_code}: ${reason}`);
       return NextResponse.json({ success: true });
     }
 
@@ -1492,7 +1492,7 @@ export async function POST(req: NextRequest) {
         throw new HttpError(400, "Số tiền thanh toán không hợp lệ (phải là số dương > 0)");
       }
       const reqId = request_id || `${po_id}_${reference_doc || "PAY"}_${amount}_${payment_date || ""}_${Date.now()}`;
-      const noteEntry = `[Thanh toán ${payment_date || todayVN()}: +${amount.toLocaleString('vi-VN')} đ (${payment_method || 'CK'}) - UNC: ${reference_doc || 'N/A'}]`;
+      const noteEntry = `[Thanh toán ${payment_date || todayVN()}: +${amount.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ (${payment_method || 'CK'}) - UNC: ${reference_doc || 'N/A'}]`;
 
       const result = await withTransaction(async (c) => {
         const orderRes = await c.query(
@@ -1518,7 +1518,7 @@ export async function POST(req: NextRequest) {
 
         const remaining = Number(order.total_amount) - Number(order.amount_paid);
         if (amount > remaining + 0.5) {
-          throw new HttpError(400, `Số tiền thanh toán (${amount.toLocaleString('vi-VN')} đ) vượt công nợ còn lại (${remaining.toLocaleString('vi-VN')} đ) của đơn PO`);
+          throw new HttpError(400, `Số tiền thanh toán (${amount.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ) vượt công nợ còn lại (${remaining.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ) của đơn PO`);
         }
 
         const upd = await c.query(
@@ -1537,7 +1537,7 @@ export async function POST(req: NextRequest) {
         await logAudit(
           "PAYMENT",
           "PROCUREMENT",
-          `Ghi nhận thanh toán ${amount.toLocaleString('vi-VN')} đ cho đơn PO ${po_code || po_id} (${payment_method || 'CK'})`
+          `Ghi nhận thanh toán ${amount.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ cho đơn PO ${po_code || po_id} (${payment_method || 'CK'})`
         );
       }
       return NextResponse.json({ success: true, new_amount_paid: result.amount_paid, duplicate: result.duplicate });

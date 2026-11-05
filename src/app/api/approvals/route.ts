@@ -1146,7 +1146,7 @@ export async function POST(req: NextRequest) {
           if (st.conditional_on_threshold && bodThreshold !== null && bodThreshold > 0) {
             if (totalAmount < bodThreshold) {
               isRequired = false;
-              skipReason = `Dưới hạn mức trình BGD (${bodThreshold.toLocaleString("vi-VN")} đ) — Duyệt theo phân cấp Trưởng bộ phận & Phòng chuyên môn`;
+              skipReason = `Dưới hạn mức trình BGD (${bodThreshold.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ) — Duyệt theo phân cấp Trưởng bộ phận & Phòng chuyên môn`;
             }
           }
 

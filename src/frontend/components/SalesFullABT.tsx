@@ -8087,7 +8087,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 defaultQty: Math.max(1, Number(qtyVal) || 1)
             };
             saveOligoPresetsList(updated);
-            showToast(`💾 Đã cập nhật đơn giá mẫu "${updated[existingIdx].label}" (${new Intl.NumberFormat("vi-VN").format(priceVal)}đ)!`, "success");
+            showToast(`💾 Đã cập nhật đơn giá mẫu "${updated[existingIdx].label}" (${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(priceVal)}đ)!`, "success");
         } else {
             const newItem: OligoPresetItem = {
                 id: `${cat.toLowerCase()}-${Date.now()}`,
@@ -8098,7 +8098,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 defaultQty: Math.max(1, Number(qtyVal) || 1)
             };
             saveOligoPresetsList([...oligoPresets, newItem]);
-            showToast(`💾 Đã lưu "${specVal}" (${new Intl.NumberFormat("vi-VN").format(priceVal)}đ) vào danh sách mẫu!`, "success");
+            showToast(`💾 Đã lưu "${specVal}" (${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(priceVal)}đ) vào danh sách mẫu!`, "success");
         }
     };
 
@@ -8246,53 +8246,53 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const breakdownConfigs: any[] = [
                     {
                         id: `cfg-base-${Date.now()}`,
-                        name: `Tổng hợp chuỗi Nucleotide chuẩn ${formattedSeq} (${bases} base x ${new Intl.NumberFormat("vi-VN").format(bPrice)}đ)`,
+                        name: `Tổng hợp chuỗi Nucleotide chuẩn ${formattedSeq} (${bases} base x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(bPrice)}đ)`,
                         model: "OLIGO-BASE",
                         brandOrigin: `Scale ${oligoScale}`,
                         quantity: bases * tubes,
                         unit: "Base",
                         isStandard: true,
                         isIncluded: true,
-                        notes: `${new Intl.NumberFormat("vi-VN").format(bases * tubes * bPrice)}đ`
+                        notes: `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(bases * tubes * bPrice)}đ`
                     }
                 ];
                 if (oligoHasMod) {
                     breakdownConfigs.push({
                         id: `cfg-mod-${Date.now() + 1}`,
-                        name: `Đánh dấu biến đổi Oligo: ${oligoModSpec.trim()} (${mQty} nhãn x ${new Intl.NumberFormat("vi-VN").format(mPrice)}đ)`,
+                        name: `Đánh dấu biến đổi Oligo: ${oligoModSpec.trim()} (${mQty} nhãn x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(mPrice)}đ)`,
                         model: "OLIGO-MOD",
                         brandOrigin: "Modification",
                         quantity: mQty * tubes,
                         unit: "Nhãn",
                         isStandard: true,
                         isIncluded: true,
-                        notes: `${new Intl.NumberFormat("vi-VN").format(mQty * tubes * mPrice)}đ`
+                        notes: `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(mQty * tubes * mPrice)}đ`
                     });
                 }
                 if (oligoHasPur) {
                     breakdownConfigs.push({
                         id: `cfg-pur-${Date.now() + 2}`,
-                        name: `Dịch vụ tinh sạch Oligo: ${oligoPurSpec.trim()} (${pQty} x ${new Intl.NumberFormat("vi-VN").format(pPrice)}đ)`,
+                        name: `Dịch vụ tinh sạch Oligo: ${oligoPurSpec.trim()} (${pQty} x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pPrice)}đ)`,
                         model: "OLIGO-PUR",
                         brandOrigin: "Purification",
                         quantity: pQty * tubes,
                         unit: "Tube",
                         isStandard: true,
                         isIncluded: true,
-                        notes: `${new Intl.NumberFormat("vi-VN").format(pQty * tubes * pPrice)}đ`
+                        notes: `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pQty * tubes * pPrice)}đ`
                     });
                 }
                 if (oligoHasSvc) {
                     breakdownConfigs.push({
                         id: `cfg-svc-${Date.now() + 3}`,
-                        name: `Dịch vụ Đông khô / Pha sẵn: ${oligoSvcSpec.trim()} (${sQty} x ${new Intl.NumberFormat("vi-VN").format(sPrice)}đ)`,
+                        name: `Dịch vụ Đông khô / Pha sẵn: ${oligoSvcSpec.trim()} (${sQty} x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(sPrice)}đ)`,
                         model: "OLIGO-SVC",
                         brandOrigin: "Formulation/Service",
                         quantity: sQty * tubes,
                         unit: "Tube",
                         isStandard: true,
                         isIncluded: true,
-                        notes: `${new Intl.NumberFormat("vi-VN").format(sQty * tubes * sPrice)}đ`
+                        notes: `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(sQty * tubes * sPrice)}đ`
                     });
                 }
                 newRows.push({
@@ -8397,7 +8397,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     productName: bundledName,
                     unit: "Tube",
                     specification: `[${seqLabel}] ${fullParts}`,
-                    notes: `Gộp giá 1 tube hoàn chỉnh: ${bases}bp x ${new Intl.NumberFormat("vi-VN").format(bPrice)}đ${oligoHasMod ? ` + Mod ${new Intl.NumberFormat("vi-VN").format(mQty * mPrice)}đ` : ""}${oligoHasPur ? ` + Tinh sạch ${new Intl.NumberFormat("vi-VN").format(pQty * pPrice)}đ` : ""}${oligoHasSvc ? ` + DV ${new Intl.NumberFormat("vi-VN").format(sQty * sPrice)}đ` : ""}`,
+                    notes: `Gộp giá 1 tube hoàn chỉnh: ${bases}bp x ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(bPrice)}đ${oligoHasMod ? ` + Mod ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(mQty * mPrice)}đ` : ""}${oligoHasPur ? ` + Tinh sạch ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pQty * pPrice)}đ` : ""}${oligoHasSvc ? ` + DV ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(sQty * sPrice)}đ` : ""}`,
                     quantity: tubes,
                     unitPrice: perTubePrice,
                     vatRate: 8,
@@ -8760,7 +8760,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="flex items-center justify-between">
                             <span className="text-[11px] font-bold text-sky-300 font-mono">1. OLIGO-BASE (Chuỗi chuẩn)</span>
                             <span className="text-[10px] font-mono text-emerald-400 font-bold">
-                                {new Intl.NumberFormat("vi-VN").format(baseSub)}đ
+                                {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(baseSub)}đ
                             </span>
                         </div>
                         <div className="grid grid-cols-2 gap-2">
@@ -8814,7 +8814,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     ⚙️ Cài đặt
                                 </button>
                                 <span className="text-[10px] font-mono text-amber-300 font-bold">
-                                    {oligoHasMod ? `${new Intl.NumberFormat("vi-VN").format(modSub)}đ` : "Không dùng"}
+                                    {oligoHasMod ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(modSub)}đ` : "Không dùng"}
                                 </span>
                             </div>
                         </div>
@@ -8863,7 +8863,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <option value="">Mẫu ({modPresets.length})...</option>
                                     {modPresets.map(p => (
                                         <option key={p.id} value={p.id}>
-                                            {p.label} ({new Intl.NumberFormat("vi-VN").format(p.defaultPrice)}đ)
+                                            {p.label} ({new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p.defaultPrice)}đ)
                                         </option>
                                     ))}
                                     <option value="__ADD_NEW__">➕ + Cài đặt / Thêm loại đánh dấu...</option>
@@ -8917,7 +8917,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     ⚙️
                                 </button>
                                 <span className="text-[10px] font-mono text-cyan-300 font-bold">
-                                    {oligoHasPur ? `${new Intl.NumberFormat("vi-VN").format(purSub)}đ` : "Không dùng"}
+                                    {oligoHasPur ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(purSub)}đ` : "Không dùng"}
                                 </span>
                             </div>
                         </div>
@@ -8963,7 +8963,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <option value="">Mẫu ({purPresets.length})...</option>
                                     {purPresets.map(p => (
                                         <option key={p.id} value={p.id}>
-                                            {p.label} ({new Intl.NumberFormat("vi-VN").format(p.defaultPrice)}đ)
+                                            {p.label} ({new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p.defaultPrice)}đ)
                                         </option>
                                     ))}
                                     <option value="__ADD_NEW__">➕ + Cài đặt thêm...</option>
@@ -9017,7 +9017,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     ⚙️
                                 </button>
                                 <span className="text-[10px] font-mono text-purple-300 font-bold">
-                                    {oligoHasSvc ? `${new Intl.NumberFormat("vi-VN").format(svcSub)}đ` : "Không dùng"}
+                                    {oligoHasSvc ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(svcSub)}đ` : "Không dùng"}
                                 </span>
                             </div>
                         </div>
@@ -9063,7 +9063,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <option value="">Mẫu ({svcPresets.length})...</option>
                                     {svcPresets.map(p => (
                                         <option key={p.id} value={p.id}>
-                                            {p.label} ({new Intl.NumberFormat("vi-VN").format(p.defaultPrice)}đ)
+                                            {p.label} ({new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p.defaultPrice)}đ)
                                         </option>
                                     ))}
                                     <option value="__ADD_NEW__">➕ + Cài đặt thêm...</option>
@@ -9098,12 +9098,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     <div className="text-xs text-slate-300 flex flex-wrap items-center gap-3">
                         <span>
                             Đơn giá 1 Tube hoàn chỉnh:{" "}
-                            <strong className="text-emerald-400 font-mono">{new Intl.NumberFormat("vi-VN").format(singleTubeTotal)} đ/Tube</strong>
+                            <strong className="text-emerald-400 font-mono">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(singleTubeTotal)} đ/Tube</strong>
                         </span>
                         {tubes > 1 && (
                             <span>
                                 Tổng ({tubes} Tube):{" "}
-                                <strong className="text-amber-300 font-mono">{new Intl.NumberFormat("vi-VN").format(grandTotal)} đ</strong>
+                                <strong className="text-amber-300 font-mono">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(grandTotal)} đ</strong>
                             </span>
                         )}
                     </div>
@@ -9122,7 +9122,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 shadow cursor-pointer transition-colors"
                             title="Gộp thành 1 dòng hoàn chỉnh theo trình tự (Dành cho KH yêu cầu báo giá & hóa đơn gộp 1 Tube theo trình tự)"
                         >
-                            <span>🧪 Chèn GỘP THEO TRÌNH TỰ (1 dòng = {new Intl.NumberFormat("vi-VN").format(singleTubeTotal)}đ)</span>
+                            <span>🧪 Chèn GỘP THEO TRÌNH TỰ (1 dòng = {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(singleTubeTotal)}đ)</span>
                         </button>
                     </div>
                 </div>
@@ -10287,7 +10287,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }
                 const res = await r.json();
                 if (res.success && field === "price" && Number(value) > 0) {
-                    showToast(`Đã thiết lập giá bán niêm yết cho mã [${code}]: ${Number(value).toLocaleString('vi-VN')} đ`, "success");
+                    showToast(`Đã thiết lập giá bán niêm yết cho mã [${code}]: ${Number(value).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ`, "success");
                 }
             }).catch(err => console.error("Error updating price:", err));
         }
@@ -10959,8 +10959,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <td style="text-align: center; font-weight: bold; color: #0f172a;">${mfg}</td>
                         <td style="text-align: center;">${spec}</td>
                         <td style="text-align: center; font-weight: bold;">${itQty}</td>
-                        <td style="text-align: right;">${new Intl.NumberFormat("vi-VN").format(itPrice)}đ</td>
-                        <td style="text-align: right; font-weight: bold;">${new Intl.NumberFormat("vi-VN").format(itTotal)}đ</td>
+                        <td style="text-align: right;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(itPrice)}đ</td>
+                        <td style="text-align: right; font-weight: bold;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(itTotal)}đ</td>
                         <td style="text-align: center; font-size: 11px; color: #475569;">${displayNote}</td>
                     </tr>
                 `;
@@ -11085,7 +11085,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             ${(effectiveTotalVat > 0 || isItemsPricePreVat) ? `
                                 <tr>
                                     <td colspan="7" style="text-align: right; color: #475569;">Cộng tiền hàng (chưa VAT):</td>
-                                    <td style="text-align: right; color: #475569;">${new Intl.NumberFormat("vi-VN").format(rawSubtotal || itemsSum)}đ</td>
+                                    <td style="text-align: right; color: #475569;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(rawSubtotal || itemsSum)}đ</td>
                                     <td></td>
                                 </tr>
                                 ${effectiveTotalVat > 0 ? (
@@ -11093,25 +11093,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         ${activeVatBuckets.map(b => `
                                             <tr>
                                                 <td colspan="7" style="text-align: right; color: #475569;">Thuế VAT (${b.rate}%):</td>
-                                                <td style="text-align: right; color: #475569;">+${new Intl.NumberFormat("vi-VN").format(b.vatAmount)}đ</td>
+                                                <td style="text-align: right; color: #475569;">+${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(b.vatAmount)}đ</td>
                                                 <td></td>
                                             </tr>
                                         `).join("")}
                                         <tr>
                                             <td colspan="7" style="text-align: right; font-weight: bold; color: #475569;">Tổng tiền thuế VAT:</td>
-                                            <td style="text-align: right; font-weight: bold; color: #475569;">+${new Intl.NumberFormat("vi-VN").format(effectiveTotalVat)}đ</td>
+                                            <td style="text-align: right; font-weight: bold; color: #475569;">+${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(effectiveTotalVat)}đ</td>
                                             <td></td>
                                         </tr>
                                     ` : (activeVatBuckets.length === 1 ? `
                                         <tr>
                                             <td colspan="7" style="text-align: right; color: #475569;">Thuế VAT (${activeVatBuckets[0].rate}%):</td>
-                                            <td style="text-align: right; color: #475569;">+${new Intl.NumberFormat("vi-VN").format(effectiveTotalVat)}đ</td>
+                                            <td style="text-align: right; color: #475569;">+${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(effectiveTotalVat)}đ</td>
                                             <td></td>
                                         </tr>
                                     ` : `
                                         <tr>
                                             <td colspan="7" style="text-align: right; color: #475569;">Thuế VAT (${taxRate}%):</td>
-                                            <td style="text-align: right; color: #475569;">+${new Intl.NumberFormat("vi-VN").format(effectiveTotalVat)}đ</td>
+                                            <td style="text-align: right; color: #475569;">+${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(effectiveTotalVat)}đ</td>
                                             <td></td>
                                         </tr>
                                     `)
@@ -11119,7 +11119,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             ` : ''}
                             <tr style="background-color: #f1f5f9;">
                                 <td colspan="7" style="text-align: right; font-weight: bold; font-size: 13px; color: #1e3a8a;">TỔNG CỘNG THANH TOÁN (ĐÃ BAO GỒM VAT):</td>
-                                <td style="text-align: right; font-weight: bold; color: #1e3a8a; font-size: 14px;">${new Intl.NumberFormat("vi-VN").format(finalTotal)}đ</td>
+                                <td style="text-align: right; font-weight: bold; color: #1e3a8a; font-size: 14px;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(finalTotal)}đ</td>
                                 <td></td>
                             </tr>
                             <tr>
@@ -11263,8 +11263,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                         </td>
                         <td style="text-align: center; font-weight: bold;">${qty}</td>
-                        <td style="text-align: right;">${new Intl.NumberFormat("vi-VN").format(price)}đ</td>
-                        <td style="text-align: right; font-weight: bold;">${new Intl.NumberFormat("vi-VN").format(total)}đ</td>
+                        <td style="text-align: right;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(price)}đ</td>
+                        <td style="text-align: right; font-weight: bold;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(total)}đ</td>
                     </tr>
                 `;
 
@@ -11464,13 +11464,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <td style="text-align: center; font-weight: bold;">-</td>
                                     <td><strong>Hàng hóa, vật tư, sinh phẩm theo thỏa thuận hợp đồng</strong></td>
                                     <td style="text-align: center; font-weight: bold;">1 gói</td>
-                                    <td style="text-align: right;">${new Intl.NumberFormat("vi-VN").format(computedTotal)}đ</td>
-                                    <td style="text-align: right; font-weight: bold;">${new Intl.NumberFormat("vi-VN").format(computedTotal)}đ</td>
+                                    <td style="text-align: right;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(computedTotal)}đ</td>
+                                    <td style="text-align: right; font-weight: bold;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(computedTotal)}đ</td>
                                 </tr>
                             `}
                             <tr style="font-weight: bold; background-color: #f9f9f9;">
                                 <td colspan="5" style="text-align: right; padding: 8px;">TỔNG GIÁ TRỊ HỢP ĐỒNG (ĐÃ BAO GỒM VAT):</td>
-                                <td style="text-align: right; font-size: 13pt; padding: 8px;">${new Intl.NumberFormat("vi-VN").format(computedTotal)}đ</td>
+                                <td style="text-align: right; font-size: 13pt; padding: 8px;">${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(computedTotal)}đ</td>
                             </tr>
                         </tbody>
                     </table>
@@ -12699,7 +12699,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             if (currentCustDebt > creditLimit) {
                 isCreditBlocked = true;
-                creditBlockReason = `Vượt hạn mức nợ đã giao: Công nợ phiếu đã giao (${currentCustDebt.toLocaleString('vi-VN')} đ) vượt trần ${creditLimit.toLocaleString('vi-VN')} đ`;
+                creditBlockReason = `Vượt hạn mức nợ đã giao: Công nợ phiếu đã giao (${currentCustDebt.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ) vượt trần ${creditLimit.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ`;
             }
 
             for (const uo of unpaidForCust) {
@@ -16430,7 +16430,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         });
 
         setExternalPeriodSync({ periodType: targetPeriodType, periodValue: targetMonth, seq: Date.now() });
-        showToast(`Đã gán chỉ tiêu doanh số ${new Intl.NumberFormat("vi-VN").format(targetAmount)}đ cho ${repName} (${periodLabel})!`, "success");
+        showToast(`Đã gán chỉ tiêu doanh số ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(targetAmount)}đ cho ${repName} (${periodLabel})!`, "success");
         setIsTargetModalOpen(false);
     };
 
@@ -19675,8 +19675,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <span className="text-[10px] text-cyan-400 uppercase font-bold tracking-wider">DS Trước VAT</span>
                                                                     <span className="text-[9px] text-slate-500 font-mono">Chưa thuế</span>
                                                                 </div>
-                                                                <div className="text-sm sm:text-base font-bold font-mono text-cyan-300 tracking-tight" title={`${new Intl.NumberFormat("vi-VN").format(displayRevBeforeVat)}đ`}>
-                                                                    {new Intl.NumberFormat("vi-VN").format(displayRevBeforeVat)} ₫
+                                                                <div className="text-sm sm:text-base font-bold font-mono text-cyan-300 tracking-tight" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(displayRevBeforeVat)}đ`}>
+                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(displayRevBeforeVat)} ₫
                                                                 </div>
                                                             </div>
 
@@ -19685,8 +19685,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <span className="text-[10px] text-amber-300 uppercase font-bold tracking-wider">Tiền Chiết Khấu</span>
                                                                     <span className="text-[9px] text-slate-500 font-mono">Trước VAT</span>
                                                                 </div>
-                                                                <div className="text-sm sm:text-base font-bold font-mono text-amber-400 tracking-tight" title={`${new Intl.NumberFormat("vi-VN").format(quoteDiscountTotal)}đ`}>
-                                                                    {new Intl.NumberFormat("vi-VN").format(quoteDiscountTotal)} ₫
+                                                                <div className="text-sm sm:text-base font-bold font-mono text-amber-400 tracking-tight" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quoteDiscountTotal)}đ`}>
+                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quoteDiscountTotal)} ₫
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -19701,8 +19701,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <span className="text-[10px] text-slate-400 block font-normal">Thực tế đơn hàng & báo giá</span>
                                                             </div>
                                                             <div className="text-right">
-                                                                <div className="text-base sm:text-lg font-black font-mono text-emerald-400 tracking-tight" title={`${new Intl.NumberFormat("vi-VN").format(displayRevAfterVat)}đ`}>
-                                                                    {new Intl.NumberFormat("vi-VN").format(displayRevAfterVat)} ₫
+                                                                <div className="text-base sm:text-lg font-black font-mono text-emerald-400 tracking-tight" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(displayRevAfterVat)}đ`}>
+                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(displayRevAfterVat)} ₫
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -20312,13 +20312,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 </div>
                                                 <div className="flex items-center gap-2 flex-wrap text-[10px]">
                                                     <span className="bg-slate-950 px-2 py-0.5 rounded border border-slate-800 font-mono">
-                                                        DS Trước VAT: <strong className="text-cyan-400">{new Intl.NumberFormat("vi-VN").format(quoteRevBeforeVat)}đ</strong>
+                                                        DS Trước VAT: <strong className="text-cyan-400">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quoteRevBeforeVat)}đ</strong>
                                                     </span>
                                                     <span className="bg-slate-950 px-2 py-0.5 rounded border border-amber-800/60 font-mono">
-                                                        Tiền CK: <strong className="text-amber-400">{new Intl.NumberFormat("vi-VN").format(quoteDiscountTotal)}đ</strong>
+                                                        Tiền CK: <strong className="text-amber-400">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quoteDiscountTotal)}đ</strong>
                                                     </span>
                                                     <span className="bg-slate-950 px-2 py-0.5 rounded border border-emerald-800/60 font-mono">
-                                                        Sau VAT: <strong className="text-emerald-400">{new Intl.NumberFormat("vi-VN").format(quoteRevAfterVat)}đ</strong>
+                                                        Sau VAT: <strong className="text-emerald-400">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quoteRevAfterVat)}đ</strong>
                                                     </span>
                                                 </div>
                                             </div>
@@ -20362,7 +20362,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             {q.salesRepName || q.salesRepId || "—"}
                                                                         </td>
                                                                         <td className="p-3 text-right font-mono text-cyan-300 font-semibold whitespace-nowrap">
-                                                                            {new Intl.NumberFormat("vi-VN").format(preVat)}đ
+                                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(preVat)}đ
                                                                         </td>
                                                                         <td className="p-3 text-center font-mono whitespace-nowrap">
                                                                             {discAmt > 0 ? (
@@ -20374,10 +20374,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             )}
                                                                         </td>
                                                                         <td className="p-3 text-right font-mono text-amber-400 font-bold whitespace-nowrap">
-                                                                            {discAmt > 0 ? `${new Intl.NumberFormat("vi-VN").format(discAmt)}đ` : "—"}
+                                                                            {discAmt > 0 ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(discAmt)}đ` : "—"}
                                                                         </td>
                                                                         <td className="p-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
-                                                                            {new Intl.NumberFormat("vi-VN").format(gross)}đ
+                                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(gross)}đ
                                                                         </td>
                                                                         <td className="p-3 text-center whitespace-nowrap">
                                                                             <span className={cn(
@@ -20541,8 +20541,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <span>Doanh Số Trước VAT</span>
                                             <span className="text-cyan-400 text-xs">📊</span>
                                         </div>
-                                        <span className="text-base sm:text-lg font-bold font-mono text-cyan-400 block truncate" title={`${new Intl.NumberFormat("vi-VN").format(totalPreVat)}đ`}>
-                                            {new Intl.NumberFormat("vi-VN").format(totalPreVat)}đ
+                                        <span className="text-base sm:text-lg font-bold font-mono text-cyan-400 block truncate" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalPreVat)}đ`}>
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalPreVat)}đ
                                         </span>
                                         <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
                                             Tổng {filteredQuotationsList.length} báo giá đang hiển thị
@@ -20554,8 +20554,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <span>Tiền Chiết Khấu (Trước VAT)</span>
                                             <span className="text-amber-400 text-xs">🏷️</span>
                                         </div>
-                                        <span className="text-base sm:text-lg font-bold font-mono text-amber-400 block truncate" title={`${new Intl.NumberFormat("vi-VN").format(totalDiscount)}đ`}>
-                                            {new Intl.NumberFormat("vi-VN").format(totalDiscount)}đ
+                                        <span className="text-base sm:text-lg font-bold font-mono text-amber-400 block truncate" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalDiscount)}đ`}>
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalDiscount)}đ
                                         </span>
                                         <span className="text-[10px] text-amber-300/80 font-mono mt-0.5 block">
                                             {quotesWithDiscountCount} đơn chiết khấu • TB {avgDiscountRate}%
@@ -20567,8 +20567,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <span>Tiền Thuế VAT</span>
                                             <span className="text-purple-400 text-xs">📑</span>
                                         </div>
-                                        <span className="text-base sm:text-lg font-bold font-mono text-purple-300 block truncate" title={`${new Intl.NumberFormat("vi-VN").format(totalVat)}đ`}>
-                                            {new Intl.NumberFormat("vi-VN").format(totalVat)}đ
+                                        <span className="text-base sm:text-lg font-bold font-mono text-purple-300 block truncate" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalVat)}đ`}>
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalVat)}đ
                                         </span>
                                         <span className="text-[10px] text-slate-500 font-mono mt-0.5 block">
                                             Thuế GTGT tính theo từng mặt hàng
@@ -20580,8 +20580,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <span>TỔNG SAU VAT (BÁO KHÁCH)</span>
                                             <span className="text-emerald-400 text-xs">💰</span>
                                         </div>
-                                        <span className="text-base sm:text-lg font-bold font-mono text-emerald-400 block truncate" title={`${new Intl.NumberFormat("vi-VN").format(totalGross)}đ`}>
-                                            {new Intl.NumberFormat("vi-VN").format(totalGross)}đ
+                                        <span className="text-base sm:text-lg font-bold font-mono text-emerald-400 block truncate" title={`${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalGross)}đ`}>
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalGross)}đ
                                         </span>
                                         <span className="text-[10px] text-emerald-300/80 font-mono mt-0.5 block">
                                             Giá trị chính thức báo khách hàng
@@ -20615,7 +20615,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </div>
                                         <span className="text-[10px] text-orange-300/80 font-mono mt-0.5 block truncate">
                                             {quoteApprovalStats.pendingCount > 0
-                                                ? `Giá trị chờ duyệt: ${new Intl.NumberFormat("vi-VN").format(quoteApprovalStats.pendingValue)}đ (Click để lọc)`
+                                                ? `Giá trị chờ duyệt: ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quoteApprovalStats.pendingValue)}đ (Click để lọc)`
                                                 : `✅ Đã duyệt ${quoteApprovalStats.approvedCount}/${quoteApprovalStats.total} báo giá`}
                                         </span>
                                     </div>
@@ -21008,7 +21008,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     {/* Price, Status Badge, Actions */}
                                                     <div className="flex flex-wrap items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                                                         <span className="font-mono font-bold text-emerald-400 text-xs mr-1">
-                                                            {new Intl.NumberFormat("vi-VN").format(quote.totalAmount)}đ
+                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quote.totalAmount)}đ
                                                         </span>
 
                                                         <span className={cn(
@@ -21362,16 +21362,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 <td className="py-1.5 px-1.5 text-center text-slate-400 text-[10px]">{spec}</td>
                                                                                 <td className="py-1.5 px-1.5 text-center font-bold font-mono text-white">{qty}</td>
                                                                                 <td className="py-1.5 px-2 text-right font-mono text-slate-300">
-                                                                                    {new Intl.NumberFormat("vi-VN").format(price)}đ
+                                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(price)}đ
                                                                                 </td>
                                                                                 <td className="py-1.5 px-1.5 text-center font-mono font-bold text-purple-300 text-[10px]">
                                                                                     {vatRate}%
                                                                                 </td>
                                                                                 <td className="py-1.5 px-2 text-right font-mono text-cyan-300">
-                                                                                    {new Intl.NumberFormat("vi-VN").format(priceBeforeVat)}đ
+                                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(priceBeforeVat)}đ
                                                                                 </td>
                                                                                 <td className="py-1.5 px-2 text-right font-mono text-slate-300 font-medium">
-                                                                                    {new Intl.NumberFormat("vi-VN").format(totalBeforeVat)}đ
+                                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalBeforeVat)}đ
                                                                                 </td>
                                                                                 <td className="py-1.5 px-1.5 text-center font-mono">
                                                                                     {discountRate > 0 ? (
@@ -21383,10 +21383,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     )}
                                                                                 </td>
                                                                                 <td className="py-1.5 px-2 text-right font-mono font-bold text-amber-400">
-                                                                                    {discountAmount > 0 ? `${new Intl.NumberFormat("vi-VN").format(discountAmount)}đ` : "—"}
+                                                                                    {discountAmount > 0 ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(discountAmount)}đ` : "—"}
                                                                                 </td>
                                                                                 <td className="py-1.5 px-2.5 text-right font-bold font-mono text-emerald-400">
-                                                                                    {new Intl.NumberFormat("vi-VN").format(totalAfterVat)}đ
+                                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalAfterVat)}đ
                                                                                 </td>
                                                                                 <td className="py-1.5 px-2 text-center text-[10px] text-slate-500 italic">{note || "—"}</td>
                                                                             </tr>
@@ -21411,7 +21411,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <div className="flex flex-col">
                                                                 <span className="text-[9px] uppercase font-bold text-purple-400 font-mono">Tiền thuế VAT:</span>
                                                                 <span className="font-mono font-bold text-purple-300 text-xs">
-                                                                    {new Intl.NumberFormat("vi-VN").format(quote.totalVat || (quote.totalAmount - (quote.totalBeforeVat || Math.round(quote.totalAmount / 1.08))))}đ
+                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quote.totalVat || (quote.totalAmount - (quote.totalBeforeVat || Math.round(quote.totalAmount / 1.08))))}đ
                                                                 </span>
                                                             </div>
                                                             <div className="flex flex-col">
@@ -21428,7 +21428,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <div className="flex flex-col">
                                                                 <span className="text-[9px] uppercase font-bold text-emerald-400 font-mono">TỔNG SAU VAT (BÁO KHÁCH):</span>
                                                                 <span className="font-mono font-bold text-emerald-400 text-sm">
-                                                                    {new Intl.NumberFormat("vi-VN").format(quote.totalAmount)}đ
+                                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(quote.totalAmount)}đ
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -21544,7 +21544,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             {quote.salesRepName || quote.salesRepId || "—"}
                                                         </td>
                                                         <td className="p-3 text-right font-mono text-cyan-300 font-semibold whitespace-nowrap">
-                                                            {new Intl.NumberFormat("vi-VN").format(preVat)}đ
+                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(preVat)}đ
                                                         </td>
                                                         <td className="p-3 text-center font-mono whitespace-nowrap">
                                                             {hasDiscount ? (
@@ -21556,16 +21556,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             )}
                                                         </td>
                                                         <td className="p-3 text-right font-mono font-bold text-amber-400 whitespace-nowrap">
-                                                            {hasDiscount ? `${new Intl.NumberFormat("vi-VN").format(discount)}đ` : "—"}
+                                                            {hasDiscount ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(discount)}đ` : "—"}
                                                         </td>
                                                         <td className="p-3 text-right font-mono text-slate-300 font-medium whitespace-nowrap">
-                                                            {new Intl.NumberFormat("vi-VN").format(netPreVat)}đ
+                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(netPreVat)}đ
                                                         </td>
                                                         <td className="p-3 text-right font-mono text-purple-300 whitespace-nowrap">
-                                                            {new Intl.NumberFormat("vi-VN").format(vat)}đ
+                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(vat)}đ
                                                         </td>
                                                         <td className="p-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
-                                                            {new Intl.NumberFormat("vi-VN").format(gross)}đ
+                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(gross)}đ
                                                         </td>
                                                         <td className="p-3 text-center whitespace-nowrap">
                                                             <span className={cn(
@@ -21988,7 +21988,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     {/* Value, Status Badge, Actions */}
                                                     <div className="flex flex-wrap items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
                                                         <span className="font-mono font-bold text-emerald-400 text-xs mr-1">
-                                                             {new Intl.NumberFormat("vi-VN").format(contract.contractValue || contract.totalAmount || 0)}đ
+                                                             {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(contract.contractValue || contract.totalAmount || 0)}đ
                                                         </span>
 
                                                         {isPrincipleContract ? (
@@ -22266,10 +22266,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             </td>
                                                                                         )}
                                                                                         <td className="py-1.5 px-2 text-right font-mono text-slate-400">
-                                                                                            {new Intl.NumberFormat("vi-VN").format(unitPrice)}đ
+                                                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(unitPrice)}đ
                                                                                         </td>
                                                                                         <td className="py-1.5 px-2.5 text-right font-bold font-mono text-emerald-400">
-                                                                                            {new Intl.NumberFormat("vi-VN").format(total)}đ
+                                                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(total)}đ
                                                                                         </td>
                                                                                     </tr>
                                                                                 );
@@ -22377,7 +22377,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 <strong className="text-amber-300 font-mono font-bold">{foUnits}</strong> SP 
                                                                                                 {foAmount > 0 && (
                                                                                                     <span className="text-emerald-400 font-mono font-bold ml-1.5">
-                                                                                                        ({new Intl.NumberFormat("vi-VN").format(foAmount)}đ)
+                                                                                                        ({new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(foAmount)}đ)
                                                                                                     </span>
                                                                                                 )}
                                                                                             </span>
@@ -22831,7 +22831,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     {orderApprovalStats.pendingAnyCount} đơn chờ xử lý
                                 </span>
                                 <span className="text-[10px] text-amber-300/80 font-mono block truncate">
-                                    Giá trị: {new Intl.NumberFormat("vi-VN").format(orderApprovalStats.pendingAnyValue)}đ
+                                    Giá trị: {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(orderApprovalStats.pendingAnyValue)}đ
                                 </span>
                             </div>
 
@@ -22856,7 +22856,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </span>
                                 <span className="text-[10px] text-orange-300/80 font-mono block truncate">
                                     {orderApprovalStats.pendingZeroPriceCount > 0
-                                        ? `Giá trị: ${new Intl.NumberFormat("vi-VN").format(orderApprovalStats.pendingZeroPriceValue)}đ (Click lọc)`
+                                        ? `Giá trị: ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(orderApprovalStats.pendingZeroPriceValue)}đ (Click lọc)`
                                         : "Không có đơn 0đ tồn đọng"}
                                 </span>
                             </div>
@@ -22882,7 +22882,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </span>
                                 <span className="text-[10px] text-rose-300/80 font-mono block truncate">
                                     {orderApprovalStats.pendingCreditCount > 0
-                                        ? `Giá trị: ${new Intl.NumberFormat("vi-VN").format(orderApprovalStats.pendingCreditValue)}đ`
+                                        ? `Giá trị: ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(orderApprovalStats.pendingCreditValue)}đ`
                                         : "Không có đơn bị khóa nợ"}
                                 </span>
                             </div>
@@ -23479,7 +23479,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         return totalVal > 0 ? (
                                                                             <div className="text-[11px] text-emerald-400 font-mono font-bold flex items-center justify-between border-t border-slate-800/60 pt-0.5 mt-0.5 w-full">
                                                                                 <span className="text-[9px] text-slate-400 font-normal">Trị giá:</span>
-                                                                                <span>{totalVal.toLocaleString('vi-VN')} đ</span>
+                                                                                <span>{totalVal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</span>
                                                                             </div>
                                                                         ) : null;
                                                                     })()}
@@ -24772,7 +24772,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 />
                                                                 {(p as any).previousCostPrice > 0 && Number((p as any).previousCostPrice) !== Number(p.costPrice) && (
                                                                     <span className="block text-[8px] text-sky-400 font-medium text-right mt-0.5" title="Giá vốn đã tự động cập nhật theo lô nhập kho mới nhất">
-                                                                        🔄 Cũ: {Number((p as any).previousCostPrice).toLocaleString("vi-VN")}đ
+                                                                        🔄 Cũ: {Number((p as any).previousCostPrice).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}đ
                                                                     </span>
                                                                 )}
                                                             </td>
@@ -27195,7 +27195,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 </div>
                                                                                 <div className="shrink-0 text-right pt-0.5">
                                                                                     <div className="text-emerald-400 font-mono font-bold text-sm">
-                                                                                        {new Intl.NumberFormat("vi-VN").format(p[quotePriceTier] || p.price)} đ
+                                                                                        {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p[quotePriceTier] || p.price)} đ
                                                                                     </div>
                                                                                     <div className="text-[10px] text-slate-400">
                                                                                         /{p.unit || "Hộp"}
@@ -27281,7 +27281,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             updateQuoteItemAt(index, { price: newAfter, priceBeforeVat: newPre });
                                                         }}
                                                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-2 text-xs text-slate-100 text-right font-mono font-bold focus:border-indigo-500 focus:outline-none"
-                                                        title={`Giá trước VAT tự động tính: ${new Intl.NumberFormat("vi-VN").format(pPreVat)}đ (nhập để quy đổi ngược ra giá sau VAT)`}
+                                                        title={`Giá trước VAT tự động tính: ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(pPreVat)}đ (nhập để quy đổi ngược ra giá sau VAT)`}
                                                     />
                                                 </div>
                                                 <div className="w-16 shrink-0">
@@ -27297,11 +27297,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         className="w-full bg-slate-900 border border-slate-700 rounded-lg px-1 py-2 text-xs text-amber-400 text-center font-bold font-mono focus:border-amber-500 focus:outline-none"
                                                     />
                                                 </div>
-                                                <div className="w-28 shrink-0 bg-amber-950/40 border border-amber-800/80 rounded-lg px-2 py-2 text-xs font-mono font-bold text-amber-300 text-right truncate" title={`Tiền chiết khấu (tính trên trước VAT): ${new Intl.NumberFormat("vi-VN").format(discAmt)}đ`}>
-                                                    {new Intl.NumberFormat("vi-VN").format(discAmt)}đ
+                                                <div className="w-28 shrink-0 bg-amber-950/40 border border-amber-800/80 rounded-lg px-2 py-2 text-xs font-mono font-bold text-amber-300 text-right truncate" title={`Tiền chiết khấu (tính trên trước VAT): ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(discAmt)}đ`}>
+                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(discAmt)}đ
                                                 </div>
-                                                <div className="w-28 shrink-0 bg-emerald-950/40 border border-emerald-800/80 rounded-lg px-2 py-2 text-xs font-mono font-bold text-emerald-300 text-right truncate" title={`Thành tiền sau VAT (báo khách): ${new Intl.NumberFormat("vi-VN").format(grossTotal)}đ`}>
-                                                    {new Intl.NumberFormat("vi-VN").format(grossTotal)}đ
+                                                <div className="w-28 shrink-0 bg-emerald-950/40 border border-emerald-800/80 rounded-lg px-2 py-2 text-xs font-mono font-bold text-emerald-300 text-right truncate" title={`Thành tiền sau VAT (báo khách): ${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(grossTotal)}đ`}>
+                                                    {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(grossTotal)}đ
                                                 </div>
                                                 <div className="flex-1 min-w-[150px]">
                                                     <input
@@ -27917,25 +27917,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800/80">
                                         <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">1. Doanh số trước VAT</div>
                                         <div className="font-mono font-bold text-white text-sm mt-0.5">
-                                            {new Intl.NumberFormat("vi-VN").format(modalPreVat)}đ
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(modalPreVat)}đ
                                         </div>
                                     </div>
                                     <div className="bg-slate-950/70 p-2.5 rounded-lg border border-slate-800/80">
                                         <div className="text-[10px] text-sky-400 font-bold uppercase tracking-wider">2. Tiền thuế VAT</div>
                                         <div className="font-mono font-bold text-sky-300 text-sm mt-0.5">
-                                            {new Intl.NumberFormat("vi-VN").format(modalVat)}đ
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(modalVat)}đ
                                         </div>
                                     </div>
                                     <div className="bg-amber-950/20 p-2.5 rounded-lg border border-amber-900/40">
                                         <div className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">3. Tiền CK (Trước VAT)</div>
                                         <div className="font-mono font-bold text-amber-300 text-sm mt-0.5">
-                                            {new Intl.NumberFormat("vi-VN").format(modalDiscount)}đ
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(modalDiscount)}đ
                                         </div>
                                     </div>
                                     <div className="bg-emerald-950/25 p-2.5 rounded-lg border border-emerald-800/60">
                                         <div className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">4. TỔNG SAU VAT (BÁO KHÁCH)</div>
                                         <div className="font-mono font-bold text-emerald-300 text-base mt-0.5">
-                                            {new Intl.NumberFormat("vi-VN").format(modalGross)}đ
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(modalGross)}đ
                                         </div>
                                     </div>
                                 </div>
@@ -28354,7 +28354,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <option value="">-- Tạo hợp đồng độc lập (Không dùng báo giá) --</option>
                                 {quotations.filter(q => q.status !== "Accepted" || q.id === contractQuoteId).map(q => (
                                     <option key={q.id} value={q.id}>
-                                        [{q.id}] - {q.customerName} ({new Intl.NumberFormat("vi-VN").format(q.totalAmount)}đ)
+                                        [{q.id}] - {q.customerName} ({new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(q.totalAmount)}đ)
                                     </option>
                                 ))}
                             </select>
@@ -28377,13 +28377,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             {it.productCode} - {it.productName}
                                         </div>
                                         <div className="font-mono text-slate-400 text-right">
-                                            {it.quantity} x {new Intl.NumberFormat("vi-VN").format(it.price)}đ
+                                            {it.quantity} x {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(it.price)}đ
                                         </div>
                                     </div>
                                 ))}
                             </div>
                             <div className="text-xs font-bold text-emerald-400 font-mono text-right pt-1 border-t border-slate-900">
-                                TỔNG CỘNG: {new Intl.NumberFormat("vi-VN").format(selectedQuoteForContract.totalAmount || 0)}đ
+                                TỔNG CỘNG: {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(selectedQuoteForContract.totalAmount || 0)}đ
                             </div>
                         </div>
                     )}
@@ -28562,7 +28562,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     </div>
                                                                     <div className="shrink-0 text-right pt-0.5">
                                                                         <div className="text-emerald-400 font-mono font-bold text-sm">
-                                                                            {new Intl.NumberFormat("vi-VN").format(p[contractPriceTier] || p.price)} đ
+                                                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(p[contractPriceTier] || p.price)} đ
                                                                         </div>
                                                                         <div className="text-[10px] text-slate-400">/{p.unit || "Hộp"}</div>
                                                                     </div>
@@ -28615,7 +28615,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     + Thêm Sản Phẩm
                                 </button>
                                 <div className="text-[11px] font-bold text-emerald-400 mt-2 font-mono">
-                                    TỔNG CỘNG: {new Intl.NumberFormat("vi-VN").format(directContractItems.reduce((sum, it) => sum + (it.quantity * it.price), 0))}đ
+                                    TỔNG CỘNG: {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(directContractItems.reduce((sum, it) => sum + (it.quantity * it.price), 0))}đ
                                 </div>
                             </div>
                         </div>
@@ -29185,10 +29185,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         />
                                                     </td>
                                                     <td className="p-2.5 text-right font-mono text-slate-300">
-                                                        {new Intl.NumberFormat("vi-VN").format(item.unitPrice)}đ
+                                                        {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(item.unitPrice)}đ
                                                     </td>
                                                     <td className="p-2.5 text-right font-mono font-bold text-amber-300">
-                                                        {item.selected ? `${new Intl.NumberFormat("vi-VN").format(lineTotal)}đ` : "—"}
+                                                        {item.selected ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(lineTotal)}đ` : "—"}
                                                     </td>
                                                 </tr>
                                             );
@@ -29215,7 +29215,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="text-sm font-bold text-amber-300 flex items-center gap-1.5">
                                         <span>Tổng Giá Trị Đợt Đặt Hàng:</span>
                                         <span className="font-mono text-base text-emerald-400 font-extrabold">
-                                            {new Intl.NumberFormat("vi-VN").format(totalBatchAmount)}đ
+                                            {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalBatchAmount)}đ
                                         </span>
                                     </div>
                                 </div>
@@ -29574,15 +29574,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </span>
                                 </div>
                                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] mb-2">
-                                    <div>Hạn mức: <strong className="text-white">{cLimit.toLocaleString("vi-VN")} đ</strong></div>
+                                    <div>Hạn mức: <strong className="text-white">{cLimit.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</strong></div>
                                     <div>Hạn thanh toán: <strong className="text-white">{cTerm} ngày</strong></div>
-                                    <div>Nợ thực tế (Phiếu đã giao): <strong className={curDebt > 0 ? "text-amber-300" : "text-white"}>{curDebt.toLocaleString("vi-VN")} đ</strong></div>
-                                    <div>Giá trị đơn đang lập: <strong className="text-indigo-300">{orderTotal.toLocaleString("vi-VN")} đ</strong></div>
+                                    <div>Nợ thực tế (Phiếu đã giao): <strong className={curDebt > 0 ? "text-amber-300" : "text-white"}>{curDebt.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</strong></div>
+                                    <div>Giá trị đơn đang lập: <strong className="text-indigo-300">{orderTotal.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</strong></div>
                                 </div>
                                 {willBeBlocked && (
                                     <div className="text-[10px] space-y-1 text-rose-300 bg-rose-950/70 p-2.5 rounded border border-rose-800/80">
                                         {isOverLimit && (
-                                            <div>• <strong>Vượt trần công nợ:</strong> Tổng nợ mới ({projDebt.toLocaleString("vi-VN")} đ) vượt hạn mức {cLimit.toLocaleString("vi-VN")} đ (vượt +{(projDebt - cLimit).toLocaleString("vi-VN")} đ).</div>
+                                            <div>• <strong>Vượt trần công nợ:</strong> Tổng nợ mới ({projDebt.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ) vượt hạn mức {cLimit.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ (vượt +{(projDebt - cLimit).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ).</div>
                                         )}
                                         {hasOverdue && (
                                             <div>• <strong>Đơn hàng quá hạn:</strong> Có {overdueList.length} đơn trễ hạn ({overdueList.map(o => `Đơn ${o.id} trễ ${o.overdueDays} ngày`).join(", ")}).</div>
@@ -29680,7 +29680,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     >
                                                         <div className="font-bold text-amber-300">{c.id || c.contract_code}</div>
                                                         <div className="text-slate-400 truncate">{c.partyBName || c.customerName}</div>
-                                                        {c.value && <div className="text-green-400 text-[10px]">{Number(c.value).toLocaleString("vi-VN")}đ</div>}
+                                                        {c.value && <div className="text-green-400 text-[10px]">{Number(c.value).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}đ</div>}
                                                     </div>
                                                 ))
                                             }
@@ -29845,7 +29845,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${q.status === "Approved" ? "bg-green-900/50 text-green-300" : q.status === "Sent" ? "bg-blue-900/50 text-blue-300" : "bg-slate-700 text-slate-300"}`}>{q.status || "Draft"}</span>
                                                         </div>
                                                         <div className="text-slate-400 truncate">{q.customerName}</div>
-                                                        {q.totalAmount && <div className="text-green-400 text-[10px]">{Number(q.totalAmount).toLocaleString("vi-VN")}đ · {(q.items || []).length} mặt hàng</div>}
+                                                        {q.totalAmount && <div className="text-green-400 text-[10px]">{Number(q.totalAmount).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}đ · {(q.items || []).length} mặt hàng</div>}
                                                     </div>
                                                 );
                                             })
@@ -30016,7 +30016,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     <div className="flex items-center gap-2 shrink-0">
                                                                         {p.price ? (
                                                                             <span className="text-[11px] text-emerald-400 font-mono font-bold">
-                                                                                {p.price.toLocaleString('vi-VN')} đ
+                                                                                {p.price.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
                                                                             </span>
                                                                         ) : null}
                                                                         <span className="text-[10px] text-slate-500 font-mono">
@@ -30112,7 +30112,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             title={isStockOrder ? "Đơn giá tham chiếu (ước tính giá trị vốn lưu kho, không áp dụng bảng giá khách)" : "Đơn giá sản phẩm (VNĐ) — bắt buộc nhập giá > 0đ hoặc tích nút 🎁 Tặng"}
                                         />
                                         <div className="w-28 bg-slate-950/70 border border-slate-800/80 rounded-lg px-2 py-2 text-xs text-emerald-400 font-mono text-right font-bold truncate">
-                                            {lineTotal.toLocaleString('vi-VN')} đ
+                                            {lineTotal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
                                         </div>
                                         <button
                                             type="button"
@@ -30517,7 +30517,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <span>💰 Tổng giá trị đơn đặt hàng:</span>
                                     </div>
                                     <span className="text-base font-mono font-bold text-emerald-400">
-                                        {totalAmount.toLocaleString('vi-VN')} đ
+                                        {totalAmount.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
                                     </span>
                                 </div>
                             );
@@ -31104,7 +31104,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 return acc + (Number(it.quantity) || 0) * (Number(price) || 0);
                                             }, 0);
                                             const finalVal = viewingFactoryOrderItems.totalAmount || total;
-                                            return finalVal > 0 ? `${finalVal.toLocaleString('vi-VN')} đ` : "0 đ";
+                                            return finalVal > 0 ? `${finalVal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ` : "0 đ";
                                         })()}
                                     </strong>
                                 </div>
@@ -31597,7 +31597,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     </td>
                                                     <td className="py-2.5 px-3 text-right font-mono font-semibold text-slate-200">
                                                         {unitPrice > 0 ? (
-                                                            `${unitPrice.toLocaleString('vi-VN')} đ`
+                                                            `${unitPrice.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ`
                                                         ) : (!isWarehouseStaff || hasSalesEditPerm) && !Boolean(it?.isGift || it?.is_gift) ? (
                                                             <button
                                                                 type="button"
@@ -31617,7 +31617,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         )}
                                                     </td>
                                                     <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">
-                                                        {totalPrice > 0 ? `${totalPrice.toLocaleString('vi-VN')} đ` : "—"}
+                                                        {totalPrice > 0 ? `${totalPrice.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ` : "—"}
                                                     </td>
                                                     <td className="py-2.5 px-3 text-slate-300 text-[11px]">
                                                         {it?.notes ? (
@@ -31676,7 +31676,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         return acc + (Number(it.quantity) || 0) * (Number(price) || 0);
                                                     }, 0);
                                                     const finalVal = viewingFactoryOrderItems.totalAmount || total;
-                                                    return `${finalVal.toLocaleString('vi-VN')} đ`;
+                                                    return `${finalVal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ`;
                                                 })()}
                                             </td>
                                             <td></td>
@@ -33724,7 +33724,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 : (Number(customerPaymentAmount) || 0);
                             const remaining = Math.max(0, customerPaymentTarget.total - customerPaymentTarget.paid);
                             if (amount <= 0) { showToast("Số tiền thu phải lớn hơn 0.", "warning"); return; }
-                            if (amount > remaining + 0.5) { showToast(`Số tiền thu vượt số còn phải thu (${remaining.toLocaleString("vi-VN")} đ).`, "warning"); return; }
+                            if (amount > remaining + 0.5) { showToast(`Số tiền thu vượt số còn phải thu (${remaining.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ).`, "warning"); return; }
                             setIsSubmittingCustomerPayment(true);
                             try {
                                 const res = await fetch("/api/sales?action=record_customer_payment", {
@@ -33754,7 +33754,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         return next;
                                     });
                                 }
-                                showToast(`Đã ghi nhận thu ${amount.toLocaleString("vi-VN")} đ cho đơn ${code}${data.payment_status === "PAID" ? " — đã thu đủ" : ""}.`, "success");
+                                showToast(`Đã ghi nhận thu ${amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ cho đơn ${code}${data.payment_status === "PAID" ? " — đã thu đủ" : ""}.`, "success");
                                 setCustomerPaymentTarget(null);
                                 setDebtRefreshKey(k => k + 1);
                             } catch {
@@ -33766,7 +33766,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     >
                         <div className="text-xs text-slate-300">
                             <div><strong className="text-white">{customerPaymentTarget.customer_name}</strong></div>
-                            <div className="font-mono mt-1">Giá trị đơn: {customerPaymentTarget.total.toLocaleString("vi-VN")} đ • Đã thu: {customerPaymentTarget.paid.toLocaleString("vi-VN")} đ • Còn lại: <strong className="text-amber-300">{Math.max(0, customerPaymentTarget.total - customerPaymentTarget.paid).toLocaleString("vi-VN")} đ</strong></div>
+                            <div className="font-mono mt-1">Giá trị đơn: {customerPaymentTarget.total.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ • Đã thu: {customerPaymentTarget.paid.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ • Còn lại: <strong className="text-amber-300">{Math.max(0, customerPaymentTarget.total - customerPaymentTarget.paid).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</strong></div>
                         </div>
                         {(() => {
                             const ordObj = resolveFactoryOrder({ order_id: customerPaymentTarget.order_code, raw_code: customerPaymentTarget.raw_code || customerPaymentTarget.order_code });
@@ -35445,7 +35445,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             🎉 HIỆU QUẢ CHUYỂN ĐỔI ĐƠN HÀNG THÀNH CÔNG
                                         </span>
                                         <span className="text-xs font-bold text-white">
-                                            Doanh thu mang lại: <span className="text-emerald-400 font-mono font-bold text-sm ml-1">{new Intl.NumberFormat("vi-VN").format(totalConvertedValue)}đ</span>
+                                            Doanh thu mang lại: <span className="text-emerald-400 font-mono font-bold text-sm ml-1">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(totalConvertedValue)}đ</span>
                                         </span>
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
@@ -35455,7 +35455,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <span className="font-bold text-white block font-mono">{so.order_code}</span>
                                                     <span className="text-[10px] text-slate-400">{new Date(so.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} | {so.customerName}</span>
                                                 </div>
-                                                <span className="font-bold text-emerald-400 font-mono">{new Intl.NumberFormat("vi-VN").format(so.total_amount)}đ</span>
+                                                <span className="font-bold text-emerald-400 font-mono">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(so.total_amount)}đ</span>
                                             </div>
                                         ))}
                                     </div>
@@ -35681,7 +35681,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <span className="text-slate-500 block font-bold text-[9px] uppercase tracking-wider">Kinh phí dự trù:</span>
                                                     <span className="text-emerald-400 font-bold font-mono text-sm block mt-0.5">
                                                         {(plan.generalBudget || plan.estimatedBudget) > 0 
-                                                            ? `${new Intl.NumberFormat("vi-VN").format(plan.generalBudget || plan.estimatedBudget)}đ`
+                                                            ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(plan.generalBudget || plan.estimatedBudget)}đ`
                                                             : "0đ"}
                                                     </span>
                                                 </div>
@@ -37456,7 +37456,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     placeholder="Ví dụ: 100000000"
                                 />
                                 <span className="text-[9px] text-slate-500 font-mono block mt-0.5">
-                                    {custCreditLimit ? `${Number(custCreditLimit).toLocaleString('vi-VN')} đ` : '0 đ'}
+                                    {custCreditLimit ? `${Number(custCreditLimit).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ` : '0 đ'}
                                 </span>
                             </div>
 
@@ -37503,7 +37503,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <option value="">-- Chọn mặt hàng để gán giá riêng --</option>
                                     {allSalesProducts.map((p: any) => (
                                         <option key={p.code} value={p.code}>
-                                            [{p.code}] {p.name} - Giá chuẩn: {Number(p.price || 0).toLocaleString('vi-VN')} đ
+                                            [{p.code}] {p.name} - Giá chuẩn: {Number(p.price || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
                                         </option>
                                     ))}
                                 </select>
@@ -37566,7 +37566,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     <td className="p-2 font-mono font-bold text-white">{item.product_code}</td>
                                                     <td className="p-2 truncate max-w-[200px]">{item.product_name}</td>
                                                     <td className="p-2 text-right font-mono font-bold text-emerald-400">
-                                                        {Number(item.special_price).toLocaleString('vi-VN')} đ
+                                                        {Number(item.special_price).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
                                                     </td>
                                                     <td className="p-2 text-center">
                                                         <button
@@ -38307,7 +38307,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             {p.specification && <span className="text-slate-400 ml-1">({p.specification})</span>}
                                                         </div>
                                                         {p.isCommercial && (p as any).costPrice ? (
-                                                            <span className="text-emerald-400 font-mono text-[11px] shrink-0">Giá vốn: {new Intl.NumberFormat("vi-VN").format((p as any).costPrice)}đ</span>
+                                                            <span className="text-emerald-400 font-mono text-[11px] shrink-0">Giá vốn: {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format((p as any).costPrice)}đ</span>
                                                         ) : null}
                                                     </div>
                                                 ));
@@ -38421,7 +38421,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <div className="flex flex-col justify-center bg-slate-950/60 p-3 rounded-lg border border-slate-850">
                             <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider">Tổng giá trị phiếu nhập:</span>
                             <span className="text-base font-bold font-mono text-emerald-400 mt-1">
-                                {new Intl.NumberFormat("vi-VN").format(Number(inboundQty) * Number(inboundUnitPrice))} VNĐ
+                                {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(inboundQty) * Number(inboundUnitPrice))} VNĐ
                             </span>
                         </div>
                     </div>
@@ -38549,10 +38549,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             </td>
                                             <td className="py-2.5 px-3 text-center font-bold text-white font-mono">{log.quantity}</td>
                                             <td className="py-2.5 px-3 text-right font-mono text-slate-300">
-                                                {log.unitPrice ? `${new Intl.NumberFormat("vi-VN").format(log.unitPrice)}đ` : "—"}
+                                                {log.unitPrice ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(log.unitPrice)}đ` : "—"}
                                             </td>
                                             <td className="py-2.5 px-3 text-right font-bold font-mono text-emerald-400">
-                                                {log.totalAmount ? `${new Intl.NumberFormat("vi-VN").format(log.totalAmount)}đ` : "—"}
+                                                {log.totalAmount ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(log.totalAmount)}đ` : "—"}
                                             </td>
                                             <td className="py-2.5 px-3 text-slate-400 text-[11px]">{log.receiverName}</td>
                                         </tr>
