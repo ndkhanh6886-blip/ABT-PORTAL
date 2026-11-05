@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from "react";
 import {
   AlertTriangle,
+  Code2,
   Cpu,
   FileCog,
   FlaskConical,
@@ -19,6 +20,9 @@ import { AssemblyDhrView } from "./AssemblyDhrView";
 import { SubcontractView } from "./SubcontractView";
 import { ServiceTicketsView } from "./ServiceTicketsView";
 import { IncidentsView } from "../qa/IncidentsView";
+import { ProjectsView } from "../rd/ProjectsView";
+import { TransferView } from "../rd/TransferView";
+import { SoftwareLifecycleView } from "./SoftwareLifecycleView";
 import { DeptMaterialActionBar } from "../warehouse/DeptMaterialActionBar";
 
 type TabKey =
@@ -28,7 +32,8 @@ type TabKey =
   | "assembly"
   | "subcontract"
   | "service"
-  | "incidents";
+  | "incidents"
+  | "software";
 
 export function FactoryDeviceModule() {
   const me = useFactoryMe();
@@ -63,6 +68,7 @@ export function FactoryDeviceModule() {
     { key: "subcontract", label: "5. Gia công ngoài & IQC", icon: Hammer },
     { key: "service", label: "6. Bảo hành & Bảo trì", icon: Wrench },
     { key: "incidents", label: "7. Sự cố & NCR", icon: AlertTriangle },
+    { key: "software", label: "8. Phát triển phần mềm", icon: Code2 },
   ];
 
   if (me.isLoading) return <div className="text-sm text-slate-400 p-6">Đang tải…</div>;
@@ -116,6 +122,14 @@ export function FactoryDeviceModule() {
       {tab === "subcontract" && <SubcontractView />}
       {tab === "service" && <ServiceTicketsView />}
       {tab === "incidents" && <IncidentsView canReport={perms.has("qms.deviation.report")} />}
+      {tab === "software" && (
+        // software projects run by KTCN (gates per IEC 62304) and their releases, signed by the KTCN head or the board
+        <div className="flex flex-col gap-3">
+          <SoftwareLifecycleView />
+          <ProjectsView domainLock="SOFTWARE" ownerModule="DEVICE" canManage={perms.has("rd.project.manage")} canReviewGate={perms.has("rd.gate.review")} />
+          <TransferView section="software" canManage={perms.has("rd.transfer.manage")} canAccept={false} />
+        </div>
+      )}
     </div>
   );
 }

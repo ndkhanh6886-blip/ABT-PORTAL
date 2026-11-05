@@ -98,6 +98,7 @@ async function setupRdTeam(site: Site) {
       "rd.eln.approve",
       "rd.sample.manage",
       "rd.transfer.manage",
+      "rd.software.release",
       "work.plan.submit",
       "work.plan.approve",
       "asset.view",
@@ -612,18 +613,27 @@ describe("R&D Module (Phase 4d): Idea Funnel, Stage-Gate, ELN, Biobank, Tech Tra
     expect(completed.status).toBe("COMPLETED");
     expect(completed.pilot_lot_ref).toContain("LOT-PILOT-HBV-001");
 
-    // Software Release lifecycle (DRAFT -> RELEASED ✍ -> WITHDRAWN 📝)
+    // Software Release lifecycle (DRAFT -> RELEASED ✍ -> WITHDRAWN 📝): the researcher drafts, the head signs
     const sw = await withTransaction((tx) =>
-      createSoftwareRelease(tx, rdHead, {
+      createSoftwareRelease(tx, researcher, {
         project_id: project.id,
         version_tag: "v1.2.0",
         target_kind: "ASSAY_CALLER",
         release_notes: "Thuật toán tự động phân tích ngưỡng Ct và kiểm tra nội chuẩn IC cho Kit HBV",
         checksum_sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         validation_summary: "Đã vượt qua bộ 120 vector dữ liệu chuẩn IEC 62304 (100% pass)",
+        srs_traceability: [{ req_id: "SRS-001", title: "Ngưỡng Ct tự động", test_case_id: "TC-001", result: "PASS" }],
       })
     );
     expect(sw.status).toBe("DRAFT");
+
+    // drafting does not give the right to release (rd.software.release), and the drafter never signs their own release
+    await expect(act(swReleaseMachine, researcher, sw.id, "release", signed)).rejects.toThrow(/quyền/);
+    await grant(researcher, ["rd.software.release"], site.dept);
+    await expect(act(swReleaseMachine, researcher, sw.id, "release", signed)).rejects.toMatchObject({
+      code: "GUARD_FAILED",
+      details: expect.arrayContaining([expect.objectContaining({ code: "SELF_RELEASE" })]),
+    });
 
     const releasedSw = await act(swReleaseMachine, rdHead, sw.id, "release", signed);
     expect(releasedSw.status).toBe("RELEASED");

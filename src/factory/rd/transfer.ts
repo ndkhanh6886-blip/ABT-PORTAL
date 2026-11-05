@@ -6,6 +6,7 @@ import { nextNumber } from "../core/numbering";
 import { enqueueEvent } from "../core/outbox";
 import { insertRecord, parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, runTransition } from "../core/stateMachine";
+import { buildTraceability, openProblems } from "./software";
 import "./permissions";
 
 export type TransferStatus = "DRAFT" | "SUBMITTED" | "ACCEPTED" | "COMPLETED";
@@ -57,6 +58,21 @@ export interface SwReleaseRow {
   withdraw_reason: string | null;
   created_by: number | null;
   version: number;
+}
+
+/**
+ * Traceability of a release: generated from the project's requirements, test cases and the runs on this version
+ * when the project keeps them (KTCN software lifecycle), else the matrix typed on the release.
+ */
+async function releaseTraceability(tx: Tx, row: SwReleaseRow): Promise<{ req_id: string; title: string; test_case_id: string; result: string }[]> {
+  return (await buildTraceability(tx, row.project_id, row.version_tag)) ?? (Array.isArray(row.srs_traceability) ? row.srs_traceability : []);
+}
+
+/** Known anomalies of a release: those typed on it plus the project's problem reports not yet verified fixed. */
+async function releaseAnomalies(tx: Tx, row: SwReleaseRow): Promise<{ bug_id: string; severity: string; description: string; status: string }[]> {
+  const typed = Array.isArray(row.known_anomalies) ? row.known_anomalies : [];
+  const reported = await openProblems(tx, row.project_id);
+  return [...typed.filter((t) => !reported.some((r) => r.bug_id === t.bug_id)), ...reported];
 }
 
 async function projectOwner(tx: Tx, projectId: string): Promise<string> {
@@ -404,9 +420,14 @@ export const swReleaseMachine = defineMachine<SwReleaseStatus, SwReleaseRow>({
       action: "release",
       from: "DRAFT",
       to: "RELEASED",
-      permission: "rd.transfer.manage",
+      permission: "rd.software.release",
       signature: "RELEASED",
       guards: [
+        {
+          code: "SELF_RELEASE",
+          message: "Người ký phát hành phải khác người lập bản phát hành (Trưởng phòng chủ trì hoặc Ban Giám Đốc ký).",
+          check: ({ actor, row }) => row.created_by !== actor.userId,
+        },
         {
           code: "VALIDATION_REQUIRED",
           message: "Phải có tóm tắt kết quả kiểm thử / thẩm định (validation_summary) trước khi phát hành phần mềm.",
@@ -414,9 +435,9 @@ export const swReleaseMachine = defineMachine<SwReleaseStatus, SwReleaseRow>({
         },
         {
           code: "IEC62304_SRS_FAILED",
-          message: "Theo chuẩn IEC 62304, phần mềm Hạng B/C bắt buộc phải có ma trận truy xuất yêu cầu (SRS Traceability) và 100% ca kiểm thử ở trạng thái PASS.",
-          check: ({ row }) => {
-            const traces = Array.isArray(row.srs_traceability) ? row.srs_traceability : [];
+          message: "Theo chuẩn IEC 62304, phần mềm Hạng B/C bắt buộc phải có ma trận truy xuất yêu cầu (SRS Traceability) và 100% yêu cầu có ca kiểm thử đạt (PASS) trên đúng phiên bản phát hành.",
+          check: async ({ tx, row }) => {
+            const traces = await releaseTraceability(tx, row);
             if ((row.safety_class === "CLASS_C" || row.safety_class === "CLASS_B") && traces.length === 0) return false;
             return traces.every((t) => t.result === "PASS");
           },
@@ -424,19 +445,25 @@ export const swReleaseMachine = defineMachine<SwReleaseStatus, SwReleaseRow>({
         {
           code: "IEC62304_CRITICAL_ANOMALY_OPEN",
           message: "Theo chuẩn IEC 62304, không được phát hành phần mềm khi còn lỗi (Known Anomaly) mức CRITICAL hoặc HIGH đang mở (OPEN).",
-          check: ({ row }) => {
-            const bugs = Array.isArray(row.known_anomalies) ? row.known_anomalies : [];
+          check: async ({ tx, row }) => {
+            const bugs = await releaseAnomalies(tx, row);
             return !bugs.some((b) => b.status === "OPEN" && (b.severity === "CRITICAL" || (row.safety_class === "CLASS_C" && b.severity === "HIGH")));
           },
         },
       ],
-      patch: ({ actor }) => ({ released_by: actor.userId, released_at: new Date() }),
+      // the signed record keeps the matrix and the anomalies as they stood at release
+      patch: async ({ tx, actor, row }) => ({
+        released_by: actor.userId,
+        released_at: new Date(),
+        srs_traceability: JSON.stringify(await releaseTraceability(tx, row)),
+        known_anomalies: JSON.stringify(await releaseAnomalies(tx, row)),
+      }),
     },
     {
       action: "withdraw",
       from: "RELEASED",
       to: "WITHDRAWN",
-      permission: "rd.transfer.manage",
+      permission: "rd.software.release",
       reasonRequired: true,
       patch: ({ reason }) => ({ withdraw_reason: reason }),
       effects: async ({ tx, actor, updated, reason }) => {
@@ -605,6 +632,7 @@ const createSwReleaseSchema = z.object({
     .default([]),
   release_notes: z.string().trim().min(5, "nhập nội dung cập nhật (release notes)").max(4000),
   checksum_sha256: z.string().trim().regex(/^[0-9a-fA-F]{64}$/, "SHA-256 gồm 64 ký tự hex").optional().nullable(),
+  source_ref: z.string().trim().max(200).optional().nullable(), // commit hash or tag of the released build
   validation_summary: z.string().trim().min(5, "nhập tóm tắt kết quả kiểm thử / thẩm định").max(4000),
 });
 
@@ -624,6 +652,7 @@ export async function createSoftwareRelease(tx: Tx, actor: AuthzActor, input: un
     known_anomalies: JSON.stringify(d.known_anomalies),
     release_notes: d.release_notes,
     checksum_sha256: d.checksum_sha256 ? d.checksum_sha256.toLowerCase() : null,
+    source_ref: d.source_ref ?? null,
     validation_summary: d.validation_summary,
   });
 }

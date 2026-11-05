@@ -176,16 +176,14 @@ export const DEPARTMENT_POSITIONS: Record<string, {
   "APP": {
     name: "Phòng Ứng Dụng (Application – APP)",
     code: "APP",
-    desc: "Ứng dụng lâm sàng, demo & lắp đặt máy tại khách hàng, kỹ thuật thiết bị, phần mềm và IT",
+    desc: "Ứng dụng lâm sàng, demo & lắp đặt máy tại khách hàng, kỹ thuật thiết bị tại hiện trường",
     badgeColor: "bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-950/50 dark:text-purple-400 dark:border-purple-800",
     borderTheme: "border-purple-500",
     positions: [
       { title: "Phó Trưởng phòng Ứng dụng", defaultRole: "app_head", level: "Manager", desc: "Điều hành phòng, phân công kỹ sư, ký nghiệm thu kỹ thuật" },
       { title: "Trưởng nhóm Công nghiệp", defaultRole: "app_rep", level: "Specialist", desc: "Phụ trách nhóm khách hàng công nghiệp" },
       { title: "Nhân viên Ứng dụng", defaultRole: "app_rep", level: "Staff", desc: "Chạy mẫu, demo, hỗ trợ kỹ thuật tại phòng xét nghiệm" },
-      { title: "Nhân viên Kỹ thuật thiết bị", defaultRole: "app_rep", level: "Staff", desc: "Lắp đặt, bảo trì, sửa chữa thiết bị tại khách hàng" },
-      { title: "Nhân viên nghiên cứu phần mềm", defaultRole: "app_rep", level: "Staff", desc: "Phát triển phần mềm phân tích và điều khiển thiết bị" },
-      { title: "Nhân viên IT", defaultRole: "staff", level: "Staff", desc: "Hạ tầng CNTT, máy tính, mạng nội bộ" }
+      { title: "Nhân viên Kỹ thuật thiết bị", defaultRole: "app_rep", level: "Staff", desc: "Lắp đặt, bảo trì, sửa chữa thiết bị tại khách hàng" }
     ]
   },
   "Cung ứng Kho": {
@@ -240,10 +238,11 @@ export const DEPARTMENT_POSITIONS: Record<string, {
   "KTCN": {
     name: "Phòng Kỹ Thuật Công Nghệ (KTCN – P-DEVICE)",
     code: "P-DEVICE",
-    desc: "Thiết kế, sản xuất và lắp ráp thiết bị (DMR/DHR), lắp đặt – bảo trì – sửa chữa, hành chính kỹ thuật, khoa học công nghệ",
+    desc: "Thiết kế, sản xuất và lắp ráp thiết bị (DMR/DHR), lắp đặt – bảo trì – sửa chữa, phát triển phần mềm, IT chung, hành chính kỹ thuật, khoa học công nghệ",
     badgeColor: "bg-amber-100 text-amber-800 border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800",
     borderTheme: "border-amber-500",
     positions: [
+      { title: "Trưởng phòng KTCN", defaultRole: "device_head", level: "Manager", desc: "Điều hành phòng; duyệt cổng dự án và ký phát hành phần mềm, ECO, lệnh lắp ráp (chưa bố trí: Ban Giám Đốc duyệt thay)" },
       { title: "Trưởng nhóm Sản xuất thiết bị", defaultRole: "device_staff", level: "Specialist", desc: "Phụ trách lắp ráp thiết bị theo lệnh sản xuất, ký phiếu BM 21-01" },
       { title: "Trưởng nhóm Lắp đặt – Bảo trì – Sửa chữa thiết bị", defaultRole: "device_staff", level: "Specialist", desc: "Phụ trách lắp đặt, bảo trì, hiệu chuẩn và sửa chữa thiết bị" },
       { title: "Trưởng nhóm Hành Chính Kỹ Thuật Công Nghệ", defaultRole: "device_staff", level: "Specialist", desc: "Hồ sơ kỹ thuật, kế hoạch và hành chính của phòng" },
@@ -251,7 +250,8 @@ export const DEPARTMENT_POSITIONS: Record<string, {
       { title: "Nhân viên Thiết kế và phát triển thiết bị", defaultRole: "device_staff", level: "Staff", desc: "Thiết kế cơ khí, điện tử, firmware; bản vẽ gia công" },
       { title: "Nhân viên Kỹ thuật", defaultRole: "device_staff", level: "Staff", desc: "Kỹ thuật thiết bị, gia công và QC chi tiết" },
       { title: "Chuyên viên Khoa học Công nghệ", defaultRole: "device_staff", level: "Specialist", desc: "Đề tài khoa học công nghệ, hồ sơ sở hữu trí tuệ" },
-      { title: "Nhân viên IT", defaultRole: "staff", level: "Staff", desc: "Hạ tầng CNTT và phần mềm nội bộ" }
+      { title: "Nhân viên nghiên cứu phần mềm", defaultRole: "device_staff", level: "Staff", desc: "Phát triển phần mềm phân tích và điều khiển thiết bị, phần mềm nội bộ (hồ sơ thiết kế IEC 62304)" },
+      { title: "Nhân viên IT", defaultRole: "staff", level: "Staff", desc: "IT chung toàn công ty: máy tính, mạng, máy chủ, tài khoản, sao lưu" }
     ]
   },
   "QC/QA": {

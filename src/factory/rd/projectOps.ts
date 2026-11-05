@@ -426,6 +426,8 @@ export async function getProjectOpsOverview(tx: Tx, actor: AuthzActor, projectId
 }
 
 const quickProjectSchema = z.object({
+  // department running the project: R&D by default, KTCN (module DEVICE) for its software and device projects
+  owner_module: z.enum(["RD", "DEVICE"]).default("RD"),
   project_type: z.enum(["NEW_PRODUCT", "IMPROVEMENT", "PROCESS", "RESEARCH"]).default("NEW_PRODUCT"),
   target_domain: z.enum(["KIT", "OLIGO", "DEVICE", "SOFTWARE", "OTHER"]).default("KIT"),
   ivd_class: z.enum(["CLASS_A", "CLASS_B", "CLASS_C", "CLASS_D", "RUO", "NA"]).default("CLASS_B"),
@@ -447,9 +449,9 @@ export async function createQuickRdProject(tx: Tx, actor: AuthzActor, input: unk
   const data = parseInput(quickProjectSchema, input);
 
   const rdUnit = (
-    await tx.query("SELECT id FROM core.org_unit WHERE module_key = 'RD' AND status = 'ACTIVE' LIMIT 1")
+    await tx.query("SELECT id FROM core.org_unit WHERE module_key = $1 AND status = 'ACTIVE' LIMIT 1", [data.owner_module])
   ).rows[0];
-  if (!rdUnit) throw invalid("Chưa cấu hình Phòng Nghiên cứu & Phát triển (R&D).");
+  if (!rdUnit) throw invalid(data.owner_module === "DEVICE" ? "Chưa cấu hình Phòng Kỹ thuật Công nghệ (KTCN)." : "Chưa cấu hình Phòng Nghiên cứu & Phát triển (R&D).");
 
   const project = await createProject(tx, actor, {
     name: data.name,

@@ -8,6 +8,7 @@ import "./rd/ideas";
 import "./rd/projects";
 import "./rd/eln";
 import "./rd/transfer";
+import "./rd/software";
 import "./rd/workPlans";
 import "./oligo/batches";
 import "./oligo/sequences";

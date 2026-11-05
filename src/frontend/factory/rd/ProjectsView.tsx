@@ -2122,10 +2122,24 @@ function matchStageKey(stage: string, status: string, passedGates: number): stri
   return "G0";
 }
 
-export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean; canReviewGate: boolean }) {
+/**
+ * `domainLock` shows and creates projects of one domain only (KTCN software tab: SOFTWARE); `ownerModule` is the
+ * department that runs new projects (R&D by default, DEVICE = KTCN).
+ */
+export function ProjectsView({
+  canManage,
+  canReviewGate,
+  domainLock,
+  ownerModule = "RD",
+}: {
+  canManage: boolean;
+  canReviewGate: boolean;
+  domainLock?: string;
+  ownerModule?: "RD" | "DEVICE";
+}) {
   const qc = useQueryClient();
   const ctx = useRdContext("rd.view");
-  const [domain, setDomain] = useState("");
+  const [domain, setDomain] = useState(domainLock ?? "");
   const [stageFilter, setStageFilter] = useState("");
   const [staffFilter, setStaffFilter] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
@@ -2151,8 +2165,9 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
         method: "POST",
         json: {
           op: "create_project",
+          owner_module: ownerModule,
           project_type: addingMode ?? "NEW_PRODUCT",
-          target_domain: targetDomain,
+          target_domain: domainLock ?? targetDomain,
           ivd_class: ivdClass,
           name,
           leader_name: leaderName || null,
@@ -2257,10 +2272,12 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
                 </option>
               ))}
             </select>
-            <select className={`${inputClass} w-40`} value={domain} onChange={(e) => setDomain(e.target.value)}>
-              <option value="">Mọi lĩnh vực</option>
-              {Object.entries(DOMAIN_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
+            {!domainLock && (
+              <select className={`${inputClass} w-40`} value={domain} onChange={(e) => setDomain(e.target.value)}>
+                <option value="">Mọi lĩnh vực</option>
+                {Object.entries(DOMAIN_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            )}
             <a href="/api/factory/rd/roadmap/ics" className="px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-semibold">
               Xuất lịch Roadmap (.ics)
             </a>
@@ -2333,11 +2350,13 @@ export function ProjectsView({ canManage, canReviewGate }: { canManage: boolean;
                 ? "🚀 Khởi tạo Dự án Nghiên cứu & Phát triển Sản phẩm Mới (5 Cổng Stage-Gate G0 -> G4 + Sổ cái Vật tư)"
                 : "✨ Khởi tạo Dự án Cải tiến / Tối ưu hóa Sản phẩm Hiện hữu (Design Change / Bridging Study)"}
             </div>
-            <Field label="Lĩnh vực sản phẩm đích *">
-              <select className={inputClass} value={targetDomain} onChange={(e) => setTargetDomain(e.target.value)}>
-                {Object.entries(DOMAIN_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-              </select>
-            </Field>
+            {!domainLock && (
+              <Field label="Lĩnh vực sản phẩm đích *">
+                <select className={inputClass} value={targetDomain} onChange={(e) => setTargetDomain(e.target.value)}>
+                  {Object.entries(DOMAIN_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </select>
+              </Field>
+            )}
             <Field label="Phân loại IVD / RUO">
               <select className={inputClass} value={ivdClass} onChange={(e) => setIvdClass(e.target.value)}>
                 {Object.entries(IVD_CLASS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}

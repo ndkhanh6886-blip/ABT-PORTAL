@@ -95,7 +95,7 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
     code: "BAN_GIAM_DOC",
     name: "Ban giám đốc",
     description: "Duyệt đề nghị mua vượt ngưỡng (ký điện tử), xem đề nghị và đơn mua.",
-    permissions: ["master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.approve", "purchase.pr.approve_bod", "purchase.po.view", "qms.qc.view", "qms.ncr.approve_bod", "rd.view", "rd.idea.evaluate", "rd.idea.approve", "rd.gate.review", "rd.transfer.accept", "device.view", "device.eco.approve", "kit.view", "kit.bom.approve", "kit.order.release"],
+    permissions: ["rd.software.release", "master.data.view", "inv.stock.view", "purchase.pr.view", "purchase.pr.approve", "purchase.pr.approve_bod", "purchase.po.view", "qms.qc.view", "qms.ncr.approve_bod", "rd.view", "rd.idea.evaluate", "rd.idea.approve", "rd.gate.review", "rd.transfer.accept", "device.view", "device.eco.approve", "kit.view", "kit.bom.approve", "kit.order.release"],
   },
   {
     code: "KIT_NHAN_VIEN",
@@ -192,6 +192,7 @@ export const DEFAULT_ROLES: { code: string; name: string; description: string; p
       "rd.eln.approve",
       "rd.sample.manage",
       "rd.transfer.manage",
+      "rd.software.release",
       "rd.transfer.accept",
       "work.plan.submit",
       "work.plan.approve",

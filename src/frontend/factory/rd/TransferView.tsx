@@ -32,7 +32,8 @@ const SW_ACTIONS = {
   withdraw: "Thu hồi phiên bản (Withdraw)",
 };
 
-export function TransferView({ canManage, canAccept }: { canManage: boolean; canAccept: boolean }) {
+/** `section="software"` shows only the software releases (KTCN software tab), without the technology transfer packages. */
+export function TransferView({ canManage, canAccept, section = "all" }: { canManage: boolean; canAccept: boolean; section?: "all" | "software" }) {
   const qc = useQueryClient();
   const ctx = useRdContext("rd.view");
   const projects = useQuery({ queryKey: ["factory", "rd", "projects", ""], queryFn: () => api<any[]>("/api/factory/rd/projects") });
@@ -62,6 +63,7 @@ export function TransferView({ canManage, canAccept }: { canManage: boolean; can
   const [swKind, setSwKind] = useState("ASSAY_CALLER");
   const [swNotes, setSwNotes] = useState("");
   const [swValidation, setSwValidation] = useState("");
+  const [swSourceRef, setSwSourceRef] = useState("");
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: ["factory", "rd", "transfers"] });
@@ -108,12 +110,14 @@ export function TransferView({ canManage, canAccept }: { canManage: boolean; can
           target_kind: swKind,
           release_notes: swNotes,
           validation_summary: swValidation,
+          source_ref: swSourceRef.trim() || null,
         },
       }),
     onSuccess: () => {
       setAddingSw(false);
       setSwNotes("");
       setSwValidation("");
+      setSwSourceRef("");
       refresh();
     },
   });
@@ -121,6 +125,7 @@ export function TransferView({ canManage, canAccept }: { canManage: boolean; can
   return (
     <div className="flex flex-col gap-3">
       {/* 1. Technology Transfer Packages */}
+      {section === "all" && (
       <Card
         title="Gói Chuyển giao Công nghệ sang Sản xuất (BOM, Routing/SOP, Tiêu chuẩn QC & Độ ổn định)"
         actions={canManage ? <Button onClick={() => setAddingTt(!addingTt)}>+ Lập gói chuyển giao công nghệ</Button> : undefined}
@@ -248,6 +253,7 @@ export function TransferView({ canManage, canAccept }: { canManage: boolean; can
           </div>
         )}
       </Card>
+      )}
 
       {/* 2. Software Releases (D6) */}
       <Card
@@ -286,6 +292,9 @@ export function TransferView({ canManage, canAccept }: { canManage: boolean; can
               </Field>
               <Field label="Kết quả kiểm thử / Thẩm định (Validation Summary) *">
                 <input className={inputClass} value={swValidation} onChange={(e) => setSwValidation(e.target.value)} required />
+              </Field>
+              <Field label="Commit / tag mã nguồn của bản dựng">
+                <input className={`${inputClass} font-mono`} placeholder="git: ez32-fw@v1.2.0" value={swSourceRef} onChange={(e) => setSwSourceRef(e.target.value)} />
               </Field>
             </div>
             <div className="sm:col-span-3 flex justify-end gap-2">
