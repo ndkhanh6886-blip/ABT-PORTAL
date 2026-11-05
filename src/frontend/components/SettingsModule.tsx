@@ -130,7 +130,8 @@ export const DEPARTMENT_POSITIONS: Record<string, {
     positions: [
       { title: "Giám đốc", defaultRole: "admin", level: "Director", desc: "Chịu trách nhiệm cao nhất về kết quả kinh doanh, phê duyệt chiến lược và ngân sách" },
       { title: "Phó Giám đốc Kinh doanh", defaultRole: "admin", level: "Director", desc: "Phụ trách khối Kinh doanh: Kinh doanh, Marketing, APP, Cung ứng Kho" },
-      { title: "Phó Giám đốc Kỹ Thuật", defaultRole: "admin", level: "Director", desc: "Phụ trách khối Kỹ thuật – Nhà máy: R&D, Sản xuất, Tổng hợp Oligo, KTCN, QC/QA" }
+      { title: "Phó Giám đốc Kỹ Thuật", defaultRole: "admin", level: "Director", desc: "Phụ trách khối Kỹ thuật – Nhà máy: R&D, Sản xuất, Tổng hợp Oligo, KTCN, QC/QA" },
+      { title: "Cố vấn cấp cao", defaultRole: "admin", level: "Director", desc: "Cố vấn chiến lược và chuyên môn cho Ban Giám Đốc; quyền quản trị như Ban Giám Đốc" }
     ]
   },
   "Hành chính": {

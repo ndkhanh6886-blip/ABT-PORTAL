@@ -43,6 +43,9 @@ describe("company departments (personnel list 11/2026)", () => {
     expect(inferSystemRoleFromPosition("Cung ứng Kho", "Nhân viên Kho")).toBe("staff");
     expect(inferSystemRoleFromPosition("Hành chính", "Nhân viên Kế toán")).toBe("accountant");
     expect(inferSystemRoleFromPosition("Marketing", "Nhân viên Marketing")).toBe("marketing");
+    // Cố vấn cấp cao: quyền quản trị như Ban Giám Đốc, kể cả khi xếp ở phòng khác
+    expect(inferSystemRoleFromPosition("Ban Giám Đốc", "Cố vấn cấp cao")).toBe("admin");
+    expect(inferSystemRoleFromPosition("R&D", "Cố vấn cấp cao")).toBe("admin");
     // a role written in the file is kept
     expect(inferSystemRoleFromPosition("R&D", "Nhân viên R&D", "rd_staff")).toBe("rd_staff");
   });

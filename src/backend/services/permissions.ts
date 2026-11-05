@@ -986,6 +986,7 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
       rawRole === "root" ||
       pos.includes("tổng giám đốc") ||
       pos.includes("phó giám đốc") ||
+      pos.includes("cố vấn cấp cao") ||
       pos.includes("giám đốc") ||
       dept.includes("ban giám đốc") ||
       dept === "bod" ||
