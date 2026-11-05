@@ -3387,7 +3387,31 @@ export const WarehouseModule: React.FC = () => {
     });
   }, [reservations, selectedRepFilter]);
 
-  const transactionsPage = usePaged(transactions, 20);
+  // Thẻ kho: lọc theo loại phiếu (nhập / xuất) và từ khóa
+  const [txTypeFilter, setTxTypeFilter] = useState<"ALL" | "INBOUND" | "OUTBOUND">("ALL");
+  const [txSearch, setTxSearch] = useState("");
+  const txSearchDebounced = useDebouncedValue(txSearch, 250);
+  const txTypeCounts = useMemo(() => {
+    let inb = 0, outb = 0;
+    for (const tx of transactions as any[]) {
+      const t = String(tx?.transaction_type || "").toUpperCase();
+      if (t === "INBOUND") inb++;
+      else if (t === "OUTBOUND") outb++;
+    }
+    return { inb, outb };
+  }, [transactions]);
+  const filteredTransactions = useMemo(() => {
+    const q = txSearchDebounced.trim().toLowerCase();
+    return (transactions as any[]).filter((tx: any) => {
+      const t = String(tx?.transaction_type || "").toUpperCase();
+      if (txTypeFilter !== "ALL" && t !== txTypeFilter) return false;
+      if (!q) return true;
+      if ([tx.transaction_code, tx.reference_code, tx.performed_by, tx.warehouse_name, tx.notes].some((v: any) => String(v || "").toLowerCase().includes(q))) return true;
+      const its = Array.isArray(tx.items) ? tx.items : [];
+      return its.some((it: any) => [it.product_code, it.product_name, it.lot_number].some((v: any) => String(v || "").toLowerCase().includes(q)));
+    });
+  }, [transactions, txTypeFilter, txSearchDebounced]);
+  const transactionsPage = usePaged(filteredTransactions, 20, `${txTypeFilter}|${txSearchDebounced}`);
   const reservationsPage = usePaged(filteredReservations, 20);
 
   // Summary calculations for Excel Inbound
@@ -4784,7 +4808,37 @@ export const WarehouseModule: React.FC = () => {
             <h3 className="font-bold text-sm text-slate-900 dark:text-white">
               Sổ Lịch Sử Xuất Nhập Kho (Thẻ Kho Điện Tử)
             </h3>
-            <span className="text-xs font-mono text-slate-500 font-bold">{transactions.length} chứng từ đã lưu</span>
+            <span className="text-xs font-mono text-slate-500 font-bold">
+              {filteredTransactions.length !== transactions.length ? `${filteredTransactions.length} / ` : ""}{transactions.length} chứng từ đã lưu
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
+              {([
+                ["ALL", `Tất cả (${transactions.length})`],
+                ["INBOUND", `Phiếu nhập (${txTypeCounts.inb})`],
+                ["OUTBOUND", `Phiếu xuất (${txTypeCounts.outb})`],
+              ] as const).map(([k, label]) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => setTxTypeFilter(k)}
+                  className={`px-3 py-1 rounded-lg font-semibold whitespace-nowrap cursor-pointer ${txTypeFilter === k
+                    ? (k === "INBOUND" ? "bg-white dark:bg-slate-900 text-emerald-600 shadow-xs" : k === "OUTBOUND" ? "bg-white dark:bg-slate-900 text-orange-600 shadow-xs" : "bg-white dark:bg-slate-900 text-indigo-600 shadow-xs")
+                    : "text-slate-600 dark:text-slate-400"}`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={txSearch}
+              onChange={(e) => setTxSearch(e.target.value)}
+              placeholder="Tìm mã phiếu, PO / SO, mã hàng, số lô, người thực hiện..."
+              className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+            />
           </div>
 
           <div className="overflow-x-auto">
