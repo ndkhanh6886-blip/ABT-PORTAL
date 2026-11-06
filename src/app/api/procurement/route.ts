@@ -253,7 +253,10 @@ export async function GET(req: NextRequest) {
         `),
         safeQuery(`
           SELECT * FROM workflow_requests
-          WHERE workflow_code LIKE 'PR%' OR workflow_code ILIKE '%PR-%' OR workflow_type ILIKE '%PROCUREMENT%' OR workflow_type = 'PURCHASE_REQUEST' OR target_dept ILIKE '%Cung%'
+          WHERE workflow_code LIKE 'PR%' OR workflow_code ILIKE '%PR-%' OR workflow_type ILIKE '%PROCUREMENT%' OR workflow_type = 'PURCHASE_REQUEST'
+             -- phiếu phối hợp 1 bước gửi thẳng Cung Ứng = yêu cầu mua hàng; quy trình nhiều bước khác (bảo trì, sửa chữa...)
+             -- chỉ có 1 bước do Cung Ứng xử lý thì không phải đề xuất mua hàng
+             OR (target_dept ILIKE '%Cung%' AND jsonb_array_length(CASE WHEN jsonb_typeof(steps) = 'array' THEN steps ELSE '[]'::jsonb END) <= 1)
           ORDER BY id DESC
         `),
         safeQuery(`
