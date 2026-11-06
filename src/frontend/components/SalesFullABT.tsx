@@ -14862,7 +14862,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         vatRate: resolvedVat,
                         isManualLot: false,
                         isExtraLot: sIdx > 0,
-                        lineGroupKey: specKey
+                        lineGroupKey: specKey,
+                    // ghi chú của dòng trên SO (NVKD ghi cho Kho / Cung ứng)
+                    soNote: String(it.notes || "").trim()
                     });
                 });
             } else {
@@ -14894,7 +14896,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     vatRate: resolvedVat,
                     isManualLot: false,
                     isExtraLot: false,
-                    lineGroupKey: specKey
+                    lineGroupKey: specKey,
+                    // ghi chú của dòng trên SO (NVKD ghi cho Kho / Cung ứng)
+                    soNote: String(it.notes || "").trim()
                 });
             }
         });
@@ -30045,6 +30049,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="w-16 text-center">Số lượng</div>
                             <div className="w-28 text-right">{isStockOrder ? "Đơn giá tham chiếu" : "Đơn giá (VNĐ)"}</div>
                             <div className="w-28 text-right">{isStockOrder ? "Ước tính vốn (VNĐ)" : "Thành tiền (VNĐ)"}</div>
+                            <div className="w-44" title="Ghi chú riêng cho từng mặt hàng (hiển thị cho Kho / Cung ứng khi xử lý đơn)">Ghi chú</div>
                             <div className="w-8"></div>
                         </div>
                         {factoryOrderItems.map((item, index) => {
@@ -30240,6 +30245,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <div className="w-28 bg-slate-950/70 border border-slate-800/80 rounded-lg px-2 py-2 text-xs text-emerald-400 font-mono text-right font-bold truncate">
                                             {lineTotal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
                                         </div>
+                                        <input
+                                            type="text"
+                                            value={String((item as any).notes ?? "")}
+                                            onChange={(e) => {
+                                                const v = e.target.value;
+                                                setFactoryOrderItems(prev => prev.map((it, i) => i === index ? { ...it, notes: v } : it));
+                                            }}
+                                            placeholder="Ghi chú mặt hàng..."
+                                            title={String((item as any).notes || "Ghi chú riêng cho mặt hàng này (vd: giao trước, lot yêu cầu, hàng về đợt 2...)")}
+                                            maxLength={500}
+                                            className="w-44 bg-slate-950 border border-slate-800 rounded-lg px-2 py-2 text-xs text-sky-200 placeholder-slate-600 focus:border-indigo-500 focus:outline-none"
+                                        />
                                         <button
                                             type="button"
                                             onClick={() => setFactoryOrderItems(prev => prev.filter((_, i) => i !== index))}
@@ -32848,6 +32865,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <span className="font-mono font-black text-sm text-amber-300 bg-amber-950/70 border border-amber-600/70 px-2 py-0.5 rounded tracking-wide">{item.productCode}</span>
                                                         <span className="font-semibold text-slate-200 text-xs">{item.productName}</span>
                                                         {item.specification && <span className="text-[10px] text-slate-400">{item.specification}</span>}
+                                                        {!item.isExtraLot && (item as any).soNote && <span className="basis-full text-[10px] text-sky-300 bg-sky-950/50 border border-sky-800/60 rounded px-1.5 py-0.5" title="Ghi chú của mặt hàng trên SO">📝 Ghi chú SO: {(item as any).soNote}</span>}
                                                         {item.storageCondition && <span className="text-[10px] text-cyan-400">🌡 {item.storageCondition}</span>}
                                                         {(() => {
                                                             const comps = getKitComponentsForCode(item.productCode);
