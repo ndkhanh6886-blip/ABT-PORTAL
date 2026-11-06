@@ -68,7 +68,17 @@ async function verifyZaloSignature(req: NextRequest, rawBody: string, body: any)
     }
   }
 
-  return true;
+  // Khi không gửi chữ ký X-ZEvent-Signature: chỉ chấp nhận nếu app_id hoặc oa_id trong gói tin khớp đúng cấu hình thực tế của OA
+  const payloadOaId = String(body?.recipient?.id || body?.oa_id || "").trim();
+  const cfgOaId = String(cfg?.oa_id || "").trim();
+  if (
+    (dbAppId && dbAppId !== "482910481920481" && body?.app_id && String(body.app_id).trim() === dbAppId) ||
+    (cfgOaId && cfgOaId !== "398247192834719" && payloadOaId && payloadOaId === cfgOaId)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
@@ -81,59 +91,25 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const challenge = searchParams.get("challenge") || searchParams.get("hub.challenge");
 
-    // If Zalo sends verification challenge
+    // If Zalo sends verification challenge (chỉ cho phép ký tự an toàn để chống Reflected XSS)
     if (challenge) {
-      return new NextResponse(challenge, {
+      const safeChallenge = String(challenge).replace(/[^a-zA-Z0-9._-]/g, "").slice(0, 256);
+      return new NextResponse(safeChallenge, {
         status: 200,
-        headers: { "Content-Type": "text/plain" }
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "X-Content-Type-Options": "nosniff",
+          "Cache-Control": "no-store",
+        }
       });
     }
 
-    // Tự động trả lời bù các tin nhắn đến bị rơi vào đúng cửa sổ restart server (hoặc chưa có phản hồi SENT)
-    let catchUpStatus: string | undefined;
-    try {
-      const bindRes = await query(
-        "SELECT zalo_user_id, display_name FROM zalo_user_bindings WHERE employee_id = 'NV-TBR-003' AND zalo_user_id IS NOT NULL LIMIT 1"
-      );
-      if (bindRes.rows.length > 0 && bindRes.rows[0].zalo_user_id) {
-        const targetUid = String(bindRes.rows[0].zalo_user_id).trim();
-        const targetName = String(bindRes.rows[0].display_name || "Ban Giám Đốc");
-        const alreadySent = await query(
-          `SELECT id FROM zalo_message_logs
-            WHERE zalo_user_id = $1 AND direction = 'OUTBOUND' AND status = 'SENT'
-              AND content ILIKE '%HI-612.N%'
-            LIMIT 1`,
-          [targetUid]
-        );
-        if (alreadySent.rows.length === 0) {
-          const reply = await processZaloInboundMessage({
-            senderId: targetUid,
-            senderName: targetName,
-            text: "Tồn kho Hi-612.N",
-            eventName: "user_send_text"
-          });
-          if (reply?.text) {
-            const sendRes = await sendZaloCustomerServiceMessage({
-              recipientId: targetUid,
-              text: reply.text,
-              senderName: "ABT OA Gateway"
-            });
-            catchUpStatus = sendRes.status;
-          }
-        } else {
-          catchUpStatus = "ALREADY_SENT";
-        }
-      }
-    } catch (e) {}
-
     return NextResponse.json({
       status: "ACTIVE",
-      message: "ABT Zalo Webhook Gateway is running and ready.",
-      catchUpStatus,
       timestamp: new Date().toISOString()
     });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  } catch {
+    return NextResponse.json({ error: "Webhook error" }, { status: 500 });
   }
 }
 
@@ -214,7 +190,7 @@ export async function POST(req: NextRequest) {
         const sendRes = await sendZaloCustomerServiceMessage({
           recipientId: senderId,
           text: result.text,
-          senderName: "ABT OA Gateway"
+          senderName: "TBR OA Gateway"
         });
         deliveryStatus = sendRes.status;
       } catch (replyErr) {

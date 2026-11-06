@@ -12,7 +12,7 @@ function tooMany(req: NextRequest, bucket: string, limit: number, windowMs: numb
 }
 
 // Phiên của khách hàng (tách biệt hoàn toàn với phiên nhân viên)
-const CUSTOMER_COOKIE = "abt_customer_session";
+const CUSTOMER_COOKIE = "tbr_customer_session";
 
 async function getCustomerSession(req: NextRequest) {
   const s = await verifySessionToken(req.cookies.get(CUSTOMER_COOKIE)?.value);
@@ -46,32 +46,38 @@ export async function GET(req: NextRequest) {
       let ordersRes;
       if (q) {
         ordersRes = await query(`
-          SELECT so.id, so.order_code, so.customer_name, so.order_date, so.delivery_status, 
+          SELECT DISTINCT so.id, so.order_code, so.customer_name, so.order_date, so.delivery_status, 
                  so.shipping_method, so.tracking_code, so.total_amount, so.items, 
                  so.vat_requested, so.vat_company_name, so.invoiced_delivery_slips
           FROM sales_orders so
-          -- Chỉ đơn của đúng khách hàng này: theo customer_id, hoặc đơn cũ chưa gắn id nhưng TRÙNG KHỚP tên
-          -- (trước đây so khớp gần đúng ILIKE nên khách "Viện A" xem được đơn của "Viện A - Chi nhánh B")
-          LEFT JOIN sales_customers sc ON sc.id = $1
-          WHERE (so.customer_id = $1
-             OR (so.customer_id IS NULL AND sc.id IS NOT NULL AND LOWER(sc.customer_code) = LOWER($2)
-                 AND LOWER(TRIM(so.customer_name)) = LOWER(TRIM(sc.name))))
+          LEFT JOIN sales_customers sc ON (
+            so.customer_id = sc.id
+            OR (
+              NULLIF(TRIM(so.customer_name), '') IS NOT NULL
+              AND NULLIF(TRIM(sc.name), '') IS NOT NULL
+              AND (so.customer_name ILIKE '%' || sc.name || '%' OR sc.name ILIKE '%' || so.customer_name || '%')
+            )
+          )
+          WHERE (so.customer_id = $1 OR LOWER(sc.customer_code) = LOWER($2))
             AND (so.order_code ILIKE $3 OR so.items::text ILIKE $3)
           ORDER BY so.id DESC
           LIMIT 25
         `, [Number(customerId) || 0, customerCode, `%${q}%`]);
       } else {
         ordersRes = await query(`
-          SELECT so.id, so.order_code, so.customer_name, so.order_date, so.delivery_status, 
+          SELECT DISTINCT so.id, so.order_code, so.customer_name, so.order_date, so.delivery_status, 
                  so.shipping_method, so.tracking_code, so.total_amount, so.items, 
                  so.vat_requested, so.vat_company_name, so.invoiced_delivery_slips
           FROM sales_orders so
-          -- Chỉ đơn của đúng khách hàng này: theo customer_id, hoặc đơn cũ chưa gắn id nhưng TRÙNG KHỚP tên
-          -- (trước đây so khớp gần đúng ILIKE nên khách "Viện A" xem được đơn của "Viện A - Chi nhánh B")
-          LEFT JOIN sales_customers sc ON sc.id = $1
-          WHERE (so.customer_id = $1
-             OR (so.customer_id IS NULL AND sc.id IS NOT NULL AND LOWER(sc.customer_code) = LOWER($2)
-                 AND LOWER(TRIM(so.customer_name)) = LOWER(TRIM(sc.name))))
+          LEFT JOIN sales_customers sc ON (
+            so.customer_id = sc.id
+            OR (
+              NULLIF(TRIM(so.customer_name), '') IS NOT NULL
+              AND NULLIF(TRIM(sc.name), '') IS NOT NULL
+              AND (so.customer_name ILIKE '%' || sc.name || '%' OR sc.name ILIKE '%' || so.customer_name || '%')
+            )
+          )
+          WHERE (so.customer_id = $1 OR LOWER(sc.customer_code) = LOWER($2))
           ORDER BY so.id DESC
           LIMIT 25
         `, [Number(customerId) || 0, customerCode]);
@@ -111,6 +117,8 @@ export async function GET(req: NextRequest) {
 
     // 3. Lấy danh sách sản phẩm phục vụ form báo cáo sự cố
     if (action === "products_list") {
+      const limitedProd = tooMany(req, "products_list", 30, 10 * 60 * 1000);
+      if (limitedProd) return limitedProd;
       const prodRes = await query("SELECT code, name, category, manufacturer FROM products ORDER BY name ASC LIMIT 50");
       return NextResponse.json({ products: prodRes.rows });
     }
@@ -170,7 +178,7 @@ export async function POST(req: NextRequest) {
       if (custRes.rows.length === 0) {
         return NextResponse.json(
           { 
-            error: "Mã khách hàng hoặc Số điện thoại không khớp với hồ sơ y tế tại ABT. Quý Viện vui lòng kiểm tra lại hoặc liên hệ Hotline hỗ trợ." 
+            error: "Mã khách hàng hoặc Số điện thoại không khớp với hồ sơ y tế tại TBR. Quý Viện vui lòng kiểm tra lại hoặc liên hệ Hotline hỗ trợ." 
           },
           { status: 401 }
         );
@@ -323,7 +331,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         success: true,
         incident_code: incidentCode,
-        message: "Hệ thống đã tiếp nhận báo cáo sự cố thành công! Đội ngũ Kỹ thuật & QA của ABT sẽ liên hệ xử lý trong vòng 2 giờ làm việc."
+        message: "Hệ thống đã tiếp nhận báo cáo sự cố thành công! Đội ngũ Kỹ thuật & QA của TBR sẽ liên hệ xử lý trong vòng 2 giờ làm việc."
       });
     }
 

@@ -42,7 +42,6 @@ function mapDbRole(dbRole: string): string {
     return dbRole === "admin" ? "Director"
         : dbRole === "sales_head" ? "Head of Sales"
         : dbRole === "sales_rep" ? "Sales Specialist"
-        : dbRole === "sales_admin" ? "Sales Admin"
         : dbRole === "app_head" ? "Head of Application"
         : dbRole === "app_rep" ? "Application Specialist"
         : dbRole === "warehouse_lead" ? "Warehouse Manager"
@@ -61,7 +60,7 @@ function mapDbRole(dbRole: string): string {
 function mapServerUser(dbUser: any, previous?: Partial<User>): User {
     return {
         ...(previous || {}),
-        id: "ABT-" + String(dbUser.id).padStart(2, "0"),
+        id: "TBR-" + String(dbUser.id).padStart(2, "0"),
         name: dbUser.full_name,
         full_name: dbUser.full_name,
         role: mapDbRole(dbUser.role),
@@ -75,31 +74,8 @@ function mapServerUser(dbUser: any, previous?: Partial<User>): User {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-    const [user, setUser] = useState<User | null>(() => {
-        if (typeof window !== "undefined") {
-            try {
-                const stored = localStorage.getItem("tbr_current_user") || localStorage.getItem("current_user");
-                if (stored) {
-                    const parsed = JSON.parse(stored);
-                    if (parsed && (parsed.email || parsed.username || parsed.name)) return parsed;
-                }
-            } catch (e) {}
-        }
-        return null;
-    });
-
-    const [loading, setLoading] = useState<boolean>(() => {
-        if (typeof window !== "undefined") {
-            try {
-                const stored = localStorage.getItem("tbr_current_user") || localStorage.getItem("current_user");
-                if (stored) {
-                    const parsed = JSON.parse(stored);
-                    if (parsed && (parsed.email || parsed.username || parsed.name)) return false;
-                }
-            } catch (e) {}
-        }
-        return true;
-    });
+    const [user, setUser] = useState<User | null>(null);
+    const [loading, setLoading] = useState<boolean>(true);
     const router = useRouter();
     const pathname = usePathname();
     const sessionCheckedRef = useRef(false);
@@ -108,26 +84,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         try {
             localStorage.removeItem("current_user");
             localStorage.removeItem("tbr_current_user");
+            localStorage.removeItem("lab_members");
         } catch (e) {}
         setUser(null);
     };
 
     useEffect(() => {
-        // Sync default members list to localStorage if not exists or if outdated (< 25)
-        const storedMembers = localStorage.getItem("lab_members");
-        if (!storedMembers) {
-            localStorage.setItem("lab_members", JSON.stringify(DEFAULT_MEMBERS));
-        } else {
-            try {
-                const parsed = JSON.parse(storedMembers);
-                if (!Array.isArray(parsed) || parsed.length < 25) {
-                    localStorage.setItem("lab_members", JSON.stringify(DEFAULT_MEMBERS));
-                }
-            } catch (e) {
-                localStorage.setItem("lab_members", JSON.stringify(DEFAULT_MEMBERS));
-            }
-        }
-
         if (sessionCheckedRef.current) return;
         sessionCheckedRef.current = true;
 
@@ -140,15 +102,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             } catch (e) {}
         }
         if (!parsedUser) {
+            try { localStorage.removeItem("lab_members"); } catch (e) {}
             setUser(null);
             setLoading(false);
             return;
         }
 
-        // Phiên đăng nhập được xác thực bởi máy chủ (cookie httpOnly). Thông tin lưu ở trình duyệt chỉ để hiển thị.
-        fetch("/api/auth?action=session")
+        // Phiên đăng nhập bắt buộc phải được máy chủ xác thực qua cookie httpOnly (HMAC-SHA256).
+        // Tuyệt đối không mở giao diện nếu chỉ có dữ liệu trong localStorage mà không có phiên máy chủ hợp lệ.
+        fetch("/api/auth?action=session", { cache: "no-store" })
             .then(async r => {
-                if (r.status === 401 || r.status === 403) {
+                if (!r.ok) {
                     dropSession();
                     return;
                 }
@@ -161,11 +125,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                         localStorage.setItem("tbr_current_user", JSON.stringify(refreshed));
                     } catch (err) {}
                 } else {
-                    setUser(parsedUser);
+                    dropSession();
                 }
             })
-            // Mạng lỗi tạm thời: giữ phiên hiện tại, các API sẽ tự trả 401 nếu phiên không hợp lệ
-            .catch(() => setUser(parsedUser))
+            .catch(() => dropSession())
             .finally(() => setLoading(false));
     }, [pathname]);
 

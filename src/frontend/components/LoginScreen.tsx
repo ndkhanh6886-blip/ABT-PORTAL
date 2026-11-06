@@ -110,7 +110,7 @@ export const LoginScreen: React.FC = () => {
 
           <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/80 border border-slate-800 text-[11px] text-emerald-400 font-mono">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            PostgreSQL 18 Online
+            Kết Nối Bảo Mật TLS
           </div>
           <button
             onClick={toggleTheme}
@@ -152,7 +152,7 @@ export const LoginScreen: React.FC = () => {
                   <CheckCircle2 className="w-4 h-4" />
                 </div>
                 <div>
-                  <div className="text-xs font-bold text-slate-200">Cơ Sở Dữ Liệu PostgreSQL 18 Chuẩn ACID</div>
+                  <div className="text-xs font-bold text-slate-200">Cơ Sở Dữ Liệu Doanh Nghiệp Chuẩn ACID</div>
                   <div className="text-[11px] text-slate-400">Lưu trữ tập trung, cam kết không ghi đè và chống mất mát dữ liệu</div>
                 </div>
               </div>
