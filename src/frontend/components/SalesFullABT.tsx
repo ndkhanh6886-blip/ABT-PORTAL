@@ -12377,7 +12377,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
 
     // Đơn hàng yêu cầu (Wholesale / Factory order request)
-    const handleEditFactoryOrder = (req: any) => {
+    const isFactoryOrderCancelled = (req: any) => {
+        if (!req) return false;
+        const st = String(req.status || "").toUpperCase();
+        if (st === "CANCELLED" || String(req.delivery_status || "").toUpperCase() === "CANCELLED") return true;
+        // bản mới nhất trong danh sách (màn hình chi tiết có thể đang giữ bản cũ mở từ trước khi hủy)
+        const latest = (factoryOrders || []).find((o: any) => o.id === req.id || (req.order_code && o.order_code === req.order_code));
+        return Boolean(latest && (String(latest.status || "").toUpperCase() === "CANCELLED" || String(latest.delivery_status || "").toUpperCase() === "CANCELLED"));
+    };
+
+    const handleEditFactoryOrder = (req: any, opts?: { forCopy?: boolean }) => {
+        // Đơn đã hủy không được sửa (sửa xong máy chủ từng đưa đơn về "Chờ giao" trong khi màn hình vẫn hiện đã hủy)
+        if (!opts?.forCopy && isFactoryOrderCancelled(req)) {
+            showToast(`Đơn ${req.order_code || req.id} đã bị hủy nên không thể sửa. Nếu khách vẫn đặt hàng, hãy dùng nút Copy để tạo đơn mới.`, "warning");
+            return;
+        }
         setEditingFactoryOrderId(req.id);
         setFactoryOrderNotes(String(req.orderNotes || req.order_notes || ""));
         setInvoiceNotes(String(req.invoiceNotes || req.invoice_notes || ""));
@@ -12453,7 +12467,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     // Copy đơn cũ thành đơn mới (khách đặt lại đúng như lần trước): mã mới, không mang trạng thái giao / HĐ / duyệt
     const handleCopyFactoryOrder = (req: any) => {
-        handleEditFactoryOrder(req);
+        handleEditFactoryOrder(req, { forCopy: true });
         setEditingFactoryOrderId(null);
         resetFactoryOrderInvoiceAndExtraStates();
         setFactoryOrderQuoteId("");
@@ -12559,9 +12573,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
 
-        const reason = window.prompt(`Nhập lý do hủy đơn hàng ${orderCode} (Khách: ${req.customerName}):`, "Khách hàng thay đổi nhu cầu / Hủy đơn");
+        // Không điền sẵn lý do: người hủy phải tự gõ (trước đây bấm OK nhầm là hủy đơn với lý do mặc định)
+        const reason = window.prompt(`HỦY ĐƠN ${orderCode} (Khách: ${req.customerName})\n\nĐơn sẽ bị hủy, giải phóng giữ hàng và hủy PR liên kết; đơn đã hủy không sửa được nữa.\nNhập lý do hủy (bắt buộc) rồi bấm OK, hoặc bấm Cancel để không hủy:`, "");
         if (reason === null) return;
-        const cleanReason = reason.trim() || "Hủy đơn hàng trước khi xuất kho / đặt NCC";
+        const cleanReason = reason.trim();
+        if (cleanReason.length < 5) {
+            showToast(`Chưa hủy đơn ${orderCode}: cần nhập lý do hủy (ít nhất 5 ký tự).`, "warning");
+            return;
+        }
 
         try {
             const res = await fetch("/api/sales?action=cancel_order", {

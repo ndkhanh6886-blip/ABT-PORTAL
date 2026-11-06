@@ -1601,6 +1601,14 @@ export async function POST(req: NextRequest) {
 
       if (existing) {
         const isRollback = Boolean(body.force_rollback) && canRollback;
+        // Đơn đã hủy không được sửa: lần lưu trước đây đưa trạng thái giao về PENDING, ghi đè dòng hàng & ghi chú hủy
+        // (đơn bị "sống lại" trong CSDL trong khi màn hình vẫn hiện đã hủy). Chỉ Quản trị viên khôi phục có chủ đích.
+        if (String(existing.delivery_status || "").toUpperCase() === "CANCELLED" && !isRollback) {
+          return NextResponse.json({
+            error: `Đơn ${existing.order_code} đã bị hủy nên không thể sửa. Nếu khách vẫn đặt hàng, hãy tạo đơn mới (nút Copy) hoặc nhờ Quản trị viên khôi phục đơn.`,
+            cancelled: true
+          }, { status: 409 });
+        }
         // Đơn đang có: loại đơn theo dữ liệu đã lưu, không theo cờ client gửi lên
         isStockOrder = String(existing.order_code || "").includes("STOCK") || String(existing.applied_price_policy || "").toUpperCase() === "STOCK";
         if (has("items") && !isStockOrder) {
@@ -1918,8 +1926,10 @@ export async function POST(req: NextRequest) {
       setAuditActor(me);
       if (!me) return unauthorizedResponse();
       const code = String(body.order_code || body.id || "").trim();
-      const reason = String(body.reason || "Khách hàng báo hủy đơn").trim();
+      const reason = String(body.reason || "").trim();
       if (!code) return NextResponse.json({ error: "Thiếu mã đơn hàng cần hủy" }, { status: 400 });
+      // Bắt buộc ghi lý do hủy thật (trước đây ô lý do điền sẵn câu mặc định nên dễ bấm OK nhầm)
+      if (reason.length < 5) return NextResponse.json({ error: "Vui lòng nhập lý do hủy đơn (ít nhất 5 ký tự)." }, { status: 400 });
 
       const result = await withTransaction(async (c) => {
         const ordRes = await c.query("SELECT * FROM sales_orders WHERE order_code = $1 ORDER BY id ASC FOR UPDATE", [code]);
