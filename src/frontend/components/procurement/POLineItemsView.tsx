@@ -117,26 +117,25 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
         <table className="w-full text-left text-xs">
           <thead className="bg-slate-50 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 font-bold uppercase text-[10px]">
             <tr>
-              <th className="py-2 px-2">Mã PO</th>
-              <th className="py-2 px-2">Ngày đặt</th>
-              <th className="py-2 px-2">Hạn giao</th>
-              <th className="py-2 px-2">NCC</th>
-              <th className="py-2 px-2">Mã hàng</th>
-              <th className="py-2 px-2">Tên hàng</th>
-              <th className="py-2 px-2">ĐVT</th>
-              <th className="py-2 px-2 text-right">SL đặt</th>
-              <th className="py-2 px-2 text-right">Đã nhận</th>
-              <th className="py-2 px-2 text-right">Còn lại</th>
-              <th className="py-2 px-2 text-right">Đơn giá</th>
-              <th className="py-2 px-2 text-right">Thành tiền</th>
-              <th className="py-2 px-2">PR nguồn</th>
-              <th className="py-2 px-2">Trạng thái</th>
-              <th className="py-2 px-2">Thanh toán</th>
+              <th className="py-2.5 px-2 w-28 whitespace-nowrap">Mã PO</th>
+              <th className="py-2.5 px-2 w-20 whitespace-nowrap">Ngày đặt</th>
+              <th className="py-2.5 px-2 w-20 whitespace-nowrap">Hạn giao</th>
+              <th className="py-2.5 px-2 w-24 max-w-[110px]">NCC</th>
+              <th className="py-2.5 px-2 w-24 max-w-[110px]">Mã hàng</th>
+              <th className="py-2.5 px-2 min-w-[260px] w-[32%]">Tên hàng &amp; Quy cách</th>
+              <th className="py-2.5 px-1.5 w-14 text-center whitespace-nowrap">ĐVT</th>
+              <th className="py-2.5 px-1.5 w-14 text-right whitespace-nowrap">SL đặt</th>
+              <th className="py-2.5 px-1.5 w-14 text-right whitespace-nowrap">Đã nhận</th>
+              <th className="py-2.5 px-1.5 w-14 text-right whitespace-nowrap">Còn lại</th>
+              <th className="py-2.5 px-2 w-20 text-right whitespace-nowrap">Đơn giá</th>
+              <th className="py-2.5 px-2 w-24 text-right whitespace-nowrap">Thành tiền</th>
+              <th className="py-2.5 px-2 w-24 whitespace-nowrap">PR nguồn</th>
+              <th className="py-2.5 px-2 w-28 whitespace-nowrap">Trạng thái / TT</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {page.items.length === 0 ? (
-              <tr><td colSpan={15} className="py-8 text-center text-slate-400">Không có dòng hàng nào phù hợp.</td></tr>
+              <tr><td colSpan={14} className="py-8 text-center text-slate-400">Không có dòng hàng nào phù hợp.</td></tr>
             ) : page.items.map(l => {
               const st = statusLabel(String(l.po.status || ""));
               const pay = PAYMENT_LABEL[paymentStatus(l.po)] || PAYMENT_LABEL.UNPAID;
@@ -144,25 +143,28 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
                 <tr key={l.key} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                   <td className="py-2 px-2 whitespace-nowrap">
                     <button type="button" onClick={() => onOpenPO(l.po)} className="font-mono font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer inline-flex items-center gap-1">
-                      {l.po.po_code} <Eye className="w-3 h-3" />
+                      {l.po.po_code} <Eye className="w-3 h-3 shrink-0" />
                     </button>
                   </td>
-                  <td className="py-2 px-2 whitespace-nowrap">{day(l.po.order_date)}</td>
-                  <td className="py-2 px-2 whitespace-nowrap">{day(l.po.expected_delivery_date)}</td>
-                  <td className="py-2 px-2 font-semibold whitespace-nowrap">{l.supplier}</td>
-                  <td className="py-2 px-2 font-mono text-indigo-700 dark:text-indigo-300 whitespace-nowrap">{l.code || "—"}</td>
-                  <td className="py-2 px-2 text-slate-800 dark:text-slate-200">
-                    {l.name}{l.spec && <span className="text-[10px] text-slate-400"> ({l.spec})</span>}
+                  <td className="py-2 px-2 font-mono text-[11px] whitespace-nowrap">{day(l.po.order_date)}</td>
+                  <td className="py-2 px-2 font-mono text-[11px] whitespace-nowrap">{day(l.po.expected_delivery_date)}</td>
+                  <td className="py-2 px-2 font-semibold max-w-[110px] truncate" title={l.supplier}>{l.supplier}</td>
+                  <td className="py-2 px-2 font-mono font-bold text-indigo-700 dark:text-indigo-300 w-24 max-w-[110px] break-all">{l.code || "—"}</td>
+                  <td className="py-2 px-2 text-slate-800 dark:text-slate-200 min-w-[260px]">
+                    <span className="font-semibold">{l.name}</span>
+                    {l.spec && <span className="text-[11px] text-slate-500 dark:text-slate-400"> ({l.spec})</span>}
                   </td>
-                  <td className="py-2 px-2">{l.unit}</td>
-                  <td className="py-2 px-2 text-right font-mono font-bold">{fmt(l.qty)}</td>
-                  <td className="py-2 px-2 text-right font-mono">{fmt(l.received)}</td>
-                  <td className={`py-2 px-2 text-right font-mono font-bold ${l.remaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>{fmt(l.remaining)}</td>
-                  <td className="py-2 px-2 text-right font-mono">{fmt(l.price)}</td>
-                  <td className="py-2 px-2 text-right font-mono font-bold">{fmt(l.amount)}</td>
+                  <td className="py-2 px-1.5 text-center whitespace-nowrap">{l.unit}</td>
+                  <td className="py-2 px-1.5 text-right font-mono font-bold whitespace-nowrap">{fmt(l.qty)}</td>
+                  <td className="py-2 px-1.5 text-right font-mono whitespace-nowrap">{fmt(l.received)}</td>
+                  <td className={`py-2 px-1.5 text-right font-mono font-bold whitespace-nowrap ${l.remaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>{fmt(l.remaining)}</td>
+                  <td className="py-2 px-2 text-right font-mono whitespace-nowrap">{fmt(l.price)}</td>
+                  <td className="py-2 px-2 text-right font-mono font-bold whitespace-nowrap">{fmt(l.amount)}</td>
                   <td className="py-2 px-2 font-mono text-[11px] whitespace-nowrap">{l.sourcePR || "—"}</td>
-                  <td className="py-2 px-2 whitespace-nowrap"><span className={st.className}>{st.label}</span></td>
-                  <td className={`py-2 px-2 whitespace-nowrap font-semibold ${pay.className}`}>{pay.label}</td>
+                  <td className="py-2 px-2 whitespace-nowrap">
+                    <div className={`text-[11px] leading-tight ${st.className}`}>{st.label}</div>
+                    <div className={`text-[10px] font-semibold mt-0.5 ${pay.className}`}>{pay.label}</div>
+                  </td>
                 </tr>
               );
             })}

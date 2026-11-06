@@ -430,11 +430,11 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
                   {allFilterSelected ? <CheckSquare className="w-4 h-4 text-indigo-600" /> : <Square className="w-4 h-4" />}
                 </button>
               </th>
-              <th className="py-2 px-2">Mã PR</th>
-              <th className="py-2 px-2">Đề xuất</th>
-              <th className="py-2 px-2">Mã hàng</th>
-              <th className="py-2 px-2">Tên hàng</th>
-              <th className="py-2 px-2">ĐVT</th>
+              <th className="py-2 px-2 w-28 whitespace-nowrap">Mã PR</th>
+              <th className="py-2 px-2 w-32">Đề xuất</th>
+              <th className="py-2 px-2 w-24 max-w-[110px]">Mã hàng</th>
+              <th className="py-2 px-2 min-w-[240px] w-[28%]">Tên hàng &amp; Quy cách</th>
+              <th className="py-2 px-2 w-14 text-center">ĐVT</th>
               <th className="py-2 px-2 text-right">SL</th>
               <th className="py-2 px-2">Hạn cần</th>
               <th className="py-2 px-2">NCC gợi ý</th>
@@ -463,15 +463,15 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
                     <div className="text-slate-800 dark:text-slate-200">{l.requester}</div>
                     <div className="text-[10px] text-slate-400">{l.dept}{l.priority ? ` • ${PRIORITY_LABEL[l.priority] || l.priority}` : ""}</div>
                   </td>
-                  <td className="py-2 px-2 font-mono text-indigo-700 dark:text-indigo-300 whitespace-nowrap">
+                  <td className="py-2 px-2 font-mono font-bold text-indigo-700 dark:text-indigo-300 w-24 max-w-[110px] break-all">
                     {l.code && getItemInfo ? <ItemStockHover code={l.code} getInfo={getItemInfo}>{l.code}</ItemStockHover> : (l.code || "—")}
                   </td>
-                  <td className="py-2 px-2 text-slate-800 dark:text-slate-200">
-                    {l.name}
-                    {l.spec && <span className="text-[10px] text-slate-400"> ({l.spec})</span>}
+                  <td className="py-2 px-2 text-slate-800 dark:text-slate-200 min-w-[240px]">
+                    <span className="font-semibold">{l.name}</span>
+                    {l.spec && <span className="text-[11px] text-slate-500 dark:text-slate-400"> ({l.spec})</span>}
                     {l.blockedReason && <div className="text-[10px] text-amber-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{l.blockedReason}</div>}
                   </td>
-                  <td className="py-2 px-2">{l.unit}</td>
+                  <td className="py-2 px-2 text-center whitespace-nowrap">{l.unit}</td>
                   <td className="py-2 px-2 text-right font-mono font-bold">{l.qty}</td>
                   <td className="py-2 px-2 whitespace-nowrap">{l.dueDate ? String(l.dueDate).slice(0, 10) : "—"}</td>
                   <td className="py-2 px-2">

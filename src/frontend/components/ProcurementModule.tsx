@@ -3840,20 +3840,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
-                  <th className="py-3 px-4 w-36">Mã Đơn PO</th>
-                  <th className="py-3 px-4 w-44">Ngày Đặt / Hạn Giao</th>
-                  <th className="py-3 px-4 min-w-[280px]">Chi Tiết Hàng Hóa Đặt Mua</th>
-                  <th className="py-3 px-4 text-right w-36">Tổng Tiền PO</th>
-                  <th className="py-3 px-4 w-36">Số HĐ / Ngày HĐ</th>
-                  <th className="py-3 px-4 text-center w-36">Thanh Toán</th>
-                  <th className="py-3 px-4 text-center w-44">Trạng Thái Đơn</th>
-                  <th className="py-3 px-4 text-center w-36">Thao Tác</th>
+                  <th className="py-2.5 px-3 w-32 whitespace-nowrap">Mã Đơn PO</th>
+                  <th className="py-2.5 px-3 min-w-[280px]">Chi Tiết Hàng Hóa Đặt Mua</th>
+                  <th className="py-2.5 px-3 text-right w-32 whitespace-nowrap">Tổng Tiền PO</th>
+                  <th className="py-2.5 px-3 w-32 whitespace-nowrap">Số HĐ / Ngày HĐ</th>
+                  <th className="py-2.5 px-3 text-center w-32 whitespace-nowrap">Thanh Toán</th>
+                  <th className="py-2.5 px-3 text-center w-40 whitespace-nowrap">Trạng Thái Đơn</th>
+                  <th className="py-2.5 px-3 text-center w-36 whitespace-nowrap">Thao Tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredOrders.length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="py-8 text-center text-slate-400">
+                    <td colSpan={7} className="py-8 text-center text-slate-400">
                       Không tìm thấy đơn đặt mua hàng nào phù hợp
                     </td>
                   </tr>
@@ -3878,37 +3877,130 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
                     return (
                       <React.Fragment key={po.id}>
-                        {/* Row 1: Dedicated Supplier Header Row */}
+                        {/* Row 1: Dedicated Supplier Header Row (kèm Ngày đặt, Hẹn giao, Người lập, Mã PR) */}
                         <tr className="bg-slate-100/80 dark:bg-slate-800/80 border-t-2 border-slate-200/90 dark:border-slate-700">
-                          <td colSpan={8} className="py-2 px-4">
-                            <div className="flex flex-wrap items-center justify-between gap-3">
-                              <div className="flex items-center gap-2">
-                                <span className="p-1 rounded-md bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400">
+                          <td colSpan={7} className="py-2 px-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                <span className="p-1 rounded-md bg-orange-100 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 shrink-0">
                                   <Building2 className="w-3.5 h-3.5" />
                                 </span>
-                                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-500">
+                                <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 dark:text-slate-500 shrink-0">
                                   Nhà Cung Cấp:
                                 </span>
-                                <span className="font-bold text-slate-900 dark:text-white text-xs">
+                                <span className="font-bold text-slate-900 dark:text-white text-xs truncate">
                                   {po.supplier_name || "Chưa xác định"}
                                 </span>
                                 {supp?.short_name && (
-                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800/60">
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-50 dark:bg-orange-950/50 text-orange-700 dark:text-orange-300 border border-orange-200 dark:border-orange-800/60 shrink-0">
                                     {supp.short_name}
                                   </span>
                                 )}
                                 {supp?.phone && (
-                                  <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                                  <span className="text-[11px] text-slate-500 dark:text-slate-400 shrink-0">
                                     • 📞 {supp.phone}
                                   </span>
                                 )}
                               </div>
-                              {po.notes && (
-                                <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1.5 italic max-w-lg truncate bg-white/70 dark:bg-slate-900/60 px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700">
-                                  <span className="font-semibold not-italic text-slate-400">Ghi chú:</span>
-                                  <span>{po.notes}</span>
+
+                              <div className="flex flex-wrap items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2 text-[11px] bg-white/80 dark:bg-slate-900/70 px-2.5 py-1 rounded-lg border border-slate-200/90 dark:border-slate-700">
+                                  <span className="text-slate-500 dark:text-slate-400">
+                                    Ngày đặt: <strong className="font-mono text-slate-800 dark:text-slate-100">{formatDate(po.order_date)}</strong>
+                                  </span>
+                                  <span className="text-slate-300 dark:text-slate-600">|</span>
+                                  {editingDeliveryDateId === po.id ? (
+                                    <div className="inline-flex items-center gap-1 bg-white dark:bg-slate-800 px-1 py-0.5 rounded border border-orange-400">
+                                      <DateInputVN
+                                        value={tempDeliveryDate}
+                                        onChange={(e) => setTempDeliveryDate(e.target.value)}
+                                        className="text-[11px] font-bold py-0.2 px-1 border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-hidden"
+                                      />
+                                      <button
+                                        onClick={() => handleSaveDeliveryDate(po)}
+                                        title="Lưu ngày hẹn giao"
+                                        className="p-0.5 rounded bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
+                                      >
+                                        <Check className="w-3 h-3" />
+                                      </button>
+                                      <button
+                                        onClick={() => setEditingDeliveryDateId(null)}
+                                        title="Hủy"
+                                        className="p-0.5 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-600 dark:text-slate-300 cursor-pointer"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1">
+                                      <span className="text-slate-500 dark:text-slate-400">Hẹn giao:</span>
+                                      <strong className="font-mono text-orange-600 dark:text-orange-400">
+                                        {formatDate(po.expected_delivery_date)}
+                                      </strong>
+                                      <button
+                                        onClick={() => {
+                                          setEditingDeliveryDateId(po.id);
+                                          setTempDeliveryDate(po.expected_delivery_date ? dbDateVN(po.expected_delivery_date) : todayVN());
+                                        }}
+                                        title="Chỉnh sửa ngày hẹn giao hàng"
+                                        className="p-0.5 rounded text-slate-400 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                                      >
+                                        <Edit2 className="w-3 h-3" />
+                                      </button>
+                                    </span>
+                                  )}
+                                  <span className="text-slate-300 dark:text-slate-600">|</span>
+                                  <span className="text-slate-500 dark:text-slate-400">
+                                    👤 Lập bởi: <strong className="text-slate-800 dark:text-slate-200">{getPOCreator(po)}</strong>
+                                  </span>
+                                  {(() => {
+                                    const prCodes = Array.from(
+                                      new Set<string>(
+                                        (Array.isArray(po.items) ? po.items : [])
+                                          .map((it: any) => String(itemSourcePR(it) || ""))
+                                          .filter(Boolean)
+                                      )
+                                    );
+                                    if (prCodes.length === 0) return null;
+                                    if (prCodes.length === 1) {
+                                      return (
+                                        <>
+                                          <span className="text-slate-300 dark:text-slate-600">|</span>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              openPRByCode(prCodes[0]);
+                                            }}
+                                            title={`Bấm để mở xem chi tiết Phiếu PR ${prCodes[0]}`}
+                                            className="px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] font-mono font-bold hover:bg-indigo-100 hover:underline cursor-pointer whitespace-nowrap"
+                                          >
+                                            🔗 {prCodes[0]}
+                                          </button>
+                                        </>
+                                      );
+                                    }
+                                    return (
+                                      <>
+                                        <span className="text-slate-300 dark:text-slate-600">|</span>
+                                        <span
+                                          className="px-1.5 py-0.2 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] font-sans font-bold cursor-help whitespace-nowrap"
+                                          title={`Gom từ ${prCodes.length} PR:\n${prCodes.join("\n")}\n(mã PR hiện cạnh từng mặt hàng)`}
+                                        >
+                                          🔗 Gom {prCodes.length} PR
+                                        </span>
+                                      </>
+                                    );
+                                  })()}
                                 </div>
-                              )}
+
+                                {po.notes && (
+                                  <div className="text-[11px] text-slate-600 dark:text-slate-300 flex items-center gap-1.5 italic max-w-md truncate bg-white/70 dark:bg-slate-900/60 px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700" title={po.notes}>
+                                    <span className="font-semibold not-italic text-slate-400">Ghi chú:</span>
+                                    <span className="truncate">{po.notes}</span>
+                                  </div>
+                                )}
+                              </div>
                             </div>
                           </td>
                         </tr>
@@ -3916,101 +4008,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                         {/* Row 2: Main PO Details */}
                         <tr className={`hover:bg-slate-50/60 dark:hover:bg-slate-800/30 transition-colors border-b border-slate-200/60 dark:border-slate-800 ${isRowDropdownOpen ? "relative z-50" : "relative z-10"}`}>
                           {/* Col 1: PO Code */}
-                          <td className="py-3 px-4 font-mono font-bold text-orange-600 dark:text-orange-400 align-top">
+                          <td className="py-3 px-3 font-mono font-bold text-orange-600 dark:text-orange-400 align-top whitespace-nowrap">
                             <button
                               onClick={() => setSelectedPODetail(po)}
-                              className="hover:underline flex items-center gap-1 cursor-pointer"
+                              className="hover:underline inline-flex items-center gap-1 cursor-pointer whitespace-nowrap"
                             >
-                              <FileText className="w-3.5 h-3.5" />
-                              {po.po_code}
+                              <FileText className="w-3.5 h-3.5 shrink-0" />
+                              <span>{po.po_code}</span>
                             </button>
-                            <div className="mt-1 font-sans font-normal text-[10px] text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                              <span>👤 Lập bởi:</span>
-                              <span className="font-semibold text-slate-700 dark:text-slate-200">{getPOCreator(po)}</span>
-                            </div>
-                            {(() => {
-                              const prCodes = Array.from(
-                                new Set<string>(
-                                  (Array.isArray(po.items) ? po.items : [])
-                                    .map((it: any) => String(itemSourcePR(it) || ""))
-                                    .filter(Boolean)
-                                )
-                              );
-                              if (prCodes.length === 0) return null;
-                              // Mã PR hiển thị cạnh từng mặt hàng (cột Chi tiết hàng hóa); ở đây chỉ tóm tắt
-                              if (prCodes.length === 1) {
-                                return (
-                                  <div className="mt-1 font-sans">
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        openPRByCode(prCodes[0]);
-                                      }}
-                                      title={`Bấm để mở xem chi tiết Phiếu PR ${prCodes[0]}`}
-                                      className="px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] font-mono font-bold hover:bg-indigo-100 hover:underline cursor-pointer"
-                                    >
-                                      🔗 {prCodes[0]}
-                                    </button>
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div
-                                  className="mt-1 inline-block px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 text-[10px] font-sans font-bold cursor-help"
-                                  title={`Gom từ ${prCodes.length} PR:\n${prCodes.join("\n")}\n(mã PR hiện cạnh từng mặt hàng)`}
-                                >
-                                  🔗 Gom {prCodes.length} PR
-                                </div>
-                              );
-                            })()}
-                          </td>
-
-                          {/* Col 2: Dates */}
-                          <td className="py-3 px-4 text-slate-500 whitespace-nowrap align-top">
-                            <div className="font-medium text-slate-700 dark:text-slate-300">
-                              📅 {formatDate(po.order_date)}
-                            </div>
-                            
-                            {editingDeliveryDateId === po.id ? (
-                              <div className="flex items-center gap-1 mt-1 bg-white dark:bg-slate-800 p-1 rounded-lg border border-orange-400 shadow-sm">
-                                <DateInputVN
-                                  value={tempDeliveryDate}
-                                  onChange={(e) => setTempDeliveryDate(e.target.value)}
-                                  className="text-[11px] font-bold py-0.5 px-1 border border-slate-300 dark:border-slate-600 rounded bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-hidden"
-                                />
-                                <button
-                                  onClick={() => handleSaveDeliveryDate(po)}
-                                  title="Lưu ngày hẹn giao"
-                                  className="p-1 rounded bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer"
-                                >
-                                  <Check className="w-3 h-3" />
-                                </button>
-                                <button
-                                  onClick={() => setEditingDeliveryDateId(null)}
-                                  title="Hủy"
-                                  className="p-1 rounded bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 text-slate-600 dark:text-slate-300 cursor-pointer"
-                                >
-                                  <X className="w-3 h-3" />
-                                </button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-1 mt-0.5">
-                                <span className="text-[11px] font-semibold text-orange-600 dark:text-orange-400">
-                                  Hẹn: {formatDate(po.expected_delivery_date)}
-                                </span>
-                                <button
-                                  onClick={() => {
-                                    setEditingDeliveryDateId(po.id);
-                                    setTempDeliveryDate(po.expected_delivery_date ? dbDateVN(po.expected_delivery_date) : todayVN());
-                                  }}
-                                  title="Chỉnh sửa ngày hẹn giao hàng"
-                                  className="p-1 rounded-md text-slate-400 hover:text-orange-600 hover:bg-orange-50 dark:hover:bg-slate-800 cursor-pointer transition-colors"
-                                >
-                                  <Edit2 className="w-3 h-3" />
-                                </button>
-                              </div>
-                            )}
                           </td>
 
                           {/* Col 3: Items Details - Compact by default, click to expand */}
