@@ -5225,21 +5225,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
                   <th className="py-3 px-2 w-8"></th>
-                  <th className="py-3 px-4">Mã Đơn PO</th>
-                  <th className="py-3 px-4">Nhà Cung Cấp</th>
-                  <th className="py-3 px-4">Ngày Đặt Hàng</th>
-                  <th className="py-3 px-4">HĐ Đầu Vào</th>
-                  <th className="py-3 px-4 text-right">Tổng Tiền PO</th>
-                  <th className="py-3 px-4 text-right" title="Giá trị phần hàng đã nhập kho — công nợ phát sinh trên phần này">Giá Trị Đã Nhận</th>
-                  <th className="py-3 px-4 text-right">Đã Thanh Toán</th>
-                  <th className="py-3 px-4 text-right">Còn Nợ Phải Trả</th>
-                  <th className="py-3 px-4 text-center">Trạng Thái Công Nợ</th>
-                  <th className="py-3 px-4 text-center">Thao Tác</th>
+                  <th className="py-3 px-2.5">Mã PO / Ngày Đặt</th>
+                  <th className="py-3 px-2.5">Nhà Cung Cấp &amp; HĐ</th>
+                  <th className="py-3 px-2.5 text-right">Tổng Tiền PO</th>
+                  <th className="py-3 px-2.5 text-right" title="Giá trị phần hàng đã nhập kho — công nợ phát sinh trên phần này">Giá Trị Đã Nhận</th>
+                  <th className="py-3 px-2.5 text-right">Đã Thanh Toán</th>
+                  <th className="py-3 px-2.5 text-right">Còn Nợ Phải Trả</th>
+                  <th className="py-3 px-2.5 text-center">Trạng Thái</th>
+                  <th className="py-3 px-2.5 text-center">Thao Tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {filteredPayables.length === 0 && (
-                  <tr><td colSpan={11} className="py-8 text-center text-slate-400">Không có PO nào phù hợp bộ lọc.</td></tr>
+                  <tr><td colSpan={9} className="py-8 text-center text-slate-400">Không có PO nào phù hợp bộ lọc.</td></tr>
                 )}
                 {payablesPage.items.map((po) => {
                   const dbt = poDebt(po);
@@ -5256,7 +5254,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
                   return (
                     <tr key={po.id} className={`hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors ${checked ? "bg-emerald-50/60 dark:bg-emerald-950/20" : ""}`}>
-                      <td className="py-3.5 px-2 text-center">
+                      <td className="py-3 px-2 text-center">
                         {!isPaid && (
                           <input
                             type="checkbox"
@@ -5266,38 +5264,38 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           />
                         )}
                       </td>
-                      <td className="py-3.5 px-4 font-mono font-bold text-orange-600 dark:text-orange-400">
-                        {po.po_code}
+                      <td className="py-3 px-2.5 whitespace-nowrap">
+                        <div className="font-mono font-bold text-orange-600 dark:text-orange-400">{po.po_code}</div>
+                        <div className="text-[10px] text-slate-500 mt-0.5">📅 {formatDate(po.order_date)}</div>
                       </td>
-                      <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
-                        {po.supplier_name}
+                      <td className="py-3 px-2.5">
+                        <div className="font-bold text-slate-900 dark:text-white">{po.supplier_name}</div>
+                        {invs.length > 0 && (
+                          <div className="text-[10px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                            🧾 HĐ: {invs.map((iv: any) => iv.invoice_no).filter(Boolean).join(", ")}
+                          </div>
+                        )}
                       </td>
-                      <td className="py-3.5 px-4 text-slate-500">
-                        {formatDate(po.order_date)}
-                      </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-600 dark:text-slate-300">
-                        {invs.length > 0 ? invs.map((iv: any) => iv.invoice_no).filter(Boolean).join(", ") : <span className="text-slate-400">—</span>}
-                      </td>
-                      <td className="py-3.5 px-4 font-mono font-bold text-right text-slate-900 dark:text-white">
+                      <td className="py-3 px-2.5 font-mono font-bold text-right text-slate-900 dark:text-white whitespace-nowrap">
                         {formatCurrency(total)}
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-right text-slate-700 dark:text-slate-200" title={dbt.unreceived > 0.5 ? `Chưa nhận: ${formatCurrency(dbt.unreceived)}` : "Đã nhận đủ hàng"}>
+                      <td className="py-3 px-2.5 font-mono text-right text-slate-700 dark:text-slate-200 whitespace-nowrap" title={dbt.unreceived > 0.5 ? `Chưa nhận: ${formatCurrency(dbt.unreceived)}` : "Đã nhận đủ hàng"}>
                         {formatCurrency(dbt.received)}
                         {dbt.unreceived > 0.5 && dbt.received > 0.5 && <div className="text-[9px] text-slate-400">chưa nhận {formatCurrency(dbt.unreceived)}</div>}
                       </td>
-                      <td className="py-3.5 px-4 font-mono font-bold text-right text-emerald-600 dark:text-emerald-400">
+                      <td className="py-3 px-2.5 font-mono font-bold text-right text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
                         {formatCurrency(paid)}
                       </td>
-                      <td className="py-3.5 px-4 font-mono font-bold text-right text-rose-600 dark:text-rose-400">
+                      <td className="py-3 px-2.5 font-mono font-bold text-right text-rose-600 dark:text-rose-400 whitespace-nowrap">
                         {remaining > 0.5 ? formatCurrency(remaining) : <span className="text-slate-400 font-normal">—</span>}
                         {dbt.prepaid > 0.5 && <div className="text-[9px] text-violet-600 font-normal">trả trước {formatCurrency(dbt.prepaid)}</div>}
                       </td>
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
-                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border ${badge.cls}`}>
+                      <td className="py-3 px-2.5 text-center whitespace-nowrap">
+                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${badge.cls}`}>
                           {badge.label}
                         </span>
                       </td>
-                      <td className="py-3.5 px-4 text-center whitespace-nowrap">
+                      <td className="py-3 px-2.5 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1.5">
                           {!isPaid && (
                             <button

@@ -7393,59 +7393,61 @@ export const UnifiedWorkspace: React.FC = () => {
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-800">
                   <tr>
-                    <th className="py-3 px-4">Mã việc</th>
-                    <th className="py-3 px-4">Tiêu đề công việc</th>
-                    <th className="py-3 px-4">Phòng ban</th>
-                    <th className="py-3 px-4">Phân loại</th>
-                    <th className="py-3 px-4">Người phụ trách</th>
-                    <th className="py-3 px-4">Khách hàng</th>
-                    <th className="py-3 px-4">Ưu tiên</th>
-                    <th className="py-3 px-4">Hạn chót</th>
-                    <th className="py-3 px-4">Trạng thái</th>
-                    <th className="py-3 px-4 text-right">Thao tác</th>
+                    <th className="py-2.5 px-3">Mã &amp; Tiêu đề công việc</th>
+                    <th className="py-2.5 px-3">Phòng ban / Phân loại</th>
+                    <th className="py-2.5 px-3">Người phụ trách</th>
+                    <th className="py-2.5 px-3">Khách hàng</th>
+                    <th className="py-2.5 px-3">Ưu tiên</th>
+                    <th className="py-2.5 px-3">Hạn chót</th>
+                    <th className="py-2.5 px-3">Trạng thái</th>
+                    <th className="py-2.5 px-3 text-right">Thao tác</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {tasksPage.items.map((t) => (
                     <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3 px-4 font-mono font-bold text-slate-500">{t.task_code}</td>
-                      <td className="py-3 px-4 font-bold text-slate-900 dark:text-white">
-                        {t.title}
-                        {t.related_workflow_code && (
-                          <span className="ml-2 text-[10px] text-purple-600 dark:text-purple-400 font-normal">
-                            (🔗 {t.related_workflow_code})
-                          </span>
-                        )}
-                        {(() => {
-                          const taskComments = Array.isArray(t.logs) ? t.logs.filter((l: any) => l?.type === "comment") : [];
-                          if (taskComments.length === 0) return null;
-                          const hasDirective = taskComments.some((c: any) => c.role === "directive");
-                          return (
-                            <span
-                              onClick={() => openEditTask(t)}
-                              className={`ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
-                                hasDirective
-                                  ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
-                                  : "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"
-                              }`}
-                              title={taskComments[taskComments.length - 1]?.text || ""}
-                            >
-                              {hasDirective ? "👑" : "💬"} {taskComments.length}
+                      <td className="py-2.5 px-3">
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-mono font-bold text-[11px] text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-1.5 py-0.2 rounded">{t.task_code}</span>
+                          <span className="font-bold text-slate-900 dark:text-white">{t.title}</span>
+                          {t.related_workflow_code && (
+                            <span className="text-[10px] text-purple-600 dark:text-purple-400 font-normal">
+                              (🔗 {t.related_workflow_code})
                             </span>
-                          );
-                        })()}
+                          )}
+                          {(() => {
+                            const taskComments = Array.isArray(t.logs) ? t.logs.filter((l: any) => l?.type === "comment") : [];
+                            if (taskComments.length === 0) return null;
+                            const hasDirective = taskComments.some((c: any) => c.role === "directive");
+                            return (
+                              <span
+                                onClick={() => openEditTask(t)}
+                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold cursor-pointer ${
+                                  hasDirective
+                                    ? "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300"
+                                    : "bg-indigo-50 text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300"
+                                }`}
+                                title={taskComments[taskComments.length - 1]?.text || ""}
+                              >
+                                {hasDirective ? "👑" : "💬"} {taskComments.length}
+                              </span>
+                            );
+                          })()}
+                        </div>
                       </td>
-                      <td className="py-3 px-4">{t.department}</td>
-                      <td className="py-3 px-4 text-slate-500">{t.task_category}</td>
-                      <td className="py-3 px-4 font-semibold text-slate-700 dark:text-slate-300">
+                      <td className="py-2.5 px-3">
+                        <div className="font-semibold text-slate-700 dark:text-slate-200">{t.department}</div>
+                        <div className="text-[10px] text-slate-500">{t.task_category}</div>
+                      </td>
+                      <td className="py-2.5 px-3 font-semibold text-slate-700 dark:text-slate-300">
                         {cleanWorkspaceAssignee(t.assignee_name) || (
                           <span className="text-amber-600 dark:text-amber-400 font-bold">⏳ Chờ phân công</span>
                         )}
                       </td>
-                      <td className="py-3 px-4 text-slate-500">{t.customer_name || "—"}</td>
-                      <td className="py-3 px-4"><PriorityBadge priority={t.priority} /></td>
-                      <td className="py-3 px-4 font-mono text-slate-500">{t.deadline ? formatDayVN(t.deadline) : "—"}</td>
-                      <td className="py-3 px-4">
+                      <td className="py-2.5 px-3 text-slate-500">{t.customer_name || "—"}</td>
+                      <td className="py-2.5 px-3"><PriorityBadge priority={t.priority} /></td>
+                      <td className="py-2.5 px-3 font-mono text-slate-500 whitespace-nowrap">{t.deadline ? formatDayVN(t.deadline) : "—"}</td>
+                      <td className="py-2.5 px-3 whitespace-nowrap">
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
                           t.status === "DONE" ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300" :
                           t.status === "IN_PROGRESS" ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300" :
@@ -7454,7 +7456,7 @@ export const UnifiedWorkspace: React.FC = () => {
                           {t.status === "DONE" ? "Hoàn tất" : t.status === "IN_PROGRESS" ? "Đang làm" : "Cần làm"}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right">
+                      <td className="py-2.5 px-3 text-right whitespace-nowrap">
                         <button
                           onClick={() => openEditTask(t)}
                           className="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-bold"
@@ -7466,7 +7468,7 @@ export const UnifiedWorkspace: React.FC = () => {
                   ))}
                   {filteredTasks.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="text-center py-8 text-slate-400 italic">
+                      <td colSpan={8} className="text-center py-8 text-slate-400 italic">
                         Không có công việc nào phù hợp với bộ lọc
                       </td>
                     </tr>

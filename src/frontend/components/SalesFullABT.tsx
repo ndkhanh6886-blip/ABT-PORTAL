@@ -21648,24 +21648,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <table className="w-full text-left text-xs border-collapse">
                                     <thead>
                                         <tr className="border-b border-slate-800 bg-slate-950/60 text-slate-400 font-bold uppercase tracking-wider text-[9.5px]">
-                                            <th className="p-3">Mã Báo Giá</th>
-                                            <th className="p-3">Ngày Lập</th>
-                                            <th className="p-3">Khách Hàng</th>
-                                            <th className="p-3">NVKD Phụ Trách</th>
-                                            <th className="p-3 text-right">Doanh Số Trước VAT</th>
-                                            <th className="p-3 text-center">% Chiết Khấu</th>
-                                            <th className="p-3 text-right">Tiền Chiết Khấu (Trước Thuế)</th>
-                                            <th className="p-3 text-right">Thuần Trước VAT (Sau CK)</th>
-                                            <th className="p-3 text-right">Tiền Thuế VAT</th>
-                                            <th className="p-3 text-right">Tổng Sau VAT (Báo Khách)</th>
-                                            <th className="p-3 text-center">Trạng Thái</th>
-                                            <th className="p-3 text-right">Thao Tác</th>
+                                            <th className="py-2.5 px-2.5">Mã BG / Ngày Lập</th>
+                                            <th className="py-2.5 px-2.5">Khách Hàng & NVKD</th>
+                                            <th className="py-2.5 px-2.5 text-right">Doanh Số Trước VAT</th>
+                                            <th className="py-2.5 px-2.5 text-right">Chiết Khấu (Trước Thuế)</th>
+                                            <th className="py-2.5 px-2.5 text-right">Thuần Trước VAT</th>
+                                            <th className="py-2.5 px-2.5 text-right">Tiền Thuế VAT</th>
+                                            <th className="py-2.5 px-2.5 text-right">Tổng Sau VAT</th>
+                                            <th className="py-2.5 px-2.5 text-center">Trạng Thái</th>
+                                            <th className="py-2.5 px-2.5 text-right">Thao Tác</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-800/60 text-slate-300">
                                         {filteredQuotationsList.length === 0 ? (
                                             <tr>
-                                                <td colSpan={12} className="p-8 text-center text-slate-500 italic">
+                                                <td colSpan={9} className="p-8 text-center text-slate-500 italic">
                                                     Không có báo giá nào phù hợp với bộ lọc hiện tại.
                                                 </td>
                                             </tr>
@@ -21681,43 +21678,41 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                 return (
                                                     <tr key={quote.id} className={cn("hover:bg-slate-950/40 transition-colors", hasDiscount && "bg-amber-950/5")}>
-                                                        <td className="p-3 font-mono font-bold text-indigo-400 whitespace-nowrap">
-                                                            {quote.id}
+                                                        <td className="py-2.5 px-2.5 font-mono whitespace-nowrap">
+                                                            <div className="font-bold text-indigo-400">{quote.id}</div>
+                                                            <div className="text-[10px] text-slate-400 mt-0.5">{quote.date}</div>
                                                         </td>
-                                                        <td className="p-3 font-mono text-[11px] text-slate-400 whitespace-nowrap">
-                                                            {quote.date}
+                                                        <td className="py-2.5 px-2.5">
+                                                            <div className="font-bold text-slate-200">{quote.customerName}</div>
+                                                            <div className="text-[10px] text-slate-400 mt-0.5">👤 {quote.salesRepName || quote.salesRepId || "—"}</div>
                                                         </td>
-                                                        <td className="p-3 font-bold text-slate-200">
-                                                            {quote.customerName}
-                                                        </td>
-                                                        <td className="p-3 text-slate-300 whitespace-nowrap">
-                                                            {quote.salesRepName || quote.salesRepId || "—"}
-                                                        </td>
-                                                        <td className="p-3 text-right font-mono text-cyan-300 font-semibold whitespace-nowrap">
+                                                        <td className="py-2.5 px-2.5 text-right font-mono text-cyan-300 font-semibold whitespace-nowrap">
                                                             {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(preVat)}đ
                                                         </td>
-                                                        <td className="p-3 text-center font-mono whitespace-nowrap">
+                                                        <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap">
                                                             {hasDiscount ? (
-                                                                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-950/90 text-amber-300 border border-amber-800/70">
-                                                                    {discPercent}%
-                                                                </span>
+                                                                <div className="flex flex-col items-end gap-0.5">
+                                                                    <span className="font-bold text-amber-400">
+                                                                        {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(discount)}đ
+                                                                    </span>
+                                                                    <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-amber-950/90 text-amber-300 border border-amber-800/70">
+                                                                        {discPercent}%
+                                                                    </span>
+                                                                </div>
                                                             ) : (
                                                                 <span className="text-slate-500 text-[10px]">0%</span>
                                                             )}
                                                         </td>
-                                                        <td className="p-3 text-right font-mono font-bold text-amber-400 whitespace-nowrap">
-                                                            {hasDiscount ? `${new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(discount)}đ` : "—"}
-                                                        </td>
-                                                        <td className="p-3 text-right font-mono text-slate-300 font-medium whitespace-nowrap">
+                                                        <td className="py-2.5 px-2.5 text-right font-mono text-slate-300 font-medium whitespace-nowrap">
                                                             {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(netPreVat)}đ
                                                         </td>
-                                                        <td className="p-3 text-right font-mono text-purple-300 whitespace-nowrap">
+                                                        <td className="py-2.5 px-2.5 text-right font-mono text-purple-300 whitespace-nowrap">
                                                             {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(vat)}đ
                                                         </td>
-                                                        <td className="p-3 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
+                                                        <td className="py-2.5 px-2.5 text-right font-mono font-bold text-emerald-400 whitespace-nowrap">
                                                             {new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(gross)}đ
                                                         </td>
-                                                        <td className="p-3 text-center whitespace-nowrap">
+                                                        <td className="py-2.5 px-2.5 text-center whitespace-nowrap">
                                                             <span className={cn(
                                                                 "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase",
                                                                 quote.status === "Approved" ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" :
@@ -24796,27 +24791,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                 {/* Commercial Products Table */}
                                 <div className="overflow-x-auto select-none">
-                                    <table className="w-full text-left text-xs border-collapse min-w-[1300px]">
+                                    <table className="w-full text-left text-xs border-collapse">
                                         <thead>
                                             <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/20">
                                                 <th className="py-2.5 px-2 text-left w-24">Mã SKU</th>
-                                                <th className="py-2.5 px-2 min-w-[300px]">Tên Hàng Hóa & Model / Hãng SX</th>
-                                                <th className="py-2.5 px-2 w-32 text-center">Phân loại ngành hàng</th>
-                                                <th className="py-2.5 px-2 w-24 text-center">ĐVT / Quy cách</th>
-                                                <th className="py-2.5 px-2 w-32 text-center">Bảo quản chuẩn</th>
+                                                <th className="py-2.5 px-2 min-w-[180px]">Tên Hàng Hóa & Model / Hãng SX</th>
+                                                <th className="py-2.5 px-2 w-32 text-center">Phân loại & Tình trạng</th>
+                                                <th className="py-2.5 px-2 w-28 text-center">ĐVT & Bảo quản</th>
                                                 <th className="py-2.5 px-2 w-28 text-right">Giá Vốn (VNĐ)</th>
-                                                <th className="py-2.5 px-2 w-28 text-right">Giá End User *</th>
-                                                <th className="py-2.5 px-2 w-20 text-center">Margin</th>
+                                                <th className="py-2.5 px-2 w-32 text-right">Giá End User * & Margin</th>
                                                 <th className="py-2.5 px-2 w-28 text-right">Giá Dealer 1</th>
                                                 <th className="py-2.5 px-2 w-28 text-right">Giá Dealer 2</th>
-                                                <th className="py-2.5 px-2 w-24 text-center">Tình trạng</th>
                                                 <th className="py-2.5 px-2 w-16 text-center">Thao tác</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-850 text-slate-300">
                                             {paginatedCommercialProducts.length === 0 ? (
                                                 <tr>
-                                                    <td colSpan={12} className="py-8 text-center text-slate-500 italic">
+                                                    <td colSpan={9} className="py-8 text-center text-slate-500 italic">
                                                         Không tìm thấy mặt hàng nào phù hợp với bộ lọc tìm kiếm.
                                                     </td>
                                                 </tr>
@@ -24882,16 +24874,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         grp === "EQUIPMENT" ? "bg-purple-100 text-purple-900 border-purple-300 dark:bg-purple-900/80 dark:text-purple-100 dark:border-purple-400/80 shadow-sm" :
                                                                         "bg-cyan-100 text-cyan-900 border-cyan-300 dark:bg-cyan-900/80 dark:text-cyan-100 dark:border-cyan-400/80 shadow-sm";
                                                                     return (
-                                                                        <span className={cn("px-2.5 py-1 rounded-full text-[10px] font-bold border tracking-wide inline-block", badgeClass)}>
-                                                                            {actualCat}
-                                                                        </span>
+                                                                        <div className="flex flex-col items-center gap-0.5">
+                                                                            <span className={cn("px-2 py-0.5 rounded-full text-[10px] font-bold border tracking-wide inline-block whitespace-nowrap", badgeClass)}>
+                                                                                {actualCat}
+                                                                            </span>
+                                                                            <span className="text-[9.5px] text-slate-400 font-medium truncate max-w-[120px]" title={p.leadTime}>
+                                                                                {p.leadTime || "Có sẵn kho"}
+                                                                            </span>
+                                                                            {p.warranty && <span className="text-[9px] text-indigo-400">BH: {p.warranty}</span>}
+                                                                        </div>
                                                                     );
                                                                 })()}
                                                             </td>
-                                                            <td className="py-2 px-2 text-center font-mono">
-                                                                <span className="text-slate-900 dark:text-slate-200 font-bold">{p.unit || "Cái"}</span>
-                                                            </td>
                                                             <td className="py-2 px-2 text-center">
+                                                                <div className="font-mono text-slate-900 dark:text-slate-200 font-bold text-[10px] mb-1">
+                                                                    ĐVT: {p.unit || "Cái"}
+                                                                </div>
                                                                 {isMultiTemp ? (
                                                                     <div className="inline-flex flex-col items-center gap-1">
                                                                         <button
@@ -24959,36 +24957,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         )}
                                                                         placeholder={isUnpriced ? "Giá theo đợt..." : "Giá End User..."}
                                                                     />
-                                                                    {isUnpriced ? (
-                                                                        <span className="block text-[8px] text-amber-400/90 font-medium text-right mt-0.5">
-                                                                            Giá báo theo đợt
-                                                                        </span>
-                                                                    ) : (Number(p.costPrice) > 0 && Number(p.price) <= Number(p.costPrice)) ? (
-                                                                        <span className="block text-[8px] text-rose-400 font-bold text-right mt-0.5">
-                                                                            ⚠️ ≤ Giá vốn nhập!
-                                                                        </span>
-                                                                    ) : ((p as any).previousCostPrice > 0 && Number((p as any).previousCostPrice) !== Number(p.costPrice)) ? (
-                                                                        <span className="block text-[8px] text-amber-300 font-semibold text-right mt-0.5">
-                                                                            ⚠️ Giá nhập vừa đổi
-                                                                        </span>
-                                                                    ) : null}
+                                                                    <div className="flex items-center justify-between gap-1 mt-1">
+                                                                        {isUnpriced ? (
+                                                                            <span className="px-1 py-0.2 rounded text-[9px] font-mono font-bold text-amber-400 bg-amber-950/50 border border-amber-500/30 whitespace-nowrap">
+                                                                                Chờ giá
+                                                                            </span>
+                                                                        ) : (
+                                                                            <span className={cn(
+                                                                                "px-1.5 py-0.2 rounded text-[9.5px] font-mono font-bold",
+                                                                                margin >= 25 ? "text-emerald-400 bg-emerald-950/40" :
+                                                                                margin >= 15 ? "text-amber-400 bg-amber-950/40" :
+                                                                                "text-rose-400 bg-rose-950/40"
+                                                                            )}>
+                                                                                LN: {margin}%
+                                                                            </span>
+                                                                        )}
+                                                                        {isUnpriced ? (
+                                                                            <span className="text-[8px] text-amber-400/90 font-medium text-right">
+                                                                                Báo theo đợt
+                                                                            </span>
+                                                                        ) : (Number(p.costPrice) > 0 && Number(p.price) <= Number(p.costPrice)) ? (
+                                                                            <span className="text-[8px] text-rose-400 font-bold text-right">
+                                                                                ⚠️ ≤ Giá vốn!
+                                                                            </span>
+                                                                        ) : ((p as any).previousCostPrice > 0 && Number((p as any).previousCostPrice) !== Number(p.costPrice)) ? (
+                                                                            <span className="text-[8px] text-amber-300 font-semibold text-right">
+                                                                                ⚠️ Vốn đổi
+                                                                            </span>
+                                                                        ) : null}
+                                                                    </div>
                                                                 </div>
-                                                            </td>
-                                                            <td className="py-2 px-2 text-center font-mono font-bold">
-                                                                {isUnpriced ? (
-                                                                    <span className="px-1.5 py-0.5 rounded text-[10px] text-amber-400 bg-amber-950/50 border border-amber-500/30 whitespace-nowrap">
-                                                                        Chờ giá
-                                                                    </span>
-                                                                ) : (
-                                                                    <span className={cn(
-                                                                        "px-1.5 py-0.5 rounded text-[10px]",
-                                                                        margin >= 25 ? "text-emerald-400 bg-emerald-950/40" :
-                                                                        margin >= 15 ? "text-amber-400 bg-amber-950/40" :
-                                                                        "text-rose-400 bg-rose-950/40"
-                                                                    )}>
-                                                                        {margin}%
-                                                                    </span>
-                                                                )}
                                                             </td>
                                                             <td className="py-2 px-2">
                                                                 <FormattedNumberInput
@@ -25005,12 +25003,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     className="bg-slate-900 border border-slate-750 rounded px-1.5 py-1 text-[11px] text-cyan-300 font-mono font-bold w-full text-right focus:border-cyan-400 focus:outline-none"
                                                                     placeholder="Dealer 2..."
                                                                 />
-                                                            </td>
-                                                            <td className="py-2 px-2 text-center">
-                                                                <span className="text-[10px] text-slate-400 font-medium block truncate" title={p.leadTime}>
-                                                                    {p.leadTime || "Có sẵn kho"}
-                                                                </span>
-                                                                {p.warranty && <span className="text-[9px] text-indigo-400">BH: {p.warranty}</span>}
                                                             </td>
                                                             <td className="py-2 px-2 text-center">
                                                                 <div className="flex items-center justify-center gap-1.5">
@@ -40116,16 +40108,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <table className="w-full text-left text-xs border-collapse">
                                 <thead className="bg-slate-950 text-slate-400 uppercase text-[9px] font-mono sticky top-0 z-10 border-b border-slate-800">
                                     <tr>
-                                        <th className="p-2.5">Mã phiếu</th>
-                                        <th className="p-2.5">NVKD giữ hàng</th>
-                                        <th className="p-2.5">Khách hàng giữ cho</th>
+                                        <th className="p-2.5">Mã phiếu / NVKD</th>
+                                        <th className="p-2.5">Khách hàng & Ghi chú</th>
                                         <th className="p-2.5">Mặt hàng & Quy cách</th>
-                                        <th className="p-2.5">Số Lô (LOT)</th>
-                                        <th className="p-2.5">Hạn Dùng (EXP)</th>
+                                        <th className="p-2.5">Số Lô & Hạn Dùng</th>
                                         <th className="p-2.5 text-center">SL giữ</th>
                                         <th className="p-2.5">Hạn giữ (TTL)</th>
                                         <th className="p-2.5 text-center">Trạng thái</th>
-                                        <th className="p-2.5">Ghi chú</th>
                                         <th className="p-2.5 text-right">Thao tác</th>
                                     </tr>
                                 </thead>
@@ -40161,7 +40150,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         if (filtered.length === 0) {
                                             return (
                                                 <tr>
-                                                    <td colSpan={11} className="py-8 text-center text-slate-500 italic">
+                                                    <td colSpan={8} className="py-8 text-center text-slate-500 italic">
                                                         Chưa có phiếu giữ chỗ nào phù hợp tiêu chí tìm kiếm.
                                                     </td>
                                                 </tr>
@@ -40174,18 +40163,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                             return (
                                                 <tr key={item.id} className={cn("hover:bg-slate-900/50 transition-colors", isExpired && "bg-rose-950/20")}>
-                                                    <td className="p-2.5 font-mono font-bold text-indigo-400">{item.order_code || `#${item.id}`}</td>
-                                                    <td className="p-2.5 font-bold text-slate-200">{item.sales_rep_name}</td>
-                                                    <td className="p-2.5 text-slate-300">{item.customer_name || "—"}</td>
+                                                    <td className="p-2.5 whitespace-nowrap">
+                                                        <div className="font-mono font-bold text-indigo-400">{item.order_code || `#${item.id}`}</div>
+                                                        <div className="text-[10px] font-semibold text-slate-300 mt-0.5">👤 {item.sales_rep_name}</div>
+                                                    </td>
+                                                    <td className="p-2.5 text-slate-300">
+                                                        <div className="font-semibold">{item.customer_name || "—"}</div>
+                                                        {item.notes && (
+                                                            <div className="text-[10px] text-slate-400 italic max-w-[220px] truncate mt-0.5" title={item.notes}>
+                                                                📝 {item.notes}
+                                                            </div>
+                                                        )}
+                                                    </td>
                                                     <td className="p-2.5">
                                                         <span className="font-mono font-bold text-white block">{item.product_code}</span>
                                                         <span className="text-[10px] text-slate-400">{item.product_name}</span>
                                                     </td>
-                                                    <td className="p-2.5 font-mono text-xs text-indigo-300 font-bold whitespace-nowrap">
-                                                        {item.lot_number || "Lô theo kho"}
-                                                    </td>
-                                                    <td className="p-2.5 font-mono text-[11px] text-slate-300 whitespace-nowrap">
-                                                        {item.expiry_date || item.exp_date || "—"}
+                                                    <td className="p-2.5 font-mono whitespace-nowrap">
+                                                        <div className="text-xs text-indigo-300 font-bold">{item.lot_number || "Lô theo kho"}</div>
+                                                        <div className="text-[10px] text-slate-400 mt-0.5">HSD: {item.expiry_date || item.exp_date || "—"}</div>
                                                     </td>
                                                     <td className="p-2.5 text-center font-mono font-bold text-base text-amber-400">
                                                         {item.quantity_reserved}
@@ -40218,9 +40214,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 🟢 ĐANG GIỮ CHỖ
                                                             </span>
                                                         )}
-                                                    </td>
-                                                    <td className="p-2.5 text-[10px] text-slate-400 max-w-xs truncate" title={item.notes}>
-                                                        {item.notes || "—"}
                                                     </td>
                                                     <td className="p-2.5 text-right whitespace-nowrap">
                                                         {item.status === "ACTIVE" && (

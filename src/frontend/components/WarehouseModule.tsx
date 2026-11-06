@@ -4778,16 +4778,13 @@ export const WarehouseModule: React.FC = () => {
                               <table className="w-full text-left text-xs">
                                 <thead>
                                   <tr className="bg-purple-50/70 dark:bg-purple-950/40 text-purple-900 dark:text-purple-200 font-bold border-b border-purple-200 dark:border-purple-800/60 text-[11px]">
-                                    <th className="py-2 px-2.5">Mã Phụ Kiện</th>
-                                    <th className="py-2 px-2.5">Tên Phụ Kiện / Thành Phần</th>
-                                    <th className="py-2 px-2.5">Quy Cách &amp; ĐVT</th>
-                                    <th className="py-2 px-2.5 text-center">Định Mức / Kit</th>
-                                    <th className="py-2 px-2.5 text-right font-bold text-purple-700 dark:text-purple-300">Theo Định Mức (Tồn Hiện Tại)</th>
-                                    <th className="py-2 px-2.5">Số LOT Phụ Kiện</th>
-                                    <th className="py-2 px-2.5">Hạn Dùng (EXP)</th>
-                                    <th className="py-2 px-2.5">ĐK Bảo Quản Riêng</th>
-                                    <th className="py-2 px-2.5">Vị Trí Lưu Kho</th>
-                                    <th className="py-2 px-2.5 text-center">Thao Tác</th>
+                                    <th className="py-2 px-2">Mã &amp; Tên Phụ Kiện / Thành Phần</th>
+                                    <th className="py-2 px-2">Quy Cách &amp; ĐVT</th>
+                                    <th className="py-2 px-2 text-center">Định Mức / Kit</th>
+                                    <th className="py-2 px-2 text-right font-bold text-purple-700 dark:text-purple-300">Tồn Theo Định Mức</th>
+                                    <th className="py-2 px-2">Số LOT &amp; HSD</th>
+                                    <th className="py-2 px-2">Bảo Quản &amp; Vị Trí Lưu Kho</th>
+                                    <th className="py-2 px-2 text-center">Thao Tác</th>
                                   </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-normal">
@@ -4796,23 +4793,21 @@ export const WarehouseModule: React.FC = () => {
                                     const isDiffTemp = comp.storage_condition && item.storage_condition && comp.storage_condition !== item.storage_condition;
                                     return (
                                       <tr key={idx} className="hover:bg-purple-50/30 dark:hover:bg-purple-950/20 transition-colors">
-                                        <td className="py-2 px-2.5 font-mono font-bold text-purple-700 dark:text-purple-300">
-                                          {comp.component_code}
-                                        </td>
-                                        <td className="py-2 px-2.5 font-medium text-slate-900 dark:text-white">
-                                          <div className="font-semibold">{comp.component_name}</div>
+                                        <td className="py-2 px-2">
+                                          <div className="font-mono font-bold text-purple-700 dark:text-purple-300">{comp.component_code}</div>
+                                          <div className="font-semibold text-slate-900 dark:text-white">{comp.component_name}</div>
                                           {comp.notes && (
                                             <div className="text-[10px] text-slate-400 mt-0.5">{comp.notes}</div>
                                           )}
                                         </td>
-                                        <td className="py-2 px-2.5 text-slate-600 dark:text-slate-400">
+                                        <td className="py-2 px-2 text-slate-600 dark:text-slate-400">
                                           <span>{comp.specification || "Tiêu chuẩn"}</span>
                                           <span className="text-[10px] text-slate-400 block">ĐVT: {comp.unit || "Ống/Lọ"}</span>
                                         </td>
-                                        <td className="py-2 px-2.5 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
+                                        <td className="py-2 px-2 text-center font-mono font-bold text-slate-700 dark:text-slate-300">
                                           {comp.quantity_per_kit} {comp.unit || ""}
                                         </td>
-                                        <td className="py-2 px-2.5 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
+                                        <td className="py-2 px-2 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
                                           {comp.total_quantity !== undefined ? comp.total_quantity : compQtyOnHand} {comp.unit || ""}
                                           {comp.received_quantity !== undefined && (
                                             <span className="block text-[10px] font-normal text-slate-500 dark:text-slate-400">
@@ -4820,34 +4815,36 @@ export const WarehouseModule: React.FC = () => {
                                             </span>
                                           )}
                                         </td>
-                                        <td className="py-2 px-2.5 font-mono">
-                                          <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-800 dark:text-slate-200">
+                                        <td className="py-2 px-2 font-mono">
+                                          <span className="px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[11px] font-semibold text-slate-800 dark:text-slate-200 inline-block">
                                             {comp.serial_number || comp.lot_number || (comp.needs_serial ? "Thiếu S/N" : "—")}
                                           </span>
+                                          <div className="text-slate-500 dark:text-slate-400 text-[10px] mt-0.5">
+                                            HSD: {comp.expiry_date || "—"}
+                                          </div>
                                         </td>
-                                        <td className="py-2 px-2.5 font-mono text-slate-700 dark:text-slate-300 text-[11px]">
-                                          {comp.expiry_date || "—"}
-                                        </td>
-                                        <td className="py-2 px-2.5">
-                                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${
-                                            comp.storage_condition?.includes("-20")
-                                              ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
-                                              : comp.storage_condition?.includes("2-8")
-                                              ? "bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
-                                              : "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
-                                          }`}>
-                                            {comp.storage_condition?.includes("-20") ? "❄️" : comp.storage_condition?.includes("2-8") ? "🧊" : "📦"} {comp.storage_condition || item.storage_condition}
-                                          </span>
+                                        <td className="py-2 px-2">
+                                          <div className="flex flex-wrap items-center gap-1">
+                                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                                              comp.storage_condition?.includes("-20")
+                                                ? "bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800"
+                                                : comp.storage_condition?.includes("2-8")
+                                                ? "bg-cyan-100 text-cyan-800 dark:bg-cyan-950 dark:text-cyan-300 border border-cyan-200 dark:border-cyan-800"
+                                                : "bg-slate-100 text-slate-800 dark:bg-slate-800 dark:text-slate-300 border border-slate-200 dark:border-slate-700"
+                                            }`}>
+                                              {comp.storage_condition?.includes("-20") ? "❄️" : comp.storage_condition?.includes("2-8") ? "🧊" : "📦"} {comp.storage_condition || item.storage_condition}
+                                            </span>
+                                            <span className="text-slate-500 dark:text-slate-400 text-[10px]">
+                                              📍 {comp.shelf_position || item.shelf_position || "Kho Trung Tâm"}
+                                            </span>
+                                          </div>
                                           {isDiffTemp && (
                                             <span className="block text-[9px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
                                               ⚠️ Khác nhiệt độ Kit chính!
                                             </span>
                                           )}
                                         </td>
-                                        <td className="py-2 px-2.5 text-slate-600 dark:text-slate-400 text-[11px]">
-                                          📍 {comp.shelf_position || item.shelf_position || "Kho Trung Tâm"}
-                                        </td>
-                                        <td className="py-2 px-2.5 text-center">
+                                        <td className="py-2 px-2 text-center">
                                           <button
                                             type="button"
                                             onClick={() => {
@@ -6053,33 +6050,30 @@ export const WarehouseModule: React.FC = () => {
                 <table className="w-full text-left text-xs">
                   <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-600 dark:text-slate-300 font-bold border-b border-slate-200 dark:border-slate-800 sticky top-0 z-10 backdrop-blur-xs">
                     <tr>
-                      <th className="py-3 px-3 text-center">STT</th>
-                      <th className="py-3 px-3">Mã SKU / Sản Phẩm</th>
-                      <th className="py-3 px-3">Hãng / Ngành Hàng</th>
-                      <th className="py-3 px-3">Số Lô / HSD</th>
-                      <th className="py-3 px-3 text-right">Tồn Kho</th>
-                      <th className="py-3 px-3 text-right">Đơn Giá Vốn</th>
-                      <th className="py-3 px-3 text-right">Tổng Vốn (Cost)</th>
-                      <th className="py-3 px-3 text-right">Đơn Giá Bán</th>
-                      <th className="py-3 px-3 text-right">Tổng Giá Niêm Yết</th>
-                      <th className="py-3 px-3 text-right">Lợi Nhuận</th>
-                      <th className="py-3 px-3 text-right">Biên LN</th>
+                      <th className="py-2.5 px-2.5 text-center w-10">STT</th>
+                      <th className="py-2.5 px-2.5">Mã SKU / Sản Phẩm</th>
+                      <th className="py-2.5 px-2.5">Hãng / Ngành Hàng</th>
+                      <th className="py-2.5 px-2.5">Số Lô / HSD</th>
+                      <th className="py-2.5 px-2.5 text-right">Tồn Kho</th>
+                      <th className="py-2.5 px-2.5 text-right">Giá Vốn (Tổng / ĐG)</th>
+                      <th className="py-2.5 px-2.5 text-right">Giá Niêm Yết (Tổng / ĐG)</th>
+                      <th className="py-2.5 px-2.5 text-right">Lợi Nhuận &amp; Biên LN</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
                     {valuationData.skuDetailsList.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="py-8 text-center text-slate-400">
+                        <td colSpan={8} className="py-8 text-center text-slate-400">
                           Không tìm thấy sản phẩm nào phù hợp với bộ lọc hiện tại.
                         </td>
                       </tr>
                     ) : (
                       valuationSkuPage.items.map((item, idx) => (
                         <tr key={idx} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
-                          <td className="py-2.5 px-3 text-center text-slate-400 font-mono">
+                          <td className="py-2.5 px-2.5 text-center text-slate-400 font-mono">
                             {(valuationSkuPage.page - 1) * valuationSkuPage.size + idx + 1}
                           </td>
-                          <td className="py-2.5 px-3">
+                          <td className="py-2.5 px-2.5">
                             <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-indigo-50 dark:bg-indigo-950/60 px-1.5 py-0.5 rounded text-[11px] block w-fit mb-0.5">
                               {item.product_code}
                             </span>
@@ -6087,7 +6081,7 @@ export const WarehouseModule: React.FC = () => {
                               {item.product_name}
                             </span>
                           </td>
-                          <td className="py-2.5 px-3">
+                          <td className="py-2.5 px-2.5">
                             <div className="font-bold text-slate-700 dark:text-slate-300">
                               {item.manufacturer}
                             </div>
@@ -6095,7 +6089,7 @@ export const WarehouseModule: React.FC = () => {
                               {item.category}
                             </div>
                           </td>
-                          <td className="py-2.5 px-3 font-mono text-[11px]">
+                          <td className="py-2.5 px-2.5 font-mono text-[11px] whitespace-nowrap">
                             <div className="text-slate-700 dark:text-slate-300 font-bold">
                               Lô: {item.lot_number || item.batch_lot || "N/A"}
                             </div>
@@ -6103,26 +6097,22 @@ export const WarehouseModule: React.FC = () => {
                               HSD: {item.expiry_date || "—"}
                             </div>
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-slate-900 dark:text-white">
+                          <td className="py-2.5 px-2.5 text-right font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
                             {item.qty.toLocaleString('vi-VN')} {item.unit || "SP"}
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-slate-600 dark:text-slate-400">
-                            {formatCurrency(item.cPrice)}
+                          <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap">
+                            <div className="font-black text-slate-900 dark:text-white">{formatCurrency(item.totalCost)}</div>
+                            <div className="text-[10px] text-slate-500">ĐG: {formatCurrency(item.cPrice)}</div>
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-black text-slate-900 dark:text-white">
-                            {formatCurrency(item.totalCost)}
+                          <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap">
+                            <div className="font-bold text-indigo-600 dark:text-indigo-400">{formatCurrency(item.totalList)}</div>
+                            <div className="text-[10px] text-indigo-400/80">ĐG: {formatCurrency(item.lPrice)}</div>
                           </td>
-                          <td className="py-2.5 px-3 text-right font-mono text-indigo-600 dark:text-indigo-400">
-                            {formatCurrency(item.lPrice)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-indigo-600 dark:text-indigo-400">
-                            {formatCurrency(item.totalList)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400">
-                            {formatCurrency(item.profit)}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-mono font-bold text-cyan-600">
-                            {item.margin.toFixed(1)}%
+                          <td className="py-2.5 px-2.5 text-right font-mono whitespace-nowrap">
+                            <div className="font-bold text-emerald-600 dark:text-emerald-400">{formatCurrency(item.profit)}</div>
+                            <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-cyan-50 dark:bg-cyan-950/60 text-cyan-700 dark:text-cyan-300 text-[10px] font-bold">
+                              {item.margin.toFixed(1)}%
+                            </span>
                           </td>
                         </tr>
                       ))
