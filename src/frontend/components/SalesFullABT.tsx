@@ -23385,12 +23385,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     </th>
                                                 )}
                                                 <th className="p-3">Mã đơn hàng (SO)</th>
-                                                <th className="p-3">Ngày đặt hàng</th>
                                                 <th className="p-3">Mặt hàng & Nguồn gốc</th>
-                                                <th className="p-3">Giao mong muốn</th>
-                                                <th className="p-3">Giao dự kiến</th>
-                                                <th className="p-3">NVKD</th>
-                                                <th className="p-3">Trạng thái</th>
+                                                <th className="p-3 w-px whitespace-nowrap">NVKD</th>
+                                                <th className="p-3 w-px whitespace-nowrap">Trạng thái</th>
                                                 <th className="p-3">Liên kết & Phân luồng</th>
                                                 <th className="p-3 text-right">Thao tác</th>
                                             </tr>
@@ -23398,7 +23395,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <tbody>
                                             {filteredOrders.length === 0 ? (
                                                 <tr>
-                                                    <td colSpan={canManageAllOrders ? 10 : 9} className="p-6 text-center text-slate-500 italic">
+                                                    <td colSpan={canManageAllOrders ? 7 : 6} className="p-6 text-center text-slate-500 italic">
                                                         Chưa có yêu cầu đặt hàng nào.
                                                     </td>
                                                 </tr>
@@ -23507,7 +23504,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 "border-t-2 border-slate-750/90 transition-colors",
                                                                 isSelected ? "bg-indigo-950/40" : "bg-gradient-to-r from-slate-900/95 via-slate-850/90 to-slate-900/95"
                                                             )}>
-                                                                <td colSpan={canManageAllOrders ? 10 : 9} className="px-4 py-2 border-b border-slate-800/60">
+                                                                <td colSpan={canManageAllOrders ? 7 : 6} className="px-4 py-2 border-b border-slate-800/60">
                                                                     <div className="flex items-center justify-between gap-3 flex-wrap">
                                                                         <div className="flex items-center gap-2.5 flex-wrap min-w-0">
                                                                             <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider shrink-0 flex items-center gap-1.5">
@@ -23529,6 +23526,88 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 </span>
                                                                             )}
                                                                         </div>
+                                                                        {/* Cụm Ngày đặt / Giao mong muốn / Giao dự kiến đặt ở khoảng trống giữa Tên KH và Mã BG */}
+                                                                        <div className="flex items-center gap-3 flex-wrap text-[11px] font-mono bg-slate-950/60 px-3 py-1 rounded-lg border border-slate-800/80">
+                                                                            <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                                                                <span className="text-slate-400 text-[10px]">Ngày đặt:</span>
+                                                                                <strong className="text-slate-200">
+                                                                                    {(() => {
+                                                                                        const rawD = (req as any).order_date || req.date || (req as any).created_at || "";
+                                                                                        if (!rawD) return "—";
+                                                                                        if (/^\d{4}-\d{2}-\d{2}/.test(String(rawD))) {
+                                                                                            const [y, m, d] = String(rawD).slice(0, 10).split("-");
+                                                                                            return `${d}-${m}-${y}`;
+                                                                                        }
+                                                                                        return String(rawD);
+                                                                                    })()}
+                                                                                </strong>
+                                                                            </div>
+                                                                            <span className="text-slate-700">|</span>
+                                                                            <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                                                                <span className="text-slate-400 text-[10px]">Giao mong muốn:</span>
+                                                                                <strong className="text-slate-300">{(req.requestedDeliveryDate || "—")}</strong>
+                                                                            </div>
+                                                                            <span className="text-slate-700">|</span>
+                                                                            {(() => {
+                                                                                const reqIso = toIsoOrderDate(req.requestedDeliveryDate);
+                                                                                const estIso = toIsoOrderDate(req.estimatedDeliveryDate) || reqIso;
+                                                                                const isAdjusted = Boolean(estIso && reqIso && estIso !== reqIso);
+                                                                                const isOrderNotDelivered = !stockAnalysis.isFullyDelivered && !isCancelledOrder && req.status !== "Rejected" && !isStockOrder;
+                                                                                const overdueDeliveryDays = (isOrderNotDelivered && estIso && estIso < todayOrderIso)
+                                                                                    ? Math.max(1, Math.round((new Date(todayOrderIso).getTime() - new Date(estIso).getTime()) / 86400000))
+                                                                                    : 0;
+                                                                                const isDueToday = isOrderNotDelivered && Boolean(estIso && estIso === todayOrderIso);
+                                                                                const canEditEstDate = canManageAllOrders || hasSalesEditPerm || isOrderOfLoggedInStaff(req) || isWarehouseStaff;
+
+                                                                                return (
+                                                                                    <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                                                                        <span className="text-slate-400 text-[10px]">Giao dự kiến:</span>
+                                                                                        {canEditEstDate ? (
+                                                                                            <div className="flex items-center gap-1">
+                                                                                                <DateInputVN
+                                                                                                    value={estIso}
+                                                                                                    onChange={(e) => handleUpdateEstimatedDeliveryDate(req.id, e.target.value)}
+                                                                                                    className={cn(
+                                                                                                        "w-[7.2rem] bg-slate-900 border rounded px-1.5 py-0.5 text-[11px] font-mono font-bold focus:outline-none cursor-pointer",
+                                                                                                        overdueDeliveryDays > 0
+                                                                                                            ? "border-rose-500/80 text-rose-300 hover:border-rose-400 focus:border-rose-400"
+                                                                                                            : isAdjusted
+                                                                                                                ? "border-amber-500/70 text-amber-300 hover:border-amber-400 focus:border-indigo-500"
+                                                                                                                : "border-slate-750 text-slate-200 hover:border-indigo-500 focus:border-indigo-500"
+                                                                                                    )}
+                                                                                                    title={isAdjusted ? `Đã điều chỉnh (Ngày giao mong muốn: ${req.requestedDeliveryDate || reqIso})` : "Mặc định theo ngày giao mong muốn — bấm để điều chỉnh nếu thay đổi"}
+                                                                                                />
+                                                                                                {isAdjusted && (
+                                                                                                    <button
+                                                                                                        type="button"
+                                                                                                        onClick={() => handleUpdateEstimatedDeliveryDate(req.id, reqIso)}
+                                                                                                        className="text-[10px] text-amber-400 hover:text-amber-200 px-1 py-0.5 rounded bg-amber-950/60 border border-amber-700/50 cursor-pointer"
+                                                                                                        title={`Khôi phục về ngày giao mong muốn (${req.requestedDeliveryDate || reqIso})`}
+                                                                                                    >
+                                                                                                        ↺
+                                                                                                    </button>
+                                                                                                )}
+                                                                                            </div>
+                                                                                        ) : (
+                                                                                            <span className={cn("font-mono text-[11px] font-bold", overdueDeliveryDays > 0 ? "text-rose-300" : estIso ? "text-amber-300" : "text-slate-500")}>
+                                                                                                {estIso ? `📅 ${estIso}` : "—"}
+                                                                                            </span>
+                                                                                        )}
+                                                                                        {overdueDeliveryDays > 0 && (
+                                                                                            <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-rose-950/90 text-rose-300 border border-rose-500/50">
+                                                                                                🚨 Trễ {overdueDeliveryDays} ngày
+                                                                                            </span>
+                                                                                        )}
+                                                                                        {isDueToday && (
+                                                                                            <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-500/50">
+                                                                                                ⏰ Hạn hôm nay
+                                                                                            </span>
+                                                                                        )}
+                                                                                    </div>
+                                                                                );
+                                                                            })()}
+                                                                        </div>
+
                                                                         
                                                                         {/* Nhãn liên kết nhanh HĐ / BG / CĐ */}
                                                                         <div className="flex items-center gap-2 flex-wrap text-[11px] font-mono">
@@ -23581,22 +23660,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         )}
                                                                     </div>
                                                                 </td>
-                                                                <td className="p-3 font-mono text-slate-300 whitespace-nowrap">
-                                                                    {(() => {
-                                                                        const rawD = (req as any).order_date || req.date || (req as any).created_at || "";
-                                                                        if (!rawD) return "—";
-                                                                        if (/^\d{4}-\d{2}-\d{2}/.test(String(rawD))) {
-                                                                            const [y, m, d] = String(rawD).slice(0, 10).split("-");
-                                                                            return `${d}/${m}/${y}`;
-                                                                        }
-                                                                        return String(rawD);
-                                                                    })()}
-                                                                </td>
                                                             <td className="p-3">
                                                                 <button
                                                                     type="button"
                                                                     onClick={() => setViewingFactoryOrderItems(req)}
-                                                                    className="group flex flex-col gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-750 hover:border-indigo-500/60 transition-all text-left max-w-[260px] cursor-pointer shadow-sm"
+                                                                    className="group flex flex-col gap-1 px-2.5 py-1.5 rounded-lg bg-slate-900/90 hover:bg-slate-800 border border-slate-750 hover:border-indigo-500/60 transition-all text-left max-w-[320px] cursor-pointer shadow-sm"
                                                                     title="Nhấn để xem chi tiết danh sách mặt hàng, đơn giá & nguồn gốc"
                                                                 >
                                                                     <div className="flex items-center gap-1.5 w-full">
@@ -23648,66 +23716,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         </div>
                                                                     )}
                                                                 </button>
-                                                            </td>
-                                                            <td className="p-3 text-slate-400 font-mono whitespace-nowrap">{req.requestedDeliveryDate || "—"}</td>
-                                                            <td className="p-3 whitespace-nowrap">
-                                                                {(() => {
-                                                                    const reqIso = toIsoOrderDate(req.requestedDeliveryDate);
-                                                                    const estIso = toIsoOrderDate(req.estimatedDeliveryDate) || reqIso;
-                                                                    const isAdjusted = Boolean(estIso && reqIso && estIso !== reqIso);
-                                                                    const isOrderNotDelivered = !stockAnalysis.isFullyDelivered && !isCancelledOrder && req.status !== "Rejected" && !isStockOrder;
-                                                                    const overdueDeliveryDays = (isOrderNotDelivered && estIso && estIso < todayOrderIso)
-                                                                        ? Math.max(1, Math.round((new Date(todayOrderIso).getTime() - new Date(estIso).getTime()) / 86400000))
-                                                                        : 0;
-                                                                    const isDueToday = isOrderNotDelivered && Boolean(estIso && estIso === todayOrderIso);
-                                                                    const canEditEstDate = canManageAllOrders || hasSalesEditPerm || isOrderOfLoggedInStaff(req) || isWarehouseStaff;
-
-                                                                    return (
-                                                                        <div className="flex flex-col gap-1">
-                                                                            {canEditEstDate ? (
-                                                                                <div className="flex items-center gap-1.5">
-                                                                                    <DateInputVN
-                                                                                        value={estIso}
-                                                                                        onChange={(e) => handleUpdateEstimatedDeliveryDate(req.id, e.target.value)}
-                                                                                        className={cn(
-                                                                                            "bg-slate-950 border rounded px-2 py-1 text-xs font-mono font-bold focus:outline-none cursor-pointer",
-                                                                                            overdueDeliveryDays > 0
-                                                                                                ? "border-rose-500/80 text-rose-300 hover:border-rose-400 focus:border-rose-400"
-                                                                                                : isAdjusted
-                                                                                                    ? "border-amber-500/70 text-amber-300 hover:border-amber-400 focus:border-indigo-500"
-                                                                                                    : "border-slate-750 text-slate-200 hover:border-indigo-500 focus:border-indigo-500"
-                                                                                        )}
-                                                                                        title={isAdjusted ? `Đã điều chỉnh (Ngày giao mong muốn: ${req.requestedDeliveryDate || reqIso})` : "Mặc định theo ngày giao mong muốn — bấm để điều chỉnh nếu thay đổi"}
-                                                                                    />
-                                                                                    {isAdjusted && (
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            onClick={() => handleUpdateEstimatedDeliveryDate(req.id, reqIso)}
-                                                                                            className="text-[10px] text-amber-400 hover:text-amber-200 px-1 py-0.5 rounded bg-amber-950/60 border border-amber-700/50 cursor-pointer"
-                                                                                            title={`Khôi phục về ngày giao mong muốn (${req.requestedDeliveryDate || reqIso})`}
-                                                                                        >
-                                                                                            ↺
-                                                                                        </button>
-                                                                                    )}
-                                                                                </div>
-                                                                            ) : (
-                                                                                <span className={cn("font-mono text-xs font-bold", overdueDeliveryDays > 0 ? "text-rose-300" : estIso ? "text-amber-300" : "text-slate-500")}>
-                                                                                    {estIso ? `📅 ${estIso}` : "—"}
-                                                                                </span>
-                                                                            )}
-                                                                            {overdueDeliveryDays > 0 && (
-                                                                                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-rose-950/90 text-rose-300 border border-rose-500/50 w-fit">
-                                                                                    🚨 Trễ hẹn {overdueDeliveryDays} ngày
-                                                                                </span>
-                                                                            )}
-                                                                            {isDueToday && (
-                                                                                <span className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-amber-950/90 text-amber-300 border border-amber-500/50 w-fit">
-                                                                                    ⏰ Hạn giao hôm nay
-                                                                                </span>
-                                                                            )}
-                                                                        </div>
-                                                                    );
-                                                                })()}
                                                             </td>
                                                             <td className="p-3 text-slate-300 font-semibold whitespace-nowrap">{req.salesRepName}</td>
                                                             <td className="p-3 whitespace-nowrap">
@@ -24233,7 +24241,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <React.Fragment>
                                                                     {isProgressExpanded && (
                                                                         <tr className="bg-slate-950/25">
-                                                                            <td colSpan={canManageAllOrders ? 10 : 9} className="px-4 pb-2.5 pt-0 border-b border-slate-800/60">
+                                                                            <td colSpan={canManageAllOrders ? 7 : 6} className="px-4 pb-2.5 pt-0 border-b border-slate-800/60">
                                                                                 <div className="mt-1.5 rounded-lg border border-cyan-800/40 bg-cyan-950/20 p-2.5 text-[11px] font-mono space-y-1.5">
                                                                                     <div className="flex items-center justify-between gap-3 flex-wrap">
                                                                                         <div className="flex items-center gap-2 flex-wrap">
@@ -24341,7 +24349,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                                     {slipList && (
                                                                         <tr className="bg-slate-950/20">
-                                                                            <td colSpan={canManageAllOrders ? 10 : 9} className="px-4 pb-2 pt-0 border-b border-slate-800/60">{slipList}</td>
+                                                                            <td colSpan={canManageAllOrders ? 7 : 6} className="px-4 pb-2 pt-0 border-b border-slate-800/60">{slipList}</td>
                                                                         </tr>
                                                                     )}
                                                                 </React.Fragment>
