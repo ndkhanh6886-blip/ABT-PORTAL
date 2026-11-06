@@ -13885,8 +13885,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 statusBadgeText = "🚚 Đang đặt hàng NCC (PO)";
                 statusBadgeClass = "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30";
             } else if (hasPR || order.prCode) {
-                const prDisplay = order.prCode || (order.id?.startsWith("SO") ? order.id.replace(/^SO/, "PR") : "");
-                statusBadgeText = prDisplay ? `⏳ Đã gửi PR (${prDisplay})` : "⏳ Đã gửi PR (Chờ gom PO)";
+                statusBadgeText = "⏳ Đã gửi PR (Chờ gom PO)";
                 statusBadgeClass = "bg-amber-600/20 text-amber-300 border border-amber-500/40";
             }
 
@@ -13946,10 +13945,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             statusBadgeText = isPartialReady ? "🚚 Đang mua hàng (Có sẵn 1 phần)" : "🚚 Đang mua hàng";
             statusBadgeClass = "bg-indigo-600/20 text-indigo-300 border border-indigo-500/30";
         } else if (hasPR || order.prCode) {
-            const prDisplay = order.prCode || (order.id?.startsWith("SO") ? order.id.replace(/^SO/, "PR") : "");
-            statusBadgeText = isPartialReady 
-                ? (prDisplay ? `⏳ Đã gửi PR (${prDisplay}): Có sẵn 1 phần` : "⏳ Đã gửi PR (Có sẵn 1 phần)")
-                : (prDisplay ? `⏳ Đã gửi PR (${prDisplay})` : "⏳ Đã gửi PR (Chờ PO)");
+            statusBadgeText = isPartialReady ? "⏳ Đã gửi PR (Có sẵn 1 phần)" : "⏳ Đã gửi PR (Chờ PO)";
             statusBadgeClass = "bg-amber-600/20 text-amber-300 border border-amber-500/40";
         } else if (needsProcure) {
             statusBadgeText = order.cancelledPrCode
@@ -23448,13 +23444,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         if (req.prCode && ((Array.isArray(po.pr_ids) && po.pr_ids.includes(req.prCode)) || mentionsCode(po.notes, String(req.prCode)))) return true;
                                                         return soKeys.some((k) => mentionsCode(po.notes, k));
                                                     };
+                                                    const allOrderPOs = (procurementOrders || []).filter(poLinksToOrder);
                                                     const linkedPOs = (stockAnalysis.isReadyAll || stockAnalysis.isFullyDelivered)
                                                         ? []
-                                                        : (procurementOrders || []).filter(poLinksToOrder);
+                                                        : allOrderPOs;
                                                     const isPODone = (po: any) => po.status === "COMPLETED" || po.status === "Received" || po.status === "DELIVERED";
                                                     const linkedPODoneCount = linkedPOs.filter(isPODone).length;
 
                                                     const primaryPO = linkedPOs[0] || null;
+                                                    const resolvedPrCode = req.prCode || allOrderPOs.map((po: any) => (Array.isArray(po.pr_ids) && po.pr_ids[0]) || (Array.isArray(po.items) && po.items.map((it: any) => it?.source_pr_code).find(Boolean))).find(Boolean) || ((stockAnalysis.hasPR || allOrderPOs.length > 0 || ["PR_PENDING", "PR_CREATED", "ORDERED", "COMPLETED", "RECEIVED"].includes(String(req.procureStatus || ""))) && req.id?.startsWith("SO") ? req.id.replace(/^SO/, "PR") : "");
                                                     const hasLinkedPO = linkedPOs.length > 0;
                                                     const arePOsReceived = hasLinkedPO && linkedPOs.every((po: any) => 
                                                         po.status === "COMPLETED" || po.status === "Received" || po.status === "DELIVERED"
@@ -23803,7 +23801,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             </span>
                                                                                         ) : (req.prCode || stockAnalysis.hasPR) ? (
                                                                                             <span className="text-amber-300 font-bold bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/40 text-[9px] flex items-center gap-1 shadow-sm">
-                                                                                                <span>⏳ Chờ Cung ứng lập PO NCC</span>
+                                                                                                <span>⏳ Đã gửi PR: <strong className="text-amber-200">{resolvedPrCode || "Chờ gom PO"}</strong></span>
                                                                                             </span>
                                                                                         ) : (
                                                                                             <span className="text-cyan-300 font-bold bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-500/40 text-[9px] flex items-center gap-1 shadow-sm">
@@ -23869,7 +23867,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     </div>
 
                                                                                     {/* 2. Trạng thái Đề xuất PR hoặc Đơn đặt NCC (PO - hỗ trợ nhiều PO từ nhiều NCC khác nhau) */}
-                                                                                    {linkedPOs.length > 0 && !stockAnalysis.isReadyAll && !stockAnalysis.isFullyDelivered ? (
+                                                                                    {(resolvedPrCode || linkedPOs.length > 0) && (
+                                                                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                                                                            {resolvedPrCode && (
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    onClick={() => handleOpenSingleProcureModal(req)}
+                                                                                                    className="w-fit text-amber-300 hover:text-amber-100 font-bold bg-amber-950/60 hover:bg-amber-900/70 px-1.5 py-0.5 rounded border border-amber-500/30 text-[9px] flex items-center gap-1 cursor-pointer transition-colors"
+                                                                                                    title="Bấm để xem lại hoặc cập nhật Đề xuất mua hàng (PR) đã gửi Cung Ứng"
+                                                                                                >
+                                                                                                    <span>📋 PR: <strong className="text-amber-200">{resolvedPrCode}</strong></span>
+                                                                                                </button>
+                                                                                            )}
+                                                                                            {linkedPOs.length > 0 && (
                                                                                         <button
                                                                                             type="button"
                                                                                             onClick={() => setExpandedOrderProgressIds(prev => ({ ...prev, [req.id]: !prev[req.id] }))}
@@ -23885,7 +23895,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             <span className="font-normal opacity-80">· {linkedPODoneCount}/{linkedPOs.length} đã về</span>
                                                                                             {expandedOrderProgressIds[req.id] ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                                                                                         </button>
-                                                                                    ) : null}
+                                                                                            )}
+                                                                                        </div>
+                                                                                    )}
 
                                                                                     {/* 3. Lựa chọn thao tác: Giao đủ hàng / Giao trước 1 phần / Tạo PR mua NCC */}
                                                                                     {canManageAllOrders && !stockAnalysis.isFullyDelivered && (
@@ -24249,7 +24261,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 </span>
                                                                                             ) : linkedPOs.length > 0 ? (
                                                                                                 <span className="text-slate-300">
-                                                                                                    {linkedPOs.length} PO đặt cho đơn này · <strong className={linkedPODoneCount === linkedPOs.length ? "text-emerald-400" : "text-cyan-300"}>{linkedPODoneCount}/{linkedPOs.length} đã về đủ</strong>
+                                                                                                    {resolvedPrCode ? <>Mã PR: <strong className="text-amber-300">{resolvedPrCode}</strong> · </> : null}{linkedPOs.length} PO đặt cho đơn này · <strong className={linkedPODoneCount === linkedPOs.length ? "text-emerald-400" : "text-cyan-300"}>{linkedPODoneCount}/{linkedPOs.length} đã về đủ</strong>
                                                                                                 </span>
                                                                                             ) : (req.prCode || stockAnalysis.hasPR) ? (
                                                                                                 <span className="text-amber-300">
