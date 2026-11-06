@@ -2526,10 +2526,35 @@ export function SalesFullABT() {
 
     // Tổng hợp toàn bộ các lô đang có tồn khả dụng trong kho (từ inventory_lots + fallback inventory_items + inboundLogs13b)
     // kèm số lượng khả dụng thực tế theo từng lô (quantity_on_hand - quantity_allocated của các đơn khác).
+    /** SL theo "mã__lô" mà phiếu giao đang sửa đã xuất khỏi kho (được cộng trả lại khi chọn lô). */
+    const getEditingSlipLotCredits = (): Map<string, { qty: number; item: any }> => {
+        const m = new Map<string, { qty: number; item: any }>();
+        const slip = deliveryEditSlipRef.current;
+        if (!slip || slip.customerName === "Kho Trung Tâm") return m; // điều chuyển nội bộ là phiếu NHẬP, không cộng trả
+        (slip.items || []).forEach((it: any) => {
+            const code = String(it?.productCode || it?.product_code || it?.code || "").trim().toLowerCase();
+            const lot = String(it?.lotNo || it?.lotNumber || it?.lot_number || "").trim().toLowerCase();
+            const q = Number(it?.quantity) || 0;
+            if (!code || !lot || q <= 0) return;
+            const k = `${code}__${lot}`;
+            const prev = m.get(k);
+            m.set(k, { qty: (prev?.qty || 0) + q, item: prev?.item || it });
+        });
+        return m;
+    };
+
     const getAllAvailableWarehouseLots = (forOrderCode?: string) => {
         const today = todayVN();
         const targetOrd = String(forOrderCode || "").trim().toLowerCase();
         const activeRes = (reservations || []).filter((r: any) => String(r.status || "").toUpperCase() === "ACTIVE");
+        const editCredits = getEditingSlipLotCredits();
+        const creditFor = (l: any) => {
+            const k = `${String(l.product_code || "").trim().toLowerCase()}__${String(l.lot_number || "").trim().toLowerCase()}`;
+            const c = editCredits.get(k);
+            if (!c) return 0;
+            editCredits.delete(k); // chỉ cộng trả một lần cho mỗi lô (lô có thể nằm ở nhiều vị trí kho)
+            return c.qty;
+        };
 
         const rawLots: any[] = [];
         const seenLotKeys = new Set<string>();
@@ -2616,7 +2641,36 @@ export function SalesFullABT() {
             }
         }
 
-        return rawLots
+        // Cộng trả SL phiếu đang sửa đã xuất; lô đã bị xuất hết (không còn dòng tồn) được thêm lại để chọn được
+        const creditedLots = rawLots.map((l: any) => {
+            const c = creditFor(l);
+            return c > 0 ? { ...l, quantity_on_hand: (Number(l.quantity_on_hand) || 0) + c } : l;
+        });
+        const getItemCodeLoose = (it: any) => String(it?.productCode || it?.product_code || it?.code || "").trim();
+        editCredits.forEach(({ qty, item }) => {
+            // Lô phiếu đang sửa đã ghi nhầm (số lô thuộc mã KHÁC trong kho): không thêm lại, để kho chọn đúng lô
+            const codeLower = getItemCodeLoose(item).toLowerCase();
+            const lotLower = String(item.lotNo || item.lotNumber || item.lot_number || "").trim().toLowerCase();
+            const belongsToOther = (warehouseLots || []).some((l: any) =>
+                String(l.lot_number || "").trim().toLowerCase() === lotLower &&
+                String(l.product_code || "").trim().toLowerCase() !== codeLower);
+            if (belongsToOther) return;
+            creditedLots.push({
+                id: `edit-${getItemCodeLoose(item)}-${item.lotNo || item.lotNumber}`,
+                product_code: getItemCodeLoose(item),
+                product_name: item.productName || item.product_name || getItemCodeLoose(item),
+                lot_number: String(item.lotNo || item.lotNumber || item.lot_number || "").trim(),
+                expiry_date: item.expDate || item.expiry_date || "",
+                warehouse_location: "Kho Trung Tâm",
+                quantity_on_hand: qty,
+                quantity_allocated: 0,
+                unit: item.unit || "Hộp",
+                specification: item.specification || "",
+                is_quarantined: false
+            });
+        });
+
+        return creditedLots
             .filter((l: any) => {
                 const onHand = Number(l.quantity_on_hand) || 0;
                 if (onHand <= 0 || l.is_quarantined) return false;
@@ -4128,6 +4182,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [deliveryStepStatus, setDeliveryStepStatus] = useState<"PENDING_DELIVERY" | "WAREHOUSE_DELIVERED" | "DELIVERED">("PENDING_DELIVERY");
     const [deliveryBatchNumber, setDeliveryBatchNumber] = useState<number>(1);
     const [editingDeliverySlip, setEditingDeliverySlip] = useState<any>(null);
+    // Phiếu giao đang sửa: tồn của các lô phiếu này đã trừ khi lập phiếu, nên được cộng trả lại vào khả dụng
+    // (không thì lô vừa chọn "biến mất" khỏi danh sách khi sửa phiếu). Ref để dùng được ngay khi mở modal.
+    const deliveryEditSlipRef = useRef<any>(null);
+    deliveryEditSlipRef.current = editingDeliverySlip;
     const [confirmDeliveryTargetSlip, setConfirmDeliveryTargetSlip] = useState<any>(null);
 
     // Delivery & Invoice confirmation modal states
@@ -14676,6 +14734,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
         const editSlip = opts?.slip || null;
+        deliveryEditSlipRef.current = editSlip;
 
         if (!editSlip && fo) {
             const hasZero = fo.hasZeroPriceItems || (fo.items && fo.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0));
@@ -14902,16 +14961,46 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 if (rawDraft) {
                     const parsed = JSON.parse(rawDraft);
                     if (Array.isArray(parsed?.items) && parsed.items.length > 0) {
+                        // Bản nháp chỉ giữ lựa chọn của người lập (lô, SL, hạn dùng, ghi chú). SL đặt / đã lập / còn lại,
+                        // giá, VAT luôn lấy theo đơn hiện tại: bản nháp cũ (trước khi SO được sửa) không được ghi đè SO.
+                        const freshByGroup = new Map<string, any>();
+                        items.forEach((fIt: any) => { if (!freshByGroup.has(fIt.lineGroupKey)) freshByGroup.set(fIt.lineGroupKey, fIt); });
+                        const freshKeyByCode = new Map<string, string>();
+                        items.forEach((fIt: any) => { if (!freshKeyByCode.has(fIt.productCode)) freshKeyByCode.set(fIt.productCode, fIt.lineGroupKey); });
+                        let changed = false;
                         let curGroupKey = "";
-                        finalItems = parsed.items.map((dIt: any, dIdx: number) => {
+                        const merged: any[] = [];
+                        const usedGroups = new Set<string>();
+                        parsed.items.forEach((dIt: any) => {
                             if (!dIt.isExtraLot) {
-                                curGroupKey = dIt.lineGroupKey || `${dIt.productCode}__line_${dIdx}`;
+                                curGroupKey = freshByGroup.has(dIt.lineGroupKey) ? dIt.lineGroupKey : (freshKeyByCode.get(dIt.productCode) || "");
                             }
-                            return {
-                                ...dIt,
-                                lineGroupKey: dIt.lineGroupKey || curGroupKey || dIt.productCode
-                            };
+                            const fresh = curGroupKey ? freshByGroup.get(curGroupKey) : null;
+                            if (!fresh) { changed = true; return; } // mặt hàng không còn trong đơn / đã giao đủ
+                            if (Number(dIt.orderedQty) !== Number(fresh.orderedQty) || Number(dIt.remainingQty) !== Number(fresh.remainingQty)) changed = true;
+                            usedGroups.add(curGroupKey);
+                            merged.push({
+                                ...fresh,
+                                quantity: Math.max(0, Math.min(Number(dIt.quantity) || 0, Number(fresh.remainingQty ?? Number.MAX_SAFE_INTEGER))),
+                                lotNo: dIt.lotNo ?? fresh.lotNo,
+                                expDate: dIt.expDate ?? fresh.expDate,
+                                notes: dIt.notes ?? fresh.notes,
+                                needsInvoice: dIt.needsInvoice ?? fresh.needsInvoice,
+                                isManualLot: Boolean(dIt.isManualLot),
+                                isExtraLot: Boolean(dIt.isExtraLot),
+                                selectedLotAvail: undefined,
+                                selectedLotProductCode: dIt.selectedLotProductCode,
+                                lineGroupKey: curGroupKey
+                            });
                         });
+                        // Mặt hàng mới thêm vào đơn sau khi lưu nháp
+                        items.forEach((fIt: any) => {
+                            if (!usedGroups.has(fIt.lineGroupKey)) { changed = true; merged.push(fIt); usedGroups.add(fIt.lineGroupKey); }
+                        });
+                        finalItems = merged.length > 0 ? merged : items;
+                        if (changed) {
+                            showToast(`Đơn ${target.order_code} đã thay đổi so với bản nháp phiếu giao đang lưu tạm: SL đặt / còn lại đã cập nhật theo đơn hiện tại, vui lòng kiểm tra lại lô & SL giao.`, "warning");
+                        }
                         if (parsed.mode === "FULL" || parsed.mode === "PARTIAL") finalMode = parsed.mode;
                         if (typeof parsed.notes === "string") finalNotes = parsed.notes;
                         if (parsed.receiverName) setDeliveryReceiverName(parsed.receiverName);
@@ -14920,7 +15009,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         if (parsed.stepStatus) finalStep = parsed.stepStatus;
                         if (parsed.dispatchLocation) finalDispatchLoc = parsed.dispatchLocation;
                         if (parsed.dispatcherName) finalDispatcher = parsed.dispatcherName;
-                        showToast(`Đã khôi phục thao tác lập phiếu giao đang lưu tạm của đơn ${target.order_code}.`, "info");
+                        if (!changed) showToast(`Đã khôi phục thao tác lập phiếu giao đang lưu tạm của đơn ${target.order_code}.`, "info");
                     }
                 }
             } catch {}
@@ -15135,7 +15224,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             for (const [code, info] of Object.entries(productTotalQtys)) {
                 if (info.totalQty < 0 || info.totalQty > info.maxQty) {
-                    showToast(`Tổng số lượng giao các lô của "${info.name}" (${info.totalQty}) vượt quá số lượng còn lại (${info.maxQty}).`, "warning");
+                    showToast(info.totalQty < 0
+                        ? `Mã ${code}: số lượng giao không hợp lệ (${info.totalQty}).`
+                        : `Mã ${code}: tổng SL giao các lô (${info.totalQty}) vượt SL còn phải giao theo đơn (${info.maxQty}). Đây là giới hạn theo SO, không phải tồn kho — hãy giảm SL giao hoặc kiểm tra lại SL đặt trên SO.`, "warning");
                     return;
                 }
             }
@@ -15143,6 +15234,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const slipItems = normalizedItems
                 .filter(x => x.qty > 0)
                 .map(x => ({ ...x.item, quantity: x.qty }));
+
+            // Không cho lưu số lô của mã hàng KHÁC (vd: lô 200687.D.IC của SQS-122 gán cho SQS-112): xuất sai lô, sai truy vết
+            for (const it of slipItems) {
+                const code = getItemCode(it).toLowerCase();
+                const lot = String(it.lotNo || "").trim().toLowerCase();
+                if (!code || !lot) continue;
+                const rows = (warehouseLots || []).filter((l: any) => String(l.lot_number || "").trim().toLowerCase() === lot);
+                const ownRow = rows.some((l: any) => String(l.product_code || "").trim().toLowerCase() === code && (Number(l.quantity_on_hand) || 0) > 0);
+                const other = rows.find((l: any) => String(l.product_code || "").trim().toLowerCase() !== code && (Number(l.quantity_on_hand) || 0) > 0);
+                const wasOnThisSlip = (editSlip?.items || []).some((x: any) =>
+                    getItemCode(x).toLowerCase() === code && String(x.lotNo || x.lotNumber || "").trim().toLowerCase() === lot);
+                if (other && !ownRow) {
+                    showToast(`Mã ${getItemCode(it)}: lô ${it.lotNo} thuộc mã ${other.product_code}, không phải ${getItemCode(it)}${wasOnThisSlip ? " (phiếu này đã ghi nhầm lô từ trước)" : ""}. Vui lòng chọn lại lô đúng.`, "warning");
+                    return;
+                }
+            }
             if (slipItems.length === 0) {
                 showToast("Vui lòng nhập số lượng giao > 0 cho ít nhất 1 mặt hàng!", "warning");
                 return;
@@ -32680,10 +32787,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         const matchedWarehouseLot = cleanTypedLot
                                             ? availLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot)
                                             : null;
-                                        // Số lô gõ tay thuộc mã KHÁC: cảnh báo, không lấy tồn của lô đó
+                                        const itemCodeLower = String(item.productCode || "").trim().toLowerCase();
+                                        // Số lô thuộc mã KHÁC (có trong kho của mã khác): cảnh báo, không lấy tồn của lô đó, không cho lưu
                                         const typedLotOtherProduct = cleanTypedLot && !matchedWarehouseLot
-                                            ? allWarehouseLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot)
+                                            ? allWarehouseLots.find((l: any) =>
+                                                String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot &&
+                                                String(l.product_code || "").trim().toLowerCase() !== itemCodeLower)
                                             : null;
+                                        // Lô đúng mã nhưng đã hết tồn khả dụng
+                                        const typedLotOwnButEmpty = Boolean(cleanTypedLot && !matchedWarehouseLot && !typedLotOtherProduct && (warehouseLots || []).some((l: any) =>
+                                            String(l.product_code || "").trim().toLowerCase() === itemCodeLower &&
+                                            String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot));
                                         const selectedLotAvailQty = matchedWarehouseLot
                                             ? (Number(matchedWarehouseLot.available_qty ?? matchedWarehouseLot.quantity_on_hand) || 0)
                                             : item.selectedLotAvail;
@@ -32751,6 +32865,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     : "bg-amber-950/80 text-amber-300 border-amber-700/60"
                                                             )}>
                                                                 📦 Đang tách {sameCodeCount} lô trong cùng khung • Tổng SL xuất: {sumSameCodeQty}/{item.remainingQty ?? item.orderedQty ?? "-"} {item.unit || "Bộ"}
+                                                            </span>
+                                                        )}
+                                                        {item.remainingQty !== undefined && sumSameCodeQty > Number(item.remainingQty) && (
+                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded border bg-rose-950/80 text-rose-300 border-rose-700/60">
+                                                                ⚠ {item.productCode}: SL giao {sumSameCodeQty} vượt SL còn phải giao theo đơn ({item.remainingQty})
                                                             </span>
                                                         )}
                                                         <span className="ml-auto flex items-center gap-1.5">
@@ -32911,7 +33030,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                         {typedLotOtherProduct && (
                                                             <div className="mt-1 px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-700/60 text-[10px] text-rose-300 font-bold">
-                                                                ⚠ Lô này thuộc mã {typedLotOtherProduct.product_code}, không phải {item.productCode}
+                                                                ⚠ Lô này thuộc mã {typedLotOtherProduct.product_code}, không phải {item.productCode} — chọn lại lô đúng của {item.productCode}
+                                                            </div>
+                                                        )}
+                                                        {typedLotOwnButEmpty && (
+                                                            <div className="mt-1 px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-700/60 text-[10px] text-amber-300 font-bold">
+                                                                ⚠ Lô {item.lotNo} của {item.productCode} đã hết tồn khả dụng
                                                             </div>
                                                         )}
                                                         {matchedWarehouseLot && (

@@ -25,12 +25,32 @@ const isValidISO = (iso: string) => {
     return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso;
 };
 
-/** Gõ số -> tự chèn "/" thành dd/mm/yyyy. */
+/** Gõ số -> tự chèn "/" thành dd/mm/yyyy. Gõ kèm dấu phân cách ("4/9/2031", "4.9.31") thì giữ nguyên cách gõ. */
 const mask = (raw: string) => {
+    const parts = raw.replace(/[^\d/.\-]/g, "").split(/[/.\-]/);
+    if (parts.length > 1 && parts.length <= 3 && (parts[0] || "").length <= 2 && (parts[1] || "").length <= 2 && (parts[2] || "").length <= 4) {
+        return parts.join("/");
+    }
     const digits = raw.replace(/\D/g, "").slice(0, 8);
     if (digits.length <= 2) return digits;
     if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
     return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+};
+
+/** Ngày gõ tay -> "YYYY-MM-DD": d/m/yyyy, d/m/yy, ddmmyy, ddmmyyyy (năm 2 số = 20yy). `full`: chỉ nhận năm 4 số. */
+const parseTyped = (t: string, full = false): string => {
+    const s = t.trim();
+    let d = "", m = "", y = "";
+    const sep = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{2}|\d{4})$/);
+    if (sep) { [, d, m, y] = sep; }
+    else {
+        const digits = s.replace(/\D/g, "");
+        if (digits.length === 8 || digits.length === 6) { d = digits.slice(0, 2); m = digits.slice(2, 4); y = digits.slice(4); }
+    }
+    if (!d || (full && y.length !== 4)) return "";
+    if (y.length === 2) y = String(2000 + Number(y));
+    const iso = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+    return isValidISO(iso) ? iso : "";
 };
 
 type Props = Omit<React.InputHTMLAttributes<HTMLInputElement>, "type" | "value" | "onChange" | "min" | "max"> & {
@@ -58,14 +78,14 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
 
     const emit = (v: string) => onChange?.({ target: { value: v } });
 
+    const inRange = (next: string) => (!min || next >= toISODate(min)) && (!max || next <= toISODate(max));
+
     const handleText = (raw: string) => {
         const t = mask(raw);
         setText(t);
         if (t === "") { emit(""); return; }
-        if (t.length === 10) {
-            const next = toISODate(t);
-            if (isValidISO(next) && (!min || next >= toISODate(min)) && (!max || next <= toISODate(max))) emit(next);
-        }
+        const next = parseTyped(t, true);
+        if (next && inRange(next)) emit(next);
     };
 
     const openPicker = () => {
@@ -88,19 +108,27 @@ export function DateInputVN({ value, onChange, className = "", min, max, disable
                 value={text}
                 disabled={disabled}
                 required={required}
-                onClick={(e) => {
-                    openPicker();
-                    rest.onClick?.(e);
+                // Bấm vào ô để gõ tay (lịch chỉ mở khi bấm biểu tượng lịch hoặc Alt+↓)
+                onKeyDown={(e) => {
+                    if (e.altKey && e.key === "ArrowDown") { e.preventDefault(); openPicker(); }
+                    rest.onKeyDown?.(e);
                 }}
-                onFocus={() => setFocused(true)}
+                onFocus={(e) => { setFocused(true); e.currentTarget.select(); }}
                 onBlur={(e) => {
                     setFocused(false);
-                    // gõ dở / sai ngày: trả lại ngày đang chọn
-                    if (text && !isValidISO(toISODate(text))) setText(formatDateVN(iso));
+                    // năm 2 số / gõ không có "/" (vd 4/9/31, 040931): đổi thành ngày đầy đủ
+                    const typed = text ? parseTyped(text) : "";
+                    if (typed && inRange(typed)) {
+                        if (typed !== iso) emit(typed);
+                        setText(formatDateVN(typed));
+                    } else if (text) {
+                        // gõ dở / sai ngày: trả lại ngày đang chọn
+                        setText(formatDateVN(iso));
+                    }
                     onBlur?.(e);
                 }}
                 onChange={(e) => handleText(e.target.value)}
-                className={`${className} pr-6 cursor-pointer`}
+                className={`${className} pr-6 cursor-text`}
             />
             <button
                 type="button"

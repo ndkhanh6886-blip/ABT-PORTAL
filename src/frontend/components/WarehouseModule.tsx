@@ -60,7 +60,23 @@ import { useAuth } from "@/frontend/contexts/AuthContext";
 import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDates } from "@/backend/services/dates";
-import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
+import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateInputVN";
+import { printWarehouseSlip, exportWarehouseSlipExcel, txPartnerName } from "@/frontend/components/warehouse/warehouseSlipDocs";
+
+/** Dòng hàng của phiếu có khớp từ khóa tìm (mã hàng, tên, số lô). */
+function txItemMatches(it: any, q: string): boolean {
+  if (!q) return false;
+  return [it?.product_code, it?.productCode, it?.product_name, it?.name, it?.lot_number].some((v: any) => String(v || "").toLowerCase().includes(q));
+}
+
+/** Tô màu phần khớp từ khóa trong chuỗi. */
+function Hl({ text, q }: { text: any; q: string }) {
+  const s = String(text ?? "");
+  if (!q) return <>{s}</>;
+  const i = s.toLowerCase().indexOf(q);
+  if (i < 0) return <>{s}</>;
+  return <>{s.slice(0, i)}<mark className="bg-yellow-300 text-slate-900 rounded px-0.5">{s.slice(i, i + q.length)}</mark>{s.slice(i + q.length)}</>;
+}
 
 /** NCC, số HĐ / tờ khai, loại hình, vận chuyển và tổng tiền của một phiếu kho (từ dòng hàng, hoặc ghi chú phiếu). */
 function txFinanceMeta(tx: any) {
@@ -2107,6 +2123,30 @@ export const WarehouseModule: React.FC = () => {
     }));
   };
 
+  /** Danh sách phụ kiện của dòng hàng: dùng sẵn trên dòng, chưa có thì tạo từ định mức BOM (giữ mã / tên từng phụ kiện). */
+  const ensureInboundComponents = (item: any): any[] => {
+    const existing: any[] = Array.isArray(item?.components) ? item.components : [];
+    const bom = productComponents.filter((c) => c.parent_product_code === item?.product_code);
+    // Đã có đủ phụ kiện hợp lệ (có mã) thì giữ nguyên
+    if (existing.length > 0 && (bom.length === 0 || (existing.length >= bom.length && existing.every((c: any) => c?.component_code)))) return existing;
+    if (bom.length === 0) return existing;
+    // Tạo theo BOM; ghép lại phần người dùng đã nhập (lô, hạn, QC…) nếu danh sách cũ bị thiếu / mất mã phụ kiện
+    return bom.map((c, i) => {
+      const old = existing.find((e: any) => e?.component_code && e.component_code === c.component_code) || (!existing[i]?.component_code ? existing[i] : undefined) || {};
+      return {
+        ...c,
+        lot_number: item?.lot_number || "",
+        serial_number: "",
+        serial_or_lot: c.tracking_type === "SERIAL" ? "" : (item?.lot_number || ""),
+        expiry_date: item?.expiry_date || "",
+        qc_status: "Đạt chuẩn 100%",
+        ...old,
+        component_code: c.component_code,
+        component_name: c.component_name
+      };
+    });
+  };
+
   const handleInboundItemChange = (index: number, field: string, value: any) => {
     setInboundForm((prev: any) => {
       const updated = [...prev.items];
@@ -2144,19 +2184,22 @@ export const WarehouseModule: React.FC = () => {
       }
 
       if (field === "lot_number") {
-        // Đồng bộ số Lô sang các thành phần con nếu có
-        if (Array.isArray(updated[index].components) && updated[index].components.length > 0) {
-          updated[index].components = updated[index].components.map((c: any) => ({
+        // Đồng bộ số Lô sang MỌI thành phần con (kể cả dòng lấy từ PO / Excel chưa có sẵn danh sách phụ kiện)
+        const comps = ensureInboundComponents(updated[index]);
+        if (comps.length > 0) {
+          updated[index].components = comps.map((c: any) => ({
             ...c,
-            lot_number: value
+            lot_number: value,
+            ...(c.tracking_type === "SERIAL" ? {} : { serial_or_lot: value })
           }));
         }
       }
 
       if (field === "expiry_date") {
-        // Đồng bộ hạn dùng sang các thành phần con nếu có
-        if (Array.isArray(updated[index].components) && updated[index].components.length > 0) {
-          updated[index].components = updated[index].components.map((c: any) => ({
+        // Đồng bộ hạn dùng sang mọi thành phần con
+        const comps = ensureInboundComponents(updated[index]);
+        if (comps.length > 0) {
+          updated[index].components = comps.map((c: any) => ({
             ...c,
             expiry_date: value
           }));
@@ -2308,15 +2351,8 @@ export const WarehouseModule: React.FC = () => {
         notes: `${inboundForm.inbound_type}. Vận chuyển: ${inboundForm.shipping_unit || "N/A"}. HĐ: ${inboundForm.vat_invoice_no || "N/A"}.${supplierPart} ${inboundForm.notes || ""}`.trim(),
         items: inboundForm.items.map((it: any) => {
           // Bảo lưu danh sách thành phần con nếu có
-          const comps = it.components && it.components.length > 0 
-            ? it.components 
-            : productComponents.filter((c) => c.parent_product_code === it.product_code).map((c, i) => ({
-                ...c,
-                lot_number: it.lot_number || `LOT-${c.component_code.slice(-3)}-01`,
-                serial_number: `SN-${c.component_code.replace(/[^a-zA-Z0-9]/g, '')}-00${i + 1}`,
-                expiry_date: it.expiry_date || "",
-                qc_status: "Đạt chuẩn 100%"
-              }));
+          // Không tự đặt số lô / serial giả cho phụ kiện: lấy lô / hạn của dòng chính khi chưa nhập riêng
+          const comps = ensureInboundComponents(it);
 
           const matchedCatalogProd = products.find((p) => p.code === it.product_code.trim());
           return {
@@ -2628,7 +2664,10 @@ export const WarehouseModule: React.FC = () => {
     setInboundForm((prev: any) => {
       const updatedItems = [...prev.items];
       const curItem = updatedItems[itemIdx];
-      const comps = [...(curItem.components || [])];
+      // Dòng chưa có danh sách phụ kiện (hiển thị theo BOM): tạo đủ danh sách trước khi sửa một phụ kiện,
+      // không thì sửa phụ kiện 1 sẽ làm mất phụ kiện 2 và mất mã / tên phụ kiện
+      const comps = [...ensureInboundComponents(curItem)];
+      if (!comps[compIdx]) return prev;
       comps[compIdx] = { ...comps[compIdx], [field]: value };
       updatedItems[itemIdx] = { ...curItem, components: comps };
       return { ...prev, items: updatedItems };
@@ -3115,6 +3154,10 @@ export const WarehouseModule: React.FC = () => {
           specification: r.specification,
           unit: r.unit,
           manufacturer: r.manufacturer,
+          // NCC / số HĐ của phiếu gắn vào từng dòng: chi tiết phiếu, Thẻ kho và công nợ NCC đọc từ đây
+          supplier_name: excelInboundDetails.supplier_name?.trim() || "",
+          vat_invoice_no: excelInboundDetails.vat_invoice_no?.trim() || "",
+          inbound_type: excelInboundDetails.inbound_reason || "",
           quantity: r.quantity,
           unit_price: r.unit_price,
           cost_price: r.unit_price,
@@ -3128,7 +3171,7 @@ export const WarehouseModule: React.FC = () => {
           qc_status: r.qc_status,
           notes: r.notes
         })),
-        notes: `${excelInboundDetails.inbound_reason}. Hóa đơn: ${excelInboundDetails.vat_invoice_no}. ${excelInboundDetails.notes || ""}`
+        notes: `${excelInboundDetails.inbound_reason}. Hóa đơn: ${excelInboundDetails.vat_invoice_no || "N/A"}. NCC: ${excelInboundDetails.supplier_name.trim()}. ${excelInboundDetails.notes || ""}`.trim()
       };
 
       const res = await fetch("/api/inventory?action=inbound", {
@@ -3412,6 +3455,11 @@ export const WarehouseModule: React.FC = () => {
   // Thẻ kho: lọc theo loại phiếu (nhập / xuất) và từ khóa
   const [txTypeFilter, setTxTypeFilter] = useState<"ALL" | "INBOUND" | "OUTBOUND">("ALL");
   const [txSearch, setTxSearch] = useState("");
+  const [txPartnerFilter, setTxPartnerFilter] = useState("");
+  const [txDateFrom, setTxDateFrom] = useState("");
+  const [txDateTo, setTxDateTo] = useState("");
+  const txPartnerDebounced = useDebouncedValue(txPartnerFilter, 250);
+  const [txDetailSearch, setTxDetailSearch] = useState("");
   const txSearchDebounced = useDebouncedValue(txSearch, 250);
   const txTypeCounts = useMemo(() => {
     let inb = 0, outb = 0;
@@ -3424,16 +3472,30 @@ export const WarehouseModule: React.FC = () => {
   }, [transactions]);
   const filteredTransactions = useMemo(() => {
     const q = txSearchDebounced.trim().toLowerCase();
+    const partnerQ = txPartnerDebounced.trim().toLowerCase();
+    const from = toISODate(txDateFrom);
+    const to = toISODate(txDateTo);
     return (transactions as any[]).filter((tx: any) => {
       const t = String(tx?.transaction_type || "").toUpperCase();
       if (txTypeFilter !== "ALL" && t !== txTypeFilter) return false;
+      if (from || to) {
+        const d = toISODate(formatDayVN(tx?.date)); // ngày theo giờ Việt Nam
+        if (!d || (from && d < from) || (to && d > to)) return false;
+      }
+      if (partnerQ && !txPartnerName(tx, txFinanceMeta(tx)).toLowerCase().includes(partnerQ)) return false;
       if (!q) return true;
       if ([tx.transaction_code, tx.reference_code, tx.performed_by, tx.warehouse_name, tx.notes].some((v: any) => String(v || "").toLowerCase().includes(q))) return true;
       const its = Array.isArray(tx.items) ? tx.items : [];
       return its.some((it: any) => [it.product_code, it.product_name, it.lot_number].some((v: any) => String(v || "").toLowerCase().includes(q)));
     });
-  }, [transactions, txTypeFilter, txSearchDebounced]);
-  const transactionsPage = usePaged(filteredTransactions, 20, `${txTypeFilter}|${txSearchDebounced}`);
+  }, [transactions, txTypeFilter, txSearchDebounced, txPartnerDebounced, txDateFrom, txDateTo]);
+  const transactionsPage = usePaged(filteredTransactions, 20, `${txTypeFilter}|${txSearchDebounced}|${txPartnerDebounced}|${txDateFrom}|${txDateTo}`);
+  const txQ = txSearchDebounced.trim().toLowerCase();
+  // Mở chi tiết phiếu: ô tìm trong phiếu lấy sẵn từ khóa đang tìm ở Thẻ kho
+  useEffect(() => {
+    if (isTxDetailModalOpen) setTxDetailSearch(txSearch.trim());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTxDetailModalOpen, selectedTxDetail]);
   const reservationsPage = usePaged(filteredReservations, 20);
 
   // Summary calculations for Excel Inbound
@@ -4861,6 +4923,37 @@ export const WarehouseModule: React.FC = () => {
               placeholder="Tìm mã phiếu, PO / SO, mã hàng, số lô, người thực hiện..."
               className="flex-1 min-w-[220px] max-w-md px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
             />
+            <input
+              type="text"
+              value={txPartnerFilter}
+              onChange={(e) => setTxPartnerFilter(e.target.value)}
+              placeholder="Khách hàng / Nhà cung cấp..."
+              title="Lọc theo khách hàng (phiếu xuất) hoặc nhà cung cấp (phiếu nhập)"
+              className="min-w-[180px] w-56 px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+            />
+            <div className="flex items-center gap-1.5 text-xs text-slate-500">
+              <span>Từ</span>
+              <DateInputVN
+                value={txDateFrom}
+                onChange={(e) => setTxDateFrom(e.target.value)}
+                className="w-28 px-2 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+              />
+              <span>đến</span>
+              <DateInputVN
+                value={txDateTo}
+                onChange={(e) => setTxDateTo(e.target.value)}
+                className="w-28 px-2 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white font-mono"
+              />
+            </div>
+            {(txSearch || txPartnerFilter || txDateFrom || txDateTo) && (
+              <button
+                type="button"
+                onClick={() => { setTxSearch(""); setTxPartnerFilter(""); setTxDateFrom(""); setTxDateTo(""); }}
+                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+              >
+                Xóa lọc
+              </button>
+            )}
           </div>
 
           <div className="overflow-x-auto">
@@ -4882,6 +4975,11 @@ export const WarehouseModule: React.FC = () => {
                   const isInbound = tx.transaction_type === "INBOUND";
                   const itemsList = Array.isArray(tx.items) ? tx.items : [];
                   const fin = txFinanceMeta(tx);
+                  const partner = txPartnerName(tx, fin);
+                  // Đang tìm theo mã hàng / số lô: chỉ hiện các dòng khớp (tô màu) thay vì 5 dòng đầu phiếu
+                  const matchedItems = txQ ? itemsList.filter((it: any) => txItemMatches(it, txQ)) : [];
+                  const shownItems = matchedItems.length > 0 ? matchedItems : itemsList;
+                  const hiddenCount = shownItems.length - Math.min(shownItems.length, 5);
                   return (
                     <tr
                       key={tx.id}
@@ -4925,20 +5023,31 @@ export const WarehouseModule: React.FC = () => {
                             {fin.invoice && <div>HĐ: <span className="font-mono text-slate-700 dark:text-slate-200">{fin.invoice}</span></div>}
                           </div>
                         )}
+                        {!isInbound && partner && (
+                          <div className="mt-0.5 font-sans font-normal text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[220px]" title={partner}>
+                            KH: <span className="text-slate-700 dark:text-slate-200">{partner}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3.5 px-4 text-slate-600 dark:text-slate-400">
                         {tx.warehouse_name || "Kho Trung Tâm"}
                       </td>
                       <td className="py-3.5 px-4">
                         <div className="space-y-1">
-                          {itemsList.slice(0, 5).map((it: any, idx: number) => (
+                          {matchedItems.length > 0 && (
+                            <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300">
+                              Khớp {matchedItems.length}/{itemsList.length} dòng hàng
+                            </div>
+                          )}
+                          {shownItems.slice(0, 5).map((it: any, idx: number) => (
                             <div key={idx} className="text-[11px] text-slate-800 dark:text-slate-200">
-                              • <strong>{it.product_code || it.productCode}</strong>: {it.product_name || it.name} (SL: <strong>{it.quantity}</strong> {it.unit || ""})
-                              {it.lot_number && <span className="ml-1 text-slate-500 font-mono text-[10px]">[Lô: {it.lot_number}]</span>}
+                              • <span className="inline-block px-1.5 rounded bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-mono font-black text-[12px] tracking-tight"><Hl text={it.product_code || it.productCode} q={txQ} /></span>{" "}
+                              <span className="text-slate-600 dark:text-slate-400"><Hl text={it.product_name || it.name} q={txQ} /></span> (SL: <strong>{it.quantity}</strong> {it.unit || ""})
+                              {it.lot_number && <span className="ml-1 text-slate-500 font-mono text-[10px]">[Lô: <Hl text={it.lot_number} q={txQ} />]</span>}
                               {it.expiry_date && <span className="ml-1 text-emerald-600 font-mono text-[10px]">[EXP: {it.expiry_date}]</span>}
                             </div>
                           ))}
-                          {itemsList.length > 5 && (
+                          {hiddenCount > 0 && (
                             <button
                               type="button"
                               onClick={() => {
@@ -4947,7 +5056,7 @@ export const WarehouseModule: React.FC = () => {
                               }}
                               className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline pt-0.5 cursor-pointer"
                             >
-                              + và {itemsList.length - 5} mặt hàng khác (Bấm Chi Tiết để xem đầy đủ)
+                              + và {hiddenCount} {matchedItems.length > 0 ? "dòng khớp" : "mặt hàng"} khác (Bấm Chi Tiết để xem đầy đủ)
                             </button>
                           )}
                         </div>
@@ -8280,7 +8389,7 @@ export const WarehouseModule: React.FC = () => {
                         const matchedComps = componentsByParentMap.get(item.product_code) || [];
                         if (matchedComps.length === 0) return null;
                         const isExpanded = expandedInboundComponents[idx] !== false;
-                        const curItemComps = item.components && item.components.length > 0 ? item.components : matchedComps;
+                        const curItemComps = ensureInboundComponents(item);
 
                         return (
                           <div className="pt-2 border-t border-purple-100 dark:border-purple-900/40">
@@ -8918,7 +9027,7 @@ export const WarehouseModule: React.FC = () => {
       {/* ==================== MODAL XEM CHI TIẾT CHỨNG TỪ XUẤT NHẬP KHO ==================== */}
       {isTxDetailModalOpen && selectedTxDetail && (
         <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-6 overflow-y-auto">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-4xl w-full my-auto flex flex-col max-h-[90vh] overflow-hidden animate-fade-in">
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-[min(96vw,1500px)] w-full my-auto flex flex-col max-h-[94vh] overflow-hidden animate-fade-in">
             {/* Modal Header */}
             <div className="p-4 sm:p-5 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50 dark:bg-slate-800/60">
               <div className="flex items-center gap-3">
@@ -9021,14 +9130,28 @@ export const WarehouseModule: React.FC = () => {
               )}
 
               {/* Items Table */}
+              {(() => {
+                const allIts: any[] = Array.isArray(selectedTxDetail.items) ? selectedTxDetail.items : [];
+                const dq = txDetailSearch.trim().toLowerCase();
+                const shown = dq ? allIts.map((it, i) => ({ it, i })).filter(({ it }) => txItemMatches(it, dq)) : allIts.map((it, i) => ({ it, i }));
+                return (
               <div className="space-y-2">
-                <span className="font-bold text-slate-900 dark:text-white uppercase text-[11px] tracking-wide">
-                  Danh Sách Mặt Hàng Trong Phiếu ({Array.isArray(selectedTxDetail.items) ? selectedTxDetail.items.length : 0} mặt hàng):
-                </span>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-bold text-slate-900 dark:text-white uppercase text-[11px] tracking-wide">
+                    Danh Sách Mặt Hàng Trong Phiếu ({dq ? `${shown.length}/` : ""}{allIts.length} mặt hàng):
+                  </span>
+                  <input
+                    type="text"
+                    value={txDetailSearch}
+                    onChange={(e) => setTxDetailSearch(e.target.value)}
+                    placeholder="Tìm trong phiếu: mã hàng, tên, số lô..."
+                    className="w-72 max-w-full px-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
 
                 <div className="overflow-x-auto border border-slate-200 dark:border-slate-700 rounded-xl">
                   <table className="w-full text-left text-xs">
-                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold">
+                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold sticky top-0 z-10">
                       <tr>
                         <th className="py-2.5 px-3">#</th>
                         <th className="py-2.5 px-3">Mã Hàng</th>
@@ -9044,12 +9167,12 @@ export const WarehouseModule: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
-                      {(Array.isArray(selectedTxDetail.items) ? selectedTxDetail.items : []).map((it: any, idx: number) => (
+                      {shown.map(({ it, i: idx }) => (
                         <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                           <td className="py-2 px-3 font-mono text-slate-400">{idx + 1}</td>
-                          <td className="py-2 px-3 font-mono font-bold text-slate-900 dark:text-white">{it.product_code || it.productCode}</td>
-                          <td className="py-2 px-3 font-semibold text-slate-800 dark:text-slate-200">{it.product_name || it.name}</td>
-                          <td className="py-2 px-3 font-mono text-orange-600 dark:text-orange-400 font-bold">{it.lot_number || "—"}</td>
+                          <td className="py-2 px-3 font-mono font-black text-[13px] text-slate-900 dark:text-white whitespace-nowrap"><Hl text={it.product_code || it.productCode} q={dq} /></td>
+                          <td className="py-2 px-3 font-semibold text-slate-800 dark:text-slate-200 min-w-[260px]"><Hl text={it.product_name || it.name} q={dq} /></td>
+                          <td className="py-2 px-3 font-mono text-orange-600 dark:text-orange-400 font-bold whitespace-nowrap"><Hl text={it.lot_number || "—"} q={dq} /></td>
                           <td className="py-2 px-3 font-mono text-emerald-600 dark:text-emerald-400 font-bold">{it.expiry_date || "—"}</td>
                           <td className="py-2 px-3 text-right font-mono font-black text-slate-900 dark:text-white">{it.quantity}</td>
                           <td className="py-2 px-3 text-slate-500">{it.unit || "Hộp"}</td>
@@ -9070,10 +9193,15 @@ export const WarehouseModule: React.FC = () => {
                           </td>
                         </tr>
                       ))}
+                      {shown.length === 0 && (
+                        <tr><td colSpan={11} className="py-6 text-center text-slate-500">Không có dòng hàng khớp "{txDetailSearch}"</td></tr>
+                      )}
                     </tbody>
                   </table>
                 </div>
               </div>
+                );
+              })()}
             </div>
 
             {/* Modal Footer */}
@@ -9093,8 +9221,18 @@ export const WarehouseModule: React.FC = () => {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => window.print()}
-                  className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1.5"
+                  onClick={() => exportWarehouseSlipExcel(selectedTxDetail, txFinanceMeta(selectedTxDetail))}
+                  className="px-4 py-2 rounded-xl text-xs font-bold border border-emerald-200 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 flex items-center gap-1.5 cursor-pointer"
+                  title="Tải phiếu này ra file Excel (.xlsx)"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>Xuất Excel</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => printWarehouseSlip(selectedTxDetail, txFinanceMeta(selectedTxDetail), companyConfig)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 flex items-center gap-1.5 cursor-pointer"
+                  title="In phiếu khổ A4 (mẫu in trắng, tiêu đề bảng lặp lại mỗi trang)"
                 >
                   <Printer className="w-4 h-4" />
                   <span>In Phiếu</span>

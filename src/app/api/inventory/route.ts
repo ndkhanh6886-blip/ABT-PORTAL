@@ -595,7 +595,13 @@ export async function POST(req: NextRequest) {
             normalizeExcelDateToISO(date, todayVN()),
             performed_by || "Thủ kho TBR",
             warehouse_name || "Kho Trung Tâm",
-            JSON.stringify(items || []),
+            // NCC / số HĐ của phiếu gắn vào từng dòng chưa có (phiếu nhập từ Excel trước đây chỉ gửi ở đầu phiếu
+            // nên chi tiết phiếu / Thẻ kho / công nợ NCC không thấy NCC)
+            JSON.stringify((Array.isArray(items) ? items : []).map((it: any) => (it && typeof it === "object") ? {
+              ...it,
+              supplier_name: String(it.supplier_name || "").trim() || String(supplier_name || "").trim(),
+              ...(vat_invoice_no && !it.vat_invoice_no ? { vat_invoice_no } : {}),
+            } : it)),
             notes || (supplier_name ? `Nhà cung cấp: ${supplier_name}` : "")
           ]
         );
