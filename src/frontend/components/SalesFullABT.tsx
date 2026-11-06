@@ -30152,31 +30152,32 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         });
                                                                         setOpenProductDropdownIndex(null);
                                                                     }}
-                                                                    className="p-2 text-xs text-slate-300 hover:bg-slate-900 hover:text-white cursor-pointer transition-colors text-left font-semibold flex items-center justify-between gap-2"
+                                                                    className="p-2 text-xs text-slate-300 hover:bg-slate-900 hover:text-white cursor-pointer transition-colors text-left font-semibold"
+                                                                    title={`${p.code} - ${p.name}${p.specification ? ` (${p.specification})` : ""}`}
                                                                 >
-                                                                    <div className="flex items-center gap-1.5 min-w-0">
-                                                                        {p.badge === "THƯƠNG MẠI" ? (
-                                                                            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950/70 text-cyan-100 border border-cyan-500/40 shrink-0">
-                                                                                🛒 Mua ngoài
-                                                                            </span>
-                                                                        ) : (
-                                                                            <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-purple-950/70 text-purple-100 border border-purple-400/40 shrink-0 shadow-sm">
-                                                                                🏷️ Phân Phối Hãng
-                                                                            </span>
-                                                                        )}
-                                                                        <span className="truncate">
-                                                                            <strong className="text-white">{p.code}</strong> - {p.name} {p.specification ? `(${p.specification})` : ""}
-                                                                        </span>
+                                                                    {/* Dòng 1: mã hàng hiện đủ (để phân biệt các mã gần giống nhau) + giá, hãng; dòng 2: tên & quy cách */}
+                                                                    <div className="flex items-center justify-between gap-2">
+                                                                        <div className="flex items-center gap-1.5 min-w-0">
+                                                                            <strong className="text-white font-mono break-all">{p.code}</strong>
+                                                                            {p.badge === "THƯƠNG MẠI" && (
+                                                                                <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950/70 text-cyan-100 border border-cyan-500/40 shrink-0">
+                                                                                    🛒 Mua ngoài
+                                                                                </span>
+                                                                            )}
+                                                                        </div>
+                                                                        <div className="flex items-center gap-2 shrink-0">
+                                                                            {p.price ? (
+                                                                                <span className="text-[11px] text-emerald-400 font-mono font-bold">
+                                                                                    {p.price.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
+                                                                                </span>
+                                                                            ) : null}
+                                                                            {p.brand ? (
+                                                                                <span className="text-[10px] text-slate-500 font-mono">{p.brand}</span>
+                                                                            ) : null}
+                                                                        </div>
                                                                     </div>
-                                                                    <div className="flex items-center gap-2 shrink-0">
-                                                                        {p.price ? (
-                                                                            <span className="text-[11px] text-emerald-400 font-mono font-bold">
-                                                                                {p.price.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
-                                                                            </span>
-                                                                        ) : null}
-                                                                        <span className="text-[10px] text-slate-500 font-mono">
-                                                                            {p.brand || "ABT"}
-                                                                        </span>
+                                                                    <div className="truncate text-[11px] font-normal text-slate-400 mt-0.5">
+                                                                        {p.name} {p.specification ? `(${p.specification})` : ""}
                                                                     </div>
                                                                 </div>
                                                             ));
