@@ -121,8 +121,8 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
               <th className="py-2.5 px-2 w-20 whitespace-nowrap">Ngày đặt</th>
               <th className="py-2.5 px-2 w-20 whitespace-nowrap">Hạn giao</th>
               <th className="py-2.5 px-2 w-24 max-w-[110px]">NCC</th>
-              <th className="py-2.5 px-2 w-24 max-w-[110px]">Mã hàng</th>
-              <th className="py-2.5 px-2 min-w-[260px] w-[32%]">Tên hàng &amp; Quy cách</th>
+              <th className="py-2.5 px-2 min-w-[115px] w-32 whitespace-nowrap">Mã hàng</th>
+              <th className="py-2.5 px-2 min-w-[200px] w-[22%]">Tên hàng &amp; Quy cách</th>
               <th className="py-2.5 px-1.5 w-14 text-center whitespace-nowrap">ĐVT</th>
               <th className="py-2.5 px-1.5 w-14 text-right whitespace-nowrap">SL đặt</th>
               <th className="py-2.5 px-1.5 w-14 text-right whitespace-nowrap">Đã nhận</th>
@@ -149,8 +149,8 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
                   <td className="py-2 px-2 font-mono text-[11px] whitespace-nowrap">{day(l.po.order_date)}</td>
                   <td className="py-2 px-2 font-mono text-[11px] whitespace-nowrap">{day(l.po.expected_delivery_date)}</td>
                   <td className="py-2 px-2 font-semibold max-w-[110px] truncate" title={l.supplier}>{l.supplier}</td>
-                  <td className="py-2 px-2 font-mono font-bold text-indigo-700 dark:text-indigo-300 w-24 max-w-[110px] break-all">{l.code || "—"}</td>
-                  <td className="py-2 px-2 text-slate-800 dark:text-slate-200 min-w-[260px]">
+                  <td className="py-2 px-2 font-mono font-bold text-indigo-700 dark:text-indigo-300 min-w-[115px] w-32 whitespace-nowrap">{l.code || "—"}</td>
+                  <td className="py-2 px-2 text-slate-800 dark:text-slate-200 min-w-[200px] w-[22%]">
                     <span className="font-semibold">{l.name}</span>
                     {l.spec && <span className="text-[11px] text-slate-500 dark:text-slate-400"> ({l.spec})</span>}
                   </td>

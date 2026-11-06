@@ -432,8 +432,8 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
               </th>
               <th className="py-2 px-2 w-28 whitespace-nowrap">Mã PR</th>
               <th className="py-2 px-2 w-32">Đề xuất</th>
-              <th className="py-2 px-2 w-24 max-w-[110px]">Mã hàng</th>
-              <th className="py-2 px-2 min-w-[240px] w-[28%]">Tên hàng &amp; Quy cách</th>
+              <th className="py-2 px-2 min-w-[115px] w-32 whitespace-nowrap">Mã hàng</th>
+              <th className="py-2 px-2 min-w-[190px] w-[20%]">Tên hàng &amp; Quy cách</th>
               <th className="py-2 px-2 w-14 text-center">ĐVT</th>
               <th className="py-2 px-2 text-right">SL</th>
               <th className="py-2 px-2">Hạn cần</th>
@@ -463,10 +463,10 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
                     <div className="text-slate-800 dark:text-slate-200">{l.requester}</div>
                     <div className="text-[10px] text-slate-400">{l.dept}{l.priority ? ` • ${PRIORITY_LABEL[l.priority] || l.priority}` : ""}</div>
                   </td>
-                  <td className="py-2 px-2 font-mono font-bold text-indigo-700 dark:text-indigo-300 w-24 max-w-[110px] break-all">
+                  <td className="py-2 px-2 font-mono font-bold text-indigo-700 dark:text-indigo-300 min-w-[115px] w-32 whitespace-nowrap">
                     {l.code && getItemInfo ? <ItemStockHover code={l.code} getInfo={getItemInfo}>{l.code}</ItemStockHover> : (l.code || "—")}
                   </td>
-                  <td className="py-2 px-2 text-slate-800 dark:text-slate-200 min-w-[240px]">
+                  <td className="py-2 px-2 text-slate-800 dark:text-slate-200 min-w-[190px] w-[20%]">
                     <span className="font-semibold">{l.name}</span>
                     {l.spec && <span className="text-[11px] text-slate-500 dark:text-slate-400"> ({l.spec})</span>}
                     {l.blockedReason && <div className="text-[10px] text-amber-600 flex items-center gap-1"><AlertTriangle className="w-3 h-3" />{l.blockedReason}</div>}
