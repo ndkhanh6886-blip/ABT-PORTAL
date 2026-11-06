@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
+import { packagingFormOfLot, normalizePackagingForm, withPackagingNote, PACKAGING_LABEL, type PackagingForm } from "@/frontend/utils/packagingForm";
 import {
     Wallet,
     Briefcase,
@@ -3893,6 +3894,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const prod: any = (allSalesProducts || []).find((x: any) => String(x.code || "").trim() === c) || { code: c };
         return getProductComponentsList(prod);
     };
+    /** Mã có phụ kiện (kit PCR...) có 2 dạng đóng gói theo lô: ".C" trong số lô = chia sẵn tube, không kèm phụ kiện. */
+    const isTwoFormKit = (code: any) => getKitComponentsForCode(code).length > 0;
+    /** Chỉ giữ các lô đúng dạng đóng gói được yêu cầu trên dòng SO (không yêu cầu / mã không phân dạng: giữ nguyên). */
+    const filterLotsByForm = (code: any, lots: any[], form: any): any[] => {
+        const f = normalizePackagingForm(form);
+        if (!f || !isTwoFormKit(code)) return lots;
+        return lots.filter((l: any) => packagingFormOfLot(l?.lot_number) === f);
+    };
     /** So sánh điều kiện bảo quản theo phần nhiệt độ (bỏ phần chú thích trong ngoặc). */
     const storageKey = (v: any) => String(v || "").replace(/\(.*$/, "").replace(/\s+/g, "").toLowerCase();
     /** Đơn giá dòng phiếu giao khi in: giá lưu trên phiếu, thiếu thì lấy giá của dòng SO. */
@@ -4162,7 +4171,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [deliveryCreatorName, setDeliveryCreatorName] = useState("");
     const [deliveryReceiverName, setDeliveryReceiverName] = useState("");
     const [deliveryReceiverPhone, setDeliveryReceiverPhone] = useState("");
-    const [deliveryItems, setDeliveryItems] = useState<{ productCode: string; productName: string; quantity: number; unit?: string; specification?: string; storageCondition?: string; lotNo?: string; expDate?: string; notes?: string; orderedQty?: number; prevAllocatedQty?: number; remainingQty?: number; needsInvoice?: boolean; availStock?: number; selectedLotAvail?: number; selectedLotProductCode?: string; isExtraLot?: boolean; isManualLot?: boolean; lineGroupKey?: string }[]>([]);
+    const [deliveryItems, setDeliveryItems] = useState<{ productCode: string; productName: string; quantity: number; unit?: string; specification?: string; storageCondition?: string; lotNo?: string; expDate?: string; notes?: string; orderedQty?: number; prevAllocatedQty?: number; remainingQty?: number; needsInvoice?: boolean; availStock?: number; selectedLotAvail?: number; selectedLotProductCode?: string; isExtraLot?: boolean; isManualLot?: boolean; lineGroupKey?: string; soNote?: string; packagingForm?: string }[]>([]);
     const [openDeliveryLotDropdownIndex, setOpenDeliveryLotDropdownIndex] = useState<number | null>(null);
     const [deliveryLotSearchQueries, setDeliveryLotSearchQueries] = useState<Record<number, string>>({});
     const [selectedViewDeliverySlip, setSelectedViewDeliverySlip] = useState<any>(null);
@@ -12451,6 +12460,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
                 sequence: it.sequence || undefined,
                 notes: it.notes || "",
+                packagingForm: normalizePackagingForm(it.packagingForm) || undefined,
                 quantity: it.quantity || 1,
                 unitPrice: unitPrice,
                 isGift,
@@ -12484,6 +12494,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     productName: it.productName || it.productCode,
                     specification: it.specification || "",
                     notes: it.notes || "",
+                    packagingForm: normalizePackagingForm(it.packagingForm) || undefined,
                     quantity: Number(it.quantity) || 1,
                     unitPrice: it.unitPrice !== undefined ? it.unitPrice : (it.price || 0),
                     ...(vatRate !== undefined ? { vatRate, vat: vatRate } : {}),
@@ -12708,6 +12719,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 specification: customSpec,
                 sequence: String((item as any).sequence || quoteItem?.sequence || "").trim() || undefined,
                 notes: customNotes || undefined,
+                packagingForm: normalizePackagingForm((item as any).packagingForm) || undefined,
                 targetAllocations: item.targetAllocations || [],
                 needsInvoice: item.needsInvoice !== false
             };
@@ -14820,7 +14832,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (matchingSlipItems.length === 0 && pg.remaining <= 0) return;
 
             const itemName = it.productName || it.name || prod?.name || "Sản phẩm";
-            const lots = getAvailableLotsForProduct(code, itemName, target.order_code);
+            const lots = filterLotsByForm(code, getAvailableLotsForProduct(code, itemName, target.order_code), it.packagingForm);
             const availStock = getAvailableStockForProduct(code, itemName, target.order_code);
             const firstLot = lots.length > 0 ? lots[0] : null;
 
@@ -14864,7 +14876,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         isExtraLot: sIdx > 0,
                         lineGroupKey: specKey,
                     // ghi chú của dòng trên SO (NVKD ghi cho Kho / Cung ứng)
-                    soNote: String(it.notes || "").trim()
+                    soNote: String(it.notes || "").trim(),
+                    packagingForm: normalizePackagingForm(it.packagingForm) || undefined
                     });
                 });
             } else {
@@ -14898,7 +14911,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     isExtraLot: false,
                     lineGroupKey: specKey,
                     // ghi chú của dòng trên SO (NVKD ghi cho Kho / Cung ứng)
-                    soNote: String(it.notes || "").trim()
+                    soNote: String(it.notes || "").trim(),
+                    packagingForm: normalizePackagingForm(it.packagingForm) || undefined
                 });
             }
         });
@@ -15098,7 +15112,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (!isDeliveryModalOpen || !deliveryTargetOrder) return;
         const ordCode = deliveryTargetOrder.order_code;
         setDeliveryItems(prev => prev.map(it => {
-            const lots = getAvailableLotsForProduct(it.productCode, it.productName, ordCode);
+            const lots = filterLotsByForm(it.productCode, getAvailableLotsForProduct(it.productCode, it.productName, ordCode), it.packagingForm);
             const avail = getAvailableStockForProduct(it.productCode, it.productName, ordCode);
             const firstLot = lots.length > 0 ? lots[0] : null;
             const autoLot = (!editingDeliverySlip && !it.lotNo && firstLot) ? firstLot.lot_number : it.lotNo;
@@ -15119,7 +15133,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const baseItem = deliveryItems[sourceIdx];
         if (!baseItem) return;
         const code = baseItem.productCode;
-        const lots = getAvailableLotsForProduct(code, baseItem.productName, deliveryTargetOrder?.order_code);
+        const lots = filterLotsByForm(code, getAvailableLotsForProduct(code, baseItem.productName, deliveryTargetOrder?.order_code), baseItem.packagingForm);
         const usedLots = new Set(deliveryItems.filter(it => it.productCode === code).map(it => it.lotNo));
         const nextLot = lots.find((l: any) => !usedLots.has(l.lot_number)) || lots[0];
 
@@ -15257,6 +15271,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const slipItems = normalizedItems
                 .filter(x => x.qty > 0)
                 .map(x => ({ ...x.item, quantity: x.qty }));
+
+            // Dòng SO yêu cầu dạng đóng gói: lô xuất phải đúng dạng (".C" = chia sẵn tube)
+            for (const it of slipItems) {
+                const f = isTwoFormKit(getItemCode(it)) ? normalizePackagingForm((it as any).packagingForm) : null;
+                const lf = f ? packagingFormOfLot(it.lotNo) : null;
+                if (f && lf && lf !== f) {
+                    showToast(`Mã ${getItemCode(it)}: SO yêu cầu dạng ${PACKAGING_LABEL[f]}, nhưng lô ${it.lotNo} là dạng ${PACKAGING_LABEL[lf]}. Vui lòng chọn lô đúng dạng.`, "warning");
+                    return;
+                }
+            }
 
             // Không cho lưu số lô của mã hàng KHÁC (vd: lô 200687.D.IC của SQS-122 gán cho SQS-112): xuất sai lô, sai truy vết
             for (const it of slipItems) {
@@ -30329,6 +30353,33 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         🚚 PO Đang về: <strong>{stockIntel.incomingQty}</strong>
                                                     </span>
                                                 ) : null}
+                                                {isTwoFormKit(item.productCode) && (() => {
+                                                    // Kit 2 dạng đóng gói (theo lô): tồn khả dụng tách theo dạng + ô khách yêu cầu dạng
+                                                    const formLots = getAvailableLotsForProduct(item.productCode, (item as any).productName);
+                                                    const sumForm = (f: PackagingForm) => formLots
+                                                        .filter((l: any) => packagingFormOfLot(l.lot_number) === f)
+                                                        .reduce((s: number, l: any) => s + (Number(l.available_qty ?? l.quantity_on_hand) || 0), 0);
+                                                    const cur = normalizePackagingForm((item as any).packagingForm);
+                                                    return (
+                                                        <span className="inline-flex items-center gap-1.5 font-sans">
+                                                            <span className="px-1.5 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-700/50 font-mono">Chia sẵn tube: <strong>{sumForm("PREALIQUOT")}</strong></span>
+                                                            <span className="px-1.5 py-0.5 rounded bg-violet-950/80 text-violet-300 border border-violet-700/50 font-mono">Kèm phụ kiện: <strong>{sumForm("WITH_ACCESSORIES")}</strong></span>
+                                                            <select
+                                                                value={cur || ""}
+                                                                onChange={(e) => {
+                                                                    const f = normalizePackagingForm(e.target.value);
+                                                                    setFactoryOrderItems(prev => prev.map((it, i) => i === index ? { ...it, packagingForm: f || undefined, notes: withPackagingNote((it as any).notes, f) } : it));
+                                                                }}
+                                                                title="Dạng đóng gói khách yêu cầu (ghi vào cột Ghi chú; phiếu giao chỉ cho chọn lô đúng dạng)"
+                                                                className={cn("bg-slate-950 border rounded px-1.5 py-0.5 text-[10px] font-bold cursor-pointer focus:outline-none", cur ? "border-fuchsia-600 text-fuchsia-300" : "border-slate-700 text-slate-300")}
+                                                            >
+                                                                <option value="">Yêu cầu dạng: Không</option>
+                                                                <option value="PREALIQUOT">Yêu cầu dạng: {PACKAGING_LABEL.PREALIQUOT}</option>
+                                                                <option value="WITH_ACCESSORIES">Yêu cầu dạng: {PACKAGING_LABEL.WITH_ACCESSORIES}</option>
+                                                            </select>
+                                                        </span>
+                                                    );
+                                                })()}
                                             </div>
                                         ) : (
                                             <div className="text-slate-500 italic flex items-center gap-1">
@@ -32817,7 +32868,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <tbody className="text-slate-300">
                                     {deliveryItems.map((item, idx) => {
                                         const ordCode = deliveryTargetOrder?.order_code;
-                                        const availLots = getAvailableLotsForProduct(item.productCode, item.productName, ordCode);
+                                        const requiredForm = isTwoFormKit(item.productCode) ? normalizePackagingForm(item.packagingForm) : null;
+                                        const availLots = filterLotsByForm(item.productCode, getAvailableLotsForProduct(item.productCode, item.productName, ordCode), requiredForm);
+                                        const typedLotForm = isTwoFormKit(item.productCode) ? packagingFormOfLot(item.lotNo) : null;
+                                        const typedLotWrongForm = Boolean(requiredForm && typedLotForm && typedLotForm !== requiredForm);
                                         const allWarehouseLots = getAllAvailableWarehouseLots(ordCode);
                                         const cleanTypedLot = String(item.lotNo || "").trim().toLowerCase();
                                         const matchedWarehouseLot = cleanTypedLot
@@ -32865,11 +32919,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <span className="font-mono font-black text-sm text-amber-300 bg-amber-950/70 border border-amber-600/70 px-2 py-0.5 rounded tracking-wide">{item.productCode}</span>
                                                         <span className="font-semibold text-slate-200 text-xs">{item.productName}</span>
                                                         {item.specification && <span className="text-[10px] text-slate-400">{item.specification}</span>}
+                                                        {!item.isExtraLot && isTwoFormKit(item.productCode) && normalizePackagingForm(item.packagingForm) && <span className="text-[10px] font-bold text-fuchsia-300 bg-fuchsia-950/60 border border-fuchsia-700/60 rounded px-1.5 py-0.5" title="Dạng đóng gói khách yêu cầu trên SO: chỉ chọn được lô đúng dạng">🎯 SO yêu cầu: {PACKAGING_LABEL[normalizePackagingForm(item.packagingForm) as PackagingForm]}</span>}
                                                         {!item.isExtraLot && (item as any).soNote && <span className="basis-full text-[10px] text-sky-300 bg-sky-950/50 border border-sky-800/60 rounded px-1.5 py-0.5" title="Ghi chú của mặt hàng trên SO">📝 Ghi chú SO: {(item as any).soNote}</span>}
                                                         {item.storageCondition && <span className="text-[10px] text-cyan-400">🌡 {item.storageCondition}</span>}
                                                         {(() => {
                                                             const comps = getKitComponentsForCode(item.productCode);
                                                             if (comps.length === 0) return null;
+                                                            if (packagingFormOfLot(item.lotNo) === "PREALIQUOT") {
+                                                                return (
+                                                                    <div className="basis-full mt-1 px-2 py-1 rounded-md bg-sky-950/50 border border-sky-800/60 text-[10px] text-sky-300">
+                                                                        📦 Lô {item.lotNo}: dạng <strong>{PACKAGING_LABEL.PREALIQUOT}</strong> (.C) — không kèm phụ kiện
+                                                                    </div>
+                                                                );
+                                                            }
                                                             const kitQty = sumSameCodeQty || Number(item.quantity) || 0;
                                                             const mainStorage = item.storageCondition || getStorageConditionForProduct(item.productCode);
                                                             return (
@@ -33070,7 +33132,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 ⚠ Lô này thuộc mã {typedLotOtherProduct.product_code}, không phải {item.productCode} — chọn lại lô đúng của {item.productCode}
                                                             </div>
                                                         )}
-                                                        {typedLotOwnButEmpty && (
+                                                        {typedLotWrongForm && (
+                                                            <div className="mt-1 px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-700/60 text-[10px] text-rose-300 font-bold">
+                                                                ⚠ Lô này là dạng {PACKAGING_LABEL[typedLotForm as PackagingForm]}, SO yêu cầu dạng {PACKAGING_LABEL[requiredForm as PackagingForm]}
+                                                            </div>
+                                                        )}
+                                                        {typedLotOwnButEmpty && !typedLotWrongForm && (
                                                             <div className="mt-1 px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-700/60 text-[10px] text-amber-300 font-bold">
                                                                 ⚠ Lô {item.lotNo} của {item.productCode} đã hết tồn khả dụng
                                                             </div>
@@ -33167,6 +33234,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                         <div className="min-w-0 flex-1">
                                                                                                             <div className="flex items-center gap-1.5 flex-wrap">
                                                                                                                 <span className="font-mono font-bold text-xs text-amber-300">{l.lot_number}</span>
+                                                                                                                {isTwoFormKit(item.productCode) && (
+                                                                                                                    <span className={cn("text-[9px] px-1.5 rounded font-bold border", packagingFormOfLot(l.lot_number) === "PREALIQUOT" ? "bg-sky-950 text-sky-300 border-sky-700/60" : "bg-violet-950 text-violet-300 border-violet-700/60")}>
+                                                                                                                        {PACKAGING_LABEL[packagingFormOfLot(l.lot_number) as PackagingForm]}
+                                                                                                                    </span>
+                                                                                                                )}
                                                                                                                 {lIdx === 0 && (
                                                                                                                     <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/60 font-bold">FEFO</span>
                                                                                                                 )}

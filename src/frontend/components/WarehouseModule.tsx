@@ -62,6 +62,7 @@ import { useCompanyConfig } from "@/frontend/utils/companyConfig";
 import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDates } from "@/backend/services/dates";
 import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateInputVN";
 import { printWarehouseSlip, exportWarehouseSlipExcel, txPartnerName } from "@/frontend/components/warehouse/warehouseSlipDocs";
+import { packagingFormOfLot, PACKAGING_LABEL } from "@/frontend/utils/packagingForm";
 
 /** Dòng hàng của phiếu có khớp từ khóa tìm (mã hàng, tên, số lô). */
 function txItemMatches(it: any, q: string): boolean {
@@ -2127,6 +2128,8 @@ export const WarehouseModule: React.FC = () => {
   const ensureInboundComponents = (item: any): any[] => {
     const existing: any[] = Array.isArray(item?.components) ? item.components : [];
     const bom = productComponents.filter((c) => c.parent_product_code === item?.product_code);
+    // Kit 2 dạng đóng gói: lô có ".C" là dạng chia sẵn tube PCR, không kèm phụ kiện
+    if (bom.length > 0 && packagingFormOfLot(item?.lot_number) === "PREALIQUOT") return [];
     // Đã có đủ phụ kiện hợp lệ (có mã) thì giữ nguyên
     if (existing.length > 0 && (bom.length === 0 || (existing.length >= bom.length && existing.every((c: any) => c?.component_code)))) return existing;
     if (bom.length === 0) return existing;
@@ -8388,6 +8391,15 @@ export const WarehouseModule: React.FC = () => {
                       {(() => {
                         const matchedComps = componentsByParentMap.get(item.product_code) || [];
                         if (matchedComps.length === 0) return null;
+                        if (packagingFormOfLot(item.lot_number) === "PREALIQUOT") {
+                          return (
+                            <div className="pt-2 border-t border-purple-100 dark:border-purple-900/40">
+                              <div className="px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/60 text-[11px] text-sky-800 dark:text-sky-200">
+                                📦 Dạng đóng gói: <strong>{PACKAGING_LABEL.PREALIQUOT}</strong> (số lô có ký hiệu <span className="font-mono font-bold">.C</span>) — lô này <strong>không kèm phụ kiện</strong>, không cần nhập lô cho {matchedComps.length} phụ kiện.
+                              </div>
+                            </div>
+                          );
+                        }
                         const isExpanded = expandedInboundComponents[idx] !== false;
                         const curItemComps = ensureInboundComponents(item);
 
@@ -8399,6 +8411,11 @@ export const WarehouseModule: React.FC = () => {
                                   <span className="px-2 py-0.5 rounded-full bg-purple-200 dark:bg-purple-900 text-purple-800 dark:text-purple-200 font-bold text-[10px] flex items-center gap-1 shadow-2xs">
                                     <span>🧩</span> HÀNG CẤU THÀNH THEO BỘ ({matchedComps.length} THÀNH PHẦN ĐỘC LẬP)
                                   </span>
+                                  {item.lot_number && (
+                                    <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 font-bold text-[10px]" title="Lô không có ký hiệu .C: dạng không chia sẵn, kèm phụ kiện. Lô dạng chia sẵn tube có .C trong số lô.">
+                                      Dạng: {PACKAGING_LABEL.WITH_ACCESSORIES}
+                                    </span>
+                                  )}
                                   <span className="text-[11px] text-slate-600 dark:text-slate-400">
                                     Quản lý Lô/Hạn dùng hoặc Serial (S/N) và điều kiện bảo quản độc lập cho từng phụ kiện
                                   </span>
