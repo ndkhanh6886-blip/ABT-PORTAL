@@ -23742,14 +23742,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                                     {/* Regular status when not pending approvals - Chuẩn hóa tên trạng thái chung */}
                                                                     {!requiresApproval && (
-                                                                        <span className={cn(
-                                                                            "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase inline-block text-center",
-                                                                            isCancelledOrder
-                                                                                ? "bg-rose-950/90 text-rose-300 border border-rose-500/50"
-                                                                                : req.status === "Rejected"
-                                                                                ? "bg-rose-600/20 text-rose-400"
-                                                                                : stockAnalysis.statusBadgeClass
-                                                                        )}>
+                                                                        <span
+                                                                            onClick={() => {
+                                                                                if (!isCancelledOrder && req.status !== "Rejected" && (stockAnalysis.hasPR || req.prCode)) {
+                                                                                    handleOpenSingleProcureModal(req);
+                                                                                }
+                                                                            }}
+                                                                            title={(!isCancelledOrder && req.status !== "Rejected" && (stockAnalysis.hasPR || req.prCode)) ? "Bấm để xem lại hoặc cập nhật Đề xuất mua hàng (PR) đã gửi Cung Ứng" : undefined}
+                                                                            className={cn(
+                                                                                "text-[9px] font-bold px-2 py-0.5 rounded-full font-mono uppercase inline-block text-center",
+                                                                                (!isCancelledOrder && req.status !== "Rejected" && (stockAnalysis.hasPR || req.prCode)) && "cursor-pointer hover:brightness-110 transition-all",
+                                                                                isCancelledOrder
+                                                                                    ? "bg-rose-950/90 text-rose-300 border border-rose-500/50"
+                                                                                    : req.status === "Rejected"
+                                                                                    ? "bg-rose-600/20 text-rose-400"
+                                                                                    : stockAnalysis.statusBadgeClass
+                                                                            )}
+                                                                        >
                                                                             {isCancelledOrder ? "🚫 Đã hủy đơn" : req.status === "Rejected" ? "Từ chối" : stockAnalysis.statusBadgeText}
                                                                         </span>
                                                                     )}
@@ -23794,7 +23803,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             </span>
                                                                                         ) : (req.prCode || stockAnalysis.hasPR) ? (
                                                                                             <span className="text-amber-300 font-bold bg-amber-950/80 px-2 py-0.5 rounded border border-amber-500/40 text-[9px] flex items-center gap-1 shadow-sm">
-                                                                                                <span>⏳ Đã gửi PR: <strong className="text-amber-200">{req.prCode || (req.id?.startsWith("SO") ? req.id.replace(/^SO/, "PR") : "Chờ gom PO")}</strong></span>
+                                                                                                <span>⏳ Chờ Cung ứng lập PO NCC</span>
                                                                                             </span>
                                                                                         ) : (
                                                                                             <span className="text-cyan-300 font-bold bg-cyan-950/80 px-2 py-0.5 rounded border border-cyan-500/40 text-[9px] flex items-center gap-1 shadow-sm">
@@ -23876,12 +23885,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             <span className="font-normal opacity-80">· {linkedPODoneCount}/{linkedPOs.length} đã về</span>
                                                                                             {expandedOrderProgressIds[req.id] ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                                                                                         </button>
-                                                                                    ) : (stockAnalysis.hasPR || req.prCode) && !stockAnalysis.isReadyAll && !stockAnalysis.isFullyDelivered ? (
-                                                                                        <div className="flex items-center gap-1.5 flex-wrap">
-                                                                                            <span className="text-amber-300 font-bold bg-amber-950/60 px-1.5 py-0.5 rounded border border-amber-500/30 text-[9px]" title="Đã gửi đề xuất PR sang phòng Cung Ứng">
-                                                                                                ⏳ Đã gửi PR: <strong className="text-amber-200">{req.prCode || (req.id?.startsWith("SO") ? req.id.replace(/^SO/, "PR") : "Chờ PO")}</strong>
-                                                                                            </span>
-                                                                                        </div>
                                                                                     ) : null}
 
                                                                                     {/* 3. Lựa chọn thao tác: Giao đủ hàng / Giao trước 1 phần / Tạo PR mua NCC */}
@@ -24176,15 +24179,6 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 <span>🛒 Tạo PR</span>
                                                                                             </button>
                                                                                         </div>
-                                                                                    ) : (procureStatus === "PR_PENDING" || procureStatus === "PR_CREATED" || req.prCode) && !isGoodsInWarehouse ? (
-                                                                                        <button
-                                                                                            type="button"
-                                                                                            onClick={() => handleOpenSingleProcureModal(req)}
-                                                                                            className="bg-amber-950/70 hover:bg-amber-900/80 text-amber-200 border border-amber-500/50 text-[10px] px-2.5 py-1 rounded-md font-bold cursor-pointer transition-colors shadow-sm flex items-center gap-1"
-                                                                                            title="Xem lại hoặc cập nhật Đề xuất mua hàng (PR) đã gửi Cung Ứng"
-                                                                                        >
-                                                                                            ⏳ Đã gửi PR {req.prCode ? `(${req.prCode})` : (req.id?.startsWith("SO") ? `(${req.id.replace(/^SO/, "PR")})` : "")}
-                                                                                        </button>
                                                                                     ) : procureStatus === "ORDERED" && !isGoodsInWarehouse ? (
                                                                                         <button
                                                                                             type="button"
