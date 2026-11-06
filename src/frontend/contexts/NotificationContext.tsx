@@ -5,7 +5,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, CheckCircle2, AlertCircle, Info, Bell, CheckSquare, Calendar, FileText, Truck, Package, FlaskConical, FileCheck2 } from "lucide-react";
 import { cn } from "@/backend/services/utils";
 import { useAuth } from "@/frontend/contexts/AuthContext";
-import { FACTORY_NOTICE_EVENTS, factoryNoticeKey } from "@/factory/noticeMatrix";
 
 type ToastType = "success" | "error" | "info" | "warning";
 
@@ -71,7 +70,7 @@ export interface PersonnelItem {
 export interface NotificationMatrixEvent {
     key: string;
     name: string;
-    category: "sales" | "warehouse" | "procurement" | "application" | "workspace" | "finance" | "quality" | "technical";
+    category: "sales" | "warehouse" | "procurement" | "application" | "workspace" | "finance" | "quality";
     categoryLabel: string;
     description: string;
     enabled: boolean;
@@ -235,14 +234,7 @@ export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent
         enableToast: true,
         targetRoles: ["qa_qc", "warehouse", "admin"],
         targetEmployeeIds: []
-    },
-    // Khối Kỹ thuật – Nhà máy: built-in recipients always apply, the matrix may switch an event off or add groups
-    ...Object.fromEntries(
-        FACTORY_NOTICE_EVENTS.map((e): [string, NotificationMatrixEvent] => [
-            factoryNoticeKey(e.type),
-            { key: factoryNoticeKey(e.type), name: e.name, category: "technical", categoryLabel: `Khối Kỹ thuật · ${e.dept}`, description: e.description, enabled: true, enableToast: true, targetRoles: [], targetEmployeeIds: [] },
-        ])
-    ),
+    }
 };
 
 export const TBR_PERSONNEL: PersonnelItem[] = [];
@@ -367,8 +359,9 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         }
     }, []);
 
-    // Load initial from API storage if available
+    // Load initial from API storage if available (only when authenticated)
     useEffect(() => {
+        if (!user) return;
         if (typeof window !== "undefined") {
             fetch("/api/storage?key=tbr_activity_notifications")
                 .then(res => res.json())
@@ -391,7 +384,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 })
                 .catch(() => {});
         }
-    }, []);
+    }, [user]);
 
     // Notification Matrix Settings (Configurable by Admin)
     const [matrixSettings, setMatrixSettings] = useState<Record<string, NotificationMatrixEvent>>(() => {
@@ -610,7 +603,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             eventKey: matchedKey,
             createdAt: new Date().toISOString(),
             readBy: [],
-            sender: sender || { name: user?.name || "Hệ thống ABT" },
+            sender: sender || { name: user?.name || "Hệ thống TBR" },
             targetEmployeeIds: resolvedEmployeeIds,
             targetEmployeeNames: resolvedEmployeeNames,
             targetUsers: params.targetUsers,
@@ -701,10 +694,9 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 } else if (rLower === "sales_rep" || rLower === "sales") {
                     if (deptLower.includes("kinh doanh") || uRoleLower.includes("sale")) return true;
                 } else if (rLower === "warehouse" || rLower === "warehouse_lead" || rLower === "warehouse_specialist") {
-                    // Kho hàng kinh doanh: Sales Admin / nhân viên kho kinh doanh (không phải phòng Cung ứng Kho của nhà máy)
-                    if (uRoleLower.includes("warehouse") || uRoleLower === "sales_admin" || deptLower === "kho vận") return true;
+                    if (deptLower.includes("kho") || uRoleLower.includes("warehouse")) return true;
                 } else if (rLower === "procurement" || rLower === "procurement_lead" || rLower === "procurement_specialist") {
-                    if (uRoleLower.includes("procurement") || uRoleLower === "sales_admin" || deptLower.includes("xnk") || deptLower === "mua hàng & cung ứng") return true;
+                    if (deptLower.includes("cung ứng") || deptLower.includes("mua hàng") || deptLower.includes("xnk") || uRoleLower.includes("procurement")) return true;
                 } else if (rLower === "app_head") {
                     if ((deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab")) && (posLower.includes("trưởng") || posLower.includes("head"))) return true;
                 } else if (rLower === "app_rep" || rLower === "application") {
@@ -728,6 +720,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             const uRole = ((user as any)?.role || "").trim().toLowerCase();
             const uEmpId = ((user as any)?.employee_id || (user as any)?.employee_code || "").trim().toLowerCase();
 
+            // Graceful fallback if no user is logged in
             if (!uName && !uEmail && !uUsername && !uEmpId) {
                 return allNotifications;
             }
@@ -748,11 +741,13 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             const nameTokens = Array.from(new Set([uName, effectiveName, uUsername, effectiveEmpId].filter(t => t && t.length >= 2)));
 
             return allNotifications.filter(n => {
+                // 1. Direct employee ID match
                 if (Array.isArray(n.targetEmployeeIds) && n.targetEmployeeIds.some(id => {
                     const idLower = String(id || "").toLowerCase();
                     return idLower === effectiveEmpId || idLower === uEmpId || idLower === effectiveEmail || idLower === uUsername || idLower === effectiveName;
                 })) return true;
 
+                // 2. Direct employee name / targetUsers / assignees match
                 const candidateNames = [
                     ...(n.targetEmployeeNames || []),
                     ...(n.targetUsers || []),
@@ -767,12 +762,14 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                     return true;
                 }
 
+                // 3. Recipient email or department match
                 if (n.recipientEmail && effectiveEmail && n.recipientEmail.toLowerCase() === effectiveEmail) return true;
                 if (n.recipientDept && effectiveDept && (
                     n.recipientDept.toLowerCase().includes(effectiveDept) ||
                     effectiveDept.includes(n.recipientDept.toLowerCase())
                 )) return true;
 
+                // 4. @mention or name/department in title, message, description, metadata
                 const textBlob = `${n.title || ""} ${n.message || ""} ${n.description || ""} ${n.metadata ? JSON.stringify(n.metadata) : ""}`.toLowerCase();
                 if (nameTokens.some(tok => textBlob.includes(`@${tok}`) || (tok.length >= 3 && textBlob.includes(tok)))) {
                     return true;
@@ -781,6 +778,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                     return true;
                 }
 
+                // 5. Role match against targetRoles / recipientRole
                 const allTargetRoles = [n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[];
                 if (allTargetRoles.length > 0 && matchRoleAgainstPerson(allTargetRoles, effectiveDept, effectivePos, uRole)) {
                     return true;
@@ -815,6 +813,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 if (textBlob.includes(fullLower)) return true;
                 if (n.recipientDept && targetPersonnel.department && n.recipientDept.toLowerCase() === targetPersonnel.department.toLowerCase()) return true;
 
+                // Role matching against targetRoles or recipientRole
                 const allTargetRoles = [n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[];
                 if (allTargetRoles.length > 0 && matchRoleAgainstPerson(allTargetRoles, targetPersonnel.department || "", targetPersonnel.position || "")) {
                     return true;
@@ -965,7 +964,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                                 {toast.type === "info" && <Bell className="w-5 h-5 text-orange-400 animate-pulse" />}
                             </div>
                             <div className="flex-1 leading-snug">
-                                <span className="font-bold block text-white text-xs mb-0.5">Thông báo hoạt động ABT</span>
+                                <span className="font-bold block text-white text-xs mb-0.5">Thông báo hoạt động TBR</span>
                                 <p className="text-xs text-slate-200">{toast.message}</p>
                             </div>
                             <button
