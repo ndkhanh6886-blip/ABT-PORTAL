@@ -217,14 +217,17 @@ const receivedOf = (po: any, i: number): number => {
   return legacyFull ? Number(po?.items?.[i]?.quantity) || 0 : 0;
 };
 
+/** Làm tròn tối đa 3 chữ số thập phân cho Đơn giá & Thành tiền */
+const roundPrice3 = (v: any): number => Math.round((Number(v) || 0) * 1000) / 1000;
+
 /** Tính toán Thành tiền (trước VAT), Tiền VAT và Thành tiền sau VAT cho từng dòng PO */
 const calcPOLine = (it: any) => {
   const qty = Number(it?.quantity) || 0;
-  const price = Math.round(Number(it?.unit_price) || 0);
-  const subtotal = Math.round(qty * price);
+  const price = roundPrice3(it?.unit_price);
+  const subtotal = roundPrice3(qty * price);
   const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
-  const vatAmount = Math.round((subtotal * vatRate) / 100);
-  const totalAfterVat = subtotal + vatAmount;
+  const vatAmount = roundPrice3((subtotal * vatRate) / 100);
+  const totalAfterVat = roundPrice3(subtotal + vatAmount);
   return { qty, price, subtotal, vatRate, vatAmount, totalAfterVat };
 };
 
@@ -235,9 +238,9 @@ const calcPOTotals = (items: any[]) => {
   let totalAfterVat = 0;
   for (const it of arr) {
     const c = calcPOLine(it);
-    subtotal += c.subtotal;
-    vatAmount += c.vatAmount;
-    totalAfterVat += c.totalAfterVat;
+    subtotal = roundPrice3(subtotal + c.subtotal);
+    vatAmount = roundPrice3(vatAmount + c.vatAmount);
+    totalAfterVat = roundPrice3(totalAfterVat + c.totalAfterVat);
   }
   return { subtotal, vatAmount, totalAfterVat };
 };
@@ -1445,11 +1448,11 @@ export const ProcurementModule: React.FC = () => {
                 <td style="font-weight: 500;">${esc(cleanItemName(it.product_name))}</td>
                 <td class="text-center">${esc(it.unit || '')}</td>
                 <td class="text-center font-bold">${c.qty || 1}</td>
-                <td class="text-right font-mono">${Number(c.price).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
-                <td class="text-right font-mono font-bold">${Number(c.subtotal).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-right font-mono">${Number(c.price).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ</td>
+                <td class="text-right font-mono font-bold">${Number(c.subtotal).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ</td>
                 <td class="text-center font-mono">${c.vatRate}%</td>
-                <td class="text-right font-mono">${Number(c.vatAmount).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
-                <td class="text-right font-mono font-bold" style="color: #ea580c;">${Number(c.totalAfterVat).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-right font-mono">${Number(c.vatAmount).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ</td>
+                <td class="text-right font-mono font-bold" style="color: #ea580c;">${Number(c.totalAfterVat).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ</td>
                 ${hasLineNotes ? `<td style="font-size: 11px;">${esc(it.notes || '')}</td>` : ''}
               </tr>
             `;
@@ -1459,21 +1462,21 @@ export const ProcurementModule: React.FC = () => {
             <tr class="total-row">
               <td colspan="9" class="text-right uppercase">TỔNG TIỀN HÀNG (CHƯA VAT):</td>
               <td class="text-right font-mono font-bold">
-                ${Number(printTotals.subtotal).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
+                ${Number(printTotals.subtotal).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ
               </td>
               ${hasLineNotes ? '<td></td>' : ''}
             </tr>
             <tr class="total-row">
               <td colspan="9" class="text-right uppercase">TỔNG TIỀN THUẾ GTGT (VAT):</td>
               <td class="text-right font-mono font-bold">
-                ${Number(printTotals.vatAmount).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
+                ${Number(printTotals.vatAmount).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ
               </td>
               ${hasLineNotes ? '<td></td>' : ''}
             </tr>
             <tr class="total-row">
               <td colspan="9" class="text-right uppercase">TỔNG CỘNG THANH TOÁN (SAU VAT):</td>
               <td class="text-right font-mono font-bold" style="color: #ea580c; font-size: 13px;">
-                ${Number(totalAmount).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
+                ${Number(totalAmount).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ
               </td>
               ${hasLineNotes ? '<td></td>' : ''}
             </tr>
@@ -6002,7 +6005,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           product_name: prod?.name || item.product_name,
                           specification: item.specification && item.product_code === val ? item.specification : (prod?.specification || ""),
                           unit: prod?.unit || item.unit || "Hộp",
-                          unit_price: Math.round(resolved.unitPrice > 0 ? resolved.unitPrice : (prod ? parseFloat(prod.cost_price) || 0 : Number(item.unit_price) || 0))
+                          unit_price: roundPrice3(resolved.unitPrice > 0 ? resolved.unitPrice : (prod ? parseFloat(prod.cost_price) || 0 : Number(item.unit_price) || 0))
                         });
                       };
                       const stockTitle = stockIntel
@@ -6106,9 +6109,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <input
                               type="number"
                               min={0}
-                              step={1}
-                              value={Number.isFinite(Number(item.unit_price)) ? Math.round(Number(item.unit_price)) : item.unit_price}
-                              onChange={(e) => updatePOLine(idx, { unit_price: Math.max(0, Math.round(parseFloat(e.target.value) || 0)) })}
+                              step="0.001"
+                              value={item.unit_price ?? ""}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                updatePOLine(idx, {
+                                  unit_price: raw === "" ? 0 : (/^\d*\.\d{0,3}$/.test(raw) ? raw : Math.max(0, roundPrice3(parseFloat(raw) || 0)))
+                                });
+                              }}
+                              onBlur={() => updatePOLine(idx, { unit_price: Math.max(0, roundPrice3(item.unit_price)) })}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-xs"
                             />
                           </td>
@@ -6702,10 +6711,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           <td className="p-2">
                             <input
                               type="number"
-                              min={1}
-                              value={l.unit_price || ""}
+                              min={0.001}
+                              step="0.001"
+                              value={l.unit_price ?? ""}
                               placeholder="Nhập đơn giá *"
-                              onChange={(e) => setL({ unit_price: Math.max(0, parseInt(e.target.value) || 0) })}
+                              onChange={(e) => {
+                                const raw = e.target.value;
+                                setL({ unit_price: raw === "" ? "" : (/^\d*\.\d{0,3}$/.test(raw) ? raw : Math.max(0, roundPrice3(parseFloat(raw) || 0))) });
+                              }}
+                              onBlur={() => setL({ unit_price: Math.max(0, roundPrice3(l.unit_price)) })}
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-[11px] ${
                                 !(Number(l.unit_price) > 0)
                                   ? "border-rose-300 dark:border-rose-800/80"

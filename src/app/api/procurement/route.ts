@@ -972,7 +972,7 @@ export async function POST(req: NextRequest) {
           })
         : undefined;
       const total_amount = items
-        ? items.reduce((sum: number, it: any) => sum + (Number(it.total_after_vat ?? it.total) || 0), 0)
+        ? Math.round(items.reduce((sum: number, it: any) => sum + (Number(it.total_after_vat ?? it.total) || 0), 0) * 1000) / 1000
         : body.total_amount;
       const force_rollback = Boolean(body.force_rollback) && isAdminUser(me); // lùi trạng thái: chỉ Quản trị viên
       let finalPoCode = po_code;
@@ -1761,16 +1761,18 @@ export async function POST(req: NextRequest) {
           if (Number.isInteger(idx) && idx >= 0 && poIt) {
             thisReceipt[idx] = (thisReceipt[idx] || 0) + qty;
             if (resolvedUnitPrice > 0 && Number(poIt.unit_price) !== resolvedUnitPrice) {
+              const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
               const pQty = Number(poIt.quantity) || 0;
-              const pSub = Math.round(pQty * resolvedUnitPrice);
+              const pPrice = r3(resolvedUnitPrice);
+              const pSub = r3(pQty * pPrice);
               const pVatRate = Math.max(0, Number(poIt.vat_rate ?? poIt.tax_rate ?? 0) || 0);
-              const pVatAmt = Math.round((pSub * pVatRate) / 100);
-              poIt.unit_price = resolvedUnitPrice;
+              const pVatAmt = r3((pSub * pVatRate) / 100);
+              poIt.unit_price = pPrice;
               poIt.subtotal = pSub;
               poIt.vat_rate = pVatRate;
               poIt.vat_amount = pVatAmt;
-              poIt.total_after_vat = pSub + pVatAmt;
-              poIt.total = pSub + pVatAmt;
+              poIt.total_after_vat = r3(pSub + pVatAmt);
+              poIt.total = r3(pSub + pVatAmt);
               poPriceUpdated = true;
             }
           }
@@ -1908,11 +1910,12 @@ export async function POST(req: NextRequest) {
         const allDone = poItems.every((it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it.quantity) || 0));
         const newStatus = allDone ? "COMPLETED" : "PARTIALLY_RECEIVED";
         const newPoTotalAmount = poPriceUpdated
-          ? poItems.reduce((sum: number, it: any) => {
-              const sub = Math.round((Number(it?.quantity) || 0) * (Number(it?.unit_price) || 0));
+          ? Math.round(poItems.reduce((sum: number, it: any) => {
+              const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
+              const sub = r3((Number(it?.quantity) || 0) * r3(it?.unit_price));
               const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
-              return sum + sub + Math.round((sub * vr) / 100);
-            }, 0)
+              return sum + sub + r3((sub * vr) / 100);
+            }, 0) * 1000) / 1000
           : Number(po.total_amount) || 0;
         await c.query(
           `UPDATE procurement_orders

@@ -7957,7 +7957,7 @@ export const WarehouseModule: React.FC = () => {
                                     specification: l.specification || cat?.specification || "",
                                     unit: l.unit || cat?.unit || "Hộp",
                                     quantity: l.remaining,
-                                    unit_price: Math.round(Number(l.unit_price) || Number(cat?.cost_price) || 0),
+                                    unit_price: Math.round((Number(l.unit_price) || Number(cat?.cost_price) || 0) * 1000) / 1000,
                                     lot_number: "",
                                     manufacture_date: "",
                                     expiry_date: "",
@@ -8391,10 +8391,15 @@ export const WarehouseModule: React.FC = () => {
                           </label>
                           <input
                             type="number"
-                            min="1"
-                            value={item.unit_price || ""}
+                            min="0.001"
+                            step="0.001"
+                            value={item.unit_price ?? ""}
                             placeholder="Nhập đơn giá..."
-                            onChange={(e) => handleInboundItemChange(idx, "unit_price", Math.max(0, parseInt(e.target.value) || 0))}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              handleInboundItemChange(idx, "unit_price", raw === "" ? "" : (/^\d*\.\d{0,3}$/.test(raw) ? raw : Math.max(0, Math.round((parseFloat(raw) || 0) * 1000) / 1000)));
+                            }}
+                            onBlur={() => handleInboundItemChange(idx, "unit_price", Math.max(0, Math.round((Number(item.unit_price) || 0) * 1000) / 1000))}
                             className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono text-xs font-semibold ${
                               !(Number(item.unit_price) > 0)
                                 ? "border-rose-300 dark:border-rose-800/80"
@@ -9285,10 +9290,10 @@ export const WarehouseModule: React.FC = () => {
                           <td className="py-2 px-3 text-right font-mono font-black text-slate-900 dark:text-white">{it.quantity}</td>
                           <td className="py-2 px-3 text-slate-500">{it.unit || "Hộp"}</td>
                           <td className="py-2 px-3 text-right font-mono">
-                            {it.unit_price !== undefined && it.unit_price !== null ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(it.unit_price) || 0) : "—"}
+                            {it.unit_price !== undefined && it.unit_price !== null ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(Math.round((Number(it.unit_price) || 0) * 1000) / 1000) : "—"}
                           </td>
                           <td className="py-2 px-3 text-right font-mono font-bold">
-                            {it.unit_price !== undefined && it.unit_price !== null ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format((Number(it.unit_price) || 0) * (Number(it.quantity) || 0)) : "—"}
+                            {it.unit_price !== undefined && it.unit_price !== null ? new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(Math.round(((Number(it.unit_price) || 0) * (Number(it.quantity) || 0)) * 1000) / 1000) : "—"}
                           </td>
                           <td className="py-2 px-3 text-slate-600 dark:text-slate-400">
                             <div>{it.storage_condition || it.storage_location || "Kho thường"}</div>

@@ -8,7 +8,7 @@ export function cn(...inputs: ClassValue[]) {
 export function formatCurrency(amount: number | string | undefined | null): string {
   if (amount === undefined || amount === null || isNaN(Number(amount))) return "0 VNĐ";
   // Tiền đồng không có phần lẻ: làm tròn khi hiển thị (giá lưu có thể còn số lẻ do quy đổi ngoại tệ)
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Number(amount)) + " VNĐ";
+  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(Math.round((Number(amount) || 0) * 1000) / 1000) + " VNĐ";
 }
 
 /**

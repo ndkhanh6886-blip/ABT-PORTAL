@@ -27,7 +27,8 @@ const PAYMENT_LABEL: Record<string, { label: string; className: string }> = {
   PAID: { label: "Đã trả", className: "text-emerald-600" },
 };
 
-const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(Number(n) || 0));
+const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
+const fmt = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(r3(n));
 const day = (v: any) => (v ? String(v).slice(0, 10).split("-").reverse().join("/") : "—");
 
 export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, cleanItemName, itemSourcePR, statusLabel, paymentStatus }: POLineItemsViewProps) {
@@ -48,11 +49,11 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
       items.forEach((it: any, idx: number) => {
         const qty = Number(it?.quantity) || 0;
         const received = receivedOf(po, idx);
-        const price = Math.round(Number(it?.unit_price) || 0);
-        const subtotal = Math.round(qty * price);
+        const price = r3(it?.unit_price);
+        const subtotal = r3(qty * price);
         const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
-        const vatAmount = Math.round((subtotal * vatRate) / 100);
-        const afterVat = subtotal + vatAmount;
+        const vatAmount = r3((subtotal * vatRate) / 100);
+        const afterVat = r3(subtotal + vatAmount);
         out.push({
           key: `${po.po_code}#${idx}`,
           po, idx,
