@@ -3756,8 +3756,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
           {/* Controls Bar & Expanded Lifecycle Filters */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div className="flex items-center gap-3 flex-1 max-w-md">
-              <div className="relative w-full">
+            <div className="flex flex-wrap items-center gap-2.5 flex-1 max-w-2xl">
+              <div className="relative flex-1 min-w-[220px]">
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
@@ -4455,8 +4455,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {subTab === "pr" && (
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div>
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+            <div className="min-w-0 flex-1">
               <h3 className="font-bold text-slate-900 dark:text-white text-sm">
                 Luồng Đề Xuất Mua Hàng (Purchase Requests - PR)
               </h3>
@@ -4465,34 +4465,34 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               </p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
+            <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+              <div className="shrink-0 flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
                 {([["pr", "Theo phiếu PR"], ["lines", "Theo mặt hàng"]] as const).map(([mode, label]) => (
                   <button
                     key={mode}
                     type="button"
                     onClick={() => setPRViewMode(mode)}
-                    className={`px-3 py-1 rounded-lg font-semibold cursor-pointer ${prViewMode === mode ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs" : "text-slate-600 dark:text-slate-400"}`}
+                    className={`px-3 py-1 rounded-lg font-semibold whitespace-nowrap cursor-pointer ${prViewMode === mode ? "bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-xs" : "text-slate-600 dark:text-slate-400"}`}
                   >
                     {label}
                   </button>
                 ))}
               </div>
               {prViewMode === "pr" && (
-              <div className="relative">
-                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+              <div className="relative shrink-0">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <input
                   type="text"
                   placeholder="Tìm mã PR, sản phẩm, người gửi..."
                   value={prSearch}
                   onChange={(e) => setPRSearch(e.target.value)}
-                  className="pl-9 pr-4 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                  className="w-52 sm:w-60 pl-9 pr-3 py-1.5 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
                 />
               </div>
               )}
               <button
                 onClick={handleOpenNewPRModal}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs cursor-pointer"
+                className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 text-white hover:bg-indigo-700 shadow-xs cursor-pointer"
               >
                 <Plus className="w-3.5 h-3.5" /> Tạo PR Mới
               </button>
@@ -4505,7 +4505,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   if (suppliers.length > 0) setConsolidateSupplierId(suppliers[0].id);
                   setIsConsolidateModalOpen(true);
                 }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer transition-all"
+                className="shrink-0 whitespace-nowrap flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer transition-all"
                 title="Gom các PR cùng Nhà cung cấp để lên 1 Đơn đặt mua (PO) tổng hợp (Yêu cầu 4)"
               >
                 <PackageCheck className="w-3.5 h-3.5" />
