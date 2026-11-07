@@ -377,23 +377,79 @@ function normalizeQuotationRow(r: any) {
   };
 }
 
+let contractExtraColumnEnsured = false;
+const CONTRACT_EXTRA_KEYS = [
+  "quotationId", "quoteId", "date", "signDate", "validUntil",
+  "partyAName", "partyAAddress", "partyAPhone", "partyAEmail", "partyARepresentative", "partyARole", "partyATaxCode", "partyACustomFields",
+  "partyBName", "partyBAddress", "partyBPhone", "partyBEmail", "partyBRepresentative", "partyBRole", "partyBTaxCode", "partyBCustomFields",
+  "taxCode", "representative", "contractValue", "deliveryTerms", "paymentTerms", "contractTerms", "generalTerms",
+  "salesRepId", "contractType", "isPrinciple", "isFramework", "signedFileUrl", "invoiceFile", "customerCode", "customer_code", "customerId",
+  "orderId", "orderIds", "hasOrder"
+];
+
 function normalizeContractRow(r: any) {
   if (!r) return null;
   const contractId = r.contract_code || (r.id ? String(r.id) : `CTR-${Date.now()}`);
+  let extra: any = {};
+  try {
+    extra = typeof r.extra_data === "string" ? JSON.parse(r.extra_data || "{}") : (r.extra_data || {});
+  } catch (e) { extra = {}; }
+  extra = extra && typeof extra === "object" ? extra : {};
+  const rawStatus = String(r.status || extra.status || "ACTIVE").trim();
+  const normalizedStatus = (rawStatus === "ACTIVE" || rawStatus === "Signed") ? "Signed" : ((rawStatus === "DRAFT" || rawStatus === "Draft") ? "Draft" : rawStatus);
+  const rawItems = Array.isArray(r.items) ? r.items : (typeof r.items === 'string' ? (() => { try { return JSON.parse(r.items || '[]'); } catch { return []; } })() : (Array.isArray(extra.items) ? extra.items : []));
+  const rawFiles = Array.isArray(r.contract_files) ? r.contract_files : (typeof r.contract_files === 'string' ? (() => { try { return JSON.parse(r.contract_files || '[]'); } catch { return []; } })() : (Array.isArray(extra.contract_files) ? extra.contract_files : []));
+  const totalVal = Number(r.total_value ?? r.totalAmount ?? extra.totalAmount ?? extra.total_value ?? extra.contractValue ?? 0) || 0;
   return {
+    ...extra,
     ...r,
     id: contractId,
     contract_code: contractId,
-    contractTitle: r.title || r.contractTitle || "Hợp đồng mua bán",
-    customerName: r.customer_name || r.customerName || "",
-    salesRepName: r.sales_rep_name || r.salesRepName || "",
-    totalAmount: Number(r.total_value || r.totalAmount) || 0,
-    total_value: Number(r.total_value || r.totalAmount) || 0,
-    status: r.status || "ACTIVE",
-    notes: r.notes || "",
-    items: Array.isArray(r.items) ? r.items : (typeof r.items === 'string' ? JSON.parse(r.items || '[]') : []),
-    contract_files: Array.isArray(r.contract_files) ? r.contract_files : (typeof r.contract_files === 'string' ? JSON.parse(r.contract_files || '[]') : [])
+    contractTitle: r.title || r.contractTitle || extra.contractTitle || extra.title || "Hợp đồng mua bán",
+    customerName: r.customer_name || r.customerName || extra.customerName || extra.partyBName || "",
+    salesRepName: r.sales_rep_name || r.salesRepName || extra.salesRepName || "",
+    salesRepId: extra.salesRepId || r.salesRepId || r.sales_rep_id || "",
+    totalAmount: totalVal,
+    total_value: totalVal,
+    status: normalizedStatus,
+    notes: r.notes || extra.notes || "",
+    items: rawItems,
+    contract_files: rawFiles
   };
+}
+
+async function mergeContractsWithStorage(dbRows: any[]): Promise<any[]> {
+  const map = new Map<string, any>();
+  let deletedSet = new Set<string>();
+  try {
+    const stRes = await query("SELECT key, data FROM app_storage WHERE key IN ('sales_contracts', 'deleted_sales_contracts')");
+    const stMap = new Map<string, any>(stRes.rows.map((r: any) => [r.key, r.data]));
+    const delArr = Array.isArray(stMap.get("deleted_sales_contracts")) ? stMap.get("deleted_sales_contracts") : [];
+    deletedSet = new Set<string>(delArr.map((x: any) => String(x || "").trim().toUpperCase()).filter(Boolean));
+    const stored = Array.isArray(stMap.get("sales_contracts")) ? stMap.get("sales_contracts") : [];
+    for (const sc of stored) {
+      const norm = normalizeContractRow(sc);
+      const k = String(norm?.contract_code || norm?.id || '').trim();
+      if (k && !deletedSet.has(k.toUpperCase())) map.set(k, norm);
+    }
+  } catch (e) {}
+  for (const r of dbRows || []) {
+    const norm = normalizeContractRow(r);
+    const k = String(norm?.contract_code || norm?.id || '').trim();
+    if (!k || deletedSet.has(k.toUpperCase())) continue;
+    const prev = map.get(k);
+    if (prev) {
+      map.set(k, {
+        ...prev,
+        ...norm,
+        items: Array.isArray(norm.items) && norm.items.length > 0 ? norm.items : (prev.items || []),
+        contract_files: Array.isArray(norm.contract_files) && norm.contract_files.length > 0 ? norm.contract_files : (prev.contract_files || []),
+      });
+    } else {
+      map.set(k, norm);
+    }
+  }
+  return Array.from(map.values());
 }
 
 // Thông tin mở rộng của phiếu giao (đợt giao, hình thức, trạng thái xác nhận, POD...) lưu ở cột JSONB extra_data
@@ -665,7 +721,7 @@ export async function GET(req: NextRequest) {
         daily: daily.rows,
         reservations: reservations.rows,
         procurement_orders: openPOs.rows,
-        contracts: contractsRes.rows.map(normalizeContractRow),
+        contracts: await mergeContractsWithStorage(contractsRes.rows),
         rma_returns: rmaRes.rows,
         lot_recalls: recallsRes.rows,
         delivery_slips: slipsRes.rows.map(normalizeDeliverySlipRow),
@@ -769,7 +825,7 @@ export async function GET(req: NextRequest) {
 
     if (action === "contracts") {
       const res = await query("SELECT * FROM sales_contracts ORDER BY id DESC");
-      return NextResponse.json({ contracts: res.rows.map(normalizeContractRow) });
+      return NextResponse.json({ contracts: await mergeContractsWithStorage(res.rows) });
     }
 
     if (action === "delivery_slips") {
@@ -2726,41 +2782,63 @@ export async function POST(req: NextRequest) {
         });
       }
 
+      if (!contractExtraColumnEnsured) {
+        try {
+          await query("ALTER TABLE sales_contracts ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb");
+          await query("CREATE UNIQUE INDEX IF NOT EXISTS sales_contracts_contract_code_uidx ON sales_contracts (contract_code)");
+          contractExtraColumnEnsured = true;
+        } catch (e) {}
+      }
+      const extraData: Record<string, any> = {};
+      for (const k of CONTRACT_EXTRA_KEYS) {
+        if (body[k] !== undefined) extraData[k] = body[k];
+      }
+      const dbStatus = (status === "Signed" || status === "ACTIVE") ? "ACTIVE" : ((status === "Draft" || status === "DRAFT") ? "DRAFT" : status);
+
       const upsertRes = await query(
         `INSERT INTO sales_contracts (
           contract_code, customer_id, customer_name, sales_rep_name, 
-          title, sign_date, valid_until, total_value, status, notes, contract_files, items
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          title, sign_date, valid_until, total_value, status, notes, contract_files, items, extra_data
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $15::jsonb)
         ON CONFLICT (contract_code) DO UPDATE 
-        SET customer_id = EXCLUDED.customer_id,
+        SET customer_id = COALESCE(EXCLUDED.customer_id, sales_contracts.customer_id),
             customer_name = EXCLUDED.customer_name,
-            sales_rep_name = EXCLUDED.sales_rep_name,
+            sales_rep_name = COALESCE(NULLIF(EXCLUDED.sales_rep_name, ''), sales_contracts.sales_rep_name),
             title = EXCLUDED.title,
             sign_date = EXCLUDED.sign_date,
-            valid_until = EXCLUDED.valid_until,
+            valid_until = COALESCE(EXCLUDED.valid_until, sales_contracts.valid_until),
             total_value = EXCLUDED.total_value,
             status = EXCLUDED.status,
-            notes = EXCLUDED.notes,
+            notes = CASE WHEN EXCLUDED.notes <> '' THEN EXCLUDED.notes ELSE sales_contracts.notes END,
             contract_files = CASE WHEN $13::boolean THEN EXCLUDED.contract_files ELSE sales_contracts.contract_files END,
-            items = CASE WHEN $14::boolean THEN EXCLUDED.items ELSE sales_contracts.items END
+            items = CASE WHEN $14::boolean THEN EXCLUDED.items ELSE sales_contracts.items END,
+            extra_data = COALESCE(sales_contracts.extra_data, '{}'::jsonb) || EXCLUDED.extra_data
         RETURNING *`,
         [
-          finalCode, validCustId, custName, repName, title, signDate, validUntil, totalVal, status, notes, JSON.stringify(contractFiles), JSON.stringify(items),
+          finalCode, validCustId, custName, repName, title, signDate, validUntil, totalVal, dbStatus, notes, JSON.stringify(contractFiles), JSON.stringify(items),
           body.contract_files !== undefined || body.contractFiles !== undefined,
-          body.items !== undefined
+          body.items !== undefined,
+          JSON.stringify(extraData)
         ]
       );
 
       await logAudit("CREATE_OR_UPDATE", "CONTRACT", `Lưu hợp đồng số hóa ${finalCode}`);
 
-      // Sync fresh snapshot to app_storage
+      // Sync fresh snapshot to app_storage (preserving rich fields and removing from deleted_sales_contracts if re-created)
       try {
+        const delRes = await query("SELECT data FROM app_storage WHERE key = 'deleted_sales_contracts'");
+        if (Array.isArray(delRes.rows[0]?.data) && delRes.rows[0].data.length > 0) {
+          const nextDel = delRes.rows[0].data.filter((x: any) => String(x || '').trim().toUpperCase() !== String(finalCode).trim().toUpperCase());
+          if (nextDel.length !== delRes.rows[0].data.length) {
+            await query("UPDATE app_storage SET data = $1::jsonb, updated_at = CURRENT_TIMESTAMP WHERE key = 'deleted_sales_contracts'", [JSON.stringify(nextDel)]);
+          }
+        }
         const allC = await query("SELECT * FROM sales_contracts ORDER BY id DESC");
-        const normalizedList = allC.rows.map(normalizeContractRow);
+        const mergedList = await mergeContractsWithStorage(allC.rows);
         await query(
           `INSERT INTO app_storage (key, data, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
            ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
-          ["sales_contracts", JSON.stringify(normalizedList)]
+          ["sales_contracts", JSON.stringify(mergedList)]
         );
       } catch (err) {
         console.error("Failed to sync sales_contracts to app_storage:", err);
@@ -2774,20 +2852,45 @@ export async function POST(req: NextRequest) {
       const targetCode = contract_code || (typeof id === 'string' && isNaN(Number(id)) ? id : null);
       const targetId = !isNaN(Number(id)) ? Number(id) : null;
 
-      await query(
-        "DELETE FROM sales_contracts WHERE contract_code = $1 OR id = $2",
+      const delRows = await query(
+        "DELETE FROM sales_contracts WHERE contract_code = $1 OR id = $2 RETURNING contract_code",
         [targetCode, targetId]
       );
-      await logAudit("DELETE", "CONTRACT", `Xóa hợp đồng ${targetCode || targetId}`);
+      const deletedCode = String(targetCode || delRows.rows[0]?.contract_code || id || '').trim();
+      await logAudit("DELETE", "CONTRACT", `Xóa hợp đồng ${deletedCode || targetId}`);
 
-      // Sync fresh snapshot to app_storage
+      // Record deleted code and sync fresh snapshot to app_storage
       try {
+        if (deletedCode) {
+          const delRes = await query("SELECT data FROM app_storage WHERE key = 'deleted_sales_contracts'");
+          const prevDel = Array.isArray(delRes.rows[0]?.data) ? delRes.rows[0].data : [];
+          if (!prevDel.some((x: any) => String(x || '').trim().toUpperCase() === deletedCode.toUpperCase())) {
+            const nextDel = [...prevDel, deletedCode];
+            await query(
+              `INSERT INTO app_storage (key, data, updated_at) VALUES ('deleted_sales_contracts', $1::jsonb, CURRENT_TIMESTAMP)
+               ON CONFLICT (key) DO UPDATE SET data = $1::jsonb, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
+              [JSON.stringify(nextDel)]
+            );
+          }
+        }
+        const stRes = await query("SELECT data FROM app_storage WHERE key = 'sales_contracts'");
+        if (Array.isArray(stRes.rows[0]?.data)) {
+          const filteredSt = stRes.rows[0].data.filter((c: any) => {
+            const ck = String(c?.contract_code || c?.id || '').trim().toUpperCase();
+            return ck !== deletedCode.toUpperCase();
+          });
+          await query(
+            `INSERT INTO app_storage (key, data, updated_at) VALUES ('sales_contracts', $1::jsonb, CURRENT_TIMESTAMP)
+             ON CONFLICT (key) DO UPDATE SET data = $1::jsonb, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
+            [JSON.stringify(filteredSt)]
+          );
+        }
         const allC = await query("SELECT * FROM sales_contracts ORDER BY id DESC");
-        const normalizedList = allC.rows.map(normalizeContractRow);
+        const mergedList = await mergeContractsWithStorage(allC.rows);
         await query(
           `INSERT INTO app_storage (key, data, updated_at) VALUES ($1, $2, CURRENT_TIMESTAMP)
            ON CONFLICT (key) DO UPDATE SET data = $2, version = COALESCE(app_storage.version, 1) + 1, updated_at = CURRENT_TIMESTAMP`,
-          ["sales_contracts", JSON.stringify(normalizedList)]
+          ["sales_contracts", JSON.stringify(mergedList)]
         );
       } catch (err) {}
 

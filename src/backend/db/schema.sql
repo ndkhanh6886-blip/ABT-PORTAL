@@ -454,7 +454,7 @@ CREATE TABLE IF NOT EXISTS "rma_returns" (
 
 CREATE TABLE IF NOT EXISTS "sales_contracts" (
   "id" SERIAL,
-  "contract_code" VARCHAR(100) NOT NULL,
+  "contract_code" VARCHAR(100) NOT NULL UNIQUE,
   "customer_id" INTEGER,
   "customer_name" VARCHAR(255) NOT NULL,
   "sales_rep_name" VARCHAR(100),
@@ -467,6 +467,7 @@ CREATE TABLE IF NOT EXISTS "sales_contracts" (
   "contract_files" JSONB DEFAULT '[]'::jsonb,
   "created_at" TIMESTAMP WITHOUT TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   "items" JSONB DEFAULT '[]'::jsonb,
+  "extra_data" JSONB DEFAULT '{}'::jsonb,
   PRIMARY KEY ("id")
 );
 

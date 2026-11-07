@@ -2064,6 +2064,18 @@ export function SalesFullABT() {
         }
     }, [quotations, isSalesDataLoaded]);
 
+    useEffect(() => {
+        if (!isSalesDataLoaded) return;
+        if (typeof window !== "undefined") {
+            try { localStorage.setItem("sales_contracts", JSON.stringify(contracts)); } catch {}
+            fetch("/api/storage", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ key: "sales_contracts", data: contracts })
+            }).catch(e => console.error("Failed to sync sales_contracts:", e));
+        }
+    }, [contracts, isSalesDataLoaded]);
+
 
     // Initial load: PostgreSQL relational tables + app_storage are the source of truth.
     // localStorage is only a display cache: it is never merged back into server data (that used to
@@ -2084,7 +2096,7 @@ export function SalesFullABT() {
             let overviewData: any = null;
             let serverData: any = null;
             const storageKeys = [
-                "sales_quotations", "sales_contracts", "sales_factory_orders", "sales_targets",
+                "sales_quotations", "sales_contracts", "deleted_sales_contracts", "sales_factory_orders", "sales_targets",
                 "sales_delivery_slips", "sales_specialized_plans", "sales_tasks", "sales_plans", "sales_daily_logs"
             ];
             await Promise.all([
@@ -2305,12 +2317,80 @@ export function SalesFullABT() {
                     localStorage.setItem("sales_factory_orders", JSON.stringify(mergedOrders));
                 } catch (e) {}
 
-                // 3. Contracts: relational table, else app_storage
-                if (Array.isArray(overviewData.contracts) && overviewData.contracts.length > 0) {
-                    setContracts(normalizeContracts(overviewData.contracts));
-                } else if (Array.isArray(serverData.sales_contracts)) {
-                    setContracts(normalizeContracts(serverData.sales_contracts));
+                // 3. Contracts: merge relational table + app_storage + unsynced local contracts + order references
+                const deletedContractSet = new Set<string>(
+                    (Array.isArray(serverData.deleted_sales_contracts) ? serverData.deleted_sales_contracts : [])
+                        .map((x: any) => String(x || '').trim().toUpperCase())
+                        .filter(Boolean)
+                );
+                const contractMap = new Map<string, any>();
+                const getContractKey = (c: any): string => String(c?.contract_code || c?.id || '').trim();
+                if (Array.isArray(serverData.sales_contracts)) {
+                    normalizeContracts(serverData.sales_contracts).forEach((c: any) => {
+                        const k = getContractKey(c);
+                        if (k && !deletedContractSet.has(k.toUpperCase())) contractMap.set(k, c);
+                    });
                 }
+                if (Array.isArray(overviewData.contracts)) {
+                    normalizeContracts(overviewData.contracts).forEach((c: any) => {
+                        const k = getContractKey(c);
+                        if (!k || deletedContractSet.has(k.toUpperCase())) return;
+                        const prev = contractMap.get(k);
+                        if (prev) {
+                            contractMap.set(k, {
+                                ...prev,
+                                ...c,
+                                items: Array.isArray(c.items) && c.items.length > 0 ? c.items : (prev.items || []),
+                                contract_files: Array.isArray(c.contract_files) && c.contract_files.length > 0 ? c.contract_files : (prev.contract_files || []),
+                            });
+                        } else {
+                            contractMap.set(k, c);
+                        }
+                    });
+                }
+                // Recover any contract created in this browser whose server save previously failed
+                if (typeof window !== 'undefined') {
+                    try {
+                        const rawLocal = localStorage.getItem('sales_contracts');
+                        const localContracts = rawLocal ? JSON.parse(rawLocal) : [];
+                        if (Array.isArray(localContracts)) {
+                            normalizeContracts(localContracts).forEach((lc: any) => {
+                                const k = getContractKey(lc);
+                                if (k && !deletedContractSet.has(k.toUpperCase()) && !contractMap.has(k)) {
+                                    contractMap.set(k, lc);
+                                    fetch('/api/sales?action=contract', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify(lc)
+                                    }).catch(() => {});
+                                }
+                            });
+                        }
+                    } catch {}
+                }
+                // Orders whose contract row is missing still need a contract entry for the UI links
+                mergedOrders.forEach((fo: any) => {
+                    const cId = String(fo.contractId || fo.contract_code || '').trim();
+                    if (cId && !deletedContractSet.has(cId.toUpperCase()) && !contractMap.has(cId)) {
+                        contractMap.set(cId, {
+                            id: cId,
+                            contract_code: cId,
+                            contractTitle: 'Hợp đồng mua bán',
+                            customerName: fo.customerName || 'Khách hàng',
+                            salesRepName: fo.salesRepName || 'Nhân viên kinh doanh',
+                            salesRepId: fo.salesRepId || '',
+                            totalAmount: Number(fo.totalAmount || 0),
+                            total_value: Number(fo.totalAmount || 0),
+                            status: 'Signed',
+                            date: fo.date || new Date().toLocaleDateString("vi-VN"),
+                            items: fo.items || [],
+                            contract_files: []
+                        });
+                    }
+                });
+                const mergedContracts = normalizeContracts(Array.from(contractMap.values()));
+                setContracts(mergedContracts);
+                try { localStorage.setItem('sales_contracts', JSON.stringify(mergedContracts)); } catch {}
 
                 // 4. Delivery slips: relational rows win, app_storage-only slips are kept
                 const slipMap = new Map<string, any>();
@@ -4645,13 +4725,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }
                 if (data && Array.isArray(data.contracts) && data.contracts.length > 0) {
                     setContracts(prev => {
-                        const merged = [...data.contracts];
-                        prev.forEach(p => {
-                            if (!merged.some(m => m.id === p.id || m.contract_code === p.id || m.contract_code === p.contract_code)) {
-                                merged.push(p);
-                            }
+                        const map = new Map<string, any>();
+                        (prev || []).forEach(p => {
+                            const k = String(p?.contract_code || p?.id || '').trim();
+                            if (k) map.set(k, p);
                         });
-                        return normalizeContracts(merged);
+                        data.contracts.forEach((m: any) => {
+                            const k = String(m?.contract_code || m?.id || '').trim();
+                            if (!k) return;
+                            const existing = map.get(k);
+                            map.set(k, existing ? { ...existing, ...m, items: Array.isArray(m.items) && m.items.length > 0 ? m.items : (existing.items || []), contract_files: Array.isArray(m.contract_files) && m.contract_files.length > 0 ? m.contract_files : (existing.contract_files || []) } : m);
+                        });
+                        return normalizeContracts(Array.from(map.values()));
                     });
                 }
             }
@@ -12193,8 +12278,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const handleCreateContract = async (e: React.FormEvent) => {
         e.preventDefault();
-        const repId = loggedInStaff?.employee_id || salesPersonnel[0]?.employee_id || "NV-001";
-        const repName = loggedInStaff?.full_name || salesPersonnel[0]?.full_name || "NVKD";
+        const repId = loggedInStaff?.employee_id || (user as any)?.employee_id || (user as any)?.employee_code || salesPersonnel[0]?.employee_id || "NV-001";
+        const repName = loggedInStaff?.full_name || (user as any)?.full_name || user?.name || salesPersonnel[0]?.full_name || "NVKD";
         
         let items: any[] = [];
         let totalAmount = 0;
@@ -12267,12 +12352,28 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 generalTerms: contractGeneralTerms || defaultGeneralTerms || STANDARD_GENERAL_TERMS
             } : c);
             setContracts(updatedContracts);
-            localStorage.setItem("sales_contracts", JSON.stringify(updatedContracts));
+            try { localStorage.setItem("sales_contracts", JSON.stringify(updatedContracts)); } catch {}
             fetch("/api/storage", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ key: "sales_contracts", data: updatedContracts })
             }).catch(e => console.error("Failed to sync sales_contracts edit:", e));
+            const editedContract = updatedContracts.find(c => c.id === editingContractId);
+            if (editedContract) {
+                fetch("/api/sales?action=contract", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        ...editedContract,
+                        contract_code: editedContract.id,
+                        customer_name: editedContract.customerName,
+                        sales_rep_name: editedContract.salesRepName || repName,
+                        title: editedContract.contractTitle || "Hợp đồng kinh tế",
+                        total_value: editedContract.totalAmount,
+                        status: editedContract.status === "Signed" ? "ACTIVE" : "DRAFT",
+                    })
+                }).catch(e => console.error("Failed to sync edited contract to PostgreSQL:", e));
+            }
 
             showToast(`Đã cập nhật thành công Hợp đồng ${editingContractId}!`, "success");
             setIsContractModalOpen(false);
@@ -12332,6 +12433,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             generalTerms: contractGeneralTerms || defaultGeneralTerms || STANDARD_GENERAL_TERMS,
             status: selectedQuoteForContract ? "Signed" : "Draft",
             salesRepId: repId,
+            salesRepName: repName,
             contractType: selectedQuoteForContract ? "QUOTATION_BASED" : contractType,
             isPrinciple: (selectedQuoteForContract ? "QUOTATION_BASED" : contractType) === "PRINCIPLE" || String(contractTitle).toLowerCase().includes("nguyên tắc"),
             isFramework: (selectedQuoteForContract ? "QUOTATION_BASED" : contractType) === "PRINCIPLE" || String(contractTitle).toLowerCase().includes("nguyên tắc")
@@ -12342,10 +12444,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const updatedContracts = [newContract, ...contracts.filter(c => c.id !== newContract.id)];
         setContracts(updatedContracts);
         try { localStorage.setItem("sales_contracts", JSON.stringify(updatedContracts)); } catch(e) {}
+        fetch("/api/storage", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ key: "sales_contracts", data: updatedContracts })
+        }).catch(e => console.error("Failed to sync sales_contracts to app_storage:", e));
         fetch("/api/sales?action=contract", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
+                ...newContract,
                 contract_code: newContract.id,
                 customer_name: newContract.customerName,
                 sales_rep_name: repName,

@@ -377,6 +377,71 @@ async function runIntegrityMigrations() {
       }
     });
 
+    // D2b: ensure sales_contracts has extra_data JSONB, unique index on contract_code, and syncs with app_storage.sales_contracts
+    await step("dedupe_and_sync_sales_contracts", async () => {
+      await client.query("ALTER TABLE sales_contracts ADD COLUMN IF NOT EXISTS extra_data JSONB DEFAULT '{}'::jsonb");
+      if (!(await indexExists("sales_contracts_contract_code_uidx")) && !(await indexExists("sales_contracts_contract_code_key"))) {
+        await client.query("BEGIN");
+        try {
+          const groups = await client.query("SELECT contract_code FROM sales_contracts GROUP BY contract_code HAVING COUNT(*) > 1");
+          for (const g of groups.rows) {
+            const rows = (await client.query("SELECT * FROM sales_contracts WHERE contract_code = $1 ORDER BY id ASC FOR UPDATE", [g.contract_code])).rows;
+            if (rows.length < 2) continue;
+            const keep = rows[0];
+            const latest = rows[rows.length - 1];
+            await client.query(
+              `UPDATE sales_contracts SET customer_id = COALESCE($2, customer_id), customer_name = COALESCE($3, customer_name),
+                 sales_rep_name = COALESCE($4, sales_rep_name), title = COALESCE($5, title), sign_date = COALESCE($6, sign_date),
+                 valid_until = COALESCE($7, valid_until), total_value = COALESCE($8, total_value), status = COALESCE($9, status),
+                 notes = COALESCE($10, notes), contract_files = COALESCE($11::jsonb, contract_files), items = COALESCE($12::jsonb, items),
+                 extra_data = COALESCE(extra_data, '{}'::jsonb) || COALESCE($13::jsonb, '{}'::jsonb)
+               WHERE id = $1`,
+              [keep.id, latest.customer_id, latest.customer_name, latest.sales_rep_name, latest.title, latest.sign_date,
+               latest.valid_until, latest.total_value, latest.status, latest.notes,
+               typeof latest.contract_files === "string" ? latest.contract_files : JSON.stringify(latest.contract_files || []),
+               typeof latest.items === "string" ? latest.items : JSON.stringify(latest.items || []),
+               typeof latest.extra_data === "string" ? latest.extra_data : JSON.stringify(latest.extra_data || {})]
+            );
+            const dupIds = rows.slice(1).map((r: any) => r.id);
+            await client.query("DELETE FROM sales_contracts WHERE id = ANY($1::int[])", [dupIds]);
+          }
+          await client.query("CREATE UNIQUE INDEX IF NOT EXISTS sales_contracts_contract_code_uidx ON sales_contracts (contract_code)");
+          await client.query("COMMIT");
+        } catch (e) {
+          await client.query("ROLLBACK").catch(() => undefined);
+          throw e;
+        }
+      }
+      // Sync any contracts stored in app_storage.sales_contracts into sales_contracts table
+      const stRes = await client.query("SELECT key, data FROM app_storage WHERE key IN ('sales_contracts', 'deleted_sales_contracts')");
+      const stMap = new Map<string, any>(stRes.rows.map((r: any) => [r.key, r.data]));
+      const deletedArr = Array.isArray(stMap.get("deleted_sales_contracts")) ? stMap.get("deleted_sales_contracts") : [];
+      const deletedSet = new Set<string>(deletedArr.map((x: any) => String(x || "").trim().toUpperCase()).filter(Boolean));
+      const storedContracts = Array.isArray(stMap.get("sales_contracts")) ? stMap.get("sales_contracts") : [];
+      for (const sc of storedContracts) {
+        const code = String(sc?.contract_code || sc?.id || "").trim();
+        if (!code || deletedSet.has(code.toUpperCase())) continue;
+        const custName = String(sc?.customerName || sc?.customer_name || sc?.partyBName || "Khách Hàng").trim();
+        const repName = String(sc?.salesRepName || sc?.sales_rep_name || "Nhân viên kinh doanh").trim();
+        const title = String(sc?.contractTitle || sc?.title || "Hợp đồng mua bán").trim();
+        const totalVal = Number(sc?.totalAmount ?? sc?.total_value ?? sc?.contractValue ?? 0) || 0;
+        const rawSt = String(sc?.status || "ACTIVE").trim();
+        const status = rawSt === "Signed" || rawSt === "ACTIVE" ? "ACTIVE" : (rawSt === "Draft" || rawSt === "DRAFT" ? "DRAFT" : rawSt);
+        const notes = String(sc?.notes || (sc?.quotationId ? `Từ báo giá ${sc.quotationId}` : "")).trim();
+        const files = Array.isArray(sc?.contract_files) ? sc.contract_files : [];
+        const items = Array.isArray(sc?.items) ? sc.items : [];
+        await client.query(
+          `INSERT INTO sales_contracts (contract_code, customer_name, sales_rep_name, title, total_value, status, notes, contract_files, items, extra_data)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb)
+           ON CONFLICT (contract_code) DO UPDATE SET
+             extra_data = COALESCE(sales_contracts.extra_data, '{}'::jsonb) || EXCLUDED.extra_data,
+             items = CASE WHEN jsonb_array_length(COALESCE(sales_contracts.items, '[]'::jsonb)) = 0 THEN EXCLUDED.items ELSE sales_contracts.items END,
+             contract_files = CASE WHEN jsonb_array_length(COALESCE(sales_contracts.contract_files, '[]'::jsonb)) = 0 THEN EXCLUDED.contract_files ELSE sales_contracts.contract_files END`,
+          [code, custName, repName, title, totalVal, status, notes, JSON.stringify(files), JSON.stringify(items), JSON.stringify(sc)]
+        );
+      }
+    });
+
     // H2: multi-lot stock model. inventory_items stays as the per-product aggregate.
     await step("inventory_lots", () =>
       client.query(`
