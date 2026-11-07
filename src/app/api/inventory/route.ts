@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { query, logAudit, ensurePersonnelTable, withTransaction, httpErrorStatus, HttpError } from "@/backend/db/db";
 import { hashPassword, generateTemporaryPassword } from "@/backend/services/passwords";
-import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
+import { getAuthorizedUser, isAdminUser, isAccountantUser, unauthorizedResponse, forbiddenResponse, setAuditActor } from "@/backend/services/authz";
 import { hasPermission, inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
-import { todayVN, toVNDateString, normalizeExcelDateToISO } from "@/backend/services/dates";
+import { todayVN, toVNDateString, normalizeExcelDateToISO, formatVNDate } from "@/backend/services/dates";
 
 /** Stock-changing actions and the permissions allowed to run them. */
 const WRITE_PERMISSIONS: Record<string, string[]> = {
@@ -24,6 +24,7 @@ import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { syncCatalogSuppliersAndProducts, unmarkSupplierDeleted } from "@/backend/services/supplierCatalogSync";
 import { resolveActualProductCategory } from "@/backend/services/catalogStore";
 import { applyPOReceipt } from "@/backend/services/poReceipt";
+import { isPcrKitProduct, packagingFormOfLot } from "@/frontend/utils/packagingForm";
 import {
   addStock,
   removeStock,
@@ -540,7 +541,8 @@ export async function POST(req: NextRequest) {
     setAuditActor(me);
     if (!me) return unauthorizedResponse();
     const needed = WRITE_PERMISSIONS[action || ""];
-    if (needed && !isAdminUser(me) && !needed.some(k => hasPermission(me, k))) {
+    const isAccountantAllowed = action === "update_inbound" && isAccountantUser(me);
+    if (needed && !isAdminUser(me) && !isAccountantAllowed && !needed.some(k => hasPermission(me, k))) {
       // Phiếu giao hàng lập ở phân hệ Kinh doanh xuất / nhập kho cho đúng một đơn hàng đã có trong CSDL
       const ref = String(body?.reference_code || "").trim();
       const isOrderMovement = (action === "inbound" || action === "outbound") && ref !== "" && hasPermission(me, "sales.view") &&
@@ -688,12 +690,11 @@ export async function POST(req: NextRequest) {
       for (const it of newItems) {
         const pCode = it.product_code || it.productCode || "SP";
         const uPrice = Number(it.unit_price ?? it.cost_price ?? 0);
-        if (!(uPrice > 0)) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Đơn Giá Nhập (> 0 VNĐ). Đây là thông tin bắt buộc.` }, { status: 400 });
+        if (!Number.isFinite(uPrice) || uPrice < 0) {
+          return NextResponse.json({ error: `Mặt hàng "${pCode}" có Đơn Giá Nhập không hợp lệ.` }, { status: 400 });
         }
-        const sCond = String(it.storage_condition || it.storageCondition || "").trim();
-        if (!sCond) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa chọn Điều Kiện Nhiệt Độ Bảo Quản (bắt buộc).` }, { status: 400 });
+        if (!String(it.storage_condition || it.storageCondition || "").trim()) {
+          it.storage_condition = "15–25°C (Nhiệt độ phòng - RT)";
         }
       }
 
@@ -887,15 +888,29 @@ export async function POST(req: NextRequest) {
           }
         }
 
-        // Clean internal _orig_* tracking fields before saving items JSON
+        // Clean internal _orig_* tracking fields before saving items JSON (and preserve existing cost if user had cost stripped)
+        const canUserEditCost = isAdminUser(me) || isAccountantUser(me) || hasPermission(me, "warehouse.view_cost_price");
         const cleanItems = newItems.map((it: any) => {
           const copy = { ...it };
+          if (!canUserEditCost && !(Number(copy.unit_price) > 0)) {
+            const origCode = String(copy._orig_product_code || copy.product_code || copy.productCode || "").trim();
+            const origLot = String(copy._orig_lot_number ?? "").trim();
+            const oldMatch =
+              oldItems.find((o: any) => String(o.product_code || o.productCode || "").trim() === origCode && String(o.lot_number || o.lotNumber || "").trim() === origLot) ||
+              oldItems.find((o: any) => String(o.product_code || o.productCode || "").trim() === origCode);
+            const prevPrice = Number(oldMatch?.unit_price ?? oldMatch?.cost_price ?? 0);
+            if (prevPrice > 0) {
+              copy.unit_price = prevPrice;
+              copy.cost_price = prevPrice;
+            }
+          }
           delete copy._orig_product_code;
           delete copy._orig_lot_number;
           delete copy._orig_qty;
           return copy;
         });
 
+        const finalRefCode = reference_code || vat_invoice_no || existingTx.reference_code || "N/A";
         await c.query(
           `UPDATE inventory_transactions
               SET transaction_code = $1,
@@ -908,7 +923,7 @@ export async function POST(req: NextRequest) {
             WHERE id = $8`,
           [
             finalTxCode,
-            reference_code || vat_invoice_no || existingTx.reference_code || "N/A",
+            finalRefCode,
             normalizeExcelDateToISO(date, existingTx.date || todayVN()),
             performed_by || existingTx.performed_by || "Thủ kho TBR",
             warehouse_name || existingTx.warehouse_name || "Kho Trung Tâm",
@@ -917,6 +932,66 @@ export async function POST(req: NextRequest) {
             existingTx.id
           ]
         );
+
+        // Đồng bộ ngược đơn giá / số hóa đơn sang Đơn Đặt Mua (PO) nếu phiếu nhập liên kết với PO
+        if (/^PO/i.test(String(finalRefCode).trim())) {
+          const poCodeRef = String(finalRefCode).trim();
+          const poRes = await c.query(
+            `SELECT id, items, supplier_invoices FROM procurement_orders WHERE po_code = $1 FOR UPDATE`,
+            [poCodeRef]
+          );
+          if (poRes.rows.length > 0) {
+            const poRow = poRes.rows[0];
+            let poItems: any[] = [];
+            try {
+              poItems = typeof poRow.items === "string" ? JSON.parse(poRow.items || "[]") : (Array.isArray(poRow.items) ? poRow.items : []);
+            } catch {
+              poItems = [];
+            }
+            let poChanged = false;
+            const updatedPoItems = poItems.map((poIt: any) => {
+              const code = String(poIt?.product_code || "").trim().toUpperCase();
+              const matchedClean = cleanItems.find(
+                (ci: any) => String(ci?.product_code || ci?.productCode || "").trim().toUpperCase() === code && Number(ci?.unit_price) > 0
+              );
+              if (matchedClean && Number(matchedClean.unit_price) !== Number(poIt.unit_price || 0)) {
+                poChanged = true;
+                const qty = Number(poIt.quantity) || 1;
+                const price = Number(matchedClean.unit_price) || 0;
+                return { ...poIt, unit_price: price, total: qty * price };
+              }
+              return poIt;
+            });
+            let invList: any[] = [];
+            try {
+              invList = typeof poRow.supplier_invoices === "string" ? JSON.parse(poRow.supplier_invoices || "[]") : (Array.isArray(poRow.supplier_invoices) ? poRow.supplier_invoices : []);
+            } catch {
+              invList = [];
+            }
+            const cleanInvNo = String(vat_invoice_no || "").trim();
+            let invChanged = false;
+            if (cleanInvNo && cleanInvNo !== "N/A" && !invList.some((x: any) => String(x?.invoice_no || "").trim() === cleanInvNo)) {
+              invList.push({
+                invoice_no: cleanInvNo,
+                invoice_date: normalizeExcelDateToISO(date, todayVN()),
+                inbound_code: finalTxCode
+              });
+              invChanged = true;
+            }
+            if (poChanged || invChanged) {
+              const newTotal = updatedPoItems.reduce((s: number, x: any) => s + (Number(x.quantity) || 0) * (Number(x.unit_price) || 0), 0);
+              await c.query(
+                `UPDATE procurement_orders
+                    SET items = $1::jsonb,
+                        total_amount = $2,
+                        supplier_invoices = $3::jsonb,
+                        version = COALESCE(version, 0) + 1
+                  WHERE id = $4`,
+                [JSON.stringify(updatedPoItems), newTotal, JSON.stringify(invList), poRow.id]
+              );
+            }
+          }
+        }
       });
 
       await logAudit("UPDATE_INBOUND", "WAREHOUSE", `Chỉnh sửa / bổ sung thông tin Phiếu Nhập Kho ${finalTxCode} (Tham chiếu: ${reference_code || vat_invoice_no || "N/A"}, NCC: ${supplier_name || "—"})`);
@@ -1130,7 +1205,9 @@ export async function POST(req: NextRequest) {
       const importBatchStamp = Date.now().toString(36).toUpperCase();
       let importAutoSeq = 0;
       const autoCode = (prefix: string) => `${prefix}-${importBatchStamp}-${++importAutoSeq}`;
-      if (!Array.isArray(rows) || rows.length === 0) {
+      const safeRows = Array.isArray(rows) ? rows : [];
+      const safeContactRows = Array.isArray(contact_rows) ? contact_rows : [];
+      if (safeRows.length === 0 && safeContactRows.length === 0) {
         return NextResponse.json({ error: "Không có dữ liệu hợp lệ để nạp" }, { status: 400 });
       }
 
@@ -1143,7 +1220,7 @@ export async function POST(req: NextRequest) {
         (keys.some(k => k.includes("vai trò") || k.includes("role")) && keys.some(k => k.includes("phòng ban") || k.includes("chức vụ")));
 
       const isInbound = 
-        keys.some(k => k.includes("số lô") || k.includes("hạn sử dụng") || k.includes("hạn dùng") || k.includes("nhiệt độ bảo quản") || k.includes("vị trí kho kệ"));
+        keys.some(k => k.includes("số lô") || k.includes("hạn sử dụng") || k.includes("hạn dùng") || k.includes("số lượng nhập") || k.includes("mã phiếu nhập") || k.includes("vị trí kho kệ"));
 
       const isPO = 
         keys.some(k => k.includes("mã đơn po") || k.includes("mã po") || k.includes("số po") || k.includes("po_code") || k.includes("po_number"));
@@ -1187,7 +1264,7 @@ export async function POST(req: NextRequest) {
       if (detectedType === "CUSTOMERS" && !isAdminUser(me) && !hasPermission(me, "sales.view") && !hasPermission(me, "sales.create_order")) {
         return forbiddenResponse("Bạn không có quyền nạp dữ liệu khách hàng từ Excel.");
       }
-      if (detectedType === "PRODUCTS" && !isAdminUser(me) && !hasPermission(me, "warehouse.inbound") && !hasPermission(me, "procurement.view")) {
+      if (detectedType === "PRODUCTS" && !isAdminUser(me) && !hasPermission(me, "warehouse.inbound") && !hasPermission(me, "procurement.view") && !hasPermission(me, "sales.view") && !hasPermission(me, "sales.create_order")) {
         return forbiddenResponse("Bạn không có quyền nạp danh mục sản phẩm từ Excel.");
       }
       if ((detectedType === "PURCHASE_ORDERS" || detectedType === "SUPPLIERS") && !isAdminUser(me) && !hasPermission(me, "procurement.view") && !hasPermission(me, "procurement.create_po")) {
@@ -1204,7 +1281,7 @@ export async function POST(req: NextRequest) {
         return (candidates: string[], defaultValue = ""): string => {
           for (const c of candidates) {
             if (r[c] !== undefined && r[c] !== null && String(r[c]).trim() !== "") {
-              return String(r[c]).trim();
+              return String(r[c]).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
             }
           }
           for (const cand of candidates) {
@@ -1212,7 +1289,7 @@ export async function POST(req: NextRequest) {
             for (const rk of rowKeys) {
               const cleanRk = rk.toLowerCase().replace(/[\s\(\)\*\_]/g, "");
               if (cleanRk === cleanCand && r[rk] !== undefined && r[rk] !== null && String(r[rk]).trim() !== "") {
-                return String(r[rk]).trim();
+                return String(r[rk]).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
               }
             }
           }
@@ -1428,33 +1505,40 @@ export async function POST(req: NextRequest) {
           }, { status: 400 });
         }
 
-        for (const r of rows) {
+        for (const r of safeRows) {
           const getVal = createGetVal(r);
-          const pCode = getVal(["Mã SKU (*)", "Mã SKU", "code", "Mã hàng", "SKU"]) || autoCode("SKU");
-          const pName = orNull(getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "Tên Hàng Hóa Thương Mại", "name", "Tên hàng", "Tên hàng hóa, dịch vụ"]));
+          // Hỗ trợ cả file Excel không có dòng tiêu đề chuẩn (cột __EMPTY..__EMPTY_12 theo đúng thứ tự mẫu 13 cột)
+          const isHeaderlessAbtRow = r["__EMPTY"] !== undefined && r["__EMPTY_1"] !== undefined && !getVal(["Mã SKU (*)", "Mã SKU", "code", "Mã hàng", "SKU"]);
+          const rawCode = isHeaderlessAbtRow ? String(r["__EMPTY"] || "").trim() : getVal(["Mã SKU (*)", "Mã SKU", "code", "Mã hàng", "SKU", "CODE"]);
+          const pCode = String(rawCode || autoCode("SKU")).trim();
+          const pName = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_1"] || "").trim() : getVal(["Tên sản phẩm (*)", "Tên sản phẩm", "Tên Hàng Hóa Thương Mại", "name", "Tên hàng", "Tên hàng hóa, dịch vụ", "PRODUCT"]));
           const supplierCol = orNull(getVal(["Nhà cung cấp (*)", "Nhà cung cấp", "Nhà Cung Cấp", "supplier", "Đơn vị cung cấp"]));
           // Hãng sản xuất và Nhà cung cấp là hai thông tin khác nhau: không lấy cái này điền cho cái kia
-          const brand = orNull(getVal(["Hãng sản xuất (*)", "Hãng sản xuất", "Hãng Sản Xuất", "manufacturer", "Hãng SX", "Hãng", "Brand"]));
-          const rawCat = orNull(getVal([
+          const brand = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_2"] || "").trim() : getVal(["Hãng sản xuất (*)", "Hãng sản xuất", "Hãng Sản Xuất", "manufacturer", "Hãng SX", "Hãng", "Brand"]));
+          const rawCat = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_3"] || "").trim() : getVal([
             "Nhóm ngành hàng (*)", "Nhóm ngành hàng", "Phân Loại Chính", "Phân loại ngành hàng",
             "Phân loại", "category", "Category", "Ngành hàng", "Nhóm hàng", "Danh mục",
             "Danh mục (Category)", "Danh mục (PCR Kit/..)", "Chủng loại", "CHỦNG LOẠI", "Loại Kit"
           ]));
           const cat = resolveActualProductCategory({ code: pCode, name: pName || pCode, category: rawCat || "" });
-          const spec = orNull(getVal(["Quy cách đóng gói", "specification", "Quy cách"]));
-          const unit = orNull(getVal(["Đơn vị tính", "unit", "ĐVT"]));
-          const cost = numOrNull(getVal(PRICE_COLS));
-          const stdPrice = numOrNull(getVal(STD_PRICE_COLS));
-          const minStock = numOrNull(getVal(MIN_STOCK_COLS));
-          const storageCondition = getVal([
+          const spec = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_4"] || "").trim() : getVal(["Quy cách đóng gói", "specification", "Quy cách", "SIZE"]));
+          const unit = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_5"] || "").trim() : getVal(["Đơn vị tính", "unit", "ĐVT"]));
+          const cost = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_6"] ?? "") : getVal(PRICE_COLS));
+          const stdPrice = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_7"] ?? "") : getVal(STD_PRICE_COLS));
+          const dealer1Price = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_8"] ?? "") : getVal(["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1"]));
+          const dealer2Price = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_9"] ?? "") : getVal(["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2"]));
+          const minStock = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_10"] ?? "") : getVal(MIN_STOCK_COLS));
+          const prodNotes = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_11"] || "").trim() : getVal(["Ghi chú", "Ghi chú kỹ thuật", "THÔNG TIN KỸ THUẬT", "notes"]));
+          const storageCondition = (isHeaderlessAbtRow ? String(r["__EMPTY_12"] || "").trim() : getVal([
             "Điều kiện bảo quản chuẩn (*)", 
             "Điều kiện bảo quản chuẩn", 
             "Điều kiện bảo quản tiêu chuẩn", 
+            "Điều kiện nhiệt độ bảo quản",
             "Điều kiện bảo quản", 
             "Nhiệt độ bảo quản chuẩn", 
             "Nhiệt độ bảo quản", 
             "storage_condition"
-          ]) || null;
+          ])) || null;
 
           // Giá phải ép kiểu ::numeric: "COALESCE($8, 0)" khiến PostgreSQL suy tham số là integer theo số 0,
           // nên giá từ 2.147.483.648 đ trở lên (ví dụ 2.650.000.000) báo "out of range for type integer".
@@ -1475,15 +1559,21 @@ export async function POST(req: NextRequest) {
             [pCode, pName, brand, cat, spec, unit, cost, stdPrice, minStock, storageCondition]
           );
 
-          // Ensure inventory item
+          // Ensure inventory item & heal placeholder name if it was created as "Sản phẩm <SKU>"
           await query(
             `INSERT INTO inventory_items (product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position)
              VALUES ($1, $2, 0, 0, 'Kho Trung Tâm', 'Chưa phân bổ kệ')
-             ON CONFLICT (product_code) DO NOTHING`,
+             ON CONFLICT (product_code) DO UPDATE
+             SET product_name = CASE
+                   WHEN (inventory_items.product_name IS NULL OR inventory_items.product_name = '' OR LOWER(inventory_items.product_name) = LOWER(inventory_items.product_code) OR inventory_items.product_name ILIKE 'Sản phẩm %')
+                        AND EXCLUDED.product_name <> '' AND EXCLUDED.product_name NOT ILIKE 'Sản phẩm %'
+                   THEN EXCLUDED.product_name
+                   ELSE inventory_items.product_name
+                 END`,
             [pCode, pName || pCode]
           );
 
-          // Đồng bộ sang catalog_items (nếu để trống Giá vốn hoặc Giá bán thì giữ nguyên giá đã lưu trước đó)
+          // Đồng bộ sang catalog_items (ghi đè tên/quy cách/hãng nếu đang là placeholder, giữ nguyên giá nếu để trống)
           await appendCommercialCatalogEntry({ query } as any, {
             code: pCode,
             name: pName || pCode,
@@ -1495,10 +1585,12 @@ export async function POST(req: NextRequest) {
             specification: spec || "",
             costPrice: cost ?? 0,
             price: stdPrice ?? 0,
-            priceDealer1: stdPrice ? Math.round(stdPrice * 0.85) : 0,
-            priceDealer2: stdPrice ? Math.round(stdPrice * 0.8) : 0,
+            priceDealer1: dealer1Price ?? (stdPrice ? Math.round(stdPrice * 0.85) : 0),
+            priceDealer2: dealer2Price ?? (stdPrice ? Math.round(stdPrice * 0.8) : 0),
             storageCondition: storageCondition || "",
             leadTime: "Có sẵn kho",
+            notes: prodNotes || "",
+            overwriteCatalogMeta: true,
           });
           importedCount++;
         }
@@ -1506,32 +1598,37 @@ export async function POST(req: NextRequest) {
         // Process Sheet 2: Định mức phụ kiện / linh kiện BOM đính kèm nếu có
         let componentsImportedCount = 0;
         if (Array.isArray(contact_rows) && contact_rows.length > 0) {
+          const bomByParent = new Map<string, Set<string>>();
           for (const cr of contact_rows) {
             const getCrVal = createGetVal(cr);
-            const parentSku = getCrVal(["Mã SKU cha (*)", "Mã SKU cha", "Mã sản phẩm chính (*)", "Mã hàng chính", "parent_product_code"]);
-            const compCode = getCrVal(["Mã phụ kiện / Thành phần (*)", "Mã phụ kiện / Thành phần", "Mã phụ kiện", "Mã thành phần", "component_code"]);
-            const compName = getCrVal(["Tên phụ kiện / Thành phần (*)", "Tên phụ kiện / Thành phần", "Tên phụ kiện", "Tên thành phần", "component_name"], compCode);
+            const parentSku = String(getCrVal(["Mã SKU cha (*)", "Mã SKU cha", "Mã sản phẩm chính (*)", "Mã hàng chính", "parent_product_code"]) || "").trim();
+            const compCode = String(getCrVal(["Mã phụ kiện / Thành phần (*)", "Mã phụ kiện / Thành phần", "Mã phụ kiện", "Mã thành phần", "component_code"]) || "").trim();
+            const compName = String(getCrVal(["Tên phụ kiện / Thành phần (*)", "Tên phụ kiện / Thành phần", "Tên phụ kiện", "Tên thành phần", "component_name"], compCode) || "").trim();
             
             if (parentSku && compCode) {
-              const spec = getCrVal(["Quy cách", "specification"]);
-              const unit = getCrVal(["Đơn vị tính", "ĐVT", "unit"], "Cái");
+              const spec = String(getCrVal(["Quy cách", "specification"]) || "").trim();
+              const unit = String(getCrVal(["Đơn vị tính", "ĐVT", "unit"], "Cái") || "Cái").trim();
               const qtyPerKit = Number(getCrVal(["Định mức theo bộ (*)", "Định mức theo bộ", "quantity_per_kit"])) || 1;
               const trackingType = getCrVal(["Hình thức quản lý (LOT/SERIAL)", "Hình thức quản lý", "tracking_type"]).toUpperCase().includes("SERIAL") ? "SERIAL" : "LOT";
-              const storageCond = getCrVal(["Điều kiện bảo quản tiêu chuẩn", "Điều kiện bảo quản", "storage_condition"]);
-              const notes = getCrVal(["Ghi chú", "notes"]);
+              const storageCond = String(getCrVal(["Điều kiện bảo quản tiêu chuẩn", "Điều kiện bảo quản", "storage_condition"]) || "").trim();
+              const notes = String(getCrVal(["Ghi chú", "notes"]) || "").trim();
+
+              const pKey = parentSku.toUpperCase();
+              if (!bomByParent.has(pKey)) bomByParent.set(pKey, new Set());
+              bomByParent.get(pKey)!.add(compCode.toUpperCase());
 
               const existComp = await query(
-                `SELECT id FROM product_components WHERE parent_product_code = $1 AND component_code = $2`,
+                `SELECT id FROM product_components WHERE UPPER(TRIM(parent_product_code)) = UPPER(TRIM($1)) AND UPPER(TRIM(component_code)) = UPPER(TRIM($2))`,
                 [parentSku, compCode]
               );
 
               if (existComp.rows.length > 0) {
                 await query(
                   `UPDATE product_components 
-                   SET component_name = $1, specification = $2, unit = $3, quantity_per_kit = $4, 
-                       tracking_type = $5, storage_condition = $6, notes = $7
-                   WHERE id = $8`,
-                  [compName, spec, unit, qtyPerKit, trackingType, storageCond, notes, existComp.rows[0].id]
+                   SET parent_product_code = $1, component_code = $2, component_name = $3, specification = $4, unit = $5, quantity_per_kit = $6, 
+                       tracking_type = $7, storage_condition = $8, notes = $9
+                   WHERE id = $10`,
+                  [parentSku, compCode, compName, spec, unit, qtyPerKit, trackingType, storageCond, notes, existComp.rows[0].id]
                 );
               } else {
                 await query(
@@ -1541,6 +1638,18 @@ export async function POST(req: NextRequest) {
                 );
               }
               componentsImportedCount++;
+            }
+          }
+          // Dọn các dòng phụ kiện cũ bị thừa/lệch của những mã cha có khai báo lại trong Sheet 2
+          for (const [parentUpper, validCompCodes] of bomByParent.entries()) {
+            const validList = Array.from(validCompCodes);
+            if (validList.length > 0) {
+              await query(
+                `DELETE FROM product_components
+                  WHERE UPPER(TRIM(parent_product_code)) = $1
+                    AND NOT (UPPER(TRIM(component_code)) = ANY($2::text[]))`,
+                [parentUpper, validList]
+              );
             }
           }
         }
@@ -1682,9 +1791,18 @@ export async function POST(req: NextRequest) {
               });
             });
 
+            // Kit PCR (ABT) lô chia sẵn (".C" trong số lô): không kèm phụ kiện, không tự lấy theo định mức
+            // (giống form nhập kho; trước đây file Excel vẫn tự gắn phụ kiện cho lô chia sẵn).
+            const isPrealiquotPcrLot =
+              isPcrKitProduct({ code: pCode, manufacturer: catalogProd?.manufacturer || brandName }) &&
+              packagingFormOfLot(lot) === "PREALIQUOT";
+            if (isPrealiquotPcrLot && itemComponents.length > 0) {
+              importWarnings.push(`${label}: lô chia sẵn (.C) không kèm phụ kiện, nhưng trang phụ kiện có ${itemComponents.length} dòng cho lô này (vẫn ghi theo file, vui lòng kiểm tra)`);
+            }
+
             // Không có dòng nào ở trang phụ kiện cho lô này: lấy theo định mức (BOM), số lượng = định mức × SL lô chính.
             // Phụ kiện quản lý theo Serial để trống S/N (trước đây hệ thống tự sinh số giả "SN-<mã>-<lô>-1").
-            if (itemComponents.length === 0) {
+            if (itemComponents.length === 0 && !isPrealiquotPcrLot) {
               const bomComps = bomByParentMap.get(pCode.toUpperCase()) || [];
               itemComponents = bomComps.map((bc: any) => {
                 const perKit = Number(bc.quantity_per_kit) || 1;
@@ -1720,7 +1838,7 @@ export async function POST(req: NextRequest) {
               pCode, pName, spec, unit, lot, expDate, qty, unitCost, storageCondition, shelf, warehouse, supplier, brandName, r,
               inboundCode, inboundDate, performedBy, poCode,
               reference: poCode || vatInvoice || lot,
-              txNote: `Nhập kho theo Lô ${lot} (HSD: ${expDate})${supplier ? ` - NCC: ${supplier}` : ""}${inboundReason ? ` - Lý do: ${inboundReason}` : ""}${notes ? ` - Ghi chú: ${notes}` : ""}`,
+              txNote: `Nhập kho theo Lô ${lot} (HSD: ${formatVNDate(expDate, expDate || "—")})${supplier ? ` - NCC: ${supplier}` : ""}${inboundReason ? ` - Lý do: ${inboundReason}` : ""}${notes ? ` - Ghi chú: ${notes}` : ""}`,
               txItem: {
                 product_code: pCode,
                 product_name: pName,
@@ -1973,7 +2091,7 @@ export async function POST(req: NextRequest) {
           const getVal = (candidates: string[]): string => {
             for (const c of candidates) {
               if (r[c] !== undefined && r[c] !== null && String(r[c]).trim() !== "") {
-                return String(r[c]).trim();
+                return String(r[c]).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
               }
             }
             // Case/accent/symbol insensitive lookup
@@ -1983,7 +2101,7 @@ export async function POST(req: NextRequest) {
               for (const rk of rowKeys) {
                 const cleanRk = rk.toLowerCase().replace(/[\s\(\)\*\_]/g, "");
                 if (cleanRk === cleanCand && r[rk] !== undefined && r[rk] !== null && String(r[rk]).trim() !== "") {
-                  return String(r[rk]).trim();
+                  return String(r[rk]).replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim();
                 }
               }
             }

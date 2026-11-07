@@ -111,7 +111,7 @@ export const WarehouseModule: React.FC = () => {
     if (!tx || tx.transaction_type !== "INBOUND") return false;
     const uRole = String((authUser as any)?.role || "").toLowerCase();
     const uDept = String((authUser as any)?.department || "").toLowerCase();
-    const isMgr = uRole.includes("director") || uRole.includes("admin") || uRole.includes("manager") || uRole.includes("lead") || uDept.includes("ban giám đốc");
+    const isMgr = uRole.includes("director") || uRole.includes("admin") || uRole.includes("manager") || uRole.includes("lead") || uRole.includes("accountant") || uRole.includes("kế toán") || uDept.includes("ban giám đốc") || uDept.includes("kế toán");
     if (isMgr || Boolean(can && can("warehouse.edit_inbound"))) return true;
     if (can && can("warehouse.inbound")) {
       const perf = String(tx.performed_by || "").trim().toLowerCase();
@@ -512,6 +512,15 @@ export const WarehouseModule: React.FC = () => {
     return () => window.removeEventListener("tbr:api-revalidated", onRevalidated);
   }, []);
 
+  const [pendingEditInboundCode, setPendingEditInboundCode] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const code = sessionStorage.getItem("tbr_open_edit_inbound") || "";
+      if (code) sessionStorage.removeItem("tbr_open_edit_inbound");
+      return code;
+    }
+    return "";
+  });
+
   useEffect(() => {
     const handleNav = (e: any) => {
       if (e.detail && (e.detail.tab === "warehouse" || !e.detail.tab)) {
@@ -520,11 +529,32 @@ export const WarehouseModule: React.FC = () => {
             setSubTab(e.detail.subTab);
           }
         }
+        if (e.detail.editInboundCode) {
+          setSubTab("transactions");
+          setPendingEditInboundCode(String(e.detail.editInboundCode).trim());
+        }
       }
     };
     window.addEventListener("tbr-navigate" as any, handleNav);
     return () => window.removeEventListener("tbr-navigate" as any, handleNav);
   }, []);
+
+  useEffect(() => {
+    if (!pendingEditInboundCode || !Array.isArray(transactions) || transactions.length === 0) return;
+    const target = transactions.find(
+      (t: any) =>
+        t.transaction_type === "INBOUND" &&
+        String(t.transaction_code || "").trim().toUpperCase() === pendingEditInboundCode.toUpperCase()
+    );
+    if (target) {
+      setSubTab("transactions");
+      setPendingEditInboundCode("");
+      if (typeof window !== "undefined") sessionStorage.removeItem("tbr_open_edit_inbound");
+      setTimeout(() => {
+        handleOpenEditInboundTx(target);
+      }, 50);
+    }
+  }, [pendingEditInboundCode, transactions]);
 
   // O(1) lookup maps for 5,000+ products and BOM components to avoid O(N^2) main-thread freezes
   const productByCodeMap = useMemo(() => {
@@ -2224,19 +2254,25 @@ export const WarehouseModule: React.FC = () => {
     if (!tx) return;
     const rawNotes = String(tx.notes || "");
     const firstItem = Array.isArray(tx.items) && tx.items.length > 0 ? tx.items[0] : {};
-    let inboundType = firstItem?.inbound_type || "Nhập mua hàng theo Đơn PO từ NCC";
-    let shippingUnit = firstItem?.shipping_unit || "";
-    let vatInvoiceNo = firstItem?.vat_invoice_no || "";
-    let supplierName = firstItem?.supplier_name || firstItem?.manufacturer || "";
-    let cleanNotes = rawNotes;
+    const finMeta = txFinanceMeta(tx);
+    let inboundType = firstItem?.inbound_type || finMeta.inboundType || "Nhập mua hàng theo Đơn PO từ NCC";
+    let shippingUnit = firstItem?.shipping_unit || finMeta.shipping || "";
+    let vatInvoiceNo = firstItem?.vat_invoice_no || finMeta.invoice || "";
+    let supplierName = firstItem?.supplier_name || finMeta.supplier || firstItem?.manufacturer || "";
+    let cleanNotes = rawNotes.replace(/\s*\[req:[^\]]+\]\s*$/, "").trim();
 
-    const noteMatch = rawNotes.match(/^(.*?)\.\s*Vận chuyển:\s*(.*?)\.\s*HĐ:\s*(.*?)\.(?:\s*NCC:\s*(.*?)\.)?\s*(.*)$/);
+    const noteMatch = cleanNotes.match(/^(.*?)\.\s*Vận chuyển:\s*(.*?)\.\s*HĐ:\s*(.*?)\.(?:\s*NCC:\s*(.*?)\.)?\s*(.*)$/);
     if (noteMatch) {
       if (noteMatch[1]?.trim()) inboundType = noteMatch[1].trim();
       if (!shippingUnit && noteMatch[2] && noteMatch[2].trim() !== "N/A") shippingUnit = noteMatch[2].trim();
       if (!vatInvoiceNo && noteMatch[3] && noteMatch[3].trim() !== "N/A") vatInvoiceNo = noteMatch[3].trim();
       if (!supplierName && noteMatch[4] && noteMatch[4].trim() !== "N/A") supplierName = noteMatch[4].trim();
       cleanNotes = (noteMatch[5] || "").trim();
+    } else if (cleanNotes.includes("•")) {
+      const userParts = cleanNotes.split("•").map((s) => s.trim()).filter((p) => {
+        return p && !/^Nhập kho theo PO\s+/i.test(p) && !/^Loại:\s*/i.test(p) && !/^NCC:\s*/i.test(p) && !/^HĐ:\s*/i.test(p) && !/^Vận chuyển:\s*/i.test(p);
+      });
+      cleanNotes = userParts.join(" • ");
     }
 
     const txDateStr = tx.date ? toVNDateString(tx.date) : todayVN();
@@ -2256,7 +2292,7 @@ export const WarehouseModule: React.FC = () => {
         lot_number: it.lot_number || "",
         manufacture_date: it.manufacture_date || "",
         expiry_date: it.expiry_date || "",
-        storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "",
+        storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
         shelf_position: it.shelf_position || (matchedCatalogProd as any)?.shelf_position || "Chưa phân bổ kệ",
         qc_status: it.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
         item_notes: it.item_notes || "",
@@ -2332,8 +2368,12 @@ export const WarehouseModule: React.FC = () => {
         alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) số lượng phải lớn hơn 0`);
         return;
       }
-      if (!it.unit_price || Number(it.unit_price) <= 0) {
+      if (!editingInboundTxId && (!it.unit_price || Number(it.unit_price) <= 0)) {
         alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ)`);
+        return;
+      }
+      if (editingInboundTxId && Number(it.unit_price || 0) < 0) {
+        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) Đơn Giá Nhập không được âm`);
         return;
       }
       if (!it.storage_condition?.trim()) {

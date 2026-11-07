@@ -28,7 +28,7 @@ export async function getAuthorizedUser(req: Request, opts: { allowPasswordChang
     }
     const mergedPerms: Record<string, boolean> = perms && typeof perms === "object" ? { ...perms } : {};
 
-    // Đồng bộ hợp nhất quyền từ các bản ghi tài khoản cùng nhân sự (VD: NV-TBR-016 vs TBR016 hoặc trùng Họ tên)
+    // Đồng bộ hợp nhất quyền từ các bản ghi tài khoản cùng nhân sự (VD: NV-TBR-016 / NV-TBRs-006 / NV-ABT-001 vs TBR016 hoặc trùng Họ tên)
     if (row.full_name || row.username) {
       const aliasRes = await query(
         `SELECT permissions FROM users
@@ -37,8 +37,8 @@ export async function getAuthorizedUser(req: Request, opts: { allowPasswordChang
            AND (
              ($2 <> '' AND LOWER(TRIM(full_name)) = LOWER(TRIM($2)))
              OR ($3 <> '' AND (
-               LOWER(username) = LOWER(REPLACE(REPLACE($3, 'NV-TBR-', 'TBR'), 'NV-VIA-', 'VIA'))
-               OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBR|VIA)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
+               LOWER(username) = LOWER(REGEXP_REPLACE($3, '^NV-(TBRS|TBR|VIA|ABT)-?', '\\1', 'i'))
+               OR LOWER(username) = LOWER(REGEXP_REPLACE($3, '^(TBRS|TBR|VIA|ABT)-?([0-9]+)$', 'NV-\\1-\\2', 'i'))
              ))
            )`,
         [row.id, String(row.full_name || ""), String(row.username || "")]

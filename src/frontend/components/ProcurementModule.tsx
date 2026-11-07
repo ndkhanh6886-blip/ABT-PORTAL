@@ -1725,6 +1725,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const receiveRequestId = useRef<string>("");
   const [poReceipts, setPOReceipts] = useState<any[]>([]);
 
+  const openEditInboundSlipFromPO = (inboundCode?: string) => {
+    const code = String(inboundCode || "").trim();
+    if (!code) return;
+    setSelectedPODetail(null);
+    if (typeof window !== "undefined") {
+      sessionStorage.setItem("tbr_open_edit_inbound", code);
+      window.dispatchEvent(
+        new CustomEvent("tbr-navigate", {
+          detail: { tab: "warehouse", subTab: "transactions", editInboundCode: code },
+        })
+      );
+    }
+  };
+
   const openReceiveModal = (po: any) => {
     const items: any[] = Array.isArray(po.items) ? po.items : [];
     const rq = po.received_qty || {};
@@ -4362,10 +4376,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               </button>
 
                               {/* Edit PO button */}
-                              {po.status !== "COMPLETED" && po.status !== "CANCELLED" && (
+                              {po.status !== "CANCELLED" && (
                                 <button
                                   onClick={() => handleEditPO(po)}
-                                  title="Hiệu chỉnh đơn PO (thay đổi số lượng, thêm/bớt mặt hàng, sửa giá, ngày giao)"
+                                  title="Hiệu chỉnh đơn PO (sửa đơn giá, nhà cung cấp, ghi chú, số lượng) — tự động đồng bộ sang Phiếu Nhập Kho"
                                   className="p-1.5 rounded-lg text-slate-600 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
                                 >
                                   <Edit2 className="w-4 h-4" />
@@ -4386,9 +4400,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                   <ArrowDownLeft className="w-3.5 h-3.5" /> {po.status === "PARTIALLY_RECEIVED" ? "Nhập tiếp" : "Nhập Kho"}
                                 </button>
                               ) : (
-                                <span className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800">
-                                  {po.inbound_transaction_code || "Đã vào kho"}
-                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => po.inbound_transaction_code && openEditInboundSlipFromPO(po.inbound_transaction_code)}
+                                  title={po.inbound_transaction_code ? `Bấm để mở & chỉnh sửa Phiếu Nhập Kho ${po.inbound_transaction_code}` : "Đã vào kho"}
+                                  className="font-mono text-[11px] text-emerald-600 dark:text-emerald-400 font-bold bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/70 px-2 py-0.5 rounded-md border border-emerald-200 dark:border-emerald-800 inline-flex items-center gap-1 cursor-pointer transition-all"
+                                >
+                                  <span>{po.inbound_transaction_code || "Đã vào kho"}</span>
+                                  {po.inbound_transaction_code && <Edit2 className="w-3 h-3 opacity-75" />}
+                                </button>
                               )}
 
                               {/* Record Payment */}
@@ -6114,6 +6134,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
+                  {d.status !== "CANCELLED" && (
+                    <button
+                      onClick={() => {
+                        setSelectedPODetail(null);
+                        handleEditPO(d);
+                      }}
+                      className="px-3 py-2 rounded-xl text-xs font-bold bg-amber-500 text-white hover:bg-amber-600 flex items-center gap-1.5 cursor-pointer"
+                      title="Chỉnh sửa đơn giá, nhà cung cấp, thông tin PO (đồng bộ sang Phiếu Nhập Kho)"
+                    >
+                      <Edit2 className="w-4 h-4" /> Sửa PO / Đơn giá
+                    </button>
+                  )}
                   {!["COMPLETED", "CANCELLED", "PENDING", "DRAFT"].includes(d.status) && (
                     <button onClick={() => openReceiveModal(d)} className="px-3 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 flex items-center gap-1.5 cursor-pointer">
                       <ArrowDownLeft className="w-4 h-4" /> {d.status === "PARTIALLY_RECEIVED" ? "Nhập tiếp" : "Nhập kho"}
@@ -6256,7 +6288,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           const its: any[] = Array.isArray(r.items) ? r.items : (() => { try { return JSON.parse(r.items || "[]"); } catch { return []; } })();
                           return its.map((it: any, k: number) => (
                             <tr key={`${r.transaction_code}-${k}`}>
-                              <td className="p-2 border-r border-slate-200 font-mono font-bold text-emerald-700">{k === 0 ? r.transaction_code : ""}</td>
+                              <td className="p-2 border-r border-slate-200 font-mono font-bold text-emerald-700">
+                                {k === 0 && r.transaction_code ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openEditInboundSlipFromPO(r.transaction_code)}
+                                    title={`Bấm để mở & chỉnh sửa Phiếu Nhập Kho ${r.transaction_code}`}
+                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 cursor-pointer transition-all"
+                                  >
+                                    <span>{r.transaction_code}</span>
+                                    <Edit2 className="w-3 h-3 text-emerald-600" />
+                                  </button>
+                                ) : ""}
+                              </td>
                               <td className="p-2 border-r border-slate-200">{k === 0 ? formatDate(r.date) : ""}</td>
                               <td className="p-2 border-r border-slate-200 font-mono">{it.product_code}</td>
                               <td className="p-2 border-r border-slate-200 font-mono">{it.lot_number || <span className="text-rose-500">(không có lô)</span>}</td>
