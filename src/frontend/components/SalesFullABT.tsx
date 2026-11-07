@@ -2447,7 +2447,7 @@ export function SalesFullABT() {
         // and reading it back here used to overwrite the server copy.
         loadServerSalesData();
         const onRevalidated = (e: any) => {
-            if (e?.detail?.pathname === "/api/sales") {
+            if (e?.detail?.pathname === "/api/sales" || (e?.detail?.pathname === "/api/storage" && String(e?.detail?.search || "").includes("sales_contracts"))) {
                 loadServerSalesData();
             }
         };

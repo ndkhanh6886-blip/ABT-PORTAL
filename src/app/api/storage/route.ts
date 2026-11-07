@@ -88,6 +88,47 @@ function keepStoredCosts(current: any, upserts: any[]): any[] {
   });
 }
 
+
+async function syncSalesContractsTable(rawList: any) {
+  if (!Array.isArray(rawList) || rawList.length === 0) return;
+  try {
+    const delRes = await query("SELECT data FROM app_storage WHERE key = 'deleted_sales_contracts'");
+    const deletedSet = new Set<string>(
+      (Array.isArray(delRes.rows[0]?.data) ? delRes.rows[0].data : [])
+        .map((x: any) => String(x || '').trim().toUpperCase())
+        .filter(Boolean)
+    );
+    for (const c of rawList) {
+      const code = String(c?.contract_code || c?.id || '').trim();
+      if (!code || deletedSet.has(code.toUpperCase())) continue;
+      const custName = String(c?.customerName || c?.customer_name || 'Khách hàng').trim();
+      const repName = String(c?.salesRepName || c?.sales_rep_name || '').trim();
+      const title = String(c?.contractTitle || c?.title || 'Hợp đồng kinh tế').trim();
+      const totalVal = Number(c?.totalAmount ?? c?.total_value ?? 0) || 0;
+      const statusRaw = String(c?.status || 'DRAFT').toUpperCase();
+      const dbStatus = (statusRaw === 'SIGNED' || statusRaw === 'ACTIVE' || statusRaw === 'APPROVED') ? 'ACTIVE' : statusRaw;
+      const itemsJson = typeof c?.items === 'string' ? c.items : JSON.stringify(c?.items || []);
+      const filesJson = typeof c?.contract_files === 'string' ? c.contract_files : JSON.stringify(c?.contract_files || []);
+      await query(
+        `INSERT INTO sales_contracts (contract_code, customer_name, sales_rep_name, title, total_value, status, items, contract_files, extra_data)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb)
+         ON CONFLICT (contract_code) DO UPDATE SET
+           customer_name = EXCLUDED.customer_name,
+           sales_rep_name = CASE WHEN EXCLUDED.sales_rep_name <> '' THEN EXCLUDED.sales_rep_name ELSE sales_contracts.sales_rep_name END,
+           title = EXCLUDED.title,
+           total_value = EXCLUDED.total_value,
+           status = EXCLUDED.status,
+           items = CASE WHEN jsonb_array_length(EXCLUDED.items) > 0 THEN EXCLUDED.items ELSE sales_contracts.items END,
+           contract_files = CASE WHEN jsonb_array_length(EXCLUDED.contract_files) > 0 THEN EXCLUDED.contract_files ELSE sales_contracts.contract_files END,
+           extra_data = COALESCE(sales_contracts.extra_data, '{}'::jsonb) || EXCLUDED.extra_data`,
+        [code, custName, repName, title, totalVal, dbStatus, itemsJson, filesJson, JSON.stringify(c)]
+      );
+    }
+  } catch (err) {
+    console.warn('[Storage API] Failed to sync sales_contracts to relational table:', err);
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const me = await getAuthorizedUser(request);
@@ -201,10 +242,12 @@ export async function POST(request: NextRequest) {
            RETURNING version`,
           [key, JSON.stringify(next)]
         );
-        return { version: up.rows[0]?.version || 1 };
+        return { version: up.rows[0]?.version || 1, next };
       });
       if (key === "sales_commercial_products") {
         await syncCatalogSuppliersAndProducts();
+      } else if (key === "sales_contracts") {
+        await syncSalesContractsTable(result.next);
       }
       return NextResponse.json({ success: true, version: result.version });
     }
@@ -261,6 +304,8 @@ export async function POST(request: NextRequest) {
 
     if (key === "sales_commercial_products") {
       await syncCatalogSuppliersAndProducts();
+    } else if (key === "sales_contracts") {
+      await syncSalesContractsTable(data);
     }
 
     const newVersion = updateRes.rows[0]?.version || 1;

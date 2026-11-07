@@ -30,6 +30,7 @@ export const SERVER_BACKED_LOCAL_KEYS = [
   "lab_app_materials",
   "lab_app_samples",
   "shared_app_requests",
+  "sales_contracts",
   "sales_weekly_approvals",
   "sales_product_customizations",
   "sales_13b_nvkd_stock",
