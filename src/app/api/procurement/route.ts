@@ -31,14 +31,13 @@ function canRecordSupplierPayment(user: AuthorizedUser) {
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
+import { withTransaction as withFactoryTx } from "@/factory/core/db";
+import { syncKdOrderOrPoToInternalOrder } from "@/factory/intake/orderDispatchOps";
 
 let supplierShortNameEnsured = false;
 async function ensureSupplierShortName() {
   if (supplierShortNameEnsured) return;
   try {
-    await query("ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS short_name VARCHAR(100)");
-    await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50)");
-    await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS created_by VARCHAR(150)");
     await query(`
       UPDATE procurement_suppliers SET short_name = 'Phù Sa' WHERE supplier_code = 'NCC0021' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Hoàng Kim' WHERE supplier_code = 'NCC0022' AND (short_name IS NULL OR short_name = '');
@@ -52,7 +51,7 @@ async function ensureSupplierShortName() {
       UPDATE procurement_suppliers SET short_name = 'Phương Đông' WHERE supplier_code = 'NCC0116' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Bio Basic' WHERE name ILIKE '%Bio Basic%' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'ABT' WHERE (name ILIKE '%ABT%' OR name ILIKE '%LONG HẬU%') AND (short_name IS NULL OR short_name = '');
-      UPDATE procurement_suppliers SET short_name = 'TBR' WHERE name ILIKE '%TBR%' AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'ABT' WHERE name ILIKE '%ABT%' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Meridian' WHERE (name ILIKE '%Meridian%' OR name ILIKE '%Bioline%') AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Liferiver' WHERE (name ILIKE '%Liferiver%' OR name ILIKE '%Shanghai ZJ%') AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'SSI' WHERE name ILIKE '%SSI%' AND (short_name IS NULL OR short_name = '');
@@ -63,7 +62,6 @@ async function ensureSupplierShortName() {
       UPDATE procurement_suppliers SET short_name = 'Biologix' WHERE name ILIKE '%Biologix%' AND (short_name IS NULL OR short_name = '');
     `);
 
-    // (Không còn tự tạo sẵn 6 nhà cung cấp quốc tế với SĐT / email / địa chỉ tự đặt: nhà cung cấp do người dùng tạo.)
 
     supplierShortNameEnsured = true;
   } catch (e: any) {
@@ -569,7 +567,7 @@ export async function POST(req: NextRequest) {
         );
         await logAudit("UPDATE", "PROCUREMENT", `Cập nhật thông tin NCC ${name} (${cleanShortName || '—'})`);
       } else {
-        const code = supplier_code || `NCC-TBR-${Date.now().toString().slice(-4)}`;
+        const code = supplier_code || `NCC-ABT-${Date.now().toString().slice(-4)}`;
         await query(
           `INSERT INTO procurement_suppliers (supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
@@ -984,7 +982,7 @@ export async function POST(req: NextRequest) {
             throw new HttpError(409, `Đơn PO đã ở trạng thái "${existing.status}", không thể chỉnh sửa!`);
           }
           if (
-            ["RECEIVED", "PARTIAL_RECEIVED", "PARTIALLY_RECEIVED", "DELIVERED", "COMPLETED"].includes(existingUpper) &&
+            ["RECEIVED", "PARTIAL_RECEIVED", "PARTIALLY_RECEIVED", "DELIVERED"].includes(existingUpper) &&
             status &&
             ["DRAFT", "PENDING", "APPROVED", "CONFIRMED", "ORDERED", "PRODUCED", "CANCELLED"].includes(String(status).toUpperCase()) &&
             !force_rollback
@@ -997,9 +995,9 @@ export async function POST(req: NextRequest) {
           }
 
           let safeStatus = status || existing.status || "PENDING";
-          if (["PARTIALLY_RECEIVED", "PARTIAL_RECEIVED", "RECEIVED", "DELIVERED", "COMPLETED"].includes(existingUpper) && Array.isArray(items) && !force_rollback) {
+          if (["PARTIALLY_RECEIVED", "PARTIAL_RECEIVED"].includes(existingUpper) && Array.isArray(items)) {
             const rq = existing.received_qty || {};
-            const oldItems: any[] = Array.isArray(existing.items) ? existing.items : (typeof existing.items === "string" ? (() => { try { return JSON.parse(existing.items); } catch { return []; } })() : []);
+            const oldItems: any[] = Array.isArray(existing.items) ? existing.items : [];
             for (const [k, v] of Object.entries(rq)) {
               const got = Number(v) || 0;
               if (got <= 0) continue;
@@ -1097,7 +1095,7 @@ export async function POST(req: NextRequest) {
 
           const code = po_code || await generateDocumentCode({
             docType: "PO",
-            customPrefix: "TBR",
+            customPrefix: "ABT",
             tagMode: "GENERAL"
           });
           finalPoCode = code;
@@ -1242,6 +1240,31 @@ export async function POST(req: NextRequest) {
           invalidateSupplierCatalogCache();
         } catch (syncErr: any) {
           console.error("[AUTO_SYNC_SUPPLIER_PRODUCTS_ERR]:", syncErr?.message || syncErr);
+        }
+      }
+
+      // Auto-sync PO to Factory Internal Orders (Đơn hàng nội bộ)
+      if (Array.isArray(items) && items.length > 0) {
+        try {
+          const soCodes = Array.from(
+            new Set(
+              items
+                .map((it: any) => String(it?.source_so_code || it?.so_code || it?.source_pr_code || "").trim())
+                .filter(Boolean)
+            )
+          ).join(", ");
+          await withFactoryTx((tx) =>
+            syncKdOrderOrPoToInternalOrder(tx, {
+              kd_po_code: finalPoCode,
+              kd_so_code: soCodes || finalPoCode,
+              customer_name: supplier_name || "Đơn PO Kinh doanh / Cung ứng",
+              requested_date: expected_delivery_date || order_date || todayVN(),
+              notes: notes || `Đồng bộ tự động từ PO ${finalPoCode}`,
+              items,
+            })
+          );
+        } catch (syncFactoryErr: any) {
+          console.error("[AUTO_SYNC_PO_TO_INTERNAL_ORDER_ERR]:", syncFactoryErr?.message || syncFactoryErr);
         }
       }
 
@@ -1660,6 +1683,16 @@ export async function POST(req: NextRequest) {
           autoPlanned[pick] = (autoPlanned[pick] || 0) + q;
           return pick;
         };
+        if (!String(receipt_date || "").trim()) {
+          throw new HttpError(400, "Vui lòng nhập Ngày Nhập Kho (*).");
+        }
+        if (!String(warehouse_name || "").trim()) {
+          throw new HttpError(400, "Vui lòng chọn Kho Tiếp Nhận (*).");
+        }
+        if (!String(received_by || me.full_name || me.username || "").trim()) {
+          throw new HttpError(400, "Vui lòng nhập Thủ Kho / Người Tiếp Nhận (*).");
+        }
+        let poPriceUpdated = false;
         for (const ln of lines) {
           const idx = resolveLineIndex(ln);
           const poIt = Number.isInteger(idx) && idx >= 0 ? poItems[idx] : undefined;
@@ -1675,17 +1708,29 @@ export async function POST(req: NextRequest) {
           const qty = Number(ln.quantity) || 0;
           if (qty <= 0) continue;
           const pCode = String(fallbackIt.product_code || fallbackIt.productCode || "").trim();
-          if (!pCode) throw new HttpError(400, "Dòng nhập kho phát sinh chưa có Mã hàng (SKU).");
+          if (!pCode) throw new HttpError(400, "Dòng nhập kho phát sinh chưa có Mã hàng (SKU) (*).");
           // nhiệt độ bảo quản: lô khai báo -> dòng PO -> danh mục sản phẩm; không tự điền
           if (pCode && !(pCode in pMasterTemp)) pMasterTemp[pCode] = (await c.query("SELECT storage_condition FROM products WHERE code = $1", [pCode])).rows[0]?.storage_condition || "";
           const lot = String(ln.lot_number || "").trim();
           const expiry = String(ln.expiry_date || "").trim();
           const mfgDate = String(ln.manufacture_date || "").trim();
-          if (!lot) throw new HttpError(400, `Mã hàng ${pCode}: chưa nhập số lô.`);
-          if (!expiry && !ln.no_expiry) throw new HttpError(400, `Mã hàng ${pCode} (lô ${lot}): chưa nhập hạn dùng (hoặc đánh dấu "Không có HSD" với thiết bị / vật tư).`);
+          if (!lot) throw new HttpError(400, `Mã hàng ${pCode}: chưa nhập Số Lô (LOT) (*).`);
+          if (!expiry && !ln.no_expiry) throw new HttpError(400, `Mã hàng ${pCode} (lô ${lot}): chưa nhập Hạn dùng (EXP) (*) (hoặc đánh dấu "Không có HSD" với thiết bị / vật tư).`);
           if (expiry && !/^\d{4}-\d{2}-\d{2}$/.test(expiry)) throw new HttpError(400, `Mã hàng ${pCode}: hạn dùng không hợp lệ.`);
+          const resolvedUnitPrice = Number(ln.unit_price ?? fallbackIt.unit_price) || 0;
+          if (!(resolvedUnitPrice > 0)) {
+            throw new HttpError(400, `Mã hàng ${pCode} (lô ${lot}): chưa nhập Đơn Giá Nhập (> 0 VNĐ) (*).`);
+          }
+          const resolvedStorageCond = String(ln.storage_condition || fallbackIt.storage_condition || pMasterTemp[pCode] || "").trim();
+          if (!resolvedStorageCond) {
+            throw new HttpError(400, `Mã hàng ${pCode} (lô ${lot}): chưa chọn Điều Kiện Bảo Quản (*).`);
+          }
           if (Number.isInteger(idx) && idx >= 0 && poIt) {
             thisReceipt[idx] = (thisReceipt[idx] || 0) + qty;
+            if (resolvedUnitPrice > 0 && Number(poIt.unit_price) !== resolvedUnitPrice) {
+              poIt.unit_price = resolvedUnitPrice;
+              poPriceUpdated = true;
+            }
           }
           clean.push({
             idx: Number.isInteger(idx) && idx >= 0 && poIt ? idx : -1,
@@ -1697,8 +1742,8 @@ export async function POST(req: NextRequest) {
             manufacture_date: mfgDate || null,
             specification: String(ln.specification || fallbackIt.specification || "").trim(),
             unit: String(ln.unit || fallbackIt.unit || "Hộp").trim(),
-            unit_price: Number(ln.unit_price ?? fallbackIt.unit_price) || 0,
-            storage_condition: String(ln.storage_condition || fallbackIt.storage_condition || pMasterTemp[pCode] || "").trim(),
+            unit_price: resolvedUnitPrice,
+            storage_condition: resolvedStorageCond,
             shelf_position: String(ln.shelf_position || fallbackIt.shelf_position || "").trim(),
             qc_status: String(ln.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)").trim(),
             notes: String(ln.notes || "").trim()
@@ -1717,7 +1762,7 @@ export async function POST(req: NextRequest) {
 
         const targetWarehouse = String(warehouse_name || "Kho Trung Tâm").trim() || "Kho Trung Tâm";
         const effectiveDate = receipt_date && /^\d{4}-\d{2}-\d{2}$/.test(String(receipt_date)) ? String(receipt_date) : todayVN();
-        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho TBR").trim();
+        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho ABT").trim();
 
         const inboundCode = await generateDocumentCode({ docType: "PNK", tagMode: "GENERAL" });
         const txItems = clean.map(x => ({
@@ -1792,7 +1837,8 @@ export async function POST(req: NextRequest) {
             lotNumber: x.lot,
             expiryDate: x.expiry,
             location: it.warehouse_location || targetWarehouse,
-            shelf: x.shelf_position || it.shelf_position || undefined
+            shelf: x.shelf_position || it.shelf_position || undefined,
+            unitCost: uPrice
           });
 
           // Hold the received goods for the customer order the line was bought for (never more than it still needs)
@@ -1802,7 +1848,7 @@ export async function POST(req: NextRequest) {
             code: x.pCode,
             name: pName,
             category: it.category || "Hàng Thương Mại",
-            brand: po.supplier_name || it.supplier_name || "TBR Phân Phối",
+            brand: po.supplier_name || it.supplier_name || "ABT Phân Phối",
             origin: it.origin || "Chính hãng",
             unit: x.unit || it.unit || "Hộp",
             specification: x.specification || it.specification || "",
@@ -1819,13 +1865,18 @@ export async function POST(req: NextRequest) {
         for (const [k, q] of Object.entries(thisReceipt)) received[k] = (Number(received[k]) || 0) + q;
         const allDone = poItems.every((it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it.quantity) || 0));
         const newStatus = allDone ? "COMPLETED" : "PARTIALLY_RECEIVED";
+        const newPoTotalAmount = poPriceUpdated
+          ? poItems.reduce((sum: number, it: any) => sum + (Number(it?.quantity) || 0) * (Number(it?.unit_price) || 0), 0)
+          : Number(po.total_amount) || 0;
         await c.query(
           `UPDATE procurement_orders
               SET status = $1, received_qty = $2::jsonb,
                   inbound_transaction_code = COALESCE(inbound_transaction_code, $3),
+                  items = $5::jsonb,
+                  total_amount = $6,
                   version = COALESCE(version, 0) + 1
             WHERE id = $4`,
-          [newStatus, JSON.stringify(received), inboundCode, po.id]
+          [newStatus, JSON.stringify(received), inboundCode, po.id, JSON.stringify(poItems), newPoTotalAmount]
         );
         // Hóa đơn đầu vào của đợt nhận hàng này: lưu thành dòng riêng trên PO để hiện cột / lọc theo số HĐ
         const invNo = String(vat_invoice_no || "").trim();
@@ -1893,7 +1944,7 @@ export async function POST(req: NextRequest) {
         : await generateDocumentCode({
             docType: "PR",
             customerName: customer_name,
-            customPrefix: isStockOrder ? "STOCK" : "TBR",
+            customPrefix: isStockOrder ? "STOCK" : "ABT",
             tagMode: isStockOrder ? "STOCK" : (customer_name ? "CUSTOMER" : "GENERAL")
           });
 
@@ -1908,7 +1959,7 @@ export async function POST(req: NextRequest) {
         const it = structuredItems[i];
         const codeStr = String(it?.product_code || "").trim();
         const nameStr = String(it?.product_name || "").trim();
-        if (!codeStr || codeStr.toUpperCase() === "TBR-ITEM" || codeStr.toUpperCase() === "MÃ MỚI" || !nameStr) {
+        if (!codeStr || codeStr.toUpperCase() === "ABT-ITEM" || codeStr.toUpperCase() === "MÃ MỚI" || !nameStr) {
           return NextResponse.json(
             {
               error: `Không thể tạo Đề xuất mua hàng (PR): Mặt hàng ở dòng #${i + 1} chưa có Mã sản phẩm (SKU) hoặc Tên hàng cụ thể! Vui lòng chọn sản phẩm từ Bảng mã sản xuất.`
@@ -2005,7 +2056,7 @@ export async function POST(req: NextRequest) {
           workflow_code, workflow_type, title, priority, status, requester_name, requester_dept,
           assignee_name, target_dept, customer_name, product_info, due_date, description,
           results_summary, attachments, comments, logs
-        ) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, 'Trần Phương Uyên', 'Cung Ứng', $7, $8, $9, $10, $11, '[]'::json, '[]'::json, $12)`,
+        ) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, '', 'Cung Ứng', $7, $8, $9, $10, $11, '[]'::json, '[]'::json, $12)`,
         [
           code,
           "SALES_TO_PROCUREMENT",
@@ -2022,6 +2073,29 @@ export async function POST(req: NextRequest) {
         ]
       );
       await logAudit("CREATE_PR", "PROCUREMENT", `Tạo phiếu đề xuất mua hàng PR ${code}: ${title}`);
+      if (structuredItems.length > 0) {
+        try {
+          const soCodes = Array.from(
+            new Set(
+              structuredItems
+                .map((it: any) => String(it?.source_so_code || it?.so_code || "").trim())
+                .filter(Boolean)
+            )
+          ).join(", ");
+          await withFactoryTx((tx) =>
+            syncKdOrderOrPoToInternalOrder(tx, {
+              kd_po_code: code,
+              kd_so_code: soCodes || code,
+              customer_name: customer_name || "Khối Kinh doanh ABT",
+              requested_date: due_date || todayVN(),
+              notes: description || title || `Đồng bộ tự động từ Đặt hàng Hãng / PR ${code}`,
+              items: structuredItems,
+            })
+          );
+        } catch (syncPrErr: any) {
+          console.error("[AUTO_SYNC_PR_TO_INTERNAL_ORDER_ERR]:", syncPrErr?.message || syncPrErr);
+        }
+      }
       return NextResponse.json({ success: true, code });
     }
 
@@ -2224,7 +2298,7 @@ export async function POST(req: NextRequest) {
       }
       const supRow = supplier_id ? (await query("SELECT id, name FROM procurement_suppliers WHERE id = $1", [supplier_id])).rows[0] : null;
       if (!supRow) throw new HttpError(400, "Chưa chọn nhà cung cấp hợp lệ cho PO.");
-      const poCode = await generateDocumentCode({ docType: "PO", customPrefix: "TBR", tagMode: "GENERAL" });
+      const poCode = await generateDocumentCode({ docType: "PO", customPrefix: "ABT", tagMode: "GENERAL" });
       const totalAmount = items.reduce((acc: number, it: any) => acc + Number(it.quantity) * (Number(it.unit_price) || 0), 0);
 
       const result = await withTransaction(async (c) => {
@@ -2312,6 +2386,22 @@ export async function POST(req: NextRequest) {
       });
 
       await logAudit("CONSOLIDATE_PO", "PROCUREMENT", `Gom ${pr_ids?.length || 0} phiếu PR vào PO ${poCode} gửi NCC ${supplier_name}`);
+      if (Array.isArray(items) && items.length > 0) {
+        try {
+          await withFactoryTx((tx) =>
+            syncKdOrderOrPoToInternalOrder(tx, {
+              kd_po_code: poCode,
+              kd_so_code: Array.isArray(pr_ids) && pr_ids.length > 0 ? pr_ids.join(", ") : poCode,
+              customer_name: supplier_name || "Đơn PO Gom PR",
+              requested_date: expected_delivery_date || todayVN(),
+              notes: notes || `Gom từ các PR: ${(pr_ids || []).join(", ")}`,
+              items,
+            })
+          );
+        } catch (syncConsErr: any) {
+          console.error("[AUTO_SYNC_CONSOLIDATED_PO_TO_INTERNAL_ORDER_ERR]:", syncConsErr?.message || syncConsErr);
+        }
+      }
       return NextResponse.json({ success: true, po_code: poCode, po_id: result.po_id });
     }
 

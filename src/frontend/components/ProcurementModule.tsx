@@ -1811,12 +1811,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
   const submitReceive = async () => {
     if (!receiveTarget) return;
+    if (!String(receiveHeader.receipt_date || "").trim()) { alert("Vui lòng nhập Ngày Nhập Kho (*)."); return; }
+    if (!String(receiveHeader.warehouse_name || "").trim()) { alert("Vui lòng chọn Kho Tiếp Nhận (*)."); return; }
+    if (!String(receiveHeader.received_by || "").trim()) { alert("Vui lòng nhập Thủ Kho / Người Tiếp Nhận (*)."); return; }
     const lines = receiveLines.filter(l => (Number(l.quantity) || 0) > 0);
-    if (lines.length === 0) { alert("Nhập số lượng thực nhận cho ít nhất 1 dòng."); return; }
+    if (lines.length === 0) { alert("Nhập số lượng thực nhận (> 0) cho ít nhất 1 dòng (*)."); return; }
     for (const l of lines) {
-      if (!String(l.product_code || "").trim()) { alert("Vui lòng chọn hoặc nhập Mã hàng cho dòng phát sinh."); return; }
-      if (!String(l.lot_number).trim()) { alert(`${l.product_code}: chưa nhập số lô / số Serial.`); return; }
-      if (!l.no_expiry && !l.expiry_date) { alert(`${l.product_code} (lô ${l.lot_number}): chưa nhập hạn dùng, hoặc đánh dấu "Không có HSD".`); return; }
+      if (!String(l.product_code || "").trim()) { alert("Vui lòng chọn hoặc nhập Mã hàng (*) cho dòng phát sinh."); return; }
+      if (!String(l.lot_number || "").trim()) { alert(`${l.product_code}: bắt buộc phải nhập Số lô (LOT) / Serial (*).`); return; }
+      if (!l.no_expiry && !String(l.expiry_date || "").trim()) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải nhập Hạn dùng (EXP) (*), hoặc đánh dấu "Không có HSD".`); return; }
+      if (!(Number(l.unit_price) > 0)) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải nhập Đơn giá nhập (> 0 VNĐ) (*).`); return; }
+      if (!String(l.storage_condition || "").trim()) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải chọn Điều kiện bảo quản (*).`); return; }
     }
     const perLine: Record<number, number> = {};
     for (const l of lines) {
@@ -6427,14 +6432,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <table className="w-full text-left min-w-[1250px]">
                   <thead>
                     <tr className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[11px]">
-                      <th className="p-2 min-w-[180px]">Mã hàng / Tên / Quy cách</th>
+                      <th className="p-2 min-w-[180px]">Mã hàng / Tên / Quy cách *</th>
                       <th className="p-2 text-center w-20">Đặt / Đã nhập</th>
                       <th className="p-2 w-20 text-center">SL thực nhận *</th>
+                      <th className="p-2 w-32 text-right">Đơn giá nhập (VNĐ) *</th>
                       <th className="p-2 w-28">Số lô (LOT) *</th>
                       <th className="p-2 w-32">Ngày SX (MFG)</th>
                       <th className="p-2 w-32">Hạn dùng (EXP) *</th>
                       <th className="p-2 w-16 text-center" title="Không có hạn sử dụng (Thiết bị / Vật tư)">K.HSD</th>
-                      <th className="p-2 w-44">Điều kiện bảo quản</th>
+                      <th className="p-2 w-44">Điều kiện bảo quản *</th>
                       <th className="p-2 w-32">Vị trí Tủ / Kệ</th>
                       <th className="p-2 w-44">Tình trạng QC đầu vào</th>
                       <th className="p-2 min-w-[120px]">Ghi chú dòng</th>
@@ -6542,8 +6548,26 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-center" />
                           </td>
                           <td className="p-2">
+                            <input
+                              type="number"
+                              min={1}
+                              value={l.unit_price || ""}
+                              placeholder="Nhập đơn giá *"
+                              onChange={(e) => setL({ unit_price: Math.max(0, parseInt(e.target.value) || 0) })}
+                              className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-[11px] ${
+                                !(Number(l.unit_price) > 0)
+                                  ? "border-rose-300 dark:border-rose-800/80"
+                                  : "border-slate-200 dark:border-slate-700"
+                              }`}
+                            />
+                          </td>
+                          <td className="p-2">
                             <input type="text" value={l.lot_number} onChange={(e) => setL({ lot_number: e.target.value })} placeholder="VD: 2510A01"
-                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-orange-600 dark:text-orange-400 font-mono font-bold" />
+                              className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-orange-600 dark:text-orange-400 font-mono font-bold ${
+                                !String(l.lot_number || "").trim()
+                                  ? "border-rose-300 dark:border-rose-800/80"
+                                  : "border-slate-200 dark:border-slate-700"
+                              }`} />
                           </td>
                           <td className="p-2">
                             <DateInputVN value={l.manufacture_date || ""} onChange={(e) => setL({ manufacture_date: e.target.value })}
@@ -6551,7 +6575,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           </td>
                           <td className="p-2">
                             <DateInputVN value={l.expiry_date} disabled={l.no_expiry} onChange={(e) => setL({ expiry_date: e.target.value })}
-                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px] disabled:opacity-50" />
+                              className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px] disabled:opacity-50 ${
+                                !l.no_expiry && !String(l.expiry_date || "").trim()
+                                  ? "border-rose-300 dark:border-rose-800/80"
+                                  : "border-slate-200 dark:border-slate-700"
+                              }`} />
                           </td>
                           <td className="p-2 text-center pt-3">
                             <input type="checkbox" checked={!!l.no_expiry} onChange={(e) => setL({ no_expiry: e.target.checked, expiry_date: e.target.checked ? "" : l.expiry_date })}
@@ -6561,7 +6589,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <select
                               value={l.storage_condition || ""}
                               onChange={(e) => setL({ storage_condition: e.target.value })}
-                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]"
+                              className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px] ${
+                                !String(l.storage_condition || "").trim()
+                                  ? "border-rose-300 dark:border-rose-800/80 text-rose-600 dark:text-rose-400"
+                                  : "border-slate-200 dark:border-slate-700"
+                              }`}
                             >
                               <option value="">-- Chưa khai báo nhiệt độ --</option>
                               <option value="-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)">-20°C (Lạnh âm sâu)</option>

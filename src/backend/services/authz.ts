@@ -28,7 +28,7 @@ export async function getAuthorizedUser(req: Request, opts: { allowPasswordChang
     }
     const mergedPerms: Record<string, boolean> = perms && typeof perms === "object" ? { ...perms } : {};
 
-    // Đồng bộ hợp nhất quyền từ các bản ghi tài khoản cùng nhân sự (VD: NV-TBR-016 / NV-TBRs-006 / NV-ABT-001 vs TBR016 hoặc trùng Họ tên)
+    // Đồng bộ hợp nhất quyền từ các bản ghi tài khoản cùng nhân sự (VD: NV-TBR-016 vs TBR016 hoặc trùng Họ tên)
     if (row.full_name || row.username) {
       const aliasRes = await query(
         `SELECT permissions FROM users

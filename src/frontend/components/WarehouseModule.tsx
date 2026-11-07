@@ -2292,7 +2292,7 @@ export const WarehouseModule: React.FC = () => {
         lot_number: it.lot_number || "",
         manufacture_date: it.manufacture_date || "",
         expiry_date: it.expiry_date || "",
-        storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
+        storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "",
         shelf_position: it.shelf_position || (matchedCatalogProd as any)?.shelf_position || "Chưa phân bổ kệ",
         qc_status: it.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
         item_notes: it.item_notes || "",
@@ -2337,11 +2337,23 @@ export const WarehouseModule: React.FC = () => {
 
   const handleInboundSubmit = async () => {
     if (!inboundForm.transaction_code?.trim()) {
-      alert("Vui lòng nhập Mã Phiếu Nhập Kho");
+      alert("Vui lòng nhập Mã Phiếu Nhập (PNK) (*)");
+      return;
+    }
+    if (!inboundForm.date?.trim()) {
+      alert("Vui lòng nhập Ngày Nhập Kho (*)");
       return;
     }
     if (!inboundForm.supplier_name?.trim()) {
       alert("Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Nguồn Hàng (*)");
+      return;
+    }
+    if (!inboundForm.warehouse_name?.trim()) {
+      alert("Vui lòng chọn Kho Tiếp Nhận (*)");
+      return;
+    }
+    if (!inboundForm.performed_by?.trim()) {
+      alert("Vui lòng nhập Thủ Kho / Người Tiếp Nhận (*)");
       return;
     }
     // Nhập mua hàng: NCC phải có trong danh mục (gõ tự do như "abt" không được ghi nhận làm NCC)
@@ -2361,23 +2373,40 @@ export const WarehouseModule: React.FC = () => {
     for (let i = 0; i < inboundForm.items.length; i++) {
       const it = inboundForm.items[i];
       if (!it.product_code?.trim() || !it.product_name?.trim()) {
-        alert(`Dòng hàng thứ ${i + 1} chưa có mã hoặc tên sản phẩm`);
+        alert(`Dòng hàng thứ ${i + 1} bắt buộc phải nhập đầy đủ Mã Hàng & Tên Sản Phẩm (*)`);
+        return;
+      }
+      const isNewMaster = !productByCodeMap.has(it.product_code.trim()) || it.is_new_master_product;
+      if (isNewMaster) {
+        const catVal = it.category || "Kít Real-time PCR";
+        const mfgVal = it.manufacturer ?? "TopSPEC";
+        if (!String(catVal).trim()) {
+          alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải chọn Nhóm Ngành Hàng (*)`);
+          return;
+        }
+        if (!String(mfgVal).trim()) {
+          alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải nhập Hãng Sản Xuất (Brand) (*)`);
+          return;
+        }
+      }
+      if (!String(it.lot_number || "").trim()) {
+        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải nhập Số Lô (LOT / Batch) (*)`);
+        return;
+      }
+      if (!String(it.expiry_date || "").trim() && !it.no_expiry) {
+        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải nhập Hạn Sử Dụng (EXP) (*)`);
         return;
       }
       if (!it.quantity || Number(it.quantity) <= 0) {
-        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) số lượng phải lớn hơn 0`);
+        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) Số Lượng Nhập (*) phải lớn hơn 0`);
         return;
       }
-      if (!editingInboundTxId && (!it.unit_price || Number(it.unit_price) <= 0)) {
-        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ)`);
-        return;
-      }
-      if (editingInboundTxId && Number(it.unit_price || 0) < 0) {
-        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) Đơn Giá Nhập không được âm`);
+      if (!it.unit_price || Number(it.unit_price) <= 0) {
+        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ) (*)`);
         return;
       }
       if (!it.storage_condition?.trim()) {
-        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải chọn Điều Kiện Nhiệt Độ Bảo Quản`);
+        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải chọn Điều Kiện Nhiệt Độ Bảo Quản (*)`);
         return;
       }
     }
@@ -3067,7 +3096,7 @@ export const WarehouseModule: React.FC = () => {
               r["Lô"] ||
               r["lot_number"] ||
               ""
-            ).trim() || "LOT-STD";
+            ).trim();
 
           const rawExpDate = String(
             r["Hạn dùng (Date)"] ||
@@ -3090,7 +3119,7 @@ export const WarehouseModule: React.FC = () => {
             r["Nhiệt độ bảo quản"] || r["Điều kiện nhiệt độ bảo quản"] || r["storage_condition"] || ""
           ).trim();
           const storage_condition =
-            rawTemp || matchedProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
+            rawTemp || matchedProd?.storage_condition || "";
 
           const rawLoc = String(
             r["Khu vực / Vị trí kho"] ||
@@ -3163,14 +3192,38 @@ export const WarehouseModule: React.FC = () => {
       alert("Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Đơn vị giao (*)");
       return;
     }
+    if (!excelInboundDetails.warehouse_name?.trim()) {
+      alert("Vui lòng chọn Kho tiếp nhận (*)");
+      return;
+    }
+    if (!excelInboundDetails.performed_by?.trim()) {
+      alert("Vui lòng nhập Thủ kho tiếp nhận (*)");
+      return;
+    }
     for (let i = 0; i < validRows.length; i++) {
       const r = validRows[i];
+      if (!r.product_code?.trim() || !r.product_name?.trim()) {
+        alert(`Dòng Excel thứ ${i + 1} bắt buộc phải có Mã SP và Tên SP (*)`);
+        return;
+      }
+      if (!r.lot_number?.trim()) {
+        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải nhập Số Lô (LOT) (*)`);
+        return;
+      }
+      if (!r.expiry_date?.trim()) {
+        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải nhập Hạn Dùng (EXP) (*)`);
+        return;
+      }
+      if (!r.quantity || Number(r.quantity) <= 0) {
+        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) Số Lượng (*) phải lớn hơn 0`);
+        return;
+      }
       if (!r.unit_price || Number(r.unit_price) <= 0) {
-        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ)`);
+        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ) (*)`);
         return;
       }
       if (!r.storage_condition?.trim()) {
-        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải khai báo Điều Kiện Nhiệt Độ Bảo Quản`);
+        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải khai báo Điều Kiện Nhiệt Độ Bảo Quản (*)`);
         return;
       }
     }
@@ -8278,25 +8331,33 @@ export const WarehouseModule: React.FC = () => {
                       <div className="grid grid-cols-2 sm:grid-cols-6 gap-2.5 bg-slate-50/60 dark:bg-slate-900/40 p-2.5 rounded-lg border border-slate-100 dark:border-slate-800">
                         <div>
                           <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Số Lô (LOT / Batch) *
+                            Số Lô (LOT / Batch) <span className="text-rose-500">*</span>
                           </label>
                           <input
                             type="text"
                             value={item.lot_number || ""}
                             onChange={(e) => handleInboundItemChange(idx, "lot_number", e.target.value)}
                             placeholder="LOT-2026-..."
-                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-orange-600 dark:text-orange-400"
+                            className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-orange-600 dark:text-orange-400 ${
+                              !String(item.lot_number || "").trim()
+                                ? "border-rose-300 dark:border-rose-800/80"
+                                : "border-slate-200 dark:border-slate-700"
+                            }`}
                           />
                         </div>
 
                         <div>
                           <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Hạn Sử Dụng (EXP) *
+                            Hạn Sử Dụng (EXP) <span className="text-rose-500">*</span>
                           </label>
                           <DateInputVN
                             value={item.expiry_date || ""}
                             onChange={(e) => handleInboundItemChange(idx, "expiry_date", e.target.value)}
-                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-emerald-600 dark:text-emerald-400"
+                            className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-emerald-600 dark:text-emerald-400 ${
+                              !String(item.expiry_date || "").trim()
+                                ? "border-rose-300 dark:border-rose-800/80"
+                                : "border-slate-200 dark:border-slate-700"
+                            }`}
                           />
                         </div>
 

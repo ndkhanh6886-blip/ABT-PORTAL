@@ -33,7 +33,7 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
     shortName: "Cung Ứng",
     code: "PROCUREMENT",
     desc: "Quản lý chuỗi cung ứng, đơn mua PO từ hãng, đề xuất mua hàng PR & theo dõi tiến độ hàng về",
-    deptMatch: ["cung ứng", "mua hàng", "procurement", "purchasing", "thu mua"],
+    deptMatch: ["kinh doanh", "mua hàng", "procurement", "purchasing", "thu mua"],
     roleMatch: ["procurement", "cung ứng", "mua hàng", "thu mua", "purchasing"],
     defaultPermissions: {
       "procurement.view": true,
@@ -82,7 +82,7 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
     shortName: "Quản Lý Kho",
     code: "WAREHOUSE",
     desc: "Kiểm soát thẻ kho, số Lô & HSD (EXP), giám sát chuỗi lạnh âm sâu, nhập/xuất kho & in barcode",
-    deptMatch: ["kho vận", "kho", "warehouse", "logistics"],
+    deptMatch: ["kinh doanh", "kho vận", "warehouse", "logistics"],
     roleMatch: ["warehouse", "kho", "thủ kho", "logistics"],
     defaultPermissions: {
       "warehouse.view": true,
@@ -105,7 +105,7 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
     shortName: "Application",
     code: "APPLICATION",
     desc: "Điều phối kỹ sư FSE, máy xét nghiệm demo tại bệnh viện, nghiệm thu kỹ thuật và chạy thử mẫu",
-    deptMatch: ["kỹ thuật", "ứng dụng", "application", "fse", "lab"],
+    deptMatch: ["app", "ứng dụng", "application", "fse", "lab"],
     roleMatch: ["application", "app", "kỹ thuật", "ứng dụng", "fse"],
     defaultPermissions: {
       "application.view": true,
@@ -126,7 +126,7 @@ export const DEPARTMENT_MODULES: DepartmentModule[] = [
     shortName: "Pháp Chế",
     code: "LEGAL",
     desc: "Thẩm định pháp lý hợp đồng kinh tế, hồ sơ công bố lưu hành thiết bị IVD, bảo lãnh và hồ sơ thầu",
-    deptMatch: ["pháp chế", "legal", "luật", "thầu"],
+    deptMatch: ["pháp chế", "legal", "luật", "thầu", "hành chính"],
     roleMatch: ["pháp chế", "legal", "luật"],
     defaultPermissions: {
       "legal.view": true,
@@ -828,6 +828,78 @@ ROLE_PRESETS.procurement = ROLE_PRESETS.procurement_specialist;
 ROLE_PRESETS.application = ROLE_PRESETS.app_rep;
 ROLE_PRESETS.chief_accountant = ROLE_PRESETS.accountant_head;
 
+// Sales Admin: đơn hàng kinh doanh + Kho và Cung ứng hàng kinh doanh (công ty giao cho Sales Admin);
+// các quyền phê duyệt (báo giá, chiết khấu, PO) vẫn thuộc trưởng phòng / cấp có thẩm quyền.
+ROLE_PRESETS.sales_admin = Object.fromEntries(
+  [...new Set([...Object.keys(ROLE_PRESETS.sales_rep), ...Object.keys(ROLE_PRESETS.warehouse_specialist), ...Object.keys(ROLE_PRESETS.procurement_specialist)])].map((k) => [
+    k,
+    !k.includes("approve") && Boolean(ROLE_PRESETS.sales_rep[k] || ROLE_PRESETS.warehouse_specialist[k] || ROLE_PRESETS.procurement_specialist[k]),
+  ])
+);
+
+/** Khối của công ty, theo thứ tự hiển thị. */
+export const COMPANY_BLOCKS = ["Điều Hành", "Khối Văn Phòng", "Khối Kinh Doanh", "Khối Kỹ Thuật – Nhà Máy"] as const;
+
+/**
+ * 11 phòng ban thực tế của ABT (danh sách nhân sự 11/2026), theo khối. Tên phòng là khóa chuẩn; các tên cũ / viết tắt
+ * (Kế Toán, Kho Vận, Sản Xuất Kit, Kỹ Thuật – Thiết Bị…) quy về đây qua `canonicalDepartment`.
+ * `staffRole` / `headRole`: vai trò mặc định khi file không ghi rõ; `factory`: phòng trong Khối Kỹ thuật – Nhà máy.
+ *
+ * Kho & Cung ứng tách theo khối: Kho và Cung ứng hàng kinh doanh do nhân viên phòng Kinh Doanh phụ trách
+ * (phân hệ Quản Lý Kho, Cung Ứng); Kho và Cung ứng nhà máy là phòng "Cung ứng Kho" của Khối Kỹ thuật
+ * (Kho Nhà Máy, Mua hàng Nhà máy — quyền cấp qua vai trò nhà máy, tài khoản Portal chỉ quyền cơ bản).
+ */
+export const COMPANY_DEPARTMENTS: { key: string; code: string; block: (typeof COMPANY_BLOCKS)[number]; headRole: string; staffRole: string; factory?: string }[] = [
+  { key: "Ban Giám Đốc", code: "BOD", block: "Điều Hành", headRole: "admin", staffRole: "admin" },
+  { key: "Hành chính", code: "HC", block: "Khối Văn Phòng", headRole: "accountant_head", staffRole: "accountant" },
+  { key: "Kinh Doanh", code: "SALES", block: "Khối Kinh Doanh", headRole: "sales_head", staffRole: "sales_rep" },
+  { key: "Marketing", code: "MKT", block: "Khối Kinh Doanh", headRole: "sales_head", staffRole: "marketing" },
+  { key: "APP", code: "APP", block: "Khối Kinh Doanh", headRole: "app_head", staffRole: "app_rep" },
+  { key: "R&D", code: "P-RD", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "rd_head", staffRole: "rd_staff", factory: "RD" },
+  { key: "Sản xuất", code: "P-KIT", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "kit_head", staffRole: "kit_staff", factory: "KIT" },
+  { key: "Tổng hợp Oligo", code: "P-OLIGO", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "oligo_head", staffRole: "oligo_staff", factory: "OLIGO" },
+  { key: "KTCN", code: "P-DEVICE", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "device_head", staffRole: "device_staff", factory: "DEVICE" },
+  { key: "QC/QA", code: "P-QA", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "qa_qc_lead", staffRole: "qa_qc", factory: "QA" },
+  { key: "Cung ứng Kho", code: "P-KHO", block: "Khối Kỹ Thuật – Nhà Máy", headRole: "staff", staffRole: "staff", factory: "WH" },
+];
+
+/** Tên phòng chuẩn (khóa trong COMPANY_DEPARTMENTS) của một tên phòng bất kỳ, hoặc null nếu không nhận ra. */
+export function canonicalDepartment(raw?: string | null): string | null {
+  const s = (raw || "").toLowerCase().normalize("NFC").replace(/\s+/g, " ").trim();
+  if (!s) return null;
+  const exact = COMPANY_DEPARTMENTS.find((d) => d.key.toLowerCase() === s || d.code.toLowerCase() === s);
+  if (exact) return exact.key;
+  if (s.includes("oligo")) return "Tổng hợp Oligo";
+  if (s.includes("r&d") || s.includes("nghiên cứu")) return "R&D";
+  if (s.includes("ktcn") || s.includes("kỹ thuật công nghệ") || s.includes("thiết bị") || s.includes("device")) return "KTCN";
+  if (s.includes("sản xuất") || s.includes("sx kit")) return "Sản xuất";
+  if (/\bq[ac]\b/.test(s) || s.includes("chất lượng") || s.includes("iso")) return "QC/QA";
+  if (s === "app" || s.includes("ứng dụng") || s.includes("application")) return "APP";
+  // the old business-block warehouse / procurement departments: now run by the Kinh Doanh staff
+  if (["kho vận", "kho kinh doanh", "mua hàng & cung ứng", "cung ứng", "cung ứng kinh doanh", "procurement", "warehouse"].includes(s)) return "Kinh Doanh";
+  if (s.includes("cung ứng") || s.includes("kho") || s.includes("mua hàng")) return "Cung ứng Kho";
+  if (s.includes("marketing") || s.includes("tiếp thị")) return "Marketing";
+  if (s.includes("kinh doanh") || s.includes("sales")) return "Kinh Doanh";
+  if (s.includes("hành chính") || s.includes("nhân sự") || s.includes("kế toán") || s.includes("tài chính") || s.includes("pháp chế") || s.includes("legal")) return "Hành chính";
+  if (s.includes("giám đốc") || s === "bod") return "Ban Giám Đốc";
+  return null;
+}
+
+/** Trưởng / Phó phòng (bộ phận), Giám đốc, Quản đốc là cấp quản lý; Trưởng nhóm vẫn là cấp chuyên viên. */
+export function isDepartmentLeaderPosition(posStr?: string | null): boolean {
+  const pos = (posStr || "").toLowerCase().replace(/trường phòng/g, "trưởng phòng").trim();
+  return (
+    /(^|\s)(phó\s+)?trưởng\s+(phòng|bộ phận|ban)/.test(pos) ||
+    pos.includes("phó phòng") ||
+    pos.includes("phó bộ phận") ||
+    pos.includes("quản đốc") ||
+    pos.includes("kế toán trưởng") ||
+    pos.includes("head") ||
+    pos.includes("chief") ||
+    (pos.includes("manager") && !pos.includes("product manager") && !pos.includes("account manager"))
+  );
+}
+
 /**
  * Suy luận mã Vai trò hệ thống (System Role) chuẩn hóa từ Phòng ban, Chức vụ và Vai trò khai báo (nếu có).
  * Phân tách rõ ràng cấp Quản lý (Head / Lead) và cấp Chuyên viên / Nhân viên (Rep / Specialist / Staff).
@@ -837,20 +909,16 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
   const dept = (deptStr || "").toLowerCase().trim();
   const pos = (posStr || "").toLowerCase().trim();
 
-  const isLeaderPos =
-    pos.includes("trưởng") ||
-    pos.includes("phó phòng") ||
-    pos.includes("phó bộ phận") ||
-    pos.includes("head") ||
-    pos.includes("lead") ||
-    pos.includes("chief") ||
-    (pos.includes("manager") && !pos.includes("product manager") && !pos.includes("account manager"));
+  const isLeaderPos = isDepartmentLeaderPosition(posStr);
 
   // Nếu cột Vai trò hệ thống đã chỉ định rõ mã chuẩn có phân cấp
   const canonicalRoles = new Set([
     "admin",
     "sales_head",
     "sales_rep",
+    "sales_admin",
+    "marketing",
+    "staff",
     "warehouse_lead",
     "warehouse",
     "warehouse_specialist",
@@ -864,6 +932,14 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
     "qa_qc",
     "legal_head",
     "legal",
+    "rd_head",
+    "rd_staff",
+    "kit_head",
+    "kit_staff",
+    "oligo_head",
+    "oligo_staff",
+    "device_head",
+    "device_staff",
   ]);
 
   if (canonicalRoles.has(rawRole)) {
@@ -912,6 +988,7 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
       rawRole === "root" ||
       pos.includes("tổng giám đốc") ||
       pos.includes("phó giám đốc") ||
+      pos.includes("cố vấn cấp cao") ||
       pos.includes("giám đốc") ||
       dept.includes("ban giám đốc") ||
       dept === "bod" ||
@@ -921,6 +998,21 @@ export function inferSystemRoleFromPosition(deptStr?: string, posStr?: string, e
       (dept.includes("nhân sự") && isLeaderPos))
   ) {
     return "admin";
+  }
+
+  // Phòng ban thực tế của công ty: vai trò mặc định theo phòng, trừ các vị trí làm việc khác chuyên môn của phòng
+  const deptDef = COMPANY_DEPARTMENTS.find((d) => d.key === canonicalDepartment(deptStr));
+  if (deptDef) {
+    if (pos.includes("lái xe") || /(^|\s)it(\s|$)/.test(pos)) return "staff";
+    // Khối Kỹ thuật – Nhà máy: the department's own role; its warehouse / purchasing work is in the factory modules
+    if (deptDef.factory) return isLeaderPos ? deptDef.headRole : deptDef.staffRole;
+    // Sales Admin phụ trách đơn hàng, Kho và Cung ứng hàng kinh doanh
+    if (pos.includes("sales admin") || pos.includes("sale admin") || pos.includes("admin kinh doanh")) return "sales_admin";
+    // Kho & Cung ứng hàng kinh doanh: business-block staff assigned to them
+    if (pos.includes("cung ứng") || pos.includes("mua hàng")) return isLeaderPos ? "procurement_lead" : "procurement_specialist";
+    if (pos.includes("giao nhận") || pos.includes("thủ kho") || /(^|\s)kho(\s|$)/.test(pos)) return isLeaderPos ? "warehouse_lead" : "warehouse";
+    if (pos.includes("pháp chế") || pos.includes("pháp lý")) return isLeaderPos ? "legal_head" : "legal";
+    return isLeaderPos ? deptDef.headRole : deptDef.staffRole;
   }
 
   // 3. Kinh Doanh & Marketing
