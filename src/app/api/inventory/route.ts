@@ -1007,8 +1007,20 @@ export async function POST(req: NextRequest) {
               if (matchedClean && Number(matchedClean.unit_price) !== Number(poIt.unit_price || 0)) {
                 poChanged = true;
                 const qty = Number(poIt.quantity) || 1;
-                const price = Number(matchedClean.unit_price) || 0;
-                return { ...poIt, unit_price: price, total: qty * price };
+                const price = Math.round(Number(matchedClean.unit_price) || 0);
+                const subtotal = Math.round(qty * price);
+                const vatRate = Math.max(0, Number(poIt.vat_rate ?? poIt.tax_rate ?? 0) || 0);
+                const vatAmount = Math.round((subtotal * vatRate) / 100);
+                const totalAfterVat = subtotal + vatAmount;
+                return {
+                  ...poIt,
+                  unit_price: price,
+                  subtotal,
+                  vat_rate: vatRate,
+                  vat_amount: vatAmount,
+                  total_after_vat: totalAfterVat,
+                  total: totalAfterVat
+                };
               }
               return poIt;
             });
@@ -1029,7 +1041,11 @@ export async function POST(req: NextRequest) {
               invChanged = true;
             }
             if (poChanged || invChanged) {
-              const newTotal = updatedPoItems.reduce((s: number, x: any) => s + (Number(x.quantity) || 0) * (Number(x.unit_price) || 0), 0);
+              const newTotal = updatedPoItems.reduce((s: number, x: any) => {
+                const sub = Math.round((Number(x.quantity) || 0) * (Number(x.unit_price) || 0));
+                const vr = Math.max(0, Number(x?.vat_rate ?? x?.tax_rate ?? 0) || 0);
+                return s + sub + Math.round((sub * vr) / 100);
+              }, 0);
               await c.query(
                 `UPDATE procurement_orders
                     SET items = $1::jsonb,

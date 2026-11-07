@@ -48,7 +48,11 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
       items.forEach((it: any, idx: number) => {
         const qty = Number(it?.quantity) || 0;
         const received = receivedOf(po, idx);
-        const price = Number(it?.unit_price) || 0;
+        const price = Math.round(Number(it?.unit_price) || 0);
+        const subtotal = Math.round(qty * price);
+        const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
+        const vatAmount = Math.round((subtotal * vatRate) / 100);
+        const afterVat = subtotal + vatAmount;
         out.push({
           key: `${po.po_code}#${idx}`,
           po, idx,
@@ -59,7 +63,10 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
           qty, received,
           remaining: Math.max(0, qty - received),
           price,
-          amount: qty * price,
+          subtotal,
+          vatRate,
+          vatAmount,
+          amount: afterVat,
           sourcePR: itemSourcePR(it),
           supplier: supplierShort(po),
         });
@@ -129,13 +136,16 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
               <th className="py-2.5 px-1.5 w-14 text-right whitespace-nowrap">Còn lại</th>
               <th className="py-2.5 px-2 w-20 text-right whitespace-nowrap">Đơn giá</th>
               <th className="py-2.5 px-2 w-24 text-right whitespace-nowrap">Thành tiền</th>
+              <th className="py-2.5 px-1.5 w-14 text-center whitespace-nowrap">%VAT</th>
+              <th className="py-2.5 px-2 w-20 text-right whitespace-nowrap">Tiền VAT</th>
+              <th className="py-2.5 px-2 w-24 text-right whitespace-nowrap">Sau VAT</th>
               <th className="py-2.5 px-2 w-24 whitespace-nowrap">PR nguồn</th>
               <th className="py-2.5 px-2 w-28 whitespace-nowrap">Trạng thái / TT</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
             {page.items.length === 0 ? (
-              <tr><td colSpan={14} className="py-8 text-center text-slate-400">Không có dòng hàng nào phù hợp.</td></tr>
+              <tr><td colSpan={17} className="py-8 text-center text-slate-400">Không có dòng hàng nào phù hợp.</td></tr>
             ) : page.items.map(l => {
               const st = statusLabel(String(l.po.status || ""));
               const pay = PAYMENT_LABEL[paymentStatus(l.po)] || PAYMENT_LABEL.UNPAID;
@@ -159,7 +169,10 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
                   <td className="py-2 px-1.5 text-right font-mono whitespace-nowrap">{fmt(l.received)}</td>
                   <td className={`py-2 px-1.5 text-right font-mono font-bold whitespace-nowrap ${l.remaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>{fmt(l.remaining)}</td>
                   <td className="py-2 px-2 text-right font-mono whitespace-nowrap">{fmt(l.price)}</td>
-                  <td className="py-2 px-2 text-right font-mono font-bold whitespace-nowrap">{fmt(l.amount)}</td>
+                  <td className="py-2 px-2 text-right font-mono whitespace-nowrap">{fmt(l.subtotal)}</td>
+                  <td className="py-2 px-1.5 text-center font-mono text-indigo-600 whitespace-nowrap">{l.vatRate}%</td>
+                  <td className="py-2 px-2 text-right font-mono text-indigo-600 whitespace-nowrap">{fmt(l.vatAmount)}</td>
+                  <td className="py-2 px-2 text-right font-mono font-bold text-orange-600 whitespace-nowrap">{fmt(l.amount)}</td>
                   <td className="py-2 px-2 font-mono text-[11px] whitespace-nowrap">{l.sourcePR || "—"}</td>
                   <td className="py-2 px-2 whitespace-nowrap">
                     <div className={`text-[11px] leading-tight ${st.className}`}>{st.label}</div>

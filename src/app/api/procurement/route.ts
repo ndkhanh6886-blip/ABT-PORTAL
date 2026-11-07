@@ -950,7 +950,30 @@ export async function POST(req: NextRequest) {
 
     // 3. Manage PO (Create / Update - C4 & H7)
     if (action === "order") {
-      const { id, po_code, supplier_id, supplier_name, order_date, expected_delivery_date, items, total_amount, status, notes, rollback_reason } = body;
+      const { id, po_code, supplier_id, supplier_name, order_date, expected_delivery_date, status, notes, rollback_reason } = body;
+      const rawItems = Array.isArray(body.items) ? body.items : null;
+      const items = rawItems
+        ? rawItems.map((it: any) => {
+            const qty = Number(it?.quantity) || 0;
+            const price = Math.round(Number(it?.unit_price) || 0);
+            const subtotal = Math.round(qty * price);
+            const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
+            const vatAmount = Math.round((subtotal * vatRate) / 100);
+            const totalAfterVat = subtotal + vatAmount;
+            return {
+              ...it,
+              unit_price: price,
+              subtotal,
+              vat_rate: vatRate,
+              vat_amount: vatAmount,
+              total_after_vat: totalAfterVat,
+              total: totalAfterVat
+            };
+          })
+        : undefined;
+      const total_amount = items
+        ? items.reduce((sum: number, it: any) => sum + (Number(it.total_after_vat ?? it.total) || 0), 0)
+        : body.total_amount;
       const force_rollback = Boolean(body.force_rollback) && isAdminUser(me); // lùi trạng thái: chỉ Quản trị viên
       let finalPoCode = po_code;
       let targetId = id;
@@ -1048,6 +1071,7 @@ export async function POST(req: NextRequest) {
                 txItems = [];
               }
               let txChanged = false;
+              const updatedLots: Array<{ code: string; lot: string; price: number }> = [];
               const updatedTxItems = txItems.map((ti: any) => {
                 const tiCode = String(ti?.product_code || ti?.productCode || "").trim().toUpperCase();
                 const lineIdx = Number.isInteger(Number(ti?.line_index)) && Number(ti?.line_index) >= 0 ? Number(ti.line_index) : -1;
@@ -1057,12 +1081,18 @@ export async function POST(req: NextRequest) {
                 if (!matchedPoIt) return ti;
                 const nextPrice = Number(matchedPoIt.unit_price) || 0;
                 const nextSup = supplier_name || ti.supplier_name || "";
-                if (nextPrice !== Number(ti.unit_price || 0) || (nextSup && nextSup !== ti.supplier_name)) {
+                if ((nextPrice > 0 && nextPrice !== Number(ti.unit_price || 0)) || (nextSup && nextSup !== ti.supplier_name)) {
                   txChanged = true;
+                  const effPrice = nextPrice > 0 ? nextPrice : Number(ti.unit_price || 0);
+                  const lotNo = String(ti?.lot_number || ti?.lotNumber || "").trim();
+                  if (effPrice > 0 && lotNo) {
+                    updatedLots.push({ code: String(ti?.product_code || ti?.productCode || "").trim(), lot: lotNo, price: effPrice });
+                  }
                   return {
                     ...ti,
-                    unit_price: nextPrice,
-                    cost_price: nextPrice,
+                    unit_price: effPrice,
+                    cost_price: effPrice,
+                    total_amount: (Number(ti.quantity) || 0) * effPrice,
                     ...(nextSup ? { supplier_name: nextSup } : {})
                   };
                 }
@@ -1070,6 +1100,9 @@ export async function POST(req: NextRequest) {
               });
               if (txChanged) {
                 await c.query(`UPDATE inventory_transactions SET items = $1 WHERE id = $2`, [JSON.stringify(updatedTxItems), txRow.id]);
+                for (const ul of updatedLots) {
+                  await c.query(`UPDATE inventory_lots SET unit_cost = $1 WHERE product_code = $2 AND lot_number = $3`, [ul.price, ul.code, ul.lot]).catch(() => {});
+                }
               }
             }
 
@@ -1728,7 +1761,16 @@ export async function POST(req: NextRequest) {
           if (Number.isInteger(idx) && idx >= 0 && poIt) {
             thisReceipt[idx] = (thisReceipt[idx] || 0) + qty;
             if (resolvedUnitPrice > 0 && Number(poIt.unit_price) !== resolvedUnitPrice) {
+              const pQty = Number(poIt.quantity) || 0;
+              const pSub = Math.round(pQty * resolvedUnitPrice);
+              const pVatRate = Math.max(0, Number(poIt.vat_rate ?? poIt.tax_rate ?? 0) || 0);
+              const pVatAmt = Math.round((pSub * pVatRate) / 100);
               poIt.unit_price = resolvedUnitPrice;
+              poIt.subtotal = pSub;
+              poIt.vat_rate = pVatRate;
+              poIt.vat_amount = pVatAmt;
+              poIt.total_after_vat = pSub + pVatAmt;
+              poIt.total = pSub + pVatAmt;
               poPriceUpdated = true;
             }
           }
@@ -1866,7 +1908,11 @@ export async function POST(req: NextRequest) {
         const allDone = poItems.every((it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it.quantity) || 0));
         const newStatus = allDone ? "COMPLETED" : "PARTIALLY_RECEIVED";
         const newPoTotalAmount = poPriceUpdated
-          ? poItems.reduce((sum: number, it: any) => sum + (Number(it?.quantity) || 0) * (Number(it?.unit_price) || 0), 0)
+          ? poItems.reduce((sum: number, it: any) => {
+              const sub = Math.round((Number(it?.quantity) || 0) * (Number(it?.unit_price) || 0));
+              const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
+              return sum + sub + Math.round((sub * vr) / 100);
+            }, 0)
           : Number(po.total_amount) || 0;
         await c.query(
           `UPDATE procurement_orders
@@ -2227,7 +2273,11 @@ export async function POST(req: NextRequest) {
             added++;
           }
         }
-        const totalAmount = poItems.reduce((s: number, x: any) => s + (Number(x.quantity) || 0) * (Number(x.unit_price) || 0), 0);
+        const totalAmount = poItems.reduce((s: number, x: any) => {
+          const sub = Math.round((Number(x.quantity) || 0) * (Number(x.unit_price) || 0));
+          const vr = Math.max(0, Number(x?.vat_rate ?? x?.tax_rate ?? 0) || 0);
+          return s + sub + Math.round((sub * vr) / 100);
+        }, 0);
 
         // Dòng PR được chọn: gắn mã PO
         const codesIn = (pr_ids || []).map((x: any) => String(x).trim()).filter(Boolean);

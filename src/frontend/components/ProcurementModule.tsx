@@ -217,6 +217,31 @@ const receivedOf = (po: any, i: number): number => {
   return legacyFull ? Number(po?.items?.[i]?.quantity) || 0 : 0;
 };
 
+/** Tính toán Thành tiền (trước VAT), Tiền VAT và Thành tiền sau VAT cho từng dòng PO */
+const calcPOLine = (it: any) => {
+  const qty = Number(it?.quantity) || 0;
+  const price = Math.round(Number(it?.unit_price) || 0);
+  const subtotal = Math.round(qty * price);
+  const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
+  const vatAmount = Math.round((subtotal * vatRate) / 100);
+  const totalAfterVat = subtotal + vatAmount;
+  return { qty, price, subtotal, vatRate, vatAmount, totalAfterVat };
+};
+
+const calcPOTotals = (items: any[]) => {
+  const arr = Array.isArray(items) ? items : [];
+  let subtotal = 0;
+  let vatAmount = 0;
+  let totalAfterVat = 0;
+  for (const it of arr) {
+    const c = calcPOLine(it);
+    subtotal += c.subtotal;
+    vatAmount += c.vatAmount;
+    totalAfterVat += c.totalAfterVat;
+  }
+  return { subtotal, vatAmount, totalAfterVat };
+};
+
 /** Trạng thái PO hải quan (gộp 1 nút lọc) và trạng thái đã đóng (không còn "đang mở"). */
 const PO_CUSTOMS_STATUSES = ["AT_CUSTOMS", "CUSTOMS_CLEARING"];
 const PO_CLOSED_STATUSES = ["COMPLETED", "CANCELLED"];
@@ -1076,8 +1101,9 @@ export const ProcurementModule: React.FC = () => {
     its.forEach((it: any, i: number) => {
       const q = Number(it?.quantity) || 0;
       const r = Math.min(receivedOf({ ...po, items: its }, i), q);
-      const pr = Number(it?.unit_price) || 0;
-      orderedVal += q * pr; recVal += r * pr; orderedQty += q; recQty += r;
+      const c = calcPOLine(it);
+      const unitGross = c.qty > 0 ? c.totalAfterVat / c.qty : c.price * (1 + c.vatRate / 100);
+      orderedVal += q * unitGross; recVal += r * unitGross; orderedQty += q; recQty += r;
     });
     const ratio = orderedVal > 0 ? recVal / orderedVal : (orderedQty > 0 ? recQty / orderedQty : 0);
     const received = Math.round(total * ratio);
@@ -1208,8 +1234,8 @@ export const ProcurementModule: React.FC = () => {
     const items = Array.isArray(po.items) ? po.items : [];
     const hasLineNotes = items.some((it: any) => String(it.notes || "").trim());
     const esc = (v: any) => String(v ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch] as string));
-    const itemsSum = items.reduce((s: number, it: any) => s + (Number(it.line_total) || (Number(it.quantity || 1) * Number(it.unit_price || 0))), 0);
-    const totalAmount = parseFloat(po.total_amount) || itemsSum || 0;
+    const printTotals = calcPOTotals(items);
+    const totalAmount = parseFloat(po.total_amount) || printTotals.totalAfterVat || 0;
 
     const htmlContent = `
       <!DOCTYPE html>
@@ -1396,33 +1422,56 @@ export const ProcurementModule: React.FC = () => {
         <table class="table-items">
           <thead>
             <tr>
-              <th class="text-center" style="width: 35px;">STT</th>
-              <th style="width: 110px;">Mã Sản Phẩm</th>
+              <th class="text-center" style="width: 32px;">STT</th>
+              <th style="width: 95px;">Mã Sản Phẩm</th>
               <th>Tên Hàng Hóa / Quy Cách Kỹ Thuật</th>
-              <th class="text-center" style="width: 50px;">ĐVT</th>
-              <th class="text-center" style="width: 50px;">SL</th>
-              <th class="text-right" style="width: 120px;">Đơn Giá (VNĐ)</th>
-              <th class="text-right" style="width: 130px;">Thành Tiền (VNĐ)</th>
-              ${hasLineNotes ? '<th style="width: 140px;">Ghi Chú</th>' : ''}
+              <th class="text-center" style="width: 44px;">ĐVT</th>
+              <th class="text-center" style="width: 42px;">SL</th>
+              <th class="text-right" style="width: 95px;">Đơn Giá</th>
+              <th class="text-right" style="width: 105px;">Thành Tiền</th>
+              <th class="text-center" style="width: 48px;">%VAT</th>
+              <th class="text-right" style="width: 90px;">Tiền VAT</th>
+              <th class="text-right" style="width: 115px;">Thành Tiền Sau VAT</th>
+              ${hasLineNotes ? '<th style="width: 110px;">Ghi Chú</th>' : ''}
             </tr>
           </thead>
           <tbody>
-            ${items.map((it: any, i: number) => `
+            ${items.map((it: any, i: number) => {
+              const c = calcPOLine(it);
+              return `
               <tr>
                 <td class="text-center">${i + 1}</td>
                 <td class="font-mono font-bold" style="color: #ea580c;">${it.product_code || ''}</td>
                 <td style="font-weight: 500;">${esc(cleanItemName(it.product_name))}</td>
                 <td class="text-center">${esc(it.unit || '')}</td>
-                <td class="text-center font-bold">${it.quantity || 1}</td>
-                <td class="text-right font-mono">${Number(it.unit_price || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
-                <td class="text-right font-mono font-bold">${Number((it.quantity || 1) * (it.unit_price || 0)).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-center font-bold">${c.qty || 1}</td>
+                <td class="text-right font-mono">${Number(c.price).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-right font-mono font-bold">${Number(c.subtotal).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-center font-mono">${c.vatRate}%</td>
+                <td class="text-right font-mono">${Number(c.vatAmount).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-right font-mono font-bold" style="color: #ea580c;">${Number(c.totalAfterVat).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
                 ${hasLineNotes ? `<td style="font-size: 11px;">${esc(it.notes || '')}</td>` : ''}
               </tr>
-            `).join('')}
+            `;
+            }).join('')}
           </tbody>
           <tfoot>
             <tr class="total-row">
-              <td colspan="6" class="text-right uppercase">TỔNG CỘNG TIỀN HÀNG (CHƯA VAT):</td>
+              <td colspan="9" class="text-right uppercase">TỔNG TIỀN HÀNG (CHƯA VAT):</td>
+              <td class="text-right font-mono font-bold">
+                ${Number(printTotals.subtotal).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
+              </td>
+              ${hasLineNotes ? '<td></td>' : ''}
+            </tr>
+            <tr class="total-row">
+              <td colspan="9" class="text-right uppercase">TỔNG TIỀN THUẾ GTGT (VAT):</td>
+              <td class="text-right font-mono font-bold">
+                ${Number(printTotals.vatAmount).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
+              </td>
+              ${hasLineNotes ? '<td></td>' : ''}
+            </tr>
+            <tr class="total-row">
+              <td colspan="9" class="text-right uppercase">TỔNG CỘNG THANH TOÁN (SAU VAT):</td>
               <td class="text-right font-mono font-bold" style="color: #ea580c; font-size: 13px;">
                 ${Number(totalAmount).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
               </td>
@@ -1534,12 +1583,23 @@ export const ProcurementModule: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify((() => {
-          // Tiền đồng không có phần lẻ: làm tròn đơn giá khi lưu (giá quy đổi ngoại tệ thường còn số lẻ dài)
-          const items = (poForm.items || []).map((it: any) => ({ ...it, unit_price: Math.round(Number(it.unit_price) || 0) }));
+          // Tiền đồng không có phần lẻ: làm tròn đơn giá và tự động tính Tiền VAT, Thành tiền sau VAT khi lưu
+          const items = (poForm.items || []).map((it: any) => {
+            const c = calcPOLine(it);
+            return {
+              ...it,
+              unit_price: c.price,
+              subtotal: c.subtotal,
+              vat_rate: c.vatRate,
+              vat_amount: c.vatAmount,
+              total_after_vat: c.totalAfterVat,
+              total: c.totalAfterVat
+            };
+          });
           return {
             ...poForm,
             items,
-            total_amount: items.reduce((s2: number, it: any) => s2 + (Number(it.quantity) || 0) * (Number(it.unit_price) || 0), 0),
+            total_amount: items.reduce((s2: number, it: any) => s2 + (Number(it.total_after_vat ?? it.total) || 0), 0),
             created_by: poForm.created_by || user?.full_name || user?.name || user?.username || "Chuyên viên Cung ứng"
           };
         })())
@@ -1578,17 +1638,23 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     const itemsFormatted = parsedItems.map((it: any) => {
       const qty = parseFloat(it.quantity) || 1;
       const price = parseFloat(it.unit_price) || 0;
+      const c = calcPOLine({ ...it, quantity: qty, unit_price: price });
       return {
         ...it,
         source_pr_code: itemSourcePR(it) || undefined,
         product_code: it.product_code || "",
         product_name: cleanItemName(it.product_name),
         unit: it.unit || "Hộp",
-        quantity: qty,
-        unit_price: price,
-        total: qty * price
+        quantity: c.qty,
+        unit_price: c.price,
+        subtotal: c.subtotal,
+        vat_rate: c.vatRate,
+        vat_amount: c.vatAmount,
+        total_after_vat: c.totalAfterVat,
+        total: c.totalAfterVat
       };
     });
+    const editTotals = calcPOTotals(itemsFormatted);
 
     setPOForm({
       id: po.id,
@@ -1597,8 +1663,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       supplier_name: po.supplier_name || "",
       order_date: po.order_date ? dbDateVN(po.order_date) : todayVN(),
       expected_delivery_date: po.expected_delivery_date ? dbDateVN(po.expected_delivery_date) : toVNDateString(new Date(Date.now() + 10 * 86400000)),
-      items: itemsFormatted.length > 0 ? itemsFormatted : [{ product_code: "", product_name: "", quantity: 1, unit_price: 0, total: 0 }],
-      total_amount: parseFloat(po.total_amount) || 0,
+      items: itemsFormatted.length > 0 ? itemsFormatted : [{ product_code: "", product_name: "", quantity: 1, unit_price: 0, subtotal: 0, vat_rate: 0, vat_amount: 0, total_after_vat: 0, total: 0 }],
+      total_amount: editTotals.totalAfterVat || parseFloat(po.total_amount) || 0,
       status: po.status || "PENDING",
       notes: po.notes || "",
       version: po.version,
@@ -1609,14 +1675,21 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     setIsPOModalOpen(true);
   };
 
-  // ---- PO line editing (one row per line, totals always recomputed)
+  // ---- PO line editing (one row per line, totals + VAT always recomputed)
   const updatePOLine = (idx: number, patch: any) => {
     setPOForm((prev: any) => {
       const items = [...prev.items];
-      const it = { ...items[idx], ...patch };
-      it.total = (Number(it.quantity) || 0) * (Number(it.unit_price) || 0);
-      items[idx] = it;
-      return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + (Number(b.total) || 0), 0) };
+      const merged = { ...items[idx], ...patch };
+      const c = calcPOLine(merged);
+      items[idx] = {
+        ...merged,
+        subtotal: c.subtotal,
+        vat_rate: c.vatRate,
+        vat_amount: c.vatAmount,
+        total_after_vat: c.totalAfterVat,
+        total: c.totalAfterVat
+      };
+      return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + calcPOLine(b).totalAfterVat, 0) };
     });
   };
 
@@ -1655,9 +1728,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const items = prev.items.map((it: any) => {
         const pr = priceOf.get(String(it.product_code));
         if (pr === undefined || pr <= 0) return it;
-        return { ...it, unit_price: pr, total: (Number(it.quantity) || 0) * pr };
+        const c = calcPOLine({ ...it, unit_price: pr });
+        return {
+          ...it,
+          unit_price: pr,
+          subtotal: c.subtotal,
+          vat_rate: c.vatRate,
+          vat_amount: c.vatAmount,
+          total_after_vat: c.totalAfterVat,
+          total: c.totalAfterVat
+        };
       });
-      return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + (Number(b.total) || 0), 0) };
+      return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + calcPOLine(b).totalAfterVat, 0) };
     });
     setPoSupplierNotice(null);
   };
@@ -1665,6 +1747,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   // ---- Excel export (a PO, or the PO list as filtered on screen)
   const exportPOExcel = (po: any) => {
     const items: any[] = Array.isArray(po.items) ? po.items : [];
+    const totals = calcPOTotals(items);
     const rows: any[][] = [
       ["ĐƠN ĐẶT MUA HÀNG", po.po_code],
       ["Nhà cung cấp", po.supplier_name || ""],
@@ -1673,36 +1756,40 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       ["Trạng thái", PO_STATUS_CONFIG[po.status]?.label || po.status],
       ["Ghi chú", po.notes || ""],
       [],
-      ["STT", "Mã hàng", "Tên hàng / Quy cách", "ĐVT", "SL đặt", "Đã nhập kho", "Đơn giá", "Thành tiền", "Mục đích", "Nguồn PR", "Ghi chú dòng"]
+      ["STT", "Mã hàng", "Tên hàng / Quy cách", "ĐVT", "SL đặt", "Đã nhập kho", "Đơn giá", "Thành tiền (trước VAT)", "%VAT", "Tiền VAT", "Thành tiền sau VAT", "Mục đích", "Nguồn PR", "Ghi chú dòng"]
     ];
     items.forEach((it, i) => {
-      const qty = Number(it.quantity) || 0;
-      const price = Number(it.unit_price) || 0;
+      const c = calcPOLine(it);
       rows.push([
-        i + 1, it.product_code || "", cleanItemName(it.product_name), it.unit || "", qty, receivedOf(po, i), price, qty * price,
+        i + 1, it.product_code || "", cleanItemName(it.product_name), it.unit || "", c.qty, receivedOf(po, i), c.price, c.subtotal,
+        `${c.vatRate}%`, c.vatAmount, c.totalAfterVat,
         it.is_stock === false ? (it.target_customer_name || "Khách hàng") : "Stock", itemSourcePR(it), it.notes || ""
       ]);
     });
-    rows.push([], ["", "", "", "", "", "", "Tổng cộng", parseFloat(po.total_amount) || items.reduce((a, it) => a + (Number(it.quantity) || 0) * (Number(it.unit_price) || 0), 0)]);
+    rows.push(
+      [],
+      ["", "", "", "", "", "", "", "", "", "Tổng tiền hàng (trước VAT)", totals.subtotal],
+      ["", "", "", "", "", "", "", "", "", "Tổng tiền thuế VAT", totals.vatAmount],
+      ["", "", "", "", "", "", "", "", "", "Tổng cộng (sau VAT)", parseFloat(po.total_amount) || totals.totalAfterVat]
+    );
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 6 }, { wch: 14 }, { wch: 50 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 24 }, { wch: 18 }, { wch: 30 }];
+    ws["!cols"] = [{ wch: 6 }, { wch: 14 }, { wch: 50 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 14 }, { wch: 18 }, { wch: 8 }, { wch: 14 }, { wch: 18 }, { wch: 24 }, { wch: 18 }, { wch: 30 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "PO");
     XLSX.writeFile(wb, `${po.po_code || "PO"}.xlsx`);
   };
   const exportPOListExcel = (list: any[]) => {
-    const rows: any[][] = [["Mã PO", "Nhà cung cấp", "Ngày lập", "Hạn giao", "Trạng thái", "Mã hàng", "Tên hàng", "ĐVT", "SL đặt", "Đã nhập", "Đơn giá", "Thành tiền", "Nguồn PR", "Ghi chú dòng", "Ghi chú PO"]];
+    const rows: any[][] = [["Mã PO", "Nhà cung cấp", "Ngày lập", "Hạn giao", "Trạng thái", "Mã hàng", "Tên hàng", "ĐVT", "SL đặt", "Đã nhập", "Đơn giá", "Thành tiền (trước VAT)", "%VAT", "Tiền VAT", "Thành tiền sau VAT", "Nguồn PR", "Ghi chú dòng", "Ghi chú PO"]];
     list.forEach(po => {
       const items: any[] = Array.isArray(po.items) ? po.items : [];
       items.forEach((it, i) => {
-        const qty = Number(it.quantity) || 0;
-        const price = Number(it.unit_price) || 0;
+        const c = calcPOLine(it);
         rows.push([po.po_code, po.supplier_name || "", formatDate(po.order_date), formatDate(po.expected_delivery_date), PO_STATUS_CONFIG[po.status]?.label || po.status,
-          it.product_code || "", cleanItemName(it.product_name), it.unit || "", qty, receivedOf(po, i), price, qty * price, itemSourcePR(it), it.notes || "", po.notes || ""]);
+          it.product_code || "", cleanItemName(it.product_name), it.unit || "", c.qty, receivedOf(po, i), c.price, c.subtotal, `${c.vatRate}%`, c.vatAmount, c.totalAfterVat, itemSourcePR(it), it.notes || "", po.notes || ""]);
       });
     });
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws["!cols"] = [{ wch: 16 }, { wch: 30 }, { wch: 11 }, { wch: 11 }, { wch: 16 }, { wch: 14 }, { wch: 44 }, { wch: 7 }, { wch: 8 }, { wch: 8 }, { wch: 13 }, { wch: 15 }, { wch: 18 }, { wch: 26 }, { wch: 30 }];
+    ws["!cols"] = [{ wch: 16 }, { wch: 30 }, { wch: 11 }, { wch: 11 }, { wch: 16 }, { wch: 14 }, { wch: 44 }, { wch: 7 }, { wch: 8 }, { wch: 8 }, { wch: 13 }, { wch: 16 }, { wch: 8 }, { wch: 14 }, { wch: 16 }, { wch: 18 }, { wch: 26 }, { wch: 30 }];
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Danh sách PO");
     XLSX.writeFile(wb, `Danh_sach_PO_${todayVN()}.xlsx`);
@@ -5875,19 +5962,22 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               </div>
 
               <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-x-auto">
-                <table className="w-full table-fixed text-left text-xs min-w-[1180px]">
+                <table className="w-full table-fixed text-left text-xs min-w-[1440px]">
                   <thead>
                     <tr className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[11px]">
-                      <th className="p-2.5 w-9 text-center">#</th>
-                      <th className="p-2.5 w-[29%]">Mã hàng / Sản phẩm</th>
-                      <th className="p-2.5 w-16 text-center">ĐVT</th>
-                      <th className="p-2.5 w-28 text-center" title="Tồn khả dụng / Đang về (rê chuột để xem chi tiết giữ chỗ)">Tồn KD / Đang về</th>
-                      <th className="p-2.5 w-24 text-center">SL đặt</th>
-                      <th className="p-2.5 w-36 text-right">Đơn giá</th>
-                      <th className="p-2.5 w-40 text-right">Thành tiền</th>
-                      <th className="p-2.5 w-48">Mục đích</th>
-                      <th className="p-2.5 w-[16%]">Ghi chú dòng</th>
-                      <th className="p-2.5 w-9"></th>
+                      <th className="p-2.5 w-8 text-center">#</th>
+                      <th className="p-2.5 w-[22%]">Mã hàng / Sản phẩm</th>
+                      <th className="p-2.5 w-14 text-center">ĐVT</th>
+                      <th className="p-2.5 w-24 text-center" title="Tồn khả dụng / Đang về (rê chuột để xem chi tiết giữ chỗ)">Tồn KD / Đang về</th>
+                      <th className="p-2.5 w-20 text-center">SL đặt</th>
+                      <th className="p-2.5 w-32 text-right">Đơn giá</th>
+                      <th className="p-2.5 w-32 text-right">Thành tiền</th>
+                      <th className="p-2.5 w-20 text-center">%VAT</th>
+                      <th className="p-2.5 w-28 text-right">Tiền VAT</th>
+                      <th className="p-2.5 w-36 text-right">Thành tiền sau VAT</th>
+                      <th className="p-2.5 w-40">Mục đích</th>
+                      <th className="p-2.5 w-[13%]">Ghi chú dòng</th>
+                      <th className="p-2.5 w-8"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -6022,9 +6112,38 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-xs"
                             />
                           </td>
-                          <td className="p-2 pt-3 text-right font-mono font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">
-                            {formatCurrency((Number(item.quantity) || 0) * (Number(item.unit_price) || 0))}
-                          </td>
+                          {(() => {
+                            const lc = calcPOLine(item);
+                            return (
+                              <>
+                                <td className="p-2 pt-3 text-right font-mono font-bold text-slate-800 dark:text-slate-100 whitespace-nowrap">
+                                  {formatCurrency(lc.subtotal)}
+                                </td>
+                                <td className="p-2">
+                                  <div className="relative">
+                                    <input
+                                      type="number"
+                                      min={0}
+                                      max={100}
+                                      step="any"
+                                      value={item.vat_rate ?? 0}
+                                      onChange={(e) => updatePOLine(idx, { vat_rate: Math.max(0, parseFloat(e.target.value) || 0) })}
+                                      placeholder="0"
+                                      title="Nhập %VAT theo hóa đơn (VD: 0, 5, 8, 10)"
+                                      className="w-full p-1.5 pr-5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 font-mono font-bold text-right text-xs"
+                                    />
+                                    <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-slate-400 pointer-events-none">%</span>
+                                  </div>
+                                </td>
+                                <td className="p-2 pt-3 text-right font-mono font-semibold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                                  {formatCurrency(lc.vatAmount)}
+                                </td>
+                                <td className="p-2 pt-3 text-right font-mono font-black text-orange-600 dark:text-orange-400 whitespace-nowrap">
+                                  {formatCurrency(lc.totalAfterVat)}
+                                </td>
+                              </>
+                            );
+                          })()}
                           <td className="p-2">
                             <select
                               value={isStockOrder ? "__STOCK__" : (item.target_customer_name || "")}
@@ -6065,7 +6184,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 onClick={() => {
                                   setPOForm((prev: any) => {
                                     const items = prev.items.filter((_: any, i: number) => i !== idx);
-                                    return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + (Number(b.total) || 0), 0) };
+                                    return { ...prev, items, total_amount: items.reduce((a: number, b: any) => a + calcPOLine(b).totalAfterVat, 0) };
                                   });
                                 }}
                                 className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-950/40 rounded cursor-pointer"
@@ -6096,10 +6215,25 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
             {/* Footer (fixed): total + actions always visible */}
             <div className="shrink-0 px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm">
-                <span className="font-bold text-slate-600 dark:text-slate-300">Tổng giá trị PO: </span>
-                <span className="font-mono font-black text-lg text-orange-600 dark:text-orange-400">{formatCurrency(poForm.total_amount)}</span>
-              </div>
+              {(() => {
+                const formTotals = calcPOTotals(poForm.items);
+                return (
+                  <div className="flex flex-wrap items-center gap-4 text-xs sm:text-sm">
+                    <div>
+                      <span className="text-slate-500 dark:text-slate-400">Tiền hàng (trước VAT): </span>
+                      <strong className="font-mono text-slate-800 dark:text-slate-100">{formatCurrency(formTotals.subtotal)}</strong>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 dark:text-slate-400">Tiền VAT: </span>
+                      <strong className="font-mono text-indigo-600 dark:text-indigo-400">{formatCurrency(formTotals.vatAmount)}</strong>
+                    </div>
+                    <div>
+                      <span className="font-bold text-slate-700 dark:text-slate-200">Tổng giá trị PO (sau VAT): </span>
+                      <span className="font-mono font-black text-lg text-orange-600 dark:text-orange-400">{formatCurrency(formTotals.totalAfterVat)}</span>
+                    </div>
+                  </div>
+                );
+              })()}
               <div className="flex gap-2">
                 <button
                   onClick={() => setIsPOModalOpen(false)}
@@ -6125,7 +6259,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {selectedPODetail && (() => {
         const d = selectedPODetail;
         const dItems: any[] = Array.isArray(d.items) ? d.items : [];
-        const totalD = parseFloat(d.total_amount) || dItems.reduce((s: number, it: any) => s + (Number(it.line_total) || (Number(it.quantity || 1) * Number(it.unit_price || 0))), 0);
+        const dTotals = calcPOTotals(dItems);
+        const totalD = parseFloat(d.total_amount) || dTotals.totalAfterVat || 0;
         return (
           <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4" onClick={() => setSelectedPODetail(null)}>
             <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[96vh] flex flex-col text-slate-900 border border-slate-200" onClick={(e) => e.stopPropagation()}>
@@ -6206,7 +6341,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
 
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse border border-slate-200 min-w-[820px]">
+                  <table className="w-full text-left border-collapse border border-slate-200 min-w-[980px]">
                     <thead>
                       <tr className="bg-slate-100 text-slate-700 font-bold border-b border-slate-200 text-[11px]">
                         <th className="p-2 border-r border-slate-200 text-center w-10">STT</th>
@@ -6217,6 +6352,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                         <th className="p-2 border-r border-slate-200 text-center">Đã nhập</th>
                         <th className="p-2 border-r border-slate-200 text-right">Đơn giá</th>
                         <th className="p-2 border-r border-slate-200 text-right">Thành tiền</th>
+                        <th className="p-2 border-r border-slate-200 text-center">%VAT</th>
+                        <th className="p-2 border-r border-slate-200 text-right">Tiền VAT</th>
+                        <th className="p-2 border-r border-slate-200 text-right">Thành tiền sau VAT</th>
                         <th className="p-2 border-r border-slate-200">Nguồn PR</th>
                         <th className="p-2">Ghi chú</th>
                       </tr>
@@ -6224,7 +6362,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     <tbody className="divide-y divide-slate-200">
                       {dItems.map((it: any, i: number) => {
                         const got = receivedOf(d, i);
-                        const qty = Number(it.quantity) || 0;
+                        const lc = calcPOLine(it);
+                        const qty = lc.qty;
                         const prSrc = itemSourcePR(it);
                         return (
                           <tr key={i}>
@@ -6234,8 +6373,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <td className="p-2 border-r border-slate-200 text-center">{it.unit || ""}</td>
                             <td className="p-2 border-r border-slate-200 text-center font-bold">{qty}</td>
                             <td className={`p-2 border-r border-slate-200 text-center font-bold ${got >= qty && qty > 0 ? "text-emerald-600" : got > 0 ? "text-teal-600" : "text-slate-400"}`}>{got}</td>
-                            <td className="p-2 border-r border-slate-200 text-right font-mono">{formatCurrency(it.unit_price)}</td>
-                            <td className="p-2 border-r border-slate-200 text-right font-mono font-bold">{formatCurrency(qty * (Number(it.unit_price) || 0))}</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono">{formatCurrency(lc.price)}</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono font-bold">{formatCurrency(lc.subtotal)}</td>
+                            <td className="p-2 border-r border-slate-200 text-center font-mono font-semibold text-indigo-600">{lc.vatRate}%</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono text-indigo-600">{formatCurrency(lc.vatAmount)}</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-orange-600">{formatCurrency(lc.totalAfterVat)}</td>
                             <td className="p-2 border-r border-slate-200 font-mono text-[10px]">
                               {prSrc ? (
                                 <button
@@ -6257,8 +6399,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       })}
                     </tbody>
                     <tfoot>
+                      <tr className="bg-slate-50 font-semibold border-t border-slate-200">
+                        <td colSpan={10} className="p-2 text-right uppercase text-slate-600">Tổng tiền hàng (chưa VAT):</td>
+                        <td className="p-2 text-right font-mono text-slate-800">{formatCurrency(dTotals.subtotal)}</td>
+                        <td colSpan={2}></td>
+                      </tr>
+                      <tr className="bg-slate-50 font-semibold border-t border-slate-200">
+                        <td colSpan={10} className="p-2 text-right uppercase text-slate-600">Tổng tiền thuế GTGT (VAT):</td>
+                        <td className="p-2 text-right font-mono text-indigo-600">{formatCurrency(dTotals.vatAmount)}</td>
+                        <td colSpan={2}></td>
+                      </tr>
                       <tr className="bg-slate-50 font-bold border-t border-slate-200">
-                        <td colSpan={7} className="p-2.5 text-right uppercase">Tổng cộng tiền hàng (chưa VAT):</td>
+                        <td colSpan={10} className="p-2.5 text-right uppercase">Tổng cộng giá trị PO (sau VAT):</td>
                         <td className="p-2.5 text-right font-mono text-orange-600 text-sm">{formatCurrency(totalD)}</td>
                         <td colSpan={2}></td>
                       </tr>
