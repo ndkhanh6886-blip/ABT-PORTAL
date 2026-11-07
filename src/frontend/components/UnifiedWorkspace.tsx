@@ -5130,9 +5130,9 @@ export const UnifiedWorkspace: React.FC = () => {
       const prjCode = item?.project_code || (thematicMatch ? thematicMatch[1].toUpperCase() : "");
       return {
         originTab: "planner_thematic" as const,
-        badgeLabel: "🚀 Nguồn: Tab Dự Án & Nhóm Việc Liên Phòng",
+        badgeLabel: "🚀 Nguồn: Tab Dự Án",
         subDetail: item?.origin_detail || [prjCode ? `Dự án: ${prjCode}` : "", taskMatch ? `Mã việc: ${taskMatch}` : ""].filter(Boolean).join(" • "),
-        actionLabel: prjCode ? `↗ Mở dự án ${prjCode}` : "↗ Xem tại Tab Dự Án & Nhóm Việc Liên Phòng",
+        actionLabel: prjCode ? `↗ Mở dự án ${prjCode}` : "↗ Xem tại Tab Dự Án",
         badgeClass: "bg-fuchsia-100 dark:bg-fuchsia-950/80 text-fuchsia-800 dark:text-fuchsia-300 border border-fuchsia-300 dark:border-fuchsia-800"
       };
     }
@@ -7352,7 +7352,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             }`}
           >
             <Layers className="w-4 h-4" />
-            <span>🚀 Dự Án &amp; Nhóm Việc Liên Phòng</span>
+            <span>Dự Án</span>
             <span className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold ${
               activeSubTab === "projects"
                 ? "bg-white/20 text-white"
