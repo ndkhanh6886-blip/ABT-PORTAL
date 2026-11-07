@@ -4570,13 +4570,13 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-700">
-                  <th className="py-3 px-3 whitespace-nowrap w-28">Mã Đề Xuất</th>
-                  <th className="py-3 px-3 whitespace-nowrap w-36 min-w-[130px]">Bộ Phận Yêu Cầu</th>
-                  <th className="py-3 px-4">Nội Dung / Mặt Hàng Đề Xuất</th>
-                  <th className="py-3 px-3 text-center whitespace-nowrap w-28 min-w-[110px]">Ưu Tiên</th>
-                  <th className="py-3 px-3 whitespace-nowrap w-28">Hạn Cần Hàng</th>
-                  <th className="py-3 px-3 text-center whitespace-nowrap w-36">Trạng Thái PO</th>
-                  <th className="py-3 px-3 text-center whitespace-nowrap w-52 max-w-[220px]">Thao Tác Xử Lý</th>
+                  <th className="py-3 px-3 w-[88px]">Mã Đề Xuất</th>
+                  <th className="py-3 px-3 w-[105px]">Bộ Phận Yêu Cầu</th>
+                  <th className="py-3 px-3 w-[34%] max-w-[380px]">Nội Dung / Mặt Hàng Đề Xuất</th>
+                  <th className="py-3 px-3 text-center whitespace-nowrap w-[120px]">Ưu Tiên</th>
+                  <th className="py-3 px-3 whitespace-nowrap w-[105px]">Hạn Cần Hàng</th>
+                  <th className="py-3 px-3 text-center whitespace-nowrap w-[145px]">Trạng Thái PO</th>
+                  <th className="py-3 px-3 text-center whitespace-nowrap w-[245px]">Thao Tác Xử Lý</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -4591,17 +4591,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     const summary = getPRPOSummary(pr);
                     return (
                       <tr key={pr.id} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40 transition-colors">
-                        <td className="py-3.5 px-3 font-mono font-bold text-indigo-600 dark:text-indigo-400 whitespace-nowrap">
+                        <td className="py-3.5 px-3 font-mono font-bold text-indigo-600 dark:text-indigo-400 w-[88px]">
                           <button
                             onClick={() => setSelectedPRDetail(pr)}
-                            className="hover:underline flex items-center gap-1 cursor-pointer whitespace-nowrap"
+                            className="hover:underline flex items-center gap-1 cursor-pointer text-left"
                             title="Bấm để xem chi tiết đề xuất mua hàng & trạng thái từng mã hàng"
                           >
                             <FileText className="w-3.5 h-3.5 shrink-0" />
-                            {pr.workflow_code}
+                            <span>{pr.workflow_code}</span>
                           </button>
                         </td>
-                        <td className="py-3.5 px-3 w-36 min-w-[130px]">
+                        <td className="py-3.5 px-3 w-[105px]">
                           {(() => {
                             const isStockPR = Boolean(
                               (pr.workflow_code && pr.workflow_code.includes("STOCK")) ||
@@ -4620,7 +4620,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             );
                           })()}
                         </td>
-                        <td className="py-3.5 px-4 max-w-md">
+                        <td className="py-3.5 px-3 w-[34%] max-w-[380px]">
                           <div className="font-bold text-slate-900 dark:text-white">
                             <button
                               type="button"
@@ -4812,7 +4812,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             </div>
                           )}
                         </td>
-                        <td className="py-3.5 px-3 text-center whitespace-nowrap w-28 min-w-[110px]">
+                        <td className="py-3.5 px-3 text-center whitespace-nowrap w-[120px]">
                           <span className={`inline-block whitespace-nowrap px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
                             pr.priority === "URGENT"
                               ? "bg-rose-50 text-rose-700 border border-rose-200"
@@ -4823,10 +4823,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             {pr.priority === "URGENT" ? "Khẩn cấp" : pr.priority === "HIGH" ? "Ưu tiên cao" : "Bình thường"}
                           </span>
                         </td>
-                        <td className="py-3.5 px-3 text-slate-500 whitespace-nowrap w-28">
+                        <td className="py-3.5 px-3 text-slate-500 whitespace-nowrap w-[105px]">
                           {formatDate(pr.due_date)}
                         </td>
-                        <td className="py-3.5 px-3 text-center whitespace-nowrap w-36">
+                        <td className="py-3.5 px-3 text-center whitespace-nowrap w-[145px]">
                           {pr.status === "CANCELLED" || pr.status === "REJECTED" ? (
                             <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-rose-50 dark:bg-rose-950 text-rose-700 dark:text-rose-400 border border-rose-200 flex items-center gap-1 justify-center">
                               <XCircle className="w-3 h-3 text-rose-500" />
@@ -4849,7 +4849,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             </span>
                           )}
                         </td>
-                        <td className="py-3.5 px-3 text-center whitespace-nowrap w-52 max-w-[220px]">
+                        <td className="py-3.5 px-2.5 text-center whitespace-nowrap w-[245px]">
                           {pr.status === "CANCELLED" || pr.status === "REJECTED" ? (
                             <span className="text-xs text-slate-400 italic">Đề xuất đã hủy</span>
                           ) : summary.isFullyConverted ? (
@@ -4857,7 +4857,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               <button
                                 type="button"
                                 onClick={() => setSelectedPODetail(summary.linkedPOs[0])}
-                                className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900 shadow-xs flex items-center gap-1.5 mx-auto cursor-pointer transition-colors max-w-[210px]"
+                                className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 border border-emerald-300 dark:border-emerald-800 hover:bg-emerald-100 dark:hover:bg-emerald-900 shadow-xs inline-flex items-center gap-1.5 mx-auto cursor-pointer transition-colors max-w-[230px]"
                                 title={`Đề xuất đã lập đơn PO: ${summary.poCodes.join(", ")}. Bấm để xem chi tiết`}
                               >
                                 <Eye className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400 shrink-0" />
@@ -4903,18 +4903,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               )}
                             </div>
                           ) : (
-                            <div className="flex items-center justify-center gap-1.5">
+                            <div className="flex items-center justify-center gap-1">
                               <button
                                 type="button"
                                 onClick={() => handleConvertPRToPO(pr)}
-                                className="px-3 py-1.5 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1.5 cursor-pointer transition-colors"
+                                className="px-2.5 py-1.5 rounded-xl text-[11px] font-bold bg-orange-600 text-white hover:bg-orange-700 shadow-xs flex items-center gap-1 cursor-pointer transition-colors"
                               >
-                                <ShoppingCart className="w-3.5 h-3.5" /> Chuyển Thành PO
+                                <ShoppingCart className="w-3 h-3 shrink-0" /> Chuyển Thành PO
                               </button>
                               <button
                                 type="button"
                                 onClick={() => handleEditPR(pr)}
-                                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-amber-50 hover:text-amber-700 border border-slate-200 dark:border-slate-700 cursor-pointer transition-colors"
+                                className="px-2 py-1.5 rounded-xl text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-amber-50 hover:text-amber-700 border border-slate-200 dark:border-slate-700 cursor-pointer transition-colors"
                                 title="Sửa số lượng, mặt hàng hoặc hạn cần của PR"
                               >
                                 ✏️ Sửa
@@ -4922,7 +4922,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               <button
                                 type="button"
                                 onClick={() => handleCancelPR(pr)}
-                                className="px-2.5 py-1.5 rounded-xl text-xs font-semibold bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 cursor-pointer transition-colors"
+                                className="px-2 py-1.5 rounded-xl text-[11px] font-semibold bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 hover:bg-rose-100 border border-rose-200 dark:border-rose-800 cursor-pointer transition-colors"
                                 title="Hủy đề xuất mua hàng này"
                               >
                                 Hủy
