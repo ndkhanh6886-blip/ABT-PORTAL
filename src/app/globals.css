@@ -2236,10 +2236,12 @@ html.dark {
    Prevent long <option> text in <select> or wide inputs from pushing buttons
    outside modals/cards and clipping text/buttons.
    ========================================================================== */
-select {
-  max-width: 100%;
-  min-width: 0;
-  text-overflow: ellipsis;
+@layer base {
+  select {
+    max-width: 100%;
+    min-width: 0;
+    text-overflow: ellipsis;
+  }
 }
 
 .flex > select,

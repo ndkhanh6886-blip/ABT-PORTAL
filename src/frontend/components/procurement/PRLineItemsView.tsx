@@ -431,13 +431,13 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
                 </button>
               </th>
               <th className="py-2 px-2 w-28 whitespace-nowrap">Mã PR</th>
-              <th className="py-2 px-2 w-32">Đề xuất</th>
+              <th className="py-2 px-2 min-w-[155px] w-44 whitespace-nowrap">Đề xuất</th>
               <th className="py-2 px-2 min-w-[115px] w-32 whitespace-nowrap">Mã hàng</th>
               <th className="py-2 px-2 min-w-[190px] w-[20%]">Tên hàng &amp; Quy cách</th>
               <th className="py-2 px-2 w-14 text-center">ĐVT</th>
               <th className="py-2 px-2 text-right">SL</th>
               <th className="py-2 px-2">Hạn cần</th>
-              <th className="py-2 px-2">NCC gợi ý</th>
+              <th className="py-2 px-2 w-48 max-w-[200px] whitespace-nowrap">NCC gợi ý</th>
               <th className="py-2 px-2 text-right">Giá mua</th>
               <th className="py-2 px-2 text-right">Thành tiền</th>
               <th className="py-2 px-2">Trạng thái</th>
@@ -460,8 +460,8 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
                   </td>
                   <td className="py-2 px-2 font-mono font-bold text-slate-800 dark:text-slate-200 whitespace-nowrap">{l.prKey}</td>
                   <td className="py-2 px-2">
-                    <div className="text-slate-800 dark:text-slate-200">{l.requester}</div>
-                    <div className="text-[10px] text-slate-400">{l.dept}{l.priority ? ` • ${PRIORITY_LABEL[l.priority] || l.priority}` : ""}</div>
+                    <div className="text-slate-800 dark:text-slate-200 font-medium min-w-[145px] whitespace-nowrap">{l.requester}</div>
+                    <div className="text-[10px] text-slate-400 whitespace-nowrap">{l.dept}{l.priority ? ` • ${PRIORITY_LABEL[l.priority] || l.priority}` : ""}</div>
                   </td>
                   <td className="py-2 px-2 font-mono font-bold text-indigo-700 dark:text-indigo-300 min-w-[115px] w-32 whitespace-nowrap">
                     {l.code && getItemInfo ? <ItemStockHover code={l.code} getInfo={getItemInfo}>{l.code}</ItemStockHover> : (l.code || "—")}
@@ -484,7 +484,8 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
                           disabled={isSel}
                           title={isSel ? "Bỏ chọn dòng để đổi NCC" : "Đổi nhà cung cấp cho dòng này"}
                           onChange={(e) => setOverrides(prev => ({ ...prev, [l.key]: e.target.value }))}
-                          className="px-1.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs max-w-[170px]"
+                          style={{ maxWidth: "185px" }}
+                          className="w-full max-w-[185px] px-1.5 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs truncate"
                         >
                           {!sid && <option value="">Chưa có NCC</option>}
                           {l.offers.map(o => (
