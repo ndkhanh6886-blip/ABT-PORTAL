@@ -1,8 +1,6 @@
 "use client";
 
-import { FactoryBridgePanel } from "./procurement/FactoryBridgePanel";
 import React, { useState, useEffect, useMemo, useRef } from "react";
-import { ItemStockHover, type ItemDemandInfo } from "@/frontend/components/procurement/ItemStockHover";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import {
   ShoppingCart,
@@ -58,10 +56,11 @@ import { LineItemLookup } from "@/frontend/components/LineItemLookup";
 import { usePaymentMethods } from "@/frontend/utils/paymentMethods";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
-import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { todayVN, toVNDateString, formatVNDate, formatVNDateTime } from "@/backend/services/dates";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 import { PRLineItemsView } from "@/frontend/components/procurement/PRLineItemsView";
+import { ItemStockHover, type ItemDemandInfo } from "@/frontend/components/procurement/ItemStockHover";
 import { POLineItemsView } from "@/frontend/components/procurement/POLineItemsView";
 
 const cn = (...classes: any[]) => classes.filter(Boolean).join(" ");
@@ -228,18 +227,18 @@ const parseDecimalNum = (v: any): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** Làm tròn tối đa 3 chữ số thập phân cho Đơn giá & Thành tiền */
-const roundPrice3 = (v: any): number => Math.round(parseDecimalNum(v) * 1000) / 1000;
+/** Làm tròn đến 0 chữ số thập phân (số nguyên VNĐ) cho Đơn giá & Thành tiền trong PO */
+const roundPrice3 = (v: any): number => Math.round(parseDecimalNum(v));
 
-/** Giữ nguyên chuỗi đang gõ cho phép tối đa 3 chữ số lẻ thập phân (hỗ trợ gõ cả dấu '.' hoặc ',') */
+/** Chuẩn hóa ô nhập Đơn giá PO thành số nguyên (0 chữ số thập phân) */
 const sanitizeDecimal3Input = (raw: string): string => {
   const norm = String(raw ?? "").replace(/,/g, ".").replace(/[^0-9.]/g, "");
   if (!norm) return "";
-  const dotIdx = norm.indexOf(".");
-  if (dotIdx === -1) return norm.replace(/^0+(\d)/, "$1");
-  const intPart = (norm.slice(0, dotIdx) || "0").replace(/^0+(\d)/, "$1");
-  const decPart = norm.slice(dotIdx + 1).replace(/\./g, "").slice(0, 3);
-  return `${intPart}.${decPart}`;
+  if (norm.includes(".")) {
+    const rounded = Math.round(parseFloat(norm) || 0);
+    return rounded > 0 ? String(rounded) : "0";
+  }
+  return norm.replace(/^0+(\d)/, "$1");
 };
 
 /** Tính toán Thành tiền (trước VAT), Tiền VAT và Thành tiền sau VAT cho từng dòng PO */
@@ -274,7 +273,7 @@ const PO_CLOSED_STATUSES = ["COMPLETED", "CANCELLED"];
 export const ProcurementModule: React.FC = () => {
   const { notifyActivity } = useNotification();
   const companyConfig = useCompanyConfig();
-  const [subTab, setSubTab] = useState<"orders" | "pr" | "suppliers" | "payables" | "restock" | "lookup" | "factory">("orders");
+  const [subTab, setSubTab] = useState<"orders" | "pr" | "suppliers" | "payables" | "restock" | "lookup">("orders");
   const [alertSubView, setAlertSubView] = useState<"restock" | "near_expiry">("restock");
   const mainSectionRef = useRef<HTMLDivElement>(null);
   const scrollToMainSection = () => {
@@ -286,10 +285,6 @@ export const ProcurementModule: React.FC = () => {
   const [orders, setOrders] = useState<any[]>([]);
   const [products, setProducts] = useState<any[]>([]);
   const [allSupplierProducts, setAllSupplierProducts] = useState<any[]>([]);
-  // Tab PR: xem theo phiếu PR, hoặc theo từng dòng mặt hàng (chọn dòng cùng NCC để lập PO)
-  const [prViewMode, setPRViewMode] = useState<"pr" | "lines">("pr");
-  // Tab PO: xem theo đơn PO, hoặc theo từng dòng mặt hàng của các PO đang lọc
-  const [poViewMode, setPOViewMode] = useState<"po" | "lines">("po");
   const [restockAlerts, setRestockAlerts] = useState<any[]>([]);
   const [purchaseRequests, setPurchaseRequests] = useState<any[]>([]);
   const [stats, setStats] = useState<any>({
@@ -313,6 +308,10 @@ export const ProcurementModule: React.FC = () => {
   const [orderStatusFilter, setOrderStatusFilter] = useState("all");
   const [supplierSearch, setSupplierSearch] = useState("");
   const [prSearch, setPRSearch] = useState("");
+  // Tab PR: xem theo phiếu PR, hoặc theo từng mặt hàng đề xuất (chọn dòng để lập PO)
+  const [prViewMode, setPRViewMode] = useState<"pr" | "lines">("pr");
+  // Tab PO: xem theo đơn PO, hoặc theo từng dòng mặt hàng của các PO đang lọc
+  const [poViewMode, setPOViewMode] = useState<"po" | "lines">("po");
   const [prStatusFilter, setPRStatusFilter] = useState("all");
   const [payableFilter, setPayableFilter] = useState("all");
   const [restockSupplierFilter, setRestockSupplierFilter] = useState("all");
@@ -324,23 +323,6 @@ export const ProcurementModule: React.FC = () => {
 
   // Interactive Status & Payment Dropdown Popovers
   const [activeStatusDropdownId, setActiveStatusDropdownId] = useState<number | null>(null);
-  // Menu trạng thái PO đặt theo màn hình (position: fixed): đặt "absolute" trong bảng thì bị khung cuộn của bảng
-  // cắt mất các dòng đầu khi menu mở lên trên (bảng chỉ có 1-2 PO)
-  const [statusMenuPos, setStatusMenuPos] = useState<React.CSSProperties | null>(null);
-  useEffect(() => {
-    if (activeStatusDropdownId === null) return;
-    // trang / bảng cuộn thì menu (đặt theo màn hình) lệch khỏi nút: đóng lại; cuộn bên trong menu thì giữ
-    const close = (e: Event) => {
-      if (e.type === "scroll" && (e.target as Element)?.closest?.("[data-po-status-menu]")) return;
-      setActiveStatusDropdownId(null);
-    };
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [activeStatusDropdownId]);
   const [activePaymentDropdownId, setActivePaymentDropdownId] = useState<number | null>(null);
 
   // Non-blocking supplier price notice inside PO modal (Bug 4a fix)
@@ -549,9 +531,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Đoạn mồi Oligo Primer tổng hợp theo trình tự (5'→3')",
         specification: "Nhập trình tự 5'-...-3' | Scale (25/50/100 nmol) | Tinh sạch (DSL/HPLC/PAGE)",
         unit: "Tube",
-        cost_price: 0,
-        brand: "",
-        manufacturer: "",
+        cost_price: 120000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -561,9 +543,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Đầu dò huỳnh quang TaqMan / Real-time PCR Probe theo trình tự (5'→3')",
         specification: "Nhập trình tự 5'[Reporter]-...-[Quencher]3' (VD: FAM-BHQ1 / HEX-BHQ1 / CY5-BHQ2 | HPLC)",
         unit: "Tube",
-        cost_price: 0,
-        brand: "",
-        manufacturer: "",
+        cost_price: 950000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -573,9 +555,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Tổng hợp chuỗi Nucleotide chuẩn theo trình tự (5'→3')",
         specification: "[Tên trình tự] 5'-...-3' (Số base | Scale 25/50/100 nmol)",
         unit: "Base",
-        cost_price: 0,
-        brand: "",
-        manufacturer: "",
+        cost_price: 5500,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -585,9 +567,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Đánh dấu biến đổi Oligo (5'/3'/Internal Modification: FAM, HEX, VIC, CY5, BHQ1/2, MGB...)",
         specification: "[Tên trình tự] Nhãn biến đổi 5'/3' (VD: 5'-FAM / 3'-BHQ1)",
         unit: "Nhãn",
-        cost_price: 0,
-        brand: "",
-        manufacturer: "",
+        cost_price: 450000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -597,9 +579,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Dịch vụ tinh sạch Oligo chuyên sâu (HPLC / PAGE / Cartridge / Desalt)",
         specification: "[Tên trình tự] Tinh sạch: HPLC / PAGE / Cartridge / Desalt",
         unit: "Tube",
-        cost_price: 0,
-        brand: "",
-        manufacturer: "",
+        cost_price: 200000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -609,9 +591,9 @@ export const ProcurementModule: React.FC = () => {
         name: "Dịch vụ điều chế Oligo (Đông khô / Pha sẵn chuẩn 100 µM TE Buffer / Chia aliquot)",
         specification: "[Tên trình tự] Dịch vụ điều chế: Đông khô / Pha sẵn chuẩn 100 µM",
         unit: "Tube",
-        cost_price: 0,
-        brand: "",
-        manufacturer: "",
+        cost_price: 80000,
+        brand: "IDT / Macrogen / PhuSa",
+        manufacturer: "IDT / Macrogen / PhuSa",
         storage_condition: "-20°C (Lạnh âm sâu - Sinh phẩm, Enzyme)"
       },
       {
@@ -622,8 +604,8 @@ export const ProcurementModule: React.FC = () => {
         specification: "Nhập quy cách / đặc tính kỹ thuật riêng của lần đặt hàng này",
         unit: "Bộ",
         cost_price: 0,
-        brand: "",
-        manufacturer: "",
+        brand: "Theo đơn đặt",
+        manufacturer: "Theo đơn đặt",
         storage_condition: "2-8°C (Kho mát - Hóa chất, Kháng thể)"
       }
     ];
@@ -707,7 +689,7 @@ export const ProcurementModule: React.FC = () => {
   // Requirement 6 (4e): Edit an existing PR that has not yet been fully converted to a PO
   const handleEditPR = (pr: any) => {
     const existingItems = getPRItems(pr)
-      .filter((it: any) => !it.is_missing_catalog_product && it.product_code && it.product_code !== "ABT-ITEM")
+      .filter((it: any) => !it.is_missing_catalog_product && it.product_code && it.product_code !== "TBR-ITEM")
       .map((it: any) => ({
         ...it,
         is_custom: Boolean(it.is_custom),
@@ -804,7 +786,7 @@ export const ProcurementModule: React.FC = () => {
         updated[index] = {
           ...updated[index],
           is_custom: true,
-          product_code: updated[index].product_code?.startsWith("ABT-") ? "" : updated[index].product_code,
+          product_code: updated[index].product_code?.startsWith("TBR-") ? "" : updated[index].product_code,
           specification: updated[index].specification || "",
           unit: updated[index].unit || "Cái"
         };
@@ -890,7 +872,7 @@ export const ProcurementModule: React.FC = () => {
           po_code: po.po_code,
           supplier: String(sup?.short_name || "").trim() || po.supplier_name || "",
           qty: rem,
-          eta: po.expected_delivery_date ? String(po.expected_delivery_date).slice(0, 10).split("-").reverse().join("/") : "",
+          eta: formatVNDate(po.expected_delivery_date),
         });
       });
     }
@@ -1019,23 +1001,23 @@ export const ProcurementModule: React.FC = () => {
   const handleDownloadSupplierTemplate = () => {
     const sampleData = [
       {
-        "Mã NCC (*)": "NCC-ABT-001",
-        "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 1 (dòng minh họa - xóa trước khi nhập)",
-        "Người liên hệ": "Người liên hệ NCC 1",
+        "Mã NCC (*)": "NCC-TBR-001",
+        "Tên nhà cung cấp (*)": "Bioer Technology Co., Ltd (Đại Diện VN)",
+        "Người liên hệ": "Trần Văn Nam",
         "Số điện thoại": "0901234567",
-        "Email": "ncc1@example.com",
-        "Địa chỉ": "Số 10, Đường G, Hà Nội",
+        "Email": "contact@bioer.vn",
+        "Địa chỉ": "Tầng 5, Tòa nhà Meditech, Cầu Giấy, Hà Nội",
         "Ngành hàng cung ứng": "Hệ thống PCR, Máy Real-time PCR",
         "Điều khoản thanh toán": "Công nợ 30 ngày",
         "Đánh giá": 5
       },
       {
-        "Mã NCC (*)": "NCC-ABT-002",
-        "Tên nhà cung cấp (*)": "Nhà cung cấp Mẫu 2 (dòng minh họa - xóa trước khi nhập)",
-        "Người liên hệ": "Người liên hệ NCC 2",
+        "Mã NCC (*)": "NCC-TBR-002",
+        "Tên nhà cung cấp (*)": "Corning Scientific SEA Pte Ltd",
+        "Người liên hệ": "Nguyễn Hoàng Oanh",
         "Số điện thoại": "0987654321",
-        "Email": "ncc2@example.com",
-        "Địa chỉ": "Singapore",
+        "Email": "sea.sales@corning.com",
+        "Địa chỉ": "Marina Bay Financial Centre, Singapore",
         "Ngành hàng cung ứng": "Vật tư tiêu hao, Đầu côn, Đĩa PCR",
         "Điều khoản thanh toán": "Thanh toán 100% khi phát hành BL",
         "Đánh giá": 5
@@ -1044,7 +1026,7 @@ export const ProcurementModule: React.FC = () => {
     const ws = XLSX.utils.json_to_sheet(sampleData);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Mau_Nha_Cung_Cap");
-    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_ABT.xlsx");
+    XLSX.writeFile(wb, "Mau_Nhap_Lieu_Nha_Cung_Cap_TBR.xlsx");
   };
 
   const handleSupplierExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1127,20 +1109,36 @@ export const ProcurementModule: React.FC = () => {
       const unitGross = c.qty > 0 ? c.totalAfterVat / c.qty : c.price * (1 + c.vatRate / 100);
       orderedVal += q * unitGross; recVal += r * unitGross; orderedQty += q; recQty += r;
     });
-    const total = Math.max(parseFloat(po?.total_amount) || 0, roundPrice3(orderedVal));
-    const rawPaid = parseFloat(po?.amount_paid) || 0;
-    const paid = String(po?.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? total : rawPaid;
+    const total = parseFloat(po?.total_amount) || 0;
+    const paid = parseFloat(po?.amount_paid) || 0;
     const ratio = orderedVal > 0 ? recVal / orderedVal : (orderedQty > 0 ? recQty / orderedQty : 0);
     const received = roundPrice3(total * ratio);
-    const payable = Math.max(0, roundPrice3(total - paid));
-    const prepaid = Math.max(0, roundPrice3(paid - total));
+    const payable = Math.max(0, roundPrice3(received - paid));
+    const prepaid = Math.max(0, roundPrice3(paid - received));
     const unreceived = Math.max(0, roundPrice3(total - received));
+    const inboundReceivedValue = roundPrice3(parseFloat(po?.inbound_received_value) || 0);
+    const inboundTotalPoValue = roundPrice3(parseFloat(po?.inbound_total_po_value) || 0);
+    const hasInboundPriceDiff = Boolean(po?.has_inbound_price_diff);
     let status: "NO_PRICE" | "NOT_INCURRED" | "DEBT" | "PARTIAL_PAID" | "PREPAID" | "PAID_RECEIVED_PART" | "SETTLED";
     if (total <= 0.5) status = "NO_PRICE";
+    else if (received <= 0.5 && paid <= 0.5) status = "NOT_INCURRED";
     else if (payable > 0.5) status = paid > 0.5 ? "PARTIAL_PAID" : "DEBT";
     else if (prepaid > 0.5) status = "PREPAID";
+    else if (unreceived > 0.5) status = "PAID_RECEIVED_PART";
     else status = "SETTLED";
-    return { total, paid, received, payable, prepaid, unreceived, status, canPay: total > 0.5 && paid < total - 0.5 };
+    return {
+      total,
+      paid,
+      received,
+      payable,
+      prepaid,
+      unreceived,
+      inboundReceivedValue,
+      inboundTotalPoValue,
+      hasInboundPriceDiff,
+      status,
+      canPay: total > 0.5 && paid < total - 0.5,
+    };
   };
   const DEBT_BADGE: Record<string, { label: string; cls: string }> = {
     NO_PRICE: { label: "Chưa có giá", cls: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200" },
@@ -1468,11 +1466,11 @@ export const ProcurementModule: React.FC = () => {
                 <td style="font-weight: 500;">${esc(cleanItemName(it.product_name))}</td>
                 <td class="text-center">${esc(it.unit || '')}</td>
                 <td class="text-center font-bold">${c.qty || 1}</td>
-                <td class="text-right font-mono">${Number(c.price).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ</td>
-                <td class="text-right font-mono font-bold">${Number(c.subtotal).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ</td>
+                <td class="text-right font-mono">${Math.round(Number(c.price) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-right font-mono font-bold">${Math.round(Number(c.subtotal) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
                 <td class="text-center font-mono">${c.vatRate}%</td>
-                <td class="text-right font-mono">${Number(c.vatAmount).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ</td>
-                <td class="text-right font-mono font-bold" style="color: #ea580c;">${Number(c.totalAfterVat).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ</td>
+                <td class="text-right font-mono">${Math.round(Number(c.vatAmount) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
+                <td class="text-right font-mono font-bold" style="color: #ea580c;">${Math.round(Number(c.totalAfterVat) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</td>
                 ${hasLineNotes ? `<td style="font-size: 11px;">${esc(it.notes || '')}</td>` : ''}
               </tr>
             `;
@@ -1482,21 +1480,21 @@ export const ProcurementModule: React.FC = () => {
             <tr class="total-row">
               <td colspan="9" class="text-right uppercase">TỔNG TIỀN HÀNG (CHƯA VAT):</td>
               <td class="text-right font-mono font-bold">
-                ${Number(printTotals.subtotal).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ
+                ${Math.round(Number(printTotals.subtotal) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
               </td>
               ${hasLineNotes ? '<td></td>' : ''}
             </tr>
             <tr class="total-row">
               <td colspan="9" class="text-right uppercase">TỔNG TIỀN THUẾ GTGT (VAT):</td>
               <td class="text-right font-mono font-bold">
-                ${Number(printTotals.vatAmount).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ
+                ${Math.round(Number(printTotals.vatAmount) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
               </td>
               ${hasLineNotes ? '<td></td>' : ''}
             </tr>
             <tr class="total-row">
               <td colspan="9" class="text-right uppercase">TỔNG CỘNG THANH TOÁN (SAU VAT):</td>
               <td class="text-right font-mono font-bold" style="color: #ea580c; font-size: 13px;">
-                ${Number(totalAmount).toLocaleString('vi-VN', { maximumFractionDigits: 3 })} đ
+                ${Math.round(Number(totalAmount) || 0).toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
               </td>
               ${hasLineNotes ? '<td></td>' : ''}
             </tr>
@@ -1601,6 +1599,21 @@ export const ProcurementModule: React.FC = () => {
       alert("Vui lòng chọn Nhà cung cấp và ít nhất 1 sản phẩm");
       return;
     }
+    const missingCodeIdx = (poForm.items || []).findIndex((it: any) => !String(it?.product_code || "").trim());
+    if (missingCodeIdx !== -1) {
+      alert(`Dòng #${missingCodeIdx + 1} chưa chọn Mã hàng (SKU). Vui lòng chọn mã hàng cho tất cả các dòng.`);
+      return;
+    }
+    if (String(poForm.status || "").toUpperCase() !== "CANCELLED") {
+      const zeroPriceIdx = (poForm.items || []).findIndex((it: any) => !(roundPrice3(it?.unit_price) > 0));
+      if (zeroPriceIdx !== -1) {
+        const bad = poForm.items[zeroPriceIdx];
+        alert(
+          `Dòng #${zeroPriceIdx + 1} (${bad?.product_code || bad?.product_name || "SP"}) chưa nhập Đơn giá PO (> 0 VNĐ).\n\nKhi tạo hoặc lưu Đơn Đặt Hàng (PO), bắt buộc phải nhập đơn giá cho tất cả các mặt hàng!`
+        );
+        return;
+      }
+    }
     try {
       const res = await fetch("/api/procurement?action=order", {
         method: "POST",
@@ -1691,7 +1704,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       status: po.status || "PENDING",
       notes: po.notes || "",
       version: po.version,
-      received_qty: po.received_qty || {}
+      received_qty: po.received_qty || {},
+      inbound_price_map: po.inbound_price_map || {}
     });
     setPoSupplierNotice(null);
     setPoItemSearchQueries({});
@@ -1871,7 +1885,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           product_name: cleanItemName(it.product_name),
           specification: it.specification || matchedProd?.specification || "",
           unit: it.unit || matchedProd?.unit || "Hộp",
-          unit_price: Number(it.unit_price) || Number(matchedProd?.cost_price) || 0,
+          unit_price: roundPrice3(Number(it.unit_price) || Number(matchedProd?.cost_price) || 0),
           ordered,
           received,
           quantity: remaining,
@@ -1906,7 +1920,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         product_name: cleanItemName(items[0]?.product_name || ""),
         specification: items[0]?.specification || "",
         unit: items[0]?.unit || "Cái",
-        unit_price: Number(items[0]?.unit_price) || 0,
+        unit_price: roundPrice3(Number(items[0]?.unit_price) || 0),
         ordered: Number(items[0]?.quantity) || 0,
         received: Number(rq[0]) || 0,
         quantity: 1,
@@ -1924,7 +1938,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     setReceiveHeader({
       receipt_date: todayVN(),
       warehouse_name: "Kho Trung Tâm",
-      received_by: user?.full_name || user?.username || "Thủ kho ABT",
+      received_by: user?.full_name || user?.username || "Thủ kho TBR",
       vat_invoice_no: "",
       vat_invoice_date: todayVN(),
       shipping_unit: "",
@@ -2344,7 +2358,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const handleDownloadCatalogTemplate = () => {
     const sample = [
       {
-        "Mã hàng (*)": "ABT-KIT-001",
+        "Mã hàng (*)": "TBR-KIT-001",
         "Tên sản phẩm (*)": "Bộ Kít Tách Chiết RNA/DNA Viral",
         "Quy cách": "50 test/hộp",
         "Đơn vị tính": "Hộp",
@@ -2352,7 +2366,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         "Ghi chú": "Bảng giá áp dụng quý 4/2026"
       },
       {
-        "Mã hàng (*)": "ABT-PCR-002",
+        "Mã hàng (*)": "TBR-PCR-002",
         "Tên sản phẩm (*)": "MasterMix Real-time PCR 2X",
         "Quy cách": "100 phản ứng/lọ",
         "Đơn vị tính": "Lọ",
@@ -2461,7 +2475,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const rawCode = String(it.product_code || "").trim();
       const rawName = String(it.product_name || "").trim();
 
-      if (!rawCode || rawCode.toUpperCase() === "ABT-ITEM" || rawCode.toUpperCase() === "MÃ MỚI") {
+      if (!rawCode || rawCode.toUpperCase() === "TBR-ITEM" || rawCode.toUpperCase() === "MÃ MỚI") {
         alert(
           `⚠️ Không thể tạo PR (Lỗi ở dòng mặt hàng #${i + 1}): Chưa có Mã sản phẩm / Mã sản xuất cụ thể!\n\nVui lòng chọn đúng sản phẩm từ Bảng mã sản xuất (hoặc nhập Mã hàng cụ thể) trước khi lưu đề xuất mua hàng.`
         );
@@ -2579,7 +2593,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     for (const rawIt of prItems) {
       const rawCode = String(rawIt?.product_code || "").trim();
       const rawName = cleanItemName(String(rawIt?.product_name || "").trim());
-      const isFakeCode = !rawCode || rawCode.toUpperCase() === "ABT-ITEM" || rawCode.toUpperCase() === "MÃ MỚI";
+      const isFakeCode = !rawCode || rawCode.toUpperCase() === "TBR-ITEM" || rawCode.toUpperCase() === "MÃ MỚI";
 
       // Mã hàng trên PR là chuẩn: khớp ĐÚNG mã trước. Chỉ dòng chưa có mã thật mới tra theo tên, và chỉ khi tên đó
       // thuộc đúng một mã. (Trước đây "trùng mã HOẶC trùng tên" lấy mã đầu tiên cùng tên trong danh mục: BIO-41026 thành
@@ -2655,7 +2669,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     }
 
     // If PR still has no valid product code & name (e.g. legacy workflow where user only typed request title),
-    // flag it explicitly instead of fabricating "ABT-ITEM" + pr.title
+    // flag it explicitly instead of fabricating "TBR-ITEM" + pr.title
     if (normalizedItems.length === 0) {
       return [
         {
@@ -2881,14 +2895,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       }) || suppliers[0] || null;
     }
 
-    const unitPrice =
+    const unitPrice = roundPrice3(
       parseFloat(spMatch?.purchase_price) ||
       parseFloat(item?.cost_price) ||
       parseFloat(matchedProd?.cost_price) ||
       parseFloat(item?.estimated_price) ||
       parseFloat(item?.unit_price) ||
       parseFloat(matchedProd?.standard_price) ||
-      0;
+      0
+    );
 
     const displayManufacturer =
       matchedSup?.short_name ||
@@ -2922,7 +2937,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const handleConvertPRToPO = (pr: any) => {
     const prItems = getPRItems(pr);
     const hasMissingCatalogItem = prItems.some(
-      (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "ABT-ITEM" || !it.product_name
+      (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM" || !it.product_name
     );
     if (hasMissingCatalogItem) {
       alert(
@@ -2946,7 +2961,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     const prOrderCode = soCodeIn(pr.title) || soCodeIn(pr.description);
     targetItems.forEach(({ it }) => {
       const resolved = resolveItemSupplierAndPrice(it);
-      const price = resolved.unitPrice > 0 ? resolved.unitPrice : Number(it.estimated_price || it.unit_price || it.price || 0);
+      const price = roundPrice3(resolved.unitPrice > 0 ? resolved.unitPrice : Number(it.estimated_price || it.unit_price || it.price || 0));
       const qty = Number(it.quantity) || 1;
       const nameWithSpec = it.specification && !it.product_name?.includes(it.specification) 
         ? `${it.product_name} (${it.specification})` 
@@ -2964,7 +2979,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         unit: it.unit || resolved.unit || "Hộp",
         quantity: qty,
         unit_price: price,
-        total: qty * price
+        total: roundPrice3(qty * price)
       });
     });
 
@@ -3105,12 +3120,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         items.forEach((it, idx) => {
           const itemKey = `${prKey}___${idx}`;
           if (selectedItemKeysForConsolidate.includes(itemKey)) {
-            if (it.is_missing_catalog_product || !it.product_code || it.product_code === "ABT-ITEM") {
+            if (it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM") {
               return;
             }
             involvedPRKeys.add(prKey);
             const resolved = resolveItemSupplierAndPrice(it);
-            const price = resolved.unitPrice > 0 ? resolved.unitPrice : (Number(it.estimated_price) || 0);
+            const price = roundPrice3(resolved.unitPrice > 0 ? resolved.unitPrice : (Number(it.estimated_price) || 0));
             const forCustomer = isCustomerPR(pr);
             const prOrderCode = soCodeIn(pr.title) || soCodeIn(pr.description);
             const qty = it.quantity || 1;
@@ -3127,11 +3142,38 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               unit: it.unit || resolved.unit || "Cái",
               quantity: qty,
               unit_price: price,
-              total: qty * price
+              total: roundPrice3(qty * price)
             });
           }
         });
       });
+
+      const hasZeroPrice = combinedItems.some((it: any) => !(Number(it?.unit_price) > 0));
+      if (hasZeroPrice) {
+        const totalAmt = combinedItems.reduce((s: number, it: any) => s + (Number(it.total) || 0), 0);
+        setPoSupplierNotice(null);
+        setPoItemSearchQueries({});
+        setPOForm({
+          id: null,
+          po_code: "",
+          supplier_id: targetSupplier.id,
+          supplier_name: targetSupplier.name,
+          order_date: todayVN(),
+          expected_delivery_date: consolidateExpectedDelivery || toVNDateString(new Date(Date.now() + 10 * 86400000)),
+          items: combinedItems,
+          total_amount: totalAmt,
+          status: "PENDING",
+          notes:
+            consolidateNotes ||
+            `Đơn PO tổng hợp gom ${combinedItems.length} mặt hàng từ các PR: ${Array.from(involvedPRKeys).join(", ")}`
+        });
+        setIsConsolidateModalOpen(false);
+        setIsPOModalOpen(true);
+        alert(
+          "Có mặt hàng chưa có Đơn giá PO (> 0 VNĐ). Hệ thống đã mở biểu mẫu Đơn Đặt Hàng (PO) để bạn nhập đầy đủ đơn giá trước khi lưu!"
+        );
+        return;
+      }
 
       const res = await fetch("/api/procurement?action=consolidate_prs_to_po", {
         method: "POST",
@@ -3618,7 +3660,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               onClick={() => {
                 setSupplierForm({
                   id: null,
-                  supplier_code: `NCC-ABT-${Date.now().toString().slice(-4)}`,
+                  supplier_code: `NCC-TBR-${Date.now().toString().slice(-4)}`,
                   name: "",
                   short_name: "",
                   contact_person: "",
@@ -3846,23 +3888,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           <Search className="w-4 h-4" />
           <span>Tra Cứu Dòng Hàng</span>
         </button>
-
-        <button
-          id="subtab-btn-factory"
-          onClick={() => setSubTab("factory")}
-          className={`pb-3 px-1 transition-all flex items-center gap-2 cursor-pointer whitespace-nowrap ${
-            subTab === "factory" ? "border-b-2 border-orange-600 text-orange-600 dark:text-orange-400" : "text-slate-500 hover:text-slate-800 dark:hover:text-slate-300"
-          }`}
-        >
-          <span>Nhà Máy (nội bộ)</span>
-        </button>
       </div>
-
-      {subTab === "factory" && (
-        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <FactoryBridgePanel />
-        </div>
-      )}
 
       {subTab === "lookup" && (
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
@@ -3885,7 +3911,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Tìm theo mã PO, tên nhà cung cấp hoặc sản phẩm..."
+                  placeholder="Tìm theo mã PO, tên NCC hoặc sản phẩm..."
                   value={orderSearch}
                   onChange={(e) => setOrderSearch(e.target.value)}
                   className="w-full pl-9 pr-4 py-2 rounded-xl text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -4195,6 +4221,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                             @ {formatCurrency(it.unit_price)}
                                           </div>
                                         )}
+                                        {(() => {
+                                          const inbPrice = Number(po?.inbound_price_map?.[String(it.product_code || "").trim().toUpperCase()]?.unit_price) || 0;
+                                          const poPrice = Number(it.unit_price) || 0;
+                                          if (inbPrice <= 0) return null;
+                                          const isDiff = Math.abs(inbPrice - poPrice) > 0.01;
+                                          return (
+                                            <div className={`text-[10px] font-mono font-semibold mt-0.5 ${isDiff ? "text-amber-600 dark:text-amber-400" : "text-teal-600 dark:text-teal-400"}`} title="Đơn giá thực tế trên Phiếu Nhập Kho (PNK) để đối chiếu">
+                                              PNK: {formatCurrency(inbPrice)}{isDiff ? " ⚠️" : ""}
+                                            </div>
+                                          );
+                                        })()}
                                       </div>
                                     </div>
                                   );
@@ -4287,6 +4324,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                               @ {formatCurrency(it.unit_price)}
                                             </div>
                                           )}
+                                          {(() => {
+                                            const inbPrice = Number(po?.inbound_price_map?.[String(it.product_code || "").trim().toUpperCase()]?.unit_price) || 0;
+                                            const poPrice = Number(it.unit_price) || 0;
+                                            if (inbPrice <= 0) return null;
+                                            const isDiff = Math.abs(inbPrice - poPrice) > 0.01;
+                                            return (
+                                              <div className={`text-[10px] font-mono font-semibold mt-0.5 ${isDiff ? "text-amber-600 dark:text-amber-400" : "text-teal-600 dark:text-teal-400"}`} title="Đơn giá thực tế trên Phiếu Nhập Kho (PNK) để đối chiếu">
+                                                PNK: {formatCurrency(inbPrice)}{isDiff ? " ⚠️" : ""}
+                                              </div>
+                                            );
+                                          })()}
                                         </div>
                                       </div>
                                     ))}
@@ -4314,6 +4362,24 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           {/* Col 4: Total Amount */}
                           <td className="py-3 px-4 font-mono font-bold text-right text-slate-900 dark:text-white whitespace-nowrap align-top">
                             <div className="text-sm">{formatCurrency(totalAmt)}</div>
+                            {Number(po.inbound_total_po_value) > 0 && po.has_inbound_price_diff && (
+                              <div className="mt-1 space-y-0.5">
+                                <div className="text-[10px] font-mono font-semibold text-amber-600 dark:text-amber-400" title="Tổng giá trị tính theo đơn giá thực tế trên Phiếu Nhập Kho (PNK)">
+                                  Giá PNK: {formatCurrency(po.inbound_total_po_value)}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEditPO(po);
+                                  }}
+                                  className="px-1.5 py-0.5 rounded text-[9px] font-sans font-bold bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 cursor-pointer"
+                                  title="Đơn giá trên Phiếu Nhập Kho đang khác với Đơn giá PO. Bấm để mở PO đối chiếu / điều chỉnh nếu cần."
+                                >
+                                  ⚠️ Lệch giá PNK • Đối chiếu
+                                </button>
+                              </div>
+                            )}
                           </td>
 
                           {/* Hóa đơn đầu vào (theo từng đợt nhận hàng) */}
@@ -4421,22 +4487,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             )}
                             <div className="inline-block text-left relative" onClick={(e) => e.stopPropagation()}>
                               <button
-                                onClick={(e) => {
+                                onClick={() => {
                                   setActivePaymentDropdownId(null);
-                                  if (activeStatusDropdownId === po.id) {
-                                    setActiveStatusDropdownId(null);
-                                    return;
-                                  }
-                                  // mở xuống dưới nếu đủ chỗ (hoặc dưới rộng hơn trên), ngược lại mở lên trên; luôn nằm trọn trong màn hình
-                                  const r = e.currentTarget.getBoundingClientRect();
-                                  const below = window.innerHeight - r.bottom - 12;
-                                  const above = r.top - 12;
-                                  const openDown = below >= 420 || below >= above;
-                                  const left = Math.min(Math.max(8, r.left + r.width / 2 - 120), window.innerWidth - 248);
-                                  setStatusMenuPos(openDown
-                                    ? { top: r.bottom + 6, left, maxHeight: Math.max(160, below) }
-                                    : { bottom: window.innerHeight - r.top + 6, left, maxHeight: Math.max(160, above) });
-                                  setActiveStatusDropdownId(po.id);
+                                  setActiveStatusDropdownId(activeStatusDropdownId === po.id ? null : po.id);
                                 }}
                                 className={`px-2.5 py-1 rounded-full text-[10px] font-bold inline-flex items-center gap-1.5 border transition-all cursor-pointer shadow-2xs hover:scale-105 ${statusCfg.bg} ${statusCfg.text} ${statusCfg.border}`}
                                 title="Bấm để thay đổi trạng thái đơn hàng"
@@ -4449,9 +4502,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               {/* Dropdown Menu of All Statuses in Logical XNK Order */}
                               {activeStatusDropdownId === po.id && (
                                 <div
-                                  data-po-status-menu
-                                  style={statusMenuPos || undefined}
-                                  className="fixed z-[100] w-60 overflow-y-auto bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs"
+                                  className={`absolute z-[100] left-1/2 -translate-x-1/2 w-60 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
+                                    idx >= 1 && idx >= ordersPage.items.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
+                                  }`}
                                 >
                                   <div className="px-3 py-1.5 font-bold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
                                     Cập nhật tiến độ đơn PO (XNK):
@@ -5102,7 +5155,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 Hồ Sơ & Đánh Giá Các Nhà Cung Cấp / Hãng Sản Xuất
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của ABT.
+                Quản lý các hãng thiết bị PCR, sinh phẩm tách chiết, vật tư tiêu hao và đối tác thương mại của TBR.
               </p>
             </div>
 
@@ -5153,7 +5206,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 onClick={() => {
                   setSupplierForm({
                     id: null,
-                    supplier_code: `NCC-ABT-${Date.now().toString().slice(-4)}`,
+                    supplier_code: `NCC-TBR-${Date.now().toString().slice(-4)}`,
                     name: "",
                     short_name: "",
                     contact_person: "",
@@ -5433,10 +5486,27 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                         )}
                       </td>
                       <td className="py-3 px-2.5 font-mono font-bold text-right text-slate-900 dark:text-white whitespace-nowrap">
-                        {formatCurrency(total)}
+                        <div>{formatCurrency(total)}</div>
+                        {dbt.inboundTotalPoValue > 0 && dbt.hasInboundPriceDiff && (
+                          <div className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 mt-0.5" title="Tổng giá trị tính theo đơn giá trên Phiếu Nhập Kho (PNK)">
+                            Theo PNK: {formatCurrency(dbt.inboundTotalPoValue)}
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-2.5 font-mono text-right text-slate-700 dark:text-slate-200 whitespace-nowrap" title={dbt.unreceived > 0.5 ? `Chưa nhận: ${formatCurrency(dbt.unreceived)}` : "Đã nhận đủ hàng"}>
-                        {formatCurrency(dbt.received)}
+                        <div>{formatCurrency(dbt.received)}</div>
+                        {dbt.inboundReceivedValue > 0 && (
+                          <div
+                            className={`text-[10px] font-semibold mt-0.5 ${
+                              Math.abs(dbt.inboundReceivedValue - dbt.received) > 0.5
+                                ? "text-amber-600 dark:text-amber-400"
+                                : "text-teal-600 dark:text-teal-400"
+                            }`}
+                            title="Giá trị hàng đã nhập kho tính theo đơn giá trên Phiếu Nhập Kho (PNK) để Kế toán đối chiếu"
+                          >
+                            Giá PNK: {formatCurrency(dbt.inboundReceivedValue)}
+                          </div>
+                        )}
                         {dbt.unreceived > 0.5 && dbt.received > 0.5 && <div className="text-[9px] text-slate-400">chưa nhận {formatCurrency(dbt.unreceived)}</div>}
                       </td>
                       <td className="py-3 px-2.5 font-mono font-bold text-right text-emerald-600 dark:text-emerald-400 whitespace-nowrap">
@@ -5450,15 +5520,31 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${badge.cls}`}>
                           {badge.label}
                         </span>
+                        {dbt.hasInboundPriceDiff && (
+                          <div className="mt-1">
+                            <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800" title="Đơn giá nhập kho (PNK) khác với đơn giá PO">
+                              ⚠️ Lệch giá PNK
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-2.5 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1.5">
+                        <div className="flex items-center justify-center gap-1.5 flex-wrap">
                           {!isPaid && (
                             <button
                               onClick={() => openPaymentModal(po)}
                               className="px-3 py-1 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs flex items-center gap-1.5 cursor-pointer"
                             >
                               <DollarSign className="w-3.5 h-3.5" /> Chi tiền
+                            </button>
+                          )}
+                          {(dbt.hasInboundPriceDiff || total <= 0.5) && (
+                            <button
+                              onClick={() => handleEditPO(po)}
+                              className="px-2.5 py-1 rounded-xl text-xs font-bold bg-amber-50 dark:bg-amber-950/70 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800 hover:bg-amber-100 cursor-pointer"
+                              title="Mở đơn PO để đối chiếu Giá Nhập Kho (PNK) và điều chỉnh Giá PO nếu cần"
+                            >
+                              ✏️ Điều chỉnh PO
                             </button>
                           )}
                           {paid > 0 && (
@@ -6153,17 +6239,47 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           <td className="p-2">
                             <input
                               type="text"
-                              inputMode="decimal"
-                              value={item.unit_price === 0 ? "" : (item.unit_price ?? "")}
+                              inputMode="numeric"
+                              value={item.unit_price === 0 || item.unit_price === "" || item.unit_price === undefined || item.unit_price === null ? "" : roundPrice3(item.unit_price)}
                               onChange={(e) => {
                                 const cleaned = sanitizeDecimal3Input(e.target.value);
                                 updatePOLine(idx, {
-                                  unit_price: cleaned
+                                  unit_price: cleaned === "" ? 0 : roundPrice3(cleaned)
                                 });
                               }}
                               onBlur={() => updatePOLine(idx, { unit_price: Math.max(0, roundPrice3(item.unit_price)) })}
-                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-xs"
+                              placeholder="Nhập đơn giá (> 0) *"
+                              className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-xs ${
+                                !(roundPrice3(item.unit_price) > 0)
+                                  ? "border-rose-400 dark:border-rose-600 ring-1 ring-rose-200 dark:ring-rose-900/50"
+                                  : "border-slate-200 dark:border-slate-700"
+                              }`}
                             />
+                            {(() => {
+                              const codeKey = String(item.product_code || "").trim().toUpperCase();
+                              const inbEntry = poForm?.inbound_price_map?.[codeKey];
+                              const inbPrice = roundPrice3(inbEntry?.unit_price);
+                              if (inbPrice <= 0) return null;
+                              const curPrice = roundPrice3(item.unit_price);
+                              const isDiff = Math.abs(inbPrice - curPrice) > 0.01;
+                              return (
+                                <div className="mt-1 flex items-center justify-end gap-1 flex-wrap text-[10px] font-mono">
+                                  <span className={isDiff ? "text-amber-600 dark:text-amber-400 font-semibold" : "text-teal-600 dark:text-teal-400"}>
+                                    Giá PNK: {formatCurrency(inbPrice)}
+                                  </span>
+                                  {isDiff && (
+                                    <button
+                                      type="button"
+                                      onClick={() => updatePOLine(idx, { unit_price: inbPrice })}
+                                      className="px-1.5 py-0.2 rounded bg-amber-100 hover:bg-amber-200 dark:bg-amber-950 dark:hover:bg-amber-900 text-amber-800 dark:text-amber-300 font-sans font-bold cursor-pointer border border-amber-300 dark:border-amber-800"
+                                      title="Áp dụng đơn giá thực tế trên Phiếu Nhập Kho (PNK) vào dòng PO này"
+                                    >
+                                      Áp giá PNK
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </td>
                           {(() => {
                             const lc = calcPOLine(item);
@@ -6434,7 +6550,29 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             <td className="p-2 border-r border-slate-200 text-center">{it.unit || ""}</td>
                             <td className="p-2 border-r border-slate-200 text-center font-bold">{qty}</td>
                             <td className={`p-2 border-r border-slate-200 text-center font-bold ${got >= qty && qty > 0 ? "text-emerald-600" : got > 0 ? "text-teal-600" : "text-slate-400"}`}>{got}</td>
-                            <td className="p-2 border-r border-slate-200 text-right font-mono">{formatCurrency(lc.price)}</td>
+                            <td className="p-2 border-r border-slate-200 text-right font-mono">
+                              <div>{formatCurrency(lc.price)}</div>
+                              {(() => {
+                                const codeKey = String(it.product_code || "").trim().toUpperCase();
+                                const inbFromMap = roundPrice3(d?.inbound_price_map?.[codeKey]?.unit_price);
+                                const inbFromReceipts = (() => {
+                                  for (const r of poReceipts) {
+                                    const rItems: any[] = Array.isArray(r.items) ? r.items : (() => { try { return JSON.parse(r.items || "[]"); } catch { return []; } })();
+                                    const m = rItems.find((ri: any) => String(ri?.product_code || ri?.productCode || "").trim().toUpperCase() === codeKey && Number(ri?.unit_price ?? ri?.cost_price) > 0);
+                                    if (m) return roundPrice3(m.unit_price ?? m.cost_price);
+                                  }
+                                  return 0;
+                                })();
+                                const inbPrice = inbFromReceipts || inbFromMap;
+                                if (inbPrice <= 0) return null;
+                                const isDiff = Math.abs(inbPrice - lc.price) > 0.01;
+                                return (
+                                  <div className={`text-[10px] font-semibold mt-0.5 ${isDiff ? "text-amber-600" : "text-teal-600"}`} title="Đơn giá nhập kho thực tế trên Phiếu Nhập Kho (PNK)">
+                                    Giá PNK: {formatCurrency(inbPrice)}{isDiff ? " ⚠️" : ""}
+                                  </div>
+                                );
+                              })()}
+                            </td>
                             <td className="p-2 border-r border-slate-200 text-right font-mono font-bold">{formatCurrency(lc.subtotal)}</td>
                             <td className="p-2 border-r border-slate-200 text-center font-mono font-semibold text-indigo-600">{lc.vatRate}%</td>
                             <td className="p-2 border-r border-slate-200 text-right font-mono text-indigo-600">{formatCurrency(lc.vatAmount)}</td>
@@ -6498,35 +6636,58 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           <th className="p-2 border-r border-slate-200">Số lô</th>
                           <th className="p-2 border-r border-slate-200">Hạn dùng</th>
                           <th className="p-2 border-r border-slate-200 text-center">SL</th>
+                          <th className="p-2 border-r border-slate-200 text-right">Đơn giá nhập (PNK)</th>
+                          <th className="p-2 border-r border-slate-200 text-right">Đối chiếu Giá PO</th>
                           <th className="p-2">Người nhập</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-slate-200">
                         {poReceipts.flatMap((r: any) => {
                           const its: any[] = Array.isArray(r.items) ? r.items : (() => { try { return JSON.parse(r.items || "[]"); } catch { return []; } })();
-                          return its.map((it: any, k: number) => (
-                            <tr key={`${r.transaction_code}-${k}`}>
-                              <td className="p-2 border-r border-slate-200 font-mono font-bold text-emerald-700">
-                                {k === 0 && r.transaction_code ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditInboundSlipFromPO(r.transaction_code)}
-                                    title={`Bấm để mở & chỉnh sửa Phiếu Nhập Kho ${r.transaction_code}`}
-                                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 cursor-pointer transition-all"
-                                  >
-                                    <span>{r.transaction_code}</span>
-                                    <Edit2 className="w-3 h-3 text-emerald-600" />
-                                  </button>
-                                ) : ""}
-                              </td>
-                              <td className="p-2 border-r border-slate-200">{k === 0 ? formatDate(r.date) : ""}</td>
-                              <td className="p-2 border-r border-slate-200 font-mono">{it.product_code}</td>
-                              <td className="p-2 border-r border-slate-200 font-mono">{it.lot_number || <span className="text-rose-500">(không có lô)</span>}</td>
-                              <td className="p-2 border-r border-slate-200">{it.expiry_date ? formatDate(it.expiry_date) : "—"}</td>
-                              <td className="p-2 border-r border-slate-200 text-center font-bold">{it.quantity}</td>
-                              <td className="p-2">{k === 0 ? r.performed_by : ""}</td>
-                            </tr>
-                          ));
+                          return its.map((it: any, k: number) => {
+                            const codeKey = String(it?.product_code || it?.productCode || "").trim().toUpperCase();
+                            const matchedPoLine = dItems.find((pi: any) => String(pi?.product_code || "").trim().toUpperCase() === codeKey);
+                            const poPrice = roundPrice3(matchedPoLine?.unit_price);
+                            const pnkPrice = roundPrice3(it?.unit_price ?? it?.cost_price);
+                            const isDiff = pnkPrice > 0 && Math.abs(pnkPrice - poPrice) > 0.01;
+                            return (
+                              <tr key={`${r.transaction_code}-${k}`}>
+                                <td className="p-2 border-r border-slate-200 font-mono font-bold text-emerald-700">
+                                  {k === 0 && r.transaction_code ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => openEditInboundSlipFromPO(r.transaction_code)}
+                                      title={`Bấm để mở & chỉnh sửa Phiếu Nhập Kho ${r.transaction_code}`}
+                                      className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 cursor-pointer transition-all"
+                                    >
+                                      <span>{r.transaction_code}</span>
+                                      <Edit2 className="w-3 h-3 text-emerald-600" />
+                                    </button>
+                                  ) : ""}
+                                </td>
+                                <td className="p-2 border-r border-slate-200">{k === 0 ? formatDate(r.date) : ""}</td>
+                                <td className="p-2 border-r border-slate-200 font-mono">{it.product_code}</td>
+                                <td className="p-2 border-r border-slate-200 font-mono">{it.lot_number || <span className="text-rose-500">(không có lô)</span>}</td>
+                                <td className="p-2 border-r border-slate-200">{it.expiry_date ? formatDate(it.expiry_date) : "—"}</td>
+                                <td className="p-2 border-r border-slate-200 text-center font-bold">{it.quantity}</td>
+                                <td className="p-2 border-r border-slate-200 text-right font-mono font-bold text-emerald-700">
+                                  {pnkPrice > 0 ? formatCurrency(pnkPrice) : "—"}
+                                </td>
+                                <td className="p-2 border-r border-slate-200 text-right font-mono">
+                                  {pnkPrice <= 0 ? (
+                                    <span className="text-slate-400">—</span>
+                                  ) : isDiff ? (
+                                    <span className="text-amber-600 font-bold" title={`Giá PO: ${formatCurrency(poPrice)} • Lệch: ${formatCurrency(pnkPrice - poPrice)}`}>
+                                      ⚠️ Lệch ({pnkPrice > poPrice ? "+" : ""}{formatCurrency(pnkPrice - poPrice)})
+                                    </span>
+                                  ) : (
+                                    <span className="text-emerald-600 font-semibold">✓ Khớp giá PO</span>
+                                  )}
+                                </td>
+                                <td className="p-2">{k === 0 ? r.performed_by : ""}</td>
+                              </tr>
+                            );
+                          });
                         })}
                       </tbody>
                     </table>
@@ -6942,13 +7103,13 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           <td className="p-2">
                             <input
                               type="text"
-                              inputMode="decimal"
+                              inputMode="numeric"
                               disabled={!isSelected}
-                              value={l.unit_price === 0 ? "" : (l.unit_price ?? "")}
-                              placeholder="VD: 125000.500 *"
+                              value={l.unit_price === 0 || l.unit_price === "" || l.unit_price === undefined || l.unit_price === null ? "" : roundPrice3(l.unit_price)}
+                              placeholder="Nhập đơn giá *"
                               onChange={(e) => {
                                 const cleaned = sanitizeDecimal3Input(e.target.value);
-                                setL({ unit_price: cleaned });
+                                setL({ unit_price: cleaned === "" ? 0 : roundPrice3(cleaned) });
                               }}
                               onBlur={() => setL({ unit_price: Math.max(0, roundPrice3(l.unit_price)) })}
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-[11px] ${
@@ -7645,7 +7806,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               </button>
                               {p.last_updated_at && (
                                 <div className="text-[9px] text-slate-400 mt-1 font-mono">
-                                  {new Date(p.last_updated_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+                                  {formatVNDate(p.last_updated_at)}
                                 </div>
                               )}
                             </td>
@@ -8093,7 +8254,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           <div className="bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200/80 dark:border-slate-800 space-y-1.5 text-xs">
                             <div className="flex items-center justify-between flex-wrap gap-1">
                               <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-[11px]">
-                                📅 {item.date ? new Date(item.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "N/A"}
+                                📅 {item.date ? formatVNDateTime(item.date) : "N/A"}
                               </span>
                               <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 font-medium">
                                 {item.source === "PO_AUTO" ? "⚡ Tự động từ PO" : item.source === "EXCEL_IMPORT" ? "📥 Nạp Excel" : "✏️ Thủ công"}
@@ -8312,7 +8473,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       : "Khởi Tạo Đề Xuất Mua Hàng (PR Mới)"}
                   </h3>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                    Chọn mặt hàng có sẵn trong danh mục (gõ mã hoặc tên hàng để tìm nhanh) hoặc gõ mới
+                    Chọn mặt hàng có sẵn trong danh mục (gõ tìm nhanh mã hàng như HD-, Meridian, SSI...) hoặc gõ mới
                   </p>
                 </div>
               </div>
@@ -8473,7 +8634,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                   <option value="">
                                     {q
                                       ? `-- Kết quả lọc "${q}" (${filteredList.length} sản phẩm phù hợp) --`
-                                      : `-- Bấm để chọn mặt hàng trong danh mục ABT (${mergedCatalogProducts.length} SP) --`}
+                                      : `-- Bấm để chọn mặt hàng trong danh mục TBR (${mergedCatalogProducts.length} SP) --`}
                                   </option>
                                   {!filteredList.some((p: any) => p.code === it.product_code) && it.product_code && (
                                     <option value={it.product_code}>
@@ -8548,7 +8709,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 type="text"
                                 value={it.product_code}
                                 onChange={(e) => handlePRItemChange(idx, "product_code", e.target.value)}
-                                placeholder="VD: ABT-NEW-01..."
+                                placeholder="VD: TBR-NEW-01..."
                                 className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-xs"
                               />
                             </div>
@@ -9099,7 +9260,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   const prKey = pr.workflow_code || String(pr.id);
                   const items = getPRItems(pr);
                   const hasOnlyMissing = items.every(
-                    (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "ABT-ITEM"
+                    (it: any) => it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM"
                   );
                   if (hasOnlyMissing) {
                     invalidPRsWithoutProduct.push(pr);
@@ -9107,7 +9268,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   }
 
                   items.forEach((it: any, idx: number) => {
-                    if (it.is_missing_catalog_product || !it.product_code || it.product_code === "ABT-ITEM") {
+                    if (it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM") {
                       return;
                     }
                     const itemKey = `${prKey}___${idx}`;

@@ -32,13 +32,14 @@ import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
 import { reconcileHistoricalPOsWithInbound, attachInboundPriceComparisonToPOs } from "@/backend/services/poReceipt";
-import { withTransaction as withFactoryTx } from "@/factory/core/db";
-import { syncKdOrderOrPoToInternalOrder } from "@/factory/intake/orderDispatchOps";
 
 let supplierShortNameEnsured = false;
 async function ensureSupplierShortName() {
   if (supplierShortNameEnsured) return;
   try {
+    await query("ALTER TABLE procurement_suppliers ADD COLUMN IF NOT EXISTS short_name VARCHAR(100)");
+    await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50)");
+    await query("ALTER TABLE procurement_orders ADD COLUMN IF NOT EXISTS created_by VARCHAR(150)");
     await query(`
       UPDATE procurement_suppliers SET short_name = 'Phù Sa' WHERE supplier_code = 'NCC0021' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Hoàng Kim' WHERE supplier_code = 'NCC0022' AND (short_name IS NULL OR short_name = '');
@@ -52,7 +53,7 @@ async function ensureSupplierShortName() {
       UPDATE procurement_suppliers SET short_name = 'Phương Đông' WHERE supplier_code = 'NCC0116' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Bio Basic' WHERE name ILIKE '%Bio Basic%' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'ABT' WHERE (name ILIKE '%ABT%' OR name ILIKE '%LONG HẬU%') AND (short_name IS NULL OR short_name = '');
-      UPDATE procurement_suppliers SET short_name = 'ABT' WHERE name ILIKE '%ABT%' AND (short_name IS NULL OR short_name = '');
+      UPDATE procurement_suppliers SET short_name = 'TBR' WHERE name ILIKE '%TBR%' AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Meridian' WHERE (name ILIKE '%Meridian%' OR name ILIKE '%Bioline%') AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'Liferiver' WHERE (name ILIKE '%Liferiver%' OR name ILIKE '%Shanghai ZJ%') AND (short_name IS NULL OR short_name = '');
       UPDATE procurement_suppliers SET short_name = 'SSI' WHERE name ILIKE '%SSI%' AND (short_name IS NULL OR short_name = '');
@@ -63,6 +64,7 @@ async function ensureSupplierShortName() {
       UPDATE procurement_suppliers SET short_name = 'Biologix' WHERE name ILIKE '%Biologix%' AND (short_name IS NULL OR short_name = '');
     `);
 
+    // (Không còn tự tạo sẵn 6 nhà cung cấp quốc tế với SĐT / email / địa chỉ tự đặt: nhà cung cấp do người dùng tạo.)
 
     supplierShortNameEnsured = true;
   } catch (e: any) {
@@ -243,7 +245,7 @@ export async function GET(req: NextRequest) {
         }
       };
 
-      const [suppliersRes, ordersRes, productsRes, inventoryRes, prRes, inventoryItemsRes, reservationsRes, customersRes, supplierProductCountsRes, catalogItemsRes, allSupplierProductsRes, inboundTxRes] = await Promise.all([
+      const [suppliersRes, ordersRes, productsRes, inventoryRes, prRes, inventoryItemsRes, reservationsRes, customersRes, supplierProductCountsRes, catalogItemsRes, allSupplierProductsRes] = await Promise.all([
         safeQuery("SELECT * FROM procurement_suppliers ORDER BY supplier_code ASC, id ASC"),
         safeQuery("SELECT * FROM procurement_orders ORDER BY id DESC"),
         safeQuery("SELECT * FROM products ORDER BY code ASC"),
@@ -282,15 +284,15 @@ export async function GET(req: NextRequest) {
           FROM supplier_products sp
           LEFT JOIN procurement_suppliers ps ON ps.id = sp.supplier_id
           ORDER BY sp.last_updated_at DESC, sp.id DESC
-        `),
-        safeQuery(`
-          SELECT id, transaction_code, reference_code, date, items, notes
-            FROM inventory_transactions
-           WHERE transaction_type = 'INBOUND'
-           ORDER BY id ASC
         `)
       ]);
 
+      const inboundTxRes = await safeQuery(`
+        SELECT id, transaction_code, reference_code, date, items, notes
+        FROM inventory_transactions
+        WHERE transaction_type = 'INBOUND'
+        ORDER BY id ASC
+      `);
       const suppliers = suppliersRes.rows;
       const orders = attachInboundPriceComparisonToPOs(ordersRes.rows, inboundTxRes.rows);
       const allSupplierProductsRaw = allSupplierProductsRes.rows || [];
@@ -446,34 +448,22 @@ export async function GET(req: NextRequest) {
         }
         return acc + (parseFloat(o.amount_amount || o.amount_paid) || 0);
       }, 0);
-      // Công nợ cần trả NCC: tính trên giá PO nhưng CHỈ phát sinh đối với số lượng hàng đã thực nhận nhập kho (trừ số tiền đã thanh toán)
+      // Công nợ cần trả NCC: tính theo Giá PO nhưng CHỈ phát sinh trên lượng hàng đã thực nhận nhập kho
       const totalPayable = liveOrders.reduce((acc: number, o: any) => {
+        const tot = parseFloat(o.total_amount) || 0;
+        const paid = parseFloat(o.amount_amount || o.amount_paid) || 0;
+        if (String(o.payment_status || "").toUpperCase() === "PAID") return acc;
+        if (o.status === "COMPLETED") return acc + Math.max(0, tot - paid);
+        const rq = o.received_qty || {};
         let its: any = o.items;
         if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
         its = Array.isArray(its) ? its : [];
-        const calcTot = its.reduce((sum: number, it: any) => {
-          const q = Number(it?.quantity) || 0;
-          const pr = Number(it?.unit_price) || 0;
-          const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
-          const sub = q * pr;
-          return sum + sub + (sub * vr) / 100;
-        }, 0);
-        const tot = Math.max(parseFloat(o.total_amount) || 0, Math.round(calcTot * 1000) / 1000);
-        const rawPaid = parseFloat(o.amount_amount || o.amount_paid) || 0;
-        const paid = String(o.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? tot : rawPaid;
-        const st = String(o.status || "").toUpperCase();
-        const rq = o.received_qty && typeof o.received_qty === "object" ? o.received_qty : {};
-        let ordQty = 0;
-        let recQty = 0;
-        its.forEach((it: any, i: number) => {
-          const q = Number(it?.quantity) || 0;
-          ordQty += q;
-          recQty += Math.min(q, Number(rq[i] ?? rq[String(i)]) || 0);
-        });
-        const fullRec = ["COMPLETED", "DELIVERED", "RECEIVED"].includes(st);
-        const ratio = fullRec ? 1 : (ordQty > 0 ? Math.min(1, recQty / ordQty) : 0);
-        const receivedVal = Math.round(tot * ratio * 1000) / 1000;
-        return acc + Math.max(0, receivedVal - paid);
+        const ordVal = its.reduce((s: number, it: any) => s + (Number(it?.quantity) || 0) * (Number(it?.unit_price) || 0), 0);
+        const recVal = its.reduce((s: number, it: any, i: number) => s + Math.min(Number(it?.quantity) || 0, Number(rq[i]) || 0) * (Number(it?.unit_price) || 0), 0);
+        const ordQty = its.reduce((s: number, it: any) => s + (Number(it?.quantity) || 0), 0);
+        const recQty = its.reduce((s: number, it: any, i: number) => s + Math.min(Number(it?.quantity) || 0, Number(rq[i]) || 0), 0);
+        const ratio = ordVal > 0 ? Math.min(1, recVal / ordVal) : (ordQty > 0 ? Math.min(1, recQty / ordQty) : 0);
+        return acc + Math.max(0, tot * ratio - paid);
       }, 0);
       const activeOrders = orders.filter((o: any) => o.status !== "COMPLETED" && o.status !== "CANCELLED").length;
       const pendingPRs = purchaseRequests.filter((pr: any) => pr.status === "PENDING" || pr.status === "APPROVED").length;
@@ -584,7 +574,7 @@ export async function POST(req: NextRequest) {
         );
         await logAudit("UPDATE", "PROCUREMENT", `Cập nhật thông tin NCC ${name} (${cleanShortName || '—'})`);
       } else {
-        const code = supplier_code || `NCC-ABT-${Date.now().toString().slice(-4)}`;
+        const code = supplier_code || `NCC-TBR-${Date.now().toString().slice(-4)}`;
         await query(
           `INSERT INTO procurement_suppliers (supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
@@ -969,7 +959,7 @@ export async function POST(req: NextRequest) {
     if (action === "order") {
       const { id, po_code, supplier_id, supplier_name, order_date, expected_delivery_date, status, notes, rollback_reason } = body;
       const rawItems = Array.isArray(body.items) ? body.items : null;
-      const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
+      const r3 = (v: any) => Math.round(Number(v) || 0);
       const items = rawItems
         ? rawItems.map((it: any) => {
             const qty = Number(it?.quantity) || 0;
@@ -989,19 +979,17 @@ export async function POST(req: NextRequest) {
             };
           })
         : undefined;
-      if (items) {
-        if (items.length === 0) {
-          throw new HttpError(400, "Đơn PO phải có ít nhất 1 mặt hàng.");
-        }
-        for (let idx = 0; idx < items.length; idx++) {
-          const it = items[idx];
-          if (!(Number(it?.unit_price) > 0)) {
-            throw new HttpError(400, `Dòng #${idx + 1} (${it?.product_code || it?.product_name || "Mặt hàng"}): Bắt buộc phải nhập Đơn giá PO (> 0 VNĐ) trước khi lưu đơn đặt mua hàng!`);
-          }
+      if (items && items.length > 0 && String(status || "").toUpperCase() !== "CANCELLED") {
+        const zeroPriceItem = items.find((it: any) => !(Number(it?.unit_price) > 0));
+        if (zeroPriceItem) {
+          return NextResponse.json(
+            { error: `Mặt hàng "${zeroPriceItem.product_code || zeroPriceItem.product_name || "SP"}" chưa nhập Đơn giá PO (> 0 VNĐ). Khi tạo hoặc lưu PO bắt buộc phải nhập đơn giá!` },
+            { status: 400 }
+          );
         }
       }
       const total_amount = items
-        ? Math.round(items.reduce((sum: number, it: any) => sum + (Number(it.total_after_vat ?? it.total) || 0), 0) * 1000) / 1000
+        ? r3(items.reduce((sum: number, it: any) => sum + (Number(it.total_after_vat ?? it.total) || 0), 0))
         : body.total_amount;
       const force_rollback = Boolean(body.force_rollback) && isAdminUser(me); // lùi trạng thái: chỉ Quản trị viên
       let finalPoCode = po_code;
@@ -1034,7 +1022,7 @@ export async function POST(req: NextRequest) {
             throw new HttpError(409, `Đơn PO đã ở trạng thái "${existing.status}", không thể chỉnh sửa!`);
           }
           if (
-            ["RECEIVED", "PARTIAL_RECEIVED", "PARTIALLY_RECEIVED", "DELIVERED"].includes(existingUpper) &&
+            ["RECEIVED", "PARTIAL_RECEIVED", "PARTIALLY_RECEIVED", "DELIVERED", "COMPLETED"].includes(existingUpper) &&
             status &&
             ["DRAFT", "PENDING", "APPROVED", "CONFIRMED", "ORDERED", "PRODUCED", "CANCELLED"].includes(String(status).toUpperCase()) &&
             !force_rollback
@@ -1047,9 +1035,9 @@ export async function POST(req: NextRequest) {
           }
 
           let safeStatus = status || existing.status || "PENDING";
-          if (["PARTIALLY_RECEIVED", "PARTIAL_RECEIVED"].includes(existingUpper) && Array.isArray(items)) {
+          if (["PARTIALLY_RECEIVED", "PARTIAL_RECEIVED", "RECEIVED", "DELIVERED", "COMPLETED"].includes(existingUpper) && Array.isArray(items) && !force_rollback) {
             const rq = existing.received_qty || {};
-            const oldItems: any[] = Array.isArray(existing.items) ? existing.items : [];
+            const oldItems: any[] = Array.isArray(existing.items) ? existing.items : (typeof existing.items === "string" ? (() => { try { return JSON.parse(existing.items); } catch { return []; } })() : []);
             for (const [k, v] of Object.entries(rq)) {
               const got = Number(v) || 0;
               if (got <= 0) continue;
@@ -1075,8 +1063,7 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // C4: amount_paid is strictly owned by record_payment, never overwritten by order edit.
-          // Lưu ý: Giá PO và giá Nhập kho (PNK) được quản lý độc lập để đối chiếu; chỉnh sửa giá PO KHÔNG ghi đè giá trên Phiếu Nhập Kho (PNK).
+          // C4: amount_paid is strictly owned by record_payment, never overwritten by order edit
           const upd = await c.query(
             `UPDATE procurement_orders 
              SET supplier_id=COALESCE($1, supplier_id), supplier_name=COALESCE($2, supplier_name), 
@@ -1099,7 +1086,7 @@ export async function POST(req: NextRequest) {
 
           const code = po_code || await generateDocumentCode({
             docType: "PO",
-            customPrefix: "ABT",
+            customPrefix: "TBR",
             tagMode: "GENERAL"
           });
           finalPoCode = code;
@@ -1244,31 +1231,6 @@ export async function POST(req: NextRequest) {
           invalidateSupplierCatalogCache();
         } catch (syncErr: any) {
           console.error("[AUTO_SYNC_SUPPLIER_PRODUCTS_ERR]:", syncErr?.message || syncErr);
-        }
-      }
-
-      // Auto-sync PO to Factory Internal Orders (Đơn hàng nội bộ)
-      if (Array.isArray(items) && items.length > 0) {
-        try {
-          const soCodes = Array.from(
-            new Set(
-              items
-                .map((it: any) => String(it?.source_so_code || it?.so_code || it?.source_pr_code || "").trim())
-                .filter(Boolean)
-            )
-          ).join(", ");
-          await withFactoryTx((tx) =>
-            syncKdOrderOrPoToInternalOrder(tx, {
-              kd_po_code: finalPoCode,
-              kd_so_code: soCodes || finalPoCode,
-              customer_name: supplier_name || "Đơn PO Kinh doanh / Cung ứng",
-              requested_date: expected_delivery_date || order_date || todayVN(),
-              notes: notes || `Đồng bộ tự động từ PO ${finalPoCode}`,
-              items,
-            })
-          );
-        } catch (syncFactoryErr: any) {
-          console.error("[AUTO_SYNC_PO_TO_INTERNAL_ORDER_ERR]:", syncFactoryErr?.message || syncFactoryErr);
         }
       }
 
@@ -1761,7 +1723,7 @@ export async function POST(req: NextRequest) {
 
         const targetWarehouse = String(warehouse_name || "Kho Trung Tâm").trim() || "Kho Trung Tâm";
         const effectiveDate = receipt_date && /^\d{4}-\d{2}-\d{2}$/.test(String(receipt_date)) ? String(receipt_date) : todayVN();
-        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho ABT").trim();
+        const effectivePerformer = String(received_by || me.full_name || me.username || "Thủ kho TBR").trim();
 
         const inboundCode = await generateDocumentCode({ docType: "PNK", tagMode: "GENERAL" });
         const txItems = clean.map(x => ({
@@ -1847,7 +1809,7 @@ export async function POST(req: NextRequest) {
             code: x.pCode,
             name: pName,
             category: it.category || "Hàng Thương Mại",
-            brand: po.supplier_name || it.supplier_name || "ABT Phân Phối",
+            brand: po.supplier_name || it.supplier_name || "TBR Phân Phối",
             origin: it.origin || "Chính hãng",
             unit: x.unit || it.unit || "Hộp",
             specification: x.specification || it.specification || "",
@@ -1864,7 +1826,7 @@ export async function POST(req: NextRequest) {
         for (const [k, q] of Object.entries(thisReceipt)) received[k] = (Number(received[k]) || 0) + q;
         const allDone = poItems.every((it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it.quantity) || 0));
         const newStatus = allDone ? "COMPLETED" : "PARTIALLY_RECEIVED";
-        // Chỉ cập nhật trạng thái nhận hàng & số lượng thực nhận, KHÔNG tự động ghi đè đơn giá PO theo giá nhập kho
+        // Nhập kho chỉ đồng bộ số lượng đã nhận (received_qty) & trạng thái PO; giữ nguyên đơn giá và tổng tiền trên PO để đối chiếu
         await c.query(
           `UPDATE procurement_orders
               SET status = $1, received_qty = $2::jsonb,
@@ -1939,7 +1901,7 @@ export async function POST(req: NextRequest) {
         : await generateDocumentCode({
             docType: "PR",
             customerName: customer_name,
-            customPrefix: isStockOrder ? "STOCK" : "ABT",
+            customPrefix: isStockOrder ? "STOCK" : "TBR",
             tagMode: isStockOrder ? "STOCK" : (customer_name ? "CUSTOMER" : "GENERAL")
           });
 
@@ -1954,7 +1916,7 @@ export async function POST(req: NextRequest) {
         const it = structuredItems[i];
         const codeStr = String(it?.product_code || "").trim();
         const nameStr = String(it?.product_name || "").trim();
-        if (!codeStr || codeStr.toUpperCase() === "ABT-ITEM" || codeStr.toUpperCase() === "MÃ MỚI" || !nameStr) {
+        if (!codeStr || codeStr.toUpperCase() === "TBR-ITEM" || codeStr.toUpperCase() === "MÃ MỚI" || !nameStr) {
           return NextResponse.json(
             {
               error: `Không thể tạo Đề xuất mua hàng (PR): Mặt hàng ở dòng #${i + 1} chưa có Mã sản phẩm (SKU) hoặc Tên hàng cụ thể! Vui lòng chọn sản phẩm từ Bảng mã sản xuất.`
@@ -2051,7 +2013,7 @@ export async function POST(req: NextRequest) {
           workflow_code, workflow_type, title, priority, status, requester_name, requester_dept,
           assignee_name, target_dept, customer_name, product_info, due_date, description,
           results_summary, attachments, comments, logs
-        ) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, '', 'Cung Ứng', $7, $8, $9, $10, $11, '[]'::json, '[]'::json, $12)`,
+        ) VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, 'Trần Phương Uyên', 'Cung Ứng', $7, $8, $9, $10, $11, '[]'::json, '[]'::json, $12)`,
         [
           code,
           "SALES_TO_PROCUREMENT",
@@ -2068,29 +2030,6 @@ export async function POST(req: NextRequest) {
         ]
       );
       await logAudit("CREATE_PR", "PROCUREMENT", `Tạo phiếu đề xuất mua hàng PR ${code}: ${title}`);
-      if (structuredItems.length > 0) {
-        try {
-          const soCodes = Array.from(
-            new Set(
-              structuredItems
-                .map((it: any) => String(it?.source_so_code || it?.so_code || "").trim())
-                .filter(Boolean)
-            )
-          ).join(", ");
-          await withFactoryTx((tx) =>
-            syncKdOrderOrPoToInternalOrder(tx, {
-              kd_po_code: code,
-              kd_so_code: soCodes || code,
-              customer_name: customer_name || "Khối Kinh doanh ABT",
-              requested_date: due_date || todayVN(),
-              notes: description || title || `Đồng bộ tự động từ Đặt hàng Hãng / PR ${code}`,
-              items: structuredItems,
-            })
-          );
-        } catch (syncPrErr: any) {
-          console.error("[AUTO_SYNC_PR_TO_INTERNAL_ORDER_ERR]:", syncPrErr?.message || syncPrErr);
-        }
-      }
       return NextResponse.json({ success: true, code });
     }
 
@@ -2177,7 +2116,7 @@ export async function POST(req: NextRequest) {
         const q = Number(it?.quantity), pr = Number(it?.unit_price ?? 0);
         if (!String(it?.product_code || "").trim()) throw new HttpError(400, "Có dòng hàng thiếu mã hàng.");
         if (!Number.isFinite(q) || q <= 0) throw new HttpError(400, `Mã ${it.product_code}: số lượng phải lớn hơn 0.`);
-        if (!Number.isFinite(pr) || pr <= 0) throw new HttpError(400, `Mã ${it.product_code}: bắt buộc phải nhập đơn giá PO (> 0 VNĐ) trước khi bổ sung vào PO.`);
+        if (!Number.isFinite(pr) || pr <= 0) throw new HttpError(400, `Mã ${it.product_code}: bắt buộc phải nhập đơn giá PO (> 0 VNĐ).`);
       }
       const actor = String(created_by || me.full_name || me.username || "Phòng Cung Ứng").trim();
       const APPENDABLE = ["DRAFT", "PENDING", "APPROVED", "CONFIRMED"];
@@ -2199,12 +2138,12 @@ export async function POST(req: NextRequest) {
         let merged = 0, added = 0;
         for (const it of items) {
           const q = Number(it.quantity) || 0;
-          const price = Number(it.unit_price) || 0;
+          const price = Math.round(Number(it.unit_price) || 0);
           const target = poItems.find((x: any) => lineKey(x) === lineKey(it));
           if (target) {
             target.quantity = (Number(target.quantity) || 0) + q;
             if (!(Number(target.unit_price) > 0) && price > 0) target.unit_price = price;
-            if (target.total !== undefined) target.total = (Number(target.quantity) || 0) * (Number(target.unit_price) || 0);
+            if (target.total !== undefined) target.total = Math.round((Number(target.quantity) || 0) * Math.round(Number(target.unit_price) || 0));
             target.source_pr_code = Array.from(new Set([...splitCodes(target.source_pr_code), ...splitCodes(it.source_pr_code)])).join(", ");
             merged++;
           } else {
@@ -2293,12 +2232,12 @@ export async function POST(req: NextRequest) {
         const q = Number(it?.quantity), pr = Number(it?.unit_price ?? 0);
         if (!String(it?.product_code || "").trim()) throw new HttpError(400, "Có dòng hàng thiếu mã hàng.");
         if (!Number.isFinite(q) || q <= 0) throw new HttpError(400, `Mã ${it.product_code}: số lượng phải lớn hơn 0.`);
-        if (!Number.isFinite(pr) || pr <= 0) throw new HttpError(400, `Mã ${it.product_code}: bắt buộc phải nhập đơn giá PO (> 0 VNĐ) trước khi bổ sung vào PO.`);
+        if (!Number.isFinite(pr) || pr <= 0) throw new HttpError(400, `Mã ${it.product_code}: bắt buộc phải nhập đơn giá PO (> 0 VNĐ).`);
       }
       const supRow = supplier_id ? (await query("SELECT id, name FROM procurement_suppliers WHERE id = $1", [supplier_id])).rows[0] : null;
       if (!supRow) throw new HttpError(400, "Chưa chọn nhà cung cấp hợp lệ cho PO.");
-      const poCode = await generateDocumentCode({ docType: "PO", customPrefix: "ABT", tagMode: "GENERAL" });
-      const totalAmount = items.reduce((acc: number, it: any) => acc + Number(it.quantity) * (Number(it.unit_price) || 0), 0);
+      const poCode = await generateDocumentCode({ docType: "PO", customPrefix: "TBR", tagMode: "GENERAL" });
+      const totalAmount = items.reduce((acc: number, it: any) => acc + Math.round((Number(it.quantity) || 0) * Math.round(Number(it.unit_price) || 0)), 0);
 
       const result = await withTransaction(async (c) => {
         // The UI sends PR codes (PR26-CR-1004); older callers sent numeric ids — accept both
@@ -2312,7 +2251,7 @@ export async function POST(req: NextRequest) {
             po_code, supplier_id, supplier_name, order_date, expected_delivery_date,
             items, total_amount, status, notes, created_by
           ) VALUES ($1, $2, $3, $4::date, $5, $6, $7, 'PENDING', $8, $9) RETURNING id`,
-          [poCode, supRow.id, supplier_name || supRow.name, todayVN(), expected_delivery_date || toVNDateString(new Date(Date.now() + 14 * 86400000)), JSON.stringify(items), totalAmount, notes || `Gom từ các PR: ${[...prCodesIn, ...ids].join(", ")}`, poCreator]
+          [poCode, supRow.id, supplier_name || supRow.name, todayVN(), expected_delivery_date || toVNDateString(new Date(Date.now() + 14 * 86400000)), JSON.stringify(items.map((it: any) => ({ ...it, unit_price: Math.round(Number(it.unit_price) || 0), total: Math.round((Number(it.quantity) || 0) * Math.round(Number(it.unit_price) || 0)) }))), totalAmount, notes || `Gom từ các PR: ${[...prCodesIn, ...ids].join(", ")}`, poCreator]
         );
         const newPoId = insRes.rows[0]?.id;
 
@@ -2385,22 +2324,6 @@ export async function POST(req: NextRequest) {
       });
 
       await logAudit("CONSOLIDATE_PO", "PROCUREMENT", `Gom ${pr_ids?.length || 0} phiếu PR vào PO ${poCode} gửi NCC ${supplier_name}`);
-      if (Array.isArray(items) && items.length > 0) {
-        try {
-          await withFactoryTx((tx) =>
-            syncKdOrderOrPoToInternalOrder(tx, {
-              kd_po_code: poCode,
-              kd_so_code: Array.isArray(pr_ids) && pr_ids.length > 0 ? pr_ids.join(", ") : poCode,
-              customer_name: supplier_name || "Đơn PO Gom PR",
-              requested_date: expected_delivery_date || todayVN(),
-              notes: notes || `Gom từ các PR: ${(pr_ids || []).join(", ")}`,
-              items,
-            })
-          );
-        } catch (syncConsErr: any) {
-          console.error("[AUTO_SYNC_CONSOLIDATED_PO_TO_INTERNAL_ORDER_ERR]:", syncConsErr?.message || syncConsErr);
-        }
-      }
       return NextResponse.json({ success: true, po_code: poCode, po_id: result.po_id });
     }
 

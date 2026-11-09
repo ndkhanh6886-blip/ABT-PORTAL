@@ -27,8 +27,8 @@ const PAYMENT_LABEL: Record<string, { label: string; className: string }> = {
   PAID: { label: "Đã trả", className: "text-emerald-600" },
 };
 
-const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
-const fmt = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(r3(n));
+const r3 = (v: any) => Math.round(Number(v) || 0);
+const fmt = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(r3(n));
 const day = (v: any) => (v ? String(v).slice(0, 10).split("-").reverse().join("-") : "—");
 
 export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, cleanItemName, itemSourcePR, statusLabel, paymentStatus }: POLineItemsViewProps) {

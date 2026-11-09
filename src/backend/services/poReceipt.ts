@@ -11,7 +11,7 @@
  *  5. Hiển thị Giá Nhập Kho (PNK) bên cạnh Giá PO để Kế toán đối chiếu và chủ động điều chỉnh PO nếu có sai lệch.
  */
 
-const r3 = (v: any): number => Math.round((Number(v) || 0) * 1000) / 1000;
+const r3 = (v: any): number => Math.round(Number(v) || 0);
 
 export interface POReceiptLineInput {
   product_code: string;
@@ -221,7 +221,29 @@ export async function reconcileHistoricalPOsWithInbound(
         }
       }
 
-      if (receivedChanged) {
+      const roundedItems = items.map((it: any) => {
+        const q = Number(it?.quantity) || 0;
+        const p = r3(it?.unit_price);
+        const sub = r3(q * p);
+        const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
+        const va = r3((sub * vr) / 100);
+        const tav = r3(sub + va);
+        return {
+          ...it,
+          unit_price: p,
+          subtotal: sub,
+          vat_rate: vr,
+          vat_amount: va,
+          total_after_vat: tav,
+          total: tav,
+        };
+      });
+      const roundedTotal = roundedItems.reduce((s: number, x: any) => s + (Number(x.total_after_vat ?? x.total) || 0), 0);
+      const hasFractionInDb =
+        items.some((it: any) => (Number(it?.unit_price) || 0) !== r3(it?.unit_price) || (Number(it?.total) || 0) !== r3(it?.total)) ||
+        (Number(po.total_amount) || 0) !== r3(po.total_amount);
+
+      if (receivedChanged || hasFractionInDb) {
         const st = String(po.status || "").toUpperCase();
         const allDone = items.every(
           (it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it?.quantity) || 0)
@@ -235,9 +257,11 @@ export async function reconcileHistoricalPOsWithInbound(
               SET received_qty = $1::jsonb,
                   status = $2,
                   inbound_transaction_code = COALESCE(inbound_transaction_code, $3),
+                  items = $4::jsonb,
+                  total_amount = $5,
                   version = COALESCE(version, 0) + 1
-            WHERE id = $4`,
-          [JSON.stringify(received), newStatus, txCode, po.id]
+            WHERE id = $6`,
+          [JSON.stringify(received), newStatus, txCode, JSON.stringify(roundedItems), roundedTotal || r3(po.total_amount), po.id]
         ).catch(() => {});
       }
     }
@@ -390,8 +414,29 @@ export function attachInboundPriceComparisonToPOs(orders: any[], inboundTxRows: 
       }
     });
 
+    const normalizedItems = items.map((it: any) => {
+      const q = Number(it?.quantity) || 0;
+      const p = r3(it?.unit_price);
+      const sub = r3(q * p);
+      const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
+      const va = r3((sub * vr) / 100);
+      const tav = r3(sub + va);
+      return {
+        ...it,
+        unit_price: p,
+        subtotal: sub,
+        vat_rate: vr,
+        vat_amount: va,
+        total_after_vat: tav,
+        total: tav,
+      };
+    });
+    const normalizedTotal = normalizedItems.reduce((s: number, x: any) => s + (Number(x.total_after_vat ?? x.total) || 0), 0);
+
     return {
       ...po,
+      items: normalizedItems,
+      total_amount: normalizedTotal > 0 ? normalizedTotal : r3(po.total_amount),
       inbound_price_map: inboundPriceMap,
       inbound_received_value: r3(inboundReceivedValue),
       inbound_total_po_value: r3(inboundTotalPoValue),

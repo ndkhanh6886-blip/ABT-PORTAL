@@ -1,5 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { formatVNDate } from "@/backend/services/dates";
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
@@ -8,7 +9,7 @@ export function cn(...inputs: ClassValue[]) {
 export function formatCurrency(amount: number | string | undefined | null): string {
   if (amount === undefined || amount === null || isNaN(Number(amount))) return "0 VNĐ";
   // Tiền đồng không có phần lẻ: làm tròn khi hiển thị (giá lưu có thể còn số lẻ do quy đổi ngoại tệ)
-  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(Math.round((Number(amount) || 0) * 1000) / 1000) + " VNĐ";
+  return new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(Math.round(Number(amount) || 0)) + " VNĐ";
 }
 
 /**
@@ -39,19 +40,17 @@ export function parseDateSafe(input?: string | Date | number | null): Date | nul
 
 /**
  * Định dạng ngày theo múi giờ Việt Nam (UTC+7 / Asia/Ho_Chi_Minh)
- * Chuẩn: DD/MM/YYYY
+ * Chuẩn: DD-MM-YYYY
  */
 export function formatDate(dateString?: string | Date | number | null): string {
   if (!dateString) return "-";
+  // ngày kiểu Việt Nam đọc trước (new Date("05/11/2026") hiểu là 11/05 kiểu Mỹ)
+  const vn = formatVNDate(dateString);
+  if (vn) return vn;
   const d = parseDateSafe(dateString);
   if (!d) return String(dateString);
   try {
-    return d.toLocaleDateString("vi-VN", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric"
-    });
+    return formatVNDate(d);
   } catch {
     return String(dateString);
   }
@@ -78,18 +77,13 @@ export function formatVietnamTime(dateInput?: string | Date | number | null): st
 
 /**
  * Định dạng ngày theo múi giờ Việt Nam (UTC+7 / Asia/Ho_Chi_Minh)
- * Chuẩn: DD/MM/YYYY
+ * Chuẩn: DD-MM-YYYY
  */
 export function formatVietnamDate(dateInput?: string | Date | number | null): string {
   const d = parseDateSafe(dateInput);
   if (!d) return "";
   try {
-    return d.toLocaleDateString("vi-VN", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric"
-    });
+    return formatVNDate(d);
   } catch {
     return "";
   }
@@ -97,7 +91,7 @@ export function formatVietnamDate(dateInput?: string | Date | number | null): st
 
 /**
  * Định dạng đầy đủ Giờ & Ngày theo múi giờ Việt Nam (UTC+7 / Asia/Ho_Chi_Minh)
- * Ví dụ: "19:55:38 • 07/10/2026" hoặc "19:55 • 07/10/2026"
+ * Ví dụ: "19:55:38 • 07-10-2026" hoặc "19:55 • 07-10-2026"
  */
 export function formatVietnamDateTime(
   dateInput?: string | Date | number | null,
@@ -113,12 +107,7 @@ export function formatVietnamDateTime(
       ...(includeSeconds ? { second: "2-digit" } : {}),
       hour12: false
     });
-    const date = d.toLocaleDateString("vi-VN", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric"
-    });
+    const date = formatVNDate(d);
     return `${time} • ${date}`;
   } catch {
     return "";
@@ -127,7 +116,7 @@ export function formatVietnamDateTime(
 
 /**
  * Nhãn ngày trực quan theo múi giờ Việt Nam (Dùng cho dải phân cách ngày / Date divider trong Chat)
- * Ví dụ: "Hôm nay, 07/10/2026", "Hôm qua, 06/10/2026", "Thứ Bảy, 03/10/2026"
+ * Ví dụ: "Hôm nay, 07-10-2026", "Hôm qua, 06-10-2026", "Thứ Bảy, 03-10-2026"
  */
 export function getVietnamDateLabel(dateInput?: string | Date | number | null): string {
   const d = parseDateSafe(dateInput);
@@ -140,12 +129,7 @@ export function getVietnamDateLabel(dateInput?: string | Date | number | null): 
     const targetDate = new Date(dateStr + "T00:00:00");
     const diffDays = Math.round((today.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
     
-    const dateFormatted = d.toLocaleDateString("vi-VN", {
-      timeZone: "Asia/Ho_Chi_Minh",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric"
-    });
+    const dateFormatted = formatVNDate(d);
 
     if (diffDays === 0) return `Hôm nay, ${dateFormatted}`;
     if (diffDays === 1) return `Hôm qua, ${dateFormatted}`;

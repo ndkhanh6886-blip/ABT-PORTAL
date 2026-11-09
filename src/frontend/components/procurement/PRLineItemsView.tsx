@@ -16,7 +16,7 @@ import React, { useMemo, useState } from "react";
 import { CheckSquare, Square, PackageCheck, Eye, AlertTriangle } from "lucide-react";
 import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
-import { toVNDateString } from "@/backend/services/dates";
+import { toVNDateString, formatVNDate } from "@/backend/services/dates";
 import { ItemStockHover, type ItemDemandInfo } from "@/frontend/components/procurement/ItemStockHover";
 
 type POInfo = { hasPO: boolean; poCode?: string; linkedPO?: any };
@@ -89,7 +89,7 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
       if (!sup) continue;
       const k = codeKey(sp.product_code);
       const list = m.get(k) || [];
-      list.push({ supplier: sup, price: Number(sp.purchase_price) || 0, source: "PRICE_LIST" });
+      list.push({ supplier: sup, price: Math.round(Number(sp.purchase_price) || 0), source: "PRICE_LIST" });
       m.set(k, list);
     }
     return m;
@@ -111,7 +111,7 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
         if (!k) continue;
         const bySup = m.get(k) || new Map<string, Offer>();
         if (!bySup.has(String(sup.id))) {
-          bySup.set(String(sup.id), { supplier: sup, price: Number(it.unit_price) || 0, source: "LAST_PURCHASE", date: o.order_date, poCode: o.po_code });
+          bySup.set(String(sup.id), { supplier: sup, price: Math.round(Number(it.unit_price) || 0), source: "LAST_PURCHASE", date: o.order_date, poCode: o.po_code });
         }
         m.set(k, bySup);
       }
@@ -473,7 +473,7 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
                   </td>
                   <td className="py-2 px-2 text-center whitespace-nowrap">{l.unit}</td>
                   <td className="py-2 px-2 text-right font-mono font-bold">{l.qty}</td>
-                  <td className="py-2 px-2 whitespace-nowrap">{l.dueDate ? String(l.dueDate).slice(0, 10) : "—"}</td>
+                  <td className="py-2 px-2 whitespace-nowrap">{formatVNDate(l.dueDate, "—")}</td>
                   <td className="py-2 px-2">
                     {l.poInfo.hasPO ? (
                       <span className="text-slate-500">{l.poInfo.linkedPO ? supShort(supplierById.get(String(l.poInfo.linkedPO.supplier_id)) || { name: l.poInfo.linkedPO.supplier_name }) : "—"}</span>
@@ -504,7 +504,7 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
                         </select>
                         <div className="text-[10px] text-slate-400 mt-0.5">
                           {lineOffer?.source === "LAST_PURCHASE"
-                            ? `Mua gần nhất ${String(lineOffer.date || "").slice(0, 10)}${lineOffer.poCode ? ` (${lineOffer.poCode})` : ""}`
+                            ? `Mua gần nhất ${formatVNDate(lineOffer.date, String(lineOffer.date || "").slice(0, 10))}${lineOffer.poCode ? ` (${lineOffer.poCode})` : ""}`
                             : lineOffer?.source === "PRICE_LIST" ? "Theo bảng giá NCC (chưa mua lần nào)" : sid ? "Chọn tay" : ""}
                           {l.offers.length > 1 ? ` • ${l.offers.length} NCC có mã này` : ""}
                         </div>
