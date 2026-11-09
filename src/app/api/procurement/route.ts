@@ -31,6 +31,7 @@ function canRecordSupplierPayment(user: AuthorizedUser) {
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
+import { syncInboundPricesToPOs, reconcileHistoricalPOsWithInbound } from "@/backend/services/poReceipt";
 import { withTransaction as withFactoryTx } from "@/factory/core/db";
 import { syncKdOrderOrPoToInternalOrder } from "@/factory/intake/orderDispatchOps";
 
@@ -231,6 +232,7 @@ export async function GET(req: NextRequest) {
 
     if (action === "overview") {
       await syncCatalogSuppliersAndProducts();
+      await reconcileHistoricalPOsWithInbound(query);
 
       const safeQuery = async (sql: string, params?: any[]) => {
         try {
@@ -438,25 +440,22 @@ export async function GET(req: NextRequest) {
         }
         return acc + (parseFloat(o.amount_amount || o.amount_paid) || 0);
       }, 0);
-      // Công nợ phải trả chỉ phát sinh trên phần hàng ĐÃ NHẬN KHO (giá trị nhận − đã trả); PO chưa nhập kho chưa là nợ
+      // Công nợ cần trả NCC: tính trên tổng giá trị PO (hoặc tổng các dòng hàng) trừ số tiền đã thanh toán
       const totalPayable = liveOrders.reduce((acc: number, o: any) => {
-        const tot = parseFloat(o.total_amount) || 0;
-        const rawPaid = parseFloat(o.amount_amount || o.amount_paid) || 0;
-        const paid = String(o.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? tot : rawPaid;
         let its: any = o.items;
         if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
         its = Array.isArray(its) ? its : [];
-        const rq = o.received_qty || {};
-        const legacyFull = String(o.status || "").toUpperCase() === "COMPLETED" && Object.keys(rq).length === 0;
-        let orderedVal = 0, recVal = 0, orderedQty = 0, recQty = 0;
-        its.forEach((it: any, i: number) => {
+        const calcTot = its.reduce((sum: number, it: any) => {
           const q = Number(it?.quantity) || 0;
-          const r = legacyFull ? q : (Number(rq[i] ?? rq[String(i)]) || 0);
           const pr = Number(it?.unit_price) || 0;
-          orderedVal += q * pr; recVal += Math.min(r, q) * pr; orderedQty += q; recQty += Math.min(r, q);
-        });
-        const ratio = orderedVal > 0 ? recVal / orderedVal : (orderedQty > 0 ? recQty / orderedQty : 0);
-        return acc + Math.max(0, tot * ratio - paid);
+          const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
+          const sub = q * pr;
+          return sum + sub + (sub * vr) / 100;
+        }, 0);
+        const tot = Math.max(parseFloat(o.total_amount) || 0, Math.round(calcTot * 1000) / 1000);
+        const rawPaid = parseFloat(o.amount_amount || o.amount_paid) || 0;
+        const paid = String(o.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? tot : rawPaid;
+        return acc + Math.max(0, tot - paid);
       }, 0);
       const activeOrders = orders.filter((o: any) => o.status !== "COMPLETED" && o.status !== "CANCELLED").length;
       const pendingPRs = purchaseRequests.filter((pr: any) => pr.status === "PENDING" || pr.status === "APPROVED").length;
@@ -1704,7 +1703,7 @@ export async function POST(req: NextRequest) {
         const autoPlanned: Record<number, number> = {};
         const resolveLineIndex = (ln: any): number => {
           const raw = ln?.line_index;
-          if (raw !== undefined && raw !== null && raw !== "" && Number.isInteger(Number(raw))) return Number(raw);
+          if (raw !== undefined && raw !== null && raw !== "" && Number.isInteger(Number(raw)) && Number(raw) >= 0) return Number(raw);
           const code = String(ln?.product_code || ln?.productCode || "").trim().toUpperCase();
           if (!code) return -1;
           const cands = poItems.map((_: any, i: number) => i).filter((i: number) => String(poItems[i]?.product_code || "").trim().toUpperCase() === code);
@@ -1909,14 +1908,13 @@ export async function POST(req: NextRequest) {
         for (const [k, q] of Object.entries(thisReceipt)) received[k] = (Number(received[k]) || 0) + q;
         const allDone = poItems.every((it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it.quantity) || 0));
         const newStatus = allDone ? "COMPLETED" : "PARTIALLY_RECEIVED";
-        const newPoTotalAmount = poPriceUpdated
-          ? Math.round(poItems.reduce((sum: number, it: any) => {
-              const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
-              const sub = r3((Number(it?.quantity) || 0) * r3(it?.unit_price));
-              const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
-              return sum + sub + r3((sub * vr) / 100);
-            }, 0) * 1000) / 1000
-          : Number(po.total_amount) || 0;
+        const computedPoTotal = Math.round(poItems.reduce((sum: number, it: any) => {
+          const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
+          const sub = r3((Number(it?.quantity) || 0) * r3(it?.unit_price));
+          const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
+          return sum + sub + r3((sub * vr) / 100);
+        }, 0) * 1000) / 1000;
+        const newPoTotalAmount = poPriceUpdated || computedPoTotal > 0 ? computedPoTotal : (Number(po.total_amount) || 0);
         await c.query(
           `UPDATE procurement_orders
               SET status = $1, received_qty = $2::jsonb,
@@ -1926,6 +1924,27 @@ export async function POST(req: NextRequest) {
                   version = COALESCE(version, 0) + 1
             WHERE id = $4`,
           [newStatus, JSON.stringify(received), inboundCode, po.id, JSON.stringify(poItems), newPoTotalAmount]
+        );
+        // Đồng bộ bảng giá NCC và các PO khác đang để giá 0đ của cùng mã hàng
+        await syncInboundPricesToPOs(
+          c,
+          clean.map((x: any) => ({
+            product_code: x.pCode,
+            product_name: x.poIt?.product_name || x.pCode,
+            specification: x.specification || "",
+            unit: x.unit || "Hộp",
+            quantity: x.qty,
+            unit_price: x.unit_price,
+            cost_price: x.unit_price,
+          })),
+          {
+            reference_code: po.po_code,
+            transaction_code: inboundCode,
+            supplier_name: po.supplier_name || "",
+            vat_invoice_no: vat_invoice_no ? String(vat_invoice_no).trim() : "",
+            invoice_date: effectiveDate,
+            is_new_inbound: false,
+          }
         );
         // Hóa đơn đầu vào của đợt nhận hàng này: lưu thành dòng riêng trên PO để hiện cột / lọc theo số HĐ
         const invNo = String(vat_invoice_no || "").trim();

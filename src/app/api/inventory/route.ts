@@ -23,7 +23,7 @@ import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { syncCatalogSuppliersAndProducts, unmarkSupplierDeleted } from "@/backend/services/supplierCatalogSync";
 import { resolveActualProductCategory } from "@/backend/services/catalogStore";
-import { applyPOReceipt } from "@/backend/services/poReceipt";
+import { applyPOReceipt, syncInboundPricesToPOs, reconcileHistoricalPOsWithInbound } from "@/backend/services/poReceipt";
 import {
   addStock,
   removeStock,
@@ -316,6 +316,8 @@ export async function GET(req: NextRequest) {
            WHERE i.product_code = s.product_code
              AND (COALESCE(i.quantity_on_hand, -1) <> s.total_qty OR (i.lot_number IS NULL AND s.earliest_lot IS NOT NULL))
         `).catch(() => {});
+
+        await reconcileHistoricalPOsWithInbound(query).catch(() => {});
       }
 
       // Chạy theo 2 đợt nhỏ thay vì bắn 12 câu lệnh song song cùng lúc để tránh nghẽn connection pool (max 25)
@@ -691,6 +693,29 @@ export async function POST(req: NextRequest) {
         for (const entry of catalogEntries) {
           await appendCommercialCatalogEntry(c, entry);
         }
+
+        // Đồng bộ đơn giá nhập, số lượng thực nhận, trạng thái & tổng tiền sang Đơn Đặt Mua Hàng (PO) và bảng giá NCC
+        await syncInboundPricesToPOs(
+          c,
+          lines.map((it: any) => ({
+            product_code: String(it.product_code || it.productCode || "").trim(),
+            product_name: String(it.product_name || it.name || "").trim(),
+            specification: String(it.specification || "").trim(),
+            unit: String(it.unit || "Hộp").trim(),
+            quantity: Number(it.quantity) || 0,
+            unit_price: Number(it.unit_price ?? it.cost_price ?? 0) || 0,
+            cost_price: Number(it.cost_price ?? it.unit_price ?? 0) || 0,
+          })),
+          {
+            reference_code: String(reference_code || "").trim(),
+            notes: String(notes || "").trim(),
+            transaction_code: code,
+            supplier_name: String(supplier_name || "").trim(),
+            vat_invoice_no: String(vat_invoice_no || "").trim(),
+            invoice_date: normalizeExcelDateToISO(date, todayVN()),
+            is_new_inbound: true,
+          }
+        );
       });
 
       await logAudit("INBOUND", "WAREHOUSE", `Nhập kho theo phiếu ${code} (Tham chiếu: ${reference_code || vat_invoice_no || "N/A"})${inbound_reason ? ` - ${inbound_reason}` : ""}`);
@@ -1060,6 +1085,31 @@ export async function POST(req: NextRequest) {
             }
           }
         }
+
+        const wasLinkedToSamePo =
+          String(existingTx.reference_code || "").trim().toUpperCase() === String(finalRefCode || "").trim().toUpperCase() &&
+          /^PO/i.test(String(finalRefCode || "").trim());
+        await syncInboundPricesToPOs(
+          c,
+          cleanItems.map((ci: any) => ({
+            product_code: String(ci.product_code || ci.productCode || "").trim(),
+            product_name: String(ci.product_name || ci.name || "").trim(),
+            specification: String(ci.specification || "").trim(),
+            unit: String(ci.unit || "Hộp").trim(),
+            quantity: Number(ci.quantity) || 0,
+            unit_price: Number(ci.unit_price ?? ci.cost_price ?? 0) || 0,
+            cost_price: Number(ci.cost_price ?? ci.unit_price ?? 0) || 0,
+          })),
+          {
+            reference_code: String(finalRefCode || "").trim(),
+            notes: String(notes ?? existingTx.notes ?? "").trim(),
+            transaction_code: finalTxCode,
+            supplier_name: String(supplier_name || "").trim(),
+            vat_invoice_no: String(vat_invoice_no || "").trim(),
+            invoice_date: normalizeExcelDateToISO(date, todayVN()),
+            is_new_inbound: !wasLinkedToSamePo && /^PO/i.test(String(finalRefCode || "").trim()),
+          }
+        );
       });
 
       await logAudit("UPDATE_INBOUND", "WAREHOUSE", `Chỉnh sửa / bổ sung thông tin Phiếu Nhập Kho ${finalTxCode} (Tham chiếu: ${reference_code || vat_invoice_no || "N/A"}, NCC: ${supplier_name || "—"})`);
@@ -1203,6 +1253,14 @@ export async function POST(req: NextRequest) {
               [product_code, newLot, newExp, newLoc || itemRow.rows[0]?.warehouse_location || "Kho Trung Tâm", qtyOnHand, newUnitCost || 0]
             );
           }
+        }
+
+        if (newUnitCost !== null && newUnitCost > 0) {
+          await syncInboundPricesToPOs(
+            c,
+            [{ product_code: String(product_code).trim(), quantity: 0, unit_price: newUnitCost, cost_price: newUnitCost }],
+            { is_new_inbound: false }
+          );
         }
       });
       await logAudit("UPDATE_ITEM", "INVENTORY", `Cập nhật thông tin lô & bảo quản cho ${product_code}: Lô ${lot_number || "—"}, HSD ${expiry_date || "—"}, Bảo quản ${storage_condition || "—"}, Kệ ${shelf_position || "—"}`);
@@ -1997,18 +2055,28 @@ export async function POST(req: NextRequest) {
             for (const entry of catalogEntries) {
               await appendCommercialCatalogEntry(c, entry);
             }
-            // Dòng có Mã PO: cộng số thực nhận vào đúng dòng của PO đó (trước đây chỉ ghi mã PO làm tham chiếu)
-            const byPo = new Map<string, { inboundCode: string; lines: { product_code: string; quantity: number }[] }>();
+            // Dòng có Mã PO: cộng số thực nhận & đồng bộ đơn giá vào đúng dòng của PO đó
+            const byPo = new Map<string, { inboundCode: string; lines: { product_code: string; quantity: number; unit_price?: number }[] }>();
             for (const p of parsedInbound) {
               const pc = String(p.poCode || "").trim();
               if (!pc) continue;
-              const g = byPo.get(pc) || { inboundCode: p.inboundCode, lines: [] as { product_code: string; quantity: number }[] };
-              g.lines.push({ product_code: p.pCode, quantity: Number(p.qty) || 0 });
+              const g = byPo.get(pc) || { inboundCode: p.inboundCode, lines: [] as { product_code: string; quantity: number; unit_price?: number }[] };
+              g.lines.push({ product_code: p.pCode, quantity: Number(p.qty) || 0, unit_price: Number(p.unitCost) || 0 });
               byPo.set(pc, g);
             }
             for (const [pc, g] of byPo) {
               await applyPOReceipt(c, pc, g.lines, g.inboundCode);
             }
+            await syncInboundPricesToPOs(
+              c,
+              parsedInbound.map((p: any) => ({
+                product_code: String(p.pCode || "").trim(),
+                quantity: Number(p.qty) || 0,
+                unit_price: Number(p.unitCost) || 0,
+                cost_price: Number(p.unitCost) || 0,
+              })),
+              { is_new_inbound: false }
+            );
             if (Array.isArray(contact_rows) && contact_rows.length > 0) {
               for (const cr of contact_rows) {
                 const getCrVal = createGetVal(cr);

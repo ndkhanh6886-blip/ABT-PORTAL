@@ -1094,9 +1094,6 @@ export const ProcurementModule: React.FC = () => {
    *  - Còn nợ = Giá trị đã nhận − Đã trả (> 0); Trả trước NCC = Đã trả − Giá trị đã nhận (> 0)
    */
   const poDebt = (po: any) => {
-    const total = parseFloat(po?.total_amount) || 0;
-    const rawPaid = parseFloat(po?.amount_paid) || 0;
-    const paid = String(po?.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? total : rawPaid;
     let its: any = po?.items;
     if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
     its = Array.isArray(its) ? its : [];
@@ -1108,17 +1105,18 @@ export const ProcurementModule: React.FC = () => {
       const unitGross = c.qty > 0 ? c.totalAfterVat / c.qty : c.price * (1 + c.vatRate / 100);
       orderedVal += q * unitGross; recVal += r * unitGross; orderedQty += q; recQty += r;
     });
+    const total = Math.max(parseFloat(po?.total_amount) || 0, roundPrice3(orderedVal));
+    const rawPaid = parseFloat(po?.amount_paid) || 0;
+    const paid = String(po?.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? total : rawPaid;
     const ratio = orderedVal > 0 ? recVal / orderedVal : (orderedQty > 0 ? recQty / orderedQty : 0);
-    const received = Math.round(total * ratio);
-    const payable = Math.max(0, received - paid);
-    const prepaid = Math.max(0, paid - received);
-    const unreceived = Math.max(0, total - received);
+    const received = roundPrice3(total * ratio);
+    const payable = Math.max(0, roundPrice3(total - paid));
+    const prepaid = Math.max(0, roundPrice3(paid - total));
+    const unreceived = Math.max(0, roundPrice3(total - received));
     let status: "NO_PRICE" | "NOT_INCURRED" | "DEBT" | "PARTIAL_PAID" | "PREPAID" | "PAID_RECEIVED_PART" | "SETTLED";
     if (total <= 0.5) status = "NO_PRICE";
     else if (payable > 0.5) status = paid > 0.5 ? "PARTIAL_PAID" : "DEBT";
     else if (prepaid > 0.5) status = "PREPAID";
-    else if (received <= 0.5) status = "NOT_INCURRED";
-    else if (unreceived > 0.5) status = "PAID_RECEIVED_PART";
     else status = "SETTLED";
     return { total, paid, received, payable, prepaid, unreceived, status, canPay: total > 0.5 && paid < total - 0.5 };
   };
@@ -3454,12 +3452,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   // Header KPIs use the very same lists as the tabs, so the numbers always agree (and refresh after every edit)
   const liveStats = useMemo(() => {
     const live = orders.filter(o => o.status !== "CANCELLED");
-    const totalSpend = live.reduce((a, o) => a + (parseFloat(o.total_amount) || 0), 0);
-    const totalPaid = live.reduce((a, o) => {
-      if (getPOPaymentStatus(o) === "PAID") return a + (parseFloat(o.total_amount) || 0);
-      return a + (parseFloat(o.amount_paid) || 0);
-    }, 0);
-    // Công nợ phải trả = phần hàng đã nhận kho chưa trả (PO chưa nhập kho chưa là nợ)
+    const totalSpend = live.reduce((a, o) => a + poDebt(o).total, 0);
+    const totalPaid = live.reduce((a, o) => a + poDebt(o).paid, 0);
     const totalPayable = live.reduce((a, o) => a + poDebt(o).payable, 0);
     return {
       total_spend: totalSpend,
