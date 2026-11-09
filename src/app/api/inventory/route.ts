@@ -23,7 +23,7 @@ import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { syncCatalogSuppliersAndProducts, unmarkSupplierDeleted } from "@/backend/services/supplierCatalogSync";
 import { resolveActualProductCategory } from "@/backend/services/catalogStore";
-import { applyPOReceipt, syncInboundPricesToPOs, reconcileHistoricalPOsWithInbound } from "@/backend/services/poReceipt";
+import { applyPOReceipt, reconcileHistoricalPOsWithInbound } from "@/backend/services/poReceipt";
 import {
   addStock,
   removeStock,
@@ -694,28 +694,18 @@ export async function POST(req: NextRequest) {
           await appendCommercialCatalogEntry(c, entry);
         }
 
-        // Đồng bộ đơn giá nhập, số lượng thực nhận, trạng thái & tổng tiền sang Đơn Đặt Mua Hàng (PO) và bảng giá NCC
-        await syncInboundPricesToPOs(
-          c,
-          lines.map((it: any) => ({
-            product_code: String(it.product_code || it.productCode || "").trim(),
-            product_name: String(it.product_name || it.name || "").trim(),
-            specification: String(it.specification || "").trim(),
-            unit: String(it.unit || "Hộp").trim(),
-            quantity: Number(it.quantity) || 0,
-            unit_price: Number(it.unit_price ?? it.cost_price ?? 0) || 0,
-            cost_price: Number(it.cost_price ?? it.unit_price ?? 0) || 0,
-          })),
-          {
-            reference_code: String(reference_code || "").trim(),
-            notes: String(notes || "").trim(),
-            transaction_code: code,
-            supplier_name: String(supplier_name || "").trim(),
-            vat_invoice_no: String(vat_invoice_no || "").trim(),
-            invoice_date: normalizeExcelDateToISO(date, todayVN()),
-            is_new_inbound: true,
-          }
-        );
+        // Chỉ đồng bộ số lượng thực nhận & trạng thái sang Đơn Đặt Mua Hàng (PO), KHÔNG ghi đè đơn giá PO
+        if (reference_code && /^PO/i.test(String(reference_code).trim())) {
+          await applyPOReceipt(
+            c,
+            String(reference_code).trim(),
+            lines.map((it: any) => ({
+              product_code: String(it.product_code || it.productCode || "").trim(),
+              quantity: Number(it.quantity) || 0,
+            })),
+            code
+          );
+        }
       });
 
       await logAudit("INBOUND", "WAREHOUSE", `Nhập kho theo phiếu ${code} (Tham chiếu: ${reference_code || vat_invoice_no || "N/A"})${inbound_reason ? ` - ${inbound_reason}` : ""}`);
@@ -1008,48 +998,29 @@ export async function POST(req: NextRequest) {
           ]
         );
 
-        // Đồng bộ ngược đơn giá / số hóa đơn sang Đơn Đặt Mua (PO) nếu phiếu nhập liên kết với PO
+        // Nếu phiếu nhập mới liên kết với PO (hoặc đổi sang PO mới), đồng bộ số lượng thực nhận & số hóa đơn (KHÔNG ghi đè giá PO)
+        const wasLinkedToSamePo =
+          String(existingTx.reference_code || "").trim().toUpperCase() === String(finalRefCode || "").trim().toUpperCase() &&
+          /^PO/i.test(String(finalRefCode || "").trim());
         if (/^PO/i.test(String(finalRefCode).trim())) {
           const poCodeRef = String(finalRefCode).trim();
+          if (!wasLinkedToSamePo) {
+            await applyPOReceipt(
+              c,
+              poCodeRef,
+              cleanItems.map((ci: any) => ({
+                product_code: String(ci.product_code || ci.productCode || "").trim(),
+                quantity: Number(ci.quantity) || 0,
+              })),
+              finalTxCode
+            );
+          }
           const poRes = await c.query(
-            `SELECT id, items, supplier_invoices FROM procurement_orders WHERE po_code = $1 FOR UPDATE`,
+            `SELECT id, supplier_invoices FROM procurement_orders WHERE po_code = $1 FOR UPDATE`,
             [poCodeRef]
           );
           if (poRes.rows.length > 0) {
             const poRow = poRes.rows[0];
-            let poItems: any[] = [];
-            try {
-              poItems = typeof poRow.items === "string" ? JSON.parse(poRow.items || "[]") : (Array.isArray(poRow.items) ? poRow.items : []);
-            } catch {
-              poItems = [];
-            }
-            let poChanged = false;
-            const updatedPoItems = poItems.map((poIt: any) => {
-              const code = String(poIt?.product_code || "").trim().toUpperCase();
-              const matchedClean = cleanItems.find(
-                (ci: any) => String(ci?.product_code || ci?.productCode || "").trim().toUpperCase() === code && Number(ci?.unit_price) > 0
-              );
-              if (matchedClean && Number(matchedClean.unit_price) !== Number(poIt.unit_price || 0)) {
-                poChanged = true;
-                const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
-                const qty = Number(poIt.quantity) || 1;
-                const price = r3(matchedClean.unit_price);
-                const subtotal = r3(qty * price);
-                const vatRate = Math.max(0, Number(poIt.vat_rate ?? poIt.tax_rate ?? 0) || 0);
-                const vatAmount = r3((subtotal * vatRate) / 100);
-                const totalAfterVat = r3(subtotal + vatAmount);
-                return {
-                  ...poIt,
-                  unit_price: price,
-                  subtotal,
-                  vat_rate: vatRate,
-                  vat_amount: vatAmount,
-                  total_after_vat: totalAfterVat,
-                  total: totalAfterVat
-                };
-              }
-              return poIt;
-            });
             let invList: any[] = [];
             try {
               invList = typeof poRow.supplier_invoices === "string" ? JSON.parse(poRow.supplier_invoices || "[]") : (Array.isArray(poRow.supplier_invoices) ? poRow.supplier_invoices : []);
@@ -1057,59 +1028,22 @@ export async function POST(req: NextRequest) {
               invList = [];
             }
             const cleanInvNo = String(vat_invoice_no || "").trim();
-            let invChanged = false;
             if (cleanInvNo && cleanInvNo !== "N/A" && !invList.some((x: any) => String(x?.invoice_no || "").trim() === cleanInvNo)) {
               invList.push({
                 invoice_no: cleanInvNo,
                 invoice_date: normalizeExcelDateToISO(date, todayVN()),
                 inbound_code: finalTxCode
               });
-              invChanged = true;
-            }
-            if (poChanged || invChanged) {
-              const newTotal = Math.round(updatedPoItems.reduce((s: number, x: any) => {
-                const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
-                const sub = r3((Number(x.quantity) || 0) * r3(x.unit_price));
-                const vr = Math.max(0, Number(x?.vat_rate ?? x?.tax_rate ?? 0) || 0);
-                return s + sub + r3((sub * vr) / 100);
-              }, 0) * 1000) / 1000;
               await c.query(
                 `UPDATE procurement_orders
-                    SET items = $1::jsonb,
-                        total_amount = $2,
-                        supplier_invoices = $3::jsonb,
+                    SET supplier_invoices = $1::jsonb,
                         version = COALESCE(version, 0) + 1
-                  WHERE id = $4`,
-                [JSON.stringify(updatedPoItems), newTotal, JSON.stringify(invList), poRow.id]
+                  WHERE id = $2`,
+                [JSON.stringify(invList), poRow.id]
               );
             }
           }
         }
-
-        const wasLinkedToSamePo =
-          String(existingTx.reference_code || "").trim().toUpperCase() === String(finalRefCode || "").trim().toUpperCase() &&
-          /^PO/i.test(String(finalRefCode || "").trim());
-        await syncInboundPricesToPOs(
-          c,
-          cleanItems.map((ci: any) => ({
-            product_code: String(ci.product_code || ci.productCode || "").trim(),
-            product_name: String(ci.product_name || ci.name || "").trim(),
-            specification: String(ci.specification || "").trim(),
-            unit: String(ci.unit || "Hộp").trim(),
-            quantity: Number(ci.quantity) || 0,
-            unit_price: Number(ci.unit_price ?? ci.cost_price ?? 0) || 0,
-            cost_price: Number(ci.cost_price ?? ci.unit_price ?? 0) || 0,
-          })),
-          {
-            reference_code: String(finalRefCode || "").trim(),
-            notes: String(notes ?? existingTx.notes ?? "").trim(),
-            transaction_code: finalTxCode,
-            supplier_name: String(supplier_name || "").trim(),
-            vat_invoice_no: String(vat_invoice_no || "").trim(),
-            invoice_date: normalizeExcelDateToISO(date, todayVN()),
-            is_new_inbound: !wasLinkedToSamePo && /^PO/i.test(String(finalRefCode || "").trim()),
-          }
-        );
       });
 
       await logAudit("UPDATE_INBOUND", "WAREHOUSE", `Chỉnh sửa / bổ sung thông tin Phiếu Nhập Kho ${finalTxCode} (Tham chiếu: ${reference_code || vat_invoice_no || "N/A"}, NCC: ${supplier_name || "—"})`);
@@ -1253,14 +1187,6 @@ export async function POST(req: NextRequest) {
               [product_code, newLot, newExp, newLoc || itemRow.rows[0]?.warehouse_location || "Kho Trung Tâm", qtyOnHand, newUnitCost || 0]
             );
           }
-        }
-
-        if (newUnitCost !== null && newUnitCost > 0) {
-          await syncInboundPricesToPOs(
-            c,
-            [{ product_code: String(product_code).trim(), quantity: 0, unit_price: newUnitCost, cost_price: newUnitCost }],
-            { is_new_inbound: false }
-          );
         }
       });
       await logAudit("UPDATE_ITEM", "INVENTORY", `Cập nhật thông tin lô & bảo quản cho ${product_code}: Lô ${lot_number || "—"}, HSD ${expiry_date || "—"}, Bảo quản ${storage_condition || "—"}, Kệ ${shelf_position || "—"}`);

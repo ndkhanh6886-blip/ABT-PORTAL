@@ -29,7 +29,7 @@ const PAYMENT_LABEL: Record<string, { label: string; className: string }> = {
 
 const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
 const fmt = (n: number) => new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 3 }).format(r3(n));
-const day = (v: any) => (v ? String(v).slice(0, 10).split("-").reverse().join("/") : "—");
+const day = (v: any) => (v ? String(v).slice(0, 10).split("-").reverse().join("-") : "—");
 
 export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, cleanItemName, itemSourcePR, statusLabel, paymentStatus }: POLineItemsViewProps) {
   const [search, setSearch] = useState("");
@@ -54,16 +54,21 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
         const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
         const vatAmount = r3((subtotal * vatRate) / 100);
         const afterVat = r3(subtotal + vatAmount);
+        const codeStr = String(it?.product_code || "").trim();
+        const inbEntry = po?.inbound_price_map?.[codeStr.toUpperCase()];
+        const inboundPrice = r3(inbEntry?.unit_price);
         out.push({
           key: `${po.po_code}#${idx}`,
           po, idx,
-          code: it?.product_code || "",
+          code: codeStr,
           name: cleanItemName(it?.product_name),
           spec: it?.specification || "",
           unit: it?.unit || "",
           qty, received,
           remaining: Math.max(0, qty - received),
           price,
+          inboundPrice,
+          inboundCodes: Array.isArray(inbEntry?.inbound_codes) ? inbEntry.inbound_codes : [],
           subtotal,
           vatRate,
           vatAmount,
@@ -169,7 +174,26 @@ export function POLineItemsView({ orders, suppliers, onOpenPO, receivedOf, clean
                   <td className="py-2 px-1.5 text-right font-mono font-bold whitespace-nowrap">{fmt(l.qty)}</td>
                   <td className="py-2 px-1.5 text-right font-mono whitespace-nowrap">{fmt(l.received)}</td>
                   <td className={`py-2 px-1.5 text-right font-mono font-bold whitespace-nowrap ${l.remaining > 0 ? "text-amber-600" : "text-emerald-600"}`}>{fmt(l.remaining)}</td>
-                  <td className="py-2 px-2 text-right font-mono whitespace-nowrap">{fmt(l.price)}</td>
+                  <td className="py-2 px-2 text-right font-mono whitespace-nowrap">
+                    <div>{fmt(l.price)}</div>
+                    {l.inboundPrice > 0 && (
+                      <div
+                        className={`text-[10px] font-semibold mt-0.5 ${
+                          Math.abs(l.inboundPrice - l.price) > 0.01
+                            ? "text-amber-600 dark:text-amber-400"
+                            : "text-teal-600 dark:text-teal-400"
+                        }`}
+                        title={
+                          l.inboundCodes?.length
+                            ? `Giá nhập kho trên phiếu ${l.inboundCodes.join(", ")}`
+                            : "Giá nhập kho thực tế để đối chiếu"
+                        }
+                      >
+                        PNK: {fmt(l.inboundPrice)}
+                        {Math.abs(l.inboundPrice - l.price) > 0.01 ? " ⚠️" : ""}
+                      </div>
+                    )}
+                  </td>
                   <td className="py-2 px-2 text-right font-mono whitespace-nowrap">{fmt(l.subtotal)}</td>
                   <td className="py-2 px-1.5 text-center font-mono text-indigo-600 whitespace-nowrap">{l.vatRate}%</td>
                   <td className="py-2 px-2 text-right font-mono text-indigo-600 whitespace-nowrap">{fmt(l.vatAmount)}</td>

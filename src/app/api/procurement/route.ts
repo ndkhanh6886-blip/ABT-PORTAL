@@ -31,7 +31,7 @@ function canRecordSupplierPayment(user: AuthorizedUser) {
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
-import { syncInboundPricesToPOs, reconcileHistoricalPOsWithInbound } from "@/backend/services/poReceipt";
+import { reconcileHistoricalPOsWithInbound, attachInboundPriceComparisonToPOs } from "@/backend/services/poReceipt";
 import { withTransaction as withFactoryTx } from "@/factory/core/db";
 import { syncKdOrderOrPoToInternalOrder } from "@/factory/intake/orderDispatchOps";
 
@@ -243,7 +243,7 @@ export async function GET(req: NextRequest) {
         }
       };
 
-      const [suppliersRes, ordersRes, productsRes, inventoryRes, prRes, inventoryItemsRes, reservationsRes, customersRes, supplierProductCountsRes, catalogItemsRes, allSupplierProductsRes] = await Promise.all([
+      const [suppliersRes, ordersRes, productsRes, inventoryRes, prRes, inventoryItemsRes, reservationsRes, customersRes, supplierProductCountsRes, catalogItemsRes, allSupplierProductsRes, inboundTxRes] = await Promise.all([
         safeQuery("SELECT * FROM procurement_suppliers ORDER BY supplier_code ASC, id ASC"),
         safeQuery("SELECT * FROM procurement_orders ORDER BY id DESC"),
         safeQuery("SELECT * FROM products ORDER BY code ASC"),
@@ -282,11 +282,17 @@ export async function GET(req: NextRequest) {
           FROM supplier_products sp
           LEFT JOIN procurement_suppliers ps ON ps.id = sp.supplier_id
           ORDER BY sp.last_updated_at DESC, sp.id DESC
+        `),
+        safeQuery(`
+          SELECT id, transaction_code, reference_code, date, items, notes
+            FROM inventory_transactions
+           WHERE transaction_type = 'INBOUND'
+           ORDER BY id ASC
         `)
       ]);
 
       const suppliers = suppliersRes.rows;
-      const orders = ordersRes.rows;
+      const orders = attachInboundPriceComparisonToPOs(ordersRes.rows, inboundTxRes.rows);
       const allSupplierProductsRaw = allSupplierProductsRes.rows || [];
 
       // Build lookup maps from catalog_items and supplier_products to enrich products & restock alerts
@@ -440,7 +446,7 @@ export async function GET(req: NextRequest) {
         }
         return acc + (parseFloat(o.amount_amount || o.amount_paid) || 0);
       }, 0);
-      // Công nợ cần trả NCC: tính trên tổng giá trị PO (hoặc tổng các dòng hàng) trừ số tiền đã thanh toán
+      // Công nợ cần trả NCC: tính trên giá PO nhưng CHỈ phát sinh đối với số lượng hàng đã thực nhận nhập kho (trừ số tiền đã thanh toán)
       const totalPayable = liveOrders.reduce((acc: number, o: any) => {
         let its: any = o.items;
         if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
@@ -455,7 +461,19 @@ export async function GET(req: NextRequest) {
         const tot = Math.max(parseFloat(o.total_amount) || 0, Math.round(calcTot * 1000) / 1000);
         const rawPaid = parseFloat(o.amount_amount || o.amount_paid) || 0;
         const paid = String(o.payment_status || "").toUpperCase() === "PAID" && rawPaid <= 0 ? tot : rawPaid;
-        return acc + Math.max(0, tot - paid);
+        const st = String(o.status || "").toUpperCase();
+        const rq = o.received_qty && typeof o.received_qty === "object" ? o.received_qty : {};
+        let ordQty = 0;
+        let recQty = 0;
+        its.forEach((it: any, i: number) => {
+          const q = Number(it?.quantity) || 0;
+          ordQty += q;
+          recQty += Math.min(q, Number(rq[i] ?? rq[String(i)]) || 0);
+        });
+        const fullRec = ["COMPLETED", "DELIVERED", "RECEIVED"].includes(st);
+        const ratio = fullRec ? 1 : (ordQty > 0 ? Math.min(1, recQty / ordQty) : 0);
+        const receivedVal = Math.round(tot * ratio * 1000) / 1000;
+        return acc + Math.max(0, receivedVal - paid);
       }, 0);
       const activeOrders = orders.filter((o: any) => o.status !== "COMPLETED" && o.status !== "CANCELLED").length;
       const pendingPRs = purchaseRequests.filter((pr: any) => pr.status === "PENDING" || pr.status === "APPROVED").length;
@@ -951,14 +969,15 @@ export async function POST(req: NextRequest) {
     if (action === "order") {
       const { id, po_code, supplier_id, supplier_name, order_date, expected_delivery_date, status, notes, rollback_reason } = body;
       const rawItems = Array.isArray(body.items) ? body.items : null;
+      const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
       const items = rawItems
         ? rawItems.map((it: any) => {
             const qty = Number(it?.quantity) || 0;
-            const price = Math.round(Number(it?.unit_price) || 0);
-            const subtotal = Math.round(qty * price);
+            const price = r3(it?.unit_price);
+            const subtotal = r3(qty * price);
             const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
-            const vatAmount = Math.round((subtotal * vatRate) / 100);
-            const totalAfterVat = subtotal + vatAmount;
+            const vatAmount = r3((subtotal * vatRate) / 100);
+            const totalAfterVat = r3(subtotal + vatAmount);
             return {
               ...it,
               unit_price: price,
@@ -970,6 +989,17 @@ export async function POST(req: NextRequest) {
             };
           })
         : undefined;
+      if (items) {
+        if (items.length === 0) {
+          throw new HttpError(400, "Đơn PO phải có ít nhất 1 mặt hàng.");
+        }
+        for (let idx = 0; idx < items.length; idx++) {
+          const it = items[idx];
+          if (!(Number(it?.unit_price) > 0)) {
+            throw new HttpError(400, `Dòng #${idx + 1} (${it?.product_code || it?.product_name || "Mặt hàng"}): Bắt buộc phải nhập Đơn giá PO (> 0 VNĐ) trước khi lưu đơn đặt mua hàng!`);
+          }
+        }
+      }
       const total_amount = items
         ? Math.round(items.reduce((sum: number, it: any) => sum + (Number(it.total_after_vat ?? it.total) || 0), 0) * 1000) / 1000
         : body.total_amount;
@@ -1045,7 +1075,8 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // C4: amount_paid is strictly owned by record_payment, never overwritten by order edit
+          // C4: amount_paid is strictly owned by record_payment, never overwritten by order edit.
+          // Lưu ý: Giá PO và giá Nhập kho (PNK) được quản lý độc lập để đối chiếu; chỉnh sửa giá PO KHÔNG ghi đè giá trên Phiếu Nhập Kho (PNK).
           const upd = await c.query(
             `UPDATE procurement_orders 
              SET supplier_id=COALESCE($1, supplier_id), supplier_name=COALESCE($2, supplier_name), 
@@ -1055,65 +1086,6 @@ export async function POST(req: NextRequest) {
              WHERE id=$9 RETURNING version`,
             [supplier_id || null, supplier_name || "Nhà cung cấp / Hãng", order_date, expected_delivery_date, items ? JSON.stringify(items) : null, total_amount, safeStatus, notes, targetId]
           );
-
-          // Đồng bộ đơn giá & nhà cung cấp từ PO sang các Phiếu Nhập Kho (PNK), Lô tồn kho & Danh mục sản phẩm liên kết
-          if (Array.isArray(items) && items.length > 0 && finalPoCode) {
-            const txRes = await c.query(
-              `SELECT id, items FROM inventory_transactions WHERE transaction_type = 'INBOUND' AND reference_code = $1 FOR UPDATE`,
-              [finalPoCode]
-            );
-            for (const txRow of txRes.rows) {
-              let txItems: any[] = [];
-              try {
-                txItems = typeof txRow.items === "string" ? JSON.parse(txRow.items || "[]") : (Array.isArray(txRow.items) ? txRow.items : []);
-              } catch {
-                txItems = [];
-              }
-              let txChanged = false;
-              const updatedLots: Array<{ code: string; lot: string; price: number }> = [];
-              const updatedTxItems = txItems.map((ti: any) => {
-                const tiCode = String(ti?.product_code || ti?.productCode || "").trim().toUpperCase();
-                const lineIdx = Number.isInteger(Number(ti?.line_index)) && Number(ti?.line_index) >= 0 ? Number(ti.line_index) : -1;
-                const matchedPoIt =
-                  (lineIdx >= 0 && items[lineIdx] && String(items[lineIdx]?.product_code || "").trim().toUpperCase() === tiCode ? items[lineIdx] : null) ||
-                  items.find((pi: any) => String(pi?.product_code || "").trim().toUpperCase() === tiCode);
-                if (!matchedPoIt) return ti;
-                const nextPrice = Number(matchedPoIt.unit_price) || 0;
-                const nextSup = supplier_name || ti.supplier_name || "";
-                if ((nextPrice > 0 && nextPrice !== Number(ti.unit_price || 0)) || (nextSup && nextSup !== ti.supplier_name)) {
-                  txChanged = true;
-                  const effPrice = nextPrice > 0 ? nextPrice : Number(ti.unit_price || 0);
-                  const lotNo = String(ti?.lot_number || ti?.lotNumber || "").trim();
-                  if (effPrice > 0 && lotNo) {
-                    updatedLots.push({ code: String(ti?.product_code || ti?.productCode || "").trim(), lot: lotNo, price: effPrice });
-                  }
-                  return {
-                    ...ti,
-                    unit_price: effPrice,
-                    cost_price: effPrice,
-                    total_amount: (Number(ti.quantity) || 0) * effPrice,
-                    ...(nextSup ? { supplier_name: nextSup } : {})
-                  };
-                }
-                return ti;
-              });
-              if (txChanged) {
-                await c.query(`UPDATE inventory_transactions SET items = $1 WHERE id = $2`, [JSON.stringify(updatedTxItems), txRow.id]);
-                for (const ul of updatedLots) {
-                  await c.query(`UPDATE inventory_lots SET unit_cost = $1 WHERE product_code = $2 AND lot_number = $3`, [ul.price, ul.code, ul.lot]).catch(() => {});
-                }
-              }
-            }
-
-            for (const poIt of items) {
-              const pCode = String(poIt?.product_code || "").trim();
-              const uPrice = Number(poIt?.unit_price) || 0;
-              if (pCode && uPrice > 0) {
-                await c.query(`UPDATE products SET cost_price = $1 WHERE code = $2`, [uPrice, pCode]);
-                await c.query(`UPDATE inventory_lots SET unit_cost = $1 WHERE product_code = $2 AND COALESCE(unit_cost, 0) = 0`, [uPrice, pCode]).catch(() => {});
-              }
-            }
-          }
 
           return { po_id: targetId, po_code: finalPoCode, isNew: false, version: upd.rows[0]?.version, safeStatus };
         } else {
@@ -1724,7 +1696,6 @@ export async function POST(req: NextRequest) {
         if (!String(received_by || me.full_name || me.username || "").trim()) {
           throw new HttpError(400, "Vui lòng nhập Thủ Kho / Người Tiếp Nhận (*).");
         }
-        let poPriceUpdated = false;
         for (const ln of lines) {
           const idx = resolveLineIndex(ln);
           const poIt = Number.isInteger(idx) && idx >= 0 ? poItems[idx] : undefined;
@@ -1759,21 +1730,6 @@ export async function POST(req: NextRequest) {
           }
           if (Number.isInteger(idx) && idx >= 0 && poIt) {
             thisReceipt[idx] = (thisReceipt[idx] || 0) + qty;
-            if (resolvedUnitPrice > 0 && Number(poIt.unit_price) !== resolvedUnitPrice) {
-              const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
-              const pQty = Number(poIt.quantity) || 0;
-              const pPrice = r3(resolvedUnitPrice);
-              const pSub = r3(pQty * pPrice);
-              const pVatRate = Math.max(0, Number(poIt.vat_rate ?? poIt.tax_rate ?? 0) || 0);
-              const pVatAmt = r3((pSub * pVatRate) / 100);
-              poIt.unit_price = pPrice;
-              poIt.subtotal = pSub;
-              poIt.vat_rate = pVatRate;
-              poIt.vat_amount = pVatAmt;
-              poIt.total_after_vat = r3(pSub + pVatAmt);
-              poIt.total = r3(pSub + pVatAmt);
-              poPriceUpdated = true;
-            }
           }
           clean.push({
             idx: Number.isInteger(idx) && idx >= 0 && poIt ? idx : -1,
@@ -1908,43 +1864,14 @@ export async function POST(req: NextRequest) {
         for (const [k, q] of Object.entries(thisReceipt)) received[k] = (Number(received[k]) || 0) + q;
         const allDone = poItems.every((it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it.quantity) || 0));
         const newStatus = allDone ? "COMPLETED" : "PARTIALLY_RECEIVED";
-        const computedPoTotal = Math.round(poItems.reduce((sum: number, it: any) => {
-          const r3 = (v: any) => Math.round((Number(v) || 0) * 1000) / 1000;
-          const sub = r3((Number(it?.quantity) || 0) * r3(it?.unit_price));
-          const vr = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
-          return sum + sub + r3((sub * vr) / 100);
-        }, 0) * 1000) / 1000;
-        const newPoTotalAmount = poPriceUpdated || computedPoTotal > 0 ? computedPoTotal : (Number(po.total_amount) || 0);
+        // Chỉ cập nhật trạng thái nhận hàng & số lượng thực nhận, KHÔNG tự động ghi đè đơn giá PO theo giá nhập kho
         await c.query(
           `UPDATE procurement_orders
               SET status = $1, received_qty = $2::jsonb,
                   inbound_transaction_code = COALESCE(inbound_transaction_code, $3),
-                  items = $5::jsonb,
-                  total_amount = $6,
                   version = COALESCE(version, 0) + 1
             WHERE id = $4`,
-          [newStatus, JSON.stringify(received), inboundCode, po.id, JSON.stringify(poItems), newPoTotalAmount]
-        );
-        // Đồng bộ bảng giá NCC và các PO khác đang để giá 0đ của cùng mã hàng
-        await syncInboundPricesToPOs(
-          c,
-          clean.map((x: any) => ({
-            product_code: x.pCode,
-            product_name: x.poIt?.product_name || x.pCode,
-            specification: x.specification || "",
-            unit: x.unit || "Hộp",
-            quantity: x.qty,
-            unit_price: x.unit_price,
-            cost_price: x.unit_price,
-          })),
-          {
-            reference_code: po.po_code,
-            transaction_code: inboundCode,
-            supplier_name: po.supplier_name || "",
-            vat_invoice_no: vat_invoice_no ? String(vat_invoice_no).trim() : "",
-            invoice_date: effectiveDate,
-            is_new_inbound: false,
-          }
+          [newStatus, JSON.stringify(received), inboundCode, po.id]
         );
         // Hóa đơn đầu vào của đợt nhận hàng này: lưu thành dòng riêng trên PO để hiện cột / lọc theo số HĐ
         const invNo = String(vat_invoice_no || "").trim();
@@ -2250,7 +2177,7 @@ export async function POST(req: NextRequest) {
         const q = Number(it?.quantity), pr = Number(it?.unit_price ?? 0);
         if (!String(it?.product_code || "").trim()) throw new HttpError(400, "Có dòng hàng thiếu mã hàng.");
         if (!Number.isFinite(q) || q <= 0) throw new HttpError(400, `Mã ${it.product_code}: số lượng phải lớn hơn 0.`);
-        if (!Number.isFinite(pr) || pr < 0) throw new HttpError(400, `Mã ${it.product_code}: đơn giá không hợp lệ.`);
+        if (!Number.isFinite(pr) || pr <= 0) throw new HttpError(400, `Mã ${it.product_code}: bắt buộc phải nhập đơn giá PO (> 0 VNĐ) trước khi bổ sung vào PO.`);
       }
       const actor = String(created_by || me.full_name || me.username || "Phòng Cung Ứng").trim();
       const APPENDABLE = ["DRAFT", "PENDING", "APPROVED", "CONFIRMED"];
@@ -2366,7 +2293,7 @@ export async function POST(req: NextRequest) {
         const q = Number(it?.quantity), pr = Number(it?.unit_price ?? 0);
         if (!String(it?.product_code || "").trim()) throw new HttpError(400, "Có dòng hàng thiếu mã hàng.");
         if (!Number.isFinite(q) || q <= 0) throw new HttpError(400, `Mã ${it.product_code}: số lượng phải lớn hơn 0.`);
-        if (!Number.isFinite(pr) || pr < 0) throw new HttpError(400, `Mã ${it.product_code}: đơn giá không hợp lệ.`);
+        if (!Number.isFinite(pr) || pr <= 0) throw new HttpError(400, `Mã ${it.product_code}: bắt buộc phải nhập đơn giá PO (> 0 VNĐ) trước khi bổ sung vào PO.`);
       }
       const supRow = supplier_id ? (await query("SELECT id, name FROM procurement_suppliers WHERE id = $1", [supplier_id])).rows[0] : null;
       if (!supRow) throw new HttpError(400, "Chưa chọn nhà cung cấp hợp lệ cho PO.");
