@@ -3085,7 +3085,22 @@ export const WarehouseModule: React.FC = () => {
           const unit_price =
             Number.isFinite(parsedPrice) && parsedPrice >= 0
               ? parsedPrice
-              : Number(matchedProd?.cost_price) || Number(matchedProd?.standard_price) || 0;
+              : Number(matchedProd?.cost_price) || 0;
+
+          const rawSellPrice =
+            r["Giá niêm yết End-User (VNĐ)"] ??
+            r["Giá niêm yết"] ??
+            r["Đơn giá bán"] ??
+            r["Giá bán"] ??
+            r["standard_price"];
+          const parsedSellPrice =
+            rawSellPrice !== undefined && rawSellPrice !== null && String(rawSellPrice).trim() !== ""
+              ? Number(String(rawSellPrice).replace(/,/g, ""))
+              : NaN;
+          const standard_price =
+            Number.isFinite(parsedSellPrice) && parsedSellPrice >= 0
+              ? parsedSellPrice
+              : Number(matchedProd?.standard_price) || 0;
 
           const lot_number =
             String(
@@ -3120,7 +3135,7 @@ export const WarehouseModule: React.FC = () => {
             r["Nhiệt độ bảo quản"] || r["Điều kiện nhiệt độ bảo quản"] || r["storage_condition"] || ""
           ).trim();
           const storage_condition =
-            rawTemp || matchedProd?.storage_condition || "";
+            rawTemp || matchedProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
 
           const rawLoc = String(
             r["Khu vực / Vị trí kho"] ||
@@ -3151,6 +3166,7 @@ export const WarehouseModule: React.FC = () => {
             manufacturer,
             quantity,
             unit_price,
+            standard_price,
             total_amount: quantity * unit_price,
             lot_number,
             expiry_date,
@@ -3190,10 +3206,7 @@ export const WarehouseModule: React.FC = () => {
       alert("Không có dòng dữ liệu hợp lệ để nhập kho");
       return;
     }
-    if (!excelInboundDetails.supplier_name?.trim()) {
-      alert("Vui lòng chọn hoặc nhập Tên Nhà Cung Cấp / Đơn vị giao (*)");
-      return;
-    }
+    const effectiveSupplier = excelInboundDetails.supplier_name?.trim() || "Tồn kho đầu kỳ";
     if (!excelInboundDetails.warehouse_name?.trim()) {
       alert("Vui lòng chọn Kho tiếp nhận (*)");
       return;
@@ -3217,12 +3230,9 @@ export const WarehouseModule: React.FC = () => {
         alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) Số Lượng (*) phải lớn hơn 0`);
         return;
       }
-      if (!r.unit_price || Number(r.unit_price) <= 0) {
-        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải điền Đơn Giá Nhập (> 0 VNĐ) (*)`);
-        return;
-      }
-      if (!r.storage_condition?.trim()) {
-        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải khai báo Điều Kiện Nhiệt Độ Bảo Quản (*)`);
+      // Cho phép để trống đơn giá bán / đơn giá nhập và nhiệt độ bảo quản khi nhập kho bằng Excel
+      if (Number(r.unit_price || 0) < 0) {
+        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) có Đơn giá không hợp lệ`);
         return;
       }
     }
@@ -3240,7 +3250,7 @@ export const WarehouseModule: React.FC = () => {
         performed_by: excelInboundDetails.performed_by,
         reference_code: excelInboundDetails.reference_code,
         warehouse_name: excelInboundDetails.warehouse_name,
-        supplier_name: excelInboundDetails.supplier_name,
+        supplier_name: effectiveSupplier,
         vat_invoice_no: excelInboundDetails.vat_invoice_no,
         inbound_reason: excelInboundDetails.inbound_reason,
         items: validRows.map((r) => ({
@@ -3250,12 +3260,13 @@ export const WarehouseModule: React.FC = () => {
           unit: r.unit,
           manufacturer: r.manufacturer,
           // NCC / số HĐ của phiếu gắn vào từng dòng: chi tiết phiếu, Thẻ kho và công nợ NCC đọc từ đây
-          supplier_name: excelInboundDetails.supplier_name?.trim() || "",
+          supplier_name: effectiveSupplier,
           vat_invoice_no: excelInboundDetails.vat_invoice_no?.trim() || "",
           inbound_type: excelInboundDetails.inbound_reason || "",
           quantity: r.quantity,
           unit_price: r.unit_price,
           cost_price: r.unit_price,
+          standard_price: Number(r.standard_price) || 0,
           total_amount: r.total_amount,
           lot_number: r.lot_number,
           expiry_date: r.expiry_date || "",
@@ -3267,7 +3278,7 @@ export const WarehouseModule: React.FC = () => {
           qc_status: r.qc_status,
           notes: r.notes
         })),
-        notes: `${excelInboundDetails.inbound_reason}. Hóa đơn: ${excelInboundDetails.vat_invoice_no || "N/A"}. NCC: ${excelInboundDetails.supplier_name.trim()}. ${excelInboundDetails.notes || ""}`.trim()
+        notes: `${excelInboundDetails.inbound_reason}. Hóa đơn: ${excelInboundDetails.vat_invoice_no || "N/A"}. NCC: ${effectiveSupplier}. ${excelInboundDetails.notes || ""}`.trim()
       };
 
       const res = await fetch("/api/inventory?action=inbound", {
@@ -7810,6 +7821,7 @@ export const WarehouseModule: React.FC = () => {
                       onChange={(e) => setExcelInboundDetails({ ...excelInboundDetails, inbound_reason: e.target.value })}
                       className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
                     >
+                      <option value="Nhập tồn kho đầu kỳ (Khởi tạo hệ thống)">Nhập tồn kho đầu kỳ (Khởi tạo hệ thống)</option>
                       <option value="Nhập mua hàng theo PO từ Nhà cung cấp">Nhập mua hàng theo PO từ NCC</option>
                       <option value="Nhập hàng từ xưởng sản xuất ABT">Nhập hàng từ xưởng sản xuất ABT</option>
                       <option value="Nhập trả lại từ khách hàng">Nhập trả lại từ khách hàng</option>

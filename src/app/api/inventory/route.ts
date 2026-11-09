@@ -603,12 +603,12 @@ export async function POST(req: NextRequest) {
           it.no_expiry = true;
         }
         const uPrice = Number(it.unit_price ?? it.cost_price ?? 0);
-        if (!(uPrice > 0)) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Đơn Giá Nhập (> 0 VNĐ) (*).` }, { status: 400 });
+        if (!Number.isFinite(uPrice) || uPrice < 0) {
+          return NextResponse.json({ error: `Mặt hàng "${pCode}" có Đơn Giá Nhập không hợp lệ.` }, { status: 400 });
         }
         const sCond = String(it.storage_condition || it.storageCondition || "").trim();
         if (!sCond) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa chọn Điều Kiện Nhiệt Độ Bảo Quản (*).` }, { status: 400 });
+          it.storage_condition = "15–25°C (Nhiệt độ phòng - RT)";
         }
       }
 
@@ -767,12 +767,12 @@ export async function POST(req: NextRequest) {
           it.no_expiry = true;
         }
         const uPrice = Number(it.unit_price ?? it.cost_price ?? 0);
-        if (!(uPrice > 0)) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Đơn Giá Nhập (> 0 VNĐ) (*).` }, { status: 400 });
+        if (!Number.isFinite(uPrice) || uPrice < 0) {
+          return NextResponse.json({ error: `Mặt hàng "${pCode}" có Đơn Giá Nhập không hợp lệ.` }, { status: 400 });
         }
         const sCond = String(it.storage_condition || it.storageCondition || "").trim();
         if (!sCond) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa chọn Điều Kiện Nhiệt Độ Bảo Quản (*).` }, { status: 400 });
+          it.storage_condition = "15–25°C (Nhiệt độ phòng - RT)";
         }
       }
 
@@ -1532,6 +1532,7 @@ export async function POST(req: NextRequest) {
         const numOrNull = (v: string) => {
           if (v === "") return null;
           const s = String(v).trim();
+          if (!s || /^([-—]+|n\/?a|none|null|chưa có|chua co|liên hệ|lien he|không|khong)$/i.test(s)) return null;
           // Số Excel đọc ra (265000000 hoặc 265000000.5) giữ nguyên; chữ có dấu phân cách hàng nghìn
           // (265.000.000 / 265,000,000) thì bỏ dấu. Trước đây luôn bỏ mọi dấu, nên "26500000.0" thành 265000000.
           const n = /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : Number(s.replace(/[^\d-]/g, ""));
@@ -1779,7 +1780,7 @@ export async function POST(req: NextRequest) {
           const unitCost = unitCostRaw !== "" ? (Number(String(unitCostRaw).replace(/[^\d.-]/g, "")) || 0) : (Number(catalogProd?.cost_price) || 0);
           const totalAmt = Number(getVal(["Thành tiền (VNĐ)", "Thành tiền"])) || (qty * unitCost);
           const storageConditionRaw = getVal(["Nhiệt độ bảo quản", "Điều kiện nhiệt độ bảo quản", "Điều kiện bảo quản", "storage_condition"]);
-          const storageCondition = storageConditionRaw || catalogProd?.storage_condition || "";
+          const storageCondition = storageConditionRaw || catalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
           const shelf = getVal(["Khu vực / Vị trí kho", "Vị trí tủ / kệ lưu trữ", "Vị trí kho / Tủ lưu trữ", "Vị trí kệ kho", "Vị trí kho", "shelf_position"], "Chưa phân bổ kệ");
           const qcStatus = getVal(["Kiểm nhận / Tình trạng QC", "Tình trạng QC", "qc_status"], "Đạt chuẩn 100% (Nguyên niêm phong & COA)");
           let inboundCode = getVal(["Mã Phiếu Nhập (PNK)", "Mã phiếu nhập", "transaction_code"]);
@@ -1808,11 +1809,9 @@ export async function POST(req: NextRequest) {
               return NextResponse.json({ error: `Dòng Excel mã "${pCode}" chưa nhập Số Lô (LOT) (*).` }, { status: 400 });
             }
             // Lô hàng không bắt buộc có HSD (để trống hoặc ghi "Không có HSD")
-            if (!(unitCost > 0)) {
-              return NextResponse.json({ error: `Dòng Excel mã "${pCode}" (lô ${lot}) chưa nhập Đơn Giá Nhập (> 0 VNĐ) (*).` }, { status: 400 });
-            }
-            if (!String(storageCondition || "").trim()) {
-              return NextResponse.json({ error: `Dòng Excel mã "${pCode}" (lô ${lot}) chưa khai báo Điều Kiện Nhiệt Độ Bảo Quản (*).` }, { status: 400 });
+            // Cho phép để trống đơn giá / giá bán và điều kiện bảo quản khi nhập kho đầu kỳ bằng Excel
+            if (!Number.isFinite(unitCost) || unitCost < 0) {
+              return NextResponse.json({ error: `Dòng Excel mã "${pCode}" (lô ${lot}) có Đơn giá không hợp lệ.` }, { status: 400 });
             }
             // Product master, catalog sync and stock are written in the transaction below (H1/H2/H4)
             // Resolve child components (BOM) from Sheet 2 or database
