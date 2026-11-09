@@ -585,27 +585,22 @@ export async function POST(req: NextRequest) {
       }
       for (const it of lines) {
         const pCode = String(it.product_code || it.productCode || "").trim();
-        const pName = String(it.product_name || it.name || "").trim();
-        if (!pCode || !pName) {
-          return NextResponse.json({ error: `Dòng hàng "${pCode || pName || "SP"}" thiếu Mã Hàng hoặc Tên Sản Phẩm (*).` }, { status: 400 });
+        const pName = String(it.product_name || it.name || pCode || "").trim();
+        if (!pCode) {
+          return NextResponse.json({ error: `Dòng hàng "${pName || "SP"}" thiếu Mã Hàng (*).` }, { status: 400 });
         }
+        it.product_name = pName;
         const qty = Number(it.quantity) || 0;
         if (!(qty > 0)) {
           return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Số Lượng Nhập (> 0) (*).` }, { status: 400 });
         }
-        const lot = String(it.lot_number || it.lotNumber || "").trim();
-        if (!lot) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Số Lô (LOT / Batch) (*).` }, { status: 400 });
-        }
         const exp = String(it.expiry_date || it.expiryDate || "").trim();
-        // Lô không bắt buộc có hạn sử dụng (thiết bị, vật tư hoặc lô K.HSD để trống EXP)
+        // Lô không bắt buộc có Số Lô hoặc Hạn sử dụng (thiết bị, vật tư, tồn kho đầu kỳ để trống LOT/EXP)
         if (!exp) {
           it.no_expiry = true;
         }
-        const uPrice = Number(it.unit_price ?? it.cost_price ?? 0);
-        if (!Number.isFinite(uPrice) || uPrice < 0) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" có Đơn Giá Nhập không hợp lệ.` }, { status: 400 });
-        }
+        const rawUPrice = Number(it.unit_price ?? it.cost_price ?? 0);
+        it.unit_price = Number.isFinite(rawUPrice) && rawUPrice >= 0 ? rawUPrice : 0;
         const sCond = String(it.storage_condition || it.storageCondition || "").trim();
         if (!sCond) {
           it.storage_condition = "15–25°C (Nhiệt độ phòng - RT)";
@@ -749,27 +744,22 @@ export async function POST(req: NextRequest) {
       }
       for (const it of newItems) {
         const pCode = String(it.product_code || it.productCode || "").trim();
-        const pName = String(it.product_name || it.name || "").trim();
-        if (!pCode || !pName) {
-          return NextResponse.json({ error: `Dòng hàng "${pCode || pName || "SP"}" thiếu Mã Hàng hoặc Tên Sản Phẩm (*).` }, { status: 400 });
+        const pName = String(it.product_name || it.name || pCode || "").trim();
+        if (!pCode) {
+          return NextResponse.json({ error: `Dòng hàng "${pName || "SP"}" thiếu Mã Hàng (*).` }, { status: 400 });
         }
+        it.product_name = pName;
         const qty = Number(it.quantity) || 0;
         if (!(qty > 0)) {
           return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Số Lượng Nhập (> 0) (*).` }, { status: 400 });
         }
-        const lot = String(it.lot_number || it.lotNumber || "").trim();
-        if (!lot) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" chưa nhập Số Lô (LOT / Batch) (*).` }, { status: 400 });
-        }
         const exp = String(it.expiry_date || it.expiryDate || "").trim();
-        // Lô không bắt buộc có hạn sử dụng (thiết bị, vật tư hoặc lô K.HSD để trống EXP)
+        // Lô không bắt buộc có Số Lô hoặc Hạn sử dụng (thiết bị, vật tư, tồn kho đầu kỳ để trống LOT/EXP)
         if (!exp) {
           it.no_expiry = true;
         }
-        const uPrice = Number(it.unit_price ?? it.cost_price ?? 0);
-        if (!Number.isFinite(uPrice) || uPrice < 0) {
-          return NextResponse.json({ error: `Mặt hàng "${pCode}" có Đơn Giá Nhập không hợp lệ.` }, { status: 400 });
-        }
+        const rawUPrice = Number(it.unit_price ?? it.cost_price ?? 0);
+        it.unit_price = Number.isFinite(rawUPrice) && rawUPrice >= 0 ? rawUPrice : 0;
         const sCond = String(it.storage_condition || it.storageCondition || "").trim();
         if (!sCond) {
           it.storage_condition = "15–25°C (Nhiệt độ phòng - RT)";
@@ -1543,32 +1533,14 @@ export async function POST(req: NextRequest) {
         const STD_PRICE_COLS = ["Giá niêm yết End-User (VNĐ)", "Giá niêm yết", "standard_price", "Giá bán"];
         const MIN_STOCK_COLS = ["Mức tồn tối thiểu", "min_stock_level", "Tồn tối thiểu"];
 
-        // Kiểm tra cả file trước khi ghi: một ô sai (ví dụ dán nhầm giá 2.650.000.000 vào "Mức tồn tối thiểu")
-        // trước đây làm lệnh ghi lỗi giữa chừng ("out of range for type integer"), các dòng trước đã ghi, các dòng
-        // sau thì không, và không biết dòng nào sai.
-        const rowErrors: string[] = [];
-        rows.forEach((r: any, i: number) => {
-          const getVal = createGetVal(r);
-          const sku = getVal(["Mã SKU (*)", "Mã SKU", "code", "Mã hàng", "SKU"]) || "(không mã)";
-          const where = `Dòng ${i + 2} (${sku})`; // dòng 1 của sheet là tiêu đề
-          const minRaw = getVal(MIN_STOCK_COLS);
-          const minStock = numOrNull(minRaw);
-          if (minRaw !== "" && (minStock === null || !Number.isInteger(minStock) || minStock < 0 || minStock > MAX_MIN_STOCK)) {
-            rowErrors.push(`${where}: "Mức tồn tối thiểu" = ${minRaw} không hợp lệ (phải là số nguyên từ 0 đến ${MAX_MIN_STOCK.toLocaleString("vi-VN")})`);
-          }
-          for (const [label, cols] of [["Giá vốn nhập", PRICE_COLS], ["Giá niêm yết", STD_PRICE_COLS]] as [string, string[]][]) {
-            const raw = getVal(cols);
-            const n = numOrNull(raw);
-            if (raw !== "" && (n === null || n < 0)) rowErrors.push(`${where}: "${label}" = ${raw} không phải số tiền hợp lệ`);
-          }
-        });
-        if (rowErrors.length > 0) {
-          const shown = rowErrors.slice(0, 20);
-          return NextResponse.json({
-            error: `File có ${rowErrors.length} ô dữ liệu không hợp lệ, CHƯA nhập dòng nào. Sửa các dòng sau rồi nạp lại:\n${shown.join("\n")}${rowErrors.length > shown.length ? `\n... và ${rowErrors.length - shown.length} lỗi khác` : ""}`,
-            row_errors: rowErrors,
-          }, { status: 400 });
-        }
+        const safePriceOrNull = (v: string) => {
+          const n = numOrNull(v);
+          return n !== null && n >= 0 ? n : null;
+        };
+        const safeMinStockOrNull = (v: string) => {
+          const n = numOrNull(v);
+          return n !== null && Number.isInteger(n) && n >= 0 && n <= MAX_MIN_STOCK ? n : null;
+        };
 
         for (const r of safeRows) {
           const getVal = createGetVal(r);
@@ -1588,11 +1560,11 @@ export async function POST(req: NextRequest) {
           const cat = resolveActualProductCategory({ code: pCode, name: pName || pCode, category: rawCat || "" });
           const spec = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_4"] || "").trim() : getVal(["Quy cách đóng gói", "specification", "Quy cách", "SIZE"]));
           const unit = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_5"] || "").trim() : getVal(["Đơn vị tính", "unit", "ĐVT"]));
-          const cost = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_6"] ?? "") : getVal(PRICE_COLS));
-          const stdPrice = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_7"] ?? "") : getVal(STD_PRICE_COLS));
-          const dealer1Price = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_8"] ?? "") : getVal(["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1"]));
-          const dealer2Price = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_9"] ?? "") : getVal(["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2"]));
-          const minStock = numOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_10"] ?? "") : getVal(MIN_STOCK_COLS));
+          const cost = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_6"] ?? "") : getVal(PRICE_COLS));
+          const stdPrice = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_7"] ?? "") : getVal(STD_PRICE_COLS));
+          const dealer1Price = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_8"] ?? "") : getVal(["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1"]));
+          const dealer2Price = safePriceOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_9"] ?? "") : getVal(["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2"]));
+          const minStock = safeMinStockOrNull(isHeaderlessAbtRow ? String(r["__EMPTY_10"] ?? "") : getVal(MIN_STOCK_COLS));
           const prodNotes = orNull(isHeaderlessAbtRow ? String(r["__EMPTY_11"] || "").trim() : getVal(["Ghi chú", "Ghi chú kỹ thuật", "THÔNG TIN KỸ THUẬT", "notes"]));
           const storageCondition = (isHeaderlessAbtRow ? String(r["__EMPTY_12"] || "").trim() : getVal([
             "Điều kiện bảo quản chuẩn (*)", 
@@ -1764,9 +1736,11 @@ export async function POST(req: NextRequest) {
 
         for (const r of rows) {
           const getVal = createGetVal(r);
-          const pCode = getVal(["Mã SP", "Mã sản phẩm (*)", "Mã sản phẩm", "Mã hàng", "Mã SKU (*)", "Mã SKU", "product_code", "sku", "code"]);
+          const rawPCode = getVal(["Mã SP", "Mã sản phẩm (*)", "Mã sản phẩm", "Mã hàng", "Mã SKU (*)", "Mã SKU", "product_code", "sku", "code"]);
+          const rawPName = getVal(["Tên hàng hóa / Sinh phẩm (*)", "Tên sản phẩm (*)", "Tên hàng hóa", "Tên sản phẩm", "Tên SP", "product_name"]);
+          const pCode = rawPCode || (rawPName ? autoCode("SP") : "");
           const catalogProd = pCode ? catalogProdMap.get(pCode.trim().toLowerCase()) || null : null;
-          const pName = getVal(["Tên hàng hóa / Sinh phẩm (*)", "Tên sản phẩm (*)", "Tên hàng hóa", "Tên sản phẩm", "Tên SP", "product_name"], catalogProd?.name || pCode);
+          const pName = rawPName || catalogProd?.name || pCode || "Sản phẩm nhập kho";
           const spec = getVal(["Quy cách đóng gói", "Quy cách", "specification"], catalogProd?.specification || "");
           const unit = getVal(["Đơn vị tính", "Đơn vị tính (ĐVT)", "ĐVT", "unit"], catalogProd?.unit || "Hộp");
           const lot = getVal(["Số Lô (Lot)", "Số Lô (LOT) (*)", "Số Lô (LOT)", "Số Lô sản xuất (*)", "Số Lô", "Lô", "Lot", "lot_number"], "");
@@ -1777,8 +1751,10 @@ export async function POST(req: NextRequest) {
           const qtyRaw = getVal(["Số lượng", "Số lượng nhập (*)", "Số lượng nhập", "SL", "quantity"]);
           const qty = Number(String(qtyRaw || "0").replace(/[^\d.-]/g, "")) || 0;
           const unitCostRaw = getVal(["Giá trị / Đơn giá đầu kỳ", "Đơn giá đầu kỳ", "Giá đầu kỳ", "Giá trị đầu kỳ", "Đơn giá nhập (VNĐ)", "Đơn giá nhập", "Đơn giá", "Giá vốn", "unit_cost", "cost_price", "unitCost", "costPrice", "price"]);
-          const unitCost = unitCostRaw !== "" ? (Number(String(unitCostRaw).replace(/[^\d.-]/g, "")) || 0) : (Number(catalogProd?.cost_price) || 0);
-          const totalAmt = Number(getVal(["Thành tiền (VNĐ)", "Thành tiền"])) || (qty * unitCost);
+          const parsedUnitCost = unitCostRaw !== "" ? (Number(String(unitCostRaw).replace(/[^\d.-]/g, "")) || 0) : (Number(catalogProd?.cost_price) || 0);
+          const unitCost = Number.isFinite(parsedUnitCost) && parsedUnitCost >= 0 ? parsedUnitCost : 0;
+          const rawTotalAmt = Number(String(getVal(["Thành tiền (VNĐ)", "Thành tiền"]) || "0").replace(/[^\d.-]/g, "")) || 0;
+          const totalAmt = (Number.isFinite(rawTotalAmt) && rawTotalAmt > 0) ? rawTotalAmt : (qty * unitCost);
           const storageConditionRaw = getVal(["Nhiệt độ bảo quản", "Điều kiện nhiệt độ bảo quản", "Điều kiện bảo quản", "storage_condition"]);
           const storageCondition = storageConditionRaw || catalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
           const shelf = getVal(["Khu vực / Vị trí kho", "Vị trí tủ / kệ lưu trữ", "Vị trí kho / Tủ lưu trữ", "Vị trí kệ kho", "Vị trí kho", "shelf_position"], "Chưa phân bổ kệ");
@@ -1790,7 +1766,7 @@ export async function POST(req: NextRequest) {
           }
           const rawInboundDate = getVal(["Ngày Nhập Kho (*)", "Ngày Nhập Kho", "Ngày nhập", "inbound_date"], todayVN());
           const inboundDate = normalizeExcelDateToISO(rawInboundDate, todayVN());
-          const inboundReason = getVal(["Loại hình / Lý do nhập", "Lý do nhập"], "Nhập mua hàng theo PO từ NCC");
+          const inboundReason = getVal(["Loại hình / Lý do nhập", "Lý do nhập"], "Nhập kho đầu kỳ / Nhập kho Excel");
           const poCode = getVal(["Mã Đơn Đặt Hàng (PO)", "Mã Đơn Đặt Hàng (PO) Tham Chiếu", "Mã PO", "reference_code"]);
           const vatInvoice = getVal(["Số Hóa Đơn VAT / Tờ khai HQ", "Số Hóa Đơn VAT / Tờ Khai Hải Quan", "Số Hóa Đơn VAT", "vat_invoice_no"]);
           // Nhà cung cấp chỉ ghi lên phiếu nhập; Nhãn hiệu / Hãng sản xuất là thông tin của sản phẩm
@@ -1802,25 +1778,15 @@ export async function POST(req: NextRequest) {
           const notes = getVal(["Ghi chú", "Ghi chú chứng từ / Chất lượng", "notes"]);
 
           if (pCode && qty > 0) {
-            if (!String(pName || "").trim()) {
-              return NextResponse.json({ error: `Dòng Excel mã "${pCode}" thiếu Tên sản phẩm (*).` }, { status: 400 });
-            }
-            if (!String(lot || "").trim()) {
-              return NextResponse.json({ error: `Dòng Excel mã "${pCode}" chưa nhập Số Lô (LOT) (*).` }, { status: 400 });
-            }
-            // Lô hàng không bắt buộc có HSD (để trống hoặc ghi "Không có HSD")
-            // Cho phép để trống đơn giá / giá bán và điều kiện bảo quản khi nhập kho đầu kỳ bằng Excel
-            if (!Number.isFinite(unitCost) || unitCost < 0) {
-              return NextResponse.json({ error: `Dòng Excel mã "${pCode}" (lô ${lot}) có Đơn giá không hợp lệ.` }, { status: 400 });
-            }
+            // Cho phép để trống Số Lô (LOT), Hạn sử dụng (EXP), Đơn giá, Giá bán, Điều kiện bảo quản, Nhà cung cấp... khi nhập kho bằng Excel
             // Product master, catalog sync and stock are written in the transaction below (H1/H2/H4)
             // Resolve child components (BOM) from Sheet 2 or database
             let itemComponents: any[] = [];
-            const label = `${pCode} lô ${lot}`;
+            const label = lot ? `${pCode} lô ${lot}` : pCode;
             compRows.forEach((cr: any, idx: number) => {
               const g = createGetVal(cr);
               const parentLot = g(COMP_PARENT_LOT);
-              if (g(COMP_PARENT_CODE).toUpperCase() !== pCode.toUpperCase() || (parentLot && parentLot !== lot)) return;
+              if (g(COMP_PARENT_CODE).toUpperCase() !== pCode.toUpperCase() || (parentLot && lot && parentLot !== lot)) return;
               const compCode = g(["Mã thành phần / Phụ kiện (*)", "Mã thành phần / Phụ kiện", "Mã thành phần", "component_code"]);
               if (!compCode) return;
               usedComponentRows.add(idx);
@@ -1832,12 +1798,12 @@ export async function POST(req: NextRequest) {
               if (receivedRaw !== "") {
                 const n = Number(String(receivedRaw).replace(",", "."));
                 if (!Number.isFinite(n) || n < 0) {
-                  componentErrors.push(`Trang phụ kiện dòng ${idx + 2} (${compCode} của ${label}): "Số lượng thực nhận" = ${receivedRaw} không hợp lệ`);
-                  return;
-                }
-                received = n;
-                if (n !== expected) {
-                  importWarnings.push(`${compCode} của ${label}: thực nhận ${n}, định mức ${perKit} × ${qty} = ${expected} (${n > expected ? "thừa" : "thiếu"} ${Math.abs(n - expected)})`);
+                  importWarnings.push(`Trang phụ kiện dòng ${idx + 2} (${compCode} của ${label}): "Số lượng thực nhận" = ${receivedRaw} không hợp lệ, tạm tính theo định mức = ${expected}`);
+                } else {
+                  received = n;
+                  if (n !== expected) {
+                    importWarnings.push(`${compCode} của ${label}: thực nhận ${n}, định mức ${perKit} × ${qty} = ${expected} (${n > expected ? "thừa" : "thiếu"} ${Math.abs(n - expected)})`);
+                  }
                 }
               }
               const tracking = g(["Hình thức quản lý (LOT/SERIAL)", "Hình thức quản lý", "tracking_type"]).toUpperCase().includes("SERIAL") ? "SERIAL" : "LOT";
@@ -1913,8 +1879,8 @@ export async function POST(req: NextRequest) {
             parsedInbound.push({
               pCode, pName, spec, unit, lot, expDate, qty, unitCost, storageCondition, shelf, warehouse, supplier, brandName, r,
               inboundCode, inboundDate, performedBy, poCode,
-              reference: poCode || vatInvoice || lot,
-              txNote: `Nhập kho theo Lô ${lot} (HSD: ${expDate ? formatVNDate(expDate, expDate) : "Không có HSD"})${supplier ? ` - NCC: ${supplier}` : ""}${inboundReason ? ` - Lý do: ${inboundReason}` : ""}${notes ? ` - Ghi chú: ${notes}` : ""}`,
+              reference: poCode || vatInvoice || lot || "NHAP-KHO-EXCEL",
+              txNote: `${lot ? `Nhập kho theo Lô ${lot}` : "Nhập kho (Không có số lô)"} (HSD: ${expDate ? formatVNDate(expDate, expDate) : "Không có HSD"})${supplier ? ` - NCC: ${supplier}` : ""}${inboundReason ? ` - Lý do: ${inboundReason}` : ""}${notes ? ` - Ghi chú: ${notes}` : ""}`,
               txItem: {
                 product_code: pCode,
                 product_name: pName,
@@ -2022,13 +1988,20 @@ export async function POST(req: NextRequest) {
 
             // Log Inbound transaction(s) with comprehensive metadata (truncate joined notes so 1000-row imports don't create 150KB note blobs)
             for (const [docCode, doc] of docs) {
+              const existTx = await c.query(
+                `SELECT 1 FROM inventory_transactions WHERE transaction_code = $1 LIMIT 1`,
+                [docCode]
+              );
+              const finalDocCode = existTx.rows.length > 0
+                ? `${docCode}-${Date.now().toString(36).slice(-4).toUpperCase()}`
+                : docCode;
               const summaryNote = doc.notes.length > 10
-                ? `${doc.notes.slice(0, 10).join(" | ")} ... (và ${doc.notes.length - 10} lô hàng khác trong phiếu ${docCode})`
+                ? `${doc.notes.slice(0, 10).join(" | ")} ... (và ${doc.notes.length - 10} lô hàng khác trong phiếu ${finalDocCode})`
                 : doc.notes.join(" | ");
               await c.query(
                 `INSERT INTO inventory_transactions (transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items, notes)
                  VALUES ($1, 'INBOUND', $2, $3, $4, $5, $6, $7)`,
-                [docCode, doc.reference, normalizeExcelDateToISO(doc.date, todayVN()), doc.performedBy, doc.warehouse, JSON.stringify(doc.items), summaryNote]
+                [finalDocCode, doc.reference, normalizeExcelDateToISO(doc.date, todayVN()), doc.performedBy, doc.warehouse, JSON.stringify(doc.items), summaryNote]
               );
             }
             for (const entry of catalogEntries) {

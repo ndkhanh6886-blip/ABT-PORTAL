@@ -3207,33 +3207,24 @@ export const WarehouseModule: React.FC = () => {
       return;
     }
     const effectiveSupplier = excelInboundDetails.supplier_name?.trim() || "Tồn kho đầu kỳ";
-    if (!excelInboundDetails.warehouse_name?.trim()) {
-      alert("Vui lòng chọn Kho tiếp nhận (*)");
-      return;
-    }
-    if (!excelInboundDetails.performed_by?.trim()) {
-      alert("Vui lòng nhập Thủ kho tiếp nhận (*)");
-      return;
-    }
+    const effectiveWarehouse = excelInboundDetails.warehouse_name?.trim() || "Kho Trung Tâm";
+    const effectivePerformedBy = excelInboundDetails.performed_by?.trim() || "Thủ kho";
     for (let i = 0; i < validRows.length; i++) {
       const r = validRows[i];
-      if (!r.product_code?.trim() || !r.product_name?.trim()) {
-        alert(`Dòng Excel thứ ${i + 1} bắt buộc phải có Mã SP và Tên SP (*)`);
+      if (!r.product_code?.trim()) {
+        alert(`Dòng Excel thứ ${i + 1} bắt buộc phải có Mã SP (*)`);
         return;
       }
-      if (!r.lot_number?.trim()) {
-        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải nhập Số Lô (LOT) (*)`);
-        return;
+      if (!r.product_name?.trim()) {
+        r.product_name = r.product_code.trim();
       }
-      // Không bắt buộc nhập Hạn Dùng (EXP) khi lô không quản lý HSD (để trống ở Excel)
+      // Cho phép để trống Số Lô (LOT), Hạn Dùng (EXP), Đơn giá bán / Đơn giá nhập, Nhiệt độ bảo quản khi nhập kho bằng Excel
       if (!r.quantity || Number(r.quantity) <= 0) {
         alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) Số Lượng (*) phải lớn hơn 0`);
         return;
       }
-      // Cho phép để trống đơn giá bán / đơn giá nhập và nhiệt độ bảo quản khi nhập kho bằng Excel
-      if (Number(r.unit_price || 0) < 0) {
-        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) có Đơn giá không hợp lệ`);
-        return;
+      if (Number(r.unit_price || 0) < 0 || !Number.isFinite(Number(r.unit_price || 0))) {
+        r.unit_price = 0;
       }
     }
 
@@ -3247,9 +3238,9 @@ export const WarehouseModule: React.FC = () => {
       const payload = {
         transaction_code: code,
         date: todayVN(),
-        performed_by: excelInboundDetails.performed_by,
+        performed_by: effectivePerformedBy,
         reference_code: excelInboundDetails.reference_code,
-        warehouse_name: excelInboundDetails.warehouse_name,
+        warehouse_name: effectiveWarehouse,
         supplier_name: effectiveSupplier,
         vat_invoice_no: excelInboundDetails.vat_invoice_no,
         inbound_reason: excelInboundDetails.inbound_reason,
