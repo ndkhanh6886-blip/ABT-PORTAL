@@ -13788,7 +13788,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return /^(OLIGO|PRI|PRB|PROBE|PRIMER)\b|^(OLIGO|PRI|PRB)[-_.]/i.test(code) ||
             /primer|probe|oligo|đoạn mồi|đầu dò|bhq|taqman|5['’]\s*-?\s*(fam|hex|rox|cy5|vic|tet|joe)/i.test(name);
     };
-    const itemSequence = (it: any): string => String(it?.sequence || "").trim();
+    const itemSequence = (it: any): string => {
+        const explicit = String(it?.sequence || "").trim();
+        if (explicit) return explicit;
+        const noteRaw = String(it?.soNote || it?.notes || "").trim();
+        if (!noteRaw) return "";
+        if (/5['’`´]?\s*-\s*[ACGTUacgtuYRWSKMDVHBXN]|[ACGTU]{10,}/i.test(noteRaw)) {
+            return noteRaw;
+        }
+        return "";
+    };
     /** Quy cách kèm trình tự (để mọi màn hình PR / PO / in ấn đều mang theo trình tự). */
     const specWithSequence = (spec: any, seq: string): string => {
         const s = String(spec || "").trim();
@@ -13832,21 +13841,49 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const orderProgress = precomputedOrderReservationData.progressMap.get(order.id) || getOrderQtyProgress(order);
         const orderSlipsActive = getOrderSlips(order, false);
         const pendingSlipCount = orderSlipsActive.filter((s: any) => getSlipStatus(s, order) === "PENDING").length;
-        const itemsBreakdown = items.map((it: any) => {
+        const sameCodeCountInAnalysis = items.reduce((acc: Record<string, number>, x: any) => {
+            const c = (x.productCode || x.product_code || x.code || "").trim();
+            if (c) acc[c] = (acc[c] || 0) + 1;
+            return acc;
+        }, {});
+        const itemsBreakdown = items.map((it: any, lineIdx: number) => {
             const code = (it.productCode || it.product_code || it.code || "").trim();
             const orderQty = Number(it.quantity) || 1;
+            const hasMultiSameCode = (sameCodeCountInAnalysis[code] || 0) > 1;
+            const isGiftItem = Boolean(it.isGift || it.is_gift || Number(it.unitPrice ?? it.price ?? 0) === 0);
+            const seqOrNote = String(itemSequence(it) || it.notes || "").trim().toLowerCase();
+            const uPrice = Number(it.unitPrice ?? it.price ?? 0);
+            const lineSpecKey = hasMultiSameCode
+                ? `${code}__${String(it.specification || "").trim().toLowerCase()}__${isGiftItem ? "gift" : "paid"}__${uPrice}__${seqOrNote || `line${lineIdx}`}`
+                : `${code}__${String(it.specification || "").trim().toLowerCase()}__${isGiftItem ? "gift" : "paid"}`;
+            const matchSlipLine = (dIt: any) => {
+                if ((dIt.productCode || dIt.product_code || dIt.code) !== code) return false;
+                if (!hasMultiSameCode) return true;
+                if (dIt.lineGroupKey) return dIt.lineGroupKey === lineSpecKey;
+                const dSeqOrNote = String(itemSequence(dIt) || dIt.soNote || dIt.notes || "").trim().toLowerCase();
+                if (seqOrNote && dSeqOrNote) return dSeqOrNote === seqOrNote;
+                const dIsGift = Boolean(dIt.isGift || dIt.is_gift || Number(dIt.unitPrice ?? dIt.price ?? 0) === 0);
+                const dPrice = Number(dIt.unitPrice ?? dIt.price ?? 0);
+                return String(dIt.specification || "").trim().toLowerCase() === String(it.specification || "").trim().toLowerCase() && dIsGift === isGiftItem && dPrice === uPrice;
+            };
             const deliveredFromDeliveries = order.deliveries ? order.deliveries.reduce((sum: number, del: any) => {
                 const matchedQty = (del.itemsDelivered || [])
-                    .filter((dIt: any) => (dIt.productCode || dIt.code) === code)
+                    .filter(matchSlipLine)
                     .reduce((s2: number, dIt: any) => s2 + (Number(dIt.quantity) || 0), 0);
                 return sum + matchedQty;
             }, 0) : 0;
+            const allocatedFromSlips = hasMultiSameCode
+                ? orderSlipsActive.reduce((sum: number, s: any) => sum + (s.items || []).filter(matchSlipLine).reduce((s2: number, x: any) => s2 + (Number(x.quantity) || 0), 0), 0)
+                : Number(orderProgress[code]?.allocated || 0);
+            const deliveredFromSlips = hasMultiSameCode
+                ? orderSlipsActive.filter((s: any) => getSlipStep(s, order) === "DELIVERED").reduce((sum: number, s: any) => sum + (s.items || []).filter(matchSlipLine).reduce((s2: number, x: any) => s2 + (Number(x.quantity) || 0), 0), 0)
+                : Number(orderProgress[code]?.delivered || 0);
             const deliveredQty = Math.max(
                 Number(it.deliveredQuantity || 0),
                 deliveredFromDeliveries,
-                Number(orderProgress[code]?.delivered || 0)
+                deliveredFromSlips
             );
-            const allocatedQty = Number(orderProgress[code]?.allocated || 0);
+            const allocatedQty = allocatedFromSlips;
             // Còn lại = SL đặt − SL đã lập phiếu giao (gồm cả phiếu chờ giao)
             const remainingQty = Math.max(0, orderQty - Math.max(deliveredQty, allocatedQty));
 
@@ -14901,32 +14938,44 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (c) acc[c] = (acc[c] || 0) + 1;
             return acc;
         }, {});
-        sourceItems.forEach((it: any) => {
+        const otherActiveSlips = getOrderSlips(target, false).filter((s: any) => s.id !== editSlip?.id);
+        sourceItems.forEach((it: any, lineIdx: number) => {
             const code = getItemCode(it);
             if (!code) return;
             const isGiftItem = Boolean(it.isGift || it.is_gift || Number(it.unitPrice ?? it.price ?? 0) === 0);
-            const specKey = `${code}__${String(it.specification || "").trim().toLowerCase()}__${isGiftItem ? "gift" : "paid"}`;
+            const hasDistinctLines = (sameCodeCountInOrder[code] || 0) > 1;
+            const seqVal = itemSequence(it);
+            const seqOrNote = String(seqVal || it.notes || "").trim().toLowerCase();
+            const uPrice = Number(it.unitPrice ?? it.price ?? 0);
+            const specKey = hasDistinctLines
+                ? `${code}__${String(it.specification || "").trim().toLowerCase()}__${isGiftItem ? "gift" : "paid"}__${uPrice}__${seqOrNote || `line${lineIdx}`}`
+                : `${code}__${String(it.specification || "").trim().toLowerCase()}__${isGiftItem ? "gift" : "paid"}`;
             if (seen.has(specKey)) return;
             seen.add(specKey);
             const prod = allSalesProducts.find(p => p.code === code);
             const ordered = Number(it.quantity) || 1;
-            const hasDistinctLines = (sameCodeCountInOrder[code] || 0) > 1;
-            const matchingSlipItems = editSlip
-                ? (editSlip.items || []).filter((x: any) => {
-                    if (getItemCode(x) !== code) return false;
-                    if (!hasDistinctLines) return true;
-                    if (x.lineGroupKey) return x.lineGroupKey === specKey;
-                    const xIsGift = Boolean(x.isGift || x.is_gift || Number(x.unitPrice ?? x.price ?? 0) === 0);
-                    return String(x.specification || "").trim().toLowerCase() === String(it.specification || "").trim().toLowerCase() && xIsGift === isGiftItem;
-                })
-                : [];
+            const matchesDistinctLine = (x: any) => {
+                if (getItemCode(x) !== code) return false;
+                if (!hasDistinctLines) return true;
+                if (x.lineGroupKey) return x.lineGroupKey === specKey;
+                const xSeqOrNote = String(itemSequence(x) || x.soNote || x.notes || "").trim().toLowerCase();
+                if (seqOrNote && xSeqOrNote) return xSeqOrNote === seqOrNote;
+                const xIsGift = Boolean(x.isGift || x.is_gift || Number(x.unitPrice ?? x.price ?? 0) === 0);
+                const xPrice = Number(x.unitPrice ?? x.price ?? 0);
+                return String(x.specification || "").trim().toLowerCase() === String(it.specification || "").trim().toLowerCase() && xIsGift === isGiftItem && xPrice === uPrice;
+            };
+            const matchingSlipItems = editSlip ? (editSlip.items || []).filter(matchesDistinctLine) : [];
             const matchingSlipQty = matchingSlipItems.reduce((s: number, x: any) => s + (Number(x.quantity) || 0), 0);
+            const otherAllocatedQty = hasDistinctLines
+                ? otherActiveSlips.reduce((sum: number, s: any) => sum + (s.items || []).filter(matchesDistinctLine).reduce((s2: number, x: any) => s2 + (Number(x.quantity) || 0), 0), 0)
+                : 0;
+            const lineDeliveredOrAllocated = Math.max(otherAllocatedQty, Math.max(0, (Number(it.deliveredQuantity) || 0) - matchingSlipQty));
             const pg = hasDistinctLines
                 ? {
                     ordered,
-                    allocated: 0,
-                    delivered: Math.max(0, (Number(it.deliveredQuantity) || 0) - matchingSlipQty),
-                    remaining: Math.max(matchingSlipQty, ordered - Math.max(0, (Number(it.deliveredQuantity) || 0) - matchingSlipQty))
+                    allocated: lineDeliveredOrAllocated,
+                    delivered: lineDeliveredOrAllocated,
+                    remaining: Math.max(matchingSlipQty, ordered - lineDeliveredOrAllocated)
                 }
                 : {
                     ...(progress[code] || { ordered, allocated: 0, delivered: 0, remaining: ordered }),
@@ -14979,6 +15028,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         isManualLot: false,
                         isExtraLot: sIdx > 0,
                         lineGroupKey: specKey,
+                        sequence: seqVal || sIt?.sequence || "",
                     // ghi chú của dòng trên SO (NVKD ghi cho Kho / Cung ứng)
                     soNote: String(it.notes || "").trim(),
                     packagingForm: normalizePackagingForm(it.packagingForm) || undefined
@@ -15014,6 +15064,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     isManualLot: false,
                     isExtraLot: false,
                     lineGroupKey: specKey,
+                    sequence: seqVal || "",
                     // ghi chú của dòng trên SO (NVKD ghi cho Kho / Cung ứng)
                     soNote: String(it.notes || "").trim(),
                     packagingForm: normalizePackagingForm(it.packagingForm) || undefined
@@ -15771,7 +15822,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         {slips.map((s: any, i: number) => {
                             const step = getSlipStep(s, fo);
                             const meta = stepMeta[step] || stepMeta.PENDING_DELIVERY;
-                            const uniqueSkuCount = new Set((s.items || []).map((it: any) => getItemCode(it))).size;
+                            const uniqueSkuCount = (s.items || []).filter((it: any) => !it.isExtraLot).length || new Set((s.items || []).map((it: any) => it.lineGroupKey || getItemCode(it))).size;
                             const totalQty = (s.items || []).reduce((sum: number, it: any) => sum + (Number(it.quantity) || 0), 0);
                             return (
                                 <div key={s.id} className="flex items-center justify-between gap-2 flex-wrap bg-slate-900/60 border border-slate-800 rounded px-2 py-1">
@@ -33760,18 +33811,35 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             const groupedBySku: any[] = [];
                                             const skuMap = new Map<string, any>();
 
-                                            rawItems.forEach((it: any) => {
-                                                const codeKey = String(it.productCode || it.productName || "").trim().toUpperCase();
+                                            const lastGroupKeyByCode: Record<string, string> = {};
+                                            rawItems.forEach((it: any, rawIdx: number) => {
+                                                const baseCode = String(it.productCode || it.productName || "").trim().toUpperCase();
+                                                const seqStr = String(itemSequence(it) || "").trim();
+                                                const soNoteStr = String(it.soNote || "").trim();
+                                                const noteStr = String(it.notes || "").trim();
+                                                const uPrice = Number(it.unitPrice ?? it.price ?? 0);
+                                                let codeKey: string;
+                                                if (it.lineGroupKey) {
+                                                    codeKey = String(it.lineGroupKey);
+                                                } else if (it.isExtraLot && lastGroupKeyByCode[baseCode]) {
+                                                    codeKey = lastGroupKeyByCode[baseCode];
+                                                } else {
+                                                    const distinctTrait = (seqStr || soNoteStr || noteStr).toLowerCase();
+                                                    codeKey = distinctTrait
+                                                        ? `${baseCode}__${String(it.specification || "").trim().toLowerCase()}__${uPrice}__${distinctTrait}`
+                                                        : `${baseCode}__${String(it.specification || "").trim().toLowerCase()}__${uPrice}__${it.isExtraLot ? "extra" : rawIdx}`;
+                                                }
+                                                lastGroupKeyByCode[baseCode] = codeKey;
                                                 const qty = Number(it.quantity) || 0;
                                                 const lotStr = String(it.lotNo || "").trim();
                                                 const expStr = String(it.expDate || "").trim();
-                                                const noteStr = String(it.notes || "").trim();
+                                                const effectiveNote = noteStr || soNoteStr;
                                                 if (!skuMap.has(codeKey)) {
                                                     const entry = {
                                                         ...it,
                                                         quantity: qty,
                                                         lotsDetail: [{ lotNo: lotStr || "-", expDate: expStr || "-", qty }],
-                                                        notesList: noteStr ? [noteStr] : []
+                                                        notesList: effectiveNote ? [effectiveNote] : []
                                                     };
                                                     skuMap.set(codeKey, entry);
                                                     groupedBySku.push(entry);
@@ -33779,8 +33847,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     const existing = skuMap.get(codeKey);
                                                     existing.quantity += qty;
                                                     existing.lotsDetail.push({ lotNo: lotStr || "-", expDate: expStr || "-", qty });
-                                                    if (noteStr && !existing.notesList.includes(noteStr)) {
-                                                        existing.notesList.push(noteStr);
+                                                    if (effectiveNote && !existing.notesList.includes(effectiveNote)) {
+                                                        existing.notesList.push(effectiveNote);
                                                     }
                                                 }
                                             });
@@ -33797,6 +33865,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <td className="p-2 border-r border-slate-200">
                                                             <div className="font-bold text-slate-900">{it.productName}</div>
                                                             {it.specification && <div className="text-[10px] text-slate-500">{it.specification}</div>}
+                                                            {itemSequence(it) && <div className="text-[10px] font-mono text-indigo-800 break-all">Trình tự: {itemSequence(it)}</div>}
                                                             {(it.storageCondition || getStorageConditionForProduct(it.productCode)) && (
                                                                 <div className="text-[10px] text-slate-600">Bảo quản: {it.storageCondition || getStorageConditionForProduct(it.productCode)}</div>
                                                             )}
