@@ -207,6 +207,7 @@ export const WarehouseModule: React.FC = () => {
   const [pendingPOs, setPendingPOs] = useState<any[]>([]);
   const [isInboundPODropdownOpen, setIsInboundPODropdownOpen] = useState(false);
   const [isExcelSupplierDropdownOpen, setIsExcelSupplierDropdownOpen] = useState(false);
+  const [isExcelPODropdownOpen, setIsExcelPODropdownOpen] = useState(false);
 
   // Reservation filter & modal states
   const [selectedRepFilter, setSelectedRepFilter] = useState<string>("all");
@@ -7666,15 +7667,129 @@ export const WarehouseModule: React.FC = () => {
                       </>
                     )}
                   </div>
-                  <div>
-                    <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1">Mã đơn mua hàng (PO)</label>
-                    <input
-                      type="text"
-                      value={excelInboundDetails.reference_code}
-                      onChange={(e) => setExcelInboundDetails({ ...excelInboundDetails, reference_code: e.target.value })}
-                      placeholder="PO-2026-..."
-                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono"
-                    />
+                  <div className="relative">
+                    <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1 flex items-center justify-between">
+                      <span>Mã đơn mua hàng (PO)</span>
+                      <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-normal">
+                        Chọn hoặc gõ tìm ({pendingPOs.length} PO)
+                      </span>
+                    </label>
+                    <div className="relative flex items-center">
+                      <input
+                        type="text"
+                        value={excelInboundDetails.reference_code}
+                        onFocus={() => setIsExcelPODropdownOpen(true)}
+                        onChange={(e) => {
+                          setExcelInboundDetails({ ...excelInboundDetails, reference_code: e.target.value });
+                          setIsExcelPODropdownOpen(true);
+                        }}
+                        placeholder="Chọn hoặc gõ tìm mã PO..."
+                        className="w-full pl-2.5 pr-14 py-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono focus:ring-2 focus:ring-emerald-500 outline-none"
+                      />
+                      <div className="absolute right-1.5 flex items-center gap-0.5">
+                        {excelInboundDetails.reference_code && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setExcelInboundDetails({ ...excelInboundDetails, reference_code: "" });
+                              setIsExcelPODropdownOpen(true);
+                            }}
+                            className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer"
+                            title="Xóa mã PO"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setIsExcelPODropdownOpen(!isExcelPODropdownOpen)}
+                          className="p-1 rounded-md text-slate-500 hover:text-emerald-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                          title="Mở danh sách Đơn Mua Hàng (PO)"
+                        >
+                          <ChevronDown className={`w-3.5 h-3.5 transition-transform duration-200 ${isExcelPODropdownOpen ? "rotate-180 text-emerald-600" : ""}`} />
+                        </button>
+                      </div>
+                    </div>
+                    {isExcelPODropdownOpen && (() => {
+                      const q = String(excelInboundDetails.reference_code || "").trim().toLowerCase();
+                      const chosenSup = String(excelInboundDetails.supplier_name || "").trim().toLowerCase();
+                      const matchedList = pendingPOs.filter((po: any) => {
+                        if (!q) return true;
+                        if (String(po.po_code || "").toLowerCase() === q) return true;
+                        return (
+                          String(po.po_code || "").toLowerCase().includes(q) ||
+                          String(po.supplier_name || "").toLowerCase().includes(q) ||
+                          (po.lines || []).some((l: any) =>
+                            String(l.product_code || "").toLowerCase().includes(q) ||
+                            String(l.product_name || "").toLowerCase().includes(q)
+                          )
+                        );
+                      });
+                      const sortedList = chosenSup
+                        ? [...matchedList].sort((a: any, b: any) => {
+                            const aMatch = String(a.supplier_name || "").toLowerCase().includes(chosenSup) ? 0 : 1;
+                            const bMatch = String(b.supplier_name || "").toLowerCase().includes(chosenSup) ? 0 : 1;
+                            return aMatch - bMatch;
+                          })
+                        : matchedList;
+                      return (
+                        <>
+                          <div className="fixed inset-0 z-40" onClick={() => setIsExcelPODropdownOpen(false)} />
+                          <div className="absolute left-0 right-0 sm:w-[420px] mt-1 max-h-64 overflow-y-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl z-50 divide-y divide-slate-100 dark:divide-slate-800">
+                            <div className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/80 text-[10px] font-bold text-slate-500 uppercase tracking-wider sticky top-0 flex justify-between">
+                              <span>Danh sách PO chờ nhập kho ({sortedList.length})</span>
+                              <span>Click để chọn</span>
+                            </div>
+                            {sortedList.length > 0 ? (
+                              sortedList.slice(0, 60).map((po: any) => {
+                                const open = (po.lines || []).filter((l: any) => l.remaining > 0);
+                                const isSelected = String(excelInboundDetails.reference_code || "").trim() === String(po.po_code || "").trim();
+                                return (
+                                  <button
+                                    key={po.id || po.po_code}
+                                    type="button"
+                                    onClick={() => {
+                                      const sup = findDirectorySupplier(po.supplier_name);
+                                      setExcelInboundDetails((prev) => ({
+                                        ...prev,
+                                        reference_code: po.po_code,
+                                        supplier_name: prev.supplier_name || sup?.name || po.supplier_name || "",
+                                      }));
+                                      setIsExcelPODropdownOpen(false);
+                                    }}
+                                    className="w-full px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors flex items-start justify-between gap-2 cursor-pointer"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <span className="font-mono font-bold text-xs text-orange-600 dark:text-orange-400">{po.po_code}</span>
+                                        <span className="text-[10px] text-slate-500">
+                                          {po.expected_delivery_date ? `Hẹn ${formatVNDate(po.expected_delivery_date)} • ` : ""}
+                                          {open.length} mặt hàng
+                                        </span>
+                                      </div>
+                                      <div className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 truncate mt-0.5">
+                                        {po.supplier_name}
+                                      </div>
+                                      {open.length > 0 && (
+                                        <div className="text-[10px] text-slate-500 truncate mt-0.5 font-mono">
+                                          {open.slice(0, 4).map((l: any) => `${l.product_code} ×${l.remaining}`).join(" • ")}
+                                          {open.length > 4 ? ` … +${open.length - 4}` : ""}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {isSelected && <Check className="w-4 h-4 text-emerald-600 shrink-0 mt-1" />}
+                                  </button>
+                                );
+                              })
+                            ) : (
+                              <div className="p-3 text-center text-slate-500 text-[11px]">
+                                Không tìm thấy PO khớp trong danh sách. Nhấn bên ngoài để dùng mã vừa gõ: <strong className="text-slate-900 dark:text-white">"{excelInboundDetails.reference_code}"</strong>
+                              </div>
+                            )}
+                          </div>
+                        </>
+                      );
+                    })()}
                   </div>
                   <div>
                     <label className="block text-slate-600 dark:text-slate-400 font-bold mb-1">Số Hóa Đơn VAT</label>

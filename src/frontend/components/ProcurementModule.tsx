@@ -217,8 +217,27 @@ const receivedOf = (po: any, i: number): number => {
   return legacyFull ? Number(po?.items?.[i]?.quantity) || 0 : 0;
 };
 
+/** Chuyển chuỗi số (hỗ trợ cả dấu chấm và dấu phẩy thập phân) sang số thực */
+const parseDecimalNum = (v: any): number => {
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  const s = String(v ?? "").trim().replace(/,/g, ".");
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+};
+
 /** Làm tròn tối đa 3 chữ số thập phân cho Đơn giá & Thành tiền */
-const roundPrice3 = (v: any): number => Math.round((Number(v) || 0) * 1000) / 1000;
+const roundPrice3 = (v: any): number => Math.round(parseDecimalNum(v) * 1000) / 1000;
+
+/** Giữ nguyên chuỗi đang gõ cho phép tối đa 3 chữ số lẻ thập phân (hỗ trợ gõ cả dấu '.' hoặc ',') */
+const sanitizeDecimal3Input = (raw: string): string => {
+  const norm = String(raw ?? "").replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  if (!norm) return "";
+  const dotIdx = norm.indexOf(".");
+  if (dotIdx === -1) return norm.replace(/^0+(\d)/, "$1");
+  const intPart = (norm.slice(0, dotIdx) || "0").replace(/^0+(\d)/, "$1");
+  const decPart = norm.slice(dotIdx + 1).replace(/\./g, "").slice(0, 3);
+  return `${intPart}.${decPart}`;
+};
 
 /** Tính toán Thành tiền (trước VAT), Tiền VAT và Thành tiền sau VAT cho từng dòng PO */
 const calcPOLine = (it: any) => {
@@ -1908,7 +1927,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       if (!String(l.product_code || "").trim()) { alert("Vui lòng chọn hoặc nhập Mã hàng (*) cho dòng phát sinh."); return; }
       if (!String(l.lot_number || "").trim()) { alert(`${l.product_code}: bắt buộc phải nhập Số lô (LOT) / Serial (*).`); return; }
       if (!l.no_expiry && !String(l.expiry_date || "").trim()) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải nhập Hạn dùng (EXP) (*), hoặc đánh dấu "Không có HSD".`); return; }
-      if (!(Number(l.unit_price) > 0)) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải nhập Đơn giá nhập (> 0 VNĐ) (*).`); return; }
+      if (!(roundPrice3(l.unit_price) > 0)) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải nhập Đơn giá nhập (> 0 VNĐ) (*).`); return; }
       if (!String(l.storage_condition || "").trim()) { alert(`${l.product_code} (lô ${l.lot_number}): bắt buộc phải chọn Điều kiện bảo quản (*).`); return; }
     }
     const perLine: Record<number, number> = {};
@@ -1957,7 +1976,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             quantity: Number(l.quantity) || 0,
             specification: l.specification || "",
             unit: l.unit || "Hộp",
-            unit_price: Number(l.unit_price) || 0,
+            unit_price: roundPrice3(l.unit_price),
             lot_number: String(l.lot_number).trim(),
             manufacture_date: l.manufacture_date || "",
             expiry_date: l.no_expiry ? "" : l.expiry_date,
@@ -6101,14 +6120,13 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           </td>
                           <td className="p-2">
                             <input
-                              type="number"
-                              min={0}
-                              step="0.001"
-                              value={item.unit_price ?? ""}
+                              type="text"
+                              inputMode="decimal"
+                              value={item.unit_price === 0 ? "" : (item.unit_price ?? "")}
                               onChange={(e) => {
-                                const raw = e.target.value;
+                                const cleaned = sanitizeDecimal3Input(e.target.value);
                                 updatePOLine(idx, {
-                                  unit_price: raw === "" ? 0 : (/^\d*\.\d{0,3}$/.test(raw) ? raw : Math.max(0, roundPrice3(parseFloat(raw) || 0)))
+                                  unit_price: cleaned
                                 });
                               }}
                               onBlur={() => updatePOLine(idx, { unit_price: Math.max(0, roundPrice3(item.unit_price)) })}
@@ -6704,18 +6722,17 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           </td>
                           <td className="p-2">
                             <input
-                              type="number"
-                              min={0.001}
-                              step="0.001"
-                              value={l.unit_price ?? ""}
-                              placeholder="Nhập đơn giá *"
+                              type="text"
+                              inputMode="decimal"
+                              value={l.unit_price === 0 ? "" : (l.unit_price ?? "")}
+                              placeholder="VD: 125000.500 *"
                               onChange={(e) => {
-                                const raw = e.target.value;
-                                setL({ unit_price: raw === "" ? "" : (/^\d*\.\d{0,3}$/.test(raw) ? raw : Math.max(0, roundPrice3(parseFloat(raw) || 0))) });
+                                const cleaned = sanitizeDecimal3Input(e.target.value);
+                                setL({ unit_price: cleaned });
                               }}
                               onBlur={() => setL({ unit_price: Math.max(0, roundPrice3(l.unit_price)) })}
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-[11px] ${
-                                !(Number(l.unit_price) > 0)
+                                !(roundPrice3(l.unit_price) > 0)
                                   ? "border-rose-300 dark:border-rose-800/80"
                                   : "border-slate-200 dark:border-slate-700"
                               }`}

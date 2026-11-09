@@ -487,9 +487,9 @@ export async function GET(req: NextRequest) {
         personnel: personnelRes.rows,
         customers: customersRes.rows,
         suppliers: suppliersRes.rows,
-        // PO đang chờ nhập kho (đã xác nhận trở đi, còn dòng chưa nhận đủ) để chọn trên phiếu nhập kho
+        // PO đang chờ nhập kho (còn dòng chưa nhận đủ) để chọn trên phiếu nhập kho & nhập kho bằng Excel
         pending_pos: openPOs.rows
-          .filter((po: any) => !["DRAFT", "PENDING"].includes(String(po.status || "").toUpperCase()))
+          .filter((po: any) => !["DRAFT", "CANCELLED"].includes(String(po.status || "").toUpperCase()))
           .map((po: any) => {
             let its: any = po.items;
             if (typeof its === "string") { try { its = JSON.parse(its); } catch { its = []; } }
