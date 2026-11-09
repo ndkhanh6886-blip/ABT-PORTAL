@@ -5971,7 +5971,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const customStarterStages = [
       {
         id: `stg-${Date.now()}-0`,
-        name: "Giai đoạn 1: Khởi tạo & Chuẩn bị nguồn lực",
+        name: "",
         dept: defaultPartDepts[0] || "Kinh Doanh",
         assignee: defaultLead,
         status: "pending" as const,
@@ -5979,45 +5979,9 @@ export const UnifiedWorkspace: React.FC = () => {
         tasks: [
           {
             id: `stgtask-${Date.now()}-0-0`,
-            title: "Lập kế hoạch chi tiết & phân công đầu mối các bộ phận",
+            title: "",
             dept: defaultPartDepts[0] || "Kinh Doanh",
             assignee: defaultLead,
-            due: toVNDateString(new Date(Date.now() + 3 * 86400000)),
-            status: "pending" as const
-          }
-        ]
-      },
-      {
-        id: `stg-${Date.now()}-1`,
-        name: "Giai đoạn 2: Triển khai thực hiện & Phối hợp liên phòng",
-        dept: defaultPartDepts[1] || defaultPartDepts[0] || "Application",
-        assignee: "",
-        status: "pending" as const,
-        estimatedDays: 7,
-        tasks: [
-          {
-            id: `stgtask-${Date.now()}-1-0`,
-            title: "Triển khai công việc chuyên môn theo phân công giai đoạn 2",
-            dept: defaultPartDepts[1] || defaultPartDepts[0] || "Application",
-            assignee: "",
-            due: toVNDateString(new Date(Date.now() + 10 * 86400000)),
-            status: "pending" as const
-          }
-        ]
-      },
-      {
-        id: `stg-${Date.now()}-2`,
-        name: "Giai đoạn 3: Kiểm tra, Nghiệm thu & Tổng kết bàn giao",
-        dept: defaultPartDepts[2] || defaultPartDepts[0] || "Kinh Doanh",
-        assignee: "",
-        status: "pending" as const,
-        estimatedDays: 4,
-        tasks: [
-          {
-            id: `stgtask-${Date.now()}-2-0`,
-            title: "Nghiệm thu kết quả, hoàn tất hồ sơ & báo cáo tổng kết dự án",
-            dept: defaultPartDepts[2] || defaultPartDepts[0] || "Kinh Doanh",
-            assignee: "",
             due: defaultDue,
             status: "pending" as const
           }
@@ -6040,7 +6004,7 @@ export const UnifiedWorkspace: React.FC = () => {
       slot: "Toàn thời gian (Theo tiến trình)",
       priority: "Cao",
       status: "Active",
-      tasksCount: 3,
+      tasksCount: 1,
       budget: "",
       description: "",
       stages: customStarterStages
@@ -6056,47 +6020,35 @@ export const UnifiedWorkspace: React.FC = () => {
       : (labProjectForm.dept === "Liên Phòng Ban"
           ? DEPARTMENTS.filter((d) => d.id !== "all").slice(0, 4).map((d) => d.id)
           : [labProjectForm.dept]);
-    const currentStages = Array.isArray(labProjectForm.stages) && labProjectForm.stages.length > 0
-      ? labProjectForm.stages.map((s: any, idx: number) => ({
-          ...s,
-          tasks: Array.isArray(s.tasks) ? s.tasks : [
-            {
-              id: `stgtask-${Date.now()}-${idx}-0`,
-              title: s.name || `Công việc giai đoạn ${idx + 1}`,
-              dept: s.dept || defaultPartDepts[0] || "Kinh Doanh",
-              assignee: s.assignee || "",
-              due: labProjectForm.endDate || todayVN(),
-              status: s.status || ("pending" as const)
-            }
-          ]
-        }))
-      : [
+    const blankStages = [
+      {
+        id: `stg-${Date.now()}-0`,
+        name: "",
+        dept: defaultPartDepts[0] || "Kinh Doanh",
+        assignee: labProjectForm.lead || "",
+        status: "pending" as const,
+        estimatedDays: 3,
+        tasks: [
           {
-            id: `stg-${Date.now()}-0`,
-            name: "Giai đoạn 1: Khởi tạo & Chuẩn bị",
+            id: `stgtask-${Date.now()}-0-0`,
+            title: "",
             dept: defaultPartDepts[0] || "Kinh Doanh",
             assignee: labProjectForm.lead || "",
-            status: "pending" as const,
-            estimatedDays: 3,
-            tasks: [
-              {
-                id: `stgtask-${Date.now()}-0-0`,
-                title: "Công việc 1 trong giai đoạn 1",
-                dept: defaultPartDepts[0] || "Kinh Doanh",
-                assignee: labProjectForm.lead || "",
-                due: labProjectForm.endDate || todayVN(),
-                status: "pending" as const
-              }
-            ]
+            due: labProjectForm.endDate || todayVN(),
+            status: "pending" as const
           }
-        ];
+        ]
+      }
+    ];
 
     setLabProjectForm((prev) => ({
       ...prev,
       id: prev.id && !prev.id.startsWith("DA-") ? `DA-${existingCount < 10 ? "0" + existingCount : existingCount}` : prev.id,
       typeId: "custom_project",
-      typeName: prev.typeId === "custom_project" && prev.typeName ? prev.typeName : "Dự án / Nhóm công việc tùy chỉnh",
-      stages: currentStages
+      typeName: "Dự án / Nhóm công việc tùy chỉnh",
+      description: prev.typeId !== "custom_project" ? "" : prev.description,
+      stages: prev.typeId !== "custom_project" ? blankStages : (Array.isArray(prev.stages) && prev.stages.length > 0 ? prev.stages : blankStages),
+      tasksCount: prev.typeId !== "custom_project" ? 1 : (prev.stages?.length || 1)
     }));
   };
 
@@ -6342,7 +6294,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       showToast("Vui lòng nhập tên dự án / nhóm công việc", "error");
       return;
     }
-    const stagesList = (labProjectForm.stages || []).map((stg: any) => {
+    const stagesList = (labProjectForm.stages || []).map((stg: any, sIdx: number) => {
       const subTasks = Array.isArray(stg.tasks) ? stg.tasks.filter((t: any) => t && String(t.title || "").trim()) : [];
       let stgStatus = stg.status;
       if (subTasks.length > 0) {
@@ -6351,7 +6303,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
         if (allDone) stgStatus = "completed";
         else if (anyDoneOrProg && stgStatus === "pending") stgStatus = "in_progress";
       }
-      return { ...stg, status: stgStatus, tasks: subTasks };
+      return {
+        ...stg,
+        name: String(stg.name || "").trim() || `Bước ${sIdx + 1}`,
+        status: stgStatus,
+        tasks: subTasks
+      };
     });
     const stageDepts = stagesList.flatMap((s: any) => [
       s.dept,
@@ -15603,78 +15560,68 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             </div>
           </div>
 
-          {/* Section 1: Choose Custom Project OR Pre-built Template */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5 flex-wrap gap-1">
-              <label className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+          {/* Section 1: Compact Dropdown for Custom Project (Default) OR Pre-built Template */}
+          <div className="p-3 rounded-xl border border-purple-200/80 dark:border-purple-800/60 bg-purple-50/40 dark:bg-purple-950/20 space-y-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <label className="font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5 shrink-0">
                 <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
-                <span>1. Chế độ khởi tạo: Tự thiết kế dự án mới bất kỳ HOẶC chọn từ mẫu gợi ý ({labProjectForm.dept}):</span>
+                <span>1. Mẫu dự án khởi tạo:</span>
               </label>
-              <span className="text-[11px] text-slate-400 italic">
-                (Không bắt buộc theo mẫu — có thể tự tạo nội dung khác hoàn toàn)
+              <span className="text-[11px] text-slate-500 dark:text-slate-400">
+                Mặc định tạo mới tự do — bấm vào nút xổ bên dưới nếu muốn áp dụng mẫu dự án có sẵn
               </span>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {/* Prominent Option 1: Custom Project with arbitrary content */}
-              <div
-                onClick={handleSelectCustomProjectType}
-                className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 sm:col-span-2 ${
-                  labProjectForm.typeId === "custom_project"
-                    ? "bg-gradient-to-r from-purple-50 via-indigo-50/80 to-purple-50 dark:from-purple-950/80 dark:via-indigo-950/60 dark:to-purple-950/80 border-purple-500 dark:border-purple-500 shadow-xs ring-2 ring-purple-500/20"
-                    : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-purple-300 dark:hover:border-purple-700"
-                }`}
-              >
-                <span className="text-xl shrink-0 mt-0.5">✨</span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between gap-2">
-                    <h5 className="font-extrabold text-xs text-purple-900 dark:text-purple-200 leading-tight">
-                      Tự Thiết Kế Dự Án / Nhóm Công Việc Mới (Nội dung bất kỳ)
-                    </h5>
-                    {labProjectForm.typeId === "custom_project" && (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-600 text-white shrink-0">
-                        ✓ Đang chọn
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-1 leading-snug">
-                    Tự nhập tên dự án, phân loại, mục tiêu, tự chia các giai đoạn và tự tạo danh sách công việc cụ thể trong từng giai đoạn hoàn toàn theo nhu cầu thực tế.
-                  </p>
-                </div>
-              </div>
-
-              {/* Optional Pre-built Templates */}
-              {(DEPARTMENT_THEMATIC_TYPES[labProjectForm.dept] || DEPARTMENT_THEMATIC_TYPES["Liên Phòng Ban"] || DEPARTMENT_THEMATIC_TYPES["Application"] || []).map((typeDef) => {
-                const isSelected = labProjectForm.typeId === typeDef.id;
-                return (
-                  <div
-                    key={typeDef.id}
-                    onClick={() => handleThematicTypeChange(typeDef)}
-                    className={`p-3 rounded-xl border cursor-pointer transition-all flex items-start gap-2.5 ${
-                      isSelected
-                        ? "bg-purple-50/90 dark:bg-purple-950/70 border-purple-500 dark:border-purple-500 shadow-xs ring-2 ring-purple-500/20"
-                        : "bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-purple-300 dark:hover:border-purple-700 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-                    }`}
+            {(() => {
+              const templateList = DEPARTMENT_THEMATIC_TYPES[labProjectForm.dept] || DEPARTMENT_THEMATIC_TYPES["Liên Phòng Ban"] || DEPARTMENT_THEMATIC_TYPES["Application"] || [];
+              const selectedTpl = templateList.find((t) => t.id === labProjectForm.typeId);
+              return (
+                <>
+                  <select
+                    value={labProjectForm.typeId || "custom_project"}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      if (val === "custom_project") {
+                        handleSelectCustomProjectType();
+                      } else {
+                        const found = templateList.find((t) => t.id === val);
+                        if (found) handleThematicTypeChange(found);
+                      }
+                    }}
+                    className="w-full px-3 py-2.5 rounded-xl border border-purple-300 dark:border-purple-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold text-xs cursor-pointer shadow-2xs focus:ring-2 focus:ring-purple-500/30 outline-none"
                   >
-                    <span className="text-xl shrink-0 mt-0.5">{typeDef.icon}</span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between">
-                        <h5 className="font-bold text-xs text-slate-900 dark:text-white leading-tight">
-                          {typeDef.name}
-                        </h5>
-                        {isSelected && <Check className="w-3.5 h-3.5 text-purple-600 shrink-0" />}
+                    <option value="custom_project">
+                      ✨ Tạo mới hoàn toàn (Không theo mẫu có sẵn — tự tạo các bước bên dưới)
+                    </option>
+                    <optgroup label={`📋 Chọn từ mẫu dự án có sẵn (${labProjectForm.dept})`}>
+                      {templateList.map((typeDef) => (
+                        <option key={typeDef.id} value={typeDef.id}>
+                          {typeDef.icon} Mẫu: {typeDef.name} ({typeDef.defaultStages.length} bước gợi ý)
+                        </option>
+                      ))}
+                    </optgroup>
+                  </select>
+
+                  {selectedTpl && (
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-purple-200 dark:border-purple-800 text-[11px]">
+                      <div className="text-slate-600 dark:text-slate-300 leading-snug">
+                        <span className="font-bold text-purple-700 dark:text-purple-300 mr-1.5">
+                          {selectedTpl.icon} Đang áp dụng mẫu ({selectedTpl.defaultStages.length} bước):
+                        </span>
+                        <span>{selectedTpl.description}</span>
                       </div>
-                      <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 leading-snug line-clamp-2">
-                        {typeDef.description}
-                      </p>
-                      <div className="mt-1.5 flex items-center gap-2 text-[10px] text-purple-600 dark:text-purple-400 font-semibold font-mono">
-                        <span>Mẫu gợi ý: {typeDef.defaultStages.length} giai đoạn</span>
-                      </div>
+                      <button
+                        type="button"
+                        onClick={handleSelectCustomProjectType}
+                        className="px-2.5 py-1 rounded-lg font-bold text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-purple-100 dark:hover:bg-purple-900/50 hover:text-purple-700 shrink-0 cursor-pointer"
+                      >
+                        ↺ Tạo mới không theo mẫu
+                      </button>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
 
           {/* Section 2: Core Details */}
@@ -15819,7 +15766,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                     : labProjectForm.dept;
                   const newStage = {
                     id: `stg-${Date.now()}-${labProjectForm.stages.length}`,
-                    name: `Giai đoạn ${labProjectForm.stages.length + 1}`,
+                    name: "",
                     dept: defaultDept,
                     assignee: "",
                     status: "pending" as const,
