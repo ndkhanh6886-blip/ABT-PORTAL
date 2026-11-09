@@ -45,7 +45,10 @@ import {
   RefreshCw,
   Package,
   Tag,
-  SlidersHorizontal
+  SlidersHorizontal,
+  Maximize2,
+  Minimize2,
+  RotateCcw
 } from "lucide-react";
 import * as XLSX from "xlsx";
 import { formatCurrency, formatDate } from "@/backend/services/utils";
@@ -1819,6 +1822,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
   const [receiveTarget, setReceiveTarget] = useState<any>(null);
   const [receiveLines, setReceiveLines] = useState<any[]>([]);
   const [receiveNotes, setReceiveNotes] = useState("");
+  const [receiveSearchQuery, setReceiveSearchQuery] = useState("");
+  const [hideUnselectedReceiveLines, setHideUnselectedReceiveLines] = useState(false);
+  const [isReceiveModalFullscreen, setIsReceiveModalFullscreen] = useState(false);
+  const [isPOModalFullscreen, setIsPOModalFullscreen] = useState(false);
+  const [isPODetailFullscreen, setIsPODetailFullscreen] = useState(false);
   const [receiveHeader, setReceiveHeader] = useState({
     receipt_date: todayVN(),
     warehouse_name: "Kho Trung Tâm",
@@ -1846,16 +1854,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     }
   };
 
-  const openReceiveModal = (po: any) => {
-    const items: any[] = Array.isArray(po.items) ? po.items : [];
-    const rq = po.received_qty || {};
-    const lines: any[] = items
+  const buildReceiveLinesFromPO = (po: any) => {
+    const items: any[] = Array.isArray(po?.items) ? po.items : [];
+    const rq = po?.received_qty || {};
+    return items
       .map((it, idx) => {
         const ordered = Number(it.quantity) || 0;
         const received = Number(rq[idx]) || 0;
+        const remaining = Math.max(0, ordered - received);
         const matchedProd = products.find((p: any) => p.code === it.product_code);
         return {
           line_index: idx,
+          selected: true,
+          default_quantity: remaining,
           product_code: it.product_code,
           product_name: cleanItemName(it.product_name),
           specification: it.specification || matchedProd?.specification || "",
@@ -1863,7 +1874,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           unit_price: Number(it.unit_price) || Number(matchedProd?.cost_price) || 0,
           ordered,
           received,
-          quantity: Math.max(0, ordered - received),
+          quantity: remaining,
           lot_number: "",
           manufacture_date: "",
           expiry_date: "",
@@ -1875,6 +1886,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         };
       })
       .filter(l => l.ordered - l.received > 0);
+  };
+
+  const openReceiveModal = (po: any) => {
+    const items: any[] = Array.isArray(po.items) ? po.items : [];
+    const rq = po.received_qty || {};
+    const lines: any[] = buildReceiveLinesFromPO(po);
     if (lines.length === 0) {
       const wantExtra = window.confirm(
         `PO ${po.po_code} đã nhập đủ số lượng theo đơn đặt.\n\nBạn có muốn mở phiếu Nhập kho để nhập bổ sung / phát sinh thêm hàng cho PO này không?`
@@ -1883,6 +1900,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       lines.push({
         line_index: -1,
         is_extra_line: true,
+        selected: true,
+        default_quantity: 1,
         product_code: items[0]?.product_code || "",
         product_name: cleanItemName(items[0]?.product_name || ""),
         specification: items[0]?.specification || "",
@@ -1912,6 +1931,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       inbound_type: "Nhập mua hàng theo Đơn PO từ NCC"
     });
     setReceiveNotes("");
+    setReceiveSearchQuery("");
+    setHideUnselectedReceiveLines(false);
     setReceiveLines(lines);
     setReceiveTarget(po);
   };
@@ -1921,8 +1942,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     if (!String(receiveHeader.receipt_date || "").trim()) { alert("Vui lòng nhập Ngày Nhập Kho (*)."); return; }
     if (!String(receiveHeader.warehouse_name || "").trim()) { alert("Vui lòng chọn Kho Tiếp Nhận (*)."); return; }
     if (!String(receiveHeader.received_by || "").trim()) { alert("Vui lòng nhập Thủ Kho / Người Tiếp Nhận (*)."); return; }
-    const lines = receiveLines.filter(l => (Number(l.quantity) || 0) > 0);
-    if (lines.length === 0) { alert("Nhập số lượng thực nhận (> 0) cho ít nhất 1 dòng (*)."); return; }
+    const lines = receiveLines.filter(l => l.selected !== false && (Number(l.quantity) || 0) > 0);
+    if (lines.length === 0) { alert("Vui lòng tích chọn và nhập số lượng thực nhận (> 0) cho ít nhất 1 mặt hàng về đợt này (*)."); return; }
     for (const l of lines) {
       if (!String(l.product_code || "").trim()) { alert("Vui lòng chọn hoặc nhập Mã hàng (*) cho dòng phát sinh."); return; }
       if (!String(l.lot_number || "").trim()) { alert(`${l.product_code}: bắt buộc phải nhập Số lô (LOT) / Serial (*).`); return; }
@@ -5841,8 +5862,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* Đầu và chân cửa sổ cố định, chỉ phần bảng cuộn.           */}
       {/* ========================================================= */}
       {isPOModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-[96vw] 2xl:max-w-[1440px] w-full max-h-[96vh] flex flex-col">
+        <div className={`fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center ${isPOModalFullscreen ? "p-0" : "p-2 sm:p-4"}`}>
+          <div className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col ${isPOModalFullscreen ? "w-screen h-screen max-w-none max-h-none rounded-none" : "rounded-2xl max-w-[96vw] 2xl:max-w-[1440px] w-full max-h-[96vh]"}`}>
             {/* Header (fixed): title + supplier / dates / status always visible */}
             <div className="shrink-0 px-5 pt-4 pb-3 border-b border-slate-100 dark:border-slate-800 space-y-3">
               <div className="flex items-center justify-between">
@@ -5852,9 +5873,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     {poForm.id ? `Cập Nhật Đơn PO ${poForm.po_code || ""}` : "Lập Đơn Đặt Mua Hàng Mới (PO)"}
                   </h3>
                 </div>
-                <button onClick={() => setIsPOModalOpen(false)} title="Đóng (Esc)" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">
-                  <X className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setIsPOModalFullscreen(prev => !prev)}
+                    title={isPOModalFullscreen ? "Thu nhỏ cửa sổ" : "Mở to bảng hết màn hình"}
+                    className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 cursor-pointer"
+                  >
+                    {isPOModalFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                    <span className="hidden sm:inline">{isPOModalFullscreen ? "Thu nhỏ" : "Toàn màn hình"}</span>
+                  </button>
+                  <button onClick={() => setIsPOModalOpen(false)} title="Đóng (Esc)" className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer">
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
               <div className="grid grid-cols-2 md:grid-cols-5 gap-2 text-xs">
                 <div>
@@ -6283,8 +6315,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         const dTotals = calcPOTotals(dItems);
         const totalD = parseFloat(d.total_amount) || dTotals.totalAfterVat || 0;
         return (
-          <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4" onClick={() => setSelectedPODetail(null)}>
-            <div className="bg-white rounded-2xl shadow-2xl max-w-6xl w-full max-h-[96vh] flex flex-col text-slate-900 border border-slate-200" onClick={(e) => e.stopPropagation()}>
+          <div className={`fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center ${isPODetailFullscreen ? "p-0" : "p-2 sm:p-4"}`} onClick={() => setSelectedPODetail(null)}>
+            <div className={`bg-white shadow-2xl flex flex-col text-slate-900 border border-slate-200 ${isPODetailFullscreen ? "w-screen h-screen max-w-none max-h-none rounded-none" : "rounded-2xl max-w-6xl w-full max-h-[96vh]"}`} onClick={(e) => e.stopPropagation()}>
               {/* Action bar (fixed) */}
               <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 border-b px-5 py-3">
                 <div className="flex items-center gap-2">
@@ -6317,6 +6349,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </button>
                   <button onClick={() => handlePrintPO(d)} className="px-3 py-2 rounded-xl text-xs font-bold bg-orange-600 text-white hover:bg-orange-700 flex items-center gap-1.5 cursor-pointer">
                     <Printer className="w-4 h-4" /> In / PDF
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsPODetailFullscreen(prev => !prev)}
+                    className="px-2.5 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1 cursor-pointer"
+                    title={isPODetailFullscreen ? "Thu nhỏ cửa sổ" : "Mở to bảng hết màn hình"}
+                  >
+                    {isPODetailFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                   </button>
                   <button onClick={() => setSelectedPODetail(null)} className="px-3 py-2 rounded-xl text-xs font-semibold bg-slate-100 text-slate-700 hover:bg-slate-200 flex items-center gap-1 cursor-pointer" title="Đóng (Esc)">
                     <X className="w-4 h-4" /> Đóng
@@ -6501,10 +6541,26 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {/* MODAL R: NHẬP KHO THEO PO (ĐẦY ĐỦ CHUẨN NHẬP KHO)         */}
       {/* ========================================================= */}
-      {receiveTarget && (
-        <div className="fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xl max-w-7xl w-full max-h-[96vh] flex flex-col">
-            <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-slate-800">
+      {receiveTarget && (() => {
+        const qNorm = normSearch(receiveSearchQuery);
+        const visibleIndices = receiveLines
+          .map((l, idx) => ({ l, idx }))
+          .filter(({ l }) => {
+            if (hideUnselectedReceiveLines && l.selected === false) return false;
+            if (!qNorm) return true;
+            const hay = normSearch(`${l.product_code || ""} ${l.product_name || ""} ${l.specification || ""} ${l.lot_number || ""} ${l.notes || ""}`);
+            return hay.includes(qNorm);
+          });
+        const allVisibleSelected = visibleIndices.length > 0 && visibleIndices.every(({ l }) => l.selected !== false);
+        const someVisibleSelected = visibleIndices.some(({ l }) => l.selected !== false) && !allVisibleSelected;
+        const activeReceiveLines = receiveLines.filter(l => l.selected !== false && (Number(l.quantity) || 0) > 0);
+        const totalSelectedQty = activeReceiveLines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
+        const initialPoLinesCount = buildReceiveLinesFromPO(receiveTarget).length;
+
+        return (
+        <div className={`fixed inset-0 z-[60] bg-slate-950/60 backdrop-blur-xs flex items-center justify-center ${isReceiveModalFullscreen ? "p-0" : "p-2 sm:p-4"}`}>
+          <div className={`bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl flex flex-col ${isReceiveModalFullscreen ? "w-screen h-screen max-w-none max-h-none rounded-none" : "rounded-2xl max-w-7xl w-full max-h-[96vh]"}`}>
+            <div className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-slate-100 dark:border-slate-800 gap-3">
               <div>
                 <div className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
                   <ArrowDownLeft className="w-5 h-5 text-emerald-600" /> Nhập kho theo PO <span className="font-mono text-orange-600">{receiveTarget.po_code}</span>
@@ -6513,9 +6569,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   {receiveTarget.supplier_name} • Khai báo đầy đủ thông tin chứng từ, kho lưu trữ, số lô (LOT), ngày SX (MFG), hạn dùng (EXP), điều kiện bảo quản, vị trí kệ và QC đầu vào.
                 </div>
               </div>
-              <button onClick={() => setReceiveTarget(null)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" title="Đóng (Esc)">
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsReceiveModalFullscreen(prev => !prev)}
+                  title={isReceiveModalFullscreen ? "Thu nhỏ cửa sổ" : "Mở to bảng hết màn hình"}
+                  className="px-2.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 flex items-center gap-1.5 cursor-pointer"
+                >
+                  {isReceiveModalFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+                  <span className="hidden sm:inline">{isReceiveModalFullscreen ? "Thu nhỏ" : "Mở rộng hết màn hình"}</span>
+                </button>
+                <button onClick={() => setReceiveTarget(null)} className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer" title="Đóng (Esc)">
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
             <div className="flex-1 overflow-y-auto px-5 py-3.5 text-xs space-y-4">
               {/* PHẦN 1: THÔNG TIN CHỨNG TỪ & KHO TIẾP NHẬN (ĐỒNG BỘ VỚI GIAO DIỆN NHẬP KHO CHUẨN) */}
@@ -6600,11 +6667,117 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
               </div>
 
-              {/* PHẦN 2: CHI TIẾT TỪNG DÒNG HÀNG NHẬP KHO THEO PO */}
+              {/* PHẦN 2: THANH TÌM KIẾM NHANH & CHỌN MẶT HÀNG VỀ ĐỢT NÀY */}
+              <div className="flex flex-wrap items-center justify-between gap-2.5 bg-emerald-50/50 dark:bg-slate-800/60 p-2.5 rounded-xl border border-emerald-200/70 dark:border-slate-700">
+                <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+                  <div className="relative flex-1 max-w-md min-w-[220px]">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={receiveSearchQuery}
+                      onChange={(e) => setReceiveSearchQuery(e.target.value)}
+                      placeholder="Tìm nhanh mã hàng, tên sản phẩm, quy cách trên phiếu giao..."
+                      className="w-full pl-8 pr-7 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs"
+                    />
+                    {receiveSearchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setReceiveSearchQuery("")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        title="Xóa tìm kiếm"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-[11px] text-slate-600 dark:text-slate-300 font-medium">
+                    Đợt này nhập: <strong className="text-emerald-700 dark:text-emerald-400 font-mono">{activeReceiveLines.length}/{receiveLines.length}</strong> dòng
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReceiveLines(prev =>
+                        prev.map(l => ({
+                          ...l,
+                          selected: true,
+                          quantity: (Number(l.quantity) || 0) > 0 ? l.quantity : (l.default_quantity || Math.max(1, (Number(l.ordered) || 1) - (Number(l.received) || 0)))
+                        }))
+                      )
+                    }
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-emerald-700 dark:text-emerald-300 font-semibold text-[11px] hover:bg-emerald-50 cursor-pointer"
+                  >
+                    ✓ Chọn tất cả
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReceiveLines(prev =>
+                        prev.map(l => ({
+                          ...l,
+                          selected: false
+                        }))
+                      )
+                    }
+                    className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 font-semibold text-[11px] hover:bg-slate-100 cursor-pointer"
+                  >
+                    ✕ Bỏ chọn tất cả
+                  </button>
+                  <label className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-semibold text-[11px] cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={hideUnselectedReceiveLines}
+                      onChange={(e) => setHideUnselectedReceiveLines(e.target.checked)}
+                      className="w-3.5 h-3.5 accent-emerald-600 cursor-pointer"
+                    />
+                    <span>Ẩn mã chưa về đợt này</span>
+                  </label>
+                  {receiveLines.length < initialPoLinesCount && (
+                    <button
+                      type="button"
+                      onClick={() => setReceiveLines(buildReceiveLinesFromPO(receiveTarget))}
+                      className="px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 font-semibold text-[11px] hover:bg-amber-100 flex items-center gap-1 cursor-pointer"
+                      title="Khôi phục lại các dòng mã hàng đã xóa tạm khỏi bảng"
+                    >
+                      <RotateCcw className="w-3 h-3" /> Khôi phục đủ {initialPoLinesCount} mã PO
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* BẢNG CHI TIẾT TỪNG DÒNG HÀNG NHẬP KHO THEO PO */}
               <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-x-auto">
-                <table className="w-full text-left min-w-[1250px]">
+                <table className="w-full text-left min-w-[1300px]">
                   <thead>
                     <tr className="bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-bold text-[11px]">
+                      <th className="p-2 w-10 text-center" title="Tích chọn các mã hàng về trong đợt nhập kho này">
+                        <input
+                          type="checkbox"
+                          checked={allVisibleSelected}
+                          ref={(el) => {
+                            if (el) el.indeterminate = someVisibleSelected;
+                          }}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            const visibleSet = new Set(visibleIndices.map(v => v.idx));
+                            setReceiveLines(prev =>
+                              prev.map((l, idx) => {
+                                if (!visibleSet.has(idx)) return l;
+                                return {
+                                  ...l,
+                                  selected: checked,
+                                  quantity: checked && (Number(l.quantity) || 0) <= 0
+                                    ? (l.default_quantity || Math.max(1, (Number(l.ordered) || 1) - (Number(l.received) || 0)))
+                                    : l.quantity
+                                };
+                              })
+                            );
+                          }}
+                          className="w-4 h-4 accent-emerald-600 cursor-pointer"
+                        />
+                      </th>
                       <th className="p-2 min-w-[180px]">Mã hàng / Tên / Quy cách *</th>
                       <th className="p-2 text-center w-20">Đặt / Đã nhập</th>
                       <th className="p-2 w-20 text-center">SL thực nhận *</th>
@@ -6617,15 +6790,46 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                       <th className="p-2 w-32">Vị trí Tủ / Kệ</th>
                       <th className="p-2 w-44">Tình trạng QC đầu vào</th>
                       <th className="p-2 min-w-[120px]">Ghi chú dòng</th>
-                      <th className="p-2 w-14 text-center">Tách lô</th>
+                      <th className="p-2 w-16 text-center">Tách / Bỏ</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                    {receiveLines.map((l: any, i: number) => {
+                    {visibleIndices.length === 0 ? (
+                      <tr>
+                        <td colSpan={14} className="p-6 text-center text-slate-400 italic">
+                          Không có dòng hàng nào khớp bộ lọc hiện tại.
+                        </td>
+                      </tr>
+                    ) : visibleIndices.map(({ l, idx: i }) => {
+                      const isSelected = l.selected !== false;
                       const isFirstOfLine = !l.is_extra_line && (i === 0 || receiveLines[i - 1].line_index !== l.line_index);
                       const setL = (patch: any) => setReceiveLines(prev => prev.map((x, j) => j === i ? { ...x, ...patch } : x));
                       return (
-                        <tr key={i} className="align-top hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                        <tr
+                          key={i}
+                          className={`align-top transition-opacity ${
+                            isSelected
+                              ? "hover:bg-slate-50/50 dark:hover:bg-slate-800/30"
+                              : "opacity-45 bg-slate-50/70 dark:bg-slate-900/40"
+                          }`}
+                        >
+                          <td className="p-2 pt-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                const checked = e.target.checked;
+                                setL({
+                                  selected: checked,
+                                  quantity: checked && (Number(l.quantity) || 0) <= 0
+                                    ? (l.default_quantity || Math.max(1, (Number(l.ordered) || 1) - (Number(l.received) || 0)))
+                                    : l.quantity
+                                });
+                              }}
+                              title={isSelected ? "Mã này có về trong đợt nhập này (bỏ tích nếu chưa về)" : "Mã này chưa về đợt này (tích chọn để nhập kho)"}
+                              className="w-4 h-4 accent-emerald-600 cursor-pointer"
+                            />
+                          </td>
                           <td className="p-2">
                             {l.is_extra_line ? (
                               <div className="space-y-1">
@@ -6636,6 +6840,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                     const prod = mergedCatalogProducts.find((p: any) => p.code === code) || products.find((p: any) => p.code === code);
                                     if (prod) {
                                       setL({
+                                        selected: true,
                                         product_code: prod.code,
                                         product_name: prod.name,
                                         specification: prod.specification || "",
@@ -6645,7 +6850,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                         shelf_position: prod.shelf_position || l.shelf_position || ""
                                       });
                                     } else {
-                                      setL({ product_code: code });
+                                      setL({ selected: true, product_code: code });
                                     }
                                   }}
                                   className="w-full p-1 rounded border border-orange-300 dark:border-orange-700 bg-orange-50/50 dark:bg-slate-800 text-[11px] font-mono font-bold text-orange-700 dark:text-orange-300"
@@ -6666,6 +6871,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 <div className="flex items-center gap-1.5">
                                   <span className="font-mono font-bold text-orange-600">{l.product_code}</span>
                                   {l.unit && <span className="text-[10px] px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold">{l.unit}</span>}
+                                  {!isSelected && (
+                                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 font-semibold">
+                                      Chưa về đợt này
+                                    </span>
+                                  )}
                                 </div>
                                 <div className="text-[10px] text-slate-500 truncate max-w-[210px]" title={l.product_name}>{l.product_name}</div>
                                 {l.specification && <div className="text-[10px] text-slate-400 truncate max-w-[210px]">{l.specification}</div>}
@@ -6676,6 +6886,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                       const n = [...prev];
                                       n.splice(i + 1, 0, {
                                         ...l,
+                                        selected: true,
                                         quantity: 1,
                                         lot_number: "",
                                         manufacture_date: "",
@@ -6717,13 +6928,22 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             )}
                           </td>
                           <td className="p-2">
-                            <input type="number" min={0} value={l.quantity} onChange={(e) => setL({ quantity: Math.max(0, parseInt(e.target.value) || 0) })}
-                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-center" />
+                            <input
+                              type="number"
+                              min={0}
+                              value={isSelected ? l.quantity : 0}
+                              onChange={(e) => {
+                                const val = Math.max(0, parseInt(e.target.value) || 0);
+                                setL({ quantity: val, selected: val > 0 });
+                              }}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 font-mono font-bold text-center"
+                            />
                           </td>
                           <td className="p-2">
                             <input
                               type="text"
                               inputMode="decimal"
+                              disabled={!isSelected}
                               value={l.unit_price === 0 ? "" : (l.unit_price ?? "")}
                               placeholder="VD: 125000.500 *"
                               onChange={(e) => {
@@ -6732,42 +6952,63 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               }}
                               onBlur={() => setL({ unit_price: Math.max(0, roundPrice3(l.unit_price)) })}
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono font-bold text-right text-[11px] ${
-                                !(roundPrice3(l.unit_price) > 0)
+                                isSelected && !(roundPrice3(l.unit_price) > 0)
                                   ? "border-rose-300 dark:border-rose-800/80"
                                   : "border-slate-200 dark:border-slate-700"
                               }`}
                             />
                           </td>
                           <td className="p-2">
-                            <input type="text" value={l.lot_number} onChange={(e) => setL({ lot_number: e.target.value })} placeholder="VD: 2510A01"
+                            <input
+                              type="text"
+                              disabled={!isSelected}
+                              value={l.lot_number}
+                              onChange={(e) => setL({ lot_number: e.target.value })}
+                              placeholder="VD: 2510A01"
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-orange-600 dark:text-orange-400 font-mono font-bold ${
-                                !String(l.lot_number || "").trim()
+                                isSelected && !String(l.lot_number || "").trim()
                                   ? "border-rose-300 dark:border-rose-800/80"
                                   : "border-slate-200 dark:border-slate-700"
-                              }`} />
+                              }`}
+                            />
                           </td>
                           <td className="p-2">
-                            <DateInputVN value={l.manufacture_date || ""} onChange={(e) => setL({ manufacture_date: e.target.value })}
-                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px]" />
+                            <DateInputVN
+                              value={l.manufacture_date || ""}
+                              disabled={!isSelected}
+                              onChange={(e) => setL({ manufacture_date: e.target.value })}
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px]"
+                            />
                           </td>
                           <td className="p-2">
-                            <DateInputVN value={l.expiry_date} disabled={l.no_expiry} onChange={(e) => setL({ expiry_date: e.target.value })}
+                            <DateInputVN
+                              value={l.expiry_date}
+                              disabled={!isSelected || l.no_expiry}
+                              onChange={(e) => setL({ expiry_date: e.target.value })}
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-mono text-[11px] disabled:opacity-50 ${
-                                !l.no_expiry && !String(l.expiry_date || "").trim()
+                                isSelected && !l.no_expiry && !String(l.expiry_date || "").trim()
                                   ? "border-rose-300 dark:border-rose-800/80"
                                   : "border-slate-200 dark:border-slate-700"
-                              }`} />
+                              }`}
+                            />
                           </td>
                           <td className="p-2 text-center pt-3">
-                            <input type="checkbox" checked={!!l.no_expiry} onChange={(e) => setL({ no_expiry: e.target.checked, expiry_date: e.target.checked ? "" : l.expiry_date })}
-                              title="Thiết bị / vật tư không có hạn dùng" className="w-4 h-4 accent-orange-600 cursor-pointer" />
+                            <input
+                              type="checkbox"
+                              disabled={!isSelected}
+                              checked={!!l.no_expiry}
+                              onChange={(e) => setL({ no_expiry: e.target.checked, expiry_date: e.target.checked ? "" : l.expiry_date })}
+                              title="Thiết bị / vật tư không có hạn dùng"
+                              className="w-4 h-4 accent-orange-600 cursor-pointer"
+                            />
                           </td>
                           <td className="p-2">
                             <select
+                              disabled={!isSelected}
                               value={l.storage_condition || ""}
                               onChange={(e) => setL({ storage_condition: e.target.value })}
                               className={`w-full p-1.5 rounded-lg border bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px] ${
-                                !String(l.storage_condition || "").trim()
+                                isSelected && !String(l.storage_condition || "").trim()
                                   ? "border-rose-300 dark:border-rose-800/80 text-rose-600 dark:text-rose-400"
                                   : "border-slate-200 dark:border-slate-700"
                               }`}
@@ -6782,6 +7023,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           <td className="p-2">
                             <input
                               type="text"
+                              disabled={!isSelected}
                               value={l.shelf_position || ""}
                               onChange={(e) => setL({ shelf_position: e.target.value })}
                               placeholder="VD: Tủ -20°C Kệ A1"
@@ -6790,6 +7032,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           </td>
                           <td className="p-2">
                             <select
+                              disabled={!isSelected}
                               value={l.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)"}
                               onChange={(e) => setL({ qc_status: e.target.value })}
                               className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]"
@@ -6801,17 +7044,47 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                             </select>
                           </td>
                           <td className="p-2">
-                            <input type="text" value={l.notes} onChange={(e) => setL({ notes: e.target.value })} placeholder="Ghi chú thêm..."
-                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]" />
+                            <input
+                              type="text"
+                              disabled={!isSelected}
+                              value={l.notes}
+                              onChange={(e) => setL({ notes: e.target.value })}
+                              placeholder="Ghi chú thêm..."
+                              className="w-full p-1.5 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-[11px]"
+                            />
                           </td>
                           <td className="p-2 text-center whitespace-nowrap">
-                            <button type="button" title="Tách thêm 1 lô / dòng máy cho mặt hàng này"
-                              onClick={() => setReceiveLines(prev => { const n = [...prev]; n.splice(i + 1, 0, { ...l, quantity: 1, lot_number: "", manufacture_date: "", expiry_date: "", no_expiry: l.no_expiry, notes: "" }); return n; })}
-                              className="p-1 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"><Plus className="w-4 h-4" /></button>
-                            {(!isFirstOfLine || l.is_extra_line) && (
-                              <button type="button" title="Bỏ dòng này" onClick={() => setReceiveLines(prev => prev.filter((_, j) => j !== i))}
-                                className="p-1 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"><Trash2 className="w-4 h-4" /></button>
-                            )}
+                            <button
+                              type="button"
+                              title="Tách thêm 1 lô / dòng máy cho mặt hàng này"
+                              onClick={() =>
+                                setReceiveLines(prev => {
+                                  const n = [...prev];
+                                  n.splice(i + 1, 0, {
+                                    ...l,
+                                    selected: true,
+                                    quantity: 1,
+                                    lot_number: "",
+                                    manufacture_date: "",
+                                    expiry_date: "",
+                                    no_expiry: l.no_expiry,
+                                    notes: ""
+                                  });
+                                  return n;
+                                })
+                              }
+                              className="p-1 rounded text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                            <button
+                              type="button"
+                              title="Bỏ dòng này khỏi đợt nhập kho hiện tại (vẫn giữ trên PO cho đợt sau)"
+                              onClick={() => setReceiveLines(prev => prev.filter((_, j) => j !== i))}
+                              className="p-1 rounded text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40 cursor-pointer"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
                           </td>
                         </tr>
                       );
@@ -6828,6 +7101,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           ...prev,
                           {
                             line_index: typeof base.line_index === "number" ? base.line_index : 0,
+                            selected: true,
+                            default_quantity: 1,
                             product_code: base.product_code || "",
                             product_name: base.product_name || "",
                             specification: base.specification || "",
@@ -6859,6 +7134,8 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           {
                             line_index: -1,
                             is_extra_line: true,
+                            selected: true,
+                            default_quantity: 1,
                             product_code: "",
                             product_name: "",
                             specification: "",
@@ -6884,7 +7161,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                     </button>
                   </div>
                   <span className="text-[11px] text-slate-500 italic">
-                    💡 Mẹo: Nếu PO đặt 1 máy nhưng NCC giao 2 máy (2 số Serial/Lot), bấm <strong>"+ Thêm dòng Lô / Máy cùng mã"</strong> để nhập cả 2 máy vào kho.
+                    💡 Mẹo: Mã nào chưa về đợt này hãy <strong>bỏ tích ô vuông đầu dòng</strong> hoặc bấm <strong>🗑️</strong>. Nếu PO đặt 1 máy về 2 lô, bấm <strong>"+ Thêm dòng Lô / Máy cùng mã"</strong>.
                   </span>
                 </div>
               </div>
@@ -6900,13 +7177,13 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   <div>
                     <span className="text-[10px] text-slate-500 block">Dòng thực nhận</span>
                     <strong className="text-slate-900 dark:text-white font-mono text-sm">
-                      {receiveLines.filter(l => (Number(l.quantity) || 0) > 0).length} dòng
+                      {activeReceiveLines.length} dòng
                     </strong>
                   </div>
                   <div>
                     <span className="text-[10px] text-slate-500 block">Tổng SL thực nhận</span>
                     <strong className="text-emerald-600 dark:text-emerald-400 font-mono text-sm">
-                      {receiveLines.reduce((sum, l) => sum + (Number(l.quantity) || 0), 0)}
+                      {totalSelectedQty}
                     </strong>
                   </div>
                 </div>
@@ -6914,14 +7191,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             </div>
             <div className="shrink-0 px-5 py-3 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-2">
               <button onClick={() => setReceiveTarget(null)} className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 cursor-pointer">Đóng</button>
-              <button onClick={submitReceive} disabled={isSubmittingReceive}
+              <button onClick={submitReceive} disabled={isSubmittingReceive || activeReceiveLines.length === 0}
                 className="px-5 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white hover:bg-emerald-700 shadow-sm cursor-pointer disabled:opacity-60">
-                {isSubmittingReceive ? "Đang nhập kho..." : "Xác nhận nhập kho"}
+                {isSubmittingReceive ? "Đang nhập kho..." : `Xác nhận nhập kho (${activeReceiveLines.length} dòng)`}
               </button>
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ========================================================= */}
       {/* MODAL 3: SUPPLIER CRUD MODAL                              */}
