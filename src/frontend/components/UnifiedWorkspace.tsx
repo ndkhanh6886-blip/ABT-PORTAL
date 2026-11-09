@@ -2135,6 +2135,8 @@ export const UnifiedWorkspace: React.FC = () => {
       id: string;
       name: string;
       dept?: string;
+      depts?: string[];
+      due?: string;
       status: "pending" | "in_progress" | "completed";
       assignee?: string;
       estimatedDays?: number;
@@ -5973,6 +5975,8 @@ export const UnifiedWorkspace: React.FC = () => {
         id: `stg-${Date.now()}-0`,
         name: "",
         dept: defaultPartDepts[0] || "Kinh Doanh",
+        depts: defaultPartDepts.length > 0 ? defaultPartDepts : ["Kinh Doanh"],
+        due: defaultDue,
         assignee: defaultLead,
         status: "pending" as const,
         estimatedDays: 3,
@@ -6025,6 +6029,8 @@ export const UnifiedWorkspace: React.FC = () => {
         id: `stg-${Date.now()}-0`,
         name: "",
         dept: defaultPartDepts[0] || "Kinh Doanh",
+        depts: defaultPartDepts.length > 0 ? defaultPartDepts : ["Kinh Doanh"],
+        due: labProjectForm.endDate || todayVN(),
         assignee: labProjectForm.lead || "",
         status: "pending" as const,
         estimatedDays: 3,
@@ -6081,9 +6087,13 @@ export const UnifiedWorkspace: React.FC = () => {
       description: prj.description || "",
       stages: (prj.stages || []).map((s: any, idx: number) => {
         const sDept = s.dept || (prj.dept !== "Liên Phòng Ban" ? prj.dept : (derivedDepts[0] || "Kinh Doanh"));
+        const sDepts = Array.isArray(s.depts) && s.depts.length > 0 ? s.depts : [sDept];
+        const sDue = s.due || prj.endDate || todayVN();
         return {
           ...s,
-          dept: sDept,
+          dept: sDepts[0] || sDept,
+          depts: sDepts,
+          due: sDue,
           assignee: s.assignee || "",
           tasks: Array.isArray(s.tasks) && s.tasks.length > 0
             ? s.tasks
@@ -6091,9 +6101,9 @@ export const UnifiedWorkspace: React.FC = () => {
                 {
                   id: `stgtask-${prj.id}-${idx}-0`,
                   title: s.name || `Thực hiện giai đoạn ${idx + 1}`,
-                  dept: sDept,
+                  dept: sDepts[0] || sDept,
                   assignee: s.assignee || prj.lead || "",
-                  due: prj.endDate || todayVN(),
+                  due: sDue,
                   status: s.status || "pending"
                 }
               ]
@@ -6126,10 +6136,13 @@ export const UnifiedWorkspace: React.FC = () => {
       : defaultPartDepts;
     const defaultStages = (firstType?.defaultStages || []).map((s, idx) => {
       const stgDept = s.dept || (newDept === "Liên Phòng Ban" ? (partDepts[idx] || partDepts[0] || "Kinh Doanh") : newDept);
+      const stgDue = toVNDateString(new Date(Date.now() + ((idx + 1) * (s.estimatedDays || 3)) * 86400000));
       return {
         id: `stg-${Date.now()}-${idx}`,
         name: s.name,
         dept: stgDept,
+        depts: [stgDept],
+        due: stgDue,
         assignee: "",
         status: "pending" as const,
         estimatedDays: s.estimatedDays,
@@ -6139,7 +6152,7 @@ export const UnifiedWorkspace: React.FC = () => {
             title: s.name,
             dept: stgDept,
             assignee: "",
-            due: toVNDateString(new Date(Date.now() + ((idx + 1) * (s.estimatedDays || 3)) * 86400000)),
+            due: stgDue,
             status: "pending" as const
           }
         ]
@@ -6167,10 +6180,13 @@ export const UnifiedWorkspace: React.FC = () => {
       : (labProjectForm.dept === "Liên Phòng Ban" ? ["Kinh Doanh", "Application", "Cung Ứng", "Kho & Vận Hành"] : [labProjectForm.dept]);
     const defaultStages = (typeDef.defaultStages || []).map((s, idx) => {
       const stgDept = s.dept || (labProjectForm.dept === "Liên Phòng Ban" ? (defaultPartDepts[idx] || defaultPartDepts[0] || "Kinh Doanh") : labProjectForm.dept);
+      const stgDue = toVNDateString(new Date(Date.now() + ((idx + 1) * (s.estimatedDays || 3)) * 86400000));
       return {
         id: `stg-${Date.now()}-${idx}`,
         name: s.name,
         dept: stgDept,
+        depts: [stgDept],
+        due: stgDue,
         assignee: "",
         status: "pending" as const,
         estimatedDays: s.estimatedDays,
@@ -6180,7 +6196,7 @@ export const UnifiedWorkspace: React.FC = () => {
             title: s.name,
             dept: stgDept,
             assignee: "",
-            due: toVNDateString(new Date(Date.now() + ((idx + 1) * (s.estimatedDays || 3)) * 86400000)),
+            due: stgDue,
             status: "pending" as const
           }
         ]
@@ -6234,7 +6250,7 @@ export const UnifiedWorkspace: React.FC = () => {
             customer_name: prj.customerOrRef || existingTask?.customer_name || "",
             priority: taskPriority,
             status: existingTask?.status === "DONE" && (stTask.status === "completed" || stg.status === "completed") ? "DONE" : mappedStatus,
-            deadline: stTask.due || prj.endDate || todayVN(),
+            deadline: stTask.due || stg.due || prj.endDate || todayVN(),
             description: `Thuộc Dự án [${prjId}]: ${prj.name}
 Giai đoạn ${idx + 1}: ${stg.name}
 Công việc: ${stTask.title}${prj.customerOrRef ? `
@@ -6266,7 +6282,7 @@ Phòng ban tham gia: ${(prj.participatingDepts || [itemDept]).join(", ")}`,
           customer_name: prj.customerOrRef || existingTask?.customer_name || "",
           priority: taskPriority,
           status: existingTask?.status === "DONE" && stg.status === "completed" ? "DONE" : taskStatus,
-          deadline: prj.endDate || todayVN(),
+          deadline: stg.due || prj.endDate || todayVN(),
           description: `Thuộc Dự án / Chuyên đề [${prjId}]: ${prj.name}${prj.customerOrRef ? `
 Khách hàng / Mã liên kết: ${prj.customerOrRef}` : ""}
 Phòng ban tham gia: ${(prj.participatingDepts || [stageDept]).join(", ")}
@@ -6312,6 +6328,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
     });
     const stageDepts = stagesList.flatMap((s: any) => [
       s.dept,
+      ...(Array.isArray(s.depts) ? s.depts : []),
       ...(Array.isArray(s.tasks) ? s.tasks.map((t: any) => t.dept) : [])
     ]).filter(Boolean);
     const mergedPartDepts = Array.from(new Set([
@@ -9680,13 +9697,20 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                           <div className="flex items-center gap-1.5 flex-wrap">
                                             <span className={`text-[10px] font-extrabold uppercase ${isDone ? "text-emerald-700 dark:text-emerald-400" : "text-purple-700 dark:text-purple-400"}`}>
                                               Giai đoạn {sIdx + 1}
-                                              {stg.estimatedDays ? ` (${stg.estimatedDays} ngày)` : ""}
                                             </span>
-                                            {stg.dept && (
-                                              <span className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                                                🏢 {stg.dept}
+                                            {stg.due && (
+                                              <span className="px-1.5 py-0.2 rounded text-[9px] font-mono font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                                                📅 Hạn: {/^d{4}-d{2}-d{2}$/.test(String(stg.due)) ? String(stg.due).split("-").reverse().join("/") : stg.due}
                                               </span>
                                             )}
+                                            {(Array.isArray(stg.depts) && stg.depts.length > 0 ? stg.depts : (stg.dept ? [stg.dept] : [])).map((dName: string) => (
+                                              <span
+                                                key={dName}
+                                                className="px-1.5 py-0.2 rounded text-[9px] font-bold bg-indigo-50 dark:bg-indigo-950/70 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800"
+                                              >
+                                                🏢 {dName}
+                                              </span>
+                                            ))}
                                             {stg.assignee && (
                                               <span className="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                                                 👤 {stg.assignee}
@@ -15761,13 +15785,17 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               <button
                 type="button"
                 onClick={() => {
-                  const defaultDept = labProjectForm.dept === "Liên Phòng Ban"
-                    ? (labProjectForm.participatingDepts?.[0] || "Kinh Doanh")
-                    : labProjectForm.dept;
+                  const defaultDepts = labProjectForm.dept === "Liên Phòng Ban"
+                    ? (Array.isArray(labProjectForm.participatingDepts) && labProjectForm.participatingDepts.length > 0 ? labProjectForm.participatingDepts : ["Kinh Doanh"])
+                    : [labProjectForm.dept];
+                  const defaultDept = defaultDepts[0] || "Kinh Doanh";
+                  const stageDue = labProjectForm.endDate || todayVN();
                   const newStage = {
                     id: `stg-${Date.now()}-${labProjectForm.stages.length}`,
                     name: "",
                     dept: defaultDept,
+                    depts: defaultDepts,
+                    due: stageDue,
                     assignee: "",
                     status: "pending" as const,
                     estimatedDays: 3,
@@ -15777,7 +15805,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         title: "",
                         dept: defaultDept,
                         assignee: "",
-                        due: labProjectForm.endDate || todayVN(),
+                        due: stageDue,
                         status: "pending" as const
                       }
                     ]
@@ -15797,6 +15825,10 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
             <div className="space-y-3 max-h-96 overflow-y-auto pr-1">
               {labProjectForm.stages.map((stg, sIdx) => {
                 const stgTasks = Array.isArray(stg.tasks) ? stg.tasks : [];
+                const stgDepts: string[] = Array.isArray(stg.depts) && stg.depts.length > 0
+                  ? stg.depts
+                  : [stg.dept || (labProjectForm.dept !== "Liên Phòng Ban" ? labProjectForm.dept : "Kinh Doanh")];
+                const stgDue = stg.due || labProjectForm.endDate || todayVN();
                 return (
                   <div
                     key={stg.id || sIdx}
@@ -15823,21 +15855,6 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </div>
 
                       <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap shrink-0">
-                        <select
-                          value={stg.dept || (labProjectForm.dept !== "Liên Phòng Ban" ? labProjectForm.dept : "Kinh Doanh")}
-                          onChange={(e) => {
-                            const updated = [...labProjectForm.stages];
-                            updated[sIdx] = { ...updated[sIdx], dept: e.target.value };
-                            setLabProjectForm({ ...labProjectForm, stages: updated });
-                          }}
-                          title="Phòng ban chủ trì giai đoạn này"
-                          className="px-2 py-1.5 rounded-lg border border-indigo-200 dark:border-indigo-800 bg-indigo-50/70 dark:bg-indigo-950/50 text-indigo-800 dark:text-indigo-200 font-bold text-[11px] cursor-pointer"
-                        >
-                          {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => (
-                            <option key={d.id} value={d.id}>🏢 {d.id}</option>
-                          ))}
-                        </select>
-
                         <input
                           type="text"
                           list={`stg-staff-list-${sIdx}`}
@@ -15852,26 +15869,29 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         />
                         <datalist id={`stg-staff-list-${sIdx}`}>
                           {personnelList
-                            .filter((p: any) => !stg.dept || isSameWorkspaceDept(p.department, stg.dept))
+                            .filter((p: any) => stgDepts.length === 0 || stgDepts.some((d) => isSameWorkspaceDept(p.department, d)))
                             .map((p: any) => (
                               <option key={p.employee_code || p.full_name} value={p.full_name} />
                             ))}
                         </datalist>
 
-                        <input
-                          type="number"
-                          min={1}
-                          max={180}
-                          value={stg.estimatedDays || 3}
-                          onChange={(e) => {
-                            const updated = [...labProjectForm.stages];
-                            updated[sIdx] = { ...updated[sIdx], estimatedDays: parseInt(e.target.value) || 1 };
-                            setLabProjectForm({ ...labProjectForm, stages: updated });
-                          }}
-                          title="Số ngày dự kiến của giai đoạn"
-                          className="w-12 px-1.5 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-center font-mono text-xs"
-                        />
-                        <span className="text-[10px] text-slate-400">ngày</span>
+                        <div className="flex items-center gap-1" title="Ngày hoàn thành (Deadline) của giai đoạn này">
+                          <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">📅 Hạn GĐ:</span>
+                          <DateInputVN
+                            value={stgDue}
+                            onChange={(e) => {
+                              const newDue = e.target.value;
+                              const updated = [...labProjectForm.stages];
+                              const oldDue = updated[sIdx].due;
+                              const updatedTasks = Array.isArray(updated[sIdx].tasks)
+                                ? updated[sIdx].tasks!.map((t: any) => (!t.due || t.due === oldDue) ? { ...t, due: newDue } : t)
+                                : [];
+                              updated[sIdx] = { ...updated[sIdx], due: newDue, tasks: updatedTasks };
+                              setLabProjectForm({ ...labProjectForm, stages: updated });
+                            }}
+                            className="w-28 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-[11px] font-semibold"
+                          />
+                        </div>
 
                         <select
                           value={stg.status}
@@ -15901,11 +15921,46 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       </div>
                     </div>
 
+                    {/* Multi-select Coordinating Departments for this Stage */}
+                    <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 shrink-0">
+                        🏢 Phòng ban phối hợp GĐ {sIdx + 1} (chọn 1 hoặc nhiều):
+                      </span>
+                      {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => {
+                        const isPicked = stgDepts.includes(d.id);
+                        return (
+                          <button
+                            key={d.id}
+                            type="button"
+                            onClick={() => {
+                              const nextDepts = isPicked
+                                ? (stgDepts.length > 1 ? stgDepts.filter((x) => x !== d.id) : stgDepts)
+                                : [...stgDepts, d.id];
+                              const updated = [...labProjectForm.stages];
+                              updated[sIdx] = {
+                                ...updated[sIdx],
+                                depts: nextDepts,
+                                dept: nextDepts[0] || "Kinh Doanh"
+                              };
+                              setLabProjectForm({ ...labProjectForm, stages: updated });
+                            }}
+                            className={`px-2 py-0.5 rounded-md text-[10px] font-bold border transition-all cursor-pointer ${
+                              isPicked
+                                ? "bg-indigo-600 text-white border-indigo-600 shadow-2xs"
+                                : "bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800 hover:border-indigo-400"
+                            }`}
+                          >
+                            {isPicked ? "✓ " : "+ "}{d.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+
                     {/* Sub-tasks List inside this Stage */}
                     <div className="pl-3 sm:pl-6 border-l-2 border-purple-200 dark:border-purple-800/80 space-y-1.5">
                       <div className="flex items-center justify-between">
                         <span className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                          📋 Các công việc cụ thể trong Giai đoạn {sIdx + 1} ({stgTasks.length} việc):
+                          📋 Các công việc cụ thể trong Giai đoạn {sIdx + 1} ({stgTasks.length} việc — mỗi việc gán 1 phòng ban cụ thể):
                         </span>
                         <button
                           type="button"
@@ -15919,9 +15974,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 {
                                   id: `stgtask-${Date.now()}-${sIdx}-${curTasks.length}`,
                                   title: "",
-                                  dept: stg.dept || (labProjectForm.dept !== "Liên Phòng Ban" ? labProjectForm.dept : "Kinh Doanh"),
+                                  dept: stgDepts[0] || stg.dept || (labProjectForm.dept !== "Liên Phòng Ban" ? labProjectForm.dept : "Kinh Doanh"),
                                   assignee: stg.assignee || "",
-                                  due: labProjectForm.endDate || todayVN(),
+                                  due: stgDue,
                                   status: "pending" as const
                                 }
                               ]
@@ -15935,7 +15990,9 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         </button>
                       </div>
 
-                      {stgTasks.map((taskItem, tIdx) => (
+                      {stgTasks.map((taskItem, tIdx) => {
+                        const taskSpecificDept = taskItem.dept || stgDepts[0] || stg.dept || "Kinh Doanh";
+                        return (
                         <div
                           key={taskItem.id || tIdx}
                           className="flex flex-col sm:flex-row sm:items-center gap-1.5 p-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-200/80 dark:border-slate-800"
@@ -15961,7 +16018,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                           <div className="flex items-center gap-1.5 flex-wrap sm:flex-nowrap shrink-0">
                             <select
-                              value={taskItem.dept || stg.dept || "Kinh Doanh"}
+                              value={taskSpecificDept}
                               onChange={(e) => {
                                 const updated = [...labProjectForm.stages];
                                 const nextTasks = [...(updated[sIdx].tasks || [])];
@@ -15969,7 +16026,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                 updated[sIdx] = { ...updated[sIdx], tasks: nextTasks };
                                 setLabProjectForm({ ...labProjectForm, stages: updated });
                               }}
-                              className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-bold"
+                              title="Phòng ban cụ thể phụ trách công việc này"
+                              className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-bold cursor-pointer"
                             >
                               {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => (
                                 <option key={d.id} value={d.id}>🏢 {d.id}</option>
@@ -15978,7 +16036,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
 
                             <input
                               type="text"
-                              list={`stg-staff-list-${sIdx}`}
+                              list={`stg-task-staff-list-${sIdx}-${tIdx}`}
                               value={taskItem.assignee || ""}
                               onChange={(e) => {
                                 const updated = [...labProjectForm.stages];
@@ -15990,9 +16048,16 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               placeholder="Người thực hiện..."
                               className="w-28 px-2 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px]"
                             />
+                            <datalist id={`stg-task-staff-list-${sIdx}-${tIdx}`}>
+                              {personnelList
+                                .filter((p: any) => !taskSpecificDept || isSameWorkspaceDept(p.department, taskSpecificDept))
+                                .map((p: any) => (
+                                  <option key={p.employee_code || p.full_name} value={p.full_name} />
+                                ))}
+                            </datalist>
 
                             <DateInputVN
-                              value={taskItem.due || labProjectForm.endDate || todayVN()}
+                              value={taskItem.due || stgDue}
                               onChange={(e) => {
                                 const updated = [...labProjectForm.stages];
                                 const nextTasks = [...(updated[sIdx].tasks || [])];
@@ -16034,7 +16099,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             </button>
                           </div>
                         </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 );
