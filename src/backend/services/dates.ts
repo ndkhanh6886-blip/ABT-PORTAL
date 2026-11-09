@@ -28,6 +28,56 @@ export function nowVNDateTime(): string {
 }
 
 /**
+ * Ngày bất kỳ -> "YYYY-MM-DD" (giờ Việt Nam): chuỗi ISO "YYYY-MM-DD" giữ nguyên ngày; ngày kiểu Việt Nam
+ * "D/M/YYYY", "D-M-YYYY", "D.M.YYYY" (năm 2 hoặc 4 số); thời điểm (ISO có giờ, Date, số ms) theo giờ Việt Nam.
+ * Không đọc được: "". (new Date("05/11/2026") hiểu là 11/05 kiểu Mỹ, nên ngày kiểu Việt Nam phải đọc trước.)
+ */
+export function parseVNDateToISO(v: unknown): string {
+  if (v === null || v === undefined || v === "") return "";
+  if (v instanceof Date || typeof v === "number") return toVNDateString(v as any);
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const dmy = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4}|\d{2})(?=$|[\sT,])/);
+  if (dmy) {
+    const y = dmy[3].length === 2 ? `20${dmy[3]}` : dmy[3];
+    const iso = `${y}-${dmy[2].padStart(2, "0")}-${dmy[1].padStart(2, "0")}`;
+    const d = new Date(`${iso}T00:00:00Z`);
+    return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === iso ? iso : "";
+  }
+  if (/^\d{4}-\d{2}-\d{2}[T ]/.test(s)) {
+    // có giờ: có múi giờ (Z, +07:00) thì đổi sang giờ Việt Nam, không có thì giữ ngày như ghi
+    return /(Z|[+-]\d{2}:?\d{2})$/i.test(s) ? toVNDateString(s) : s.slice(0, 10);
+  }
+  if (/^\d{4}[/.]\d{1,2}[/.]\d{1,2}$/.test(s)) {
+    const [y, m, d] = s.split(/[/.]/);
+    return `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
+  }
+  return "";
+}
+
+/** Ngày hiển thị theo chuẩn Việt Nam "DD-MM-YYYY" cho mọi kiểu giá trị ngày; không đọc được thì trả `fallback`. */
+export function formatVNDate(v: unknown, fallback = ""): string {
+  const iso = parseVNDateToISO(v);
+  return iso ? `${iso.slice(8, 10)}-${iso.slice(5, 7)}-${iso.slice(0, 4)}` : fallback;
+}
+
+/** Ngày giờ hiển thị "DD-MM-YYYY HH:mm" (giờ Việt Nam). Chỉ có ngày thì chỉ trả ngày. */
+export function formatVNDateTime(v: unknown, fallback = ""): string {
+  if (v === null || v === undefined || v === "") return fallback;
+  const s = v instanceof Date || typeof v === "number" ? "" : String(v).trim();
+  const date = formatVNDate(v);
+  if (!date) return fallback || s;
+  let time = "";
+  if (v instanceof Date || typeof v === "number" || /(Z|[+-]\d{2}:?\d{2})$/i.test(s)) {
+    const d = new Date(v as any);
+    if (!isNaN(d.getTime())) time = timeFormatter.format(d);
+  } else {
+    time = (s.match(/[T ](\d{1,2}:\d{2})/) || [])[1] || "";
+  }
+  return time ? `${date} ${time}` : date;
+}
+
+/**
  * Convert an Excel cell value (Excel serial number like 46063, Date object, "DD/MM/YYYY",
  * "DD.MM.YYYY", "DD-MM-YYYY", "MM/YYYY", "YYYY/MM/DD", or ISO "YYYY-MM-DD") into a valid
  * ISO date string "YYYY-MM-DD". Returns `fallback` when empty or unparseable.
@@ -41,8 +91,8 @@ export function normalizeExcelDateToISO(val: unknown, fallback = ""): string {
   const s = String(val).trim();
   if (!s) return fallback;
   const low = s.toLowerCase();
-  if (["n/a", "na", "none", "null", "undefined", "-", "—", "không", "khong", "kxd"].includes(low)) {
-    return fallback;
+  if (["n/a", "na", "none", "null", "undefined", "-", "—", "không", "khong", "kxd", "k.hsd", "khsd", "không có hsd", "khong co hsd", "không hsd", "khong hsd", "không hạn", "khong han", "vô thời hạn", "vo thoi han"].includes(low)) {
+    return fallback === val || fallback === s ? "" : fallback;
   }
 
   const clampAndFormat = (year: number, month: number, day: number): string => {

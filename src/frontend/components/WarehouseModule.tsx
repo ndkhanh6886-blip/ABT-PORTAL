@@ -59,10 +59,10 @@ import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { useCompanyConfig } from "@/frontend/utils/companyConfig";
-import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDates } from "@/backend/services/dates";
+import { todayVN, toVNDateString, normalizeExcelDateToISO, normalizeExcelRowDates, formatVNDate } from "@/backend/services/dates";
 import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateInputVN";
 import { printWarehouseSlip, exportWarehouseSlipExcel, txPartnerName } from "@/frontend/components/warehouse/warehouseSlipDocs";
-import { packagingFormOfLot, PACKAGING_LABEL } from "@/frontend/utils/packagingForm";
+import { packagingFormOfLot, isPcrKitProduct, PACKAGING_LABEL } from "@/frontend/utils/packagingForm";
 
 /** Dòng hàng của phiếu có khớp từ khóa tìm (mã hàng, tên, số lô). */
 function txItemMatches(it: any, q: string): boolean {
@@ -1725,7 +1725,7 @@ export const WarehouseModule: React.FC = () => {
 
     // 2. INBOUND LOT (Nhập kho hàng hóa theo Lô/HSD)
     const isInbound =
-      keys.some(k => k.includes("số lô") || k.includes("hạn sử dụng") || k.includes("hạn dùng") || k.includes("nhiệt độ bảo quản") || k.includes("vị trí kho kệ")) ||
+      keys.some(k => k.includes("số lô") || k.includes("hạn sử dụng") || k.includes("hạn dùng") || k.includes("vị trí kho kệ")) ||
       fName.includes("nhap_kho") || fName.includes("nhapkho") || fName.includes("theo_lo") ||
       sNames.some(s => s.includes("nhap_kho") || s.includes("theo_lo"));
 
@@ -2159,8 +2159,8 @@ export const WarehouseModule: React.FC = () => {
   const ensureInboundComponents = (item: any): any[] => {
     const existing: any[] = Array.isArray(item?.components) ? item.components : [];
     const bom = productComponents.filter((c) => c.parent_product_code === item?.product_code);
-    // Kit 2 dạng đóng gói: lô có ".C" là dạng chia sẵn tube PCR, không kèm phụ kiện
-    if (bom.length > 0 && packagingFormOfLot(item?.lot_number) === "PREALIQUOT") return [];
+    // Kit PCR: lô có ".C" là dạng chia sẵn tube PCR, không kèm phụ kiện (kit tách chiết luôn kèm phụ kiện)
+    if (bom.length > 0 && isPcrKitProduct(products.find((p: any) => p.code === item?.product_code) || { code: item?.product_code }) && packagingFormOfLot(item?.lot_number) === "PREALIQUOT") return [];
     // Đã có đủ phụ kiện hợp lệ (có mã) thì giữ nguyên
     if (existing.length > 0 && (bom.length === 0 || (existing.length >= bom.length && existing.every((c: any) => c?.component_code)))) return existing;
     if (bom.length === 0) return existing;
@@ -2394,9 +2394,8 @@ export const WarehouseModule: React.FC = () => {
         alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải nhập Số Lô (LOT / Batch) (*)`);
         return;
       }
-      if (!String(it.expiry_date || "").trim() && !it.no_expiry) {
-        alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) bắt buộc phải nhập Hạn Sử Dụng (EXP) (*)`);
-        return;
+      if (!String(it.expiry_date || "").trim()) {
+        it.no_expiry = true;
       }
       if (!it.quantity || Number(it.quantity) <= 0) {
         alert(`Dòng hàng thứ ${i + 1} (${it.product_name}) Số Lượng Nhập (*) phải lớn hơn 0`);
@@ -2755,7 +2754,7 @@ export const WarehouseModule: React.FC = () => {
 
     setHandoverData({
       delivery_code: `BBBG-${Date.now().toString().slice(-6)}`,
-      date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+      date: formatVNDate(new Date()),
       order_code: outboundForm.reference_code || "SO-2026-088",
       customer_name: outboundForm.customer_name || "Bệnh viện Đa Khoa / Viện Nghiên Cứu",
       warehouse_name: outboundForm.warehouse_name || "Kho Trung Tâm",
@@ -2824,8 +2823,8 @@ export const WarehouseModule: React.FC = () => {
       {
         "Nhóm Thông Tin": "3. HẠN SỬ DỤNG",
         "Tên Cột Trên Excel": "Hạn dùng (Date)",
-        "Bắt Buộc / Tùy Chọn": "BẮT BUỘC (*)",
-        "Quy Định & Giá Trị Hợp Lệ": "Định dạng YYYY-MM-DD (VD: 2027-12-31)."
+        "Bắt Buộc / Tùy Chọn": "Cho phép để trống (nếu không có HSD)",
+        "Quy Định & Giá Trị Hợp Lệ": "Định dạng YYYY-MM-DD hoặc DD/MM/YYYY (VD: 2027-12-31). Để trống hoặc ghi 'Không có HSD' đối với lô hàng / vật tư / thiết bị không quản lý hạn dùng."
       },
       {
         "Nhóm Thông Tin": "4. SỐ LƯỢNG TỒN / NHẬP",
@@ -3108,7 +3107,8 @@ export const WarehouseModule: React.FC = () => {
             r["expiry_date"] ||
             ""
           ).trim();
-          const expiry_date = normalizeExcelDateToISO(rawExpDate, rawExpDate);
+          const expiry_date = normalizeExcelDateToISO(rawExpDate, "");
+          const no_expiry = !expiry_date;
 
           const rawMfgDate = String(
             r["Ngày sản xuất (MFG)"] || r["Ngày sản xuất"] || r["mfg_date"] || ""
@@ -3154,6 +3154,7 @@ export const WarehouseModule: React.FC = () => {
             total_amount: quantity * unit_price,
             lot_number,
             expiry_date,
+            no_expiry,
             manufacture_date,
             storage_condition,
             storage_location,
@@ -3211,10 +3212,7 @@ export const WarehouseModule: React.FC = () => {
         alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải nhập Số Lô (LOT) (*)`);
         return;
       }
-      if (!r.expiry_date?.trim()) {
-        alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) bắt buộc phải nhập Hạn Dùng (EXP) (*)`);
-        return;
-      }
+      // Không bắt buộc nhập Hạn Dùng (EXP) khi lô không quản lý HSD (để trống ở Excel)
       if (!r.quantity || Number(r.quantity) <= 0) {
         alert(`Dòng Excel thứ ${i + 1} (${r.product_code} - ${r.product_name}) Số Lượng (*) phải lớn hơn 0`);
         return;
@@ -3260,7 +3258,8 @@ export const WarehouseModule: React.FC = () => {
           cost_price: r.unit_price,
           total_amount: r.total_amount,
           lot_number: r.lot_number,
-          expiry_date: r.expiry_date,
+          expiry_date: r.expiry_date || "",
+          no_expiry: !r.expiry_date || Boolean(r.no_expiry),
           manufacture_date: r.manufacture_date,
           storage_condition: r.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
           shelf_position: r.shelf_position || "Chưa phân bổ kệ",
@@ -4249,7 +4248,7 @@ export const WarehouseModule: React.FC = () => {
                       )}
                       <span className="text-slate-300 dark:text-slate-600">|</span>
                       <span className="text-slate-400">EXP:</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300">{item.expiry_date || "Dài hạn"}</span>
+                      <span className="font-bold text-slate-700 dark:text-slate-300">{formatVNDate(item.expiry_date, item.expiry_date || "Dài hạn")}</span>
                     </div>
                     <div className="flex items-center gap-1 font-semibold text-slate-700 dark:text-slate-300">
                       {item.temp_category === "-20C" ? (
@@ -4563,7 +4562,7 @@ export const WarehouseModule: React.FC = () => {
                               </div>
                             )}
                             <div className="flex items-center gap-1.5 mt-0.5">
-                              <span className="font-mono text-slate-600 dark:text-slate-300">{item.expiry_date}</span>
+                              <span className="font-mono text-slate-600 dark:text-slate-300">{formatVNDate(item.expiry_date, item.expiry_date)}</span>
                               {Number.isFinite(item.days_to_expiry) && item.days_to_expiry < 900 ? (
                                 item.days_to_expiry <= 60 ? (
                                   <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300 font-bold text-[10px]">
@@ -6440,7 +6439,7 @@ export const WarehouseModule: React.FC = () => {
 
                           <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80 text-[11px] flex justify-between">
                             <span className="text-slate-400">Hạn sử dụng (EXP):</span>
-                            <span className="font-mono font-bold text-amber-400">{itm.expiry_date || "2027-12-31"}</span>
+                            <span className="font-mono font-bold text-amber-400">{formatVNDate(itm.expiry_date, itm.expiry_date || "—")}</span>
                           </div>
                         </div>
                       );
@@ -7897,7 +7896,9 @@ export const WarehouseModule: React.FC = () => {
                             <td className="py-1.5 px-3 text-slate-500">{r.specification || "—"} ({r.unit || "Hộp"})</td>
                             <td className="py-1.5 px-3 text-indigo-600 dark:text-indigo-400 font-semibold">{r.manufacturer || "—"}</td>
                             <td className="py-1.5 px-3 font-mono text-orange-500">{r.lot_number || "—"}</td>
-                            <td className="py-1.5 px-3 font-mono text-emerald-500">{r.expiry_date || "—"}</td>
+                            <td className="py-1.5 px-3 font-mono text-emerald-500">
+                              {r.expiry_date ? formatVNDate(r.expiry_date, r.expiry_date) : <span className="text-slate-400 italic font-sans">Không có HSD</span>}
+                            </td>
                             <td className="py-1.5 px-3 text-right font-mono font-black text-emerald-600 dark:text-emerald-400">{r.quantity}</td>
                             <td className="py-1.5 px-3 text-right font-mono text-slate-700 dark:text-slate-300">{r.unit_price > 0 ? formatCurrency(r.unit_price) : "0 đ"}</td>
                             <td className="py-1.5 px-3 text-right font-mono font-bold text-teal-600 dark:text-teal-400">{r.total_amount > 0 ? formatCurrency(r.total_amount) : "0 đ"}</td>
@@ -8103,7 +8104,7 @@ export const WarehouseModule: React.FC = () => {
                                   <button key={po.id} type="button" onClick={() => pickPO(po)} className="w-full px-3 py-2 text-left hover:bg-emerald-50 dark:hover:bg-emerald-950/40 cursor-pointer">
                                     <div className="flex items-center justify-between gap-2">
                                       <span className="font-mono font-bold text-xs text-orange-600 dark:text-orange-400">{po.po_code}</span>
-                                      <span className="text-[10px] text-slate-500">{po.expected_delivery_date ? `Hẹn ${String(po.expected_delivery_date).slice(0, 10).split("-").reverse().join("/")}` : ""} • {open.length} dòng chờ nhận</span>
+                                      <span className="text-[10px] text-slate-500">{po.expected_delivery_date ? `Hẹn ${formatVNDate(po.expected_delivery_date)}` : ""} • {open.length} dòng chờ nhận</span>
                                     </div>
                                     <div className="text-[11px] text-slate-700 dark:text-slate-200 truncate">{po.supplier_name}</div>
                                     <div className="text-[10px] text-slate-500 truncate">{open.slice(0, 4).map((l: any) => `${l.product_code} ×${l.remaining}`).join(" • ")}{open.length > 4 ? ` … +${open.length - 4}` : ""}</div>
@@ -8462,17 +8463,31 @@ export const WarehouseModule: React.FC = () => {
                         </div>
 
                         <div>
-                          <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-1">
-                            Hạn Sử Dụng (EXP) <span className="text-rose-500">*</span>
-                          </label>
+                          <div className="flex items-center justify-between mb-1">
+                            <label className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
+                              Hạn Sử Dụng (EXP)
+                            </label>
+                            <label className="inline-flex items-center gap-1 text-[10px] text-slate-500 cursor-pointer" title="Tích chọn hoặc để trống nếu lô không có hạn sử dụng">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(item.no_expiry)}
+                                onChange={(e) => {
+                                  handleInboundItemChange(idx, "no_expiry", e.target.checked);
+                                  if (e.target.checked) handleInboundItemChange(idx, "expiry_date", "");
+                                }}
+                                className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                              />
+                              <span>K.HSD</span>
+                            </label>
+                          </div>
                           <DateInputVN
                             value={item.expiry_date || ""}
-                            onChange={(e) => handleInboundItemChange(idx, "expiry_date", e.target.value)}
-                            className={`w-full p-2 rounded-lg border bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-emerald-600 dark:text-emerald-400 ${
-                              !String(item.expiry_date || "").trim()
-                                ? "border-rose-300 dark:border-rose-800/80"
-                                : "border-slate-200 dark:border-slate-700"
-                            }`}
+                            disabled={Boolean(item.no_expiry)}
+                            onChange={(e) => {
+                              handleInboundItemChange(idx, "expiry_date", e.target.value);
+                              if (e.target.value) handleInboundItemChange(idx, "no_expiry", false);
+                            }}
+                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-mono font-bold text-xs text-emerald-600 dark:text-emerald-400 disabled:opacity-50"
                           />
                         </div>
 
@@ -8602,7 +8617,8 @@ export const WarehouseModule: React.FC = () => {
                       {(() => {
                         const matchedComps = componentsByParentMap.get(item.product_code) || [];
                         if (matchedComps.length === 0) return null;
-                        if (packagingFormOfLot(item.lot_number) === "PREALIQUOT") {
+                        const isPcrKit = isPcrKitProduct(products.find((p: any) => p.code === item.product_code) || { code: item.product_code });
+                        if (isPcrKit && packagingFormOfLot(item.lot_number) === "PREALIQUOT") {
                           return (
                             <div className="pt-2 border-t border-purple-100 dark:border-purple-900/40">
                               <div className="px-3 py-2 rounded-xl bg-sky-50 dark:bg-sky-950/40 border border-sky-200 dark:border-sky-800/60 text-[11px] text-sky-800 dark:text-sky-200">
@@ -8622,7 +8638,7 @@ export const WarehouseModule: React.FC = () => {
                                   <span className="px-2 py-0.5 rounded-full bg-purple-200 dark:bg-purple-900 text-purple-800 dark:text-purple-200 font-bold text-[10px] flex items-center gap-1 shadow-2xs">
                                     <span>🧩</span> HÀNG CẤU THÀNH THEO BỘ ({matchedComps.length} THÀNH PHẦN ĐỘC LẬP)
                                   </span>
-                                  {item.lot_number && (
+                                  {isPcrKit && item.lot_number && (
                                     <span className="px-2 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200 font-bold text-[10px]" title="Lô không có ký hiệu .C: dạng không chia sẵn, kèm phụ kiện. Lô dạng chia sẵn tube có .C trong số lô.">
                                       Dạng: {PACKAGING_LABEL.WITH_ACCESSORIES}
                                     </span>
@@ -9181,7 +9197,7 @@ export const WarehouseModule: React.FC = () => {
                 </div>
                 <div className="grid grid-cols-3 gap-2 pt-1 border-t border-rose-200 dark:border-rose-900/60 text-[11px]">
                   <div>Số Lô (LOT): <strong className="font-mono text-slate-800 dark:text-slate-200">{selectedPushItem.lot_number}</strong></div>
-                  <div>Hạn dùng (EXP): <strong className="font-mono text-rose-600">{selectedPushItem.expiry_date}</strong></div>
+                  <div>Hạn dùng (EXP): <strong className="font-mono text-rose-600">{formatVNDate(selectedPushItem.expiry_date, selectedPushItem.expiry_date)}</strong></div>
                   <div>Tồn kho: <strong className="font-mono text-slate-900 dark:text-white">{selectedPushItem.quantity_on_hand} {selectedPushItem.unit || "Hộp"}</strong></div>
                 </div>
               </div>
@@ -9401,7 +9417,7 @@ export const WarehouseModule: React.FC = () => {
                           <td className="py-2 px-3 font-mono font-black text-[13px] text-slate-900 dark:text-white whitespace-nowrap"><Hl text={it.product_code || it.productCode} q={dq} /></td>
                           <td className="py-2 px-3 font-semibold text-slate-800 dark:text-slate-200 min-w-[260px]"><Hl text={it.product_name || it.name} q={dq} /></td>
                           <td className="py-2 px-3 font-mono text-orange-600 dark:text-orange-400 font-bold whitespace-nowrap"><Hl text={it.lot_number || "—"} q={dq} /></td>
-                          <td className="py-2 px-3 font-mono text-emerald-600 dark:text-emerald-400 font-bold">{it.expiry_date || "—"}</td>
+                          <td className="py-2 px-3 font-mono text-emerald-600 dark:text-emerald-400 font-bold">{formatVNDate(it.expiry_date, it.expiry_date || "—")}</td>
                           <td className="py-2 px-3 text-right font-mono font-black text-slate-900 dark:text-white">{it.quantity}</td>
                           <td className="py-2 px-3 text-slate-500">{it.unit || "Hộp"}</td>
                           <td className="py-2 px-3 text-right font-mono">
@@ -9530,7 +9546,7 @@ export const WarehouseModule: React.FC = () => {
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px]">Hạn dùng (EXP):</span>
-                    <strong className="text-emerald-600 dark:text-emerald-400">{selectedReserveItem.expiry_date}</strong>
+                    <strong className="text-emerald-600 dark:text-emerald-400">{formatVNDate(selectedReserveItem.expiry_date, selectedReserveItem.expiry_date)}</strong>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px]">Thực tồn kho:</span>
