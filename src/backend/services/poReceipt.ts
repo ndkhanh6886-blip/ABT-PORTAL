@@ -168,26 +168,66 @@ export async function reconcileHistoricalPOsWithInbound(
   lastReconcileAt = now;
 
   try {
-    const [posRes, txRes] = await Promise.all([
+    const [posRes, txRes, inboundAuditRes] = await Promise.all([
       queryFn(
-        `SELECT id, po_code, supplier_name, status, items, received_qty, inbound_transaction_code, supplier_invoices
+        `SELECT id, po_code, supplier_name, status, items, received_qty, inbound_transaction_code, supplier_invoices, created_by
            FROM procurement_orders
           WHERE status != 'CANCELLED'
           ORDER BY id ASC`
       ),
       queryFn(
-        `SELECT id, transaction_code, reference_code, items, notes
+        `SELECT id, transaction_code, reference_code, performed_by, items, notes
            FROM inventory_transactions
           WHERE transaction_type = 'INBOUND'
           ORDER BY id ASC`
       ),
+      queryFn(
+        `SELECT action, details, actor_name
+           FROM audit_logs
+          WHERE action IN ('RECEIVE_PO', 'INBOUND', 'UPDATE_INBOUND')
+            AND actor_name IS NOT NULL AND actor_name != '' AND actor_name != 'Hệ Thống'
+          ORDER BY id ASC`
+      ).catch(() => ({ rows: [] as any[] })),
     ]);
 
-    if (posRes.rows.length === 0) return;
+    if (posRes.rows.length === 0 && txRes.rows.length === 0) return;
 
-    // Tự động khôi phục liên kết cho các phiếu PNK của PO từng bị đổi nhầm sang NHAP-KHO-DAU-KY khi Kế toán sửa giá PNK
+    const originalReceiverByTxCode = new Map<string, string>();
+    const editedByTxCode = new Set<string>();
+    for (const log of inboundAuditRes.rows || []) {
+      const det = String(log.details || "");
+      const actor = String(log.actor_name || "").trim();
+      if (!actor) continue;
+      const pnkMatch = det.match(/\b(PNK[A-Z0-9_-]+)\b/i);
+      if (!pnkMatch) continue;
+      const pnkCode = pnkMatch[1].toUpperCase();
+      if (log.action === "RECEIVE_PO" || log.action === "INBOUND") {
+        if (!originalReceiverByTxCode.has(pnkCode)) {
+          originalReceiverByTxCode.set(pnkCode, actor);
+        }
+      } else if (log.action === "UPDATE_INBOUND") {
+        editedByTxCode.add(pnkCode);
+      }
+    }
+
+    // Tự động khôi phục liên kết PO & người nhập kho gốc cho các phiếu PNK từng bị sửa bởi Kế toán
     for (const tx of txRes.rows) {
+      const txCodeUpper = String(tx?.transaction_code || "").trim().toUpperCase();
       const refUpper = String(tx?.reference_code || "").trim().toUpperCase();
+      let origActor = originalReceiverByTxCode.get(txCodeUpper) || "";
+      if (!origActor && editedByTxCode.has(txCodeUpper) && /^PO/i.test(refUpper)) {
+        const linkedPo = posRes.rows.find((po: any) => String(po.po_code || "").trim().toUpperCase() === refUpper);
+        if (linkedPo?.created_by) origActor = String(linkedPo.created_by).trim();
+      }
+      if (origActor && String(tx.performed_by || "").trim() !== origActor) {
+        tx.performed_by = origActor;
+        if (tx.id) {
+          await queryFn(
+            `UPDATE inventory_transactions SET performed_by = $1 WHERE id = $2`,
+            [origActor, tx.id]
+          ).catch(() => {});
+        }
+      }
       const notesRaw = String(tx?.notes || "").trim();
       let parsedTxItems: any[] = [];
       if (Array.isArray(tx?.items)) {
@@ -238,12 +278,17 @@ export async function reconcileHistoricalPOsWithInbound(
           const restoredNotes = /^Nhập kho theo PO\s+/i.test(notesRaw)
             ? notesRaw
             : `Nhập kho theo PO ${restoredRef} • ${notesRaw}`;
+          const restoredPerformer =
+            originalReceiverByTxCode.get(txCodeUpper) ||
+            (editedByTxCode.has(txCodeUpper) && matchedPo.created_by ? String(matchedPo.created_by).trim() : "") ||
+            tx.performed_by;
           tx.reference_code = restoredRef;
           tx.notes = restoredNotes;
+          tx.performed_by = restoredPerformer;
           if (tx.id) {
             await queryFn(
-              `UPDATE inventory_transactions SET reference_code = $1, notes = $2 WHERE id = $3`,
-              [restoredRef, restoredNotes, tx.id]
+              `UPDATE inventory_transactions SET reference_code = $1, notes = $2, performed_by = COALESCE(NULLIF($3, ''), performed_by) WHERE id = $4`,
+              [restoredRef, restoredNotes, restoredPerformer || "", tx.id]
             ).catch(() => {});
           }
         }

@@ -8249,12 +8249,21 @@ export const WarehouseModule: React.FC = () => {
                     </select>
                   </div>
                   <div>
-                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Thủ Kho / Người Tiếp Nhận *</label>
+                    <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">
+                      Thủ Kho / Người Tiếp Nhận *{editingInboundTxId ? " (Giữ nguyên người nhập kho)" : ""}
+                    </label>
                     <input
                       type="text"
                       value={inboundForm.performed_by}
-                      onChange={(e) => setInboundForm({ ...inboundForm, performed_by: e.target.value })}
-                      className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
+                      readOnly={Boolean(editingInboundTxId)}
+                      onChange={(e) => {
+                        if (!editingInboundTxId) setInboundForm({ ...inboundForm, performed_by: e.target.value });
+                      }}
+                      className={`w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 font-semibold ${
+                        editingInboundTxId
+                          ? "bg-slate-100 dark:bg-slate-800/70 text-slate-600 dark:text-slate-300 cursor-not-allowed"
+                          : "bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+                      }`}
                     />
                   </div>
                   <div>

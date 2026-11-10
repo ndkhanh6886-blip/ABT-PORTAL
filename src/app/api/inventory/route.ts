@@ -277,6 +277,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "overview") {
+      await reconcileHistoricalPOsWithInbound(query).catch(() => {});
       // Đồng bộ tự động 2 chiều giữa products / inventory_lots và inventory_items:
       // Chỉ chạy tối đa 5 phút / lần trên GET (và reset ngay khi có POST nhập/xuất kho) để tránh ghi bảng trên mọi lần mở trang
       if (Date.now() - lastOverviewSyncAt > 5 * 60_000) {
@@ -551,10 +552,12 @@ export async function POST(req: NextRequest) {
         (await query("SELECT 1 FROM sales_orders WHERE order_code = $1 LIMIT 1", [ref])).rows.length > 0;
       if (!isOrderMovement) return forbiddenResponse("Bạn không có quyền thực hiện nghiệp vụ kho này.");
     }
-    // Người thực hiện được ghi theo phiên đăng nhập (giao diện từng gửi tên thủ kho cố định)
+    // Người thực hiện được ghi theo phiên đăng nhập khi tạo phiếu mới (không ghi đè người nhập kho gốc khi sửa phiếu update_inbound)
     if (body && typeof body === "object" && !Array.isArray(body)) {
       const actorName = me.full_name || me.username;
-      body.performed_by = actorName;
+      if (action !== "update_inbound") {
+        body.performed_by = actorName;
+      }
       body.actor = actorName;
       body.reported_by = actorName;
       body.released_by = actorName;
@@ -998,7 +1001,7 @@ export async function POST(req: NextRequest) {
             finalTxCode,
             finalRefCode,
             normalizeExcelDateToISO(date, existingTx.date || todayVN()),
-            performed_by || existingTx.performed_by || "Thủ kho TBR",
+            existingTx.performed_by || performed_by || "Thủ kho TBR",
             warehouse_name || existingTx.warehouse_name || "Kho Trung Tâm",
             JSON.stringify(cleanItems),
             finalNotes,
