@@ -979,6 +979,11 @@ export async function POST(req: NextRequest) {
         });
 
         const finalRefCode = reference_code || vat_invoice_no || existingTx.reference_code || "N/A";
+        const rawUpdatedNotes = String(notes ?? existingTx.notes ?? (supplier_name ? `Nhà cung cấp: ${supplier_name}` : "")).trim();
+        const finalNotes =
+          /^PO/i.test(String(finalRefCode).trim()) && !/^Nhập kho theo PO\s+/i.test(rawUpdatedNotes)
+            ? `Nhập kho theo PO ${String(finalRefCode).trim()} • ${rawUpdatedNotes}`
+            : rawUpdatedNotes;
         await c.query(
           `UPDATE inventory_transactions
               SET transaction_code = $1,
@@ -996,7 +1001,7 @@ export async function POST(req: NextRequest) {
             performed_by || existingTx.performed_by || "Thủ kho TBR",
             warehouse_name || existingTx.warehouse_name || "Kho Trung Tâm",
             JSON.stringify(cleanItems),
-            notes ?? existingTx.notes ?? (supplier_name ? `Nhà cung cấp: ${supplier_name}` : ""),
+            finalNotes,
             existingTx.id
           ]
         );

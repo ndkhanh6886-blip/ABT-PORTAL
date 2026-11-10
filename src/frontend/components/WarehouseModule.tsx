@@ -2415,12 +2415,14 @@ export const WarehouseModule: React.FC = () => {
     try {
       setIsSubmittingInbound(true);
       const supplierPart = inboundForm.supplier_name?.trim() ? ` NCC: ${inboundForm.supplier_name.trim()}.` : "";
+      const refCodeClean = inboundForm.reference_code?.trim() || inboundForm.vat_invoice_no?.trim() || "N/A";
+      const poPrefix = /^PO/i.test(refCodeClean) ? `Nhập kho theo PO ${refCodeClean} • ` : "";
       const payload = {
         ...inboundForm,
         id: editingInboundTxId || undefined,
         transaction_code: inboundForm.transaction_code.trim(),
-        reference_code: inboundForm.reference_code?.trim() || inboundForm.vat_invoice_no?.trim() || "N/A",
-        notes: `${inboundForm.inbound_type}. Vận chuyển: ${inboundForm.shipping_unit || "N/A"}. HĐ: ${inboundForm.vat_invoice_no || "N/A"}.${supplierPart} ${inboundForm.notes || ""}`.trim(),
+        reference_code: refCodeClean,
+        notes: `${poPrefix}${inboundForm.inbound_type}. Vận chuyển: ${inboundForm.shipping_unit || "N/A"}. HĐ: ${inboundForm.vat_invoice_no || "N/A"}.${supplierPart} ${inboundForm.notes || ""}`.trim(),
         items: inboundForm.items.map((it: any) => {
           // Bảo lưu danh sách thành phần con nếu có
           // Không tự đặt số lô / serial giả cho phụ kiện: lấy lô / hạn của dòng chính khi chưa nhập riêng

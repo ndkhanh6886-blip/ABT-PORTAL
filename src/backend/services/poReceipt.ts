@@ -30,18 +30,30 @@ function extractGenuinePoCodeFromTx(tx: any): { poCode: string; wasAutoLinkedIni
 
   if (!candidatePo) return { poCode: "", wasAutoLinkedInitialStock: false };
 
-  // Phiếu lập từ chức năng "Nhập kho theo PO" luôn có ghi chú "Nhập kho theo PO <MÃ_PO>"
-  if (/^Nhập kho theo PO\s+/i.test(notesRaw)) {
+  let parsedItems: any[] = [];
+  if (Array.isArray(tx?.items)) {
+    parsedItems = tx.items;
+  } else if (typeof tx?.items === "string") {
+    try {
+      const p = JSON.parse(tx.items);
+      if (Array.isArray(p)) parsedItems = p;
+    } catch {}
+  }
+
+  // Phiếu lập từ chức năng "Nhập kho theo PO" hoặc có loại hình "Nhập mua hàng theo Đơn PO" (kể cả sau khi Kế toán sửa giá PNK)
+  const isPoInbound =
+    /Nhập kho theo PO|Nhập mua hàng theo Đơn PO/i.test(notesRaw) ||
+    parsedItems.some((it: any) => /Đơn PO|theo PO/i.test(String(it?.inbound_type || "")));
+  if (isPoInbound) {
     return { poCode: candidatePo, wasAutoLinkedInitialStock: false };
   }
 
-  // Các phiếu nhập kho đầu kỳ / Excel tổng hợp / phiếu lẻ ở Kho không ghi PO trong notes nhưng bị bản cũ (51af48a) tự gắn reference_code
+  // Chỉ loại trừ các phiếu nhập kho đầu kỳ / Excel tổng hợp bị bản cũ (51af48a) tự gắn reference_code
   const isInitialOrStandaloneStock =
     /^Nhập kho theo Lô\b/i.test(notesRaw) ||
     /^Nhập kho \(Không có số lô\)/i.test(notesRaw) ||
     /Tồn kho đầu kỳ|Nhập kho đầu kỳ|Nhập tồn đầu kỳ|NHAP-KHO-EXCEL/i.test(notesRaw) ||
-    /^PNK-EXCEL-/i.test(txCode) ||
-    (/HĐ:\s*N\/A/i.test(notesRaw) && !notesRaw.toUpperCase().includes(candidatePo));
+    /^PNK-EXCEL-/i.test(txCode);
 
   if (isInitialOrStandaloneStock) {
     return { poCode: "", wasAutoLinkedInitialStock: /^PO/i.test(refRaw) };
@@ -158,7 +170,7 @@ export async function reconcileHistoricalPOsWithInbound(
   try {
     const [posRes, txRes] = await Promise.all([
       queryFn(
-        `SELECT id, po_code, status, items, received_qty, inbound_transaction_code
+        `SELECT id, po_code, supplier_name, status, items, received_qty, inbound_transaction_code, supplier_invoices
            FROM procurement_orders
           WHERE status != 'CANCELLED'
           ORDER BY id ASC`
@@ -172,6 +184,71 @@ export async function reconcileHistoricalPOsWithInbound(
     ]);
 
     if (posRes.rows.length === 0) return;
+
+    // Tự động khôi phục liên kết cho các phiếu PNK của PO từng bị đổi nhầm sang NHAP-KHO-DAU-KY khi Kế toán sửa giá PNK
+    for (const tx of txRes.rows) {
+      const refUpper = String(tx?.reference_code || "").trim().toUpperCase();
+      const notesRaw = String(tx?.notes || "").trim();
+      let parsedTxItems: any[] = [];
+      if (Array.isArray(tx?.items)) {
+        parsedTxItems = tx.items;
+      } else if (typeof tx?.items === "string") {
+        try {
+          const p = JSON.parse(tx.items);
+          if (Array.isArray(p)) parsedTxItems = p;
+        } catch {}
+      }
+      const isPoPurchaseReceipt =
+        /Nhập mua hàng theo Đơn PO|Nhập kho theo PO/i.test(notesRaw) ||
+        parsedTxItems.some((it: any) => /Đơn PO|theo PO/i.test(String(it?.inbound_type || "")));
+
+      if (refUpper === "NHAP-KHO-DAU-KY" && isPoPurchaseReceipt && parsedTxItems.length > 0) {
+        const txCode = String(tx.transaction_code || "").trim();
+        const txSupplier = String(
+          parsedTxItems[0]?.supplier_name ||
+          notesRaw.match(/NCC:\s*([^.•]+)/i)?.[1] ||
+          ""
+        ).trim().toLowerCase();
+
+        const matchedPo = posRes.rows.find((po: any) => {
+          if (txCode && String(po.inbound_transaction_code || "").trim() === txCode) return true;
+          const invs = Array.isArray(po.supplier_invoices) ? po.supplier_invoices : [];
+          if (txCode && invs.some((inv: any) => String(inv?.inbound_code || "").trim() === txCode)) return true;
+
+          let poItems: any = po.items;
+          if (typeof poItems === "string") {
+            try { poItems = JSON.parse(poItems); } catch { poItems = []; }
+          }
+          if (!Array.isArray(poItems) || poItems.length === 0) return false;
+          const poSup = String(po.supplier_name || "").trim().toLowerCase();
+          if (txSupplier && poSup && !poSup.includes(txSupplier) && !txSupplier.includes(poSup)) return false;
+
+          return parsedTxItems.every((ti: any) => {
+            const tCode = String(ti?.product_code || ti?.productCode || "").trim().toUpperCase();
+            const tQty = Number(ti?.quantity) || 0;
+            return poItems.some((pi: any) =>
+              String(pi?.product_code || "").trim().toUpperCase() === tCode &&
+              Math.abs((Number(pi?.quantity) || 0) - tQty) < 0.001
+            );
+          });
+        });
+
+        if (matchedPo && matchedPo.po_code) {
+          const restoredRef = String(matchedPo.po_code).trim();
+          const restoredNotes = /^Nhập kho theo PO\s+/i.test(notesRaw)
+            ? notesRaw
+            : `Nhập kho theo PO ${restoredRef} • ${notesRaw}`;
+          tx.reference_code = restoredRef;
+          tx.notes = restoredNotes;
+          if (tx.id) {
+            await queryFn(
+              `UPDATE inventory_transactions SET reference_code = $1, notes = $2 WHERE id = $3`,
+              [restoredRef, restoredNotes, tx.id]
+            ).catch(() => {});
+          }
+        }
+      }
+    }
 
     const txQtyByPoAndCode = new Map<string, number>();
     const firstTxCodeByPo = new Map<string, string>();
