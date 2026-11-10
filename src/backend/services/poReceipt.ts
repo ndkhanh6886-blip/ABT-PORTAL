@@ -13,6 +13,43 @@
 
 const r3 = (v: any): number => Math.round(Number(v) || 0);
 
+/**
+ * Kiểm tra xem một phiếu INBOUND có thực sự là Phiếu Nhập Kho của đơn PO hay không.
+ * Loại trừ các phiếu nhập tồn đầu kỳ / nhập Excel chung bị bản cũ tự động gắn mã PO.
+ */
+function extractGenuinePoCodeFromTx(tx: any): { poCode: string; wasAutoLinkedInitialStock: boolean } {
+  const refRaw = String(tx?.reference_code || "").trim();
+  const notesRaw = String(tx?.notes || "").trim();
+  const txCode = String(tx?.transaction_code || "").trim();
+
+  const candidatePo = (
+    (/^PO[A-Z0-9_-]+$/i.test(refRaw) ? refRaw : "") ||
+    (refRaw.match(/\b(PO\d{2}-[A-Z0-9-]+)\b/i)?.[1] ?? "") ||
+    (notesRaw.match(/\bNhập kho theo PO\s+(PO\d{2}-[A-Z0-9-]+)\b/i)?.[1] ?? "")
+  ).toUpperCase();
+
+  if (!candidatePo) return { poCode: "", wasAutoLinkedInitialStock: false };
+
+  // Phiếu lập từ chức năng "Nhập kho theo PO" luôn có ghi chú "Nhập kho theo PO <MÃ_PO>"
+  if (/^Nhập kho theo PO\s+/i.test(notesRaw)) {
+    return { poCode: candidatePo, wasAutoLinkedInitialStock: false };
+  }
+
+  // Các phiếu nhập kho đầu kỳ / Excel tổng hợp / phiếu lẻ ở Kho không ghi PO trong notes nhưng bị bản cũ (51af48a) tự gắn reference_code
+  const isInitialOrStandaloneStock =
+    /^Nhập kho theo Lô\b/i.test(notesRaw) ||
+    /^Nhập kho \(Không có số lô\)/i.test(notesRaw) ||
+    /Tồn kho đầu kỳ|Nhập kho đầu kỳ|Nhập tồn đầu kỳ|NHAP-KHO-EXCEL/i.test(notesRaw) ||
+    /^PNK-EXCEL-/i.test(txCode) ||
+    (/HĐ:\s*N\/A/i.test(notesRaw) && !notesRaw.toUpperCase().includes(candidatePo));
+
+  if (isInitialOrStandaloneStock) {
+    return { poCode: "", wasAutoLinkedInitialStock: /^PO/i.test(refRaw) };
+  }
+
+  return { poCode: candidatePo, wasAutoLinkedInitialStock: false };
+}
+
 export interface POReceiptLineInput {
   product_code: string;
   product_name?: string;
@@ -134,19 +171,16 @@ export async function reconcileHistoricalPOsWithInbound(
       ),
     ]);
 
-    if (posRes.rows.length === 0 || txRes.rows.length === 0) return;
+    if (posRes.rows.length === 0) return;
 
     const txQtyByPoAndCode = new Map<string, number>();
     const firstTxCodeByPo = new Map<string, string>();
 
     for (const tx of txRes.rows) {
-      const refRaw = String(tx.reference_code || "").trim();
-      const notesRaw = String(tx.notes || "").trim();
-      const poCode = (
-        (/^PO[A-Z0-9_-]+$/i.test(refRaw) ? refRaw : "") ||
-        (refRaw.match(/\b(PO\d{2}-[A-Z0-9-]+)\b/i)?.[1] ?? "") ||
-        (notesRaw.match(/\b(PO\d{2}-[A-Z0-9-]+)\b/i)?.[1] ?? "")
-      ).toUpperCase();
+      const { poCode, wasAutoLinkedInitialStock } = extractGenuinePoCodeFromTx(tx);
+      if (wasAutoLinkedInitialStock && tx.id) {
+        await queryFn(`UPDATE inventory_transactions SET reference_code = 'NHAP-KHO-DAU-KY' WHERE id = $1`, [tx.id]).catch(() => {});
+      }
       if (!poCode) continue;
 
       if (tx.transaction_code && !firstTxCodeByPo.has(poCode)) {
@@ -199,25 +233,29 @@ export async function reconcileHistoricalPOsWithInbound(
 
       for (const [code, idxs] of codeIndices.entries()) {
         const txTotalQty = txQtyByPoAndCode.get(`${poCodeUpper}|${code}`) || 0;
-        if (txTotalQty <= 0) continue;
         const currentRecSum = idxs.reduce((s, i) => s + (Number(received[i]) || 0), 0);
-        if (txTotalQty > currentRecSum) {
-          let rem = txTotalQty - currentRecSum;
+        if (txTotalQty !== currentRecSum) {
+          // Tính lại số lượng đã nhận của mã này đúng bằng tổng số lượng trên các Phiếu Nhập Kho thực tế của PO
           for (const i of idxs) {
-            if (rem <= 0) break;
-            const room = Math.max(0, (Number(items[i]?.quantity) || 0) - (Number(received[i]) || 0));
-            const take = Math.min(room, rem);
-            if (take > 0) {
-              received[i] = (Number(received[i]) || 0) + take;
-              rem -= take;
-              receivedChanged = true;
+            delete received[i];
+          }
+          if (txTotalQty > 0) {
+            let rem = txTotalQty;
+            for (const i of idxs) {
+              if (rem <= 0) break;
+              const room = Math.max(0, Number(items[i]?.quantity) || 0);
+              const take = Math.min(room, rem);
+              if (take > 0) {
+                received[i] = take;
+                rem -= take;
+              }
+            }
+            if (rem > 0) {
+              const last = idxs[idxs.length - 1];
+              received[last] = (Number(received[last]) || 0) + rem;
             }
           }
-          if (rem > 0) {
-            const last = idxs[idxs.length - 1];
-            received[last] = (Number(received[last]) || 0) + rem;
-            receivedChanged = true;
-          }
+          receivedChanged = true;
         }
       }
 
@@ -243,20 +281,38 @@ export async function reconcileHistoricalPOsWithInbound(
         items.some((it: any) => (Number(it?.unit_price) || 0) !== r3(it?.unit_price) || (Number(it?.total) || 0) !== r3(it?.total)) ||
         (Number(po.total_amount) || 0) !== r3(po.total_amount);
 
-      if (receivedChanged || hasFractionInDb) {
-        const st = String(po.status || "").toUpperCase();
-        const allDone = items.every(
-          (it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it?.quantity) || 0)
-        );
-        const anyReceived = Object.values(received).some((v) => Number(v) > 0);
-        const newStatus = st === "COMPLETED" ? "COMPLETED" : allDone ? "COMPLETED" : anyReceived ? "PARTIALLY_RECEIVED" : po.status;
-        const txCode = firstTxCodeByPo.get(poCodeUpper) || po.inbound_transaction_code || null;
+      const st = String(po.status || "").toUpperCase();
+      const anyReceived = Object.values(received).some((v) => Number(v) > 0);
+      const hasGenuinePoTx = firstTxCodeByPo.has(poCodeUpper);
+      // Nếu PO đang ở trạng thái PARTIALLY_RECEIVED (hoặc có gắn mã PNK cũ) nhưng thực tế chưa có phiếu nhập kho nào của PO này -> trả về ORDERED
+      const statusNeedsReset =
+        !anyReceived &&
+        !hasGenuinePoTx &&
+        (["PARTIALLY_RECEIVED", "PARTIAL_RECEIVED"].includes(st) ||
+          (st === "COMPLETED" && Boolean(po.inbound_transaction_code)));
+
+      if (receivedChanged || hasFractionInDb || statusNeedsReset) {
+        const allDone =
+          anyReceived &&
+          items.every(
+            (it: any, i: number) => (Number(it?.quantity) || 0) <= 0 || (Number(received[i]) || 0) >= (Number(it?.quantity) || 0)
+          );
+        const newStatus = statusNeedsReset
+          ? "ORDERED"
+          : allDone
+          ? "COMPLETED"
+          : anyReceived
+          ? "PARTIALLY_RECEIVED"
+          : st === "PARTIALLY_RECEIVED" || st === "PARTIAL_RECEIVED"
+          ? "ORDERED"
+          : po.status;
+        const txCode = firstTxCodeByPo.get(poCodeUpper) || (anyReceived ? po.inbound_transaction_code : null);
 
         await queryFn(
           `UPDATE procurement_orders
               SET received_qty = $1::jsonb,
                   status = $2,
-                  inbound_transaction_code = COALESCE(inbound_transaction_code, $3),
+                  inbound_transaction_code = $3,
                   items = $4::jsonb,
                   total_amount = $5,
                   version = COALESCE(version, 0) + 1
@@ -285,20 +341,14 @@ export interface InboundPriceEntry {
 export function attachInboundPriceComparisonToPOs(orders: any[], inboundTxRows: any[]): any[] {
   if (!Array.isArray(orders) || orders.length === 0) return orders;
 
-  // 1. Gom giá nhập kho theo (PO_CODE | PRODUCT_CODE) và theo PRODUCT_CODE (phiếu nhập gần nhất)
+  // 1. Gom giá nhập kho thực tế theo đúng (PO_CODE | PRODUCT_CODE) của những phiếu nhập thuộc về PO đó
   const directByPoAndCode = new Map<string, { totalValue: number; totalQty: number; lastPrice: number; codes: Set<string>; latestDate: string }>();
-  const latestByCode = new Map<string, { unit_price: number; quantity: number; inbound_code: string; date: string }>();
 
   for (const tx of Array.isArray(inboundTxRows) ? inboundTxRows : []) {
     const txCode = String(tx.transaction_code || "").trim();
-    const refRaw = String(tx.reference_code || "").trim();
-    const notesRaw = String(tx.notes || "").trim();
     const txDate = tx.date ? String(tx.date).slice(0, 10) : "";
-    const poCode = (
-      (/^PO[A-Z0-9_-]+$/i.test(refRaw) ? refRaw : "") ||
-      (refRaw.match(/\b(PO\d{2}-[A-Z0-9-]+)\b/i)?.[1] ?? "") ||
-      (notesRaw.match(/\b(PO\d{2}-[A-Z0-9-]+)\b/i)?.[1] ?? "")
-    ).toUpperCase();
+    const { poCode } = extractGenuinePoCodeFromTx(tx);
+    if (!poCode) continue;
 
     let txItems: any = tx.items;
     if (typeof txItems === "string") {
@@ -315,15 +365,7 @@ export function attachInboundPriceComparisonToPOs(orders: any[], inboundTxRows: 
       if (!code) continue;
       const uPrice = r3(it?.unit_price ?? it?.cost_price ?? 0);
       const qty = Number(it?.quantity) || 0;
-      if (uPrice > 0) {
-        latestByCode.set(code, {
-          unit_price: uPrice,
-          quantity: qty,
-          inbound_code: txCode,
-          date: txDate,
-        });
-      }
-      if (poCode && (uPrice > 0 || qty > 0)) {
+      if (uPrice > 0 || qty > 0) {
         const key = `${poCode}|${code}`;
         const prev = directByPoAndCode.get(key) || {
           totalValue: 0,
@@ -359,9 +401,6 @@ export function attachInboundPriceComparisonToPOs(orders: any[], inboundTxRows: 
     const rq: Record<string, number> = po.received_qty || {};
     const stUpper = String(po.status || "").toUpperCase();
     const isCompleted = ["COMPLETED", "RECEIVED", "DELIVERED"].includes(stUpper);
-    const isPartiallyReceived = ["PARTIALLY_RECEIVED", "PARTIAL_RECEIVED"].includes(stUpper);
-    const anyReceivedQty = Object.values(rq).some((v) => Number(v) > 0);
-    const hasReceivedGoods = isCompleted || isPartiallyReceived || anyReceivedQty || Boolean(po.inbound_transaction_code);
 
     const inboundPriceMap: Record<string, InboundPriceEntry> = {};
     let inboundReceivedValue = 0;
@@ -376,8 +415,8 @@ export function attachInboundPriceComparisonToPOs(orders: any[], inboundTxRows: 
       const poPrice = r3(it?.unit_price);
       const vatRate = Math.max(0, Number(it?.vat_rate ?? it?.tax_rate ?? 0) || 0);
 
+      // Chỉ hiển thị Giá PNK khi có phiếu nhập kho thực sự thuộc về đơn PO này (không lấy từ phiếu nhập tồn đầu kỳ rời)
       const direct = directByPoAndCode.get(`${poCodeUpper}|${code}`);
-      const fallback = hasReceivedGoods ? latestByCode.get(code) : undefined;
 
       let inbPrice = 0;
       if (direct && direct.lastPrice > 0) {
@@ -388,15 +427,6 @@ export function attachInboundPriceComparisonToPOs(orders: any[], inboundTxRows: 
           inbound_codes: Array.from(direct.codes),
           latest_date: direct.latestDate || undefined,
           is_direct_po: true,
-        };
-      } else if (fallback && fallback.unit_price > 0) {
-        inbPrice = fallback.unit_price;
-        inboundPriceMap[code] = {
-          unit_price: inbPrice,
-          quantity: fallback.quantity,
-          inbound_codes: fallback.inbound_code ? [fallback.inbound_code] : [],
-          latest_date: fallback.date || undefined,
-          is_direct_po: false,
         };
       }
 

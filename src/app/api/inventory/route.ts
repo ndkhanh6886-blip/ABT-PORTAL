@@ -627,7 +627,7 @@ export async function POST(req: NextRequest) {
               supplier_name: String(it.supplier_name || "").trim() || String(supplier_name || "").trim(),
               ...(vat_invoice_no && !it.vat_invoice_no ? { vat_invoice_no } : {}),
             } : it)),
-            notes || (supplier_name ? `Nhà cung cấp: ${supplier_name}` : "")
+            `${reference_code && /^PO/i.test(String(reference_code).trim()) ? `Nhập kho theo PO ${String(reference_code).trim()} • ` : ""}${notes || (supplier_name ? `Nhà cung cấp: ${supplier_name}` : "")}`
           ]
         );
 
