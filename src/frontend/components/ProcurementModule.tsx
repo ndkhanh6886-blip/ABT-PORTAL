@@ -1190,6 +1190,18 @@ export const ProcurementModule: React.FC = () => {
   // Quick Change PO Status directly from row
   const handleQuickChangeStatus = async (po: any, newStatus: string) => {
     setActiveStatusDropdownId(null);
+    const targetUpper = String(newStatus || "").toUpperCase();
+    if (!["DRAFT", "PENDING", "CANCELLED"].includes(targetUpper)) {
+      const poItems: any[] = Array.isArray(po.items) ? po.items : [];
+      const zeroPriceItems = poItems.filter((it: any) => !(roundPrice3(it?.unit_price) > 0));
+      if (zeroPriceItems.length > 0) {
+        const missingList = zeroPriceItems.map((it: any) => `• ${it?.product_code || "SP"} - ${cleanItemName(it?.product_name || "")}`).join("\n");
+        alert(
+          `Không thể xác nhận / chuyển trạng thái PO ${po.po_code} khi chưa nhập đủ đơn giá!\n\nCác mặt hàng đang chưa có giá (0 VNĐ):\n${missingList}\n\n👉 Vui lòng bấm Sửa PO để nhập đầy đủ đơn giá trước khi xác nhận.`
+        );
+        return;
+      }
+    }
     if (newStatus === "COMPLETED") {
       handleReceiveToWarehouse(po);
       return;
@@ -1604,12 +1616,13 @@ export const ProcurementModule: React.FC = () => {
       alert(`Dòng #${missingCodeIdx + 1} chưa chọn Mã hàng (SKU). Vui lòng chọn mã hàng cho tất cả các dòng.`);
       return;
     }
-    if (String(poForm.status || "").toUpperCase() !== "CANCELLED") {
-      const zeroPriceIdx = (poForm.items || []).findIndex((it: any) => !(roundPrice3(it?.unit_price) > 0));
-      if (zeroPriceIdx !== -1) {
-        const bad = poForm.items[zeroPriceIdx];
+    const targetStatusUpper = String(poForm.status || "PENDING").toUpperCase();
+    if (!["DRAFT", "PENDING", "CANCELLED"].includes(targetStatusUpper)) {
+      const zeroPriceItems = (poForm.items || []).filter((it: any) => !(roundPrice3(it?.unit_price) > 0));
+      if (zeroPriceItems.length > 0) {
+        const missingList = zeroPriceItems.map((it: any) => it?.product_code || it?.product_name || "SP").join(", ");
         alert(
-          `Dòng #${zeroPriceIdx + 1} (${bad?.product_code || bad?.product_name || "SP"}) chưa nhập Đơn giá PO (> 0 VNĐ).\n\nKhi tạo hoặc lưu Đơn Đặt Hàng (PO), bắt buộc phải nhập đơn giá cho tất cả các mặt hàng!`
+          `Không thể xác nhận / duyệt Đơn Đặt Hàng (PO) khi chưa có đủ đơn giá!\n\nCác mặt hàng chưa nhập Đơn giá PO (> 0 VNĐ): ${missingList}\n\n👉 Vui lòng nhập đầy đủ đơn giá, hoặc chuyển trạng thái về "1. Chờ xác nhận" để lưu tạm PO trước khi có giá.`
         );
         return;
       }
@@ -3147,33 +3160,6 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
           }
         });
       });
-
-      const hasZeroPrice = combinedItems.some((it: any) => !(Number(it?.unit_price) > 0));
-      if (hasZeroPrice) {
-        const totalAmt = combinedItems.reduce((s: number, it: any) => s + (Number(it.total) || 0), 0);
-        setPoSupplierNotice(null);
-        setPoItemSearchQueries({});
-        setPOForm({
-          id: null,
-          po_code: "",
-          supplier_id: targetSupplier.id,
-          supplier_name: targetSupplier.name,
-          order_date: todayVN(),
-          expected_delivery_date: consolidateExpectedDelivery || toVNDateString(new Date(Date.now() + 10 * 86400000)),
-          items: combinedItems,
-          total_amount: totalAmt,
-          status: "PENDING",
-          notes:
-            consolidateNotes ||
-            `Đơn PO tổng hợp gom ${combinedItems.length} mặt hàng từ các PR: ${Array.from(involvedPRKeys).join(", ")}`
-        });
-        setIsConsolidateModalOpen(false);
-        setIsPOModalOpen(true);
-        alert(
-          "Có mặt hàng chưa có Đơn giá PO (> 0 VNĐ). Hệ thống đã mở biểu mẫu Đơn Đặt Hàng (PO) để bạn nhập đầy đủ đơn giá trước khi lưu!"
-        );
-        return;
-      }
 
       const res = await fetch("/api/procurement?action=consolidate_prs_to_po", {
         method: "POST",

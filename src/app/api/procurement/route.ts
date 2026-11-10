@@ -979,11 +979,13 @@ export async function POST(req: NextRequest) {
             };
           })
         : undefined;
-      if (items && items.length > 0 && String(status || "").toUpperCase() !== "CANCELLED") {
-        const zeroPriceItem = items.find((it: any) => !(Number(it?.unit_price) > 0));
-        if (zeroPriceItem) {
+      const targetStatusUpper = String(status || "PENDING").toUpperCase();
+      if (items && items.length > 0 && !["DRAFT", "PENDING", "CANCELLED"].includes(targetStatusUpper)) {
+        const zeroPriceItems = items.filter((it: any) => !(Number(it?.unit_price) > 0));
+        if (zeroPriceItems.length > 0) {
+          const missingCodes = zeroPriceItems.map((it: any) => it.product_code || it.product_name || "SP").join(", ");
           return NextResponse.json(
-            { error: `Mặt hàng "${zeroPriceItem.product_code || zeroPriceItem.product_name || "SP"}" chưa nhập Đơn giá PO (> 0 VNĐ). Khi tạo hoặc lưu PO bắt buộc phải nhập đơn giá!` },
+            { error: `Không thể xác nhận / duyệt PO khi chưa nhập đủ đơn giá! Các mặt hàng chưa có giá (> 0 VNĐ): ${missingCodes}. Nếu chưa có giá, vui lòng lưu ở trạng thái "1. Chờ xác nhận".` },
             { status: 400 }
           );
         }
@@ -1324,13 +1326,28 @@ export async function POST(req: NextRequest) {
       };
 
       await withTransaction(async (c) => {
-        const existingRes = await c.query("SELECT id, status, inbound_transaction_code FROM procurement_orders WHERE id = $1 FOR UPDATE", [id]);
+        const existingRes = await c.query("SELECT id, status, items, inbound_transaction_code FROM procurement_orders WHERE id = $1 FOR UPDATE", [id]);
         if (existingRes.rows.length === 0) {
           throw new HttpError(404, "Không tìm thấy đơn PO");
         }
         const existing = existingRes.rows[0];
         const existingUpper = String(existing.status || "").toUpperCase();
         const targetUpper = String(status || "").toUpperCase();
+        if (!["DRAFT", "PENDING", "CANCELLED"].includes(targetUpper)) {
+          const poItems: any[] = Array.isArray(existing.items)
+            ? existing.items
+            : typeof existing.items === "string"
+              ? (() => { try { return JSON.parse(existing.items) || []; } catch { return []; } })()
+              : [];
+          const zeroPriceItems = poItems.filter((it: any) => !(Number(it?.unit_price) > 0));
+          if (zeroPriceItems.length > 0) {
+            const missingCodes = zeroPriceItems.map((it: any) => it.product_code || it.product_name || "SP").join(", ");
+            throw new HttpError(
+              400,
+              `Không thể xác nhận / duyệt PO khi chưa có đủ đơn giá! Các mặt hàng chưa có giá (> 0 VNĐ): ${missingCodes}. Vui lòng bấm Sửa PO để nhập đơn giá trước khi xác nhận.`
+            );
+          }
+        }
         if (
           existing.inbound_transaction_code &&
           ["RECEIVED", "PARTIAL_RECEIVED", "PARTIALLY_RECEIVED", "DELIVERED", "COMPLETED"].includes(existingUpper) &&
@@ -2116,7 +2133,7 @@ export async function POST(req: NextRequest) {
         const q = Number(it?.quantity), pr = Number(it?.unit_price ?? 0);
         if (!String(it?.product_code || "").trim()) throw new HttpError(400, "Có dòng hàng thiếu mã hàng.");
         if (!Number.isFinite(q) || q <= 0) throw new HttpError(400, `Mã ${it.product_code}: số lượng phải lớn hơn 0.`);
-        if (!Number.isFinite(pr) || pr <= 0) throw new HttpError(400, `Mã ${it.product_code}: bắt buộc phải nhập đơn giá PO (> 0 VNĐ).`);
+        if (!Number.isFinite(pr) || pr < 0) throw new HttpError(400, `Mã ${it.product_code}: đơn giá không hợp lệ.`);
       }
       const actor = String(created_by || me.full_name || me.username || "Phòng Cung Ứng").trim();
       const APPENDABLE = ["DRAFT", "PENDING", "APPROVED", "CONFIRMED"];
@@ -2208,13 +2225,16 @@ export async function POST(req: NextRequest) {
           );
         }
 
+        const hasUnpricedItem = poItems.some((x: any) => !(Number(x?.unit_price) > 0));
+        const nextStatus = hasUnpricedItem && ["APPROVED", "CONFIRMED"].includes(st) ? "PENDING" : po.status;
         const noteLine = `[${nowVNDateTime()}] ${actor}: bổ sung ${items.length} dòng từ ${codesIn.join(", ")} (cộng dồn ${merged}, thêm mới ${added})`;
         await c.query(
           `UPDATE procurement_orders SET items = $1, total_amount = $2,
-                  notes = CASE WHEN COALESCE(notes, '') = '' THEN $3 ELSE notes || E'\n' || $3 END,
+                  status = $3,
+                  notes = CASE WHEN COALESCE(notes, '') = '' THEN $4 ELSE notes || E'\n' || $4 END,
                   version = COALESCE(version, 0) + 1
-            WHERE id = $4`,
-          [JSON.stringify(poItems), totalAmount, noteLine, po.id]
+            WHERE id = $5`,
+          [JSON.stringify(poItems), totalAmount, nextStatus, noteLine, po.id]
         );
         await linkSalesOrdersToPO(c, prs.rows.map((r: any) => r.workflow_code), po.po_code);
         return { po_code: po.po_code, merged, added };
@@ -2232,7 +2252,7 @@ export async function POST(req: NextRequest) {
         const q = Number(it?.quantity), pr = Number(it?.unit_price ?? 0);
         if (!String(it?.product_code || "").trim()) throw new HttpError(400, "Có dòng hàng thiếu mã hàng.");
         if (!Number.isFinite(q) || q <= 0) throw new HttpError(400, `Mã ${it.product_code}: số lượng phải lớn hơn 0.`);
-        if (!Number.isFinite(pr) || pr <= 0) throw new HttpError(400, `Mã ${it.product_code}: bắt buộc phải nhập đơn giá PO (> 0 VNĐ).`);
+        if (!Number.isFinite(pr) || pr < 0) throw new HttpError(400, `Mã ${it.product_code}: đơn giá không hợp lệ.`);
       }
       const supRow = supplier_id ? (await query("SELECT id, name FROM procurement_suppliers WHERE id = $1", [supplier_id])).rows[0] : null;
       if (!supRow) throw new HttpError(400, "Chưa chọn nhà cung cấp hợp lệ cho PO.");
