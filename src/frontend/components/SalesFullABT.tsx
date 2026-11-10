@@ -2102,7 +2102,9 @@ export function SalesFullABT() {
             await Promise.all([
                 (async () => {
                     try {
-                        const overviewRes = await fetch("/api/sales?action=overview");
+                        // Đọc thẳng máy chủ: bộ đệm "trả bản cũ trước, tải mới sau" làm danh sách phiếu giao nhảy số
+                        // (bản lưu trên máy -> bản đệm cũ -> dữ liệu thật) và phải chờ lâu mới đủ phiếu
+                        const overviewRes = await fetch("/api/sales?action=overview", { headers: { "x-no-cache": "1" } });
                         if (overviewRes.ok) overviewData = await overviewRes.json();
                         if (overviewData && Array.isArray(overviewData.slip_payments)) {
                             const m: Record<string, number> = {};
@@ -2115,7 +2117,7 @@ export function SalesFullABT() {
                 })(),
                 (async () => {
                     try {
-                        const res = await fetch(`/api/storage?keys=${storageKeys.join(",")}`);
+                        const res = await fetch(`/api/storage?keys=${storageKeys.join(",")}`, { headers: { "x-no-cache": "1" } });
                         if (res.ok) {
                             const json = await res.json();
                             serverData = json.data || {};
@@ -2729,13 +2731,9 @@ export function SalesFullABT() {
         });
         const getItemCodeLoose = (it: any) => String(it?.productCode || it?.product_code || it?.code || "").trim();
         editCredits.forEach(({ qty, item }) => {
-            // Lô phiếu đang sửa đã ghi nhầm (số lô thuộc mã KHÁC trong kho): không thêm lại, để kho chọn đúng lô
-            const codeLower = getItemCodeLoose(item).toLowerCase();
-            const lotLower = String(item.lotNo || item.lotNumber || item.lot_number || "").trim().toLowerCase();
-            const belongsToOther = (warehouseLots || []).some((l: any) =>
-                String(l.lot_number || "").trim().toLowerCase() === lotLower &&
-                String(l.product_code || "").trim().toLowerCase() !== codeLower);
-            if (belongsToOther) return;
+            // Lô phiếu đang sửa đã xuất hết (danh sách lô chỉ có lô còn tồn): thêm lại với phần phiếu này đã xuất.
+            // Máy chủ chỉ xuất được lô có thật dưới đúng mã, nên lô trên phiếu luôn là lô của mã này — kể cả khi
+            // mã khác có lô TRÙNG SỐ (số lô dạng ngày như 20260608 trùng giữa nhiều mã là bình thường).
             creditedLots.push({
                 id: `edit-${getItemCodeLoose(item)}-${item.lotNo || item.lotNumber}`,
                 product_code: getItemCodeLoose(item),
@@ -15291,7 +15289,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     remaining: Math.max(matchingSlipQty, (progress[code]?.remaining ?? ordered))
                 };
             const slipItem = matchingSlipItems[0] || null;
-            if (matchingSlipItems.length === 0 && pg.remaining <= 0) return;
+            // Sửa phiếu: chỉ các dòng đã có trên phiếu. Trước đây mặt hàng SO chưa giao cũng được thêm vào (phiếu "Giao toàn bộ"
+            // còn điền sẵn SL = SL còn lại) nên lưu lại là xuất kho thêm hàng không có trên phiếu. Giao thêm thì lập phiếu đợt mới.
+            if (matchingSlipItems.length === 0 && (editSlip || pg.remaining <= 0)) return;
 
             const itemName = it.productName || it.name || prod?.name || "Sản phẩm";
             const lots = filterLotsByForm(code, getAvailableLotsForProduct(code, itemName, target.order_code), it);
@@ -15656,7 +15656,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho TBR",
                     warehouse_name: is13B ? "Kho Trung Tâm" : (slip.dispatchLocation || "Kho Trung Tâm"),
                     items: valid.map((it: any) => ({
-                        product_code: it.selectedLotProductCode || getItemCode(it),
+                        // Luôn xuất theo mã của dòng: lô trùng số của mã khác không được trừ tồn sang mã đó
+                        product_code: getItemCode(it),
                         product_name: it.productName,
                         quantity: Number(it.quantity) || 0,
                         lot_number: it.lotNo || it.lotNumber || "",
@@ -15746,21 +15747,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 }
             }
 
-            // Không cho lưu số lô của mã hàng KHÁC (vd: lô 200687.D.IC của SQS-122 gán cho SQS-112): xuất sai lô, sai truy vết
-            for (const it of slipItems) {
-                const code = getItemCode(it).toLowerCase();
-                const lot = String(it.lotNo || "").trim().toLowerCase();
-                if (!code || !lot) continue;
-                const rows = (warehouseLots || []).filter((l: any) => String(l.lot_number || "").trim().toLowerCase() === lot);
-                const ownRow = rows.some((l: any) => String(l.product_code || "").trim().toLowerCase() === code && (Number(l.quantity_on_hand) || 0) > 0);
-                const other = rows.find((l: any) => String(l.product_code || "").trim().toLowerCase() !== code && (Number(l.quantity_on_hand) || 0) > 0);
-                const wasOnThisSlip = (editSlip?.items || []).some((x: any) =>
-                    getItemCode(x).toLowerCase() === code && String(x.lotNo || x.lotNumber || "").trim().toLowerCase() === lot);
-                if (other && !ownRow) {
-                    showToast(`Mã ${getItemCode(it)}: lô ${it.lotNo} thuộc mã ${other.product_code}, không phải ${getItemCode(it)}${wasOnThisSlip ? " (phiếu này đã ghi nhầm lô từ trước)" : ""}. Vui lòng chọn lại lô đúng.`, "warning");
-                    return;
-                }
-            }
+            // (Không chặn ở đây theo "lô của mã khác": số lô trùng giữa nhiều mã là bình thường và danh sách lô
+            //  chỉ có lô còn tồn. Máy chủ từ chối xuất lô không có thật dưới đúng mã hàng.)
             if (slipItems.length === 0) {
                 showToast("Vui lòng nhập số lượng giao > 0 cho ít nhất 1 mặt hàng!", "warning");
                 return;
@@ -25611,6 +25599,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             )}
 
             {/* TAB CONTENT: DANH SÁCH PHIẾU GIAO HÀNG (lọc theo ngày giao / trạng thái / mã SO, lịch giao, Excel) */}
+            {activeTab === "delivery_slips" && !isSalesDataLoaded && (
+                <div className="mb-3 px-4 py-3 rounded-xl border border-sky-700/50 bg-sky-950/40 text-xs text-sky-200 flex items-center gap-2">
+                    <span className="inline-block w-3 h-3 rounded-full border-2 border-sky-300 border-t-transparent animate-spin" />
+                    Đang tải danh sách phiếu giao từ máy chủ… (số phiếu bên dưới là bản lưu tạm trên máy, sẽ cập nhật khi tải xong)
+                </div>
+            )}
             {activeTab === "delivery_slips" && (
                 <DeliverySlipListView
                     slips={deliverySlips}
@@ -33445,7 +33439,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             ? availLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot)
                                             : null;
                                         const itemCodeLower = String(item.productCode || "").trim().toLowerCase();
-                                        // Số lô thuộc mã KHÁC (có trong kho của mã khác): cảnh báo, không lấy tồn của lô đó, không cho lưu
+                                        // Mã này không còn tồn lô gõ vào nhưng mã khác có lô TRÙNG SỐ: chỉ nhắc kiểm tra (không chặn)
                                         const typedLotOtherProduct = cleanTypedLot && !matchedWarehouseLot
                                             ? allWarehouseLots.find((l: any) =>
                                                 String(l.lot_number || "").trim().toLowerCase() === cleanTypedLot &&
@@ -33663,8 +33657,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     const val = e.target.value;
                                                                     const cleanVal = val.trim().toLowerCase();
                                                                     const matched = cleanVal
-                                                                        ? (availLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanVal) ||
-                                                                           allWarehouseLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanVal))
+                                                                        // chỉ lô của đúng mã (không lấy tồn / HSD của lô trùng số ở mã khác)
+                                                                        ? availLots.find((l: any) => String(l.lot_number || "").trim().toLowerCase() === cleanVal)
                                                                         : null;
                                                                     setDeliveryItems(prev => prev.map((it, i) => i === idx ? {
                                                                         ...it,
@@ -33696,7 +33690,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                         {typedLotOtherProduct && (
                                                             <div className="mt-1 px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-700/60 text-[10px] text-rose-300 font-bold">
-                                                                ⚠ Lô này thuộc mã {typedLotOtherProduct.product_code}, không phải {item.productCode} — chọn lại lô đúng của {item.productCode}
+                                                                ⚠ {item.productCode} không còn tồn lô này (số lô trùng với lô của {typedLotOtherProduct.product_code}) — kiểm tra lại số lô
                                                             </div>
                                                         )}
                                                         {typedLotWrongForm && (

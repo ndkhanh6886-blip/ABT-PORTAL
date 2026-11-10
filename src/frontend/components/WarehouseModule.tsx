@@ -3561,35 +3561,55 @@ export const WarehouseModule: React.FC = () => {
   const txPartnerDebounced = useDebouncedValue(txPartnerFilter, 250);
   const [txDetailSearch, setTxDetailSearch] = useState("");
   const txSearchDebounced = useDebouncedValue(txSearch, 250);
-  const txTypeCounts = useMemo(() => {
-    let inb = 0, outb = 0;
-    for (const tx of transactions as any[]) {
-      const t = String(tx?.transaction_type || "").toUpperCase();
-      if (t === "INBOUND") inb++;
-      else if (t === "OUTBOUND") outb++;
-    }
-    return { inb, outb };
-  }, [transactions]);
-  const filteredTransactions = useMemo(() => {
-    const q = txSearchDebounced.trim().toLowerCase();
-    const partnerQ = txPartnerDebounced.trim().toLowerCase();
-    const from = toISODate(txDateFrom);
-    const to = toISODate(txDateTo);
-    return (transactions as any[]).filter((tx: any) => {
-      const t = String(tx?.transaction_type || "").toUpperCase();
-      if (txTypeFilter !== "ALL" && t !== txTypeFilter) return false;
-      if (from || to) {
-        const d = toISODate(formatDayVN(tx?.date)); // ngày theo giờ Việt Nam
-        if (!d || (from && d < from) || (to && d > to)) return false;
-      }
-      if (partnerQ && !txPartnerName(tx, txFinanceMeta(tx)).toLowerCase().includes(partnerQ)) return false;
-      if (!q) return true;
-      if ([tx.transaction_code, tx.reference_code, tx.performed_by, tx.warehouse_name, tx.notes].some((v: any) => String(v || "").toLowerCase().includes(q))) return true;
-      const its = Array.isArray(tx.items) ? tx.items : [];
-      return its.some((it: any) => [it.product_code, it.product_name, it.lot_number].some((v: any) => String(v || "").toLowerCase().includes(q)));
+  // Thẻ kho đọc từ máy chủ (tìm / lọc / phân trang trên TOÀN BỘ phiếu). Trước đây chỉ lọc trong 100 phiếu mới nhất
+  // của overview nên phiếu cũ (kể cả phiếu nhập đầu kỳ) "biến mất" khỏi Thẻ kho dù vẫn còn trong CSDL.
+  const [txPageNo, setTxPageNo] = useState(1);
+  const [txPageSize, setTxPageSize] = useState(20);
+  const [txServer, setTxServer] = useState<{ rows: any[]; total: number; counts: { total: number; inbound: number; outbound: number } }>(
+    { rows: [], total: 0, counts: { total: 0, inbound: 0, outbound: 0 } }
+  );
+  const [txLoading, setTxLoading] = useState(false);
+  useEffect(() => { setTxPageNo(1); }, [txTypeFilter, txSearchDebounced, txPartnerDebounced, txDateFrom, txDateTo, txPageSize]);
+  useEffect(() => {
+    if (subTab !== "transactions") return;
+    const ctrl = new AbortController();
+    const sp = new URLSearchParams({
+      action: "transactions",
+      type: txTypeFilter,
+      q: txSearchDebounced.trim(),
+      partner: txPartnerDebounced.trim(),
+      from: toISODate(txDateFrom),
+      to: toISODate(txDateTo),
+      page: String(txPageNo),
+      page_size: String(txPageSize),
     });
-  }, [transactions, txTypeFilter, txSearchDebounced, txPartnerDebounced, txDateFrom, txDateTo]);
-  const transactionsPage = usePaged(filteredTransactions, 20, `${txTypeFilter}|${txSearchDebounced}|${txPartnerDebounced}|${txDateFrom}|${txDateTo}`);
+    setTxLoading(true);
+    fetch(`/api/inventory?${sp.toString()}`, { signal: ctrl.signal })
+      .then((r) => r.json())
+      .then((d) => {
+        if (Array.isArray(d?.transactions)) {
+          setTxServer({
+            rows: d.transactions,
+            total: Number(d.total) || 0,
+            counts: { total: Number(d.counts?.total) || 0, inbound: Number(d.counts?.inbound) || 0, outbound: Number(d.counts?.outbound) || 0 },
+          });
+        }
+      })
+      .catch(() => {})
+      .finally(() => { if (!ctrl.signal.aborted) setTxLoading(false); });
+    return () => ctrl.abort();
+    // `transactions` đổi (sau nhập / xuất / sửa phiếu) thì tải lại trang Thẻ kho đang xem
+  }, [subTab, txTypeFilter, txSearchDebounced, txPartnerDebounced, txDateFrom, txDateTo, txPageNo, txPageSize, transactions]);
+  const txTypeCounts = { inb: txServer.counts.inbound, outb: txServer.counts.outbound };
+  const transactionsPage = {
+    items: txServer.rows,
+    page: txPageNo,
+    pages: Math.max(1, Math.ceil(txServer.total / txPageSize)),
+    setPage: setTxPageNo,
+    size: txPageSize,
+    setSize: ((v: any) => setTxPageSize((prev) => { const s = Number(typeof v === "function" ? v(prev) : v); return s > 0 ? Math.min(100, s) : 100; })) as React.Dispatch<React.SetStateAction<number>>,
+    total: txServer.total,
+  };
   const txQ = txSearchDebounced.trim().toLowerCase();
   // Mở chi tiết phiếu: ô tìm trong phiếu lấy sẵn từ khóa đang tìm ở Thẻ kho
   useEffect(() => {
@@ -4990,14 +5010,14 @@ export const WarehouseModule: React.FC = () => {
               Sổ Lịch Sử Xuất Nhập Kho (Thẻ Kho Điện Tử)
             </h3>
             <span className="text-xs font-mono text-slate-500 font-bold">
-              {filteredTransactions.length !== transactions.length ? `${filteredTransactions.length} / ` : ""}{transactions.length} chứng từ đã lưu
+              {txLoading ? "Đang tải… " : ""}{txServer.total !== txServer.counts.total ? `${txServer.total} / ` : ""}{txServer.counts.total} chứng từ
             </span>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
               {([
-                ["ALL", `Tất cả (${transactions.length})`],
+                ["ALL", `Tất cả (${txServer.counts.total})`],
                 ["INBOUND", `Phiếu nhập (${txTypeCounts.inb})`],
                 ["OUTBOUND", `Phiếu xuất (${txTypeCounts.outb})`],
               ] as const).map(([k, label]) => (
@@ -5194,7 +5214,7 @@ export const WarehouseModule: React.FC = () => {
                 })}
               </tbody>
             </table>
-            <Pager p={transactionsPage} unit="chứng từ xuất nhập kho" />
+            <Pager p={transactionsPage} unit="chứng từ xuất nhập kho" sizes={[20, 50, 100]} />
           </div>
         </div>
       )}

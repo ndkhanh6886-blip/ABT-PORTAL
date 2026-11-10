@@ -153,6 +153,8 @@ export async function applyPOReceipt(
 }
 
 let lastReconcileAt = 0;
+/** Có nhập / xuất kho mới: lần đọc tiếp theo đối soát lại ngay (không chờ hết 5 phút). */
+export function markPOReconcileDirty() { lastReconcileAt = 0; }
 
 /**
  * Đối soát số lượng đã nhận (received_qty) và trạng thái (PARTIALLY_RECEIVED / COMPLETED)
@@ -164,7 +166,8 @@ export async function reconcileHistoricalPOsWithInbound(
   force = false
 ) {
   const now = Date.now();
-  if (!force && now - lastReconcileAt < 15_000) return;
+  // Đọc toàn bộ PO, phiếu nhập và nhật ký: tối đa 5 phút / lần (sau mỗi lần nhập kho / nhận PO thì gọi với force)
+  if (!force && now - lastReconcileAt < 5 * 60_000) return;
   lastReconcileAt = now;
 
   try {

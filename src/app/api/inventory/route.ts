@@ -23,7 +23,7 @@ import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { syncCatalogSuppliersAndProducts, unmarkSupplierDeleted } from "@/backend/services/supplierCatalogSync";
 import { resolveActualProductCategory } from "@/backend/services/catalogStore";
-import { applyPOReceipt, reconcileHistoricalPOsWithInbound } from "@/backend/services/poReceipt";
+import { applyPOReceipt, reconcileHistoricalPOsWithInbound, markPOReconcileDirty } from "@/backend/services/poReceipt";
 import { isPcrKitProduct, packagingFormOfLot } from "@/frontend/utils/packagingForm";
 import {
   addStock,
@@ -265,6 +265,62 @@ export async function GET(req: NextRequest) {
       return NextResponse.json(canSeeCost ? tracePayload : stripCostFields(tracePayload));
     }
 
+    // Thẻ kho: tìm / lọc / phân trang TRÊN TOÀN BỘ phiếu (trước đây màn hình chỉ có 100 phiếu mới nhất từ overview,
+    // phiếu cũ hơn — kể cả phiếu nhập đầu kỳ — không tra được dù vẫn còn trong CSDL)
+    if (action === "transactions") {
+      const type = String(searchParams.get("type") || "ALL").toUpperCase();
+      const q = String(searchParams.get("q") || "").trim();
+      const partner = String(searchParams.get("partner") || "").trim();
+      const isoDate = (v: string | null) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || "")) ? String(v) : "");
+      const from = isoDate(searchParams.get("from"));
+      const to = isoDate(searchParams.get("to"));
+      const pageSize = Math.min(100, Math.max(5, Number(searchParams.get("page_size")) || 20));
+      const page = Math.max(1, Number(searchParams.get("page")) || 1);
+
+      const where: string[] = [];
+      const params: any[] = [];
+      const p = (v: any) => { params.push(v); return `$${params.length}`; };
+      if (from) where.push(`date >= ${p(from)}::date`);
+      if (to) where.push(`date <= ${p(to)}::date`);
+      if (q) {
+        const like = p(`%${q}%`);
+        where.push(`(transaction_code ILIKE ${like} OR reference_code ILIKE ${like} OR performed_by ILIKE ${like}
+                      OR warehouse_name ILIKE ${like} OR notes ILIKE ${like} OR items::text ILIKE ${like})`);
+      }
+      if (partner) {
+        // NCC (phiếu nhập: supplier_name trên dòng / "NCC: …" trong ghi chú) hoặc khách hàng (phiếu xuất: "Khách hàng: …")
+        const like = p(`%${partner}%`);
+        where.push(`(notes ILIKE ${like} OR items::text ILIKE ${like})`);
+      }
+      const baseWhere = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      const typeCond = type === "INBOUND" || type === "OUTBOUND" ? `transaction_type = ${p(type)}` : "";
+      const listWhere = typeCond ? (baseWhere ? `${baseWhere} AND ${typeCond}` : `WHERE ${typeCond}`) : baseWhere;
+      const typeParamCount = typeCond ? 1 : 0;
+      const baseParams = params.slice(0, params.length - typeParamCount);
+
+      const [countsRes, rowsRes] = await Promise.all([
+        query(
+          `SELECT COUNT(*)::int AS total,
+                  COUNT(*) FILTER (WHERE transaction_type = 'INBOUND')::int AS inbound,
+                  COUNT(*) FILTER (WHERE transaction_type = 'OUTBOUND')::int AS outbound
+             FROM inventory_transactions ${baseWhere}`,
+          baseParams
+        ),
+        query(
+          `SELECT id, transaction_code, transaction_type, reference_code, date, performed_by, warehouse_name, items,
+                  LEFT(COALESCE(notes, ''), 600) AS notes, created_at
+             FROM inventory_transactions ${listWhere}
+            ORDER BY date DESC, id DESC
+            LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}`,
+          params
+        ),
+      ]);
+      const c = countsRes.rows[0] || { total: 0, inbound: 0, outbound: 0 };
+      const total = type === "INBOUND" ? c.inbound : type === "OUTBOUND" ? c.outbound : c.total;
+      const payload = { transactions: rowsRes.rows, total, counts: c, page, page_size: pageSize };
+      return NextResponse.json(canSeeCost ? payload : stripCostFields(payload));
+    }
+
     if (action === "product_components") {
       const parentCode = searchParams.get("product_code");
       let res;
@@ -277,7 +333,8 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "overview") {
-      await reconcileHistoricalPOsWithInbound(query).catch(() => {});
+      // Đối soát PO ↔ phiếu nhập đọc toàn bộ PO, phiếu nhập và nhật ký: chạy nền, không bắt màn hình Kho chờ
+      void reconcileHistoricalPOsWithInbound(query).catch(() => {});
       // Đồng bộ tự động 2 chiều giữa products / inventory_lots và inventory_items:
       // Chỉ chạy tối đa 5 phút / lần trên GET (và reset ngay khi có POST nhập/xuất kho) để tránh ghi bảng trên mọi lần mở trang
       if (Date.now() - lastOverviewSyncAt > 5 * 60_000) {
@@ -536,6 +593,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   try {
     lastOverviewSyncAt = 0;
+    markPOReconcileDirty();
     const { searchParams } = new URL(req.url);
     const body = await req.json();
     const action = searchParams.get("action") || body?.action;

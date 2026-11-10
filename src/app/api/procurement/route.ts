@@ -31,7 +31,7 @@ function canRecordSupplierPayment(user: AuthorizedUser) {
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
-import { reconcileHistoricalPOsWithInbound, attachInboundPriceComparisonToPOs } from "@/backend/services/poReceipt";
+import { reconcileHistoricalPOsWithInbound, markPOReconcileDirty, attachInboundPriceComparisonToPOs } from "@/backend/services/poReceipt";
 
 let supplierShortNameEnsured = false;
 async function ensureSupplierShortName() {
@@ -525,6 +525,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  markPOReconcileDirty();
   try {
     const { searchParams } = new URL(req.url);
     const action = searchParams.get("action");
