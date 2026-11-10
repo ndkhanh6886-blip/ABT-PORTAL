@@ -39,6 +39,7 @@ export const SERVER_BACKED_LOCAL_KEYS = [
   "sales_13b_retail_logs",
   "sales_13b_processed_orders",
   "tbr_rfid_tags_list",
+  "workspace_proposals",
 ];
 const SERVER_BACKED_SET = new Set(SERVER_BACKED_LOCAL_KEYS);
 
@@ -253,7 +254,7 @@ interface CachedApiEntry {
   updatedAt: number;
 }
 
-const IDB_NAME = "tbr_instant_api_cache_v1";
+const IDB_NAME = "tbr_instant_api_cache_v2";
 const IDB_STORE = "responses";
 const apiMemoryCache = new Map<string, CachedApiEntry>();
 const inFlightGets = new Map<string, Promise<{ status: number; bodyText: string; ok: boolean }>>();
@@ -345,6 +346,13 @@ function clearInstantApiCache(): void {
 
 function markCacheMutated(pathname?: string): void {
   bypassCacheUntil = Date.now() + 8000;
+  if (pathname === "/api/inventory") {
+    bases.delete("sales_commercial_products");
+  }
+  if (pathname === "/api/inventory" || pathname === "/api/storage" || pathname === "/api/sales" || pathname === "/api/procurement") {
+    clearInstantApiCache();
+    return;
+  }
   if (pathname) {
     for (const [k, v] of apiMemoryCache.entries()) {
       if (v.url.startsWith(pathname)) {
@@ -414,7 +422,9 @@ export function installStorageSync() {
       const reqHeaders = new Headers(init?.headers || (typeof input === "object" && "headers" in (input as any) ? (input as Request).headers : undefined));
       const forceNetwork = Date.now() <= bypassCacheUntil || reqHeaders.get("x-no-cache") === "1";
 
-      const fetchAndStore = (): Promise<{ status: number; bodyText: string; ok: boolean }> => {
+      const cached = !forceNetwork ? apiMemoryCache.get(cacheKey) : undefined;
+
+      const fetchAndStore = (isBackgroundRevalidate = false): Promise<{ status: number; bodyText: string; ok: boolean }> => {
         const existingInFlight = inFlightGets.get(cacheKey);
         if (existingInFlight) return existingInFlight;
 
@@ -462,13 +472,12 @@ export function installStorageSync() {
         return run;
       };
 
-      const cached = !forceNetwork ? apiMemoryCache.get(cacheKey) : undefined;
       if (cached) {
         if (url.pathname === "/api/storage") {
           await recordFromGet(url, new Response(cached.bodyText, { status: 200, headers: { "Content-Type": "application/json" } }));
         }
         if (Date.now() - cached.updatedAt > 2500) {
-          fetchAndStore().catch(() => {});
+          fetchAndStore(true).catch(() => {});
         }
         return new Response(cached.bodyText, {
           status: 200,

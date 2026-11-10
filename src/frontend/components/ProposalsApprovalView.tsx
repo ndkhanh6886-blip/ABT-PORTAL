@@ -967,11 +967,17 @@ export function ProposalsApprovalView({
       );
       if (matched) {
         setSelectedProposal(matched);
+        const isLeave =
+          matched.templateId === "tmpl_leave_request" ||
+          String(matched.proposalCode || "").toUpperCase().startsWith("DXNP") ||
+          String(matched.templateName || "").toLowerCase().includes("nghỉ phép");
+        if (isLeave) {
+          const propMonth = String(matched.formValues?.fromDate || matched.neededByDate || matched.createdAt || "").slice(0, 7);
+          if (/^\d{4}-\d{2}$/.test(propMonth) && leaveMonthFilter !== "all" && leaveMonthFilter !== propMonth) {
+            setLeaveMonthFilter(propMonth);
+          }
+        }
         if (subView === "templates") {
-          const isLeave =
-            matched.templateId === "tmpl_leave_request" ||
-            String(matched.proposalCode || "").toUpperCase().startsWith("DXNP") ||
-            String(matched.templateName || "").toLowerCase().includes("nghỉ phép");
           setSubView(isLeave ? "leave_tracker" : "all");
         }
       }
