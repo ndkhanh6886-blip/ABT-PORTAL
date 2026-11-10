@@ -13079,9 +13079,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const priceApprovalNotes = (!isStockOrder && hasZeroPrice) ? "Đơn hàng có mặt hàng 0đ / quà tặng cần BGĐ duyệt" : "";
 
         if (editingFactoryOrderId) {
+            const targetOrdBeforeEdit = factoryOrders.find(o => o.id === editingFactoryOrderId);
+            const isFromStockEdit = factoryOrderFulfillmentSource === "STOCK" || (factoryOrderFulfillmentSource === "AUTO" && targetOrdBeforeEdit?.procureStatus === "STOCK_DELIVERY");
+            const nextFulfillmentSourceEdit = factoryOrderFulfillmentSource !== "AUTO" ? factoryOrderFulfillmentSource : targetOrdBeforeEdit?.fulfillmentSource;
+            const nextProcureStatusEdit = isFromStockEdit
+                ? "STOCK_DELIVERY"
+                : (factoryOrderFulfillmentSource === "PROCURE" && (!targetOrdBeforeEdit?.procureStatus || targetOrdBeforeEdit?.procureStatus === "STOCK_DELIVERY")
+                    ? "PENDING"
+                    : targetOrdBeforeEdit?.procureStatus);
             setFactoryOrders(prev => prev.map(order => {
                 if (order.id === editingFactoryOrderId) {
-                    const isFromStockEdit = factoryOrderFulfillmentSource === "STOCK" || order.procureStatus === "STOCK_DELIVERY";
                     const editStatus = (isCreditBlocked || (!isStockOrder && hasZeroPrice))
                         ? (order.status === "Delivered" ? "Delivered" : "Pending")
                         : (isFromStockEdit ? "Ready" : (order.status === "Pending" ? "Approved" : order.status));
@@ -13105,8 +13112,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         totalAmount: totalAmount,
                         hasMfg,
                         hasComm,
-                        fulfillmentSource: factoryOrderFulfillmentSource !== "AUTO" ? factoryOrderFulfillmentSource : order.fulfillmentSource,
-                        procureStatus: isFromStockEdit ? "STOCK_DELIVERY" : (factoryOrderFulfillmentSource === "PROCURE" ? "PENDING" : order.procureStatus),
+                        fulfillmentSource: nextFulfillmentSourceEdit,
+                        procureStatus: nextProcureStatusEdit,
                         status: editStatus,
                         contractId: isStockOrder ? undefined : (factoryOrderContractId || undefined),
                         quoteId: factoryOrderQuoteId || undefined,
@@ -13193,6 +13200,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     vat_email: vatRequested ? vatEmail : "",
                     shipping_method: shippingMethod,
                     tracking_code: trackingCode,
+                    fulfillment_source: nextFulfillmentSourceEdit,
+                    procure_status: nextProcureStatusEdit,
                     applied_price_policy: isStockOrder ? "STOCK" : (matchedCust?.customer_type === "DEALER" ? "DEALER" : "STANDARD"),
                     is_stock_order: isStockOrder
                 })
@@ -13890,6 +13899,82 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         return Boolean(o.isStockOrder || o.orderCategory === "STOCK" || (o.id && String(o.id).includes("STOCK")));
     };
 
+    // Tính số lượng hàng của đơn đang được đặt mua riêng qua PR/PO (chưa nhập kho) để KHÔNG chiếm giữ tồn kho sẵn có của các đơn khác
+    const getOrderItemUnreceivedProcureQty = (o: any, it: any, code: string, remainingQty: number): number => {
+        if (!o || !code || remainingQty <= 0) return 0;
+        const cleanCode = String(code).trim().toLowerCase();
+        const pStatus = String(o.procureStatus || "").toUpperCase();
+        if (pStatus === "RECEIVED" || pStatus === "COMPLETED") return 0;
+
+        const hasActivePR = Boolean(o.prCode) || pStatus === "PR_PENDING" || pStatus === "PR_CREATED";
+        const hasActivePO = Boolean(o.procureOrderCode) || pStatus === "ORDERED";
+
+        const soKeys = [o.order_code, o.id, o.linkedSalesOrderId].filter(Boolean).map((x: any) => String(x).trim());
+        const directPOs = (procurementOrders || []).filter((po: any) => {
+            if (!po || String(po.status || "").toUpperCase() === "CANCELLED") return false;
+            if (o.procureOrderCode && po.po_code === o.procureOrderCode) return true;
+            if (o.prCode && ((Array.isArray(po.pr_ids) && po.pr_ids.includes(o.prCode)) || (po.notes && String(po.notes).includes(String(o.prCode))))) return true;
+            if (Array.isArray(po.items) && po.items.some((poi: any) => {
+                const oc = String(poi?.order_code || poi?.so_code || poi?.linked_order_code || "").trim();
+                if (oc && soKeys.includes(oc)) return true;
+                return Boolean(o.prCode && String(poi?.source_pr_code || "") === String(o.prCode));
+            })) return true;
+            return soKeys.some(k => k && po.notes && String(po.notes).includes(k));
+        });
+
+        if (!hasActivePR && !hasActivePO && directPOs.length === 0) return 0;
+
+        let poOrderedQty = 0;
+        let poReceivedQty = 0;
+        directPOs.forEach((po: any) => {
+            const isDone = po.status === "COMPLETED" || po.status === "Received" || po.status === "DELIVERED";
+            (po.items || []).forEach((poi: any, pIdx: number) => {
+                const pcode = String(poi?.product_code || poi?.code || "").trim().toLowerCase();
+                if (pcode && (pcode === cleanCode || pcode.includes(cleanCode) || cleanCode.includes(pcode))) {
+                    const ordQ = Number(poi?.quantity || 0);
+                    const recQ = isDone ? ordQ : Number(po.received_qty?.[pIdx] ?? po.received_qty?.[String(pIdx)] ?? 0);
+                    poOrderedQty += ordQ;
+                    poReceivedQty += Math.min(ordQ, Math.max(0, recQ));
+                }
+            });
+        });
+
+        let prTargetQty = 0;
+        if (it?.procureQuantity !== undefined && it?.procureQuantity !== null) {
+            prTargetQty = Math.max(0, Number(it.procureQuantity) || 0);
+        } else if (o.prCode) {
+            const prRow = (purchaseRequests || []).find((r: any) =>
+                r && r.workflow_code === o.prCode && !["CANCELLED", "REJECTED"].includes(String(r.status || "").toUpperCase())
+            );
+            if (prRow) {
+                let parsed: any[] = [];
+                try {
+                    const rs = prRow.results_summary;
+                    parsed = Array.isArray(rs) ? rs : (typeof rs === "string" && rs.trim().startsWith("[") ? JSON.parse(rs) : []);
+                } catch {}
+                const matchedPrItems = parsed.filter((prit: any) => {
+                    const pcode = String(prit?.product_code || prit?.code || "").trim().toLowerCase();
+                    return pcode && (pcode === cleanCode || pcode.includes(cleanCode) || cleanCode.includes(pcode));
+                });
+                if (matchedPrItems.length > 0) {
+                    prTargetQty = matchedPrItems.reduce((s: number, prit: any) => s + (Number(prit?.quantity) || 0), 0);
+                } else {
+                    prTargetQty = remainingQty;
+                }
+            } else {
+                prTargetQty = remainingQty;
+            }
+        } else if (hasActivePR) {
+            prTargetQty = remainingQty;
+        }
+
+        const unreceived = poOrderedQty > 0
+            ? Math.max(Math.max(0, poOrderedQty - poReceivedQty), Math.max(0, prTargetQty - poReceivedQty))
+            : prTargetQty;
+
+        return Math.min(remainingQty, Math.max(0, unreceived));
+    };
+
     // Tiền tính toán tồn giữ chỗ lũy kế 1 lượt O(N) để phân tích tồn kho / lọc nhanh toàn bộ đơn hàng tức thì (0ms)
     const precomputedOrderReservationData = useMemo(() => {
         const progressMap = new Map<string, Record<string, { ordered: number; allocated: number; delivered: number; remaining: number }>>();
@@ -13923,15 +14008,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const oQty = Number(it.quantity) || 1;
                     const dQty = Math.max(Number(it.deliveredQuantity || 0), Number(prog[String(code).trim()]?.allocated || 0));
                     const pending = Math.max(0, oQty - dQty);
-                    runningReserved[code] = (runningReserved[code] || 0) + pending;
-                    if (pending > 0) {
-                        runningDetail[code] = [...(runningDetail[code] || []), { order: o.id, customer: o.customerName || "", qty: pending }];
+                    // Phần số lượng đã lập PR / PO đặt mua riêng (chưa về kho) không giữ chỗ tồn kho hiện có, nhường cho các đơn sau giao trước
+                    const unreceivedProcureQty = getOrderItemUnreceivedProcureQty(o, it, String(code).trim(), pending);
+                    const reservedFromExistingStock = Math.max(0, pending - unreceivedProcureQty);
+                    runningReserved[code] = (runningReserved[code] || 0) + reservedFromExistingStock;
+                    if (reservedFromExistingStock > 0) {
+                        runningDetail[code] = [...(runningDetail[code] || []), { order: o.id, customer: o.customerName || "", qty: reservedFromExistingStock }];
                     }
                 });
             }
         }
         return { progressMap, priorReservedMap, priorReservedDetailMap };
-    }, [factoryOrders, deliverySlips]);
+    }, [factoryOrders, deliverySlips, procurementOrders, purchaseRequests]);
 
     /** Dòng hàng là primer / probe / oligo đặt tổng hợp theo trình tự riêng. */
     const isOligoLikeItem = (it: any, prod?: any): boolean => {
@@ -14041,7 +14129,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             const totalWarehouse = Number(stock13b[code] || 0);
             const reserved = Number(reservedMap[code] || 0);
-            const availableStock = Math.max(0, totalWarehouse - reserved);
+            const rawAvailableStock = Math.max(0, totalWarehouse - reserved);
+            const unreceivedProcureQty = isStockOrder ? 0 : getOrderItemUnreceivedProcureQty(order, it, code, remainingQty);
+            // Nếu đơn này đang có PR/PO mua ngoài (unreceivedProcureQty > 0), phần đang chờ mua ngoài đã nhường tồn kho cho đơn khác
+            // nên tồn kho khả dụng để xét trạng thái giao ngay của chính đơn này chỉ tính phần không nằm trong PR/PO chờ về
+            const availableStock = unreceivedProcureQty > 0
+                ? Math.min(rawAvailableStock, Math.max(0, remainingQty - unreceivedProcureQty))
+                : rawAvailableStock;
 
             // Tìm PO đang mua về (status chưa hoàn thành) có chứa mặt hàng này
             const matchingPOs = (procurementOrders || []).filter((po: any) => {
@@ -14115,6 +14209,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const linkedPO = (availableStock >= remainingQty && !isStockOrder)
                 ? null
                 : (matchingPOs[0] || null);
+            const rawMissingQty = Math.max(0, remainingQty - rawAvailableStock - incomingQty);
 
             return {
                 item: it,
@@ -14124,8 +14219,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 deliveredQty,
                 remainingQty,
                 availableStock,
+                rawAvailableStock,
+                unreceivedProcureQty,
                 incomingQty,
                 missingQty: Math.max(0, missingQty),
+                rawMissingQty,
                 lineStatus,
                 linkedPO,
                 allocatedQty,
@@ -14282,12 +14380,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         factoryOrders.forEach(o => {
             const isOStock = checkIsPureStock(o);
             if (!isOStock && o.status !== "Delivered" && o.status !== "COMPLETED" && o.status !== "Rejected" && o.status !== "Cancelled") {
+                const prog = precomputedOrderReservationData.progressMap.get(o.id) || getOrderQtyProgress(o);
                 (o.items || []).forEach((it: any) => {
                     const itc = (it.productCode || it.product_code || it.code || "").trim();
                     if (itc === code) {
                         const oQty = Number(it.quantity) || 1;
-                        const dQty = Number(it.deliveredQuantity || 0);
-                        reserved += Math.max(0, oQty - dQty);
+                        const dQty = Math.max(Number(it.deliveredQuantity || 0), Number(prog[code]?.allocated || 0));
+                        const pending = Math.max(0, oQty - dQty);
+                        const unreceivedProcureQty = getOrderItemUnreceivedProcureQty(o, it, code, pending);
+                        reserved += Math.max(0, pending - unreceivedProcureQty);
                     }
                 });
             }
@@ -14352,13 +14453,27 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             showToast(`Đơn ${req.id} có mặt hàng 0đ / quà tặng chưa được Ban Giám Đốc duyệt!`, "warning");
             return;
         }
+
+        const analysis = computeOrderStockAnalysis(req);
+        const isCreatingNewPR = !req.prCode && !analysis.hasPR;
+        const isStockAlreadySufficient = !isPureStock && (
+            analysis.isReadyAll ||
+            ((analysis.itemsBreakdown || []).length > 0 &&
+                (analysis.itemsBreakdown || []).every((ib: any) => (ib.rawAvailableStock ?? ib.availableStock) >= ib.remainingQty))
+        );
+        if (isCreatingNewPR && isStockAlreadySufficient) {
+            const confirmed = window.confirm(
+                `Hàng đã có sẵn trong kho cho đơn ${req.id}. Bạn có muốn tạo PR đặt mua riêng (và nhường tồn kho sẵn có cho các đơn khác) không?`
+            );
+            if (!confirmed) return;
+        }
+
         setSingleProcureTargetOrder(req);
         setSingleProcureExcludedKeys({});
         setSingleProcureSupplier(req.procureSupplierSuggestion || req.procureSupplier || "");
         setSingleProcureNotes(req.procureNotes || req.notes || "");
         setSingleProcureEstDelivery(req.procureDueDate || req.procureEstDate || req.requestedDeliveryDate || toVNDateString(new Date(Date.now() + 7 * 86400000)));
         
-        const analysis = computeOrderStockAnalysis(req);
         const notesMap: Record<string, string> = {};
         const qtyMap: Record<string, number> = {};
         const isStock = checkIsPureStock(req);
@@ -14368,11 +14483,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const lineKey = `${ib.code}__${idx}`;
                 notesMap[lineKey] = ib.item?.notes || "";
                 notesMap[ib.code] = ib.item?.notes || "";
-                // Tự động gợi ý số lượng cần mua ngoài: với đơn SO Stock mua đủ số lượng đặt dự trù, với SO khách thì gợi ý số lượng thiếu
-                // Dòng kho đã đủ hàng: không cần mua (0). Đơn SO Stock: mua đủ số lượng dự trù.
+                // Tự động gợi ý số lượng cần mua ngoài:
+                // - Nếu đơn đã có PR trước đó (mở lên xem/sửa): lấy procureQuantity đã lưu
+                // - Nếu kho đã đủ hàng nhưng người dùng vừa xác nhận "Tạo PR mua riêng": gợi ý 100% SL còn lại của đơn (để nhường tồn kho cho đơn khác)
+                // - Với đơn SO Stock: mua đủ số lượng đặt dự trù
+                // - Trường hợp thông thường: gợi ý phần còn thiếu (missingQty)
+                const rawAvail = Number(ib.rawAvailableStock ?? ib.availableStock) || 0;
+                const rawMissing = Number(ib.rawMissingQty ?? ib.missingQty) || 0;
+                const savedProcureQty = ib.item?.procureQuantity !== undefined && ib.item?.procureQuantity !== null
+                    ? Number(ib.item.procureQuantity)
+                    : undefined;
                 const suggestedQty = isStock
                     ? ib.orderQty
-                    : (ib.missingQty > 0 ? ib.missingQty : (ib.lineStatus === "NEEDS_PROCURE" ? ib.remainingQty : Math.max(0, ib.orderQty - ib.availableStock)));
+                    : (!isCreatingNewPR && savedProcureQty !== undefined)
+                    ? savedProcureQty
+                    : isStockAlreadySufficient
+                    ? (ib.remainingQty || ib.orderQty)
+                    : (rawMissing > 0 ? rawMissing : (ib.lineStatus === "NEEDS_PROCURE" ? ib.remainingQty : Math.max(0, ib.remainingQty - rawAvail)));
                 const safeQty = Math.max(0, Number(suggestedQty) || 0);
                 qtyMap[lineKey] = safeQty;
                 qtyMap[ib.code] = safeQty;
@@ -14423,7 +14550,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 original_order_qty: it.quantity || 1,
                 // Ảnh chụp tồn kho lúc lập PR để Cung ứng biết hàng trong kho đang dành cho đơn nào
                 stock_on_hand: Number(ib?.onHandQty) || 0,
-                stock_available: Number(ib?.availableStock) || 0,
+                stock_available: Number(ib?.rawAvailableStock ?? ib?.availableStock) || 0,
                 pending_delivery_qty: Number(ib?.pendingDeliveryQty) || 0,
                 pending_delivery_orders: (ib?.pendingDeliveryOrders || []).map((p: any) => ({ order: p.order, customer: p.customer, qty: p.qty }))
             };
@@ -14491,21 +14618,49 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return;
         }
 
+        const updatedOrderItemsForPR = (singleProcureTargetOrder.items || []).map((it: any, idx: number) => {
+            const lineKey = `${it.productCode}__${idx}`;
+            const isExcluded = Boolean(singleProcureExcludedKeys[lineKey] || singleProcureExcludedKeys[it.productCode]);
+            const resolvedProcureQty = isExcluded
+                ? 0
+                : (singleProcureItemQuantities[lineKey] !== undefined
+                    ? Number(singleProcureItemQuantities[lineKey])
+                    : (singleProcureItemQuantities[it.productCode] !== undefined
+                        ? Number(singleProcureItemQuantities[it.productCode])
+                        : (it.procureQuantity !== undefined ? Number(it.procureQuantity) : (Number(it.quantity) || 1))));
+            return {
+                ...it,
+                notes: singleProcureItemNotes[lineKey] !== undefined ? singleProcureItemNotes[lineKey] : (singleProcureItemNotes[it.productCode] !== undefined ? singleProcureItemNotes[it.productCode] : it.notes),
+                sequence: singleProcureItemSequences[lineKey] !== undefined ? (singleProcureItemSequences[lineKey].trim() || undefined) : it.sequence,
+                procureQuantity: resolvedProcureQty
+            };
+        });
+
+        // Đồng bộ ngay vào danh sách purchaseRequests tại client để tính toán giải phóng giữ chỗ kho tức thì
+        setPurchaseRequests(prev => {
+            const existingIdx = (prev || []).findIndex((r: any) => r && r.workflow_code === prCode);
+            const prRecord = {
+                workflow_code: prCode,
+                title: prTitle,
+                status: "PENDING",
+                requester_name: targetRepNameProcure,
+                customer_name: singleProcureTargetOrder.customerName || "Khách hàng",
+                results_summary: prItems
+            };
+            if (existingIdx >= 0) {
+                const clone = [...prev];
+                clone[existingIdx] = { ...clone[existingIdx], ...prRecord };
+                return clone;
+            }
+            return [prRecord, ...(prev || [])];
+        });
+
         setFactoryOrders(prev => prev.map(req => {
             if (req.id === singleProcureTargetOrder.id) {
                 const hasMfg = req.hasMfg !== undefined ? req.hasMfg : ((req.items || []).some((it: any) => it?.sourceType !== "COMMERCIAL"));
-                const updatedItems = (req.items || []).map((it: any, idx: number) => {
-                    const lineKey = `${it.productCode}__${idx}`;
-                    return {
-                        ...it,
-                        notes: singleProcureItemNotes[lineKey] !== undefined ? singleProcureItemNotes[lineKey] : (singleProcureItemNotes[it.productCode] !== undefined ? singleProcureItemNotes[it.productCode] : it.notes),
-                        sequence: singleProcureItemSequences[lineKey] !== undefined ? (singleProcureItemSequences[lineKey].trim() || undefined) : it.sequence,
-                        procureQuantity: singleProcureItemQuantities[lineKey] !== undefined ? singleProcureItemQuantities[lineKey] : (singleProcureItemQuantities[it.productCode] !== undefined ? singleProcureItemQuantities[it.productCode] : (it.procureQuantity || it.quantity))
-                    };
-                });
                 return {
                     ...req,
-                    items: updatedItems,
+                    items: updatedOrderItemsForPR,
                     hasMfg,
                     hasComm: true,
                     // Đã phải lập PR thì đơn không còn là "giao từ kho có sẵn"
@@ -14521,13 +14676,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return req;
         }));
         // PO sẽ do phòng Cung ứng lập từ PR này (đơn bán được tự cập nhật mã PO khi Cung ứng lập PO)
-        // Also persist pr_code & procure_status to PostgreSQL sales_orders
+        // Also persist pr_code, procure_status & items (with procureQuantity) to PostgreSQL sales_orders
         fetch("/api/sales?action=order", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
                 id: singleProcureTargetOrder.id,
                 order_code: singleProcureTargetOrder.order_code || singleProcureTargetOrder.id,
+                is_update: true,
+                items: updatedOrderItemsForPR,
                 pr_code: prCode,
                 procure_status: "PR_PENDING",
                 fulfillment_source: singleProcureTargetOrder.fulfillmentSource === "STOCK" ? "PROCURE" : (singleProcureTargetOrder.fulfillmentSource || "COMMERCIAL")
@@ -24466,33 +24623,37 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     ) : null
                                                                                 )}
 
-                                                                                {/* Tách luồng 2: Mua ngoài Cung ứng hoặc Giao hàng */}
-                                                                                {(canManageAllOrders || canUserAct) && !isFromStock && hasComm && (req.status === "Approved" || req.status === "Ordered" || req.status === "Ready") && req.status !== "Delivered" && (
-                                                                                    procureStatus !== "ORDERED" && procureStatus !== "COMPLETED" && procureStatus !== "PR_PENDING" && procureStatus !== "PR_CREATED" && !req.prCode && !hasLinkedPO ? (
+                                                                                {/* Tách luồng 2: Mua ngoài Cung ứng hoặc Giao hàng (cho phép Tạo PR mua riêng kể cả khi kho có sẵn hàng để nhường tồn kho cho đơn khác) */}
+                                                                                {(canManageAllOrders || canUserAct) && (hasComm || !hasMfg) && !stockAnalysis.isFullyDelivered && (req.status === "Approved" || req.status === "Ordered" || req.status === "Ready") && req.status !== "Delivered" && (
+                                                                                    procureStatus !== "ORDERED" && procureStatus !== "COMPLETED" && procureStatus !== "PR_PENDING" && procureStatus !== "PR_CREATED" && !req.prCode && !stockAnalysis.hasPR && !hasLinkedPO ? (
                                                                                         <div className="flex items-center gap-1">
-                                                                                            <button
-                                                                                                type="button"
-                                                                                                disabled={!isGoodsInWarehouse}
-                                                                                                onClick={() => {
-                                                                                                    if (!isGoodsInWarehouse) return;
-                                                                                                    handleShipOrderToCustomer(req.id);
-                                                                                                }}
-                                                                                                className={cn(
-                                                                                                    "text-[10px] px-2 py-1 rounded-md font-bold transition-all shadow-sm flex items-center gap-1 border",
-                                                                                                    isGoodsInWarehouse
-                                                                                                        ? "bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 cursor-pointer animate-pulse"
-                                                                                                        : "bg-slate-900 border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
-                                                                                                )}
-                                                                                                title={isGoodsInWarehouse ? "Hàng đã nhập kho, xuất giao hàng" : "Hàng chưa nhập kho"}
-                                                                                            >
-                                                                                                <Package className="w-3 h-3 text-emerald-400" />
-                                                                                                <span>Giao hàng</span>
-                                                                                            </button>
+                                                                                            {!(canManageAllOrders && isGoodsInWarehouse) && (
+                                                                                                <button
+                                                                                                    type="button"
+                                                                                                    disabled={!isGoodsInWarehouse}
+                                                                                                    onClick={() => {
+                                                                                                        if (!isGoodsInWarehouse) return;
+                                                                                                        handleShipOrderToCustomer(req.id);
+                                                                                                    }}
+                                                                                                    className={cn(
+                                                                                                        "text-[10px] px-2 py-1 rounded-md font-bold transition-all shadow-sm flex items-center gap-1 border",
+                                                                                                        isGoodsInWarehouse
+                                                                                                            ? "bg-emerald-600 hover:bg-emerald-500 text-white border-emerald-400 cursor-pointer animate-pulse"
+                                                                                                            : "bg-slate-900 border-slate-800 text-slate-500 opacity-50 cursor-not-allowed"
+                                                                                                    )}
+                                                                                                    title={isGoodsInWarehouse ? "Hàng đã nhập kho, xuất giao hàng" : "Hàng chưa nhập kho"}
+                                                                                                >
+                                                                                                    <Package className="w-3 h-3 text-emerald-400" />
+                                                                                                    <span>Giao hàng</span>
+                                                                                                </button>
+                                                                                            )}
                                                                                             <button
                                                                                                 type="button"
                                                                                                 onClick={() => handleOpenSingleProcureModal(req)}
                                                                                                 className="bg-cyan-950/70 hover:bg-cyan-900/80 text-cyan-100 border border-cyan-500/50 text-[10px] px-2 py-1 rounded-md font-bold cursor-pointer transition-colors shadow-sm flex items-center gap-1"
-                                                                                                title="Lập đề xuất mua hàng (PR) gửi phòng Cung Ứng nếu hàng không có sẵn"
+                                                                                                title={stockAnalysis.isReadyAll
+                                                                                                    ? "Hàng đã có sẵn trong kho — bấm nếu đơn có yêu cầu đặc thù cần lập PR đặt mua riêng (và nhường tồn kho cho đơn khác)"
+                                                                                                    : "Lập đề xuất mua hàng (PR) gửi phòng Cung Ứng"}
                                                                                             >
                                                                                                 <span>🛒 Tạo PR</span>
                                                                                             </button>
@@ -32313,19 +32474,35 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     const modalAnalysis = computeOrderStockAnalysis(viewingFactoryOrderItems);
                                     if (modalAnalysis.isReadyAll) {
                                         return (
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    const oid = viewingFactoryOrderItems.id;
-                                                    setViewingFactoryOrderItems(null);
-                                                    handleShipOrderToCustomer(oid);
-                                                }}
-                                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-950/60 animate-pulse border border-emerald-400"
-                                                title="Hàng đã có sẵn trong kho, bấm để xuất giao cho khách"
-                                            >
-                                                <Package className="w-3.5 h-3.5" />
-                                                <span>Giao Hàng Cho Khách (Đủ hàng)</span>
-                                            </button>
+                                            <div className="flex items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => {
+                                                        const oid = viewingFactoryOrderItems.id;
+                                                        setViewingFactoryOrderItems(null);
+                                                        handleShipOrderToCustomer(oid);
+                                                    }}
+                                                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-emerald-950/60 animate-pulse border border-emerald-400"
+                                                    title="Hàng đã có sẵn trong kho, bấm để xuất giao cho khách"
+                                                >
+                                                    <Package className="w-3.5 h-3.5" />
+                                                    <span>Giao Hàng Cho Khách (Đủ hàng)</span>
+                                                </button>
+                                                {!viewingFactoryOrderItems.prCode && !modalAnalysis.hasPR && !modalAnalysis.hasPO && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => {
+                                                            const reqObj = viewingFactoryOrderItems;
+                                                            setViewingFactoryOrderItems(null);
+                                                            handleOpenSingleProcureModal(reqObj);
+                                                        }}
+                                                        className="px-3.5 py-2 bg-cyan-800 hover:bg-cyan-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 shadow-md border border-cyan-400"
+                                                        title="Đơn có yêu cầu đặc thù cần đặt mua riêng và nhường tồn kho sẵn có cho các đơn khác"
+                                                    >
+                                                        <span>🛒 Tạo PR Mua Riêng</span>
+                                                    </button>
+                                                )}
+                                            </div>
                                         );
                                     } else if (modalAnalysis.isPartialReady) {
                                         return (
@@ -32791,8 +32968,61 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="border border-slate-800 rounded-lg overflow-hidden bg-slate-950/60 max-h-[32vh] overflow-y-auto">
                                     {(() => {
                                         const prAnalysis = computeOrderStockAnalysis(singleProcureTargetOrder);
+                                        const hasAnyAvailableWarehouseStock = !checkIsPureStock(singleProcureTargetOrder) &&
+                                            (prAnalysis.itemsBreakdown || []).some((ib: any) => Number(ib.rawAvailableStock ?? ib.availableStock) > 0 && Number(ib.remainingQty) > 0);
+                                        const totalFullOrderRemaining = (prAnalysis.itemsBreakdown || []).reduce((s: number, ib: any) => s + (Number(ib.remainingQty) || Number(ib.orderQty) || 0), 0);
+                                        const totalDeficitOnly = (prAnalysis.itemsBreakdown || []).reduce((s: number, ib: any) => s + (Number(ib.rawMissingQty ?? ib.missingQty) || 0), 0);
                                         return (
-                                            <table className="w-full text-left text-xs border-collapse">
+                                            <>
+                                                {hasAnyAvailableWarehouseStock && (
+                                                    <div className="px-3 py-2 bg-amber-950/30 border-b border-amber-500/30 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                                                        <span className="text-amber-200 font-medium">
+                                                            📦 Kho đang có sẵn hàng cho đơn này. Chọn phương án đặt mua PR:
+                                                        </span>
+                                                        <div className="flex flex-wrap items-center gap-1.5">
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => {
+                                                                    const nextMap: Record<string, number> = {};
+                                                                    (prAnalysis.itemsBreakdown || []).forEach((ib: any, idx: number) => {
+                                                                        if (!ib.code) return;
+                                                                        const lk = `${ib.code}__${idx}`;
+                                                                        const fullQ = Math.max(0, Number(ib.remainingQty) || Number(ib.orderQty) || 0);
+                                                                        nextMap[lk] = fullQ;
+                                                                        nextMap[ib.code] = fullQ;
+                                                                    });
+                                                                    setSingleProcureExcludedKeys({});
+                                                                    setSingleProcureItemQuantities(nextMap);
+                                                                }}
+                                                                className="px-2.5 py-1 rounded bg-cyan-800 hover:bg-cyan-700 border border-cyan-400/60 text-white font-bold text-[10px] cursor-pointer transition-colors shadow-sm"
+                                                                title="Đặt mua riêng 100% số lượng đơn này để nhường toàn bộ hàng sẵn có trong kho cho các đơn SO khác giao trước"
+                                                            >
+                                                                🛒 Mua riêng 100% đơn ({totalFullOrderRemaining} SP) — Nhường tồn kho cho đơn khác
+                                                            </button>
+                                                            {totalDeficitOnly > 0 && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        const nextMap: Record<string, number> = {};
+                                                                        (prAnalysis.itemsBreakdown || []).forEach((ib: any, idx: number) => {
+                                                                            if (!ib.code) return;
+                                                                            const lk = `${ib.code}__${idx}`;
+                                                                            const defQ = Math.max(0, Number(ib.rawMissingQty ?? ib.missingQty) || 0);
+                                                                            nextMap[lk] = defQ;
+                                                                            nextMap[ib.code] = defQ;
+                                                                        });
+                                                                        setSingleProcureItemQuantities(nextMap);
+                                                                    }}
+                                                                    className="px-2.5 py-1 rounded bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 font-bold text-[10px] cursor-pointer transition-colors"
+                                                                    title="Giữ lại hàng sẵn có trong kho cho đơn này và chỉ lập PR mua phần còn thiếu"
+                                                                >
+                                                                    📦 Trừ tồn kho sẵn có — Chỉ mua phần thiếu ({totalDeficitOnly} SP)
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                                <table className="w-full text-left text-xs border-collapse">
                                                 <thead>
                                                     <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-900/90 sticky top-0 z-10">
                                                         <th className="p-2.5 w-8 text-center">Chọn</th>
@@ -32881,9 +33111,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     )}
                                                                 </td>
                                                                 <td className="p-2.5 text-center font-mono font-bold">
-                                                                    {itemAnalysis.availableStock > 0 ? (
+                                                                    {Number(itemAnalysis.rawAvailableStock ?? itemAnalysis.availableStock) > 0 ? (
                                                                         <span className="text-emerald-400 bg-emerald-950/80 px-1.5 py-0.5 rounded border border-emerald-500/40 text-[10px]">
-                                                                            {itemAnalysis.availableStock}
+                                                                            {Number(itemAnalysis.rawAvailableStock ?? itemAnalysis.availableStock)}
                                                                         </span>
                                                                     ) : (
                                                                         <span className="text-slate-500">0</span>
@@ -32935,6 +33165,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     })}
                                                 </tbody>
                                             </table>
+                                            </>
                                         );
                                     })()}
                                 </div>
