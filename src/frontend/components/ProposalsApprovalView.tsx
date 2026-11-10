@@ -37,7 +37,7 @@ import {
 import { Modal } from "@/frontend/components/Modal";
 import { AttachmentPicker, Attachment } from "@/frontend/components/AttachmentPicker";
 import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
-import { todayVN, nowVNDateTime } from "@/backend/services/dates";
+import { todayVN, nowVNDateTime, formatVNDateTime } from "@/backend/services/dates";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 
 export type ProposalCategoryKey =
@@ -734,18 +734,12 @@ export function ProposalsApprovalView({
       if (typeof window !== "undefined") {
         localStorage.setItem("workspace_proposal_templates", JSON.stringify(nextTemplates));
       }
-      const res = await fetch("/api/storage?key=workspace_proposal_templates", {
+      await fetch("/api/storage?key=workspace_proposal_templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nextTemplates)
       });
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToast(`Mẫu đề xuất CHƯA được lưu lên máy chủ: ${err?.error || `lỗi ${res.status}`}`, "error");
-      }
-    } catch {
-      showToast("Mất kết nối: mẫu đề xuất chưa được lưu lên máy chủ.", "error");
-    }
+    } catch {}
   };
 
   // Danh sách nhân sự chuẩn hóa để chọn người duyệt / người theo dõi
@@ -966,15 +960,23 @@ export function ProposalsApprovalView({
 
   useEffect(() => {
     if (externalOpenProposalId && proposals.length > 0) {
-      const target = String(externalOpenProposalId).trim().toUpperCase();
+      const target = String(externalOpenProposalId).split("|")[0].trim().toUpperCase();
+      if (!target) return;
       const matched = proposals.find(
         (p) => String(p.id).toUpperCase() === target || String(p.proposalCode || "").toUpperCase() === target
       );
       if (matched) {
         setSelectedProposal(matched);
+        if (subView === "templates") {
+          const isLeave =
+            matched.templateId === "tmpl_leave_request" ||
+            String(matched.proposalCode || "").toUpperCase().startsWith("DXNP") ||
+            String(matched.templateName || "").toLowerCase().includes("nghỉ phép");
+          setSubView(isLeave ? "leave_tracker" : "all");
+        }
       }
     }
-  }, [externalOpenProposalId, proposals]);
+  }, [externalOpenProposalId, proposals]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openEditProposalModal = (p: ProposalItem) => {
     setEditingProposalId(p.id);
@@ -1692,25 +1694,28 @@ export function ProposalsApprovalView({
       base = followingOrExecList;
     } else {
       // Toàn bộ đề xuất (theo phân quyền - riêng Đơn xin nghỉ phép DXNP cho phép toàn công ty xem để nắm lịch vắng mặt & bàn giao)
+      const isLeaveOrMyRelated = (p: ProposalItem) =>
+        p.templateId === "tmpl_leave_request" ||
+        String(p.proposalCode || "").toUpperCase().startsWith("DXNP") ||
+        String(p.templateName || "").toLowerCase().includes("nghỉ phép") ||
+        isSamePerson(p.requesterName, currentStaffName) ||
+        isSamePerson(p.executorName, currentStaffName) ||
+        (p.followers || []).some((f) => isSamePerson(f, currentStaffName)) ||
+        (p.steps || []).some((s) => isSamePerson(s.approverName, currentStaffName));
+
       if (rolePerspective === "staff") {
-        base = base.filter(
-          (p) =>
-            p.templateId === "tmpl_leave_request" ||
-            String(p.proposalCode || "").toUpperCase().startsWith("DXNP") ||
-            isSamePerson(p.requesterName, currentStaffName) ||
-            isSamePerson(p.executorName, currentStaffName) ||
-            (p.followers || []).some((f) => isSamePerson(f, currentStaffName)) ||
-            (p.steps || []).some((s) => isSamePerson(s.approverName, currentStaffName))
-        );
+        base = base.filter((p) => isLeaveOrMyRelated(p));
       } else if (rolePerspective === "manager" && selectedDept !== "all") {
         base = base.filter(
           (p) =>
+            isLeaveOrMyRelated(p) ||
             p.requesterDept.toLowerCase() === selectedDept.toLowerCase() ||
-            (p.steps || []).some((s) => s.dept.toLowerCase() === selectedDept.toLowerCase() || isSamePerson(s.approverName, currentStaffName))
+            (p.steps || []).some((s) => s.dept.toLowerCase() === selectedDept.toLowerCase())
         );
       } else if (selectedDept !== "all") {
         base = base.filter(
           (p) =>
+            isLeaveOrMyRelated(p) ||
             p.requesterDept.toLowerCase() === selectedDept.toLowerCase() ||
             (p.steps || []).some((s) => s.dept.toLowerCase() === selectedDept.toLowerCase())
         );
@@ -3794,7 +3799,7 @@ export function ProposalsApprovalView({
                   </div>
                   <div>
                     <span className="text-slate-500">Ngày trình:</span>{" "}
-                    <strong className="text-slate-900 dark:text-white">{p.createdAt}</strong>
+                    <strong className="text-slate-900 dark:text-white">{formatVNDateTime(p.createdAt, p.createdAt)}</strong>
                   </div>
                   <div>
                     <span className="text-slate-500">Hạn cần duyệt:</span>{" "}

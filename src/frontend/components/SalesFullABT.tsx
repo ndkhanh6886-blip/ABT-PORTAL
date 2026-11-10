@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
-import { packagingFormOfLot, normalizePackagingForm, withPackagingNote, PACKAGING_LABEL, type PackagingForm } from "@/frontend/utils/packagingForm";
+import { packagingFormOfLot, normalizePackagingForm, normalizeIcForm, normalizeTubeType, withPackagingNote, isPcrKitProduct, PACKAGING_LABEL, IC_LABEL, PCR_TUBE_CODES, kitSpecOf, kitSpecLabel, lotKitSpec, lotMatchesKitSpec, kitSpecMismatches, missingKitSpec, hasKitSpec, type KitSpec } from "@/frontend/utils/packagingForm";
 import {
     Wallet,
     Briefcase,
@@ -74,7 +74,7 @@ import { SalesEvaluationAnalytics } from "@/frontend/components/SalesEvaluationA
 import { SalesPerformanceAnalytics } from "@/frontend/components/SalesPerformanceAnalytics";
 import { SalesDealsPipeline } from "@/frontend/components/SalesDealsPipeline";
 import { HospitalBiddingManagement } from "@/frontend/components/HospitalBiddingManagement";
-import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { todayVN, toVNDateString, formatVNDate, formatVNDateTime, parseVNDateToISO } from "@/backend/services/dates";
 import { DeliverySlipListView } from "@/frontend/components/DeliverySlipListView";
 import { MoneyInput } from "@/frontend/components/MoneyInput";
 import { CustomerDebtView } from "@/frontend/components/CustomerDebtView";
@@ -707,7 +707,7 @@ const quoteDateVN = (v: any) => {
     if (!v) return "";
     try {
         const d = toVNDateString(v);
-        return /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : String(v);
+        return /^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d.slice(8, 10)}-${d.slice(5, 7)}-${d.slice(0, 4)}` : String(v);
     } catch {
         return String(v);
     }
@@ -1548,7 +1548,7 @@ export function SalesFullABT() {
                 discountRate: Number(q.discountRate !== undefined ? q.discountRate : (q.discount_rate || 0)),
                 taxRate: calcTaxRate,
                 status: q.status || "Draft",
-                date: q.date || (q.created_at ? new Date(q.created_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })),
+                date: q.date || (q.created_at ? formatVNDate(q.created_at) : formatVNDate(new Date())),
                 items: normItems
             };
         });
@@ -1604,9 +1604,9 @@ export function SalesFullABT() {
                 salesRepId: repId,
                 totalAmount: Number(c.totalAmount || c.total_value || 0),
                 items: Array.isArray(items) ? items : (c.items || []),
-                date: c.date || (c.sign_date ? new Date(c.sign_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })),
-                signDate: c.signDate || (c.sign_date ? new Date(c.sign_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : ""),
-                validUntil: c.validUntil || (c.valid_until ? new Date(c.valid_until).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "")
+                date: c.date || (c.sign_date ? formatVNDate(c.sign_date) : formatVNDate(new Date())),
+                signDate: c.signDate || (c.sign_date ? formatVNDate(c.sign_date) : ""),
+                validUntil: c.validUntil || (c.valid_until ? formatVNDate(c.valid_until) : "")
             };
         });
     };
@@ -1801,7 +1801,7 @@ export function SalesFullABT() {
                 salesRepName: repName || "Nhân viên kinh doanh",
                 salesRepId: repId || "NV-001",
                 totalAmount: Number(o.totalAmount !== undefined ? o.totalAmount : (o.total_amount || 0)),
-                date: o.date || (o.order_date ? (typeof o.order_date === 'string' && o.order_date.includes('T') ? new Date(o.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : o.order_date) : (o.created_at ? new Date(o.created_at).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }))),
+                date: o.date || (o.order_date ? (typeof o.order_date === 'string' && o.order_date.includes('T') ? formatVNDate(o.order_date) : o.order_date) : (o.created_at ? formatVNDate(o.created_at) : formatVNDate(new Date()))),
                 requestedDeliveryDate: reqDelivIso || reqDelivRaw || undefined,
                 estimatedDeliveryDate: estDelivIso || estDelivRaw || reqDelivIso || reqDelivRaw || undefined,
                 items: items,
@@ -1891,7 +1891,7 @@ export function SalesFullABT() {
         const s = String(v).trim();
         let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
         if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-        m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
         if (m) return new Date(Number(m[3]), Number(m[2]) - 1, Number(m[1]));
         const d = new Date(s);
         return isNaN(d.getTime()) ? null : d;
@@ -2302,7 +2302,7 @@ export function SalesFullABT() {
                             totalDiscount: 0,
                             totalVat: 0,
                             status: "Approved",
-                            date: fo.date || new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+                            date: fo.date || formatVNDate(new Date()),
                             items: fo.items || [],
                             priceApprovalStatus: "APPROVED"
                         });
@@ -2382,7 +2382,7 @@ export function SalesFullABT() {
                             totalAmount: Number(fo.totalAmount || 0),
                             total_value: Number(fo.totalAmount || 0),
                             status: 'Signed',
-                            date: fo.date || new Date().toLocaleDateString("vi-VN"),
+                            date: fo.date || formatVNDate(new Date()),
                             items: fo.items || [],
                             contract_files: []
                         });
@@ -3761,109 +3761,137 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 });
             };
 
-            // Danh mục luôn đọc thẳng từ máy chủ (bỏ qua bộ nhớ đệm trình duyệt): bản đệm cũ trước đây giữ
-            // danh mục như trước lần nhập Excel mới nhất, và trang này không tự tải lại khi bản đệm được làm mới
-            const noCache = { headers: { "x-no-cache": "1" } };
-            // 1. Fetch inventory overview to get master product_components and products
-            fetch("/api/inventory?action=overview", noCache)
-                .then(res => res.json())
-                .then(overview => {
-                    if (overview.product_components && Array.isArray(overview.product_components)) {
-                        setDbProductComponents(overview.product_components);
-                    }
-                    if (overview.products && Array.isArray(overview.products)) {
-                        setDbMasterProducts(overview.products);
-                        const dbMap: Record<string, string> = {};
-                        const dbProdMap: Record<string, any> = {};
-                        overview.products.forEach((p: any) => {
-                            if (p.code) {
-                                dbProdMap[p.code] = p;
-                                if (p.storage_condition) {
-                                    dbMap[p.code] = p.storage_condition;
+            const isPlaceholderName = (name: any, code: any) => {
+                const n = String(name || "").trim();
+                const c = String(code || "").trim();
+                if (!n) return true;
+                const nl = n.toLowerCase();
+                const cl = c.toLowerCase();
+                return nl === cl || nl === `sản phẩm ${cl}` || nl.startsWith("sản phẩm ") || nl === "hàng hóa nhập khẩu";
+            };
+            const isPlaceholderBrand = (brand: any) => {
+                const b = String(brand || "").trim().toLowerCase();
+                return !b || b === "thương mại" || b === "nhà cung cấp" || b.startsWith("tbr phân phối");
+            };
+
+            const loadInventoryOverviewForCatalog = (noCache = false) => {
+                fetch("/api/inventory?action=overview", noCache ? { headers: { "x-no-cache": "1" } } : undefined)
+                    .then(res => res.json())
+                    .then(overview => {
+                        if (overview.product_components && Array.isArray(overview.product_components)) {
+                            setDbProductComponents(overview.product_components);
+                        }
+                        if (overview.products && Array.isArray(overview.products)) {
+                            setDbMasterProducts(overview.products);
+                            const dbMap: Record<string, string> = {};
+                            const dbProdMap: Record<string, any> = {};
+                            overview.products.forEach((p: any) => {
+                                if (p.code) {
+                                    dbProdMap[String(p.code).trim()] = p;
+                                    if (p.storage_condition) {
+                                        dbMap[String(p.code).trim()] = p.storage_condition;
+                                    }
                                 }
-                            }
-                        });
-                        setCommercialProducts(prev => {
-                            const updatedExisting = prev.map(p => {
-                                const dbProd = dbProdMap[p.code];
-                                const next: any = { ...p };
-                                if (!dbProd) {
-                                    next.category = resolveActualProductCategory(next);
-                                    return next;
-                                }
-                                const dbStorage = dbMap[p.code];
-                                const dbCost = Number(dbProd.cost_price) || 0;
-                                const dbStdPrice = Number(dbProd.standard_price) || 0;
-                                const curCost = Number(p.costPrice) || 0;
-                                const curPrice = Number(p.price) || 0;
-                                if (dbStorage) next.storageCondition = dbStorage;
-                                if (dbProd.category && (!next.category || next.category === "Thiết bị" || next.category === "Hàng Thương Mại")) {
-                                    next.category = dbProd.category;
-                                }
-                                next.category = resolveActualProductCategory(next);
-                                if (dbCost > 0 && dbCost !== curCost) {
-                                    if (curCost > 0) next.previousCostPrice = curCost;
-                                    next.costPrice = dbCost;
-                                }
-                                if (curPrice === 0 && dbStdPrice > 0) {
-                                    next.price = dbStdPrice;
-                                    next.priceDealer1 = Math.round(dbStdPrice * 0.9);
-                                    next.priceDealer2 = Math.round(dbStdPrice * 0.85);
-                                }
-                                return next;
                             });
-                            const existingCodes = new Set(updatedExisting.map(p => p.code));
-                            const missingFromDb: CommercialProduct[] = overview.products
-                                .filter((p: any) => p.code && !existingCodes.has(p.code))
-                                .map((p: any) => {
-                                    const resolvedCategory = resolveActualProductCategory({
-                                        code: p.code,
-                                        name: p.name,
-                                        category: p.category,
-                                    });
-                                    return {
-                                        code: p.code,
-                                        name: p.name,
-                                        category: resolvedCategory,
-                                        subCategory: p.category || "",
-                                        brand: p.manufacturer || "Thương mại",
-                                        origin: p.origin || "Chính hãng",
-                                        unit: p.unit || "Hộp",
-                                        specification: p.specification || p.unit || "",
-                                        costPrice: Number(p.cost_price) || 0,
-                                        price: Number(p.standard_price) || 0,
-                                        priceDealer1: Math.round((Number(p.standard_price) || 0) * 0.9),
-                                        priceDealer2: Math.round((Number(p.standard_price) || 0) * 0.85),
-                                        warranty: "12 tháng",
-                                        leadTime: "Có sẵn kho",
-                                        storageCondition: p.storage_condition || "15-25°C (Nhiệt độ phòng)",
-                                        supplier: p.manufacturer || "Nhà cung cấp",
-                                        notes: "",
-                                        imageUrl: "",
-                                        techSpecs: "",
-                                        isEquipment: getCommercialCategoryGroup({ code: p.code, name: p.name, category: resolvedCategory }) === "EQUIPMENT",
-                                        configurations: []
-                                    };
+                            setCommercialProducts(prev => {
+                                const updatedExisting = prev.map(p => {
+                                    const codeKey = String(p.code || "").trim();
+                                    const dbProd = dbProdMap[codeKey];
+                                    const next: any = { ...p };
+                                    if (!dbProd) {
+                                        next.category = resolveActualProductCategory(next);
+                                        return next;
+                                    }
+                                    if (isPlaceholderName(next.name, codeKey) && dbProd.name && !isPlaceholderName(dbProd.name, codeKey)) {
+                                        next.name = dbProd.name;
+                                    }
+                                    if (isPlaceholderBrand(next.brand) && dbProd.manufacturer && !isPlaceholderBrand(dbProd.manufacturer)) {
+                                        next.brand = dbProd.manufacturer;
+                                        if (isPlaceholderBrand(next.supplier)) next.supplier = dbProd.manufacturer;
+                                    }
+                                    if ((!next.specification || next.specification === next.unit) && dbProd.specification) {
+                                        next.specification = dbProd.specification;
+                                    }
+                                    if (dbProd.unit && (!next.unit || next.unit === "Cái")) {
+                                        next.unit = dbProd.unit;
+                                    }
+                                    const dbStorage = dbMap[codeKey];
+                                    const dbCost = Number(dbProd.cost_price) || 0;
+                                    const dbStdPrice = Number(dbProd.standard_price) || 0;
+                                    const curCost = Number(p.costPrice) || 0;
+                                    const curPrice = Number(p.price) || 0;
+                                    if (dbStorage) next.storageCondition = dbStorage;
+                                    if (dbProd.category && (!next.category || next.category === "Thiết bị" || next.category === "Hàng Thương Mại")) {
+                                        next.category = dbProd.category;
+                                    }
+                                    next.category = resolveActualProductCategory(next);
+                                    if (dbCost > 0 && dbCost !== curCost) {
+                                        if (curCost > 0) next.previousCostPrice = curCost;
+                                        next.costPrice = dbCost;
+                                    }
+                                    if (curPrice === 0 && dbStdPrice > 0) {
+                                        next.price = dbStdPrice;
+                                        next.priceDealer1 = Math.round(dbStdPrice * 0.9);
+                                        next.priceDealer2 = Math.round(dbStdPrice * 0.85);
+                                    }
+                                    return next;
                                 });
-                            return [...updatedExisting, ...missingFromDb];
-                        });
-                    }
-                    if (overview.items && Array.isArray(overview.items)) {
-                        const liveStock: Record<string, number> = {};
-                        overview.items.forEach((it: any) => {
-                            const code = it.product_code || it.code;
-                            if (code) {
-                                liveStock[code] = (liveStock[code] || 0) + (Number(it.quantity_on_hand) || 0);
-                            }
-                        });
-                        setStock13b(prev => {
-                            const merged = { ...prev, ...liveStock };
-                            try { localStorage.setItem("sales_13b_general_stock", JSON.stringify(merged)); } catch(e) {}
-                            return merged;
-                        });
-                    }
-                })
-                .catch(err => console.error("Failed to load inventory overview:", err));
+                                const existingCodes = new Set(updatedExisting.map(p => String(p.code || "").trim().toUpperCase()));
+                                const missingFromDb: CommercialProduct[] = overview.products
+                                    .filter((p: any) => p.code && !existingCodes.has(String(p.code).trim().toUpperCase()))
+                                    .map((p: any) => {
+                                        const resolvedCategory = resolveActualProductCategory({
+                                            code: p.code,
+                                            name: p.name,
+                                            category: p.category,
+                                        });
+                                        return {
+                                            code: String(p.code).trim(),
+                                            name: p.name,
+                                            category: resolvedCategory,
+                                            subCategory: p.category || "",
+                                            brand: p.manufacturer || "Thương mại",
+                                            origin: p.origin || "Chính hãng",
+                                            unit: p.unit || "Hộp",
+                                            specification: p.specification || p.unit || "",
+                                            costPrice: Number(p.cost_price) || 0,
+                                            price: Number(p.standard_price) || 0,
+                                            priceDealer1: Math.round((Number(p.standard_price) || 0) * 0.9),
+                                            priceDealer2: Math.round((Number(p.standard_price) || 0) * 0.85),
+                                            warranty: "12 tháng",
+                                            leadTime: "Có sẵn kho",
+                                            storageCondition: p.storage_condition || "15-25°C (Nhiệt độ phòng)",
+                                            supplier: p.manufacturer || "Nhà cung cấp",
+                                            notes: "",
+                                            imageUrl: "",
+                                            techSpecs: "",
+                                            isEquipment: getCommercialCategoryGroup({ code: p.code, name: p.name, category: resolvedCategory }) === "EQUIPMENT",
+                                            configurations: []
+                                        };
+                                    });
+                                return [...updatedExisting, ...missingFromDb];
+                            });
+                        }
+                        if (overview.items && Array.isArray(overview.items)) {
+                            const liveStock: Record<string, number> = {};
+                            overview.items.forEach((it: any) => {
+                                const code = it.product_code || it.code;
+                                if (code) {
+                                    liveStock[code] = (liveStock[code] || 0) + (Number(it.quantity_on_hand) || 0);
+                                }
+                            });
+                            setStock13b(prev => {
+                                const merged = { ...prev, ...liveStock };
+                                try { localStorage.setItem("sales_13b_general_stock", JSON.stringify(merged)); } catch(e) {}
+                                return merged;
+                            });
+                        }
+                    })
+                    .catch(err => console.error("Failed to load inventory overview:", err));
+            };
+
+            // 1. Fetch inventory overview to get master product_components and products
+            loadInventoryOverviewForCatalog(true);
 
             // Fetch suppliers to get manufacturer short names (brands)
             fetch("/api/procurement")
@@ -3879,7 +3907,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             // The server copy is authoritative. Defaults are only seeded when the catalogue was never
             // initialised (key absent). A failed request must NOT be treated as "empty": that used to
             // push the defaults or a stale local copy over the whole catalogue.
-            fetch("/api/storage?key=sales_commercial_products", noCache)
+            fetch("/api/storage?key=sales_commercial_products", { headers: { "x-no-cache": "1" } })
                 .then(async res => {
                     if (!res.ok) throw new Error(`HTTP ${res.status}`);
                     return res.json();
@@ -3889,11 +3917,36 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     if (Array.isArray(data?.data)) {
                         const cleanData = data.data.filter((item: any) => item && !DEMO_COMMERCIAL_CODES.has(item.code));
                         const enriched = enrichStorage(cleanData);
-                        const existingCodes = new Set(enriched.map((p: any) => p.code));
-                        const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(d.code));
+                        const existingCodes = new Set(enriched.map((p: any) => String(p.code || "").trim().toUpperCase()));
+                        const missingDefaults = DEFAULT_COMMERCIAL_PRODUCTS.filter(d => !existingCodes.has(String(d.code || "").trim().toUpperCase()));
                         const merged = [...missingDefaults, ...enriched];
-                        setCommercialProducts(merged);
-                        try { localStorage.setItem("sales_commercial_products", JSON.stringify(merged)); } catch (e) {}
+                        setCommercialProducts(prev => {
+                            const prevByCode = new Map<string, CommercialProduct>();
+                            prev.forEach(p => {
+                                if (p?.code) prevByCode.set(String(p.code).trim().toUpperCase(), p);
+                            });
+                            const healedMerged = merged.map((item: any) => {
+                                const k = String(item.code || "").trim().toUpperCase();
+                                const fromPrev = prevByCode.get(k);
+                                if (!fromPrev) return item;
+                                const next = { ...item };
+                                if (isPlaceholderName(next.name, next.code) && !isPlaceholderName(fromPrev.name, fromPrev.code)) {
+                                    next.name = fromPrev.name;
+                                }
+                                if (isPlaceholderBrand(next.brand) && !isPlaceholderBrand(fromPrev.brand)) {
+                                    next.brand = fromPrev.brand;
+                                }
+                                if ((!next.specification || next.specification === next.unit) && fromPrev.specification) {
+                                    next.specification = fromPrev.specification;
+                                }
+                                return next;
+                            });
+                            const mergedCodeSet = new Set(healedMerged.map((p: any) => String(p.code || "").trim().toUpperCase()));
+                            const onlyInPrev = prev.filter(p => p?.code && !mergedCodeSet.has(String(p.code).trim().toUpperCase()));
+                            const finalCatalog = [...healedMerged, ...onlyInPrev];
+                            try { localStorage.setItem("sales_commercial_products", JSON.stringify(finalCatalog)); } catch (e) {}
+                            return finalCatalog;
+                        });
                     } else if (neverInitialised) {
                         setCommercialProducts(DEFAULT_COMMERCIAL_PRODUCTS);
                     }
@@ -3903,6 +3956,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     console.error("Failed to load sales_commercial_products:", err);
                     showToast("Không tải được Danh mục hàng thương mại từ máy chủ. Thay đổi danh mục sẽ không được lưu cho tới khi tải lại trang.", "error");
                 });
+
+            const onInvRevalidated = (e: any) => {
+                if (e?.detail?.pathname === "/api/inventory") {
+                    loadInventoryOverviewForCatalog(true);
+                }
+            };
+            window.addEventListener("tbr:api-revalidated", onInvRevalidated);
+            return () => window.removeEventListener("tbr:api-revalidated", onInvRevalidated);
         }
     }, []);
 
@@ -3948,7 +4009,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
     const getProductComponentsList = (prod: any) => {
         if (!prod || !prod.code) return [];
-        const fromDb = dbProductComponents.filter(c => c.parent_product_code === prod.code);
+        const targetCode = String(prod.code || "").trim().toUpperCase();
+        const fromDb = dbProductComponents.filter(c => String(c.parent_product_code || "").trim().toUpperCase() === targetCode);
         if (fromDb.length > 0) return fromDb;
         if (prod.configurations && Array.isArray(prod.configurations) && prod.configurations.length > 0) {
             return prod.configurations.map((cfg: any, idx: number) => ({
@@ -3974,13 +4036,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const prod: any = (allSalesProducts || []).find((x: any) => String(x.code || "").trim() === c) || { code: c };
         return getProductComponentsList(prod);
     };
-    /** Mã có phụ kiện (kit PCR...) có 2 dạng đóng gói theo lô: ".C" trong số lô = chia sẵn tube, không kèm phụ kiện. */
-    const isTwoFormKit = (code: any) => getKitComponentsForCode(code).length > 0;
-    /** Chỉ giữ các lô đúng dạng đóng gói được yêu cầu trên dòng SO (không yêu cầu / mã không phân dạng: giữ nguyên). */
-    const filterLotsByForm = (code: any, lots: any[], form: any): any[] => {
-        const f = normalizePackagingForm(form);
-        if (!f || !isTwoFormKit(code)) return lots;
-        return lots.filter((l: any) => packagingFormOfLot(l?.lot_number) === f);
+    /** Kit PCR có phụ kiện: phân quy cách theo số lô (chia sẵn ".C", IC ".IC", loại tube ".T01"...). Kit tách chiết thì không. */
+    const isTwoFormKit = (code: any) => {
+        const c = String(code || "").trim();
+        if (!c || getKitComponentsForCode(c).length === 0) return false;
+        const prod: any = (allSalesProducts || []).find((x: any) => String(x.code || "").trim() === c) || { code: c };
+        return isPcrKitProduct(prod);
+    };
+    /** Chỉ giữ các lô đúng quy cách được yêu cầu trên dòng SO (dạng, IC, loại tube); mã không phân quy cách: giữ nguyên. */
+    const filterLotsByForm = (code: any, lots: any[], item: any): any[] => {
+        const spec = kitSpecOf(item);
+        if (!hasKitSpec(spec) || !isTwoFormKit(code)) return lots;
+        return lots.filter((l: any) => lotMatchesKitSpec(l?.lot_number, spec));
+    };
+    /** Các trường quy cách kit lưu kèm dòng SO / phiếu giao. */
+    const kitSpecFields = (it: any) => {
+        const spec = kitSpecOf(it);
+        return { packagingForm: spec.packagingForm, icForm: spec.icForm, tubeType: spec.tubeType };
     };
     /** So sánh điều kiện bảo quản theo phần nhiệt độ (bỏ phần chú thích trong ngoặc). */
     const storageKey = (v: any) => String(v || "").replace(/\(.*$/, "").replace(/\s+/g, "").toLowerCase();
@@ -6755,7 +6827,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const newLog: InboundLog13b = {
             id: newId,
-            date: `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`,
+            date: formatVNDate(now),
             type: inboundType,
             productCode: inboundProductCode,
             productName: prod?.name || inboundProductCode,
@@ -7484,7 +7556,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const s = String(raw || "").trim();
         if (!s) return "";
         if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        const m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
         if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
         const d = parseLooseDate(s);
         if (d) {
@@ -9689,7 +9761,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const newQuote = {
             id: newQuoteId,
             quote_code: newQuoteId,
-            date: `${now.getDate()}/${now.getMonth() + 1}/${now.getFullYear()}`,
+            date: formatVNDate(now),
             customerId: quoteCustomerId,
             customerName: customerName,
             items: items,
@@ -9949,7 +10021,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Danh Mục Sản Phẩm");
 
-        const fileName = `Danh_muc_san_pham_kinh_doanh_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
+        const fileName = `Danh_muc_san_pham_kinh_doanh_${formatVNDate(new Date()).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast("Đã xuất file Excel danh mục sản phẩm thành công!", "success");
     };
@@ -9975,7 +10047,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             return {
                 "STT": idx + 1,
                 "Mã Báo Giá": q.id,
-                "Ngày Lập": q.date ? new Date(q.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
+                "Ngày Lập": q.date ? formatVNDate(q.date) : "",
                 "Tên Khách Hàng / Đơn Vị": q.customerName || "—",
                 "Mã Khách Hàng": q.customer_code || q.customerId || "—",
                 "Người Liên Hệ": q.contactPerson || "—",
@@ -10020,7 +10092,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Danh Mục Báo Giá");
-        const fileName = `Danh_muc_bao_gia_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
+        const fileName = `Danh_muc_bao_gia_${formatVNDate(new Date()).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast(`Đã xuất ${source.length} báo giá ra file Excel thành công!`, "success");
         setIsQuoteExportMenuOpen(false);
@@ -10059,7 +10131,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 rows.push({
                     "STT": stt++,
                     "Mã Báo Giá": q.id,
-                    "Ngày Báo Giá": q.date ? new Date(q.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
+                    "Ngày Báo Giá": q.date ? formatVNDate(q.date) : "",
                     "Khách Hàng": q.customerName || "—",
                     "NVKD Phụ Trách": q.salesRepName || "—",
                     "Mã Sản Phẩm": displayCode,
@@ -10112,7 +10184,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Hàng Hóa Báo Giá");
-        const fileName = `Hang_hoa_bao_gia_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
+        const fileName = `Hang_hoa_bao_gia_${formatVNDate(new Date()).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast(`Đã xuất ${rows.length} dòng hàng hóa từ ${source.length} báo giá ra Excel!`, "success");
         setIsQuoteExportMenuOpen(false);
@@ -10133,7 +10205,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             "STT": idx + 1,
             "Mã Hợp Đồng": c.id,
             "Tiêu Đề Hợp Đồng": c.contractTitle || "Hợp đồng kinh tế",
-            "Ngày Ký": (c.contractDate || c.date) ? new Date(c.contractDate || c.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
+            "Ngày Ký": (c.contractDate || c.date) ? formatVNDate(c.contractDate || c.date) : "",
             "Khách Hàng (Bên B)": c.customerName || c.partyBName || "—",
             "Mã Khách Hàng": c.customer_code || c.customerId || "—",
             "Đại Diện Bên B": c.partyBRepresentative || "—",
@@ -10174,7 +10246,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Danh Mục Hợp Đồng");
-        const fileName = `Danh_muc_hop_dong_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
+        const fileName = `Danh_muc_hop_dong_${formatVNDate(new Date()).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast(`Đã xuất ${source.length} hợp đồng ra file Excel thành công!`, "success");
         setIsContractExportMenuOpen(false);
@@ -10203,7 +10275,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     "STT": stt++,
                     "Mã Hợp Đồng": c.id,
                     "Tiêu Đề HĐ": c.contractTitle || "Hợp đồng kinh tế",
-                    "Ngày Ký": (c.contractDate || c.date) ? new Date(c.contractDate || c.date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "",
+                    "Ngày Ký": (c.contractDate || c.date) ? formatVNDate(c.contractDate || c.date) : "",
                     "Khách Hàng (Bên B)": c.customerName || c.partyBName || "—",
                     "NVKD Phụ Trách": c.salesRepName || "—",
                     "Mã Sản Phẩm": it.productCode || "—",
@@ -10243,7 +10315,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Hàng Hóa Hợp Đồng");
-        const fileName = `Hang_hoa_hop_dong_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
+        const fileName = `Hang_hoa_hop_dong_${formatVNDate(new Date()).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast(`Đã xuất ${rows.length} dòng hàng hóa từ ${source.length} hợp đồng ra Excel!`, "success");
         setIsContractExportMenuOpen(false);
@@ -10495,7 +10567,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Hàng Hóa Thương Mại");
 
-        const fileName = `Danh_muc_hang_hoa_thuong_mai_${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }).replace(/\//g, "-")}.xlsx`;
+        const fileName = `Danh_muc_hang_hoa_thuong_mai_${formatVNDate(new Date()).replace(/\//g, "-")}.xlsx`;
         XLSX.writeFile(workbook, fileName);
         showToast("Đã xuất file Excel danh mục hàng hóa thương mại thành công!", "success");
     };
@@ -10511,7 +10583,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const workbook = XLSX.read(data, { type: "array" });
                 const firstSheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[firstSheetName];
-                const json: any[] = XLSX.utils.sheet_to_json(worksheet);
+                const json: any[] = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
 
                 if (!Array.isArray(json) || json.length === 0) {
                     showToast("File Excel không có dữ liệu hợp lệ!", "warning");
@@ -10531,49 +10603,84 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                     if (secSheetName) {
                         const secWs = workbook.Sheets[secSheetName];
-                        secondaryRows = XLSX.utils.sheet_to_json(secWs);
+                        secondaryRows = XLSX.utils.sheet_to_json(secWs, { defval: "" });
                     }
                 }
 
+                const getColVal = (row: any, candidates: string[], partialKeywords: string[] = []): any => {
+                    if (!row || typeof row !== "object") return undefined;
+                    for (const c of candidates) {
+                        if (row[c] !== undefined && row[c] !== null && String(row[c]).trim() !== "") return row[c];
+                    }
+                    const entries = Object.entries(row);
+                    for (const [k, v] of entries) {
+                        if (v === undefined || v === null || String(v).trim() === "") continue;
+                        const normK = k.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+                        for (const c of candidates) {
+                            if (normK === c.toLowerCase()) return v;
+                        }
+                        for (const pk of partialKeywords) {
+                            if (normK.includes(pk.toLowerCase())) return v;
+                        }
+                    }
+                    return undefined;
+                };
+
+                const parseMoneyVal = (val: any): number => {
+                    if (typeof val === "number") return Number.isFinite(val) ? val : 0;
+                    if (!val) return 0;
+                    const cleaned = String(val).replace(/[^0-9.-]/g, "");
+                    const num = Number(cleaned);
+                    return Number.isFinite(num) ? num : 0;
+                };
+
+                const isPlaceholderProdName = (name: any, code: any) => {
+                    const n = String(name || "").trim();
+                    const c = String(code || "").trim();
+                    if (!n) return true;
+                    const nl = n.toLowerCase();
+                    const cl = c.toLowerCase();
+                    return nl === cl || nl === `sản phẩm ${cl}` || nl.startsWith("sản phẩm ") || nl === "hàng hóa nhập khẩu";
+                };
+
                 const importedAll: CommercialProduct[] = json.map((row, idx) => {
-                    const code = String(row["Mã SKU (*)"] || row["Mã Hàng Hóa (SKU)"] || row["Mã SKU"] || row["Mã hàng"] || row["MÃ HÀNG"] || row["Code"] || `COMM-IMP-${idx + 1}`).trim();
-                    const name = String(row["Tên sản phẩm (*)"] || row["Tên Hàng Hóa Thương Mại"] || row["Tên hàng"] || row["TÊN HÀNG HÓA"] || row["Name"] || "Hàng hóa nhập khẩu").trim();
+                    const isHeaderlessRow = row["__EMPTY"] !== undefined && row["__EMPTY_1"] !== undefined && !getColVal(row, ["Mã SKU (*)", "Mã Hàng Hóa (SKU)", "Mã SKU", "Mã hàng", "MÃ HÀNG", "Code"], ["mã sku", "mã hàng"]);
+                    const code = String(
+                        getColVal(row, ["Mã SKU (*)", "Mã Hàng Hóa (SKU)", "Mã SKU", "Mã hàng", "MÃ HÀNG", "Code"], ["mã sku", "mã hàng", "mã sản phẩm"]) ||
+                        (isHeaderlessRow ? row["__EMPTY"] : "") ||
+                        `COMM-IMP-${idx + 1}`
+                    ).trim();
+                    const name = String(
+                        getColVal(row, ["Tên sản phẩm (*)", "Tên Hàng Hóa Thương Mại", "Tên hàng", "TÊN HÀNG HÓA", "Name"], ["tên sản phẩm", "tên hàng"]) ||
+                        (isHeaderlessRow ? row["__EMPTY_1"] : "") ||
+                        "Hàng hóa nhập khẩu"
+                    ).trim();
                     const rawCategory = String(
-                        row["Nhóm ngành hàng (*)"] ||
-                        row["Nhóm ngành hàng"] ||
-                        row["Phân Loại Chính"] ||
-                        row["Phân loại ngành hàng"] ||
-                        row["Phân loại"] ||
-                        row["Ngành hàng"] ||
-                        row["Nhóm hàng"] ||
-                        row["Danh mục"] ||
-                        row["Danh mục (Category)"] ||
-                        row["Danh mục (PCR Kit/..)"] ||
-                        row["Chủng loại"] ||
-                        row["CHỦNG LOẠI"] ||
-                        row["Loại Kit"] ||
-                        row["Category"] ||
-                        row["category"] ||
+                        getColVal(row, [
+                            "Nhóm ngành hàng (*)", "Nhóm ngành hàng", "Phân Loại Chính", "Phân loại ngành hàng",
+                            "Phân loại", "Ngành hàng", "Nhóm hàng", "Danh mục", "Danh mục (Category)",
+                            "Danh mục (PCR Kit/..)", "Chủng loại", "CHỦNG LOẠI", "Loại Kit", "Category", "category"
+                        ], ["nhóm ngành hàng", "phân loại", "danh mục", "chủng loại"]) ||
+                        (isHeaderlessRow ? row["__EMPTY_2"] : "") ||
                         ""
                     ).trim();
+                    const subCat = String(getColVal(row, ["Nhóm Hàng Con", "Nhóm"], ["nhóm hàng con"]) || "").trim();
                     const category = resolveActualProductCategory({
                         code,
                         name,
                         category: rawCategory,
-                        subCategory: String(row["Nhóm Hàng Con"] || row["Nhóm"] || ""),
+                        subCategory: subCat,
                     }) as any;
-                    const price = Number(row["Giá niêm yết End-User (VNĐ)"] || row["Giá End User (VNĐ)"] || row["Giá bán"] || row["Price"] || 0);
-                    const costPrice = Number(row["Giá vốn nhập (VNĐ)"] || row["Giá Vốn (VNĐ)"] || row["Cost"] || 0);
-                    const priceDealer1 = Number(row["Giá Đại lý Cấp 1 (VNĐ)"] || row["Giá Dealer Cấp 1 (VNĐ)"] || row["Giá Dealer 1"] || 0) || Math.round(price * 0.9);
-                    const priceDealer2 = Number(row["Giá Đại lý Cấp 2 (VNĐ)"] || row["Giá Dealer Cấp 2 (VNĐ)"] || row["Giá Dealer 2"] || 0) || Math.round(price * 0.85);
+                    const price = parseMoneyVal(getColVal(row, ["Giá niêm yết End-User (VNĐ)", "Giá End User (VNĐ)", "Giá bán", "Price"], ["giá niêm yết", "giá end", "giá bán"]) ?? (isHeaderlessRow ? row["__EMPTY_7"] : 0));
+                    const costPrice = parseMoneyVal(getColVal(row, ["Giá vốn nhập (VNĐ)", "Giá Vốn (VNĐ)", "Cost"], ["giá vốn"]) ?? (isHeaderlessRow ? row["__EMPTY_6"] : 0));
+                    const priceDealer1 = parseMoneyVal(getColVal(row, ["Giá Đại lý Cấp 1 (VNĐ)", "Giá Dealer Cấp 1 (VNĐ)", "Giá Dealer 1"], ["đại lý cấp 1", "dealer cấp 1"])) || (price > 0 ? Math.round(price * 0.9) : 0);
+                    const priceDealer2 = parseMoneyVal(getColVal(row, ["Giá Đại lý Cấp 2 (VNĐ)", "Giá Dealer Cấp 2 (VNĐ)", "Giá Dealer 2"], ["đại lý cấp 2", "dealer cấp 2"])) || (price > 0 ? Math.round(price * 0.85) : 0);
                     const storageCondition = String(
-                        row["Điều kiện bảo quản chuẩn (*)"] || 
-                        row["Điều kiện bảo quản chuẩn"] || 
-                        row["Điều kiện bảo quản tiêu chuẩn"] || 
-                        row["Điều kiện bảo quản"] || 
-                        row["Điều Kiện Bảo Quản"] || 
-                        row["Nhiệt độ bảo quản"] || 
-                        row["storage_condition"] || 
+                        getColVal(row, [
+                            "Điều kiện bảo quản chuẩn (*)", "Điều kiện bảo quản chuẩn", "Điều kiện bảo quản tiêu chuẩn",
+                            "Điều kiện bảo quản", "Điều Kiện Bảo Quản", "Nhiệt độ bảo quản", "storage_condition"
+                        ], ["điều kiện bảo quản", "nhiệt độ bảo quản"]) ||
+                        (isHeaderlessRow ? row["__EMPTY_8"] : "") ||
                         "15-25°C (Nhiệt độ phòng)"
                     ).trim();
 
@@ -10581,24 +10688,25 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         code,
                         name,
                         category,
-                        subCategory: row["Nhóm Hàng Con"] || row["Nhóm"] || undefined,
-                        brand: row["Hãng sản xuất (*)"] || row["Hãng Sản Xuất"] || row["Hãng"] || row["Brand"] || undefined,
-                        origin: row["Xuất Xứ"] || row["Origin"] || undefined,
-                        unit: row["Đơn vị tính"] || row["Đơn Vị Tính"] || row["ĐVT"] || "Cái",
-                        specification: row["Quy cách đóng gói"] || row["Quy Cách / Model"] || row["Model"] || undefined,
+                        subCategory: subCat || undefined,
+                        brand: String(getColVal(row, ["Hãng sản xuất (*)", "Hãng Sản Xuất", "Hãng", "Brand"], ["hãng sản xuất"]) || (isHeaderlessRow ? row["__EMPTY_3"] : "") || "").trim() || undefined,
+                        origin: String(getColVal(row, ["Xuất Xứ", "Origin"], ["xuất xứ"]) || "").trim() || undefined,
+                        unit: String(getColVal(row, ["Đơn vị tính", "Đơn Vị Tính", "ĐVT"], ["đơn vị tính", "đvt"]) || (isHeaderlessRow ? row["__EMPTY_4"] : "") || "Hộp").trim(),
+                        specification: String(getColVal(row, ["Quy cách đóng gói", "Quy Cách / Model", "Model"], ["quy cách"]) || (isHeaderlessRow ? row["__EMPTY_5"] : "") || "").trim() || undefined,
                         costPrice,
                         price,
                         priceDealer1,
                         priceDealer2,
-                        warranty: row["Bảo Hành"] || undefined,
-                        leadTime: row["Tình Trạng Hàng"] || "Có sẵn kho",
+                        warranty: String(getColVal(row, ["Bảo Hành"], ["bảo hành"]) || "").trim() || undefined,
+                        leadTime: String(getColVal(row, ["Tình Trạng Hàng"], ["tình trạng hàng"]) || "Có sẵn kho").trim(),
                         storageCondition,
-                        supplier: row["Nhà Cung Cấp"] || undefined,
-                        notes: row["Ghi Chú"] || row["Ghi chú"] || undefined
+                        supplier: String(getColVal(row, ["Nhà Cung Cấp"], ["nhà cung cấp"]) || "").trim() || undefined,
+                        notes: String(getColVal(row, ["Ghi Chú", "Ghi chú"], ["ghi chú"]) || "").trim() || undefined
                     };
-                });
+                }).filter(p => p.code && !p.code.startsWith("COMM-IMP-"));
+
                 // Hỏi trước khi ghi: (1) mã SKU lặp lại trong file, (2) mã đã có trong danh mục sẽ bị ghi đè.
-                // Mỗi mã chỉ một dòng (mã trùng làm danh mục không lưu được lên máy chủ).
+                // Lưu ý: các mã đang có tên tạm "Sản phẩm <SKU>" (do nhập kho tạo tự động trước đó) luôn được cập nhật tên chuẩn.
                 const lastIdx = new Map<string, number>();
                 const dupCodes = new Set<string>();
                 importedAll.forEach((p, i) => {
@@ -10619,17 +10727,31 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     return;
                 }
                 const keepIdx = new Set(lastIdx.values());
-                const existingCodes = new Set(commercialProducts.map(p => String(p.code || "").trim()));
-                const overlap = Array.from(lastIdx.keys()).filter(k => existingCodes.has(k));
+                const existingMap = new Map<string, CommercialProduct>();
+                commercialProducts.forEach(p => {
+                    const k = String(p.code || "").trim();
+                    if (k) existingMap.set(k, p);
+                });
+                // Chỉ tính là trùng lặp cần hỏi nếu mã đã có tên chuẩn (không phải tên tạm "Sản phẩm <SKU>")
+                const overlap = Array.from(lastIdx.keys()).filter(k => {
+                    const ex = existingMap.get(k);
+                    return ex && !isPlaceholderProdName(ex.name, k);
+                });
                 if (overlap.length > 0) {
-                    const newCount = lastIdx.size - overlap.length;
+                    const newOrHealedCount = lastIdx.size - overlap.length;
+                    const bomNote = secondaryRows.length > 0 ? `\n(Lưu ý: ${secondaryRows.length} dòng định mức phụ kiện BOM ở Sheet 2 vẫn sẽ được cập nhật đầy đủ).` : "";
                     const overwrite = window.confirm(
                         `${overlap.length} mã trong file ĐÃ CÓ trong danh mục:\n${listCodes(overlap)}\n\n` +
-                        `OK: CẬP NHẬT các mã này theo file (thông tin và giá đang có sẽ bị thay).\nCancel: không ghi đè - chọn tiếp ở bước sau.`
+                        `OK: CẬP NHẬT thông tin các mã này theo file (nếu cột Giá trong file để trống thì giữ nguyên giá đang có).${bomNote}\n` +
+                        `Cancel: chỉ thêm mã mới & cập nhật phụ kiện BOM.`
                     );
                     if (!overwrite) {
-                        if (newCount === 0 || !window.confirm(
-                            `Chỉ thêm ${newCount} mã MỚI và giữ nguyên ${overlap.length} mã đã có?\n\nOK: chỉ thêm mã mới.\nCancel: hủy nhập.`
+                        if (newOrHealedCount === 0 && secondaryRows.length === 0) {
+                            showToast("Không có mã mới hoặc phụ kiện BOM nào để cập nhật.", "info");
+                            return;
+                        }
+                        if (!window.confirm(
+                            `Bỏ qua cập nhật ${overlap.length} mã đã có, chỉ nạp ${newOrHealedCount} mã mới/thiếu tên chuẩn${secondaryRows.length > 0 ? ` và ${secondaryRows.length} dòng phụ kiện BOM` : ""}?\n\nOK: Tiếp tục nạp.\nCancel: Hủy nhập.`
                         )) {
                             showToast("Đã hủy nhập Excel. Chưa có gì thay đổi.", "info");
                             return;
@@ -10638,9 +10760,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     }
                 }
                 const keptIdx = Array.from(keepIdx).sort((a, b) => a - b);
-                const imported: CommercialProduct[] = keptIdx.map(i => ({ ...importedAll[i], code: String(importedAll[i].code).trim() }));
-                const rowsToSend = keptIdx.map(i => json[i]);
-                if (imported.length === 0) {
+                const imported: CommercialProduct[] = keptIdx.map(i => {
+                    const item = { ...importedAll[i], code: String(importedAll[i].code).trim() };
+                    const ex = existingMap.get(item.code);
+                    if (ex) {
+                        if (!item.costPrice && ex.costPrice) item.costPrice = ex.costPrice;
+                        if (!item.price && ex.price) {
+                            item.price = ex.price;
+                            item.priceDealer1 = ex.priceDealer1 || Math.round(ex.price * 0.9);
+                            item.priceDealer2 = ex.priceDealer2 || Math.round(ex.price * 0.85);
+                        }
+                    }
+                    return item;
+                });
+                const rowsToSend = keptIdx.length > 0 ? keptIdx.map(i => json[i]) : json;
+                if (imported.length === 0 && secondaryRows.length === 0) {
                     showToast("Không có mã nào để nhập.", "info");
                     return;
                 }
@@ -10652,25 +10786,57 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         headers: { "Content-Type": "application/json" },
                         body: JSON.stringify({
                             action: "import_excel",
+                            detected_type: "PRODUCTS",
                             fileName: file.name,
                             rows: rowsToSend,
                             contact_rows: secondaryRows
                         })
                     });
-                    const resData = await res.json();
-                    if (resData.success) {
+                    const resData = await res.json().catch(() => ({}));
+                    if (res.ok && resData.success) {
                         const secMsg = secondaryRows.length > 0 ? ` kèm ${secondaryRows.length} phụ kiện định mức (BOM)` : "";
                         showToast(`Đã import thành công ${imported.length} sản phẩm${secMsg} vào cơ sở dữ liệu!`, "success");
+                        // Tải lại ngay danh sách phụ kiện BOM & sản phẩm gốc từ server (bỏ qua cache)
+                        fetch("/api/inventory?action=overview", { headers: { "x-no-cache": "1" } })
+                            .then(r => r.json())
+                            .then(ov => {
+                                if (ov?.product_components && Array.isArray(ov.product_components)) {
+                                    setDbProductComponents(ov.product_components);
+                                }
+                                if (ov?.products && Array.isArray(ov.products)) {
+                                    setDbMasterProducts(ov.products);
+                                }
+                            })
+                            .catch(() => {});
+                    } else {
+                        showToast(`Lỗi lưu cơ sở dữ liệu khi nhập Excel: ${resData?.error || res.statusText || "Không xác định"}`, "error");
                     }
                 } catch (apiErr) {
                     console.error("API sync error:", apiErr);
+                    showToast("Lỗi kết nối máy chủ khi đồng bộ danh mục & BOM.", "error");
                 }
 
-                setCommercialProducts(prev => {
-                    const existingCodes = new Set(imported.map(p => p.code));
-                    const remaining = prev.filter(p => !existingCodes.has(p.code));
-                    return [...imported, ...remaining];
-                });
+                if (imported.length > 0) {
+                    setCommercialProducts(prev => {
+                        const importedByCode = new Map(imported.map(p => [String(p.code).trim(), p]));
+                        const updatedPrev = prev.map(p => {
+                            const k = String(p.code || "").trim();
+                            const imp = importedByCode.get(k);
+                            if (!imp) return p;
+                            importedByCode.delete(k);
+                            return {
+                                ...p,
+                                ...imp,
+                                costPrice: imp.costPrice || p.costPrice || 0,
+                                price: imp.price || p.price || 0,
+                                priceDealer1: imp.priceDealer1 || p.priceDealer1 || 0,
+                                priceDealer2: imp.priceDealer2 || p.priceDealer2 || 0,
+                            };
+                        });
+                        const brandNew = Array.from(importedByCode.values());
+                        return [...brandNew, ...updatedPrev];
+                    });
+                }
             } catch (err) {
                 console.error(err);
                 showToast("Lỗi khi đọc file Excel. Vui lòng kiểm tra định dạng file!", "error");
@@ -11206,7 +11372,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         </div>
                         <div style="font-size: 12px; text-align: right; line-height: 1.5;">
                             <strong>Mã báo giá:</strong> ${quote.id}<br>
-                            <strong>Ngày báo giá:</strong> ${quote.date ? (quote.date.includes('T') ? new Date(quote.date).toLocaleDateString('vi-VN') : quote.date) : new Date().toLocaleDateString('vi-VN')}
+                            <strong>Ngày báo giá:</strong> ${quote.date ? (quote.date.includes('T') ? formatVNDate(quote.date) : quote.date) : formatVNDate(new Date())}
                         </div>
                     </div>
                     <div class="title">BẢNG BÁO GIÁ SẢN PHẨM</div>
@@ -11305,11 +11471,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         if (termRows.length === 0) return "";
                         return `<div class="terms-section">
                             <div class="terms-title">ĐIỀU KHOẢN & CHI TIẾT BÁO GIÁ:</div>
-                            ${termRows.map((tr, i) => {
-                                // giữ các chỗ xuống dòng người dùng gõ trong ô điều khoản (ký tự HTML được thoát)
-                                const html = tr.text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\r?\n/g, "<br/>");
-                                return `<p style="margin: 4px 0;"><strong>${i + 1}. ${tr.label}:</strong> ${html.includes("<br/>") ? "<br/>" : ""}${html}</p>`;
-                            }).join("\n")}
+                            ${termRows.map((tr, i) => `<p style="margin: 4px 0;"><strong>${i + 1}. ${tr.label}:</strong> ${tr.text}</p>`).join("\n")}
                         </div>`;
                     })()}
                     <p style="margin-top: 25px; font-style: italic; font-size: 12px; margin-bottom: 6px;">Trân trọng cảm ơn sự quan tâm của Quý khách hàng!</p>
@@ -11475,17 +11637,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 return rowHtml;
             }).join("");
 
-            const contractDateStr = contract.date || new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+            const contractDateStr = contract.date || formatVNDate(new Date());
             let day = new Date().getDate();
             let month = new Date().getMonth() + 1;
             let year = new Date().getFullYear();
-            if (contractDateStr && contractDateStr.includes("/")) {
-                const parts = contractDateStr.split("/");
-                if (parts.length === 3) {
-                    day = parseInt(parts[0], 10) || day;
-                    month = parseInt(parts[1], 10) || month;
-                    year = parseInt(parts[2], 10) || year;
-                }
+            const contractIso = parseVNDateToISO(contractDateStr);
+            if (contractIso) {
+                year = parseInt(contractIso.slice(0, 4), 10) || year;
+                month = parseInt(contractIso.slice(5, 7), 10) || month;
+                day = parseInt(contractIso.slice(8, 10), 10) || day;
             }
 
             const qualTerms = contract.qualityTerms || defaultQualityTerms || STANDARD_QUALITY_TERMS;
@@ -12400,7 +12560,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             id: generatedContractId,
             quotationId: contractQuoteId || undefined,
             quoteId: contractQuoteId || undefined,
-            date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+            date: formatVNDate(new Date()),
             
             // Rich Party details
             partyAName: contractPartyAName,
@@ -12536,13 +12696,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (!rawVal) return "";
             const raw = String(rawVal).trim();
             if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
-            if (raw.includes("/")) {
-                const parts = raw.split("/");
-                if (parts.length === 3) {
-                    return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-                }
-            }
-            return raw;
+            return parseVNDateToISO(raw) || raw;
         };
         const formattedOrderDate = parseToIsoDate((req as any).order_date || req.date || (req as any).created_at);
         setFactoryOrderOrderDate(formattedOrderDate || todayVN());
@@ -12568,7 +12722,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 specification: it.specification !== undefined ? it.specification : (prod?.specification || ""),
                 sequence: it.sequence || undefined,
                 notes: it.notes || "",
-                packagingForm: normalizePackagingForm(it.packagingForm) || undefined,
+                ...kitSpecFields(it),
                 quantity: it.quantity || 1,
                 unitPrice: unitPrice,
                 isGift,
@@ -12602,7 +12756,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     productName: it.productName || it.productCode,
                     specification: it.specification || "",
                     notes: it.notes || "",
-                    packagingForm: normalizePackagingForm(it.packagingForm) || undefined,
+                    ...kitSpecFields(it),
                     quantity: Number(it.quantity) || 1,
                     unitPrice: it.unitPrice !== undefined ? it.unitPrice : (it.price || 0),
                     ...(vatRate !== undefined ? { vatRate, vat: vatRate } : {}),
@@ -12632,7 +12786,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const rec = (Array.isArray(inv) ? inv : []).find((r: any) => r.delivery_slip_id === slip?.id);
         const no = rec?.invoice_no || slip?.invoiceNumber || slip?.invoice_number || "";
         const date = rec?.invoice_date || slip?.invoiceDate || slip?.invoice_date || "";
-        return { invoiceNo: String(no || ""), invoiceDate: date ? toVNDateString(date).split("-").reverse().join("/") : "" };
+        return { invoiceNo: String(no || ""), invoiceDate: formatVNDate(date) };
     };
 
     const handleCopyQuotation = (quote: any) => {
@@ -12827,11 +12981,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 specification: customSpec,
                 sequence: String((item as any).sequence || quoteItem?.sequence || "").trim() || undefined,
                 notes: customNotes || undefined,
-                packagingForm: normalizePackagingForm((item as any).packagingForm) || undefined,
+                ...kitSpecFields(item),
                 targetAllocations: item.targetAllocations || [],
                 needsInvoice: item.needsInvoice !== false
             };
         });
+
+        // Kit PCR (mã có phụ kiện): bắt buộc chọn đủ quy cách (chia sẵn, IC, loại tube) để kho xuất đúng lô
+        for (const it of items as any[]) {
+            if (!isTwoFormKit(it.productCode)) continue;
+            const miss = missingKitSpec(kitSpecOf(it));
+            if (miss.length > 0) {
+                showToast(`⚠️ Mặt hàng ${it.productCode} là kit PCR: vui lòng chọn ${miss.join(", ")} trước khi lưu SO.`, "warning");
+                return;
+            }
+        }
 
         // Chốt chặn bắt buộc: Khi tạo/sửa SO thương mại (trừ SO Stock), bắt buộc phải nhập giá (> 0đ) hoặc nếu 0 đồng thì phải tích vào nút "🎁 Tặng"
         if (!isStock) {
@@ -13115,7 +13279,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             id: generatedCode,
             order_code: generatedCode,
             linkedSalesOrderId: generatedCode,
-            date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+            date: formatVNDate(new Date()),
             order_date: todayVN(),
             customerId: matchedCust?.id || "",
             customerName: realCustomerName,
@@ -13126,8 +13290,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             customerContact: resolvedContactPerson,
             customerPhone: resolvedContactPhone,
             customerAddress: resolvedDeliveryAddress,
-            requestedDeliveryDate: factoryOrderDeliveryDate || new Date(Date.now() + 7*24*60*60*1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
-            estimatedDeliveryDate: factoryOrderDeliveryDate || new Date(Date.now() + 7*24*60*60*1000).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+            requestedDeliveryDate: factoryOrderDeliveryDate || formatVNDate(Date.now() + 7*24*60*60*1000),
+            estimatedDeliveryDate: factoryOrderDeliveryDate || formatVNDate(Date.now() + 7*24*60*60*1000),
             items: items,
             totalAmount: totalAmount,
             status: initialStatus,
@@ -13307,14 +13471,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             let formattedDate: string | null = null;
             if (deliveryDate) {
                 const trimmed = String(deliveryDate).trim();
-                if (trimmed.includes("/")) {
-                    const parts = trimmed.split("/");
-                    if (parts.length === 3) {
-                        formattedDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-                    }
-                } else if (trimmed.includes("-")) {
-                    formattedDate = trimmed.split("T")[0];
-                }
+                formattedDate = parseVNDateToISO(trimmed) || (trimmed.includes("-") ? trimmed.split("T")[0] : null);
             }
             if (!formattedDate) {
                 formattedDate = todayVN();
@@ -13357,12 +13514,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
 
         let formattedEstDate = (singleMfgEstDelivery || "").trim();
-        if (formattedEstDate.includes("/")) {
-            const parts = formattedEstDate.split("/");
-            if (parts.length === 3) {
-                formattedEstDate = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-            }
-        }
+        formattedEstDate = parseVNDateToISO(formattedEstDate) || formattedEstDate;
         if (!formattedEstDate) {
             formattedEstDate = targetReq.requestedDeliveryDate || todayVN();
         }
@@ -14887,7 +15039,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const parseSlipDateToIso = (d: any): string => {
         const s = String(d || "").trim();
         if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
-        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        const m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
         if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
         return todayVN();
     };
@@ -14985,7 +15137,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (matchingSlipItems.length === 0 && pg.remaining <= 0) return;
 
             const itemName = it.productName || it.name || prod?.name || "Sản phẩm";
-            const lots = filterLotsByForm(code, getAvailableLotsForProduct(code, itemName, target.order_code), it.packagingForm);
+            const lots = filterLotsByForm(code, getAvailableLotsForProduct(code, itemName, target.order_code), it);
             const availStock = getAvailableStockForProduct(code, itemName, target.order_code);
             const firstLot = lots.length > 0 ? lots[0] : null;
 
@@ -15030,8 +15182,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         lineGroupKey: specKey,
                         sequence: seqVal || sIt?.sequence || "",
                     // ghi chú của dòng trên SO (NVKD ghi cho Kho / Cung ứng)
-                    soNote: String(it.notes || "").trim(),
-                    packagingForm: normalizePackagingForm(it.packagingForm) || undefined
+                    soNote: String(it.notes || sIt?.soNote || "").trim(),
+                    ...kitSpecFields(it)
                     });
                 });
             } else {
@@ -15067,7 +15219,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     sequence: seqVal || "",
                     // ghi chú của dòng trên SO (NVKD ghi cho Kho / Cung ứng)
                     soNote: String(it.notes || "").trim(),
-                    packagingForm: normalizePackagingForm(it.packagingForm) || undefined
+                    ...kitSpecFields(it)
                 });
             }
         });
@@ -15267,7 +15419,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         if (!isDeliveryModalOpen || !deliveryTargetOrder) return;
         const ordCode = deliveryTargetOrder.order_code;
         setDeliveryItems(prev => prev.map(it => {
-            const lots = filterLotsByForm(it.productCode, getAvailableLotsForProduct(it.productCode, it.productName, ordCode), it.packagingForm);
+            const lots = filterLotsByForm(it.productCode, getAvailableLotsForProduct(it.productCode, it.productName, ordCode), it);
             const avail = getAvailableStockForProduct(it.productCode, it.productName, ordCode);
             const firstLot = lots.length > 0 ? lots[0] : null;
             const autoLot = (!editingDeliverySlip && !it.lotNo && firstLot) ? firstLot.lot_number : it.lotNo;
@@ -15288,7 +15440,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const baseItem = deliveryItems[sourceIdx];
         if (!baseItem) return;
         const code = baseItem.productCode;
-        const lots = filterLotsByForm(code, getAvailableLotsForProduct(code, baseItem.productName, deliveryTargetOrder?.order_code), baseItem.packagingForm);
+        const lots = filterLotsByForm(code, getAvailableLotsForProduct(code, baseItem.productName, deliveryTargetOrder?.order_code), baseItem);
         const usedLots = new Set(deliveryItems.filter(it => it.productCode === code).map(it => it.lotNo));
         const nextLot = lots.find((l: any) => !usedLots.has(l.lot_number)) || lots[0];
 
@@ -15427,12 +15579,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 .filter(x => x.qty > 0)
                 .map(x => ({ ...x.item, quantity: x.qty }));
 
-            // Dòng SO yêu cầu dạng đóng gói: lô xuất phải đúng dạng (".C" = chia sẵn tube)
+            // Dòng SO yêu cầu quy cách kit (chia sẵn, IC, loại tube): lô xuất phải đúng quy cách ghi trong số lô
             for (const it of slipItems) {
-                const f = isTwoFormKit(getItemCode(it)) ? normalizePackagingForm((it as any).packagingForm) : null;
-                const lf = f ? packagingFormOfLot(it.lotNo) : null;
-                if (f && lf && lf !== f) {
-                    showToast(`Mã ${getItemCode(it)}: SO yêu cầu dạng ${PACKAGING_LABEL[f]}, nhưng lô ${it.lotNo} là dạng ${PACKAGING_LABEL[lf]}. Vui lòng chọn lô đúng dạng.`, "warning");
+                if (!isTwoFormKit(getItemCode(it))) continue;
+                const wrong = kitSpecMismatches(it.lotNo, kitSpecOf(it));
+                if (wrong.length > 0) {
+                    showToast(`Mã ${getItemCode(it)}: lô ${it.lotNo} không đúng quy cách SO yêu cầu: ${wrong.join("; ")}. Vui lòng chọn lô đúng quy cách.`, "warning");
                     return;
                 }
             }
@@ -15492,7 +15644,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const staffName = loggedInStaff?.full_name || user?.name || "Nhân viên";
             const chosenStep = deliveryStepStatus || "PENDING_DELIVERY";
             const isoDeliveryDate = deliveryDate ? parseSlipDateToIso(deliveryDate) : todayVN();
-            const formattedDeliveryDateVN = `${isoDeliveryDate.slice(8, 10)}/${isoDeliveryDate.slice(5, 7)}/${isoDeliveryDate.slice(0, 4)}`;
+            const formattedDeliveryDateVN = `${isoDeliveryDate.slice(8, 10)}-${isoDeliveryDate.slice(5, 7)}-${isoDeliveryDate.slice(0, 4)}`;
             const newSlip: any = {
                 ...(editSlip || {}),
                 id: slipId,
@@ -15830,7 +15982,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <span className="text-[10px] font-bold bg-indigo-950 text-indigo-300 border border-indigo-700/50 px-1.5 rounded">Đợt {s.batchNumber || i + 1}</span>
                                         <span className="font-mono font-bold text-white">{s.id}</span>
                                         <span className={cn("text-[10px] font-bold border px-1.5 rounded", meta.cls)}>{meta.label}</span>
-                                        <span className="text-slate-400">{s.deliveryDate} • {uniqueSkuCount} SP / {totalQty} SL</span>
+                                        <span className="text-slate-400">{formatVNDate(s.deliveryDate, s.deliveryDate)} • {uniqueSkuCount} SP / {totalQty} SL</span>
                                         {step === "WAREHOUSE_DELIVERED" && s.deliveryStaff && (
                                             <span className="text-sky-400/90">• Kho giao: {s.deliveryStaff}</span>
                                         )}
@@ -16161,7 +16313,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         // 2. Update deliverySlips: chỉ đánh dấu ĐÚNG phiếu được xác nhận
         if (slip) {
             const isoConfirm = parseSlipDateToIso(deliveredAtDate);
-            const fmtConfirmVN = `${isoConfirm.slice(8, 10)}/${isoConfirm.slice(5, 7)}/${isoConfirm.slice(0, 4)}`;
+            const fmtConfirmVN = `${isoConfirm.slice(8, 10)}-${isoConfirm.slice(5, 7)}-${isoConfirm.slice(0, 4)}`;
             const confirmedSlip = {
                 ...slip,
                 deliveryDate: fmtConfirmVN,
@@ -16485,14 +16637,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const rows = allDeliveredOrders.map((ord, idx) => ({
                 "STT": idx + 1,
                 "Mã Đơn Hàng": ord.order_code,
-                "Ngày Giao Hàng": ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—",
+                "Ngày Giao Hàng": ord.deliveredAt ? formatVNDate(ord.deliveredAt) : "—",
                 "Khách Hàng": ord.customer_name,
                 "Mã Số Thuế": ord.customer_tax_code || "—",
                 "Nhân Viên Kinh Doanh": ord.sales_rep_name || "—",
                 "Tổng Tiền (VNĐ)": ord.total_amount || 0,
                 "Trạng Thái HĐ": ord.invoiceStatus === "ISSUED" ? "Đã xuất HĐ" : ord.invoiceStatus === "NO_INVOICE" ? "Không xuất HĐ" : "Chờ xuất HĐ",
                 "Số Hóa Đơn": ord.invoiceNo || "Chưa có",
-                "Ngày Xuất HĐ": ord.invoiceDate ? new Date(ord.invoiceDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—",
+                "Ngày Xuất HĐ": ord.invoiceDate ? formatVNDate(ord.invoiceDate) : "—",
                 "Số File Đính Kèm": ord.invoiceFiles ? ord.invoiceFiles.length : 0,
                 "Ghi Chú": ord.deliveryNotes || ""
             }));
@@ -16539,7 +16691,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             customerContact: deliveryReceiverName.trim() || deliveryTargetOrder.contactPerson || deliveryTargetOrder.customerContact || selectedCustomer?.contact_person || "",
             receiverName: deliveryReceiverName.trim() || deliveryTargetOrder.contactPerson || deliveryTargetOrder.customerContact || selectedCustomer?.contact_person || "",
             receiverPhone: deliveryReceiverPhone.trim() || deliveryTargetOrder.contactPhone || deliveryTargetOrder.customerPhone || selectedCustomer?.phone || "",
-            deliveryDate: deliveryDate ? new Date(deliveryDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : now.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+            deliveryDate: deliveryDate ? formatVNDate(deliveryDate) : formatVNDate(now),
             timeliness: deliveryTimeliness,
             notes: deliveryNotes,
             items: previewItems,
@@ -16984,7 +17136,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             title: planTitle.trim(),
             salesRepId: repId,
             salesRepName: repName,
-            dateCreated: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+            dateCreated: formatVNDate(new Date()),
             status: "Pending",
             customersList: cleanedCusts,
             
@@ -17082,9 +17234,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
         const newReport = {
             id: `REP-${Date.now()}`,
-            stageName: stageReportName.trim() || `Báo cáo Giai đoạn ${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`,
+            stageName: stageReportName.trim() || `Báo cáo Giai đoạn ${formatVNDate(new Date())}`,
             content: stageReportText.trim(),
-            date: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
+            date: formatVNDate(new Date())
         };
 
         setSpecializedPlans(prev => prev.map(p => {
@@ -17135,7 +17287,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             stepIndex: selectedPlanForProgress.currentStepIndex,
             fileName: attachmentName.trim(),
             fileSize: "1.2 MB",
-            uploadDate: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
+            uploadDate: formatVNDate(new Date())
         };
 
         setSpecializedPlans(prev => prev.map(p => {
@@ -17186,7 +17338,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const invoiceData = {
             name: file.name,
             size: (file.size / 1024).toFixed(1) + " KB",
-            uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
+            uploadedAt: formatVNDate(new Date())
         };
         
         setContracts(prev => prev.map(c => c.id === contractId ? { ...c, invoiceFile: invoiceData } : c));
@@ -17205,7 +17357,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const invoiceData = {
             name: file.name,
             size: (file.size / 1024).toFixed(1) + " KB",
-            uploadedAt: new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })
+            uploadedAt: formatVNDate(new Date())
         };
         
         setRetailLogs13b(prev => prev.map(l => l.id === logId ? { ...l, invoiceFile: invoiceData } : l));
@@ -17869,7 +18021,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 </div>
                                                                 {task.due_date && (
                                                                     <span className='text-xs font-mono font-semibold text-amber-300'>
-                                                                        Hạn: {new Date(task.due_date).toLocaleDateString('vi-VN')}
+                                                                        Hạn: {formatVNDate(task.due_date)}
                                                                     </span>
                                                                 )}
                                                             </div>
@@ -18184,7 +18336,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     </div>
                                                                     <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
                                                                         <span>Số việc: <strong>{repPlansCount}</strong></span>
-                                                                        {app.reviewedAt && <span className="text-[9px] text-slate-500">{new Date(app.reviewedAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}</span>}
+                                                                        {app.reviewedAt && <span className="text-[9px] text-slate-500">{formatVNDate(app.reviewedAt)}</span>}
                                                                     </div>
                                                                 </div>
 
@@ -18272,13 +18424,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div className="text-xs text-slate-300 space-y-0.5 pt-0.5">
                                                 {approval.status === "PENDING" && approval.submittedAt && (
                                                     <p className="text-[11px] text-amber-300/90">
-                                                        Đã gửi duyệt lúc {new Date(approval.submittedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} tới <strong>{approverTitle}</strong>.
+                                                        Đã gửi duyệt lúc {formatVNDateTime(approval.submittedAt)} tới <strong>{approverTitle}</strong>.
                                                     </p>
                                                 )}
                                                 {approval.status === "APPROVED" && (
                                                     <p className="text-[11px] text-emerald-300/90">
                                                         Phê duyệt bởi: <strong>{approval.reviewerName || approverTitle}</strong>
-                                                        {approval.reviewedAt && ` lúc ${new Date(approval.reviewedAt).toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}`}
+                                                        {approval.reviewedAt && ` lúc ${formatVNDateTime(approval.reviewedAt)}`}
                                                         {approval.reviewerFeedback && ` • Ghi chú: "${approval.reviewerFeedback}"`}
                                                     </p>
                                                 )}
@@ -18949,7 +19101,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 {/* Left: Date badge + Staff Name + 1-line preview */}
                                                 <div className="flex items-center gap-2.5 min-w-0 flex-1">
                                                     <span className="text-[10px] font-mono font-bold text-indigo-300 bg-indigo-950/60 px-2 py-0.5 rounded border border-indigo-500/20 shrink-0">
-                                                        {new Date(log.log_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+                                                        {formatVNDate(log.log_date)}
                                                     </span>
 
                                                     <span className="text-xs font-bold text-white shrink-0">
@@ -19024,7 +19176,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                                                     <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
                                                         <span>Nhân sự: <strong>{staff ? `${staff.full_name} (${staff.position || "NVKD"})` : log.employee_id}</strong></span>
-                                                        <span>Thời gian ghi: {new Date(log.log_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", weekday: "long", year: "numeric", month: "long", day: "numeric" })}</span>
+                                                        <span>Thời gian ghi: {formatVNDate(log.log_date, String(log.log_date || ""))}</span>
                                                     </div>
                                                 </div>
                                             )}
@@ -20429,7 +20581,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 const linkedSlip = deliverySlips.find(slip => slip.orderCode === ord.order_code || slip.orderId === String(ord.order_id) || (ord.raw_code && (slip.orderCode === ord.raw_code || slip.orderId === ord.raw_code)) || (ord.order_code && slip.orderCode && ord.order_code.includes(slip.orderCode)));
                                                                 const dateDisplay = ord.order_date 
                                                                     ? (new Date(ord.order_date).toString() !== "Invalid Date" 
-                                                                        ? new Date(ord.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) 
+                                                                        ? formatVNDate(ord.order_date) 
                                                                         : String(ord.order_date))
                                                                     : "—";
 
@@ -21746,7 +21898,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <div className="text-[10px] text-slate-400 bg-slate-900/40 p-2 rounded border border-slate-850 space-y-1">
                                                             <div><strong>Hiệu lực:</strong> {quote.validityTerms || "30 ngày kể từ ngày báo giá"}</div>
                                                             <div><strong>Giao hàng:</strong> {quote.deliveryTerms || "Tận nơi 3-5 ngày làm việc"}</div>
-                                                            <div className="whitespace-pre-line"><strong>Thanh toán:</strong> {quote.paymentTerms || "Chuyển khoản trong vòng 15 ngày"}</div>
+                                                            <div><strong>Thanh toán:</strong> {quote.paymentTerms || "Chuyển khoản trong vòng 15 ngày"}</div>
                                                         </div>
 
                                                         {/* Action bar inside expanded quote */}
@@ -23697,7 +23849,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <span className="text-slate-700">|</span>
                                                                             <div className="flex items-center gap-1.5 whitespace-nowrap">
                                                                                 <span className="text-slate-400 text-[10px]">Giao mong muốn:</span>
-                                                                                <strong className="text-slate-300">{(req.requestedDeliveryDate || "—")}</strong>
+                                                                                <strong className="text-slate-300">{formatVNDate(req.requestedDeliveryDate, req.requestedDeliveryDate || "—")}</strong>
                                                                             </div>
                                                                             <span className="text-slate-700">|</span>
                                                                             {(() => {
@@ -23742,7 +23894,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             </div>
                                                                                         ) : (
                                                                                             <span className={cn("font-mono text-[11px] font-bold", overdueDeliveryDays > 0 ? "text-rose-300" : estIso ? "text-amber-300" : "text-slate-500")}>
-                                                                                                {estIso ? `📅 ${estIso}` : "—"}
+                                                                                                {estIso ? `📅 ${formatVNDate(estIso)}` : "—"}
                                                                                             </span>
                                                                                         )}
                                                                                         {overdueDeliveryDays > 0 && (
@@ -24918,8 +25070,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         >
                                             <option value="all">-- Tất cả Tình trạng --</option>
                                             <option value="Có sẵn kho">Có sẵn kho</option>
+                                            <option value="Đặt hàng 1-2 tuần">Đặt hàng 1-2 tuần</option>
                                             <option value="Đặt hàng 2-3 tuần">Đặt hàng 2-3 tuần</option>
                                             <option value="Đặt hàng 4-6 tuần">Đặt hàng 4-6 tuần</option>
+                                            <option value="Đặt hàng 8-10 tuần">Đặt hàng 8-10 tuần</option>
+                                            <option value="Đặt hàng 10-12 tuần">Đặt hàng 10-12 tuần</option>
+                                            <option value="Đặt hàng 12-14 tuần">Đặt hàng 12-14 tuần</option>
+                                            <option value="Tạm ngưng">Tạm ngưng</option>
                                         </select>
                                     </div>
                                     <div>
@@ -25742,7 +25899,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <span>{ord.order_code}</span>
                                                             </div>
                                                             <div className="text-[10px] text-slate-400 mt-0.5">
-                                                                Giao ngày: <span className="text-slate-300 font-semibold">{ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—"}</span>
+                                                                Giao ngày: <span className="text-slate-300 font-semibold">{ord.deliveredAt ? formatVNDate(ord.deliveredAt) : "—"}</span>
                                                             </div>
                                                             {ord.sales_rep_name && (
                                                                 <div className="text-[9px] text-indigo-300/80 font-sans mt-0.5">
@@ -25827,7 +25984,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 {/* Partial Invoicing status & button (Yêu cầu 9) */}
                                                                                 {isSlipInvoiced ? (
                                                                                     <span className="inline-flex items-center gap-1">
-                                                                                        <span className="text-[9px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded" title={`HĐ: ${slipInv?.invoice_no}${slipInv?.invoice_date ? ` (${new Date(slipInv.invoice_date).toLocaleDateString('vi-VN')})` : ""}`}>
+                                                                                        <span className="text-[9px] font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-700/60 px-1.5 py-0.5 rounded" title={`HĐ: ${slipInv?.invoice_no}${slipInv?.invoice_date ? ` (${formatVNDate(slipInv.invoice_date)})` : ""}`}>
                                                                                             ✅ HĐ {slipInv?.invoice_no}
                                                                                         </span>
                                                                                         {canViewCustomerDebt && (
@@ -25958,7 +26115,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     <span>{r.invoice_no}</span>
                                                                                 </div>
                                                                                 <div className="text-[10px] text-slate-400">
-                                                                                    {r.invoice_date ? new Date(r.invoice_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—"}{r.delivery_slip_id ? ` · ${r.delivery_slip_id}` : ""}
+                                                                                    {r.invoice_date ? formatVNDate(r.invoice_date) : "—"}{r.delivery_slip_id ? ` · ${r.delivery_slip_id}` : ""}
                                                                                 </div>
                                                                             </div>
                                                                         ))}
@@ -25972,7 +26129,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <span>{ord.invoiceNo}</span>
                                                                     </div>
                                                                     <div className="text-[10px] text-slate-400 mt-0.5">
-                                                                        Ngày lập: {ord.invoiceDate ? new Date(ord.invoiceDate).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : (ord.deliveredAt ? new Date(ord.deliveredAt).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "—")}
+                                                                        Ngày lập: {ord.invoiceDate ? formatVNDate(ord.invoiceDate) : (ord.deliveredAt ? formatVNDate(ord.deliveredAt) : "—")}
                                                                     </div>
                                                                 </div>
                                                             ) : (
@@ -26733,6 +26890,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <option value="Đặt hàng 1-2 tuần">Đặt hàng 1-2 tuần</option>
                                 <option value="Đặt hàng 2-3 tuần">Đặt hàng 2-3 tuần</option>
                                 <option value="Đặt hàng 4-6 tuần">Đặt hàng 4-6 tuần</option>
+                                <option value="Đặt hàng 8-10 tuần">Đặt hàng 8-10 tuần</option>
+                                <option value="Đặt hàng 10-12 tuần">Đặt hàng 10-12 tuần</option>
+                                <option value="Đặt hàng 12-14 tuần">Đặt hàng 12-14 tuần</option>
                                 <option value="Tạm ngưng">Tạm ngưng</option>
                             </select>
                         </div>
@@ -28184,12 +28344,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                             <div className="md:col-span-2">
                                 <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán</label>
-                                {/* Mỗi thông tin (thời hạn, số tài khoản, ngân hàng...) một dòng: Enter để xuống dòng */}
-                                <textarea
-                                    rows={3}
+                                <input
+                                    type="text"
                                     value={quotePaymentTerms}
                                     onChange={(e) => setQuotePaymentTerms(e.target.value)}
-                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y leading-relaxed"
+                                    className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
                                 />
                             </div>
                             <div className="md:col-span-2">
@@ -30520,29 +30679,44 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     </span>
                                                 ) : null}
                                                 {isTwoFormKit(item.productCode) && (() => {
-                                                    // Kit 2 dạng đóng gói (theo lô): tồn khả dụng tách theo dạng + ô khách yêu cầu dạng
+                                                    // Kit PCR: quy cách theo số lô (chia sẵn ".C", IC ".IC", loại tube ".T01"...); bắt buộc chọn đủ 3 mục
                                                     const formLots = getAvailableLotsForProduct(item.productCode, (item as any).productName);
-                                                    const sumForm = (f: PackagingForm) => formLots
-                                                        .filter((l: any) => packagingFormOfLot(l.lot_number) === f)
-                                                        .reduce((s: number, l: any) => s + (Number(l.available_qty ?? l.quantity_on_hand) || 0), 0);
-                                                    const cur = normalizePackagingForm((item as any).packagingForm);
+                                                    const spec = kitSpecOf(item);
+                                                    const qtyOf = (lots: any[]) => lots.reduce((s: number, l: any) => s + (Number(l.available_qty ?? l.quantity_on_hand) || 0), 0);
+                                                    const matchQty = qtyOf(formLots.filter((l: any) => lotMatchesKitSpec(l.lot_number, spec)));
+                                                    const setSpec = (patch: Partial<KitSpec>) => setFactoryOrderItems(prev => prev.map((it, i) => {
+                                                        if (i !== index) return it;
+                                                        const next: any = { ...it, ...patch };
+                                                        // Không chia sẵn thường là không sẵn IC: gợi ý sẵn khi chưa chọn IC (vẫn đổi được)
+                                                        if (patch.packagingForm === "WITH_ACCESSORIES" && !normalizeIcForm((it as any).icForm)) next.icForm = "NO_IC";
+                                                        const ns = kitSpecOf(next);
+                                                        return { ...next, packagingForm: ns.packagingForm, icForm: ns.icForm, tubeType: ns.tubeType, notes: withPackagingNote((it as any).notes, ns) };
+                                                    }));
+                                                    const selCls = (v: any) => cn("bg-slate-950 border rounded px-1.5 py-0.5 text-[10px] font-bold cursor-pointer focus:outline-none", v ? "border-fuchsia-600 text-fuchsia-300" : "border-rose-600 text-rose-300");
+                                                    const missing = missingKitSpec(spec);
                                                     return (
-                                                        <span className="inline-flex items-center gap-1.5 font-sans">
-                                                            <span className="px-1.5 py-0.5 rounded bg-sky-950/80 text-sky-300 border border-sky-700/50 font-mono">Chia sẵn tube: <strong>{sumForm("PREALIQUOT")}</strong></span>
-                                                            <span className="px-1.5 py-0.5 rounded bg-violet-950/80 text-violet-300 border border-violet-700/50 font-mono">Kèm phụ kiện: <strong>{sumForm("WITH_ACCESSORIES")}</strong></span>
-                                                            <select
-                                                                value={cur || ""}
-                                                                onChange={(e) => {
-                                                                    const f = normalizePackagingForm(e.target.value);
-                                                                    setFactoryOrderItems(prev => prev.map((it, i) => i === index ? { ...it, packagingForm: f || undefined, notes: withPackagingNote((it as any).notes, f) } : it));
-                                                                }}
-                                                                title="Dạng đóng gói khách yêu cầu (ghi vào cột Ghi chú; phiếu giao chỉ cho chọn lô đúng dạng)"
-                                                                className={cn("bg-slate-950 border rounded px-1.5 py-0.5 text-[10px] font-bold cursor-pointer focus:outline-none", cur ? "border-fuchsia-600 text-fuchsia-300" : "border-slate-700 text-slate-300")}
-                                                            >
-                                                                <option value="">Yêu cầu dạng: Không</option>
-                                                                <option value="PREALIQUOT">Yêu cầu dạng: {PACKAGING_LABEL.PREALIQUOT}</option>
-                                                                <option value="WITH_ACCESSORIES">Yêu cầu dạng: {PACKAGING_LABEL.WITH_ACCESSORIES}</option>
+                                                        <span className="inline-flex flex-wrap items-center gap-1.5 font-sans" title="Quy cách khách yêu cầu (ghi vào cột Ghi chú; phiếu giao chỉ cho chọn lô đúng quy cách theo số lô)">
+                                                            <select value={spec.packagingForm || ""} onChange={(e) => setSpec({ packagingForm: normalizePackagingForm(e.target.value) || undefined })} className={selCls(spec.packagingForm)}>
+                                                                <option value="">-- Chia sẵn? --</option>
+                                                                <option value="PREALIQUOT">{PACKAGING_LABEL.PREALIQUOT}</option>
+                                                                <option value="WITH_ACCESSORIES">{PACKAGING_LABEL.WITH_ACCESSORIES}</option>
                                                             </select>
+                                                            <select value={spec.icForm || ""} onChange={(e) => setSpec({ icForm: normalizeIcForm(e.target.value) || undefined })} className={selCls(spec.icForm)}>
+                                                                <option value="">-- IC? --</option>
+                                                                <option value="IC">{IC_LABEL.IC}</option>
+                                                                <option value="NO_IC">{IC_LABEL.NO_IC}</option>
+                                                            </select>
+                                                            <select value={spec.tubeType || ""} onChange={(e) => setSpec({ tubeType: normalizeTubeType(e.target.value) || undefined })} className={selCls(spec.tubeType)}>
+                                                                <option value="">{spec.packagingForm === "WITH_ACCESSORIES" ? "-- Tube PCR cấp kèm --" : spec.packagingForm === "PREALIQUOT" ? "-- Tube chia sẵn --" : "-- Loại tube --"}</option>
+                                                                {PCR_TUBE_CODES.map(t => <option key={t} value={t}>{spec.packagingForm === "WITH_ACCESSORIES" ? `Cấp kèm tube ${t}` : spec.packagingForm === "PREALIQUOT" ? `Chia vào tube ${t}` : `Tube ${t}`}</option>)}
+                                                            </select>
+                                                            {missing.length > 0 ? (
+                                                                <span className="px-1.5 py-0.5 rounded bg-rose-950/80 text-rose-300 border border-rose-700/50 font-bold">⚠ Bắt buộc chọn: {missing.join(", ")}</span>
+                                                            ) : (
+                                                                <span className={cn("px-1.5 py-0.5 rounded border font-mono", matchQty > 0 ? "bg-emerald-950/80 text-emerald-300 border-emerald-700/50" : "bg-amber-950/80 text-amber-300 border-amber-700/50")}>
+                                                                    Khả dụng đúng quy cách: <strong>{matchQty}</strong>
+                                                                </span>
+                                                            )}
                                                         </span>
                                                     );
                                                 })()}
@@ -31262,7 +31436,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <span>✍️ Người lập PR: <strong className="text-emerald-300">{prCreatorName}</strong></span>
                                     <span>👤 NVKD đơn hàng: <strong className="text-white">{singleMfgTargetOrder.salesRepName || "—"}</strong></span>
                                     {singleMfgTargetOrder.requestedDeliveryDate && (
-                                        <span>📅 Giao mong muốn: <strong className="text-amber-300 font-mono">{singleMfgTargetOrder.requestedDeliveryDate}</strong></span>
+                                        <span>📅 Giao mong muốn: <strong className="text-amber-300 font-mono">{formatVNDate(singleMfgTargetOrder.requestedDeliveryDate, singleMfgTargetOrder.requestedDeliveryDate)}</strong></span>
                                     )}
                                     {singleMfgTargetOrder.linkedSalesOrderId && (
                                         <span>🔗 Đơn bán: <strong className="text-indigo-400 font-mono">{singleMfgTargetOrder.linkedSalesOrderId}</strong></span>
@@ -31374,11 +31548,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         value={(() => {
                                             if (!singleMfgEstDelivery) return "";
                                             const s = String(singleMfgEstDelivery).trim();
-                                            if (s.includes("/")) {
-                                                const parts = s.split("/");
-                                                if (parts.length === 3) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-                                            }
-                                            return s.split("T")[0];
+                                            return parseVNDateToISO(s) || s.split("T")[0];
                                         })()}
                                         onChange={(e) => setSingleMfgEstDelivery(e.target.value)}
                                         className="w-full bg-slate-950 border border-purple-500/40 rounded-lg px-2.5 py-2 text-xs text-amber-300 font-mono font-bold focus:border-purple-400 focus:outline-none"
@@ -31454,7 +31624,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <span className="text-slate-400">Ngày đặt:</span> <strong className="text-white ml-1">{viewingFactoryOrderItems.date || "—"}</strong>
                                 </div>
                                 <div className="bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
-                                    <span className="text-slate-400">Giao mong muốn:</span> <strong className="text-amber-300 ml-1">{viewingFactoryOrderItems.requestedDeliveryDate || "—"}</strong>
+                                    <span className="text-slate-400">Giao mong muốn:</span> <strong className="text-amber-300 ml-1">{formatVNDate(viewingFactoryOrderItems.requestedDeliveryDate, viewingFactoryOrderItems.requestedDeliveryDate || "—")}</strong>
                                 </div>
                                 <div className="bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
                                     <span className="text-slate-400">Tổng giá trị:</span> <strong className="text-emerald-400 font-mono ml-1">
@@ -31849,7 +32019,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             NCC: <strong title={linkedPO.supplier_name || ""}>{poSupplierLabel(linkedPO) || "Nhà cung cấp"}</strong>
                                                                         </span>
                                                                         <span className="text-amber-300 font-mono">
-                                                                            📅 Hẹn: {linkedPO.expected_delivery_date ? new Date(linkedPO.expected_delivery_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }) : "Sắp về"}
+                                                                            📅 Hẹn: {linkedPO.expected_delivery_date ? formatVNDate(linkedPO.expected_delivery_date) : "Sắp về"}
                                                                         </span>
                                                                         <span className="px-1.5 py-0.2 rounded font-mono font-bold bg-slate-900 text-emerald-400 border border-slate-700 text-[9px]">
                                                                             ● {linkedPO.status}
@@ -32501,7 +32671,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 {isApprovedRma && (r.approved_by || r.approved_at) && (
                                                     <span className="text-emerald-400 font-medium">
                                                         • Người duyệt: <b>{r.approved_by || "Quản lý"}</b>
-                                                        {r.approved_at ? ` (${new Date(r.approved_at).toLocaleString("vi-VN")})` : ""}
+                                                        {r.approved_at ? ` (${formatVNDateTime(r.approved_at)})` : ""}
                                                     </span>
                                                 )}
                                             </div>
@@ -32592,7 +32762,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <span>✍️ Người lập PR: <strong className="text-emerald-300">{prCreatorName}</strong></span>
                                     <span>👤 NVKD đơn hàng: <strong className="text-white">{singleProcureTargetOrder.salesRepName || "—"}</strong></span>
                                     {singleProcureTargetOrder.requestedDeliveryDate && (
-                                        <span>📅 Giao cho khách (SO): <strong className="text-amber-300 font-mono">{singleProcureTargetOrder.requestedDeliveryDate}</strong></span>
+                                        <span>📅 Giao cho khách (SO): <strong className="text-amber-300 font-mono">{formatVNDate(singleProcureTargetOrder.requestedDeliveryDate, singleProcureTargetOrder.requestedDeliveryDate)}</strong></span>
                                     )}
                                 </div>
                             </div>
@@ -33034,10 +33204,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <tbody className="text-slate-300">
                                     {deliveryItems.map((item, idx) => {
                                         const ordCode = deliveryTargetOrder?.order_code;
-                                        const requiredForm = isTwoFormKit(item.productCode) ? normalizePackagingForm(item.packagingForm) : null;
-                                        const availLots = filterLotsByForm(item.productCode, getAvailableLotsForProduct(item.productCode, item.productName, ordCode), requiredForm);
-                                        const typedLotForm = isTwoFormKit(item.productCode) ? packagingFormOfLot(item.lotNo) : null;
-                                        const typedLotWrongForm = Boolean(requiredForm && typedLotForm && typedLotForm !== requiredForm);
+                                        const requiredSpec: KitSpec = isTwoFormKit(item.productCode) ? kitSpecOf(item) : {};
+                                        const availLots = filterLotsByForm(item.productCode, getAvailableLotsForProduct(item.productCode, item.productName, ordCode), item);
+                                        const typedLotMismatches = isTwoFormKit(item.productCode) ? kitSpecMismatches(item.lotNo, requiredSpec) : [];
+                                        const typedLotWrongForm = typedLotMismatches.length > 0;
                                         const allWarehouseLots = getAllAvailableWarehouseLots(ordCode);
                                         const cleanTypedLot = String(item.lotNo || "").trim().toLowerCase();
                                         const matchedWarehouseLot = cleanTypedLot
@@ -33085,16 +33255,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <span className="font-mono font-black text-sm text-amber-300 bg-amber-950/70 border border-amber-600/70 px-2 py-0.5 rounded tracking-wide">{item.productCode}</span>
                                                         <span className="font-semibold text-slate-200 text-xs">{item.productName}</span>
                                                         {item.specification && <span className="text-[10px] text-slate-400">{item.specification}</span>}
-                                                        {!item.isExtraLot && isTwoFormKit(item.productCode) && normalizePackagingForm(item.packagingForm) && <span className="text-[10px] font-bold text-fuchsia-300 bg-fuchsia-950/60 border border-fuchsia-700/60 rounded px-1.5 py-0.5" title="Dạng đóng gói khách yêu cầu trên SO: chỉ chọn được lô đúng dạng">🎯 SO yêu cầu: {PACKAGING_LABEL[normalizePackagingForm(item.packagingForm) as PackagingForm]}</span>}
+                                                        {!item.isExtraLot && isTwoFormKit(item.productCode) && hasKitSpec(requiredSpec) && <span className="text-[10px] font-bold text-fuchsia-300 bg-fuchsia-950/60 border border-fuchsia-700/60 rounded px-1.5 py-0.5" title="Quy cách khách yêu cầu trên SO: chỉ chọn được lô đúng quy cách (theo số lô)">🎯 SO yêu cầu: {kitSpecLabel(requiredSpec)}</span>}
                                                         {!item.isExtraLot && (item as any).soNote && <span className="basis-full text-[10px] text-sky-300 bg-sky-950/50 border border-sky-800/60 rounded px-1.5 py-0.5" title="Ghi chú của mặt hàng trên SO">📝 Ghi chú SO: {(item as any).soNote}</span>}
                                                         {item.storageCondition && <span className="text-[10px] text-cyan-400">🌡 {item.storageCondition}</span>}
                                                         {(() => {
                                                             const comps = getKitComponentsForCode(item.productCode);
                                                             if (comps.length === 0) return null;
-                                                            if (packagingFormOfLot(item.lotNo) === "PREALIQUOT") {
+                                                            if (isTwoFormKit(item.productCode) && packagingFormOfLot(item.lotNo) === "PREALIQUOT") {
                                                                 return (
                                                                     <div className="basis-full mt-1 px-2 py-1 rounded-md bg-sky-950/50 border border-sky-800/60 text-[10px] text-sky-300">
-                                                                        📦 Lô {item.lotNo}: dạng <strong>{PACKAGING_LABEL.PREALIQUOT}</strong> (.C) — không kèm phụ kiện
+                                                                        📦 Lô {item.lotNo}: <strong>{PACKAGING_LABEL.PREALIQUOT}</strong> (.C) — không kèm phụ kiện
                                                                     </div>
                                                                 );
                                                             }
@@ -33300,7 +33470,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         )}
                                                         {typedLotWrongForm && (
                                                             <div className="mt-1 px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-700/60 text-[10px] text-rose-300 font-bold">
-                                                                ⚠ Lô này là dạng {PACKAGING_LABEL[typedLotForm as PackagingForm]}, SO yêu cầu dạng {PACKAGING_LABEL[requiredForm as PackagingForm]}
+                                                                ⚠ Lô này không đúng quy cách SO yêu cầu: {typedLotMismatches.join("; ")}
                                                             </div>
                                                         )}
                                                         {typedLotOwnButEmpty && !typedLotWrongForm && (
@@ -33402,7 +33572,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                                 <span className="font-mono font-bold text-xs text-amber-300">{l.lot_number}</span>
                                                                                                                 {isTwoFormKit(item.productCode) && (
                                                                                                                     <span className={cn("text-[9px] px-1.5 rounded font-bold border", packagingFormOfLot(l.lot_number) === "PREALIQUOT" ? "bg-sky-950 text-sky-300 border-sky-700/60" : "bg-violet-950 text-violet-300 border-violet-700/60")}>
-                                                                                                                        {PACKAGING_LABEL[packagingFormOfLot(l.lot_number) as PackagingForm]}
+                                                                                                                        {kitSpecLabel(lotKitSpec(l.lot_number))}
                                                                                                                     </span>
                                                                                                                 )}
                                                                                                                 {lIdx === 0 && (
@@ -33756,7 +33926,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="text-right shrink-0">
                                     <div className="text-base font-black font-mono text-indigo-900">{selectedViewDeliverySlip.id}</div>
                                     <div className="text-[10px] text-slate-500 mt-0.5">Mã đơn: <strong>{selectedViewDeliverySlip.orderCode}</strong></div>
-                                    <div className="text-[10px] text-slate-500">Ngày giao: <strong>{selectedViewDeliverySlip.deliveryDate}</strong></div>
+                                    <div className="text-[10px] text-slate-500">Ngày giao: <strong>{formatVNDate(selectedViewDeliverySlip.deliveryDate, selectedViewDeliverySlip.deliveryDate)}</strong></div>
                                 </div>
                             </div>
 
@@ -33888,11 +34058,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             {hasMultiLots ? (
                                                                 <div className="space-y-0.5">
                                                                     {it.lotsDetail.map((ld: any, lIdx: number) => (
-                                                                        <div key={lIdx} className="text-[10px] leading-tight">{ld.expDate || "-"}</div>
+                                                                        <div key={lIdx} className="text-[10px] leading-tight">{formatVNDate(ld.expDate, ld.expDate || "-")}</div>
                                                                     ))}
                                                                 </div>
                                                             ) : (
-                                                                <span>{it.lotsDetail?.[0]?.expDate || it.expDate || "-"}</span>
+                                                                <span>{formatVNDate(it.lotsDetail?.[0]?.expDate || it.expDate, it.lotsDetail?.[0]?.expDate || it.expDate || "-")}</span>
                                                             )}
                                                         </td>
                                                         <td className="p-2 text-center border-r border-slate-200 font-bold text-slate-900 font-mono text-xs">{it.quantity}</td>
@@ -35151,12 +35321,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label className="block text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">Điều khoản thanh toán mặc định *</label>
-                                    <textarea
-                                        rows={3}
+                                    <input
+                                        type="text"
                                         value={defaultQuotePaymentTerms}
                                         onChange={(e) => setDefaultQuotePaymentTerms(e.target.value)}
                                         required
-                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white resize-y leading-relaxed"
+                                        className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
                                     />
                                 </div>
                                 <div>
@@ -35870,7 +36040,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <div key={so.order_code} className="bg-slate-950/70 border border-slate-900 p-2.5 rounded-lg text-xs flex justify-between items-center">
                                                 <div>
                                                     <span className="font-bold text-white block font-mono">{so.order_code}</span>
-                                                    <span className="text-[10px] text-slate-400">{new Date(so.order_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })} | {so.customerName}</span>
+                                                    <span className="text-[10px] text-slate-400">{formatVNDate(so.order_date)} | {so.customerName}</span>
                                                 </div>
                                                 <span className="font-bold text-emerald-400 font-mono">{new Intl.NumberFormat("vi-VN", { maximumFractionDigits: 0 }).format(so.total_amount)}đ</span>
                                             </div>
@@ -37254,7 +37424,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             <option value="">-- Chọn công việc trong danh sách của bạn --</option>
                                             {myTasks.map(t => (
                                                 <option key={t.task_id} value={t.task_id}>
-                                                    [{t.priority || "Normal"}] {t.title} {t.due_date ? `(Hạn: ${new Date(t.due_date).toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })})` : ""}
+                                                    [{t.priority || "Normal"}] {t.title} {t.due_date ? `(Hạn: ${formatVNDate(t.due_date)})` : ""}
                                                 </option>
                                             ))}
                                         </select>
@@ -37490,7 +37660,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             </div>
                         </div>
                         <span className="text-[10px] font-mono bg-slate-950 text-slate-400 px-2.5 py-1 rounded border border-slate-850 font-semibold">
-                            📅 {new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}
+                            📅 {`${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", weekday: "short" })}, ${formatVNDate(new Date())}`}
                         </span>
                     </div>
 
@@ -39978,7 +40148,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
                             <div className="bg-slate-900/40 p-3.5 rounded-xl border border-slate-800">
                                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Hạn hoàn thành mong muốn</span>
-                                <div className="text-xs font-bold text-amber-400 font-mono">{selectedAppRequestDetail.dueDate}</div>
+                                <div className="text-xs font-bold text-amber-400 font-mono">{formatVNDate(selectedAppRequestDetail.dueDate, selectedAppRequestDetail.dueDate)}</div>
                                 <div className="text-[10px] text-slate-500 mt-0.5">Ngày gửi: {selectedAppRequestDetail.requestDate}</div>
                             </div>
                         </div>

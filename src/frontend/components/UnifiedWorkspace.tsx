@@ -62,25 +62,20 @@ import { Modal } from "@/frontend/components/Modal";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
 import { useAuth } from "@/frontend/contexts/AuthContext";
 import { cn } from "@/backend/services/utils";
-import { todayVN, toVNDateString, nowVNDateTime } from "@/backend/services/dates";
+import { todayVN, toVNDateString, nowVNDateTime, formatVNDate, formatVNDateTime } from "@/backend/services/dates";
 import { AttachmentPicker, AttachmentList, uploadSingleFileSmart } from "@/frontend/components/AttachmentPicker";
 import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 import { ProposalsApprovalView, ProposalItem, isProposalWaitingForUser } from "@/frontend/components/ProposalsApprovalView";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 
-// Configuration for Departments (12 Phòng ban đầy đủ cho ABT: Nghiên cứu - Sản xuất - Chất lượng - Công nghệ - Kinh doanh)
+// Configuration for Departments
 export const DEPARTMENTS = [
   { id: "all", name: "Toàn công ty", icon: Building2 },
   { id: "Kinh Doanh", name: "Kinh Doanh", icon: Briefcase },
-  { id: "Application", name: "Application (Ứng dụng)", icon: FlaskConical },
-  { id: "R&D", name: "R&D (Nghiên cứu)", icon: Sparkles },
-  { id: "Sản Xuất", name: "Sản Xuất (Kit & Oligo)", icon: Layers },
-  { id: "QA/QC", name: "QA/QC (Chất lượng)", icon: ShieldCheck },
-  { id: "Kỹ Thuật Công Nghệ", name: "Kỹ Thuật Công Nghệ", icon: Activity },
-  { id: "IT", name: "CNTT (IT & Hệ thống)", icon: FileSpreadsheet },
+  { id: "Application", name: "Application (Lab)", icon: FlaskConical },
   { id: "Kho & Vận Hành", name: "Kho & Vận Hành", icon: Package },
-  { id: "Cung Ứng", name: "Cung Ứng - Thu Mua", icon: ShoppingCart },
-  { id: "Pháp Chế", name: "Pháp Chế & Đăng Ký", icon: FileText },
+  { id: "Cung Ứng", name: "Cung Ứng", icon: ShoppingCart },
+  { id: "Pháp Chế", name: "Pháp Chế & Tuân Thủ", icon: ShieldCheck },
   { id: "Kế Toán", name: "Kế Toán - Tài Chính", icon: DollarSign },
   { id: "Ban Giám Đốc", name: "Ban Giám Đốc", icon: Award },
 ];
@@ -126,18 +121,12 @@ export function normalizeWorkspaceDept(raw: any): string {
   const s = String(raw || "").trim();
   if (!s) return "";
   if (s === "all") return "all";
-  if (s === "Liên Phòng Ban") return "Liên Phòng Ban";
   const l = s.toLowerCase();
-  if (l === "r&d" || l === "rd" || l.includes("nghiên cứu") || l.includes("phát triển sản phẩm")) return "R&D";
-  if (l.includes("sản xuất") || l.includes("sx kit") || l.includes("oligo") || l.includes("pha chế") || l === "kit") return "Sản Xuất";
-  if (l.includes("qa") || l.includes("qc") || l.includes("kiểm nghiệm") || l.includes("đảm bảo chất lượng") || l.includes("kiểm soát chất lượng")) return "QA/QC";
-  if (l.includes("kỹ thuật công nghệ") || l.includes("ktcn") || l.includes("thiết bị") || l === "device") return "Kỹ Thuật Công Nghệ";
-  if (l === "it" || l.includes("cntt") || l.includes("công nghệ thông tin") || l.includes("phần mềm") || l.includes("chuyển đổi số")) return "IT";
   if (l.includes("ứng dụng") || l.includes("application") || l.includes("kỹ thuật")) return "Application";
   if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
-  if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement") || l.includes("vật tư")) return "Cung Ứng";
+  if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
   if (l.includes("kinh doanh") || l.includes("sales") || l.includes("marketing")) return "Kinh Doanh";
-  if (l.includes("pháp chế") || l.includes("legal") || l.includes("đăng ký")) return "Pháp Chế";
+  if (l.includes("pháp chế") || l.includes("legal") || l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "Pháp Chế";
   if (l.includes("kế toán") || l.includes("tài chính") || l.includes("accounting")) return "Kế Toán";
   if (l.includes("giám đốc") || l.includes("bod")) return "Ban Giám Đốc";
   return s;
@@ -195,48 +184,6 @@ export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
     "Thỏa thuận Bảo mật & Hợp đồng Đại lý",
     "Bảo hộ Sở hữu trí tuệ thương hiệu TBR",
     "Tư vấn Pháp luật Doanh nghiệp & Lao động",
-    "Khác"
-  ],
-  "R&D": [
-    "Nghiên cứu & Thiết kế Primer/Probe",
-    "Thực nghiệm ELN & Tối ưu công thức",
-    "Đánh giá độ ổn định & LOD/LOQ",
-    "Chuyển giao công nghệ (Tech Transfer)",
-    "Soạn thảo hồ sơ thiết kế (DHF / TCCS)",
-    "Khác"
-  ],
-  "Sản Xuất": [
-    "Lập kế hoạch mẻ & Chuẩn bị NVL",
-    "Pha chế bán thành phẩm (Bulk / MasterMix)",
-    "Tổng hợp & Tinh sạch Oligo",
-    "Chia chiết, Đóng gói & Dán nhãn",
-    "Hoàn thiện Hồ sơ lô điện tử (EBR)",
-    "Vệ sinh phòng sạch & Bảo dưỡng line",
-    "Khác"
-  ],
-  "QA/QC": [
-    "Kiểm nghiệm nguyên liệu đầu vào (IQC)",
-    "Kiểm soát chất lượng trong quá trình (IPQC)",
-    "Kiểm nghiệm thành phẩm & Cấp CoA (FQC)",
-    "Quản lý mẫu lưu (Retention Sample)",
-    "Xử lý sự cố chất lượng (NCR / CAPA)",
-    "Hồ sơ hệ thống ISO 13485 / WHO-GMP",
-    "Khác"
-  ],
-  "Kỹ Thuật Công Nghệ": [
-    "Thiết kế cơ khí & Mạch điện tử",
-    "Lập trình Firmware & Tích hợp phần cứng",
-    "Lắp ráp thiết bị & Hồ sơ DHR",
-    "Quản lý thay đổi kỹ thuật (ECO)",
-    "Bảo trì & Hiệu chuẩn thiết bị nhà máy",
-    "Khác"
-  ],
-  "IT": [
-    "Phát triển & Vận hành ERP / MES / LIMS",
-    "Quản trị Hạ tầng Mạng, Máy chủ & Cloud",
-    "An toàn thông tin & Bảo mật dữ liệu",
-    "Hỗ trợ kỹ thuật CNTT nội bộ (Helpdesk)",
-    "Tự động hóa quy trình & Báo cáo BI/AI",
     "Khác"
   ]
 };
@@ -569,164 +516,67 @@ export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]>
       ]
     }
   ],
-  "R&D": [
-    {
-      id: "rd_new_ivd_kit",
-      name: "Nghiên Cứu & Thiết Kế Kit Chẩn Đoán IVD / Sinh Học Phân Tử Mới",
-      icon: "🧬",
-      codePrefix: "RD-KIT",
-      description: "Thiết kế mồi/probe, tối ưu công thức MasterMix, đánh giá LOD, độ đặc hiệu và độ ổn định tăng tốc/thực tế.",
-      sampleObjectives: "Hoàn thiện công thức Kit Real-time PCR mới đạt LOD <= 10 copies/rxn, độ đặc hiệu 100%, sẵn sàng chuyển giao sản xuất.",
-      participatingDepts: ["R&D", "QA/QC", "Sản Xuất"],
-      defaultStages: [
-        { name: "Thiết kế In-silico Primer/Probe & đặt tổng hợp Oligo thử nghiệm", estimatedDays: 3, dept: "R&D" },
-        { name: "Tối ưu hóa thành phần đệm phản ứng (Buffer/Enzyme) & chu trình nhiệt trên ELN", estimatedDays: 5, dept: "R&D" },
-        { name: "Đánh giá giới hạn phát hiện (LOD), độ lặp lại & độ ổn định nhiệt", estimatedDays: 5, dept: "R&D" },
-        { name: "Lập hồ sơ thiết kế (DHF) & gói chuyển giao công nghệ sang Sản xuất / QC", estimatedDays: 3, dept: "R&D" }
-      ]
-    }
-  ],
-  "Sản Xuất": [
-    {
-      id: "prod_pilot_scaleup",
-      name: "Sản Xuất Lô Thử Nghiệm (Pilot Batch) & Chuẩn Hóa Quy Trình EBR",
-      icon: "🏭",
-      codePrefix: "SX-PILOT",
-      description: "Tiếp nhận chuyển giao từ R&D, thiết lập BOM/Routing và chạy 3 lô Pilot liên tiếp để thẩm định quy trình sản xuất.",
-      sampleObjectives: "Sản xuất thành công 3 lô Pilot liên tiếp đạt 100% chỉ tiêu QC, hoàn thiện Hồ sơ lô điện tử (EBR) và định mức hao hụt.",
-      participatingDepts: ["Sản Xuất", "QA/QC", "Kho & Vận Hành", "Kỹ Thuật Công Nghệ"],
-      defaultStages: [
-        { name: "Kiểm tra điều kiện phòng sạch, hiệu chuẩn thiết bị chia chiết & nhận NVL từ Kho", estimatedDays: 2, dept: "Sản Xuất" },
-        { name: "Pha chế bán thành phẩm (Bulk), kiểm soát bán thành phẩm (IPQC) & chia ống", estimatedDays: 3, dept: "Sản Xuất" },
-        { name: "Đóng gói hoàn thiện, dán nhãn & lấy mẫu gửi QA/QC kiểm định xuất xưởng", estimatedDays: 2, dept: "QA/QC" },
-        { name: "Tổng kết định mức tiêu hao BOM, khóa hồ sơ lô EBR & nhập kho thành phẩm", estimatedDays: 1, dept: "Sản Xuất" }
-      ]
-    }
-  ],
-  "QA/QC": [
-    {
-      id: "qa_batch_validation",
-      name: "Thẩm Định Chất Lượng Lô, Cấp CoA & Quản Lý Hồ Sơ ISO 13485",
-      icon: "🛡️",
-      codePrefix: "QC-VAL",
-      description: "Kiểm nghiệm IQC nguyên liệu, IPQC bán thành phẩm, FQC thành phẩm, theo dõi mẫu lưu (Retention) và xử lý NCR/CAPA.",
-      sampleObjectives: "Đảm bảo 100% lô nguyên liệu và thành phẩm ABT được kiểm nghiệm đúng tiêu chuẩn cơ sở (TCCS) và cấp CoA đúng hạn.",
-      participatingDepts: ["QA/QC", "Sản Xuất", "R&D"],
-      defaultStages: [
-        { name: "Lấy mẫu & kiểm nghiệm chất lượng nguyên vật liệu đầu vào (IQC)", estimatedDays: 2, dept: "QA/QC" },
-        { name: "Kiểm nghiệm thành phẩm cuối (FQC) trên mẫu chuẩn & mẫu đối chứng", estimatedDays: 2, dept: "QA/QC" },
-        { name: "Thẩm tra hồ sơ lô (Batch Record Review), phát hành CoA & lưu mẫu đối chiếu", estimatedDays: 1, dept: "QA/QC" }
-      ]
-    }
-  ],
-  "Kỹ Thuật Công Nghệ": [
-    {
-      id: "ktcn_device_eco",
-      name: "Thiết Kế Chế Tạo Thiết Bị, Firmware & Bảo Trì Hiệu Chuẩn Nhà Máy",
-      icon: "⚙️",
-      codePrefix: "KTCN-DEV",
-      description: "Thiết kế cơ khí - điện tử - firmware cho thiết bị y sinh, quản lý thay đổi kỹ thuật (ECO) và bảo trì máy sản xuất.",
-      sampleObjectives: "Hoàn thiện nguyên mẫu (Prototype) thiết bị tách chiết/nhiệt luân chuyển, vượt qua bài kiểm tra an toàn điện & độ chính xác nhiệt.",
-      participatingDepts: ["Kỹ Thuật Công Nghệ", "IT", "R&D", "QA/QC"],
-      defaultStages: [
-        { name: "Thiết kế bản vẽ kỹ thuật, mạch điều khiển & lập BOM linh kiện thiết bị", estimatedDays: 5, dept: "Kỹ Thuật Công Nghệ" },
-        { name: "Lắp ráp nguyên mẫu (DHR), nạp Firmware & hiệu chuẩn cảm biến nhiệt/quang", estimatedDays: 5, dept: "Kỹ Thuật Công Nghệ" },
-        { name: "Chạy thử nghiệm tải liên tục (Burn-in test) & kiểm định chất lượng cùng QC/R&D", estimatedDays: 3, dept: "QA/QC" }
-      ]
-    }
-  ],
-  "IT": [
-    {
-      id: "it_digital_system",
-      name: "Phát Triển Phần Mềm, Tự Động Hóa ERP/MES/LIMS & Bảo Mật Hệ Thống",
-      icon: "💻",
-      codePrefix: "IT-SYS",
-      description: "Triển khai tính năng phần mềm nội bộ, kết nối dữ liệu thiết bị - nhà máy - kinh doanh và đảm bảo an toàn thông tin.",
-      sampleObjectives: "Số hóa 100% quy trình truy xuất nguồn gốc lô sản xuất và tự động hóa báo cáo điều hành liên phòng ban.",
-      participatingDepts: ["IT", "Kỹ Thuật Công Nghệ", "Sản Xuất", "QA/QC", "Kinh Doanh"],
-      defaultStages: [
-        { name: "Khảo sát yêu cầu nghiệp vụ liên phòng ban & thiết kế kiến trúc dữ liệu/giao diện", estimatedDays: 3, dept: "IT" },
-        { name: "Lập trình tính năng, tích hợp API & kiểm thử bảo mật (Security Hardening)", estimatedDays: 5, dept: "IT" },
-        { name: "Kiểm thử nghiệm thu người dùng (UAT) cùng các phòng ban & golive vận hành", estimatedDays: 2, dept: "IT" }
-      ]
-    }
-  ],
   "Liên Phòng Ban": [
     {
-      id: "abt_npd_launch",
-      name: "Dự Án Phát Triển & Thương Mại Hóa Sản Phẩm Mới (R&D ➔ SX ➔ QC ➔ Pháp Chế ➔ KD)",
-      icon: "🧬",
-      codePrefix: "DA-NPD",
-      description: "Chuỗi dự án toàn diện từ nghiên cứu R&D, mua NVL, chuyển giao sản xuất Pilot, kiểm định QC, đăng ký lưu hành IVD đến ra mắt thị trường.",
-      sampleObjectives: "Hoàn tất nghiên cứu, chuyển giao sản xuất 3 lô Pilot đạt chuẩn ISO 13485, có số lưu hành BYT và thương mại hóa thành công.",
-      participatingDepts: ["R&D", "Cung Ứng", "Kỹ Thuật Công Nghệ", "Sản Xuất", "QA/QC", "Application", "Pháp Chế", "Kinh Doanh"],
+      id: "cross_hospital_tender",
+      name: "Dự Án Đấu Thầu & Cung Ứng Trọn Gói Bệnh Viện",
+      icon: "🏛️",
+      codePrefix: "DA-THAU",
+      description: "Phối hợp liên phòng ban từ rà soát HSMT, chuẩn bị pháp lý, đặt hàng hãng, chạy thử mẫu đến giao hàng & nghiệm thu thầu.",
+      sampleObjectives: "Trúng thầu và triển khai cung ứng trọn gói hóa chất - sinh phẩm - thiết bị xét nghiệm cho Bệnh viện trọng điểm đúng tiến độ hợp đồng.",
+      participatingDepts: ["Kinh Doanh", "Pháp Chế", "Cung Ứng", "Application", "Kho & Vận Hành", "Kế Toán"],
       defaultStages: [
-        { name: "R&D hoàn thiện công thức, chạy ELN & Cung ứng đặt mua nguyên liệu/Oligo thử nghiệm", estimatedDays: 5, dept: "R&D" },
-        { name: "Chuyển giao công nghệ (Tech Transfer), KTCN chuẩn bị máy & Sản xuất chạy 3 lô Pilot", estimatedDays: 5, dept: "Sản Xuất" },
-        { name: "QA/QC kiểm định chất lượng lô Pilot (CoA, độ ổn định) & Application đánh giá mẫu thực tế", estimatedDays: 4, dept: "QA/QC" },
-        { name: "Pháp chế hoàn thiện hồ sơ CSDT đăng ký số lưu hành IVD & công bố tiêu chuẩn", estimatedDays: 7, dept: "Pháp Chế" },
-        { name: "Kinh doanh & Application tổ chức ra mắt sản phẩm, gửi mẫu Demo bệnh viện & mở bán thương mại", estimatedDays: 5, dept: "Kinh Doanh" }
+        { name: "Phân tích danh mục HSMT, xây dựng cấu hình kỹ thuật & phương án giá dự thầu", estimatedDays: 3, dept: "Kinh Doanh" },
+        { name: "Thẩm định pháp lý hồ sơ thầu, giấy phép lưu hành, ủy quyền hãng (MA/CFS/ISO) & Bảo lãnh", estimatedDays: 4, dept: "Pháp Chế" },
+        { name: "Đàm phán giá dự án với Hãng/NCC, chốt tiến độ nhập hàng & CO/CQ", estimatedDays: 4, dept: "Cung Ứng" },
+        { name: "Demo thiết bị / chạy thử mẫu lâm sàng & bảo vệ giải pháp kỹ thuật tại khoa Xét nghiệm", estimatedDays: 5, dept: "Application" },
+        { name: "Giao nhận theo hợp đồng thầu, bàn giao nghiệm thu & đối soát hồ sơ thanh quyết toán", estimatedDays: 5, dept: "Kho & Vận Hành" }
       ]
     },
     {
-      id: "abt_device_sw",
-      name: "Dự Án Chế Tạo Thiết Bị, Phần Mềm & Chuyển Đổi Số (KTCN + IT + R&D + QC + SX)",
-      icon: "⚙️",
-      codePrefix: "DA-TECH",
-      description: "Phối hợp giữa Kỹ thuật Công nghệ (Phần cứng/Firmware), IT (Phần mềm/Cloud/AI), R&D và QA/QC để ra mắt thiết bị hoặc hệ thống mới.",
-      sampleObjectives: "Hoàn thiện thiết bị và phần mềm điều khiển/phân tích đạt chuẩn kỹ thuật, kiểm thử thực nghiệm đạt 100% yêu cầu.",
-      participatingDepts: ["Kỹ Thuật Công Nghệ", "IT", "R&D", "QA/QC", "Application"],
+      id: "cross_equipment_deploy",
+      name: "Dự Án Lắp Đặt & Chuyển Giao Hệ Thống Thiết Bị Xét Nghiệm",
+      icon: "🏥",
+      codePrefix: "DA-TB",
+      description: "Điều phối nhập máy, khảo sát phòng Lab khách hàng, vận chuyển lắp đặt, hiệu chuẩn, đào tạo KTV và bàn giao nghiệm thu.",
+      sampleObjectives: "Hoàn tất lắp đặt, hiệu chuẩn đạt chuẩn QC và đào tạo vận hành thành thạo hệ thống máy xét nghiệm tại đơn vị khách hàng.",
+      participatingDepts: ["Kinh Doanh", "Cung Ứng", "Kho & Vận Hành", "Application", "Kế Toán"],
       defaultStages: [
-        { name: "KTCN thiết kế cơ điện tử/Firmware & Cung ứng đặt mua linh kiện, bo mạch", estimatedDays: 5, dept: "Kỹ Thuật Công Nghệ" },
-        { name: "IT phát triển phần mềm điều khiển, giao diện người dùng & thuật toán phân tích dữ liệu", estimatedDays: 5, dept: "IT" },
-        { name: "R&D và Application chạy thử nghiệm phản ứng sinh học thực tế trên thiết bị nguyên mẫu", estimatedDays: 4, dept: "R&D" },
-        { name: "QA/QC kiểm định độ chính xác, an toàn kỹ thuật & ký phát hành phiên bản (Release)", estimatedDays: 3, dept: "QA/QC" }
+        { name: "Chốt hợp đồng/đơn hàng thiết bị & thông báo kế hoạch triển khai với khách hàng", estimatedDays: 2, dept: "Kinh Doanh" },
+        { name: "Đặt mua / thông quan máy chính, phụ kiện đi kèm & hóa chất chạy thử nghiệm (Startup Kit)", estimatedDays: 5, dept: "Cung Ứng" },
+        { name: "Kiểm tra ngoại quan, đóng gói chuyên dụng & vận chuyển bàn giao máy tận phòng Lab", estimatedDays: 2, dept: "Kho & Vận Hành" },
+        { name: "Lắp đặt, hiệu chuẩn thông số, chạy mẫu nội kiểm (QC) & đào tạo KTV vận hành", estimatedDays: 4, dept: "Application" },
+        { name: "Ký biên bản nghiệm thu bàn giao (handed-over), kích hoạt bảo hành & xuất hóa đơn thu hồi công nợ", estimatedDays: 2, dept: "Kế Toán" }
       ]
     },
     {
-      id: "abt_capa_ecr",
-      name: "Nhóm Đặc Nhiệm Xử Lý Sự Cố Chất Lượng / Cải Tiến SP (Application ➔ QC ➔ R&D ➔ SX)",
-      icon: "🛡️",
-      codePrefix: "DA-CAPA",
-      description: "Quy trình phản ứng nhanh liên phòng ban khi có phản hồi kỹ thuật từ khách hàng hoặc phát hiện điểm không phù hợp (NCR/CAPA).",
-      sampleObjectives: "Xác định chính xác nguyên nhân gốc rễ (Root Cause), khắc phục triệt để trong 72h và cập nhật quy trình phòng ngừa tái diễn.",
-      participatingDepts: ["Application", "QA/QC", "R&D", "Sản Xuất", "Kinh Doanh"],
+      id: "cross_new_product_launch",
+      name: "Dự Án Ra Mắt Dòng Sản Phẩm Mới & Phát Triển Thị Trường",
+      icon: "🚀",
+      codePrefix: "DA-LAUNCH",
+      description: "Phối hợp thẩm định chất lượng Kit/Máy mới, hoàn thiện pháp lý lưu hành, nhập hàng mẫu và tổ chức chiến dịch thương mại hóa.",
+      sampleObjectives: "Đưa dòng sản phẩm sinh phẩm/thiết bị mới ra thị trường, hoàn tất đánh giá tại 10 phòng Lab đầu ngành và phát sinh đơn hàng thương mại.",
+      participatingDepts: ["Application", "Pháp Chế", "Cung Ứng", "Kinh Doanh", "Kho & Vận Hành"],
       defaultStages: [
-        { name: "Application & Kinh doanh thu thập thông tin lô hàng, điều kiện chạy mẫu & tái hiện hiện tượng tại Lab", estimatedDays: 1, dept: "Application" },
-        { name: "QA/QC kiểm tra mẫu lưu (Retention Sample), rà soát hồ sơ lô EBR & mở phiếu NCR", estimatedDays: 2, dept: "QA/QC" },
-        { name: "R&D phân tích chuyên sâu nguyên nhân gốc rễ & đề xuất phương án tinh chỉnh công thức/quy trình", estimatedDays: 2, dept: "R&D" },
-        { name: "Sản xuất cập nhật SOP/sản xuất lô đổi bù & Kinh doanh/Application nghiệm thu lại với khách hàng", estimatedDays: 2, dept: "Sản Xuất" }
+        { name: "Chạy thẩm định thực tế độ nhạy/đặc hiệu & biên soạn tài liệu hướng dẫn tiếng Việt (SOP/IFU)", estimatedDays: 5, dept: "Application" },
+        { name: "Hoàn tất hồ sơ công bố / đăng ký số lưu hành trang thiết bị y tế (IVD)", estimatedDays: 7, dept: "Pháp Chế" },
+        { name: "Đặt nhập lô hàng thương mại đầu tiên & bộ mẫu dùng thử (Demo/Sample Kits)", estimatedDays: 5, dept: "Cung Ứng" },
+        { name: "Tổ chức hội thảo giới thiệu, gửi mẫu dùng thử cho khách hàng mục tiêu & chốt đơn mở màn", estimatedDays: 7, dept: "Kinh Doanh" }
       ]
     },
     {
-      id: "abt_oem_tender",
-      name: "Dự Án Sản Xuất Đơn Hàng Lớn / OEM / Thầu Trọng Điểm (KD ➔ Cung Ứng ➔ SX ➔ QC ➔ Kho)",
-      icon: "🏭",
-      codePrefix: "DA-OEM",
-      description: "Điều phối liên thông từ Hợp đồng thầu/OEM lớn sang kế hoạch vật tư MRP, lịch sản xuất nhiều mẻ, kiểm định QC và giao hàng theo đợt.",
-      sampleObjectives: "Đảm bảo cung ứng đủ 100% sản lượng đơn hàng dự án/OEM đúng tiến độ cam kết, đầy đủ hồ sơ CoA và chuỗi lạnh.",
-      participatingDepts: ["Kinh Doanh", "Cung Ứng", "Sản Xuất", "QA/QC", "Kho & Vận Hành", "Kế Toán"],
+      id: "cross_customer_taskforce",
+      name: "Nhóm Đặc Nhiệm Xử Lý Sự Cố Kỹ Thuật & Hỗ Trợ Khách Hàng Trọng Điểm",
+      icon: "🛠️",
+      codePrefix: "DA-CSKH",
+      description: "Phối hợp khẩn cấp giữa Kinh doanh, Application, Kho và Cung ứng để xử lý sự cố kỹ thuật/lô hàng tại bệnh viện lớn.",
+      sampleObjectives: "Xử lý dứt điểm vướng mắc kỹ thuật tại phòng Lab khách hàng trong vòng 48-72h, đảm bảo hoạt động xét nghiệm không gián đoạn.",
+      participatingDepts: ["Application", "Kinh Doanh", "Kho & Vận Hành", "Cung Ứng"],
       defaultStages: [
-        { name: "Kinh doanh & Pháp chế chốt hợp đồng, lịch giao hàng từng đợt & quy cách đóng gói/nhãn OEM", estimatedDays: 2, dept: "Kinh Doanh" },
-        { name: "Cung ứng & Kho kiểm tra tồn kho NVL/bao bì, phát hành PO mua bổ sung kịp lịch sản xuất", estimatedDays: 4, dept: "Cung Ứng" },
-        { name: "Sản xuất lập lịch chạy các mẻ (Batches) Kit/Oligo/Thiết bị theo thứ tự ưu tiên", estimatedDays: 5, dept: "Sản Xuất" },
-        { name: "QA/QC kiểm nghiệm xuất xưởng từng lô, cấp chứng nhận CoA & giải phóng lô (Batch Release)", estimatedDays: 2, dept: "QA/QC" },
-        { name: "Kho đóng gói chuẩn chuỗi lạnh, giao hàng tới khách hàng & Kế toán đối soát nghiệm thu thanh toán", estimatedDays: 2, dept: "Kho & Vận Hành" }
-      ]
-    },
-    {
-      id: "abt_iso_gmp",
-      name: "Dự Án Chuẩn Hóa Hệ Thống ISO 13485 / WHO-GMP & Đánh Giá Nội Bộ Toàn Công Ty",
-      icon: "🏆",
-      codePrefix: "DA-ISO",
-      description: "Phối hợp toàn bộ các phòng ban rà soát SOP, hồ sơ thiết bị, hồ sơ lô, truy xuất nguồn gốc và khắc phục điểm không phù hợp.",
-      sampleObjectives: "100% phòng ban hoàn thiện hồ sơ chuẩn ISO 13485 / GMP, hoàn thành kiểm toán nội bộ và đạt chứng nhận đánh giá định kỳ.",
-      participatingDepts: ["QA/QC", "Sản Xuất", "R&D", "Kỹ Thuật Công Nghệ", "Kho & Vận Hành", "Cung Ứng", "IT"],
-      defaultStages: [
-        { name: "QA/QC lập kế hoạch đánh giá, ban hành checklist rà soát hồ sơ SOP cho toàn bộ các phòng ban", estimatedDays: 3, dept: "QA/QC" },
-        { name: "KTCN & Sản xuất hoàn tất hiệu chuẩn máy móc, nhật ký vận hành thiết bị & vệ sinh phòng sạch", estimatedDays: 4, dept: "Kỹ Thuật Công Nghệ" },
-        { name: "R&D, Kho & Cung ứng rà soát hồ sơ thiết kế (DHF), đánh giá nhà cung cấp (AVL) & thẻ kho FEFO", estimatedDays: 4, dept: "R&D" },
-        { name: "QA/QC & Ban Giám Đốc tổ chức đánh giá nội bộ (Internal Audit), đóng các điểm CAPA & tổng kết", estimatedDays: 3, dept: "QA/QC" }
+        { name: "Tiếp nhận thông tin sự cố từ khách hàng, khoanh vùng mã lô (Lot) & điều kiện bảo quản", estimatedDays: 1, dept: "Kinh Doanh" },
+        { name: "Trực tiếp xuống Lab khách hàng kiểm tra thiết bị, chạy mẫu đối chứng & xác định nguyên nhân gốc", estimatedDays: 2, dept: "Application" },
+        { name: "Xuất kho khẩn cấp hàng/máy thay thế tạm thời để duy trì hoạt động xét nghiệm cho khách", estimatedDays: 1, dept: "Kho & Vận Hành" },
+        { name: "Làm việc với Hãng sản xuất về báo cáo kỹ thuật (CAPA), bảo hành/đổi bù & nghiệm thu với khách hàng", estimatedDays: 3, dept: "Cung Ứng" }
       ]
     }
   ]
@@ -2119,8 +1969,8 @@ export const UnifiedWorkspace: React.FC = () => {
     dept: "Liên Phòng Ban",
     participatingDepts: [] as string[],
     customerOrRef: "",
-    typeId: "abt_npd_launch",
-    typeName: "Dự Án Phát Triển & Thương Mại Hóa Sản Phẩm Mới",
+    typeId: "cross_hospital_tender",
+    typeName: "Dự Án Đấu Thầu & Cung Ứng Trọn Gói Bệnh Viện",
     lead: "",
     collaborators: [] as string[],
     startDate: todayVN(),
@@ -2575,7 +2425,7 @@ export const UnifiedWorkspace: React.FC = () => {
   useEffect(() => {
     fetchData();
     const onRevalidated = (e: any) => {
-      if (e?.detail?.pathname === "/api/workflows") {
+      if (e?.detail?.pathname === "/api/workflows" || e?.detail?.pathname === "/api/storage") {
         fetchData({ silent: true });
       }
     };
@@ -2875,9 +2725,38 @@ export const UnifiedWorkspace: React.FC = () => {
     const subTab = String(rawPayload.subTab || notif?.link?.subTab || "").trim();
     const fullText = `${rawCode} ${rawId} ${rawTitle} ${rawMsg}`.toLowerCase();
 
-    const codeMatch = `${rawCode} ${rawId} ${rawTitle} ${rawMsg}`.match(/\b((?:WF|TASK)-[A-Z0-9-]+)\b/i);
+    const codeMatch = `${rawCode} ${rawId} ${rawTitle} ${rawMsg}`.match(/\b((?:WF|TASK|DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
     const extractedCode = (codeMatch ? codeMatch[1] : rawCode || rawId).toUpperCase();
     const quoteMatches = Array.from(`${rawTitle} ${rawMsg}`.matchAll(/"([^"]{3,140})"/g)).map((m) => m[1].trim());
+
+    if (
+      subTab === "proposals" ||
+      /^(?:DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-/i.test(extractedCode) ||
+      fullText.includes("trình duyệt") ||
+      fullText.includes("nghỉ phép")
+    ) {
+      setSelectedDept("all");
+      setActiveSubTab("proposals");
+      const targetPropId = String(extractedCode || rawId || rawCode || "").trim();
+      if (targetPropId) {
+        setExternalOpenProposalId(`${targetPropId}|${Date.now()}`);
+      }
+      fetch("/api/storage?key=workspace_proposals", { headers: { "x-no-cache": "1" } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((j) => {
+          if (Array.isArray(j?.data)) {
+            setProposals(j.data);
+            try {
+              localStorage.setItem("workspace_proposals", JSON.stringify(j.data));
+            } catch {}
+          }
+        })
+        .catch(() => {});
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("workspace_open_task_detail");
+      }
+      return true;
+    }
 
     const findMatchingWorkflow = () => {
       if (!workflows || workflows.length === 0) return null;
@@ -3258,7 +3137,7 @@ export const UnifiedWorkspace: React.FC = () => {
       if (!isNaN(t)) return t;
     }
     // "HH:mm(:ss) DD/MM/YYYY" or "DD/MM/YYYY HH:mm"
-    const dmyTimeMatch = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4}).*?(\d{1,2}):(\d{2})/) || s.match(/(\d{1,2}):(\d{2}).*?(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const dmyTimeMatch = s.match(/(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4}).*?(\d{1,2}):(\d{2})/) || s.match(/(\d{1,2}):(\d{2}).*?(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
     if (dmyTimeMatch) {
       const isTimeFirst = s.indexOf(":") < s.indexOf("/");
       const dd = String(isTimeFirst ? dmyTimeMatch[3] : dmyTimeMatch[1]).padStart(2, "0");
@@ -3858,7 +3737,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
     const periodLabel =
       analyticsPeriod === "today"
-        ? `Hôm nay (${todayStr.slice(8, 10)}/${todayStr.slice(5, 7)}/${todayStr.slice(0, 4)})`
+        ? `Hôm nay (${todayStr.slice(8, 10)}-${todayStr.slice(5, 7)}-${todayStr.slice(0, 4)})`
         : analyticsPeriod === "week"
         ? `Tuần ${viewedWeek.weekNo}/${viewedWeek.year}`
         : analyticsPeriod === "month"
@@ -3923,7 +3802,7 @@ export const UnifiedWorkspace: React.FC = () => {
         type: "comment",
         role: rolePerspective !== "staff" ? "directive" : "comment",
         author: user?.name || currentStaffName || "Nhân viên",
-        time: new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+        time: formatVNDateTime(new Date()),
         text: taskReplyText.trim(),
         attachments: []
       });
@@ -4950,7 +4829,7 @@ export const UnifiedWorkspace: React.FC = () => {
         type: "comment",
         role: isDirective ? "directive" : "comment",
         author: user?.name || currentStaffName || "Nhân viên",
-        time: new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" }),
+        time: formatVNDateTime(new Date()),
         text,
         attachments: []
       });
@@ -5476,7 +5355,7 @@ export const UnifiedWorkspace: React.FC = () => {
         // Send Activity Notification to Manager/Department
         notifyActivity({
           title: "Báo Cáo Nhật Ký Ngày",
-          message: `${targetStaff} (${targetDept}) vừa nộp báo cáo Daily ngày ${new Date().toLocaleDateString('vi-VN')}.${issuesSummary ? ' Ghi nhận vướng mắc cần hỗ trợ!' : ''}`,
+          message: `${targetStaff} (${targetDept}) vừa nộp báo cáo Daily ngày ${formatVNDate(new Date())}.${issuesSummary ? ' Ghi nhận vướng mắc cần hỗ trợ!' : ''}`,
           type: issuesSummary ? "warning" : "info",
           category: "daily",
           sender: { name: targetStaff },
@@ -5573,7 +5452,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const allParticipants = Array.from(new Set([...rawActors, ...coList]));
     const hostName = rawActors[0] || currentStaffName || "Chủ trì";
     const dateStr = meetingObj?.date
-      ? `${String(meetingObj.date).slice(8, 10)}/${String(meetingObj.date).slice(5, 7)}/${String(meetingObj.date).slice(0, 4)}`
+      ? `${String(meetingObj.date).slice(8, 10)}-${String(meetingObj.date).slice(5, 7)}-${String(meetingObj.date).slice(0, 4)}`
       : (meetingObj?.day || "Tuần này");
     const dateLabel = meetingObj?.day ? `${meetingObj.day} (${dateStr})` : dateStr;
 
@@ -6705,19 +6584,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       if (typeof window !== "undefined") {
         localStorage.setItem("workspace_proposals", JSON.stringify(nextList));
       }
-      const res = await fetch("/api/storage?key=workspace_proposals", {
+      await fetch("/api/storage?key=workspace_proposals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(nextList)
       });
-      // lưu thất bại thì báo ngay: đề xuất chưa lên máy chủ thì người duyệt không thấy (chỉ có thông báo)
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        showToast(`Đề xuất CHƯA được lưu lên máy chủ: ${err?.error || `lỗi ${res.status}`}. Người duyệt sẽ không thấy đề xuất này.`, "error");
-      }
     } catch (err) {
       console.warn("Could not save proposals:", err);
-      showToast("Mất kết nối: đề xuất chưa được lưu lên máy chủ.", "error");
     }
   };
 
@@ -15511,16 +15384,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold cursor-pointer"
                 >
                   <option value="Liên Phòng Ban">🚀 Dự Án Liên Phòng Ban (Nhiều bộ phận phối hợp)</option>
-                  <option value="R&D">🧬 R&amp;D (Nghiên cứu &amp; Phát triển)</option>
-                  <option value="Sản Xuất">🏭 Sản Xuất (Kit &amp; Oligo)</option>
-                  <option value="QA/QC">🛡️ QA/QC (Đảm bảo &amp; Kiểm soát Chất lượng)</option>
-                  <option value="Kỹ Thuật Công Nghệ">⚙️ Kỹ Thuật - Công Nghệ (Thiết bị)</option>
-                  <option value="IT">💻 CNTT &amp; Chuyển Đổi Số (IT)</option>
-                  <option value="Application">🔬 Application (Ứng dụng &amp; Lab)</option>
-                  <option value="Kinh Doanh">💼 Kinh Doanh &amp; Marketing</option>
-                  <option value="Cung Ứng">🛒 Cung Ứng - Thu Mua</option>
+                  <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
+                  <option value="Application">🔬 Application (Kỹ thuật &amp; Lab)</option>
+                  <option value="Cung Ứng">🛒 Cung Ứng (Procurement)</option>
                   <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành</option>
-                  <option value="Pháp Chế">⚖️ Pháp Chế &amp; Đăng Ký (RA)</option>
+                  <option value="Pháp Chế">⚖️ Pháp Chế (Legal)</option>
                   <option value="Kế Toán">💰 Kế Toán - Tài Chính</option>
                   <option value="Ban Giám Đốc">🏆 Ban Giám Đốc</option>
                 </select>

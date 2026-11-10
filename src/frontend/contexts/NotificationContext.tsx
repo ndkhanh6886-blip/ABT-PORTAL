@@ -576,7 +576,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             }
         }
 
-        const extractedCodeMatch = `${title || ""} ${message || ""}`.match(/\b((?:WF|TASK|PR|PO|BG|SO|HD)-[A-Z0-9-]+)\b/i);
+        const extractedCodeMatch = `${title || ""} ${message || ""}`.match(/\b((?:WF|TASK|PR|PO|BG|SO|HD|DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
         const autoItemId = link?.itemId
             || (params.taskId ? String(params.taskId) : undefined)
             || (params.workflowId ? String(params.workflowId) : undefined)

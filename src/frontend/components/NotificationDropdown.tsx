@@ -1,5 +1,6 @@
 "use client";
 
+import { formatVNDate } from "@/backend/services/dates";
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
     Bell,
@@ -110,7 +111,7 @@ export const NotificationDropdown: React.FC = () => {
             if (diffHours < 24) return `${diffHours} giờ trước`;
             if (diffDays === 1) return "Hôm qua";
             if (diffDays < 7) return `${diffDays} ngày trước`;
-            return date.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh", day: "2-digit", month: "2-digit" });
+            return formatVNDate(date).slice(0, 5);
         } catch (e) {
             return "Vừa xong";
         }
@@ -140,30 +141,41 @@ export const NotificationDropdown: React.FC = () => {
         markAsRead(item.id);
 
         const combinedText = `${item.title || ""} ${item.message || ""}`;
-        const codeMatch = combinedText.match(/\b((?:WF|TASK|PR|PO|BG|SO|HD)-[A-Z0-9-]+)\b/i);
+        const codeMatch = combinedText.match(/\b((?:WF|TASK|PR|PO|BG|SO|HD|DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
         const extractedCode = codeMatch ? codeMatch[1] : "";
         const quoteMatch = combinedText.match(/"([^"]{3,120})"/) || combinedText.match(/\[([^\]]{3,120})\]/);
         const extractedTitle = quoteMatch ? quoteMatch[1] : "";
 
         const rawTab = item.link?.tab || "";
         const titleLower = combinedText.toLowerCase();
+        const isProposalNotif =
+            rawTab === "proposals" ||
+            item.link?.subTab === "proposals" ||
+            /^(?:DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-/i.test(extractedCode) ||
+            titleLower.includes("trình duyệt") ||
+            titleLower.includes("nghỉ phép");
         const isWorkflowNotif =
-            item.category === "workflow" ||
-            rawTab === "workflows" ||
-            item.link?.subTab === "workflows" ||
-            Boolean(item.workflowId || item.workflowCode) ||
-            extractedCode.toUpperCase().startsWith("WF-") ||
-            titleLower.includes("phối hợp") ||
-            titleLower.includes("quy trình") ||
-            titleLower.includes("stage-gate");
+            !isProposalNotif && (
+                item.category === "workflow" ||
+                rawTab === "workflows" ||
+                item.link?.subTab === "workflows" ||
+                Boolean(item.workflowId || item.workflowCode) ||
+                extractedCode.toUpperCase().startsWith("WF-") ||
+                titleLower.includes("phối hợp") ||
+                titleLower.includes("quy trình") ||
+                titleLower.includes("stage-gate")
+            );
 
         let targetTab = rawTab;
-        let targetSubTab = item.link?.subTab;
+        let targetSubTab = item.link?.subTab || (isProposalNotif ? "proposals" : undefined);
 
-        if (!targetTab || targetTab === "tasks" || targetTab === "workflows") {
-            if (targetTab === "tasks" || targetTab === "workflows") {
+        if (!targetTab || targetTab === "tasks" || targetTab === "workflows" || targetTab === "proposals") {
+            if (targetTab === "tasks" || targetTab === "workflows" || targetTab === "proposals") {
                 targetSubTab = targetTab;
                 targetTab = "workspace";
+            } else if (isProposalNotif) {
+                targetTab = "workspace";
+                targetSubTab = "proposals";
             } else if (item.category === "delivery" || item.category === "warehouse") {
                 targetTab = "warehouse";
             } else if (item.category === "order" || item.category === "quote") {
@@ -177,7 +189,7 @@ export const NotificationDropdown: React.FC = () => {
                 targetSubTab = isWorkflowNotif ? "workflows" : item.category === "plan" ? "plans" : item.category === "daily" ? "reports" : "tasks";
             }
         } else if (targetTab === "workspace" && !targetSubTab) {
-            targetSubTab = isWorkflowNotif ? "workflows" : "tasks";
+            targetSubTab = isProposalNotif ? "proposals" : isWorkflowNotif ? "workflows" : "tasks";
         }
 
         const resolvedItemId =
