@@ -3,6 +3,10 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { needsLeaveDates } from "@/frontend/utils/recoveredProposals";
 import {
+  isDatesMode, parseLeaveDays, normalizeLeaveDays, serializeLeaveDays, expandWeekdays, sumLeaveDays, isOnLeaveOn,
+  formatLeaveDays, weekdayOf, SESSION_LABEL, WEEKDAY_LABELS, type LeaveDay, type LeaveSession
+} from "@/frontend/utils/leaveDates";
+import {
   FileText,
   CheckCircle2,
   Clock,
@@ -1035,6 +1039,148 @@ export function ProposalsApprovalView({
     }));
   };
 
+  // ===== Đơn nghỉ theo các ngày cụ thể (vd thứ 6, thứ 7 hằng tuần) =====
+  const [repeatFrom, setRepeatFrom] = useState("");
+  const [repeatTo, setRepeatTo] = useState("");
+  const [repeatWeekdays, setRepeatWeekdays] = useState<number[]>([]);
+  const [repeatSession, setRepeatSession] = useState<LeaveSession>("FULL");
+  const [singleLeaveDate, setSingleLeaveDate] = useState("");
+
+  /** Ghi danh sách ngày vào đơn: fromDate / toDate = ngày đầu / cuối, totalDays = tổng (buổi = 0,5). */
+  const setLeaveDaysInForm = (days: LeaveDay[]) => {
+    const n = normalizeLeaveDays(days);
+    setFormState((prev) => ({
+      ...prev,
+      formValues: {
+        ...prev.formValues,
+        leaveMode: "DATES",
+        leaveDates: serializeLeaveDays(n),
+        fromDate: n[0]?.date || "",
+        toDate: n[n.length - 1]?.date || "",
+        totalDays: n.length ? String(sumLeaveDays(n)) : "",
+      },
+    }));
+  };
+
+  const switchLeaveMode = (mode: "RANGE" | "DATES") => {
+    if (mode === "DATES") {
+      const fv = formState.formValues || {};
+      setRepeatFrom(String(fv.fromDate || todayVN()).slice(0, 10));
+      setRepeatTo(String(fv.toDate || fv.fromDate || todayVN()).slice(0, 10));
+      setLeaveDaysInForm(parseLeaveDays({ ...fv, leaveMode: "DATES" }) || []);
+      return;
+    }
+    setFormState((prev) => {
+      const { leaveMode, leaveDates, ...rest } = prev.formValues || {};
+      void leaveMode; void leaveDates;
+      const fd = String(rest.fromDate || todayVN()).slice(0, 10);
+      const td = String(rest.toDate || fd).slice(0, 10);
+      const diff = td >= fd ? Math.round((new Date(td).getTime() - new Date(fd).getTime()) / 86400000) + 1 : 1;
+      return { ...prev, formValues: { ...rest, fromDate: fd, toDate: td, totalDays: String(Math.max(1, diff)) } };
+    });
+  };
+
+  const renderLeaveDatesEditor = () => {
+    const datesMode = isDatesMode(formState.formValues);
+    const days = parseLeaveDays(formState.formValues) || [];
+    const chip = (on: boolean) =>
+      `px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer transition-colors ${on
+        ? "bg-indigo-600 text-white border-indigo-600"
+        : "bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:border-indigo-400"}`;
+    return (
+      <div className="space-y-2.5 p-3 rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50/60 dark:bg-indigo-950/30">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Kiểu nghỉ:</span>
+          <button type="button" className={chip(!datesMode)} onClick={() => switchLeaveMode("RANGE")}>Khoảng liên tục</button>
+          <button type="button" className={chip(datesMode)} onClick={() => switchLeaveMode("DATES")}>Các ngày cụ thể (vd thứ 6, thứ 7 hằng tuần)</button>
+        </div>
+        {datesMode && (
+          <>
+            <div className="flex flex-wrap items-end gap-2">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-0.5">Lặp từ ngày</label>
+                <DateInputVN value={repeatFrom} onChange={(e) => setRepeatFrom(e.target.value)} className="w-32 px-2 py-1 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900" />
+              </div>
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-0.5">đến ngày</label>
+                <DateInputVN value={repeatTo} onChange={(e) => setRepeatTo(e.target.value)} className="w-32 px-2 py-1 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900" />
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {[1, 2, 3, 4, 5, 6, 0].map((wd) => (
+                  <button
+                    key={wd}
+                    type="button"
+                    className={chip(repeatWeekdays.includes(wd))}
+                    onClick={() => setRepeatWeekdays((prev) => (prev.includes(wd) ? prev.filter((x) => x !== wd) : [...prev, wd]))}
+                  >
+                    {WEEKDAY_LABELS[wd]}
+                  </button>
+                ))}
+              </div>
+              <select
+                value={repeatSession}
+                onChange={(e) => setRepeatSession(e.target.value as LeaveSession)}
+                className="px-2 py-1 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900"
+              >
+                {(["FULL", "AM", "PM"] as LeaveSession[]).map((s) => <option key={s} value={s}>{SESSION_LABEL[s]}</option>)}
+              </select>
+              <button
+                type="button"
+                onClick={() => {
+                  const add = expandWeekdays(repeatFrom, repeatTo, repeatWeekdays, repeatSession);
+                  if (add.length === 0) { showToast("Chọn khoảng ngày và ít nhất 1 thứ trong tuần", "warning"); return; }
+                  setLeaveDaysInForm([...days, ...add]);
+                  showToast(`Đã thêm ${add.length} ngày nghỉ`, "success");
+                }}
+                className="px-3 py-1 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+              >
+                + Thêm các ngày theo thứ
+              </button>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <div>
+                <label className="block text-[10px] font-bold text-slate-600 dark:text-slate-400 mb-0.5">Thêm 1 ngày lẻ</label>
+                <DateInputVN value={singleLeaveDate} onChange={(e) => setSingleLeaveDate(e.target.value)} className="w-32 px-2 py-1 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900" />
+              </div>
+              <button
+                type="button"
+                onClick={() => { if (singleLeaveDate) { setLeaveDaysInForm([...days, { date: singleLeaveDate, session: repeatSession }]); setSingleLeaveDate(""); } }}
+                className="px-3 py-1 rounded-lg text-xs font-bold border border-indigo-300 dark:border-indigo-700 text-indigo-700 dark:text-indigo-300 bg-white dark:bg-slate-900 cursor-pointer"
+              >
+                + Thêm ngày
+              </button>
+              {days.length > 0 && (
+                <button type="button" onClick={() => setLeaveDaysInForm([])} className="px-3 py-1 rounded-lg text-xs font-bold text-rose-600 cursor-pointer">
+                  Xóa hết
+                </button>
+              )}
+            </div>
+            <div className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+              Danh sách ngày nghỉ: {days.length} ngày · tổng <span className="text-indigo-700 dark:text-indigo-300">{sumLeaveDays(days)} ngày công</span>
+              {days.length > 0 && <span className="font-normal text-slate-500"> (từ {formatDayVN(days[0].date)} đến {formatDayVN(days[days.length - 1].date)})</span>}
+            </div>
+            <div className="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto">
+              {days.map((d) => (
+                <span key={d.date} className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-[11px]">
+                  <strong>{WEEKDAY_LABELS[weekdayOf(d.date)]} {formatDayVN(d.date)}</strong>
+                  <select
+                    value={d.session}
+                    onChange={(e) => setLeaveDaysInForm(days.map((x) => (x.date === d.date ? { ...x, session: e.target.value as LeaveSession } : x)))}
+                    className="bg-transparent text-[10px] border-0 p-0 cursor-pointer"
+                  >
+                    {(["FULL", "AM", "PM"] as LeaveSession[]).map((s) => <option key={s} value={s}>{SESSION_LABEL[s]}</option>)}
+                  </select>
+                  <button type="button" title="Bỏ ngày này" onClick={() => setLeaveDaysInForm(days.filter((x) => x.date !== d.date))} className="text-rose-500 font-bold cursor-pointer">×</button>
+                </span>
+              ))}
+              {days.length === 0 && <span className="text-[11px] text-slate-500">Chưa có ngày nào — chọn khoảng ngày + thứ trong tuần rồi bấm "Thêm các ngày theo thứ", hoặc thêm từng ngày.</span>}
+            </div>
+          </>
+        )}
+      </div>
+    );
+  };
+
   // Lưu hoặc Gửi duyệt Đề xuất
   const handleSaveProposal = async (submitMode: "DRAFT" | "PENDING") => {
     if (!formState.title.trim()) {
@@ -1043,6 +1189,10 @@ export function ProposalsApprovalView({
     }
     if (!formState.summaryReason.trim()) {
       showToast("Vui lòng nhập nội dung / lý do đề xuất", "warning");
+      return;
+    }
+    if (isDatesMode(formState.formValues) && (parseLeaveDays(formState.formValues) || []).length === 0) {
+      showToast("Đơn nghỉ theo các ngày cụ thể: vui lòng chọn ít nhất 1 ngày nghỉ", "warning");
       return;
     }
 
@@ -1526,7 +1676,12 @@ export function ProposalsApprovalView({
         const displayVal = f.type === "date" ? formatDayVN(val) : String(val);
         return `<tr><td style="padding:6px 10px;border:1px solid #cbd5e1;font-weight:600;width:36%;background:#f8fafc">${f.label}</td><td style="padding:6px 10px;border:1px solid #cbd5e1">${displayVal}</td></tr>`;
       })
-      .join("");
+      .join("") + (() => {
+        const ld = parseLeaveDays(p.formValues || {});
+        return ld
+          ? `<tr><td style="padding:6px 10px;border:1px solid #cbd5e1;font-weight:600;width:36%;background:#f8fafc">Các ngày nghỉ cụ thể (${ld.length} ngày)</td><td style="padding:6px 10px;border:1px solid #cbd5e1">${formatLeaveDays(ld, 200)}</td></tr>`
+          : "";
+      })();
 
     const lineItemsHtml =
       Array.isArray(p.lineItems) && p.lineItems.length > 0
@@ -1796,8 +1951,23 @@ export function ProposalsApprovalView({
     String(p.proposalCode || "").toUpperCase().startsWith("DXNP") ||
     String(p.templateName || "").toLowerCase().includes("nghỉ phép");
 
-  const getLeaveDatesAndDays = (p: ProposalItem) => {
+  /** `month` ("YYYY-MM"): với đơn "các ngày cụ thể" chỉ tính các ngày trong tháng đó. */
+  const getLeaveDatesAndDays = (p: ProposalItem, month?: string) => {
     const fv = p.formValues || {};
+    const leaveDays = parseLeaveDays(fv);
+    if (leaveDays) {
+      const inMonth = month ? leaveDays.filter((d) => d.date.startsWith(month)) : leaveDays;
+      return {
+        fDate: leaveDays[0]?.date || "",
+        tDate: leaveDays[leaveDays.length - 1]?.date || "",
+        days: sumLeaveDays(leaveDays, month),
+        leaveType: String(fv.leaveType || fv.hr_sub_type || "Nghỉ phép năm (Có hưởng lương)"),
+        handoverStaff: String(fv.handoverStaff || fv.handover_person || "—"),
+        leaveDays,
+        rangeLabel: formatLeaveDays(inMonth),
+        isOffOn: (iso: string) => isOnLeaveOn(leaveDays, iso),
+      };
+    }
     const fDate = String(fv.fromDate || fv.from_date || p.neededByDate || String(p.createdAt || "").slice(0, 10)).slice(0, 10);
     const tDate = String(fv.toDate || fv.to_date || fDate).slice(0, 10);
     let days = Number(String(fv.totalDays || fv.total_days || "").replace(",", "."));
@@ -1811,8 +1981,14 @@ export function ProposalsApprovalView({
     }
     const leaveType = String(fv.leaveType || fv.hr_sub_type || "Nghỉ phép năm (Có hưởng lương)");
     const handoverStaff = String(fv.handoverStaff || fv.handover_person || "—");
-    return { fDate, tDate, days, leaveType, handoverStaff };
+    return {
+      fDate, tDate, days, leaveType, handoverStaff,
+      leaveDays: null as LeaveDay[] | null,
+      rangeLabel: "",
+      isOffOn: (iso: string) => Boolean(fDate) && fDate <= iso && tDate >= iso,
+    };
   };
+  const leaveMonthArg = () => (leaveMonthFilter && leaveMonthFilter !== "all" ? leaveMonthFilter : undefined);
 
   // Đơn nghỉ phục hồi từ thông báo, chưa có ngày nghỉ thật: không tính vào chấm công, liệt kê riêng để bổ sung
   const leaveProposalsMissingDates = useMemo(
@@ -1826,14 +2002,15 @@ export function ProposalsApprovalView({
         if (!isLeaveProposalItem(p)) return false;
         if (p.status === "WITHDRAWN" || p.status === "DRAFT") return false;
         if (needsLeaveDates(p)) return false;
-        const { fDate, tDate, leaveType } = getLeaveDatesAndDays(p);
+        const { fDate, tDate, leaveType, leaveDays } = getLeaveDatesAndDays(p);
         if (leaveMonthFilter && leaveMonthFilter !== "all") {
           const mStart = `${leaveMonthFilter}-01`;
           const mEnd = `${leaveMonthFilter}-31`;
-          const overlapsMonth =
-            fDate.startsWith(leaveMonthFilter) ||
-            tDate.startsWith(leaveMonthFilter) ||
-            (fDate <= mEnd && tDate >= mStart);
+          const overlapsMonth = leaveDays
+            ? leaveDays.some((d) => d.date.startsWith(leaveMonthFilter))
+            : fDate.startsWith(leaveMonthFilter) ||
+              tDate.startsWith(leaveMonthFilter) ||
+              (fDate <= mEnd && tDate >= mStart);
           if (!overlapsMonth) return false;
         }
         if (leaveDeptFilter !== "all" && String(p.requesterDept || "").toLowerCase() !== leaveDeptFilter.toLowerCase()) {
@@ -1874,8 +2051,7 @@ export function ProposalsApprovalView({
       if (!isLeaveProposalItem(p)) return false;
       if (p.status === "REJECTED" || p.status === "WITHDRAWN" || p.status === "DRAFT") return false;
       if (needsLeaveDates(p)) return false;
-      const { fDate, tDate } = getLeaveDatesAndDays(p);
-      return Boolean(fDate) && fDate <= todayIsoStr && tDate >= todayIsoStr;
+      return getLeaveDatesAndDays(p).isOffOn(todayIsoStr);
     });
   }, [proposals, todayIsoStr]);
 
@@ -1900,7 +2076,7 @@ export function ProposalsApprovalView({
     monthlyLeaveProposals.forEach((p) => {
       if (p.status === "REJECTED") return;
       const key = String(p.requesterName || "Nhân sự").trim();
-      const { fDate, tDate, days, leaveType, handoverStaff } = getLeaveDatesAndDays(p);
+      const { fDate, tDate, days, leaveType, handoverStaff, rangeLabel } = getLeaveDatesAndDays(p, leaveMonthArg());
       const existing = map.get(key) || {
         staffName: key,
         dept: p.requesterDept || "—",
@@ -1941,7 +2117,7 @@ export function ProposalsApprovalView({
         fromDate: fDate,
         toDate: tDate,
         days,
-        type: leaveType,
+        type: rangeLabel ? `${leaveType} — các ngày: ${rangeLabel}` : leaveType,
         handover: handoverStaff,
         status: p.status
       });
@@ -2028,7 +2204,9 @@ export function ProposalsApprovalView({
     );
 
     monthlyLeaveProposals.forEach((p, idx) => {
-      const { fDate, tDate, days, leaveType, handoverStaff } = getLeaveDatesAndDays(p);
+      const ld = getLeaveDatesAndDays(p, leaveMonthArg());
+      const { fDate, tDate, days, handoverStaff } = ld;
+      const leaveType = ld.rangeLabel ? `${ld.leaveType} — các ngày: ${ld.rangeLabel}` : ld.leaveType;
       const stMeta = getStatusMeta(p.status);
       const lastApprover =
         (p.steps || [])
@@ -2831,10 +3009,10 @@ export function ProposalsApprovalView({
                   </thead>
                   <tbody className="divide-y divide-slate-200/80 dark:divide-slate-800">
                     {monthlyLeaveProposals.map((p) => {
-                      const { fDate, tDate, days, leaveType, handoverStaff } = getLeaveDatesAndDays(p);
+                      const { fDate, tDate, days, leaveType, handoverStaff, rangeLabel, isOffOn } = getLeaveDatesAndDays(p, leaveMonthArg());
                       const statusMeta = getStatusMeta(p.status);
                       const waitingMe = isProposalWaitingForUser(p, currentStaffName, userDept, isDirector, isManager);
-                      const isOffToday = fDate <= todayIsoStr && tDate >= todayIsoStr && p.status !== "REJECTED";
+                      const isOffToday = isOffOn(todayIsoStr) && p.status !== "REJECTED";
                       return (
                         <tr key={p.id} className="hover:bg-teal-50/40 dark:hover:bg-slate-800/60 transition-colors">
                           <td className="py-2.5 px-3">
@@ -2854,6 +3032,11 @@ export function ProposalsApprovalView({
                             <div className="font-bold text-slate-900 dark:text-white">
                               {formatDayVN(fDate)} → {formatDayVN(tDate)}
                             </div>
+                            {rangeLabel && (
+                              <div className="text-[10px] text-indigo-700 dark:text-indigo-300 font-semibold max-w-[260px]" title={rangeLabel}>
+                                📅 Các ngày nghỉ{leaveMonthArg() ? " trong tháng" : ""}: {rangeLabel}
+                              </div>
+                            )}
                             {isOffToday && (
                               <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded text-[10px] font-black bg-rose-600 text-white">
                                 🏖️ Đang nghỉ hôm nay
@@ -3344,8 +3527,11 @@ export function ProposalsApprovalView({
               <div className="text-xs font-extrabold text-slate-800 dark:text-slate-200 uppercase">
                 2. Thông tin nghiệp vụ chi tiết ({activeTemplate.name}):
               </div>
+              {activeTemplate.id === "tmpl_leave_request" && renderLeaveDatesEditor()}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {activeTemplate.fields.map((field) => (
+                {activeTemplate.fields
+                  .filter((f) => !(isDatesMode(formState.formValues) && (f.key === "fromDate" || f.key === "toDate" || f.key === "totalDays")))
+                  .map((field) => (
                   <div key={field.key} className={field.type === "textarea" ? "sm:col-span-2" : ""}>
                     <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
                       {field.label} {field.required && <span className="text-rose-500">*</span>}
@@ -3873,6 +4059,16 @@ export function ProposalsApprovalView({
                   </div>
                 </div>
 
+                {(() => {
+                  const ld = parseLeaveDays(p.formValues || {});
+                  if (!ld) return null;
+                  return (
+                    <div className="p-2.5 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 text-xs">
+                      <div className="text-[10px] font-bold text-indigo-500 uppercase">Các ngày nghỉ cụ thể ({ld.length} ngày · tổng {sumLeaveDays(ld)} ngày công)</div>
+                      <div className="font-semibold text-slate-900 dark:text-white mt-0.5">{formatLeaveDays(ld, 200)}</div>
+                    </div>
+                  );
+                })()}
                 {/* Các trường thông tin động */}
                 {tmpl && tmpl.fields.some((f) => p.formValues?.[f.key]) && (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2">
