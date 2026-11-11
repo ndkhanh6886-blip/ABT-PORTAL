@@ -13,7 +13,8 @@
  */
 
 import React, { useMemo, useState } from "react";
-import { CheckSquare, Square, PackageCheck, Eye, AlertTriangle } from "lucide-react";
+import { CheckSquare, Square, PackageCheck, Eye, AlertTriangle, FileSpreadsheet } from "lucide-react";
+import * as XLSX from "xlsx";
 import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
 import { DateInputVN } from "@/frontend/components/DateInputVN";
 import { toVNDateString, formatVNDate } from "@/backend/services/dates";
@@ -386,6 +387,190 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
 
   const pendingCount = lines.filter(l => !l.poInfo.hasPO).length;
 
+  // Xuất Excel danh sách dòng PR theo phân loại: Chưa tạo PO / Đã chuyển PO / Tất cả (Tách Sheet)
+  const exportLinesExcel = (mode: "unconverted" | "converted" | "all") => {
+    const q = debouncedSearch.trim().toLowerCase();
+    const baseLines = lines
+      .filter(l => {
+        if (supplierFilter === "all") return true;
+        const sid = effectiveSupplierId(l);
+        return supplierFilter === "none" ? !sid : sid === supplierFilter;
+      })
+      .filter(l => !q || [l.code, l.name, l.prKey, l.requester, l.dept, l.poInfo.poCode].some(v => String(v || "").toLowerCase().includes(q)));
+
+    const header = [
+      "STT",
+      "Mã PR",
+      "Người đề xuất",
+      "Bộ phận",
+      "Ưu tiên",
+      "Hạn cần",
+      "Mã hàng (SKU)",
+      "Tên hàng",
+      "Quy cách",
+      "ĐVT",
+      "SL đề xuất",
+      "NCC gợi ý / PO",
+      "Giá mua dự kiến",
+      "Thành tiền",
+      "Phân loại PO",
+      "Mã PO liên kết",
+      "Lý do / Ghi chú PR",
+    ];
+    const colsWidth = [
+      { wch: 6 }, { wch: 15 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 12 },
+      { wch: 16 }, { wch: 42 }, { wch: 22 }, { wch: 9 }, { wch: 11 }, { wch: 24 },
+      { wch: 15 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 36 },
+    ];
+
+    const toRow = (l: Line, stt: number) => {
+      const sid = effectiveSupplierId(l);
+      const supName = l.poInfo.hasPO
+        ? (l.poInfo.linkedPO ? supShort(supplierById.get(String(l.poInfo.linkedPO.supplier_id)) || { name: l.poInfo.linkedPO.supplier_name }) : "—")
+        : (sid ? supShort(supplierById.get(sid)) : "Chưa có NCC");
+      const price = sid ? priceFrom(l.code, sid) : 0;
+      const total = price > 0 ? price * l.qty : 0;
+      return [
+        stt,
+        l.prKey,
+        l.requester,
+        l.dept,
+        PRIORITY_LABEL[l.priority] || l.priority || "Bình thường",
+        formatVNDate(l.dueDate, ""),
+        l.code,
+        l.name,
+        l.spec,
+        l.unit,
+        l.qty,
+        supName,
+        price,
+        total,
+        l.poInfo.hasPO ? "Đã chuyển thành PO" : "Chưa tạo PO",
+        l.poInfo.poCode || "",
+        l.pr?.description || l.pr?.title || "",
+      ];
+    };
+
+    const unRows = [header, ...baseLines.filter(l => !l.poInfo.hasPO).map((l, i) => toRow(l, i + 1))];
+    const convRows = [header, ...baseLines.filter(l => l.poInfo.hasPO).map((l, i) => toRow(l, i + 1))];
+    const allRows = [header, ...baseLines.map((l, i) => toRow(l, i + 1))];
+
+    const wb = XLSX.utils.book_new();
+    const todayStr = toVNDateString(new Date());
+    if (mode === "unconverted") {
+      const ws = XLSX.utils.aoa_to_sheet(unRows);
+      ws["!cols"] = colsWidth;
+      XLSX.utils.book_append_sheet(wb, ws, "PR Chưa tạo PO");
+      XLSX.writeFile(wb, `PR_Mat_Hang_Chua_Tao_PO_${todayStr}.xlsx`);
+      return;
+    }
+    if (mode === "converted") {
+      const ws = XLSX.utils.aoa_to_sheet(convRows);
+      ws["!cols"] = colsWidth;
+      XLSX.utils.book_append_sheet(wb, ws, "PR Đã chuyển PO");
+      XLSX.writeFile(wb, `PR_Mat_Hang_Da_Chuyen_PO_${todayStr}.xlsx`);
+      return;
+    }
+    const wsUn = XLSX.utils.aoa_to_sheet(unRows);
+    wsUn["!cols"] = colsWidth;
+    const wsConv = XLSX.utils.aoa_to_sheet(convRows);
+    wsConv["!cols"] = colsWidth;
+    const wsAll = XLSX.utils.aoa_to_sheet(allRows);
+    wsAll["!cols"] = colsWidth;
+    XLSX.utils.book_append_sheet(wb, wsUn, "1. Chưa tạo PO");
+    XLSX.utils.book_append_sheet(wb, wsConv, "2. Đã chuyển PO");
+    XLSX.utils.book_append_sheet(wb, wsAll, "3. Tất cả dòng PR");
+    XLSX.writeFile(wb, `PR_Theo_Mat_Hang_Phan_Loai_${todayStr}.xlsx`);
+  };
+
+  // Xuất PO Nháp & Chi tiết PR (Không gộp) cho các dòng đang tick chọn mà KHÔNG tạo PO trên hệ thống
+  const exportSelectedDraftPOExcel = () => {
+    if (selectedLines.length === 0) return;
+    const wb = XLSX.utils.book_new();
+    const todayStr = toVNDateString(new Date());
+    const supLabel = poSupplier ? supShort(poSupplier) : "NCC";
+
+    const prHeader = [
+      "STT",
+      "Mã PR Nguồn",
+      "Người đề xuất",
+      "Bộ phận",
+      "Hạn cần hàng",
+      "Mã hàng (SKU)",
+      "Tên sản phẩm",
+      "Quy cách",
+      "ĐVT",
+      "SL cần",
+      "Đơn giá dự kiến",
+      "Thành tiền",
+      "NCC dự kiến",
+      "Ghi chú PR",
+    ];
+    const prRows: any[][] = [prHeader];
+    let totalRaw = 0;
+    selectedLines.forEach((l, i) => {
+      const price = poSupplierId ? priceFrom(l.code, poSupplierId) : 0;
+      const lineTotal = l.qty * price;
+      totalRaw += lineTotal;
+      prRows.push([
+        i + 1,
+        l.prKey,
+        l.requester,
+        l.dept,
+        formatVNDate(l.dueDate, ""),
+        l.code,
+        l.name,
+        l.spec,
+        l.unit,
+        l.qty,
+        price,
+        lineTotal,
+        poSupplier ? poSupplier.name : supLabel,
+        l.pr?.description || l.pr?.title || "",
+      ]);
+    });
+    prRows.push(["", "", "", "", "", "", "TỔNG CỘNG (CHI TIẾT PR KHÔNG GỘP)", "", "", selectedLines.reduce((s, x) => s + x.qty, 0), "", totalRaw, "", ""]);
+    const wsPR = XLSX.utils.aoa_to_sheet(prRows);
+    wsPR["!cols"] = [
+      { wch: 6 }, { wch: 15 }, { wch: 20 }, { wch: 16 }, { wch: 12 }, { wch: 16 },
+      { wch: 42 }, { wch: 22 }, { wch: 9 }, { wch: 11 }, { wch: 15 }, { wch: 18 }, { wch: 26 }, { wch: 34 },
+    ];
+    XLSX.utils.book_append_sheet(wb, wsPR, "Chi tiết PR (Không gộp)");
+
+    const draftRows: any[][] = [
+      ["ĐƠN ĐẶT MUA HÀNG NHÁP (DRAFT PO - CHƯA LẬP PO TRÊN HỆ THỐNG)"],
+      ["Nhà cung cấp:", poSupplier?.name || supLabel, "", "Ngày xuất nháp:", formatVNDate(todayStr, todayStr)],
+      ["Hạn giao dự kiến:", formatVNDate(expectedDelivery, expectedDelivery), "", "Người lập:", actorName],
+      ["Ghi chú:", notes || "Xuất nháp từ danh sách đề xuất mua hàng (PR)"],
+      [],
+      ["STT", "Mã hàng (SKU)", "Tên sản phẩm", "Quy cách", "ĐVT", "Tổng SL đặt", "Đơn giá dự kiến", "Thành tiền", "Danh sách PR nguồn"],
+    ];
+    poItems.forEach((it, idx) => {
+      const price = Number(it.unit_price) || 0;
+      const lineTotal = (Number(it.quantity) || 0) * price;
+      draftRows.push([
+        idx + 1,
+        it.product_code,
+        it.product_name,
+        it.specification || "",
+        it.unit,
+        it.quantity,
+        price,
+        lineTotal,
+        it.source_pr_code,
+      ]);
+    });
+    draftRows.push(["", "", "TỔNG CỘNG PO NHÁP", "", "", poItems.reduce((s, x) => s + (Number(x.quantity) || 0), 0), "", poTotal, ""]);
+    const wsDraft = XLSX.utils.aoa_to_sheet(draftRows);
+    wsDraft["!cols"] = [
+      { wch: 6 }, { wch: 18 }, { wch: 44 }, { wch: 24 }, { wch: 10 }, { wch: 13 }, { wch: 16 }, { wch: 18 }, { wch: 32 },
+    ];
+    XLSX.utils.book_append_sheet(wb, wsDraft, "PO Nháp (Theo mã hàng)");
+
+    const safeSup = supLabel.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 20);
+    XLSX.writeFile(wb, `PO_Nhap_Va_Chi_Tiet_PR_${safeSup}_${todayStr}.xlsx`);
+  };
+
   return (
     <div className="space-y-3">
       {/* Bộ lọc */}
@@ -412,6 +597,37 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
         </label>
         <span className="text-xs text-slate-500 dark:text-slate-400 ml-auto">
           {pendingCount} dòng chờ lập PO • đang hiển thị {visible.length}
+        </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => exportLinesExcel("unconverted")}
+            title="Xuất Excel các dòng mặt hàng PR CHƯA tạo PO"
+            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 flex items-center gap-1 cursor-pointer"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-amber-600" />
+            <span>Chưa tạo PO</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => exportLinesExcel("converted")}
+            title="Xuất Excel các dòng mặt hàng PR ĐÃ chuyển thành PO"
+            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1 cursor-pointer"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Đã chuyển PO</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => exportLinesExcel("all")}
+            title="Xuất Excel toàn bộ dòng mặt hàng PR tách 3 Sheet (Chưa tạo PO / Đã chuyển PO / Tất cả)"
+            className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white flex items-center gap-1 cursor-pointer"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Tất cả (Tách Sheet)</span>
+          </button>
+        </div>
+        <span className="hidden">
         </span>
       </div>
 
@@ -559,6 +775,17 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
           />
           <button type="button" onClick={clearSelection} className="px-3 py-1.5 rounded-xl text-xs font-semibold border border-slate-200 dark:border-slate-700 cursor-pointer">
             Bỏ chọn
+          </button>
+          <button
+            type="button"
+            onClick={exportSelectedDraftPOExcel}
+            title="Xuất các dòng đã chọn ra file Excel (Sheet 1: Chi tiết PR không gộp + Sheet 2: PO Nháp) mà KHÔNG tạo PO trên hệ thống"
+            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white cursor-pointer"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5" />
+            <span>Xuất Excel PO Nháp / PR (Không tạo PO)</span>
+          </button>
+          <button type="button" className="hidden">
           </button>
           <button
             type="button"

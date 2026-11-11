@@ -1851,6 +1851,281 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     XLSX.writeFile(wb, `Danh_sach_PO_${todayVN()}.xlsx`);
   };
 
+  // ---- Xuất Excel danh sách PR (kèm từng mã hàng) theo phân loại: Chưa tạo PO / Đã chuyển thành PO / Tất cả
+  const exportPRListExcel = (prList: any[], mode: "all" | "unconverted" | "converted" = "all") => {
+    const header = [
+      "STT",
+      "Mã PR",
+      "Tiêu đề đề xuất",
+      "Bộ phận yêu cầu",
+      "Người đề xuất",
+      "Mức ưu tiên",
+      "Hạn cần hàng",
+      "Mã hàng (SKU)",
+      "Tên mặt hàng",
+      "Quy cách",
+      "ĐVT",
+      "SL đề xuất",
+      "Đơn giá dự kiến / PO",
+      "Thành tiền",
+      "Nhà cung cấp gợi ý / PO",
+      "Phân loại PO",
+      "Mã PO liên kết",
+      "Trạng thái PO",
+      "Lý do / Ghi chú PR"
+    ];
+    const colsWidth = [
+      { wch: 6 }, { wch: 15 }, { wch: 34 }, { wch: 16 }, { wch: 20 }, { wch: 13 }, { wch: 12 },
+      { wch: 16 }, { wch: 42 }, { wch: 22 }, { wch: 9 }, { wch: 11 }, { wch: 16 }, { wch: 18 },
+      { wch: 28 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 36 }
+    ];
+
+    const unconvertedRows: any[][] = [header];
+    const convertedRows: any[][] = [header];
+    const allRows: any[][] = [header];
+
+    let sttUn = 0;
+    let sttConv = 0;
+    let sttAll = 0;
+
+    prList.forEach((pr) => {
+      const prSt = String(pr.status || "").toUpperCase();
+      const isCancelled = prSt === "CANCELLED" || prSt === "REJECTED";
+      const items = getPRItems(pr);
+      const priorityLabel = pr.priority === "URGENT" ? "Khẩn cấp" : pr.priority === "HIGH" ? "Ưu tiên cao" : "Bình thường";
+      const dueStr = formatDate(pr.due_date);
+
+      items.forEach((it: any, idx: number) => {
+        const itemPO = getItemPOInfo(pr, it, idx);
+        const hasPO = Boolean(it.po_code || itemPO.hasPO);
+        const poCode = it.po_code || itemPO.poCode || "";
+        const linkedPO = itemPO.linkedPO;
+        const resolved = resolveItemSupplierAndPrice(it);
+        const qty = Number(it.quantity) || 1;
+        const poItemPrice = linkedPO && Array.isArray(linkedPO.items)
+          ? Number(linkedPO.items.find((x: any) => String(x?.product_code || "").toUpperCase() === String(it?.product_code || "").toUpperCase())?.unit_price) || 0
+          : 0;
+        const unitPrice = poItemPrice || resolved.unitPrice || Number(it.estimated_price) || 0;
+        const lineTotal = roundPrice3(qty * unitPrice);
+        const supplierLabel = linkedPO?.supplier_name || resolved.supplierName || "";
+        const poStatusLabel = isCancelled
+          ? "PR Đã hủy"
+          : hasPO
+          ? (linkedPO ? (PO_STATUS_CONFIG[linkedPO.status]?.label || linkedPO.status) : "Đã lên PO")
+          : "Chưa tạo PO";
+        const categoryLabel = isCancelled ? "PR Đã hủy" : hasPO ? "Đã chuyển thành PO" : "Chưa tạo PO";
+        const codeDisplay = it.is_missing_catalog_product ? "" : (it.product_code || "");
+
+        const rowData = (stt: number) => [
+          stt,
+          pr.workflow_code || "",
+          pr.title || "",
+          pr.requester_dept || "",
+          pr.requester_name || "",
+          priorityLabel,
+          dueStr,
+          codeDisplay,
+          cleanItemName(it.product_name || ""),
+          it.specification || resolved.specification || "",
+          it.unit || resolved.unit || "Hộp",
+          qty,
+          unitPrice,
+          lineTotal,
+          supplierLabel,
+          categoryLabel,
+          poCode,
+          poStatusLabel,
+          pr.description || ""
+        ];
+
+        allRows.push(rowData(++sttAll));
+        if (!isCancelled) {
+          if (hasPO) {
+            convertedRows.push(rowData(++sttConv));
+          } else {
+            unconvertedRows.push(rowData(++sttUn));
+          }
+        }
+      });
+    });
+
+    const wb = XLSX.utils.book_new();
+    if (mode === "unconverted") {
+      const ws = XLSX.utils.aoa_to_sheet(unconvertedRows);
+      ws["!cols"] = colsWidth;
+      XLSX.utils.book_append_sheet(wb, ws, "PR Chưa tạo PO");
+      XLSX.writeFile(wb, `PR_Chua_Tao_PO_${todayVN()}.xlsx`);
+      return;
+    }
+    if (mode === "converted") {
+      const ws = XLSX.utils.aoa_to_sheet(convertedRows);
+      ws["!cols"] = colsWidth;
+      XLSX.utils.book_append_sheet(wb, ws, "PR Đã chuyển PO");
+      XLSX.writeFile(wb, `PR_Da_Chuyen_PO_${todayVN()}.xlsx`);
+      return;
+    }
+    const wsUn = XLSX.utils.aoa_to_sheet(unconvertedRows);
+    wsUn["!cols"] = colsWidth;
+    const wsConv = XLSX.utils.aoa_to_sheet(convertedRows);
+    wsConv["!cols"] = colsWidth;
+    const wsAll = XLSX.utils.aoa_to_sheet(allRows);
+    wsAll["!cols"] = colsWidth;
+    XLSX.utils.book_append_sheet(wb, wsUn, "1. Chưa tạo PO");
+    XLSX.utils.book_append_sheet(wb, wsConv, "2. Đã chuyển PO");
+    XLSX.utils.book_append_sheet(wb, wsAll, "3. Tất cả dòng PR");
+    XLSX.writeFile(wb, `Danh_sach_PR_Theo_Phan_Loai_${todayVN()}.xlsx`);
+  };
+
+  // ---- Xuất Excel PO Nháp / Danh sách PR từ cửa sổ "Gom PR Lên PO Tổng" mà KHÔNG tạo PO tổng trên hệ thống
+  const handleExportConsolidateDraftExcel = () => {
+    const pendingPRs = purchaseRequests.filter(isPRConsolidatable);
+    const targetSupplier = suppliers.find((s) => String(s.id) === String(consolidateSupplierId)) || suppliers[0];
+
+    const candidateRows: Array<{ pr: any; prKey: string; it: any; idx: number; itemKey: string; resolved: any; isAlreadyPo: boolean; poCode: string }> = [];
+    pendingPRs.forEach((pr) => {
+      const prKey = pr.workflow_code || String(pr.id);
+      const items = getPRItems(pr);
+      items.forEach((it: any, idx: number) => {
+        if (it.is_missing_catalog_product || !it.product_code || it.product_code === "TBR-ITEM") return;
+        const itemKey = `${prKey}___${idx}`;
+        const resolved = resolveItemSupplierAndPrice(it);
+        const itemPOInfo = getItemPOInfo(pr, it, idx);
+        const isAlreadyPo = Boolean(it.po_code || itemPOInfo.hasPO);
+        candidateRows.push({
+          pr,
+          prKey,
+          it,
+          idx,
+          itemKey,
+          resolved,
+          isAlreadyPo,
+          poCode: it.po_code || itemPOInfo.poCode || ""
+        });
+      });
+    });
+
+    const hasSelection = selectedItemKeysForConsolidate.length > 0;
+    const activeRows = hasSelection
+      ? candidateRows.filter((r) => selectedItemKeysForConsolidate.includes(r.itemKey))
+      : candidateRows.filter((r) => !r.isAlreadyPo);
+
+    if (activeRows.length === 0) {
+      alert("Không có mặt hàng PR nào để xuất Excel.");
+      return;
+    }
+
+    // Sheet 1: Chi tiết từng PR (KHÔNG gộp thành PO tổng - giữ nguyên từng dòng PR riêng biệt)
+    const unmergedHeader = [
+      "STT",
+      "Mã PR Nguồn",
+      "Mã Sản Xuất (SKU)",
+      "Tên Sản Phẩm Đặt Mua",
+      "Quy Cách",
+      "ĐVT",
+      "SL Cần",
+      "Đơn Giá Dự Kiến (VNĐ)",
+      "Thành Tiền Dự Kiến (VNĐ)",
+      "Nhà Cung Cấp Phù Hợp",
+      "Người Đề Xuất",
+      "Bộ Phận",
+      "Hạn Cần Hàng",
+      "Trạng Thái PO",
+      "Lý Do / Ghi Chú PR"
+    ];
+    const unmergedAoA: any[][] = [unmergedHeader];
+    let totalUnmergedAmt = 0;
+    let totalUnmergedQty = 0;
+
+    activeRows.forEach((r, i) => {
+      const qty = Number(r.it.quantity) || 1;
+      const price = r.resolved.unitPrice || Number(r.it.estimated_price) || 0;
+      const lineTotal = roundPrice3(qty * price);
+      totalUnmergedQty += qty;
+      totalUnmergedAmt += lineTotal;
+      unmergedAoA.push([
+        i + 1,
+        r.pr.workflow_code || r.prKey,
+        r.it.product_code || "",
+        cleanItemName(r.it.product_name || ""),
+        r.it.specification || r.resolved.specification || "",
+        r.it.unit || r.resolved.unit || "Hộp",
+        qty,
+        price,
+        lineTotal,
+        r.resolved.supplierName || targetSupplier?.name || "",
+        r.pr.requester_name || "",
+        r.pr.requester_dept || "",
+        formatDate(r.pr.due_date),
+        r.isAlreadyPo ? `Đã tạo PO (${r.poCode})` : "Chưa tạo PO",
+        r.pr.description || ""
+      ]);
+    });
+    unmergedAoA.push(
+      [],
+      ["", "", "", "TỔNG CỘNG", "", "", totalUnmergedQty, "", totalUnmergedAmt, "", "", "", "", "", ""]
+    );
+
+    // Sheet 2: PO Nháp (Gộp theo mã hàng để tham khảo / gửi NCC duyệt nháp trước khi tạo PO thật)
+    const groupedMap = new Map<string, { code: string; name: string; spec: string; unit: string; qty: number; price: number; prs: string[]; supplier: string }>();
+    activeRows.forEach((r) => {
+      const code = String(r.it.product_code || "").trim();
+      const unit = String(r.it.unit || r.resolved.unit || "Hộp").trim();
+      const spec = String(r.it.specification || r.resolved.specification || "").trim();
+      const gk = `${code.toUpperCase()}|${unit.toLowerCase()}|${spec.toLowerCase()}`;
+      const qty = Number(r.it.quantity) || 1;
+      const price = r.resolved.unitPrice || Number(r.it.estimated_price) || 0;
+      const existing = groupedMap.get(gk);
+      if (existing) {
+        existing.qty += qty;
+        if (!existing.prs.includes(r.prKey)) existing.prs.push(r.prKey);
+      } else {
+        groupedMap.set(gk, {
+          code,
+          name: cleanItemName(r.it.product_name || ""),
+          spec,
+          unit,
+          qty,
+          price,
+          prs: [r.prKey],
+          supplier: r.resolved.supplierName || targetSupplier?.name || ""
+        });
+      }
+    });
+
+    const draftAoA: any[][] = [
+      ["ĐƠN ĐẶT MUA HÀNG NHÁP (PO NHÁP - CHƯA LƯU HỆ THỐNG)", ""],
+      ["Nhà cung cấp dự kiến", targetSupplier?.name || ""],
+      ["Ngày xuất nháp", formatDate(todayVN())],
+      ["Hạn giao mong muốn", formatDate(consolidateExpectedDelivery)],
+      ["Ghi chú", consolidateNotes || `PO nháp kết xuất từ ${activeRows.length} dòng PR`],
+      [],
+      ["STT", "Mã Sản Xuất (SKU)", "Tên Sản Phẩm Đặt Mua", "Quy Cách", "ĐVT", "Tổng SL Cần", "Đơn Giá Dự Kiến", "Thành Tiền Dự Kiến", "NCC Gợi Ý", "Mã PR Nguồn"]
+    ];
+    let draftTotal = 0;
+    Array.from(groupedMap.values()).forEach((g, idx) => {
+      const sub = roundPrice3(g.qty * g.price);
+      draftTotal += sub;
+      draftAoA.push([idx + 1, g.code, g.name, g.spec, g.unit, g.qty, g.price, sub, g.supplier, g.prs.join(", ")]);
+    });
+    draftAoA.push([], ["", "", "", "", "", "", "TỔNG GIÁ TRỊ DỰ KIẾN", draftTotal, "", ""]);
+
+    const wsUnmerged = XLSX.utils.aoa_to_sheet(unmergedAoA);
+    wsUnmerged["!cols"] = [
+      { wch: 6 }, { wch: 16 }, { wch: 18 }, { wch: 42 }, { wch: 22 }, { wch: 9 }, { wch: 10 },
+      { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 20 }, { wch: 15 }, { wch: 12 }, { wch: 16 }, { wch: 35 }
+    ];
+    const wsDraft = XLSX.utils.aoa_to_sheet(draftAoA);
+    wsDraft["!cols"] = [
+      { wch: 6 }, { wch: 18 }, { wch: 44 }, { wch: 22 }, { wch: 9 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 28 }, { wch: 26 }
+    ];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, wsUnmerged, "Chi tiết PR (Không gộp)");
+    XLSX.utils.book_append_sheet(wb, wsDraft, "PO Nháp (Theo mã hàng)");
+    const supSlug = String(targetSupplier?.short_name || targetSupplier?.supplier_code || "PR").replace(/[^a-zA-Z0-9_-]/g, "_");
+    XLSX.writeFile(wb, `PO_Nhap_Va_Chi_Tiet_PR_${supSlug}_${todayVN()}.xlsx`);
+  };
+
   // ---- Goods receipt of a PO: lot / expiry / MFG / storage / shelf / QC / received quantity per line, can be split into several lots
   const [receiveTarget, setReceiveTarget] = useState<any>(null);
   const [receiveLines, setReceiveLines] = useState<any[]>([]);
@@ -4781,6 +5056,50 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   ⛔ Từ chối / Huỷ ({prCounts.closed})
                 </button>
               )}
+            </div>
+
+            {/* Xuất Excel PR theo phân loại */}
+            <div className="flex flex-wrap items-center gap-1.5 ml-auto">
+              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 mr-0.5">Xuất Excel PR (kèm mã hàng):</span>
+              <button
+                type="button"
+                onClick={() => {
+                  const q = normSearch(prSearch);
+                  const list = purchaseRequests.filter(pr => !q || normSearch(`${pr.workflow_code || ""} ${pr.title || ""} ${pr.product_info || ""} ${pr.requester_name || ""} ${pr.description || ""}`).includes(q));
+                  exportPRListExcel(list, "unconverted");
+                }}
+                title="Xuất Excel các dòng PR (kèm mã hàng) CHƯA tạo PO"
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/60 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 border border-amber-300 dark:border-amber-700 flex items-center gap-1 cursor-pointer transition-all"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" />
+                <span>Chưa tạo PO</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const q = normSearch(prSearch);
+                  const list = purchaseRequests.filter(pr => !q || normSearch(`${pr.workflow_code || ""} ${pr.title || ""} ${pr.product_info || ""} ${pr.requester_name || ""} ${pr.description || ""}`).includes(q));
+                  exportPRListExcel(list, "converted");
+                }}
+                title="Xuất Excel các dòng PR (kèm mã hàng) ĐÃ chuyển thành PO"
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700 flex items-center gap-1 cursor-pointer transition-all"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                <span>Đã chuyển PO</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const q = normSearch(prSearch);
+                  const list = purchaseRequests.filter(pr => !q || normSearch(`${pr.workflow_code || ""} ${pr.title || ""} ${pr.product_info || ""} ${pr.requester_name || ""} ${pr.description || ""}`).includes(q));
+                  exportPRListExcel(list, "all");
+                }}
+                title="Xuất Excel toàn bộ dòng PR tách 3 Sheet: 1. Chưa tạo PO | 2. Đã chuyển PO | 3. Tất cả"
+                className="px-2.5 py-1.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-2xs flex items-center gap-1 cursor-pointer transition-all"
+              >
+                <FileSpreadsheet className="w-3.5 h-3.5" />
+                <span>Tất cả (Tách Sheet)</span>
+              </button>
             </div>
           </div>
 
@@ -9630,13 +9949,26 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
               <span className="text-xs text-slate-500">
                 Sau khi tạo PO tổng, các dòng sản phẩm được chọn sẽ tự động gắn mã PO này. PR chuyển thành <strong className="text-indigo-600 font-mono">CONVERTED</strong>.
               </span>
-              <div className="flex items-center gap-2.5 ml-auto">
+              <div className="flex items-center gap-2.5 ml-auto flex-wrap">
                 <button
                   type="button"
                   onClick={() => setIsConsolidateModalOpen(false)}
                   className="px-4 py-2.5 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
                 >
                   Hủy
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExportConsolidateDraftExcel}
+                  title="Xuất các PR / sản phẩm ra file Excel (Sheet 1: Chi tiết từng PR không gộp + Sheet 2: PO Nháp) mà KHÔNG tạo PO tổng trên hệ thống"
+                  className="px-4 py-2.5 rounded-xl text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white shadow-sm flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                >
+                  <FileSpreadsheet className="w-4 h-4 shrink-0" />
+                  <span>
+                    {selectedItemKeysForConsolidate.length > 0
+                      ? `Xuất Excel PO Nháp / PR (${selectedItemKeysForConsolidate.length} SP - Không tạo PO)`
+                      : "Xuất Excel PO Nháp / PR (Không tạo PO)"}
+                  </span>
                 </button>
                 <button
                   type="button"
