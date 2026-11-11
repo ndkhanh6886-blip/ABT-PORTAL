@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo } from "react";
+import { needsLeaveDates } from "@/frontend/utils/recoveredProposals";
 import {
   FileText,
   CheckCircle2,
@@ -1807,11 +1808,18 @@ export function ProposalsApprovalView({
     return { fDate, tDate, days, leaveType, handoverStaff };
   };
 
+  // Đơn nghỉ phục hồi từ thông báo, chưa có ngày nghỉ thật: không tính vào chấm công, liệt kê riêng để bổ sung
+  const leaveProposalsMissingDates = useMemo(
+    () => (proposals || []).filter((p) => isLeaveProposalItem(p) && needsLeaveDates(p) && p.status !== "REJECTED" && p.status !== "WITHDRAWN"),
+    [proposals]
+  );
+
   const monthlyLeaveProposals = useMemo(() => {
     return (proposals || [])
       .filter((p) => {
         if (!isLeaveProposalItem(p)) return false;
         if (p.status === "WITHDRAWN" || p.status === "DRAFT") return false;
+        if (needsLeaveDates(p)) return false;
         const { fDate, tDate, leaveType } = getLeaveDatesAndDays(p);
         if (leaveMonthFilter && leaveMonthFilter !== "all") {
           const mStart = `${leaveMonthFilter}-01`;
@@ -1859,8 +1867,9 @@ export function ProposalsApprovalView({
     return (proposals || []).filter((p) => {
       if (!isLeaveProposalItem(p)) return false;
       if (p.status === "REJECTED" || p.status === "WITHDRAWN" || p.status === "DRAFT") return false;
+      if (needsLeaveDates(p)) return false;
       const { fDate, tDate } = getLeaveDatesAndDays(p);
-      return fDate <= todayIsoStr && tDate >= todayIsoStr;
+      return Boolean(fDate) && fDate <= todayIsoStr && tDate >= todayIsoStr;
     });
   }, [proposals, todayIsoStr]);
 
@@ -2675,6 +2684,31 @@ export function ProposalsApprovalView({
               </div>
             </div>
           </div>
+
+          {leaveProposalsMissingDates.length > 0 && (
+            <div className="rounded-2xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/40 p-4 space-y-2">
+              <div className="text-xs sm:text-sm font-black text-amber-900 dark:text-amber-200">
+                ⚠ {leaveProposalsMissingDates.length} đơn nghỉ được hệ thống "phục hồi từ thông báo" — THIẾU NGÀY NGHỈ THẬT, chưa tính vào chấm công
+              </div>
+              <p className="text-[11px] text-amber-800 dark:text-amber-300">
+                Các đơn này được dựng lại tự động khi đơn gốc không còn trong danh sách; ngày nghỉ trước đây bị gán nhầm bằng ngày dựng lại.
+                Người xin nghỉ vui lòng lập lại đơn đúng ngày nghỉ, người duyệt từ chối / thu hồi đơn phục hồi tương ứng.
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {leaveProposalsMissingDates.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => setSelectedProposal(p)}
+                    className="px-2 py-1 rounded-lg bg-white dark:bg-slate-900 border border-amber-300 dark:border-amber-700 text-[11px] font-bold text-amber-900 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/50 cursor-pointer"
+                    title={String(p.summaryReason || "")}
+                  >
+                    {p.proposalCode} · {p.requesterName}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* BẢNG 1: BẢNG TỔNG HỢP CHẤM CÔNG NGHỈ PHÉP CUỐI THÁNG THEO NHÂN VIÊN (DÀNH CHO KẾ TOÁN) */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 space-y-3">

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { sanitizeProposalList } from "@/frontend/utils/recoveredProposals";
 import {
   Bell,
   LayoutDashboard,
@@ -2335,14 +2336,14 @@ export const UnifiedWorkspace: React.FC = () => {
         // Load persistent enterprise proposals & approvals
         try {
           if (Array.isArray(batchStorageData.workspace_proposals)) {
-            setProposals(batchStorageData.workspace_proposals);
+            setProposals(sanitizeProposalList(batchStorageData.workspace_proposals));
           } else {
             const localProp = typeof window !== "undefined" ? localStorage.getItem("workspace_proposals") : null;
-            if (localProp) setProposals(JSON.parse(localProp));
+            if (localProp) setProposals(sanitizeProposalList(JSON.parse(localProp)));
           }
         } catch (err) {
           const localProp = typeof window !== "undefined" ? localStorage.getItem("workspace_proposals") : null;
-          if (localProp) setProposals(JSON.parse(localProp));
+          if (localProp) setProposals(sanitizeProposalList(JSON.parse(localProp)));
         }
 
         // Bỏ chặn hiển thị giao diện ngay lập tức trước khi tải bổ sung danh mục NCC từ /api/procurement
@@ -2714,121 +2715,12 @@ export const UnifiedWorkspace: React.FC = () => {
     });
   }, []);
 
-  const reconcileProposalsWithNotifications = useCallback((baseList: ProposalItem[], extraNotif?: any): { list: ProposalItem[]; added: boolean } => {
-    const safeBase = Array.isArray(baseList) ? [...baseList] : [];
-    const knownCodes = new Set(safeBase.map((p) => String(p?.proposalCode || p?.id || "").trim().toUpperCase()).filter(Boolean));
-    let rawNotifs: any[] = Array.isArray(filteredNotifications) ? [...filteredNotifications] : [];
-    if (typeof window !== "undefined") {
-      try {
-        const storedNotifs = localStorage.getItem("tbr_activity_notifications");
-        if (storedNotifs) {
-          const parsed = JSON.parse(storedNotifs);
-          if (Array.isArray(parsed)) rawNotifs = [...rawNotifs, ...parsed];
-        }
-      } catch {}
-    }
-    if (extraNotif) {
-      rawNotifs = [extraNotif.notification || extraNotif, ...rawNotifs];
-    }
-
-    let added = false;
-    for (const n of rawNotifs) {
-      if (!n || typeof n !== "object") continue;
-      const nTitle = String(n.title || "").trim();
-      const nMsg = String(n.message || "").trim();
-      if (!nTitle.toLowerCase().includes("trình duyệt") && !nMsg.toLowerCase().includes("vừa trình duyệt")) continue;
-
-      const codeMatch = `${nTitle} ${nMsg} ${n.link?.itemId || ""}`.match(/\b((?:DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
-      if (!codeMatch) continue;
-      const code = codeMatch[1].toUpperCase();
-      if (knownCodes.has(code)) continue;
-
-      const reqMatch = nMsg.match(/^([^()]+?)\s*\(([^)]+)\)\s*vừa trình duyệt/i);
-      const requesterName = String(reqMatch ? reqMatch[1] : n.sender?.name || "Nhân sự").trim();
-      const requesterDept = normalizeWorkspaceDept(reqMatch ? reqMatch[2] : n.targetDept || "Kinh Doanh") || "Kinh Doanh";
-      const titleMatch = nMsg.match(/"([^"]+)"/);
-      const propTitle = titleMatch ? titleMatch[1].trim() : nTitle.replace(/^.*?\]\s*:?\s*/, "").trim() || `Đề xuất ${code}`;
-      const waitMatch = nMsg.match(/Đang chờ\s+(.+?)\s+phê duyệt/i);
-      const approverName = String(
-        waitMatch ? waitMatch[1] : (Array.isArray(n.targetEmployeeNames) && n.targetEmployeeNames[0]) || currentStaffName
-      ).trim();
-
-      const dateInTitleMatch = `${propTitle} ${nMsg}`.match(/(\d{2})\/(\d{2})\/(\d{4})/);
-      const neededIso = dateInTitleMatch
-        ? `${dateInTitleMatch[3]}-${dateInTitleMatch[2]}-${dateInTitleMatch[1]}`
-        : todayVN();
-
-      const isLeave = code.startsWith("DXNP") || propTitle.toLowerCase().includes("nghỉ phép");
-      const isApprovedLater = rawNotifs.some((other) => {
-        const ot = String(other?.title || "");
-        return ot.toUpperCase().includes(code) && (ot.toLowerCase().includes("đã phê duyệt") || ot.toLowerCase().includes("hoàn tất"));
-      });
-      const isRejectedLater = rawNotifs.some((other) => {
-        const ot = String(other?.title || "");
-        return ot.toUpperCase().includes(code) && ot.toLowerCase().includes("từ chối");
-      });
-
-      const createdStr = String(n.timestamp || nowVNDateTime());
-      const reconstructed: ProposalItem = {
-        id: `prop-rec-${code}`,
-        proposalCode: code,
-        templateId: isLeave ? "tmpl_leave_request" : "tmpl_general_request",
-        templateName: isLeave ? "Đơn Xin Nghỉ Phép / Công Tác / Làm Việc Từ Xa" : "Tờ Trình / Đề Xuất Nội Bộ",
-        category: isLeave ? "HR_ADMIN" : "TECHNICAL_OPS",
-        title: propTitle,
-        priority: n.type === "warning" ? "URGENT" : "NORMAL",
-        requesterName,
-        requesterDept,
-        createdAt: createdStr,
-        updatedAt: createdStr,
-        neededByDate: neededIso,
-        totalAmount: 0,
-        currency: "VND",
-        summaryReason: isLeave ? `${propTitle} (Phục hồi tự động từ thông báo trình duyệt)` : propTitle,
-        formValues: isLeave
-          ? {
-              leaveType: "Nghỉ phép năm (hưởng nguyên lương - AL)",
-              fromDate: neededIso,
-              toDate: neededIso,
-              totalDays: "1",
-              shiftSession: "Cả ngày (08:00 - 17:30)",
-              handoverStaff: ""
-            }
-          : {},
-        lineItems: [],
-        steps: [
-          {
-            stepOrder: 1,
-            stepName: isLeave ? "Trưởng bộ phận / Kế toán phê duyệt" : "Cấp thẩm quyền phê duyệt",
-            roleType: "DEPT_HEAD",
-            dept: normalizeWorkspaceDept(n.targetDept || "") || userDept || "Kế Toán",
-            approverName: approverName || currentStaffName,
-            status: isApprovedLater ? "APPROVED" : isRejectedLater ? "REJECTED" : "PENDING_NOW",
-            slaHours: 8
-          }
-        ],
-        currentStepIndex: 0,
-        status: isApprovedLater ? "APPROVED" : isRejectedLater ? "REJECTED" : "PENDING",
-        followers: Array.isArray(n.targetEmployeeNames) ? n.targetEmployeeNames : [approverName].filter(Boolean),
-        attachments: [],
-        comments: [],
-        auditLogs: [
-          {
-            time: createdStr,
-            actor: requesterName,
-            action: "Gửi trình duyệt",
-            detail: nMsg || `Trình duyệt ${code}`
-          }
-        ]
-      };
-
-      safeBase.unshift(reconstructed);
-      knownCodes.add(code);
-      added = true;
-    }
-
-    return { list: safeBase, added };
-  }, [filteredNotifications, currentStaffName, userDept]);
+  // Trước đây hàm này DỰNG LẠI đơn từ nội dung thông báo "… vừa trình duyệt DXNP-…" khi danh sách chưa có mã đó và ghi
+  // đè cả danh sách đơn chung. Thông báo không có ngày nghỉ nên đơn dựng lại bị gán ngày nghỉ = ngày dựng lại (6 đơn DXNP
+  // thành "nghỉ 11/11", sai bảng chấm công). Không dựng đơn từ thông báo nữa: chỉ đánh dấu các đơn phục hồi cũ thiếu ngày.
+  const reconcileProposalsWithNotifications = useCallback((baseList: ProposalItem[], _extraNotif?: any): { list: ProposalItem[]; added: boolean } => {
+    return { list: sanitizeProposalList<ProposalItem>(baseList), added: false };
+  }, []);
 
   // Deep-link opener for notifications ("Đi tới xem ↗") -> opens specific Task or Workflow Detail Modal
   const openWorkspaceItemFromNotification = useCallback((rawPayload: any): boolean => {
