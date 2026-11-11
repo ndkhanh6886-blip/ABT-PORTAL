@@ -4325,14 +4325,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [openDeliveryLotDropdownIndex, setOpenDeliveryLotDropdownIndex] = useState<number | null>(null);
     const [deliveryLotSearchQueries, setDeliveryLotSearchQueries] = useState<Record<number, string>>({});
     const [selectedViewDeliverySlip, setSelectedViewDeliverySlip] = useState<any>(null);
-    // "In có giá" nhớ theo trình duyệt cho các lần in sau
-    const [slipPrintWithPrice, setSlipPrintWithPriceState] = useState<boolean>(() => {
-        if (typeof window === "undefined") return false;
-        try { return localStorage.getItem("tbr_slip_print_with_price") === "1"; } catch { return false; }
-    });
+    // Mặc định Phiếu giao hàng CÓ GIÁ (true); khi cần in phiếu không giá mới tích chọn "In không giá"
+    const [slipPrintWithPrice, setSlipPrintWithPriceState] = useState<boolean>(true);
     const setSlipPrintWithPrice = (v: boolean) => {
         setSlipPrintWithPriceState(v);
-        try { localStorage.setItem("tbr_slip_print_with_price", v ? "1" : "0"); } catch {}
     };
     const [slipPrintLandscape, setSlipPrintLandscape] = useState(false);
 
@@ -4637,7 +4633,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 </body>
 </html>`;
 
-        writeSafePrintDocument(win, htmlDoc, { title: `PGH ${slip.id || ""}` });
+        writeSafePrintDocument(win, htmlDoc, {
+            title: `PGH ${slip.id || ""}`,
+            orientation: slipPrintLandscape ? "landscape" : "portrait"
+        });
     };
     const [isViewDeliverySlipModalOpen, setIsViewDeliverySlipModalOpen] = useState(false);
     // Luồng giao hàng mới: Lập phiếu giao (toàn bộ / từng đợt) -> NVKD xác nhận đã giao theo từng phiếu
@@ -15537,6 +15536,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }
         const editSlip = opts?.slip || null;
         deliveryEditSlipRef.current = editSlip;
+        setSlipPrintWithPrice(true);
 
         if (!editSlip && fo) {
             const hasZero = fo.hasZeroPriceItems || (fo.items && fo.items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0));
@@ -34534,19 +34534,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             )}
                             <label
                                 className={`flex items-center gap-2 px-3 py-2 rounded-lg border font-bold text-xs cursor-pointer select-none transition-colors ${
-                                    slipPrintWithPrice
-                                        ? "bg-emerald-50 dark:bg-emerald-500/20 border-emerald-400 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-300"
+                                    !slipPrintWithPrice
+                                        ? "bg-amber-50 dark:bg-amber-500/20 border-amber-400 dark:border-amber-500/50 text-amber-800 dark:text-amber-300"
                                         : "bg-slate-100 dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800"
                                 }`}
-                                title="Chọn hiển thị hoặc ẩn cột Đơn giá & Thành tiền trên Phiếu giao hàng khi Xem trước / In"
+                                title="Mặc định Phiếu giao hàng CÓ HIỂN THỊ GIÁ. Tích chọn ô này nếu muốn ẩn Đơn giá & Thành tiền (In không giá)"
                             >
                                 <input
                                     type="checkbox"
-                                    checked={slipPrintWithPrice}
-                                    onChange={(e) => setSlipPrintWithPrice(e.target.checked)}
-                                    className="w-4 h-4 accent-emerald-500 cursor-pointer"
+                                    checked={!slipPrintWithPrice}
+                                    onChange={(e) => setSlipPrintWithPrice(!e.target.checked)}
+                                    className="w-4 h-4 accent-amber-500 cursor-pointer"
                                 />
-                                <span>💰 Hiển thị giá trên phiếu (In có giá)</span>
+                                <span>In không giá (Ẩn đơn giá)</span>
+                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${slipPrintWithPrice ? "bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300" : "bg-amber-200 dark:bg-amber-950 text-amber-900 dark:text-amber-300"}`}>
+                                    {slipPrintWithPrice ? "Đang hiện giá (Mặc định)" : "Đang ẩn giá"}
+                                </span>
                             </label>
                             <button
                                 type="button"
@@ -34595,7 +34598,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     color: #000000 !important;
                                     height: auto !important;
                                     min-height: 0 !important;
-                                    overflow: visible !important;
+                                    max-height: 100% !important;
+                                    overflow: hidden !important;
+                                }
+                                body > *:not(:has(#printable-delivery-slip)) {
+                                    display: none !important;
                                 }
                                 body * {
                                     visibility: hidden !important;
@@ -34615,6 +34622,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     background: #ffffff !important;
                                     background-color: #ffffff !important;
                                     color: #000000 !important;
+                                    page-break-after: avoid !important;
                                 }
                             }
                         ` }} />
@@ -34624,19 +34632,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <div className="flex items-center gap-3 flex-wrap">
                                 <label
                                     className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border font-bold cursor-pointer select-none transition-all ${
-                                        slipPrintWithPrice
-                                            ? "bg-emerald-50 border-emerald-400 text-emerald-800 shadow-2xs"
+                                        !slipPrintWithPrice
+                                            ? "bg-amber-50 border-amber-400 text-amber-900 shadow-2xs"
                                             : "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
                                     }`}
-                                    title="Bật/tắt hiển thị cột Đơn giá & Thành tiền trên Phiếu giao hàng"
+                                    title="Mặc định Phiếu giao hàng CÓ HIỂN THỊ GIÁ. Tích chọn ô này nếu muốn ẩn Đơn giá & Thành tiền (In không giá)"
                                 >
                                     <input
                                         type="checkbox"
-                                        checked={slipPrintWithPrice}
-                                        onChange={(e) => setSlipPrintWithPrice(e.target.checked)}
-                                        className="w-4 h-4 accent-emerald-600 cursor-pointer"
+                                        checked={!slipPrintWithPrice}
+                                        onChange={(e) => setSlipPrintWithPrice(!e.target.checked)}
+                                        className="w-4 h-4 accent-amber-600 cursor-pointer"
                                     />
-                                    <span>💰 Hiển thị Đơn giá &amp; Thành tiền (In có giá)</span>
+                                    <span>In không giá (Ẩn đơn giá &amp; thành tiền)</span>
+                                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${slipPrintWithPrice ? "bg-emerald-100 text-emerald-800" : "bg-amber-200 text-amber-900"}`}>
+                                        {slipPrintWithPrice ? "Mặc định: Có giá" : "Đang ẩn giá"}
+                                    </span>
                                 </label>
                                 <select
                                     value={slipPrintLandscape ? "landscape" : "portrait"}
@@ -34944,9 +34955,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 })()}
                             </div>
                             <div className="flex items-center gap-2 flex-wrap">
-                                <label className="flex items-center gap-1 text-xs font-semibold text-slate-700 cursor-pointer select-none" title="In kèm đơn giá và thành tiền">
-                                    <input type="checkbox" checked={slipPrintWithPrice} onChange={(e) => setSlipPrintWithPrice(e.target.checked)} className="w-3.5 h-3.5 accent-indigo-600" />
-                                    In có giá
+                                <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer select-none" title="Mặc định Phiếu giao hàng có giá; tích chọn ô này nếu muốn in không giá">
+                                    <input type="checkbox" checked={!slipPrintWithPrice} onChange={(e) => setSlipPrintWithPrice(!e.target.checked)} className="w-3.5 h-3.5 accent-amber-600" />
+                                    In không giá
                                 </label>
                                 <select
                                     value={slipPrintLandscape ? "landscape" : "portrait"}
