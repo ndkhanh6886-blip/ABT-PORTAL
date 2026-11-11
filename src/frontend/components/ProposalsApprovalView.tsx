@@ -860,8 +860,14 @@ export function ProposalsApprovalView({
   const generateProposalCode = (tmpl: ProposalTemplate) => {
     const year = new Date().getFullYear();
     const prefix = tmpl.codePrefix || "DX";
-    const count = (proposals || []).filter((p) => String(p.proposalCode || "").startsWith(`${prefix}-${year}`)).length + 1;
-    return `${prefix}-${year}-${String(count).padStart(3, "0")}`;
+    // Số lớn nhất đang dùng + 1 (trước đây "số đơn + 1": danh sách thiếu đơn / đã xóa đơn là sinh mã trùng, vd 3 đơn DXNP-2026-007).
+    // Máy chủ vẫn kiểm tra lần cuối và cấp lại mã nếu trùng với đơn người khác vừa lập.
+    const re = new RegExp("^" + prefix + "-" + year + "-([0-9]+)$", "i");
+    const maxSeq = (proposals || []).reduce((m, p) => {
+      const mm = re.exec(String(p.proposalCode || "").trim());
+      return mm ? Math.max(m, Number(mm[1])) : m;
+    }, 0);
+    return `${prefix}-${year}-${String(maxSeq + 1).padStart(3, "0")}`;
   };
 
   const openCreateProposalModal = (tmplId?: string) => {

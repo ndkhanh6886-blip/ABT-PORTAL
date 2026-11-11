@@ -7,6 +7,7 @@ import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { CATALOG_KEY, readCatalog, catalogVersion, applyCatalogPatch, replaceCatalog } from "@/backend/services/catalogStore";
 import { itemIdentity } from "@/backend/services/storagePatch";
+import { PROTECTED_PROPOSAL_KEY, limitProposalDeletes, keepMissingProposals, dedupeProposalCodes } from "@/backend/services/proposalStoreGuard";
 import type { AuthorizedUser } from "@/backend/services/authz";
 import { syncCatalogSuppliersAndProducts } from "@/backend/services/supplierCatalogSync";
 
@@ -229,11 +230,26 @@ export async function POST(request: NextRequest) {
         const cur = await c.query("SELECT data, version FROM app_storage WHERE key = $1 FOR UPDATE", [key]);
         const current = cur.rows[0]?.data ?? null;
         const patch = body.patch as StoragePatch;
+        let droppedDeletes = 0;
         if (patch.kind === "array") {
           patch.upserts = await enforceApprovalGuards(key, current, patch.upserts || [], me);
           if (hideCost) patch.upserts = keepStoredCosts(current, patch.upserts);
+          // Danh sách đơn từ: không cho một lần lưu xóa hàng loạt đơn (trình duyệt có danh sách sai đã xóa sạch đơn thật)
+          if (key === PROTECTED_PROPOSAL_KEY) droppedDeletes = limitProposalDeletes(patch);
         }
         const next = applyStoragePatch(current, patch);
+        let recoded: Array<[string, string, string]> = [];
+        if (key === PROTECTED_PROPOSAL_KEY && Array.isArray(next)) {
+          const existingIds = new Set((Array.isArray(current) ? current : []).map((p: any) => String(itemIdentity(p))));
+          recoded = dedupeProposalCodes(next, existingIds, current);
+        }
+        if (droppedDeletes > 0 || recoded.length > 0) {
+          await logAudit(
+            "GUARD", "STORAGE",
+            `${key}: ${droppedDeletes > 0 ? `chặn lệnh xóa ${droppedDeletes} đơn trong một lần lưu. ` : ""}${recoded.map(([a, b]) => `cấp lại mã ${a} -> ${b}`).join(", ")}`,
+            me.username, me.full_name
+          ).catch(() => {});
+        }
         const up = await c.query(
           `INSERT INTO app_storage (key, data, version, updated_at)
            VALUES ($1, $2, 1, now())
@@ -254,6 +270,24 @@ export async function POST(request: NextRequest) {
 
     let data = isEnvelope ? body.data : body;
     if (hideCost) return forbiddenResponse("Không thể ghi đè toàn bộ danh mục có giá vốn.");
+    if (Array.isArray(data)) {
+      const cur = await query("SELECT data FROM app_storage WHERE key = $1", [key]);
+      if (key === PROTECTED_PROPOSAL_KEY) {
+        // Ghi đè cả danh sách đơn từ không được làm mất đơn đang có, và không để trùng mã
+        const curList = cur.rows[0]?.data ?? null;
+        const { list, kept } = keepMissingProposals(curList, data);
+        const existingIds = new Set((Array.isArray(curList) ? curList : []).map((p: any) => String(itemIdentity(p))));
+        const recoded = dedupeProposalCodes(list, existingIds, curList);
+        data = list;
+        if (kept > 0 || recoded.length > 0) {
+          await logAudit(
+            "GUARD", "STORAGE",
+            `${key}: ${kept > 0 ? `giữ lại ${kept} đơn bị thiếu trong lần ghi đè. ` : ""}${recoded.map(([a, b]) => `cấp lại mã ${a} -> ${b}`).join(", ")}`,
+            me.username, me.full_name
+          ).catch(() => {});
+        }
+      }
+    }
     if (data === undefined) {
       return NextResponse.json({ error: "Data is required" }, { status: 400 });
     }
