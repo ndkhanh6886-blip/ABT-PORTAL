@@ -4054,15 +4054,20 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     };
     /** So sánh điều kiện bảo quản theo phần nhiệt độ (bỏ phần chú thích trong ngoặc). */
     const storageKey = (v: any) => String(v || "").replace(/\(.*$/, "").replace(/\s+/g, "").toLowerCase();
-    /** Đơn giá dòng phiếu giao khi in: giá lưu trên phiếu, thiếu thì lấy giá của dòng SO. */
+    /** Đơn giá dòng phiếu giao khi in: giữ đúng 0đ nếu dòng SO/phiếu là dòng 0đ (không ghi giá / hàng tặng), tránh lấy nhầm giá của dòng có giá cùng mã SKU hoặc giá danh mục. */
     const slipLinePrice = (it: any): number => {
+        if (it?.isGift || it?.is_gift || String(it?.lineGroupKey || "").includes("__gift")) return 0;
         const own = Number(it?.unitPrice ?? it?.price ?? 0);
         if (own > 0) return own;
         const oc = String(selectedViewDeliverySlip?.orderCode || "").trim();
         const ord: any = oc ? factoryOrders.find((o: any) => o.id === oc || o.order_code === oc) : null;
         const code = String(it?.productCode || "").trim();
-        const line: any = (ord?.items || []).find((x: any) => String(x.productCode || x.product_code || "").trim() === code);
-        return Number(line?.unitPrice ?? line?.price ?? 0) || 0;
+        const matchingLines = (ord?.items || []).filter((x: any) => String(x.productCode || x.product_code || "").trim() === code);
+        if (matchingLines.length === 0) return 0;
+        // Nếu trên SO có bất kỳ dòng nào của mã này không ghi giá (0đ) thì dòng 0đ trên phiếu giao phải giữ nguyên 0đ
+        if (matchingLines.some((x: any) => Number(x?.unitPrice ?? x?.price ?? 0) <= 0)) return 0;
+        if (it?.unitPrice !== undefined && it?.unitPrice !== null) return 0;
+        return Number(matchingLines[0]?.unitPrice ?? matchingLines[0]?.price ?? 0) || 0;
     };
 
     const [commercialPage, setCommercialPage] = useState<number>(1);
@@ -4362,7 +4367,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const seqStr = String(itemSequence(it) || "").trim();
             const soNoteStr = String(it.soNote || "").trim();
             const noteStr = String(it.notes || "").trim();
-            const uPrice = Number(it.unitPrice ?? it.price ?? 0);
+            const uPrice = slipLinePrice(it);
             let codeKey: string;
             if (it.lineGroupKey) {
                 codeKey = String(it.lineGroupKey);
@@ -4433,8 +4438,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 <td class="c lot">${lotsHtml}</td>
                 <td class="c mono">${expHtml}</td>
                 <td class="c qty">${escHtml(it.quantity)}</td>
-                ${slipPrintWithPrice ? `<td class="r mono">${unitPriceVal.toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>` : ""}
-                ${slipPrintWithPrice ? `<td class="r mono b">${lineTotalVal.toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>` : ""}
+                ${slipPrintWithPrice ? `<td class="r mono">${unitPriceVal > 0 ? unitPriceVal.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) : "-"}</td>` : ""}
+                ${slipPrintWithPrice ? `<td class="r mono b">${unitPriceVal > 0 ? lineTotalVal.toLocaleString("vi-VN", { maximumFractionDigits: 0 }) : "-"}</td>` : ""}
                 <td class="c sub">${escHtml(it.notesList?.length > 0 ? it.notesList.join("; ") : (it.notes || "-"))}</td>
             </tr>${kitHtml}`;
         }).join("");
@@ -15654,7 +15659,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         selectedLotAvail: matchedChosenLot ? (Number(matchedChosenLot.available_qty ?? matchedChosenLot.quantity_on_hand) || 0) : undefined,
                         selectedLotProductCode: matchedChosenLot?.product_code || undefined,
                         needsInvoice: sIt?.needsInvoice !== undefined ? sIt.needsInvoice : (it.needsInvoice !== false),
-                        unitPrice: sIt?.unitPrice ?? it.unitPrice ?? it.price ?? prod?.price ?? 0,
+                        isGift: isGiftItem,
+                        unitPrice: isGiftItem ? 0 : (Number(sIt?.unitPrice ?? it.unitPrice ?? it.price ?? 0) || 0),
                         vat: resolvedVat,
                         vatRate: resolvedVat,
                         isManualLot: false,
@@ -15690,7 +15696,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     selectedLotAvail: matchedChosenLot ? (Number(matchedChosenLot.available_qty ?? matchedChosenLot.quantity_on_hand) || 0) : undefined,
                     selectedLotProductCode: matchedChosenLot?.product_code || undefined,
                     needsInvoice: it.needsInvoice !== false,
-                    unitPrice: it.unitPrice ?? it.price ?? prod?.price ?? 0,
+                    isGift: isGiftItem,
+                    unitPrice: isGiftItem ? 0 : (Number(it.unitPrice ?? it.price ?? 0) || 0),
                     vat: resolvedVat,
                     vatRate: resolvedVat,
                     isManualLot: false,
@@ -17235,7 +17242,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const previewItems = deliveryItems
             .map(it => {
                 const code = getItemCode(it);
-                const isSingleRow = deliveryItems.filter(x => getItemCode(x) === code).length === 1;
+                const groupKey = it.lineGroupKey || code;
+                const isSingleRow = deliveryItems.filter(x => (x.lineGroupKey || getItemCode(x)) === groupKey).length === 1;
                 const qty = (deliverySlipMode === "FULL" && !editingDeliverySlip && isSingleRow)
                     ? (it.remainingQty ?? Number(it.quantity) ?? 0)
                     : (Number(it.quantity) || 0);
@@ -34759,7 +34767,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 const seqStr = String(itemSequence(it) || "").trim();
                                                 const soNoteStr = String(it.soNote || "").trim();
                                                 const noteStr = String(it.notes || "").trim();
-                                                const uPrice = Number(it.unitPrice ?? it.price ?? 0);
+                                                const uPrice = slipLinePrice(it);
                                                 let codeKey: string;
                                                 if (it.lineGroupKey) {
                                                     codeKey = String(it.lineGroupKey);
@@ -34838,8 +34846,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             )}
                                                         </td>
                                                         <td className="p-2 text-center border-r border-slate-200 font-bold text-slate-900 font-mono text-xs">{it.quantity}</td>
-                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono">{slipLinePrice(it).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>}
-                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono font-bold">{(slipLinePrice(it) * (Number(it.quantity) || 0)).toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>}
+                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono">{slipLinePrice(it) > 0 ? slipLinePrice(it).toLocaleString("vi-VN", { maximumFractionDigits: 0 }) : "-"}</td>}
+                                                        {slipPrintWithPrice && <td className="p-2 text-right border-r border-slate-200 font-mono font-bold">{slipLinePrice(it) > 0 ? (slipLinePrice(it) * (Number(it.quantity) || 0)).toLocaleString("vi-VN", { maximumFractionDigits: 0 }) : "-"}</td>}
                                                         <td className="p-2 text-center text-slate-700 text-[10px]">{it.notesList?.length > 0 ? it.notesList.join("; ") : (it.notes || "-")}</td>
                                                     </tr>
                                                     {kitComps.length > 0 && (
