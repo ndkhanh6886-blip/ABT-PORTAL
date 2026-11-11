@@ -4335,6 +4335,310 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         try { localStorage.setItem("tbr_slip_print_with_price", v ? "1" : "0"); } catch {}
     };
     const [slipPrintLandscape, setSlipPrintLandscape] = useState(false);
+
+    // Mở cửa sổ in A4 độc lập nền trắng 100% (tránh lỗi in ra vùng đen của Dark Mode hoặc chữ bị thu nhỏ theo khung modal)
+    const handlePrintDeliverySlip = (slipArg?: any) => {
+        const slip = slipArg || selectedViewDeliverySlip;
+        if (!slip) return;
+        const slipEl = typeof document !== "undefined" ? document.getElementById("printable-delivery-slip") : null;
+        if (!slipEl) {
+            window.print();
+            return;
+        }
+        const win = window.open("", "_blank");
+        if (!win) {
+            window.print();
+            return;
+        }
+        const escHtml = (v: any) =>
+            String(v ?? "")
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;");
+
+        const rawItems = slip.items || [];
+        const groupedBySku: any[] = [];
+        const skuMap = new Map<string, any>();
+        const lastGroupKeyByCode: Record<string, string> = {};
+        rawItems.forEach((it: any, rawIdx: number) => {
+            const baseCode = String(it.productCode || it.productName || "").trim().toUpperCase();
+            const seqStr = String(itemSequence(it) || "").trim();
+            const soNoteStr = String(it.soNote || "").trim();
+            const noteStr = String(it.notes || "").trim();
+            const uPrice = Number(it.unitPrice ?? it.price ?? 0);
+            let codeKey: string;
+            if (it.lineGroupKey) {
+                codeKey = String(it.lineGroupKey);
+            } else if (it.isExtraLot && lastGroupKeyByCode[baseCode]) {
+                codeKey = lastGroupKeyByCode[baseCode];
+            } else {
+                const distinctTrait = (seqStr || soNoteStr || noteStr).toLowerCase();
+                codeKey = distinctTrait
+                    ? `${baseCode}__${String(it.specification || "").trim().toLowerCase()}__${uPrice}__${distinctTrait}`
+                    : `${baseCode}__${String(it.specification || "").trim().toLowerCase()}__${uPrice}__${it.isExtraLot ? "extra" : rawIdx}`;
+            }
+            lastGroupKeyByCode[baseCode] = codeKey;
+            const qty = Number(it.quantity) || 0;
+            const lotStr = String(it.lotNo || "").trim();
+            const expStr = String(it.expDate || "").trim();
+            const effectiveNote = noteStr || soNoteStr;
+            if (!skuMap.has(codeKey)) {
+                const entry = {
+                    ...it,
+                    quantity: qty,
+                    lotsDetail: [{ lotNo: lotStr || "-", expDate: expStr || "-", qty }],
+                    notesList: effectiveNote ? [effectiveNote] : []
+                };
+                skuMap.set(codeKey, entry);
+                groupedBySku.push(entry);
+            } else {
+                const existing = skuMap.get(codeKey);
+                existing.quantity += qty;
+                existing.lotsDetail.push({ lotNo: lotStr || "-", expDate: expStr || "-", qty });
+                if (effectiveNote && !existing.notesList.includes(effectiveNote)) {
+                    existing.notesList.push(effectiveNote);
+                }
+            }
+        });
+
+        const rowsHtml = groupedBySku.map((it: any, i: number) => {
+            const hasMultiLots = (it.lotsDetail?.length || 0) > 1;
+            const kitComps = getKitComponentsForCode(it.productCode);
+            const mainStorage = it.storageCondition || getStorageConditionForProduct(it.productCode);
+            const unitPriceVal = slipLinePrice(it);
+            const lineTotalVal = unitPriceVal * (Number(it.quantity) || 0);
+            const lotsHtml = hasMultiLots
+                ? it.lotsDetail.map((ld: any) => `<div>• <b>${escHtml(ld.lotNo)}</b> <span style="color:#475569;font-weight:normal">(SL: ${escHtml(ld.qty)})</span></div>`).join("")
+                : escHtml(it.lotsDetail?.[0]?.lotNo || it.lotNo || "-");
+            const expHtml = hasMultiLots
+                ? it.lotsDetail.map((ld: any) => `<div>${escHtml(formatVNDate(ld.expDate, ld.expDate || "-"))}</div>`).join("")
+                : escHtml(formatVNDate(it.lotsDetail?.[0]?.expDate || it.expDate, it.lotsDetail?.[0]?.expDate || it.expDate || "-"));
+            const kitHtml = kitComps.length > 0
+                ? `<tr class="kit-row"><td></td><td colspan="${slipPrintWithPrice ? 9 : 7}">
+                    <div style="font-weight:700;margin-bottom:2px">Bộ gồm ${kitComps.length} thành phần:</div>
+                    ${kitComps.map((c: any) => {
+                        const per = Number(c.quantity_per_kit) || 1;
+                        const differs = c.storage_condition && storageKey(c.storage_condition) !== storageKey(mainStorage);
+                        return `<div>• <b>${escHtml(c.component_code)}</b> ${escHtml(c.component_name)} – SL: ${per * (Number(it.quantity) || 0)} ${escHtml(c.unit || "")}${c.storage_condition ? ` – Bảo quản: ${escHtml(c.storage_condition)}${differs ? " <b>(khác bộ)</b>" : ""}` : ""}</div>`;
+                    }).join("")}
+                   </td></tr>`
+                : "";
+            return `<tr>
+                <td class="c">${i + 1}</td>
+                <td class="sku">${escHtml(it.productCode)}</td>
+                <td>
+                    <div class="pname">${escHtml(it.productName)}</div>
+                    ${it.specification ? `<div class="sub">${escHtml(it.specification)}</div>` : ""}
+                    ${itemSequence(it) ? `<div class="seq">Trình tự: ${escHtml(itemSequence(it))}</div>` : ""}
+                    ${mainStorage ? `<div class="sub">Bảo quản: ${escHtml(mainStorage)}</div>` : ""}
+                </td>
+                <td class="c">${escHtml(it.unit || "Bộ")}</td>
+                <td class="c lot">${lotsHtml}</td>
+                <td class="c mono">${expHtml}</td>
+                <td class="c qty">${escHtml(it.quantity)}</td>
+                ${slipPrintWithPrice ? `<td class="r mono">${unitPriceVal.toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>` : ""}
+                ${slipPrintWithPrice ? `<td class="r mono b">${lineTotalVal.toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>` : ""}
+                <td class="c sub">${escHtml(it.notesList?.length > 0 ? it.notesList.join("; ") : (it.notes || "-"))}</td>
+            </tr>${kitHtml}`;
+        }).join("");
+
+        const totalMoney = (slip.items || []).reduce((s: number, it: any) => s + slipLinePrice(it) * (Number(it.quantity) || 0), 0);
+        const receiverLine = `${escHtml(slip.receiverName || slip.customerContact || slip.customerPhone || "Theo hợp đồng")}${(slip.receiverPhone || (slip.receiverName && slip.customerPhone)) ? ` • SĐT: ${escHtml(slip.receiverPhone || slip.customerPhone)}` : ""}`;
+        const creatorSign = escHtml(slip.creatorName || (slip.dispatcherName !== "Kho Trung Tâm" ? slip.dispatcherName : ""));
+        const dispatcherSign = escHtml(slip.dispatcherName && slip.dispatcherName !== "Kho Trung Tâm" ? slip.dispatcherName : "");
+        const customerSign = escHtml(slip.receiverName || slip.customerContact || slip.customerName || "");
+
+        const htmlDoc = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<title>Phiếu giao hàng ${escHtml(slip.id)}</title>
+<style>
+  @page { size: A4 ${slipPrintLandscape ? "landscape" : "portrait"}; margin: 10mm 12mm; }
+  * { box-sizing: border-box; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+  html, body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    background-color: #ffffff !important;
+    color: #0f172a !important;
+    font-family: "Be Vietnam Pro", "Segoe UI", Arial, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .page {
+    background: #ffffff !important;
+    padding: 4px 2px;
+    width: 100%;
+  }
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 16px;
+    border-bottom: 2px solid #0f172a;
+    padding-bottom: 10px;
+    margin-bottom: 12px;
+  }
+  .co-name { font-size: 14.5px; font-weight: 800; text-transform: uppercase; color: #0f172a; margin: 0 0 3px 0; }
+  .co-meta { font-size: 11.5px; color: #334155; margin: 2px 0; }
+  .slip-code { font-size: 16px; font-weight: 900; color: #1e1b4b; text-align: right; }
+  .slip-meta { font-size: 11.5px; color: #334155; text-align: right; margin-top: 2px; }
+  .title-block { text-align: center; margin: 10px 0 14px; }
+  .title-block h1 { font-size: 20px; font-weight: 900; text-transform: uppercase; margin: 0; letter-spacing: 0.4px; color: #0f172a; }
+  .title-block p { font-size: 11.5px; font-style: italic; color: #475569; margin: 3px 0 0; }
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    background: #f8fafc;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12px;
+  }
+  .info-box-title {
+    font-weight: 800;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: #1e1b4b;
+    border-bottom: 1px solid #cbd5e1;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
+  }
+  .info-row { margin: 3px 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 12px; background: #ffffff !important; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; }
+  th, td { border: 1px solid #64748b; padding: 6px 7px; vertical-align: middle; }
+  th { background: #f1f5f9 !important; color: #0f172a !important; font-weight: 800; text-transform: uppercase; font-size: 11px; }
+  td.c, th.c { text-align: center; }
+  td.r, th.r { text-align: right; }
+  td.sku { font-weight: 800; color: #1e1b4b; white-space: nowrap; }
+  td.lot { font-weight: 800; color: #78350f; background: #fffbeb !important; }
+  td.qty { font-weight: 800; font-size: 13px; }
+  td.b { font-weight: 800; }
+  .pname { font-weight: 700; color: #0f172a; font-size: 12.5px; }
+  .sub { font-size: 11px; color: #334155; margin-top: 2px; }
+  .seq { font-size: 11px; color: #1e1b4b; word-break: break-all; margin-top: 2px; }
+  .kit-row td { background: #f8fafc !important; font-size: 11px; color: #334155; }
+  tfoot td { background: #f1f5f9 !important; font-weight: 800; font-size: 12.5px; }
+  .note-box {
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+  .signatures {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    text-align: center;
+    margin-top: 18px;
+    page-break-inside: avoid;
+    font-size: 12px;
+  }
+  .sig-title { font-weight: 800; text-transform: uppercase; color: #0f172a; }
+  .sig-sub { font-size: 11px; color: #475569; font-style: italic; margin-top: 2px; }
+  .sig-space { height: 72px; }
+  .sig-name { font-weight: 700; color: #0f172a; }
+</style>
+</head>
+<body>
+  <div class="page">
+    <div class="header">
+      <div>
+        <div class="co-name">${escHtml(companyName || "ĐƠN VỊ XUẤT HÀNG")}</div>
+        ${companyAddress ? `<div class="co-meta"><b>Địa chỉ:</b> ${escHtml(companyAddress)}</div>` : ""}
+        ${(companyPhone || companyEmail) ? `<div class="co-meta">${companyPhone ? `<b>Điện thoại:</b> ${escHtml(companyPhone)}` : ""}${companyPhone && companyEmail ? " • " : ""}${companyEmail ? `<b>Email:</b> ${escHtml(companyEmail)}` : ""}</div>` : ""}
+        ${companyTaxCode ? `<div class="co-meta"><b>MST:</b> ${escHtml(companyTaxCode)}</div>` : ""}
+      </div>
+      <div>
+        <div class="slip-code">${escHtml(slip.id)}</div>
+        <div class="slip-meta">Mã đơn: <b>${escHtml(slip.orderCode)}</b></div>
+        <div class="slip-meta">Ngày giao: <b>${escHtml(formatVNDate(slip.deliveryDate, slip.deliveryDate))}</b></div>
+      </div>
+    </div>
+
+    <div class="title-block">
+      <h1>PHIẾU GIAO HÀNG KIÊM BIÊN BẢN BÀN GIAO</h1>
+      <p>(Liên 1: Lưu nội bộ • Liên 2: Giao khách hàng)</p>
+    </div>
+
+    <div class="info-grid">
+      <div>
+        <div class="info-box-title">ĐƠN VỊ NHẬN HÀNG (KHÁCH HÀNG)</div>
+        <div class="info-row"><b>Tên khách hàng:</b> ${escHtml(slip.customerName)}</div>
+        <div class="info-row"><b>Địa chỉ nhận:</b> ${escHtml(slip.customerAddress || "Tại cơ sở khách hàng")}</div>
+        <div class="info-row"><b>Người nhận hàng:</b> ${receiverLine}</div>
+      </div>
+      <div>
+        <div class="info-box-title">ĐƠN VỊ XUẤT GIAO HÀNG</div>
+        <div class="info-row"><b>Địa điểm xuất:</b> ${escHtml(slip.dispatchLocation || slip.dispatcherLocation || "Kho Trung Tâm")}</div>
+        <div class="info-row"><b>Người giao hàng:</b> ${escHtml(slip.dispatcherName && slip.dispatcherName !== "Kho Trung Tâm" ? slip.dispatcherName : (slip.dispatcherName || "Theo điều phối"))}</div>
+        <div class="info-row"><b>Hotline hỗ trợ:</b> ${escHtml(slip.dispatcherPhone || companyPhone || "028 2216 0885")}</div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th class="c" style="width:36px">STT</th>
+          <th style="width:105px">Mã SKU</th>
+          <th>Tên Hàng Hóa &amp; Quy Cách</th>
+          <th class="c" style="width:58px">ĐVT</th>
+          <th class="c" style="width:130px">Số Lô (Lot No)</th>
+          <th class="c" style="width:88px">Hạn dùng</th>
+          <th class="c" style="width:68px">Số lượng</th>
+          ${slipPrintWithPrice ? `<th class="r" style="width:95px">Đơn giá</th>` : ""}
+          ${slipPrintWithPrice ? `<th class="r" style="width:110px">Thành tiền</th>` : ""}
+          <th class="c" style="width:110px">Ghi chú</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rowsHtml}
+      </tbody>
+      ${slipPrintWithPrice ? `<tfoot>
+        <tr>
+          <td colspan="8" class="r">TỔNG TIỀN HÀNG (CHƯA VAT):</td>
+          <td class="r">${totalMoney.toLocaleString("vi-VN", { maximumFractionDigits: 0 })}</td>
+          <td></td>
+        </tr>
+      </tfoot>` : ""}
+    </table>
+
+    ${slip.notes ? `<div class="note-box"><b>Ghi chú giao hàng:</b> ${escHtml(slip.notes)}</div>` : ""}
+
+    <div class="signatures">
+      <div>
+        <div class="sig-title">NGƯỜI LẬP PHIẾU</div>
+        <div class="sig-sub">(Ký, ghi rõ họ tên)</div>
+        <div class="sig-space"></div>
+        <div class="sig-name">${creatorSign}</div>
+      </div>
+      <div>
+        <div class="sig-title">NGƯỜI GIAO HÀNG</div>
+        <div class="sig-sub">(Ký, ghi rõ họ tên)</div>
+        <div class="sig-space"></div>
+        <div class="sig-name">${dispatcherSign}</div>
+      </div>
+      <div>
+        <div class="sig-title">ĐẠI DIỆN KHÁCH HÀNG NHẬN</div>
+        <div class="sig-sub">(Ký xác nhận đủ hàng, nguyên tem)</div>
+        <div class="sig-space"></div>
+        <div class="sig-name">${customerSign}</div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+        writeSafePrintDocument(win, htmlDoc, { title: `PGH ${slip.id || ""}` });
+    };
     const [isViewDeliverySlipModalOpen, setIsViewDeliverySlipModalOpen] = useState(false);
     // Luồng giao hàng mới: Lập phiếu giao (toàn bộ / từng đợt) -> NVKD xác nhận đã giao theo từng phiếu
     const [deliverySlipMode, setDeliverySlipMode] = useState<"FULL" | "PARTIAL">("FULL");
@@ -34228,6 +34532,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     </button>
                                 </>
                             )}
+                            <label
+                                className={`flex items-center gap-2 px-3 py-2 rounded-lg border font-bold text-xs cursor-pointer select-none transition-colors ${
+                                    slipPrintWithPrice
+                                        ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300"
+                                        : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                                }`}
+                                title="Chọn hiển thị hoặc ẩn cột Đơn giá & Thành tiền trên Phiếu giao hàng khi Xem trước / In"
+                            >
+                                <input
+                                    type="checkbox"
+                                    checked={slipPrintWithPrice}
+                                    onChange={(e) => setSlipPrintWithPrice(e.target.checked)}
+                                    className="w-4 h-4 accent-emerald-500 cursor-pointer"
+                                />
+                                <span>💰 Hiển thị giá trên phiếu (In có giá)</span>
+                            </label>
                             <button
                                 type="button"
                                 onClick={() => { setIsDeliveryModalOpen(false); setEditingDeliverySlip(null); }}
@@ -34269,6 +34589,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         <style dangerouslySetInnerHTML={{ __html: `
                             @page { size: A4 ${slipPrintLandscape ? "landscape" : "portrait"}; margin: 10mm; }
                             @media print {
+                                html, body, .dark, #__next, main {
+                                    background: #ffffff !important;
+                                    background-color: #ffffff !important;
+                                    color: #000000 !important;
+                                    height: auto !important;
+                                    min-height: 0 !important;
+                                    overflow: visible !important;
+                                }
                                 body * {
                                     visibility: hidden !important;
                                 }
@@ -34276,19 +34604,60 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     visibility: visible !important;
                                 }
                                 #printable-delivery-slip {
-                                    position: fixed !important;
+                                    position: absolute !important;
                                     left: 0 !important;
                                     top: 0 !important;
                                     width: 100% !important;
                                     margin: 0 !important;
-                                    padding: 15px !important;
+                                    padding: 12px !important;
                                     border: none !important;
                                     box-shadow: none !important;
-                                    background: white !important;
-                                    color: black !important;
+                                    background: #ffffff !important;
+                                    background-color: #ffffff !important;
+                                    color: #000000 !important;
                                 }
                             }
                         ` }} />
+
+                        {/* Thanh tùy chọn hiển thị giá & in nhanh ngay đầu cửa sổ */}
+                        <div className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 rounded-xl bg-slate-100 border border-slate-200 text-xs">
+                            <div className="flex items-center gap-3 flex-wrap">
+                                <label
+                                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg border font-bold cursor-pointer select-none transition-all ${
+                                        slipPrintWithPrice
+                                            ? "bg-emerald-50 border-emerald-400 text-emerald-800 shadow-2xs"
+                                            : "bg-white border-slate-300 text-slate-700 hover:bg-slate-50"
+                                    }`}
+                                    title="Bật/tắt hiển thị cột Đơn giá & Thành tiền trên Phiếu giao hàng"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        checked={slipPrintWithPrice}
+                                        onChange={(e) => setSlipPrintWithPrice(e.target.checked)}
+                                        className="w-4 h-4 accent-emerald-600 cursor-pointer"
+                                    />
+                                    <span>💰 Hiển thị Đơn giá &amp; Thành tiền (In có giá)</span>
+                                </label>
+                                <select
+                                    value={slipPrintLandscape ? "landscape" : "portrait"}
+                                    onChange={(e) => setSlipPrintLandscape(e.target.value === "landscape")}
+                                    className="text-xs font-semibold border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white text-slate-800 cursor-pointer"
+                                    title="Khổ giấy khi in"
+                                >
+                                    <option value="portrait">📄 Khổ dọc (A4)</option>
+                                    <option value="landscape">📄 Khổ ngang (A4)</option>
+                                </select>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => handlePrintDeliverySlip(selectedViewDeliverySlip)}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-1.5 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
+                                title="Mở bản in chuẩn A4 nền trắng (cỡ chữ chuẩn, không bị đen nền)"
+                            >
+                                <Printer className="w-4 h-4" />
+                                In / Lưu PDF (Chuẩn A4)
+                            </button>
+                        </div>
 
                         {selectedViewDeliverySlip.isDraftPreview && (
                             <div className="bg-amber-50 border border-amber-300 text-amber-900 px-4 py-2.5 rounded-lg text-xs font-medium flex items-center justify-between">
@@ -34590,9 +34959,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </select>
                                 <button
                                     type="button"
-                                    onClick={() => window.print()}
+                                    onClick={() => handlePrintDeliverySlip(selectedViewDeliverySlip)}
                                     className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg font-bold text-xs flex items-center gap-1.5 shadow cursor-pointer transition-colors"
-                                    title="Chỉ in phiếu giao hàng / Lưu PDF"
+                                    title="Chỉ in phiếu giao hàng / Lưu PDF (mẫu chuẩn A4 nền trắng)"
                                 >
                                     <Printer className="w-4 h-4" />
                                     In / Lưu PDF
