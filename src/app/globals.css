@@ -835,6 +835,14 @@ html:not(.dark) {
   span[class*="bg-indigo-950/"],
   span[class*="bg-indigo-900/"],
   span[class*="bg-indigo-600/"],
+  label[class~="bg-indigo-950"],
+  label[class~="bg-indigo-900"],
+  label[class*="bg-indigo-950/"],
+  label[class*="bg-indigo-900/"],
+  a[class~="bg-indigo-950"],
+  a[class~="bg-indigo-900"],
+  a[class*="bg-indigo-950/"],
+  a[class*="bg-indigo-900/"],
   button[class~="bg-indigo-950"],
   button[class~="bg-indigo-900"],
   button[class*="bg-indigo-950/"],
@@ -844,12 +852,38 @@ html:not(.dark) {
     color: #0c4a6e !important;
     -webkit-text-fill-color: #0c4a6e !important;
   }
+  label[class~="bg-indigo-950"] *,
+  label[class~="bg-indigo-900"] *,
+  label[class*="bg-indigo-950/"] *,
+  label[class*="bg-indigo-900/"] *,
+  a[class~="bg-indigo-950"] *,
+  a[class~="bg-indigo-900"] *,
+  a[class*="bg-indigo-950/"] *,
+  a[class*="bg-indigo-900/"] *,
   button[class~="bg-indigo-950"] *,
   button[class~="bg-indigo-900"] *,
   button[class*="bg-indigo-950/"] *,
   button[class*="bg-indigo-900/"] * {
     color: #0c4a6e !important;
     -webkit-text-fill-color: #0c4a6e !important;
+  }
+  label[class*="bg-slate-900"],
+  label[class*="bg-slate-800"],
+  a[class*="bg-slate-900"],
+  a[class*="bg-slate-800"] {
+    background-color: #f1f5f9 !important;
+    border-color: #cbd5e1 !important;
+    color: #1e293b !important;
+    -webkit-text-fill-color: #1e293b !important;
+  }
+  label[class*="bg-emerald-950"],
+  label[class*="bg-emerald-900"],
+  a[class*="bg-emerald-950"],
+  a[class*="bg-emerald-900"] {
+    background-color: #d1fae5 !important;
+    border-color: #34d399 !important;
+    color: #065f46 !important;
+    -webkit-text-fill-color: #065f46 !important;
   }
 
   /* Product / Item summary card buttons inside table cells: clean light card instead of solid black box */

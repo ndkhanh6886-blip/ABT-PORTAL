@@ -23084,26 +23084,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             target="_blank"
                                                                             rel="noopener noreferrer"
                                                                             download={attachedFile!.name || "Hop_Dong_Da_Ky.pdf"}
-                                                                            className="text-[10px] bg-emerald-950/90 hover:bg-emerald-900 text-emerald-300 hover:text-emerald-100 border border-emerald-600/70 hover:border-emerald-500 px-2 py-1 rounded font-bold inline-flex items-center gap-1 shadow-sm transition-all whitespace-nowrap cursor-pointer"
+                                                                            className="text-[10px] bg-emerald-50 dark:bg-emerald-950/90 hover:bg-emerald-100 dark:hover:bg-emerald-900 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-600/70 px-2 py-1 rounded font-bold inline-flex items-center gap-1 shadow-sm transition-all whitespace-nowrap cursor-pointer"
                                                                             title={`Tải về / Xem trực tiếp file scan đã ký: ${attachedFile!.name || "PDF / Ảnh"}`}
                                                                         >
-                                                                            <Download className="w-3 h-3 text-emerald-400" />
+                                                                            <Download className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
                                                                             <span>Tải / Xem File Ký</span>
                                                                         </a>
                                                                     )}
 
                                                                     <label className={cn(
-                                                                        "text-[10px] px-2 py-1 rounded font-bold inline-flex items-center gap-1 cursor-pointer transition-all whitespace-nowrap shadow-sm border",
+                                                                        "text-[10px] px-2.5 py-1 rounded font-bold inline-flex items-center gap-1 cursor-pointer transition-all whitespace-nowrap shadow-sm border",
                                                                         hasScanFile
-                                                                            ? "bg-slate-900/80 hover:bg-slate-800 text-slate-300 hover:text-white border-slate-700 hover:border-slate-500"
-                                                                            : "bg-indigo-950/80 hover:bg-indigo-900 text-indigo-300 hover:text-white border-indigo-700/60 hover:border-indigo-500"
+                                                                            ? "bg-slate-100 dark:bg-slate-900/80 hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700"
+                                                                            : "bg-indigo-50 dark:bg-indigo-950/80 hover:bg-indigo-100 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 border-indigo-300 dark:border-indigo-700/60"
                                                                     )}
                                                                     title={hasScanFile ? "Tải file scan mới thay thế file hiện tại" : "Tải tệp scan hợp đồng đã ký (PDF / Ảnh) lên hệ thống"}
                                                                     >
                                                                         {isUploadingThis ? (
-                                                                            <Loader2 className="w-3 h-3 animate-spin text-indigo-400" />
+                                                                            <Loader2 className="w-3 h-3 animate-spin text-indigo-600 dark:text-indigo-400" />
                                                                         ) : (
-                                                                            <Upload className="w-3 h-3 text-indigo-400" />
+                                                                            <Upload className="w-3 h-3 text-indigo-600 dark:text-indigo-400" />
                                                                         )}
                                                                         <span>{isUploadingThis ? "Đang tải..." : (hasScanFile ? "Đổi File Scan" : "📎 Tải Scan Đã Ký")}</span>
                                                                         <input
@@ -34535,8 +34535,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             <label
                                 className={`flex items-center gap-2 px-3 py-2 rounded-lg border font-bold text-xs cursor-pointer select-none transition-colors ${
                                     slipPrintWithPrice
-                                        ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-300"
-                                        : "bg-slate-900 border-slate-700 text-slate-300 hover:bg-slate-800"
+                                        ? "bg-emerald-50 dark:bg-emerald-500/20 border-emerald-400 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-300"
+                                        : "bg-slate-100 dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800"
                                 }`}
                                 title="Chọn hiển thị hoặc ẩn cột Đơn giá & Thành tiền trên Phiếu giao hàng khi Xem trước / In"
                             >
