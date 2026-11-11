@@ -81,6 +81,7 @@ function canActOnWorkflow(me: AuthorizedUser, wf: any, step?: any) {
 
 const PR_DECISION_STATUSES = new Set(["APPROVED", "REJECTED", "CONVERTED", "PARTIAL_CONVERTED", "COMPLETED"]);
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
+import { NOT_PR_ROW_SQL } from "@/backend/services/prRows";
 
 const DEFAULT_DB_WORKFLOW_TEMPLATES = [
   {
@@ -250,7 +251,8 @@ export async function GET(req: NextRequest) {
 
     if (action === "overview") {
       const [workflows, tasks, daily, customers, products, personnel, users, templates, recentOrders] = await Promise.all([
-        query("SELECT * FROM workflow_requests ORDER BY id DESC"),
+        // PR (đề xuất mua hàng) chỉ nằm ở Cung ứng, không hiện trong Quy trình phối hợp
+        query(`SELECT * FROM workflow_requests WHERE ${NOT_PR_ROW_SQL} ORDER BY id DESC`),
         query("SELECT * FROM company_tasks ORDER BY id DESC"),
         query("SELECT * FROM company_daily_logs ORDER BY log_date DESC, id DESC LIMIT 100"),
         query("SELECT id, customer_code, name, address, phone, email, contact_person, contacts, classification, region, province FROM sales_customers ORDER BY name ASC"),
@@ -285,7 +287,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "workflows") {
-      const res = await query("SELECT * FROM workflow_requests ORDER BY id DESC");
+      const res = await query(`SELECT * FROM workflow_requests WHERE ${NOT_PR_ROW_SQL} ORDER BY id DESC`);
       return NextResponse.json({ workflows: res.rows });
     }
 

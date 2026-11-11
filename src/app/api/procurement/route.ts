@@ -32,6 +32,7 @@ import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, sortByProductCode } from "@/backend/services/inventoryLedger";
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
 import { reconcileHistoricalPOsWithInbound, markPOReconcileDirty, attachInboundPriceComparisonToPOs } from "@/backend/services/poReceipt";
+import { PR_ROW_SQL } from "@/backend/services/prRows";
 
 let supplierShortNameEnsured = false;
 async function ensureSupplierShortName() {
@@ -259,10 +260,7 @@ export async function GET(req: NextRequest) {
         `),
         safeQuery(`
           SELECT * FROM workflow_requests
-          WHERE workflow_code LIKE 'PR%' OR workflow_code ILIKE '%PR-%' OR workflow_type ILIKE '%PROCUREMENT%' OR workflow_type = 'PURCHASE_REQUEST'
-             -- phiếu phối hợp 1 bước gửi thẳng Cung Ứng = yêu cầu mua hàng; quy trình nhiều bước khác (bảo trì, sửa chữa...)
-             -- chỉ có 1 bước do Cung Ứng xử lý thì không phải đề xuất mua hàng
-             OR (target_dept ILIKE '%Cung%' AND jsonb_array_length(CASE WHEN jsonb_typeof(steps) = 'array' THEN steps ELSE '[]'::jsonb END) <= 1)
+          WHERE ${PR_ROW_SQL}
           ORDER BY id DESC
         `),
         safeQuery(`
