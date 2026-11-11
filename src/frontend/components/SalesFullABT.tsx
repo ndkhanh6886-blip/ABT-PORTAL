@@ -13466,8 +13466,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 return order;
             }));
 
-            // Đồng bộ thông tin khách hàng, địa chỉ và đơn giá mặt hàng sang các Phiếu giao hàng liên kết (nếu có)
-            setDeliverySlips(prev => prev.map(slip => {
+            // Đồng bộ thông tin khách hàng, địa chỉ và đơn giá mặt hàng sang các Phiếu giao hàng liên kết (nếu có).
+            // Trước đây chỉ đổi trên trình duyệt: bảng phiếu giao trong CSDL giữ giá cũ và được ưu tiên khi tải lại, nên
+            // Kế toán sửa giá SO xong mở lại PXK vẫn thấy giá cũ. Giờ các phiếu có thay đổi được ghi lại vào CSDL.
+            const syncSlip = (slip: any) => {
                 const sameOrder = String(slip.orderCode || slip.order_code || "").trim() === String(editingFactoryOrderId).trim() ||
                     String(slip.orderId || slip.order_id || "").trim() === String(editingFactoryOrderId).trim();
                 if (!sameOrder) return slip;
@@ -13493,7 +13495,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     deliveryAddress: resolvedDeliveryAddress || slip.deliveryAddress,
                     items: updatedSlipItems
                 };
-            }));
+            };
+            const changedSlips: any[] = [];
+            const nextSlips = (deliverySlips || []).map(slip => {
+                const next = syncSlip(slip);
+                if (next !== slip && JSON.stringify(next) !== JSON.stringify(slip)) changedSlips.push(next);
+                return next;
+            });
+            setDeliverySlips(nextSlips);
+            changedSlips.forEach(slip => { persistDeliverySlip(slip); });
 
             // Chốt chặn DB: Đồng bộ các trường sửa vào PostgreSQL nhưng bảo lưu tiến trình giao hàng (Monotonic)
             const targetOrd = factoryOrders.find(o => o.id === editingFactoryOrderId);
