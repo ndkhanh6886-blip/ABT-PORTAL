@@ -17037,6 +17037,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const candidates: any[] = [];
 
+        // Tổng tiền đơn tính từ dòng hàng (Σ SL × đơn giá, bỏ dòng đã hủy) — cùng cách với màn chi tiết SO và máy chủ.
+        // Trước đây lấy tổng lưu sẵn / tổng phiếu giao, có đơn bị hụt tiền (vd SO 5.368.000 nhưng HĐ 4.752.000).
+        const itemsTotal = (items: any[]): number => (Array.isArray(items) ? items : [])
+            .filter((it: any) => it && it.status !== "CANCELLED")
+            .reduce((acc: number, it: any) => {
+                const qty = Number(it.quantity ?? it.qty ?? 0) || 0;
+                const price = Number(it.unitPrice ?? it.unit_price ?? it.price ?? 0) || 0;
+                return acc + qty * price;
+            }, 0);
+
         // 1. From factoryOrders
         factoryOrders.forEach(fo => {
             const linkedSlips = deliverySlips.filter(s => 
@@ -17055,7 +17065,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     (fo.customerName && c.name && (c.name.toLowerCase().includes(fo.customerName.toLowerCase()) || fo.customerName.toLowerCase().includes(c.name.toLowerCase())))
                 );
                 const primarySlip = linkedSlips.find(s => (s.totalAmount || 0) > 0) || linkedSlips[0];
-                const amt = fo.total_amount || fo.totalAmount || primarySlip?.totalAmount || (fo.items || []).reduce((acc: number, it: any) => acc + (Number(it.quantity || 1) * Number(it.unitPrice || it.price || 0)), 0);
+                const amt = itemsTotal(fo.items) || fo.total_amount || fo.totalAmount || primarySlip?.totalAmount || 0;
 
                 candidates.push({
                     canonical_code: canonicalCode,
@@ -17172,7 +17182,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     const slipAmt = Number(s.totalAmount) || (s.items || []).reduce((acc: number, it: any) => acc + (Number(it.quantity || 1) * Number(it.unitPrice || it.price || 0)), 0);
                     return sum + slipAmt;
                 }, 0);
-                const resolvedTotalAmount = existing.rawOrder?.total_amount || cand.rawOrder?.total_amount || (sumSlipAmounts > 0 ? sumSlipAmounts : Math.max(existing.total_amount || 0, cand.total_amount || 0));
+                // Có SO: dùng tổng tính từ dòng hàng của SO; chỉ khi không có SO mới cộng các phiếu giao
+                const soOrder = existing.factory_order_id ? existing.rawOrder : (cand.factory_order_id ? cand.rawOrder : null);
+                const soTotal = soOrder ? (itemsTotal(soOrder.items) || Number(soOrder.total_amount ?? soOrder.totalAmount) || 0) : 0;
+                const resolvedTotalAmount = soTotal || (sumSlipAmounts > 0 ? sumSlipAmounts : Math.max(existing.total_amount || 0, cand.total_amount || 0));
 
                 // Merge files
                 const allFiles = [...(existing.invoiceFiles || []), ...(cand.invoiceFiles || [])];

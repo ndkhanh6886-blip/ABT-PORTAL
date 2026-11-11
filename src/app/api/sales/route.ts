@@ -3026,12 +3026,9 @@ export async function POST(req: NextRequest) {
           return it;
         });
 
-        const activeItems = updatedItems.filter((it: any) => it.status !== "CANCELLED");
-        const newTotal = activeItems.reduce((sum: number, it: any) => {
-          const lineTotal = Number(it.subtotal || it.totalPrice || it.total_price) || 
-            ((Number(it.quantity) || 1) * (Number(it.unitPrice || it.unit_price || it.price) || 0));
-          return sum + lineTotal;
-        }, 0);
+        // Tổng mới tính như khi lưu SO (Σ SL × đơn giá các dòng chưa hủy). Trước đây ưu tiên thành tiền lưu sẵn
+        // của từng dòng: dòng đã sửa số lượng mà thành tiền còn cũ (vd ×1 -> ×5) làm tổng đơn bị hụt.
+        const newTotal = computeOrderTotal(updatedItems);
 
         await c.query(
           `UPDATE sales_orders SET items = $1, total_amount = $2 WHERE id = $3`,
