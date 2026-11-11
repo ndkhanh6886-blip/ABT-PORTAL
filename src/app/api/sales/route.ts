@@ -964,10 +964,13 @@ export async function GET(req: NextRequest) {
         if (!anySlip && st === "DELIVERED") delivered = total;
         delivered = Math.min(Math.round(delivered), total || Math.round(delivered));
         const paid = Number(o.amount_paid) || 0;
-        if (delivered <= 0 && paid <= 0) continue; // chưa giao, chưa thu: chưa phát sinh công nợ
+        if (delivered <= 0 && paid <= 0) continue; // chưa giao, chưa thu/cọc: chưa phát sinh công nợ hay tiền cọc
         const cust = (o.customer_id && custById.get(o.customer_id)) || custByName.get(String(o.customer_name || "").trim().toLowerCase()) || null;
         const term = cust?.credit_term_days !== undefined && cust?.credit_term_days !== null ? Number(cust.credit_term_days) : 30;
-        const outstanding = Math.round(delivered - paid);
+        const actualDebt = Math.max(0, Math.round(delivered - paid));
+        const prepaid = Math.max(0, Math.round(paid - delivered));
+        const remainingOrder = Math.max(0, Math.round(total - paid));
+        const outstanding = actualDebt;
         const deliveredAt = o.delivered_at ? toVNDateString(o.delivered_at) : null;
         let dueDate: string | null = null;
         let overdueDays = 0;
@@ -982,12 +985,12 @@ export async function GET(req: NextRequest) {
           customers.set(key, {
             customer_id: cust?.id || null, customer_code: cust?.customer_code || "", customer_name: cust?.name || o.customer_name,
             tax_code: cust?.tax_code || "", credit_limit: Number(cust?.credit_limit) || 0, credit_term_days: term,
-            order_total: 0, delivered: 0, paid: 0, outstanding: 0, overdue: 0,
+            order_total: 0, delivered: 0, paid: 0, outstanding: 0, prepaid: 0, remaining_order: 0, overdue: 0,
             aging: { current: 0, d1_30: 0, d31_60: 0, d60_plus: 0 }, max_overdue_days: 0, orders: []
           });
         }
         const c = customers.get(key);
-        c.order_total += total; c.delivered += delivered; c.paid += paid; c.outstanding += outstanding;
+        c.order_total += total; c.delivered += delivered; c.paid += paid; c.outstanding += outstanding; c.prepaid += prepaid; c.remaining_order += remainingOrder;
         if (outstanding > 0) {
           if (overdueDays <= 0) c.aging.current += outstanding;
           else if (overdueDays <= 30) c.aging.d1_30 += outstanding;
@@ -998,7 +1001,7 @@ export async function GET(req: NextRequest) {
         }
         c.orders.push({
           order_code: o.order_code, order_date: o.order_date ? toVNDateString(o.order_date) : null, sales_rep_name: o.sales_rep_name,
-          total, delivered, paid, outstanding, delivery_status: st, delivered_at: deliveredAt, due_date: dueDate,
+          total, delivered, paid, outstanding, prepaid, remaining_order: remainingOrder, delivery_status: st, delivered_at: deliveredAt, due_date: dueDate,
           overdue_days: outstanding > 0 ? overdueDays : 0, invoice_no: o.invoice_no, payment_status: o.payment_status,
           payments: (paysByOrder.get(String(o.order_code)) || []).map((py: any) => ({
             id: py.id, amount: Number(py.amount) || 0, date: py.payment_date ? toVNDateString(py.payment_date) : null,
@@ -1007,7 +1010,7 @@ export async function GET(req: NextRequest) {
           }))
         });
       }
-      const rows = Array.from(customers.values()).sort((a, b) => b.outstanding - a.outstanding);
+      const rows = Array.from(customers.values()).sort((a, b) => (b.outstanding - a.outstanding) || (b.prepaid - a.prepaid));
       return NextResponse.json({ customers: rows, generated_at: new Date().toISOString() });
     }
 
@@ -2234,10 +2237,43 @@ export async function POST(req: NextRequest) {
       const requestId = body.request_id ? String(body.request_id).slice(0, 100) : null;
 
       const result = await withTransaction(async (c) => {
-        const ord = (await c.query(
-          "SELECT id, order_code, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL AND $2::text !~ '^[0-9]+$' THEN order_code = $2::text ELSE id = $1::int END) ORDER BY id LIMIT 1 FOR UPDATE",
-          [numericIdOrNull(body.order_id), String(body.order_code || body.order_id || "").trim() || null]
+        const lookupCode = String(body.order_code || body.order_id || "").trim() || null;
+        let ord = (await c.query(
+          "SELECT id, order_code, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status FROM sales_orders WHERE (CASE WHEN $2::text IS NOT NULL AND $2::text !~ '^[0-9]+$' THEN UPPER(TRIM(order_code)) = UPPER(TRIM($2::text)) ELSE id = $1::int END) ORDER BY id LIMIT 1 FOR UPDATE",
+          [numericIdOrNull(body.order_id), lookupCode]
         )).rows[0];
+        if (!ord && lookupCode) {
+          // Nếu đơn SO vừa tạo trong sales_factory_orders (app_storage) nhưng chưa đồng bộ sang bảng sales_orders: tự động khởi tạo vào sales_orders
+          const stRow = (await c.query("SELECT data FROM app_storage WHERE key = 'sales_factory_orders' FOR UPDATE")).rows[0];
+          const foList: any[] = Array.isArray(stRow?.data) ? stRow.data : [];
+          const fo = foList.find((x: any) => {
+            const c1 = String(x?.linkedSalesOrderId || "").trim().toUpperCase();
+            const c2 = String(x?.id || "").trim().toUpperCase();
+            const c3 = String(x?.order_code || "").trim().toUpperCase();
+            const target = lookupCode.toUpperCase();
+            return (c1 && c1 === target) || (c2 && c2 === target) || (c3 && c3 === target);
+          });
+          if (fo) {
+            const canonicalCode = String(fo.linkedSalesOrderId || fo.order_code || fo.id || lookupCode).trim();
+            const foItems = Array.isArray(fo.items) ? fo.items : [];
+            const foTotal = Math.round(foItems.filter((it: any) => it?.status !== "CANCELLED").reduce((s: number, it: any) => s + (Number(it?.quantity) || 0) * (Number(it?.unitPrice ?? it?.unit_price ?? it?.price) || 0), 0)) || Number(fo.totalAmount ?? fo.total_amount) || 0;
+            const ins = await c.query(
+              `INSERT INTO sales_orders (order_code, customer_name, sales_rep_name, order_date, items, total_amount, delivery_status, payment_status, amount_paid)
+               VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, 'UNPAID', 0)
+               RETURNING id, order_code, total_amount, COALESCE(amount_paid, 0) AS amount_paid, payment_status`,
+              [
+                canonicalCode,
+                fo.customerName || fo.customer_name || "Khách hàng",
+                fo.salesRep || fo.sales_rep_name || me.full_name || me.username,
+                fo.createdAt ? parseSqlDate(fo.createdAt) : todayVN(),
+                JSON.stringify(foItems),
+                foTotal,
+                fo.isDelivered ? "DELIVERED" : "PENDING"
+              ]
+            );
+            ord = ins.rows[0];
+          }
+        }
         if (!ord) throw new HttpError(404, "Không tìm thấy đơn hàng");
         if (requestId) {
           const dup = await c.query("SELECT id FROM sales_payments WHERE order_id = $1 AND request_id = $2", [ord.id, requestId]);
@@ -2248,7 +2284,7 @@ export async function POST(req: NextRequest) {
         if (total > 0 && paidBefore + amount > total + 0.5) {
           throw new HttpError(409, `Đơn ${ord.order_code}: giá trị ${total.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ, đã thu ${paidBefore.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ — khoản thu ${amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ vượt số còn phải thu.`);
         }
-        // Phân bổ khoản thu theo phiếu giao (Kế toán chọn phiếu nào được thanh toán). Không gửi -> khoản thu chung của đơn.
+        // Phân bổ khoản thu theo phiếu giao (Kế toán chọn phiếu nào được thanh toán). Không gửi -> khoản thu chung / tiền cọc của đơn.
         const rawAlloc: any[] = Array.isArray(body.allocations) && body.allocations.length > 0
           ? body.allocations
           : [{ delivery_slip_code: body.delivery_slip_code || null, amount }];
@@ -2287,6 +2323,32 @@ export async function POST(req: NextRequest) {
         const paid = paidBefore + amount;
         const status = total > 0 && paid >= total - 0.5 ? "PAID" : "PARTIALLY_PAID";
         await c.query("UPDATE sales_orders SET amount_paid = $1, payment_status = $2 WHERE id = $3", [paid, status, ord.id]);
+
+        // Đồng bộ ngay amountPaid & payment_status vào sales_factory_orders (app_storage) để giao diện SO / Sale / Admin thấy tức thì
+        try {
+          const stRow = (await c.query("SELECT data FROM app_storage WHERE key = 'sales_factory_orders' FOR UPDATE")).rows[0];
+          if (Array.isArray(stRow?.data)) {
+            const targetUpper = String(ord.order_code || "").trim().toUpperCase();
+            let touched = false;
+            const nextFo = stRow.data.map((fo: any) => {
+              const c1 = String(fo?.linkedSalesOrderId || "").trim().toUpperCase();
+              const c2 = String(fo?.id || "").trim().toUpperCase();
+              const c3 = String(fo?.order_code || "").trim().toUpperCase();
+              if (c1 === targetUpper || c2 === targetUpper || c3 === targetUpper) {
+                touched = true;
+                return { ...fo, amountPaid: paid, amount_paid: paid, payment_status: status };
+              }
+              return fo;
+            });
+            if (touched) {
+              await c.query(
+                "UPDATE app_storage SET data = $1::jsonb, version = COALESCE(version, 1) + 1, updated_at = now() WHERE key = 'sales_factory_orders'",
+                [JSON.stringify(nextFo)]
+              );
+            }
+          }
+        } catch { /* ignore storage sync error */ }
+
         return { ord, duplicate: false, paid, status };
       });
       if (!result.duplicate) {
@@ -2323,6 +2385,29 @@ export async function POST(req: NextRequest) {
         const total = Number(ord?.total_amount) || 0;
         const status = paid <= 0 ? "UNPAID" : (total > 0 && paid >= total - 0.5 ? "PAID" : "PARTIALLY_PAID");
         await c.query("UPDATE sales_orders SET amount_paid = $1, payment_status = $2 WHERE id = $3", [paid, status, pay.order_id]);
+        try {
+          const stRow = (await c.query("SELECT data FROM app_storage WHERE key = 'sales_factory_orders' FOR UPDATE")).rows[0];
+          if (Array.isArray(stRow?.data)) {
+            const targetUpper = String(pay.order_code || "").trim().toUpperCase();
+            let touched = false;
+            const nextFo = stRow.data.map((fo: any) => {
+              const c1 = String(fo?.linkedSalesOrderId || "").trim().toUpperCase();
+              const c2 = String(fo?.id || "").trim().toUpperCase();
+              const c3 = String(fo?.order_code || "").trim().toUpperCase();
+              if (c1 === targetUpper || c2 === targetUpper || c3 === targetUpper) {
+                touched = true;
+                return { ...fo, amountPaid: paid, amount_paid: paid, payment_status: status };
+              }
+              return fo;
+            });
+            if (touched) {
+              await c.query(
+                "UPDATE app_storage SET data = $1::jsonb, version = COALESCE(version, 1) + 1, updated_at = now() WHERE key = 'sales_factory_orders'",
+                [JSON.stringify(nextFo)]
+              );
+            }
+          }
+        } catch { /* ignore storage sync error */ }
         return { order_code: pay.order_code, amount: Number(pay.amount) || 0, paid, status };
       });
       await logAudit("VOID_CUSTOMER_PAYMENT", "SALES_ORDER", `Hủy khoản thu ${result.amount.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ đơn ${result.order_code}: ${reason}`, me.username, me.full_name);

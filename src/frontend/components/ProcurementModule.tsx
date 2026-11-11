@@ -1153,6 +1153,12 @@ export const ProcurementModule: React.FC = () => {
   // Quick Change PO Payment Status directly from row (Requirement 6 / 4d)
   const handleQuickChangePaymentStatus = async (po: any, newPayStatus: string) => {
     setActivePaymentDropdownId(null);
+    // Khi người dùng bấm chọn "Đã thanh toán" hoặc "TT 1 phần" trên PO (kể cả PO chưa nhập kho):
+    // Mở ngay Modal Ghi Sổ Chi Tiền / Chi Cọc thay vì báo lỗi chặn
+    if (newPayStatus === "PAID" || newPayStatus === "PARTIAL_PAID") {
+      openPaymentModal(po, newPayStatus === "PARTIAL_PAID" ? "deposit" : "full");
+      return;
+    }
     try {
       const res = await fetch("/api/procurement?action=update_payment_status", {
         method: "POST",
@@ -3270,11 +3276,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
     setIsPOModalOpen(true);
   };
 
-  // Open Payment Modal
-  const openPaymentModal = (order: any) => {
-    const total = parseFloat(order.total_amount) || 0;
-    const paid = parseFloat(order.amount_paid) || 0;
+  // Open Payment Modal (hỗ trợ cả Chi tiền hàng đã nhập kho & Chi cọc / Thanh toán trước cho PO chưa nhập kho)
+  const openPaymentModal = (order: any, mode?: "full" | "deposit") => {
+    const dbt = poDebt(order);
+    const total = dbt.total || parseFloat(order.total_amount) || 0;
+    const paid = dbt.paid || parseFloat(order.amount_paid) || 0;
+    if (total <= 0) {
+      alert(`Đơn PO ${order.po_code} hiện chưa có đơn giá (Tổng tiền = 0 VNĐ). Vui lòng nhập đơn giá trên PO trước khi ghi nhận chi cọc / thanh toán.`);
+      handleEditPO(order);
+      return;
+    }
     const remaining = Math.max(0, total - paid);
+    const isPrepay = dbt.received <= 0.5 || mode === "deposit";
 
     setPaymentForm({
       request_id: `PAY-${order.id}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
@@ -3283,12 +3296,15 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       supplier_name: order.supplier_name,
       total_amount: total,
       amount_paid: paid,
+      received_amount: dbt.received,
       remaining_balance: remaining,
       payment_amount: remaining,
       payment_method: paymentMethods[0] || "Chuyển khoản",
       reference_doc: "",
       payment_date: todayVN(),
-      payment_notes: `Thanh toán tiền hàng PO ${order.po_code}`,
+      payment_notes: isPrepay
+        ? `Đặt cọc / Thanh toán trước PO ${order.po_code}`
+        : `Thanh toán tiền hàng PO ${order.po_code}`,
       allocations: null
     });
     setIsPaymentModalOpen(true);
@@ -3570,6 +3586,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const paid = dbt.paid;
       if (String(po.status || "").toUpperCase() === "CANCELLED" && paid <= 0) return false;
       if (payableFilter === "debt" && !(dbt.payable > 0.5)) return false;
+      if (payableFilter === "prepaid" && !(dbt.prepaid > 0.5)) return false;
       if (payableFilter === "paid" && dbt.status !== "SETTLED") return false;
       if (payableSupplier !== "all" && String(po.supplier_name || "").trim() !== payableSupplier) return false;
       const d = po.order_date ? String(po.order_date).slice(0, 10) : "";
@@ -4013,8 +4030,9 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                   </tr>
                 ) : (
                   ordersPage.items.map((po, idx) => {
-                    const totalAmt = parseFloat(po.total_amount) || 0;
-                    const paidAmt = parseFloat(po.amount_paid) || 0;
+                    const dbt = poDebt(po);
+                    const totalAmt = dbt.total || parseFloat(po.total_amount) || 0;
+                    const paidAmt = dbt.paid || parseFloat(po.amount_paid) || 0;
                     const remainingAmt = Math.max(0, totalAmt - paidAmt);
                     const isFullyPaid = paidAmt >= totalAmt && totalAmt > 0;
                     const payStatusKey = getPOPaymentStatus(po);
@@ -4411,11 +4429,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 {isFullyPaid && <CheckCircle2 className="w-3 h-3" />}
                                 <span>
                                   {payStatusKey === "PARTIAL_PAID" && totalAmt > 0 && paidAmt > 0
-                                    ? `Đã trả ${Math.round((paidAmt / totalAmt) * 100)}%`
+                                    ? `${dbt.received <= 0.5 ? "Đã cọc" : "Đã trả"} ${Math.round((paidAmt / totalAmt) * 100)}%`
+                                    : isFullyPaid && dbt.received <= 0.5
+                                    ? "Đã TT trước 100%"
                                     : payStatusCfg.label}
                                 </span>
                                 <ChevronDown className="w-2.5 h-2.5 opacity-60" />
                               </button>
+                              {dbt.prepaid > 0.5 && (
+                                <div className="text-[10px] text-purple-600 dark:text-purple-400 font-mono font-bold mt-0.5 text-center" title="Khoản đặt cọc / trả trước cho NCC (chưa nhập kho hoặc vượt giá trị đã nhập)">
+                                  💜 Đã cọc: {formatCurrency(dbt.prepaid)}
+                                </div>
+                              )}
                               {!isFullyPaid && remainingAmt > 0 && paidAmt > 0 && (
                                 <div className="text-[10px] text-rose-500 font-mono font-bold mt-0.5 text-center">
                                   Còn: {formatCurrency(remainingAmt)}
@@ -4424,12 +4449,12 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
                               {activePaymentDropdownId === po.id && (
                                 <div
-                                  className={`absolute z-[100] left-1/2 -translate-x-1/2 w-56 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
+                                  className={`absolute z-[100] left-1/2 -translate-x-1/2 w-60 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 py-1 text-left text-xs ${
                                     idx >= 1 && idx >= ordersPage.items.length - 2 ? "bottom-full mb-1.5" : "top-full mt-1.5"
                                   }`}
                                 >
                                   <div className="px-3 py-1.5 font-bold text-[10px] text-slate-400 uppercase tracking-wider border-b border-slate-100 dark:border-slate-800">
-                                    Trạng thái thanh toán:
+                                    Trạng thái thanh toán / Đặt cọc:
                                   </div>
                                   {Object.entries(PO_PAYMENT_STATUS_CONFIG).map(([pKey, pCfg]) => (
                                     <button
@@ -4441,7 +4466,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                       }`}
                                     >
                                       <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${pCfg.bg} ${pCfg.text} ${pCfg.border}`}>
-                                        {pCfg.label}
+                                        {pKey === "PARTIAL_PAID" && dbt.received <= 0.5 ? "Đặt cọc / TT 1 phần" : pKey === "PAID" && dbt.received <= 0.5 ? "TT trước 100%" : pCfg.label}
                                       </span>
                                       {payStatusKey === pKey && <Check className="w-3.5 h-3.5 text-orange-600" />}
                                     </button>
@@ -4451,11 +4476,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                       type="button"
                                       onClick={() => {
                                         setActivePaymentDropdownId(null);
-                                        openPaymentModal(po);
+                                        openPaymentModal(po, dbt.received <= 0.5 ? "deposit" : "full");
                                       }}
                                       className="w-full px-2 py-1.5 rounded-lg text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/50 hover:bg-emerald-100 flex items-center gap-1.5 cursor-pointer"
                                     >
-                                      <DollarSign className="w-3.5 h-3.5" /> Ghi sổ chi tiền chi tiết...
+                                      <DollarSign className="w-3.5 h-3.5" /> {dbt.received <= 0.5 ? "Ghi sổ Chi cọc / TT trước..." : "Ghi sổ chi tiền chi tiết..."}
                                     </button>
                                   </div>
                                 </div>
@@ -4579,14 +4604,19 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 </button>
                               )}
 
-                              {/* Record Payment */}
-                              {remainingAmt > 0 && (
+                              {/* Record Payment / Deposit */}
+                              {po.status !== "CANCELLED" && (remainingAmt > 0 || totalAmt <= 0) && (
                                 <button
-                                  onClick={() => openPaymentModal(po)}
-                                  title="Ghi nhận thanh toán công nợ"
-                                  className="p-1.5 rounded-lg text-slate-600 hover:text-emerald-600 hover:bg-emerald-50 dark:hover:bg-slate-800 transition-all cursor-pointer"
+                                  onClick={() => openPaymentModal(po, dbt.received <= 0.5 ? "deposit" : "full")}
+                                  title={dbt.received <= 0.5 ? "Ghi nhận Chi cọc / Thanh toán trước cho NCC (PO chưa nhập kho)" : "Ghi nhận thanh toán công nợ NCC"}
+                                  className={`px-2 py-1 rounded-lg text-[10px] font-bold inline-flex items-center gap-1 border transition-all cursor-pointer ${
+                                    dbt.received <= 0.5
+                                      ? "bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:bg-purple-100"
+                                      : "bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100"
+                                  }`}
                                 >
-                                  <DollarSign className="w-4 h-4" />
+                                  <DollarSign className="w-3.5 h-3.5" />
+                                  <span>{dbt.received <= 0.5 ? "Chi cọc" : "Chi tiền"}</span>
                                 </button>
                               )}
 
@@ -5346,6 +5376,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 }`}
               >
                 Còn nợ phải trả ({orders.filter(o => String(o.status || "").toUpperCase() !== "CANCELLED" && poDebt(o).payable > 0.5).length})
+              </button>
+              <button
+                onClick={() => setPayableFilter("prepaid")}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold cursor-pointer ${
+                  payableFilter === "prepaid" ? "bg-purple-600 text-white" : "bg-slate-100 dark:bg-slate-800 text-slate-600"
+                }`}
+              >
+                💜 Đã đặt cọc / Trả trước ({orders.filter(o => String(o.status || "").toUpperCase() !== "CANCELLED" && poDebt(o).prepaid > 0.5).length})
               </button>
               <button
                 onClick={() => setPayableFilter("paid")}
@@ -8370,7 +8408,49 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                 </div>
               ) : (
                 <div>
-                  <label className="block font-bold text-slate-700 dark:text-slate-300 mb-1">Số Tiền Thanh Toán Đợt Này (VNĐ)</label>
+                  <div className="flex items-center justify-between mb-1 gap-2 flex-wrap">
+                    <label className="block font-bold text-slate-700 dark:text-slate-300">Số Tiền Chi / Đặt Cọc Đợt Này (VNĐ)</label>
+                    {paymentForm.total_amount > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {[30, 50, 70].map((pct) => {
+                          const targetAmt = Math.min(paymentForm.remaining_balance, Math.round((paymentForm.total_amount * pct) / 100));
+                          if (targetAmt <= 0) return null;
+                          return (
+                            <button
+                              key={pct}
+                              type="button"
+                              onClick={() =>
+                                setPaymentForm({
+                                  ...paymentForm,
+                                  payment_amount: targetAmt,
+                                  payment_notes: `Đặt cọc ${pct}% PO ${paymentForm.po_code}`
+                                })
+                              }
+                              className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 cursor-pointer"
+                            >
+                              Cọc {pct}%
+                            </button>
+                          );
+                        })}
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPaymentForm({
+                              ...paymentForm,
+                              payment_amount: paymentForm.remaining_balance,
+                              payment_notes:
+                                (Number(paymentForm.received_amount) || 0) <= 0.5
+                                  ? `Thanh toán trước 100% PO ${paymentForm.po_code}`
+                                  : `Thanh toán tiền hàng PO ${paymentForm.po_code}`
+                            })
+                          }
+                          className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 hover:bg-emerald-100 cursor-pointer"
+                        >
+                          100% còn lại
+                        </button>
+                      </div>
+                    )}
+                  </div>
                   <MoneyInput
                     value={paymentForm.payment_amount}
                     onValueChange={(v) => setPaymentForm({ ...paymentForm, payment_amount: v })}

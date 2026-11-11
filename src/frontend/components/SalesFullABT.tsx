@@ -4351,11 +4351,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [isConfirmDeliveryModalOpen, setIsConfirmDeliveryModalOpen] = useState(false);
     const [confirmDeliveryTargetOrder, setConfirmDeliveryTargetOrder] = useState<any>(null);
     const [confirmDeliveryInvoiceNo, setConfirmDeliveryInvoiceNo] = useState("");
-    // Thu tiền khách hàng (Kế toán)
+    // Thu tiền khách hàng / Thu cọc SO & PXK (Kế toán)
     const [customerPaymentTarget, setCustomerPaymentTarget] = useState<{ order_code: string; raw_code?: string; customer_name?: string; total: number; paid: number } | null>(null);
     const [customerPaymentAmount, setCustomerPaymentAmount] = useState("");
-    // Đã thu theo phiếu giao (mã phiếu -> số tiền) và phân bổ khoản thu đang nhập
+    // Đã thu theo phiếu giao (mã phiếu -> số tiền), đã thu theo đơn SO (mã đơn -> số tiền) và phân bổ khoản thu đang nhập
     const [slipPaidMap, setSlipPaidMap] = useState<Record<string, number>>({});
+    const [orderPaidMap, setOrderPaidMap] = useState<Record<string, number>>({});
     const [debtRefreshKey, setDebtRefreshKey] = useState(0);
     // Báo cáo kiểm tra dữ liệu đơn (Quản trị): mã đơn trùng, phiếu lệch khách...
     const [integrityReport, setIntegrityReport] = useState<any | null>(null);
@@ -4788,10 +4789,28 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 if (data && Array.isArray(data.rma_returns)) {
                     setRmaList(data.rma_returns);
                 }
-                if (data && Array.isArray(data.slip_payments)) {
+                if (data && (Array.isArray(data.slip_payments) || Array.isArray(data.orders))) {
                     const m: Record<string, number> = {};
-                    data.slip_payments.forEach((r: any) => { if (r.delivery_slip_code) m[r.delivery_slip_code] = (m[r.delivery_slip_code] || 0) + (Number(r.paid) || 0); });
+                    const om: Record<string, number> = {};
+                    if (Array.isArray(data.slip_payments)) {
+                        data.slip_payments.forEach((r: any) => {
+                            const p = Number(r.paid) || 0;
+                            if (r.delivery_slip_code) m[r.delivery_slip_code] = (m[r.delivery_slip_code] || 0) + p;
+                            if (r.order_code) {
+                                const oc = String(r.order_code).trim();
+                                om[oc] = (om[oc] || 0) + p;
+                            }
+                        });
+                    }
+                    if (Array.isArray(data.orders)) {
+                        data.orders.forEach((o: any) => {
+                            const oc = String(o?.order_code || "").trim();
+                            const op = Number(o?.amount_paid) || 0;
+                            if (oc && op > (om[oc] || 0)) om[oc] = op;
+                        });
+                    }
                     setSlipPaidMap(m);
+                    setOrderPaidMap(om);
                 }
                 if (data && Array.isArray(data.contracts) && data.contracts.length > 0) {
                     setContracts(prev => {
@@ -16050,6 +16069,65 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         handleOpenConfirmDeliveryModal(targetOrd, slip);
     };
 
+    // Tra cứu tổng tiền & số tiền đã thu / đã cọc của 1 đơn hàng SO (kết hợp sổ thu sales_payments + dữ liệu đơn)
+    const getOrderTotalValue = (ord: any): number => {
+        if (!ord) return 0;
+        const direct = Number(ord.totalAmount ?? ord.total_amount ?? ord.total) || 0;
+        if (direct > 0) return direct;
+        const items = Array.isArray(ord.items) ? ord.items.filter((it: any) => it?.status !== "CANCELLED") : [];
+        return items.reduce((s: number, it: any) => s + (Number(it?.quantity) || 0) * (Number(it?.unitPrice ?? it?.unit_price ?? it?.price) || 0), 0);
+    };
+
+    const getOrderPaidAmount = (ord: any): number => {
+        if (!ord) return 0;
+        const candidates = [ord.linkedSalesOrderId, ord.order_code, ord.raw_code, ord.orderCode, ord.id, ord.orderId]
+            .map((v: any) => String(v || "").trim())
+            .filter(Boolean);
+        let best = Number(ord.amountPaid ?? ord.amount_paid ?? ord.paid) || 0;
+        for (const c of candidates) {
+            if ((orderPaidMap[c] || 0) > best) best = orderPaidMap[c];
+        }
+        return best;
+    };
+
+    const openCustomerPaymentModalForOrder = (ord: any, preselectSlip?: any) => {
+        const fo = resolveFactoryOrder(ord) || ord;
+        const orderCode = String(fo?.linkedSalesOrderId || fo?.order_code || ord?.order_code || ord?.orderCode || preselectSlip?.orderCode || fo?.id || ord?.id || "").trim();
+        const rawCode = String(fo?.order_code || fo?.linkedSalesOrderId || ord?.order_code || fo?.id || orderCode).trim();
+        const total = getOrderTotalValue(fo) || getOrderTotalValue(ord) || (preselectSlip ? getSlipValue(preselectSlip, fo) : 0);
+        const paid = Math.max(getOrderPaidAmount(fo), getOrderPaidAmount(ord));
+        if (total <= 0) {
+            showToast(`Đơn ${orderCode || ""} chưa có đơn giá (> 0đ). Vui lòng cập nhật đơn giá trước khi ghi nhận thu cọc / thanh toán.`, "warning");
+            return;
+        }
+        const remOrder = Math.max(0, Math.round(total - paid));
+        setCustomerPaymentTarget({
+            order_code: orderCode,
+            raw_code: rawCode,
+            customer_name: fo?.customerName || fo?.customer_name || ord?.customerName || ord?.customer_name || preselectSlip?.customerName || "Khách hàng",
+            total,
+            paid
+        });
+        if (preselectSlip && preselectSlip.id) {
+            const sVal = getSlipValue(preselectSlip, fo);
+            const sPaid = slipPaidMap[preselectSlip.id] || 0;
+            const leftSlip = Math.max(0, Math.min(remOrder, Math.round(sVal - sPaid)));
+            if (leftSlip > 0) {
+                setCustomerPaymentAlloc({ [preselectSlip.id]: leftSlip });
+                setCustomerPaymentAmount(String(leftSlip));
+            } else {
+                setCustomerPaymentAlloc({});
+                setCustomerPaymentAmount(String(remOrder));
+            }
+        } else {
+            setCustomerPaymentAlloc({});
+            setCustomerPaymentAmount(String(remOrder));
+        }
+        setCustomerPaymentDate(todayVN());
+        setCustomerPaymentRef("");
+        customerPaymentRequestId.current = `${orderCode}-${Date.now()}`;
+    };
+
     // Danh sách tất cả phiếu giao (các đợt) của 1 đơn + trạng thái 3 bước (Slide 2) + thao tác. Dùng chung Tab Đơn hàng & Tab Khách hàng
     const renderOrderSlipList = (ord: any, opts?: { compact?: boolean }) => {
         const fo = resolveFactoryOrder(ord);
@@ -16139,6 +16217,41 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         {step === "CANCELLED" && s.cancelReason && <span className="text-rose-400/80">• Lý do: {s.cancelReason}</span>}
                                     </div>
                                     <div className="flex items-center gap-1 flex-wrap">
+                                        {(() => {
+                                            const sVal = getSlipValue(s, fo || ord);
+                                            const sPaid = slipPaidMap[s.id] || 0;
+                                            const ordTotal = getOrderTotalValue(fo || ord);
+                                            const ordPaid = getOrderPaidAmount(fo || ord);
+                                            const ordFull = ordTotal > 0 && ordPaid >= ordTotal - 0.5;
+                                            const sFull = (sVal > 0 && sPaid >= sVal - 0.5) || ordFull;
+                                            return (
+                                                <>
+                                                    {step !== "CANCELLED" && (sPaid > 0 || ordFull) && (
+                                                        <span className={cn(
+                                                            "text-[10px] font-bold px-1.5 py-0.5 rounded border font-mono",
+                                                            sFull
+                                                                ? "bg-emerald-950/70 text-emerald-300 border-emerald-700/60"
+                                                                : "bg-purple-950/70 text-purple-300 border-purple-700/60"
+                                                        )}>
+                                                            {sFull ? "✓ Đã thu đủ" : `Đã thu: ${sPaid.toLocaleString("vi-VN")} đ`}
+                                                        </span>
+                                                    )}
+                                                    {canViewCustomerDebt && step !== "CANCELLED" && !sFull && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openCustomerPaymentModalForOrder(fo || ord, s)}
+                                                            className={cn(
+                                                                "text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer text-white",
+                                                                step === "DELIVERED" ? "bg-emerald-700 hover:bg-emerald-600" : "bg-purple-700 hover:bg-purple-600"
+                                                            )}
+                                                            title={step === "DELIVERED" ? "Ghi nhận thu tiền cho Phiếu giao hàng này" : "Ghi nhận thu cọc / thanh toán trước cho Phiếu giao đang chờ giao"}
+                                                        >
+                                                            💰 {step === "DELIVERED" ? "Thu tiền" : "Thu cọc / TT"}
+                                                        </button>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
                                         <button type="button" onClick={() => { setSelectedViewDeliverySlip(s); setIsViewDeliverySlipModalOpen(true); }} className="text-[10px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 px-1.5 py-0.5 rounded cursor-pointer">👁 Xem</button>
                                         {step === "PENDING_DELIVERY" && (
                                             <button
@@ -24146,12 +24259,33 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         )}
                                                                     </div>
                                                                     {(() => {
-                                                                        const totalVal = req.totalAmount || (req.items || []).reduce((s: number, it: any) => s + (Number(it.quantity) || 0) * (Number(it.unitPrice || it.price) || 0), 0);
+                                                                        const totalVal = getOrderTotalValue(req);
+                                                                        const paidVal = getOrderPaidAmount(req);
+                                                                        const remVal = Math.max(0, totalVal - paidVal);
+                                                                        const isFullyPaid = totalVal > 0 && paidVal >= totalVal - 0.5;
                                                                         return totalVal > 0 ? (
-                                                                            <div className="text-[11px] text-emerald-400 font-mono font-bold flex items-center justify-between border-t border-slate-800/60 pt-0.5 mt-0.5 w-full">
-                                                                                <span className="text-[9px] text-slate-400 font-normal">Trị giá:</span>
-                                                                                <span>{totalVal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</span>
-                                                                            </div>
+                                                                            <>
+                                                                                <div className="text-[11px] text-emerald-400 font-mono font-bold flex items-center justify-between border-t border-slate-800/60 pt-0.5 mt-0.5 w-full">
+                                                                                    <span className="text-[9px] text-slate-400 font-normal">Trị giá:</span>
+                                                                                    <span>{totalVal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ</span>
+                                                                                </div>
+                                                                                {paidVal > 0 && (
+                                                                                    <div className={cn(
+                                                                                        "text-[10px] font-mono font-bold flex items-center justify-between border-t border-slate-800/60 pt-0.5 mt-0.5 w-full",
+                                                                                        isFullyPaid ? "text-emerald-300" : "text-purple-300"
+                                                                                    )}>
+                                                                                        <span>
+                                                                                            {isFullyPaid
+                                                                                                ? (stockAnalysis.isFullyDelivered ? "✓ Đã thu đủ 100%" : "💜 Đã TT trước 100%")
+                                                                                                : (stockAnalysis.isFullyDelivered || stockAnalysis.isPartiallyDelivered ? "💰 Đã thu:" : "💜 Đã cọc:")}
+                                                                                        </span>
+                                                                                        <span>
+                                                                                            {paidVal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ
+                                                                                            {!isFullyPaid && remVal > 0 ? ` (Còn: ${remVal.toLocaleString('vi-VN', { maximumFractionDigits: 0 })} đ)` : ""}
+                                                                                        </span>
+                                                                                    </div>
+                                                                                )}
+                                                                            </>
                                                                         ) : null;
                                                                     })()}
                                                                     {(req.orderNotes || req.order_notes) && (
@@ -24521,6 +24655,29 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                             <Copy className="w-3 h-3" /> Copy
                                                                         </button>
                                                                     )}
+                                                                    {/* Nút Thu cọc / Thu tiền trực tiếp trên đơn SO (cho Kế toán / Quản trị) */}
+                                                                    {canViewCustomerDebt && !isCancelledOrder && !isStockOrder && (() => {
+                                                                        const totalVal = getOrderTotalValue(req);
+                                                                        const paidVal = getOrderPaidAmount(req);
+                                                                        const remVal = Math.max(0, totalVal - paidVal);
+                                                                        if (totalVal > 0 && remVal <= 0.5) return null;
+                                                                        const isDeliveredOrPartial = stockAnalysis.isFullyDelivered || stockAnalysis.isPartiallyDelivered;
+                                                                        return (
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => openCustomerPaymentModalForOrder(req)}
+                                                                                className={cn(
+                                                                                    "text-[10px] px-2 py-1 rounded font-bold cursor-pointer transition-colors flex items-center gap-1 shadow-sm border",
+                                                                                    isDeliveredOrPartial
+                                                                                        ? "bg-emerald-950/80 hover:bg-emerald-900 text-emerald-200 border-emerald-500/50"
+                                                                                        : "bg-purple-950/80 hover:bg-purple-900 text-purple-200 border-purple-500/50"
+                                                                                )}
+                                                                                title={isDeliveredOrPartial ? "Ghi nhận thu tiền cho đơn hàng SO" : "Ghi nhận Thu cọc / Thanh toán trước cho đơn SO chưa giao hàng"}
+                                                                            >
+                                                                                <span>💰 {isDeliveredOrPartial ? "Thu tiền" : "Thu cọc / TT"}</span>
+                                                                            </button>
+                                                                        );
+                                                                    })()}
                                                                     {/* 3. Nút Sửa, Nút Hủy đơn & Nút Xóa */}
                                                                     {!isCancelledOrder && canUserAct && (
                                                                         <button
@@ -25619,7 +25776,17 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     onCancelSlip={(s: any) => handleCancelDeliverySlip(s)}
                     canConfirmForOrder={(ord: any) => canConfirmDeliveryForOrder(ord)}
                     canEditSlip={(s: any) => canEditDeliverySlip(s)}
-                    getFinance={(s: any) => ({ amount: getSlipValue(s), paid: slipPaidMap[s.id] || 0, ...getSlipInvoice(s) })}
+                    getFinance={(s: any) => {
+                        const ord = resolveFactoryOrder({ order_id: s?.orderId, raw_code: s?.orderCode });
+                        return {
+                            amount: getSlipValue(s, ord),
+                            paid: slipPaidMap[s.id] || 0,
+                            orderPaid: getOrderPaidAmount(ord || { order_code: s?.orderCode, id: s?.orderId }),
+                            orderTotal: getOrderTotalValue(ord || { order_code: s?.orderCode, id: s?.orderId }),
+                            ...getSlipInvoice(s)
+                        };
+                    }}
+                    onCollectPayment={canViewCustomerDebt ? (s: any, ord: any) => openCustomerPaymentModalForOrder(ord || { order_code: s?.orderCode, id: s?.orderId, customerName: s?.customerName }, s) : undefined}
                     rmaList={rmaList}
                     onCreateRma={(ord: any, slip?: any) => handleOpenCreateRmaModal(ord, slip)}
                     onOpenRmaList={(orderCode?: string) => {
@@ -34556,9 +34723,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 if (!res.ok) { showToast(data.error || "Không ghi nhận được khoản thu.", "error"); return; }
                                 const code = customerPaymentTarget.order_code;
                                 const raw = customerPaymentTarget.raw_code;
-                                setFactoryOrders(prev => prev.map(f => (f.id === code || f.order_code === code || f.id === raw || f.order_code === raw)
+                                setFactoryOrders(prev => prev.map(f => (f.id === code || f.order_code === code || f.linkedSalesOrderId === code || f.id === raw || f.order_code === raw || f.linkedSalesOrderId === raw)
                                     ? { ...f, amountPaid: data.amount_paid, payment_status: data.payment_status }
                                     : f));
+                                setOrderPaidMap(prev => ({
+                                    ...prev,
+                                    [code]: Number(data.amount_paid) || 0,
+                                    ...(raw ? { [raw]: Number(data.amount_paid) || 0 } : {})
+                                }));
                                 if (allocEntries.length > 0) {
                                     setSlipPaidMap(prev => {
                                         const next = { ...prev };
@@ -34578,20 +34750,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     >
                         <div className="text-xs text-slate-300">
                             <div><strong className="text-white">{customerPaymentTarget.customer_name}</strong></div>
-                            <div className="font-mono mt-1">Giá trị đơn: {customerPaymentTarget.total.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ • Đã thu: {customerPaymentTarget.paid.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ • Còn lại: <strong className="text-amber-300">{Math.max(0, customerPaymentTarget.total - customerPaymentTarget.paid).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</strong></div>
+                            <div className="font-mono mt-1">Giá trị đơn: {customerPaymentTarget.total.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ • Đã thu / cọc: {customerPaymentTarget.paid.toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ • Còn lại: <strong className="text-amber-300">{Math.max(0, customerPaymentTarget.total - customerPaymentTarget.paid).toLocaleString("vi-VN", { maximumFractionDigits: 0 })} đ</strong></div>
                         </div>
                         {(() => {
                             const ordObj = resolveFactoryOrder({ order_id: customerPaymentTarget.order_code, raw_code: customerPaymentTarget.raw_code || customerPaymentTarget.order_code });
                             const slips = getOrderSlips(ordObj || { order_code: customerPaymentTarget.order_code, raw_code: customerPaymentTarget.raw_code })
                                 .filter((s: any) => getSlipStatus(s, ordObj) !== "CANCELLED");
-                            if (slips.length === 0) return null;
+                            if (slips.length === 0) return (
+                                <div className="px-3 py-2 rounded-lg bg-purple-950/40 border border-purple-700/50 text-purple-200 text-xs">
+                                    💜 Đơn SO này chưa lập Phiếu giao hàng — khoản thu này sẽ được ghi nhận là <strong>Khách đặt cọc / Thanh toán trước</strong> trên đơn SO.
+                                </div>
+                            );
                             const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
                             return (
                                 <div className="border border-slate-800 rounded-lg overflow-hidden">
-                                    <div className="px-2.5 py-1.5 bg-slate-900 text-[10px] font-bold uppercase text-slate-400">Thu cho phiếu giao nào? (để trống = khoản thu chung của đơn)</div>
+                                    <div className="px-2.5 py-1.5 bg-slate-900 text-[10px] font-bold uppercase text-slate-400">Thu cho phiếu giao nào? (bỏ tích = ghi nhận cọc / thu chung cho cả đơn SO)</div>
                                     <table className="w-full text-[11px]">
                                         <thead className="text-slate-500">
-                                            <tr><th className="p-1.5 text-left">Phiếu</th><th className="p-1.5 text-right">Giá trị</th><th className="p-1.5 text-right">Đã thu</th><th className="p-1.5 text-right w-32">Thu lần này</th></tr>
+                                            <tr><th className="p-1.5 text-left">Phiếu giao</th><th className="p-1.5 text-center">Trạng thái</th><th className="p-1.5 text-right">Giá trị</th><th className="p-1.5 text-right">Đã thu</th><th className="p-1.5 text-right w-32">Thu lần này</th></tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-800">
                                             {slips.map((s: any) => {
@@ -34599,6 +34775,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 const paidS = slipPaidMap[s.id] || 0;
                                                 const left = Math.max(0, value - paidS);
                                                 const inv = getSlipInvoice(s).invoiceNo;
+                                                const st = getSlipStatus(s, ordObj);
                                                 return (
                                                     <tr key={s.id}>
                                                         <td className="p-1.5">
@@ -34609,6 +34786,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 <span className="font-mono text-white">{s.id}</span>
                                                                 {inv && <span className="text-slate-500">HĐ {inv}</span>}
                                                             </label>
+                                                        </td>
+                                                        <td className="p-1.5 text-center">
+                                                            <span className={cn(
+                                                                "text-[9px] px-1.5 py-0.5 rounded-full border font-bold",
+                                                                st === "DELIVERED"
+                                                                    ? "bg-emerald-950/60 text-emerald-300 border-emerald-600/50"
+                                                                    : "bg-amber-950/60 text-amber-300 border-amber-600/50"
+                                                            )}>
+                                                                {st === "DELIVERED" ? "✅ Đã giao" : "⏳ Chờ giao"}
+                                                            </span>
                                                         </td>
                                                         <td className="p-1.5 text-right font-mono">{fmt(value)}</td>
                                                         <td className="p-1.5 text-right font-mono text-slate-400">{fmt(paidS)}</td>
@@ -34626,7 +34813,42 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             );
                         })()}
                         <div className="grid grid-cols-2 gap-3">
-                            <label className="block text-[11px] font-bold text-slate-400">Số tiền thu (đ) *
+                            <div className="block text-[11px] font-bold text-slate-400">
+                                <div className="flex items-center justify-between gap-1 flex-wrap">
+                                    <span>Số tiền thu / đặt cọc (đ) *</span>
+                                    {!Object.values(customerPaymentAlloc).some(v => (Number(v) || 0) > 0) && customerPaymentTarget.total > 0 && (
+                                        <div className="flex items-center gap-1">
+                                            {[30, 50, 70].map((pct) => {
+                                                const rem = Math.max(0, Math.round(customerPaymentTarget.total - customerPaymentTarget.paid));
+                                                const amt = Math.min(rem, Math.round((customerPaymentTarget.total * pct) / 100));
+                                                if (amt <= 0) return null;
+                                                return (
+                                                    <button
+                                                        key={pct}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setCustomerPaymentAmount(String(amt));
+                                                            if (!customerPaymentRef) setCustomerPaymentRef(`Khách đặt cọc ${pct}% đơn ${customerPaymentTarget.order_code}`);
+                                                        }}
+                                                        className="px-1.5 py-0.5 rounded bg-purple-950/80 hover:bg-purple-900 text-purple-300 border border-purple-700/60 text-[9px] font-bold cursor-pointer"
+                                                    >
+                                                        Cọc {pct}%
+                                                    </button>
+                                                );
+                                            })}
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    const rem = Math.max(0, Math.round(customerPaymentTarget.total - customerPaymentTarget.paid));
+                                                    setCustomerPaymentAmount(String(rem));
+                                                }}
+                                                className="px-1.5 py-0.5 rounded bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 border border-emerald-700/60 text-[9px] font-bold cursor-pointer"
+                                            >
+                                                100%
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
                                 {Object.values(customerPaymentAlloc).some(v => (Number(v) || 0) > 0) ? (
                                     <div className="mt-1 w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-emerald-300 font-mono">
                                         {Object.values(customerPaymentAlloc).reduce((s, v) => s + (Number(v) || 0), 0).toLocaleString("vi-VN")} <span className="text-[10px] text-slate-500">(tổng các phiếu)</span>
@@ -34635,7 +34857,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <MoneyInput value={Number(customerPaymentAmount) || 0} onValueChange={(v) => setCustomerPaymentAmount(String(v))}
                                         className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono" />
                                 )}
-                            </label>
+                            </div>
                             <label className="block text-[11px] font-bold text-slate-400">Ngày thu *
                                 <DateInputVN value={customerPaymentDate} onChange={(e) => setCustomerPaymentDate(e.target.value)}
                                     className="mt-1 w-full bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-white font-mono" />

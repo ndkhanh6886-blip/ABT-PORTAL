@@ -19,6 +19,8 @@ interface DebtOrder {
   delivered: number;
   paid: number;
   outstanding: number;
+  prepaid?: number;
+  remaining_order?: number;
   delivery_status: string;
   delivered_at: string | null;
   due_date: string | null;
@@ -39,6 +41,8 @@ interface DebtCustomer {
   delivered: number;
   paid: number;
   outstanding: number;
+  prepaid?: number;
+  remaining_order?: number;
   overdue: number;
   aging: { current: number; d1_30: number; d31_60: number; d60_plus: number };
   max_overdue_days: number;
@@ -60,7 +64,7 @@ export function CustomerDebtView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
-  const [filter, setFilter] = useState<"open" | "overdue" | "all">("open");
+  const [filter, setFilter] = useState<"open" | "prepaid" | "overdue" | "all">("open");
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [historyOrder, setHistoryOrder] = useState<string | null>(null);
 
@@ -104,6 +108,7 @@ export function CustomerDebtView({
     const kw = q.trim().toLowerCase();
     return rows.filter((c) => {
       if (filter === "open" && c.outstanding <= 0.5) return false;
+      if (filter === "prepaid" && (c.prepaid || 0) <= 0.5) return false;
       if (filter === "overdue" && c.overdue <= 0.5) return false;
       if (!kw) return true;
       return [c.customer_name, c.customer_code, c.tax_code, ...c.orders.map((o) => o.order_code)].some((v) => String(v || "").toLowerCase().includes(kw));
@@ -116,12 +121,13 @@ export function CustomerDebtView({
     delivered: t.delivered + c.delivered,
     paid: t.paid + c.paid,
     outstanding: t.outstanding + Math.max(0, c.outstanding),
+    prepaid: t.prepaid + Math.max(0, c.prepaid || 0),
     overdue: t.overdue + c.overdue,
     current: t.current + c.aging.current,
     d1_30: t.d1_30 + c.aging.d1_30,
     d31_60: t.d31_60 + c.aging.d31_60,
     d60_plus: t.d60_plus + c.aging.d60_plus,
-  }), { delivered: 0, paid: 0, outstanding: 0, overdue: 0, current: 0, d1_30: 0, d31_60: 0, d60_plus: 0 }), [visible]);
+  }), { delivered: 0, paid: 0, outstanding: 0, prepaid: 0, overdue: 0, current: 0, d1_30: 0, d31_60: 0, d60_plus: 0 }), [visible]);
 
   const exportExcel = () => {
     const summary = visible.map((c) => ({
@@ -158,11 +164,12 @@ export function CustomerDebtView({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2">
         {[
           ["Đã giao", totals.delivered, "text-white"],
           ["Đã thu", totals.paid, "text-emerald-300"],
           ["Còn nợ", totals.outstanding, "text-amber-300"],
+          ["Khách cọc / Trả trước", totals.prepaid, "text-purple-300"],
           ["Trong hạn", totals.current, "text-sky-300"],
           ["Quá hạn 1–30", totals.d1_30, "text-orange-300"],
           ["Quá hạn 31–60", totals.d31_60, "text-orange-400"],
@@ -176,9 +183,18 @@ export function CustomerDebtView({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {([["open", "Còn nợ"], ["overdue", "Quá hạn"], ["all", "Tất cả"]] as const).map(([k, label]) => (
+        {([
+          ["open", "Còn nợ"],
+          ["prepaid", `💜 Khách cọc / Trả trước (${rows.filter((r) => (r.prepaid || 0) > 0.5).length})`],
+          ["overdue", "Quá hạn"],
+          ["all", "Tất cả"]
+        ] as const).map(([k, label]) => (
           <button key={k} type="button" onClick={() => setFilter(k)}
-            className={`px-2.5 py-1.5 rounded-lg font-semibold cursor-pointer ${filter === k ? "bg-indigo-600 text-white" : "bg-slate-800 text-slate-300 hover:bg-slate-700"}`}>
+            className={`px-2.5 py-1.5 rounded-lg font-semibold cursor-pointer ${
+              filter === k
+                ? k === "prepaid" ? "bg-purple-600 text-white" : "bg-indigo-600 text-white"
+                : "bg-slate-800 text-slate-300 hover:bg-slate-700"
+            }`}>
             {label}
           </button>
         ))}
@@ -226,7 +242,12 @@ export function CustomerDebtView({
                     </td>
                     <td className="p-2 text-center text-slate-300">{c.credit_term_days} ngày</td>
                     <td className="p-2 text-right font-mono">{fmt(c.delivered)}</td>
-                    <td className="p-2 text-right font-mono text-emerald-300">{fmt(c.paid)}</td>
+                    <td className="p-2 text-right font-mono text-emerald-300">
+                      <div>{fmt(c.paid)}</div>
+                      {(c.prepaid || 0) > 0.5 && (
+                        <div className="text-[10px] font-bold text-purple-300">💜 Đã cọc: {fmt(c.prepaid || 0)}</div>
+                      )}
+                    </td>
                     <td className="p-2 text-right font-mono font-bold text-amber-300">{fmt(c.outstanding)}</td>
                     <td className="p-2 text-right font-mono text-sky-300">{c.aging.current ? fmt(c.aging.current) : "—"}</td>
                     <td className="p-2 text-right font-mono text-orange-300">{c.aging.d1_30 ? fmt(c.aging.d1_30) : "—"}</td>
@@ -293,19 +314,35 @@ export function CustomerDebtView({
                                 <td className="p-1.5 font-mono text-slate-300">{o.invoice_no || "—"}</td>
                                 <td className="p-1.5 text-right font-mono">{fmt(o.total)}</td>
                                 <td className="p-1.5 text-right font-mono">{fmt(o.delivered)}</td>
-                                <td className="p-1.5 text-right font-mono text-emerald-300">{fmt(o.paid)}</td>
-                                <td className="p-1.5 text-right font-mono font-bold text-amber-300">{fmt(o.outstanding)}</td>
+                                <td className="p-1.5 text-right font-mono text-emerald-300">
+                                  <div>{fmt(o.paid)}</div>
+                                  {(o.prepaid || 0) > 0.5 && (
+                                    <div className="text-[9px] font-bold text-purple-300">💜 Cọc: {fmt(o.prepaid || 0)}</div>
+                                  )}
+                                </td>
+                                <td className="p-1.5 text-right font-mono font-bold text-amber-300">
+                                  <div>{fmt(o.outstanding)}</div>
+                                  {o.outstanding <= 0.5 && (o.total - o.paid) > 0.5 && (
+                                    <div className="text-[9px] font-normal text-slate-400" title="Giá trị SO còn lại chưa thu">
+                                      Còn SO: {fmt(o.total - o.paid)}
+                                    </div>
+                                  )}
+                                </td>
                                 <td className="p-1.5 text-center font-mono">{dmy(o.delivered_at)}</td>
                                 <td className="p-1.5 text-center font-mono">{dmy(o.due_date)}</td>
                                 <td className="p-1.5 text-center">
                                   {o.overdue_days > 0 ? <span className="text-rose-300 font-bold">{o.overdue_days} ngày</span> : <span className="text-slate-500">—</span>}
                                 </td>
                                 <td className="p-1.5 text-right">
-                                  {onCollect && o.outstanding > 0.5 && (
+                                  {onCollect && (o.outstanding > 0.5 || (o.total - o.paid) > 0.5) && (
                                     <button type="button"
                                       onClick={(e) => { e.stopPropagation(); onCollect({ order_code: o.order_code, customer_name: c.customer_name, total: o.total, paid: o.paid }); }}
-                                      className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white font-bold cursor-pointer">
-                                      💰 Thu tiền
+                                      className={`px-2 py-0.5 rounded text-white font-bold cursor-pointer ${
+                                        o.delivered <= 0.5
+                                          ? "bg-purple-700 hover:bg-purple-600"
+                                          : "bg-emerald-700 hover:bg-emerald-600"
+                                      }`}>
+                                      {o.delivered <= 0.5 ? "💰 Thu thêm cọc" : "💰 Thu tiền"}
                                     </button>
                                   )}
                                 </td>

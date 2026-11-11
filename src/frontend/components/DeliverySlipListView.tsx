@@ -105,6 +105,7 @@ export function DeliverySlipListView({
   canConfirmForOrder,
   canEditSlip,
   getFinance,
+  onCollectPayment,
   rmaList = [],
   onCreateRma,
   onOpenRmaList,
@@ -121,8 +122,10 @@ export function DeliverySlipListView({
   onCancelSlip?: (slip: any) => void;
   canConfirmForOrder?: (ord: any) => boolean;
   canEditSlip?: (slip: any) => boolean;
-  /** Thành tiền phiếu (gồm VAT), số HĐ (từ Quản lý hóa đơn), số đã thu theo phiếu */
-  getFinance?: (slip: any) => { amount: number; invoiceNo: string; invoiceDate?: string; paid: number };
+  /** Thành tiền phiếu (gồm VAT), số HĐ (từ Quản lý hóa đơn), số đã thu theo phiếu & tổng đã thu của đơn SO */
+  getFinance?: (slip: any) => { amount: number; invoiceNo: string; invoiceDate?: string; paid: number; orderPaid?: number; orderTotal?: number };
+  /** Mở cửa sổ thu tiền / thu cọc cho Phiếu giao hàng (kể cả khi đang Chờ giao) */
+  onCollectPayment?: (slip: any, order: any) => void;
   /** Danh sách phiếu trả hàng (RMA) & các hàm thao tác trả hàng ngay tại Phiếu giao hàng */
   rmaList?: any[];
   onCreateRma?: (ord: any, slip?: any) => void;
@@ -985,6 +988,23 @@ export function DeliverySlipListView({
                                     ✅ Đã giao
                                   </button>
                                 )}
+                                {st !== "CANCELLED" && onCollectPayment && (() => {
+                                  const f = getFinance ? getFinance(slip) : null;
+                                  const paidFull = f ? (f.amount > 0 && f.paid >= f.amount - 0.5) || ((f.orderTotal || 0) > 0 && (f.orderPaid || 0) >= (f.orderTotal || 0) - 0.5) : false;
+                                  if (paidFull) return null;
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => onCollectPayment(slip, group.rawOrder)}
+                                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded cursor-pointer text-white ${
+                                        st === "PENDING" ? "bg-purple-700 hover:bg-purple-600" : "bg-emerald-700 hover:bg-emerald-600"
+                                      }`}
+                                      title={st === "PENDING" ? "Ghi nhận thu tiền trước / thu cọc cho Phiếu giao đang chờ giao" : "Ghi nhận thu tiền cho Phiếu giao hàng này"}
+                                    >
+                                      💰 {st === "PENDING" ? "Thu cọc / TT" : "Thu tiền"}
+                                    </button>
+                                  );
+                                })()}
                                 {st !== "CANCELLED" && onEditSlip && (!canEditSlip || canEditSlip(slip)) && (
                                   <button
                                     type="button"
@@ -1112,22 +1132,48 @@ export function DeliverySlipListView({
                       {getFinance && (() => {
                         const f = getFinance(slip);
                         const fmt = (n: number) => new Intl.NumberFormat("vi-VN").format(Math.round(n || 0));
-                        const paidFull = f.amount > 0 && f.paid >= f.amount - 0.5;
+                        const orderFullPaid = (f.orderTotal || 0) > 0 && (f.orderPaid || 0) >= (f.orderTotal || 0) - 0.5;
+                        const paidFull = (f.amount > 0 && f.paid >= f.amount - 0.5) || orderFullPaid;
                         return (
                           <>
                             <td className="p-2.5 text-right font-mono font-bold text-white">{f.amount > 0 ? fmt(f.amount) : "—"}</td>
                             <td className="p-2.5 font-mono text-slate-200" title={f.invoiceDate ? `Ngày HĐ: ${f.invoiceDate}` : undefined}>
                               {f.invoiceNo || <span className="text-slate-600">Chưa xuất</span>}
                             </td>
-                            <td className="p-2.5 text-center">
+                            <td className="p-2.5 text-center" onClick={(e) => { if (onCollectPayment && st !== "CANCELLED" && !paidFull) e.stopPropagation(); }}>
                               {st === "CANCELLED" ? (
                                 <span className="text-slate-600">—</span>
                               ) : paidFull ? (
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-700/60 font-bold">✓ Đã thu</span>
-                              ) : f.paid > 0 ? (
-                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-amber-950/60 text-amber-300 border border-amber-700/50 font-bold" title={`Đã thu ${fmt(f.paid)} / ${fmt(f.amount)}`}>
-                                  Thu {fmt(f.paid)}
+                                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-950/70 text-emerald-300 border border-emerald-700/60 font-bold">
+                                  ✓ {f.paid <= 0 && orderFullPaid ? "SO đã thu 100%" : "Đã thu"}
                                 </span>
+                              ) : f.paid > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onCollectPayment && onCollectPayment(slip, soGroup?.rawOrder || (resolveOrder ? resolveOrder(slip) : null))}
+                                  className={`text-[10px] px-2 py-0.5 rounded-full bg-amber-950/60 text-amber-300 border border-amber-700/50 font-bold ${onCollectPayment ? "hover:bg-amber-900/80 cursor-pointer" : ""}`}
+                                  title={`Đã thu ${fmt(f.paid)} / ${fmt(f.amount)}${onCollectPayment ? " — Bấm để thu thêm" : ""}`}
+                                >
+                                  Thu {fmt(f.paid)}
+                                </button>
+                              ) : (f.orderPaid || 0) > 0 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onCollectPayment && onCollectPayment(slip, soGroup?.rawOrder || (resolveOrder ? resolveOrder(slip) : null))}
+                                  className={`text-[10px] px-2 py-0.5 rounded-full bg-purple-950/70 text-purple-300 border border-purple-700/60 font-bold ${onCollectPayment ? "hover:bg-purple-900/80 cursor-pointer" : ""}`}
+                                  title={`Đơn SO đã đặt cọc / thu ${fmt(f.orderPaid || 0)} đ${onCollectPayment ? " — Bấm để thu thêm / phân bổ vào phiếu này" : ""}`}
+                                >
+                                  💜 SO cọc {fmt(f.orderPaid || 0)}
+                                </button>
+                              ) : onCollectPayment ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onCollectPayment(slip, soGroup?.rawOrder || (resolveOrder ? resolveOrder(slip) : null))}
+                                  className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 hover:bg-purple-900/70 text-slate-300 hover:text-purple-200 border border-slate-700 hover:border-purple-600 font-bold cursor-pointer transition-colors"
+                                  title="Bấm để ghi nhận thu tiền trước / thu cọc cho Phiếu giao hàng này"
+                                >
+                                  Chưa thu • +Thu
+                                </button>
                               ) : (
                                 <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-bold">Chưa thu</span>
                               )}
@@ -1178,6 +1224,23 @@ export function DeliverySlipListView({
                           >
                             <Eye className="w-3 h-3" /> Xem
                           </button>
+                          {st !== "CANCELLED" && onCollectPayment && (() => {
+                            const f = getFinance ? getFinance(slip) : null;
+                            const paidFull = f ? (f.amount > 0 && f.paid >= f.amount - 0.5) || ((f.orderTotal || 0) > 0 && (f.orderPaid || 0) >= (f.orderTotal || 0) - 0.5) : false;
+                            if (paidFull) return null;
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => onCollectPayment(slip, soGroup?.rawOrder || (resolveOrder ? resolveOrder(slip) : null))}
+                                className={`text-[10px] font-bold px-2 py-1 rounded cursor-pointer flex items-center gap-1 text-white ${
+                                  st === "PENDING" ? "bg-purple-700 hover:bg-purple-600" : "bg-emerald-700 hover:bg-emerald-600"
+                                }`}
+                                title={st === "PENDING" ? "Ghi nhận thu cọc / thanh toán trước cho Phiếu giao đang chờ giao" : "Ghi nhận thu tiền cho Phiếu giao hàng này"}
+                              >
+                                💰 {st === "PENDING" ? "Thu cọc" : "Thu tiền"}
+                              </button>
+                            );
+                          })()}
                           {st !== "CANCELLED" && onEditSlip && (!canEditSlip || canEditSlip(slip)) && (
                             <button
                               type="button"
