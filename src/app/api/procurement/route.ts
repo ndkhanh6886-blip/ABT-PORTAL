@@ -1912,14 +1912,26 @@ export async function POST(req: NextRequest) {
         requester_dept || me.department || (isStockOrder ? "Kho Vận" : "Kinh Doanh")
       ).trim();
 
-      let code = workflow_code && typeof workflow_code === "string" && /^PR\d{2}-/.test(workflow_code.trim())
+      const clientCode = workflow_code && typeof workflow_code === "string" && /^PR\d{2}-/.test(workflow_code.trim())
         ? workflow_code.trim()
-        : await generateDocumentCode({
-            docType: "PR",
-            customerName: customer_name,
-            customPrefix: isStockOrder ? "STOCK" : "TBR",
-            tagMode: isStockOrder ? "STOCK" : (customer_name ? "CUSTOMER" : "GENERAL")
-          });
+        : "";
+      const genPrCode = () => generateDocumentCode({
+        docType: "PR",
+        customerName: customer_name,
+        customPrefix: isStockOrder ? "STOCK" : "TBR",
+        tagMode: isStockOrder ? "STOCK" : (customer_name ? "CUSTOMER" : "GENERAL")
+      });
+      let code = clientCode || (await genPrCode());
+      // Mã cấp từ bộ đếm có thể trùng mã PR lập từ đơn bán (SO26-TB-1105 -> PR26-TB-1105 không qua bộ đếm).
+      // Trước đây PR mới bị coi là "sửa" PR cũ trùng mã: ghi đè nội dung và kéo theo các dòng đã lên PO của phiếu cũ
+      // (PR26-TB-1105 ngày 12/11/2026: 20 mã Biobasic bị gộp với MX-S, D1008 của PO26-TB-1135). Bỏ qua mã đã có.
+      if (!clientCode && !prId) {
+        for (let tries = 0; tries < 200; tries++) {
+          const used = await query("SELECT 1 FROM workflow_requests WHERE workflow_code = $1 LIMIT 1", [code]);
+          if (used.rows.length === 0) break;
+          code = await genPrCode();
+        }
+      }
 
       let structuredItems = Array.isArray(items) && items.length > 0 ? items : [];
       if (structuredItems.length === 0 && !String(product_info || "").trim()) {
@@ -1953,8 +1965,21 @@ export async function POST(req: NextRequest) {
 
       // Check if PR already exists by id or workflow_code in workflow_requests
       const existing = prId
-        ? await query("SELECT id, workflow_code, status, results_summary, logs FROM workflow_requests WHERE id = $1 OR workflow_code = $2", [Number(prId) || 0, code])
-        : await query("SELECT id, workflow_code, status, results_summary, logs FROM workflow_requests WHERE workflow_code = $1", [code]);
+        ? await query("SELECT id, workflow_code, status, results_summary, logs, title, description FROM workflow_requests WHERE id = $1 OR workflow_code = $2", [Number(prId) || 0, code])
+        : await query("SELECT id, workflow_code, status, results_summary, logs, title, description FROM workflow_requests WHERE workflow_code = $1", [code]);
+      // PR gửi kèm mã (lập từ đơn bán) mà mã đó đang thuộc một PR khác — không phải PR của chính đơn bán này:
+      // không sửa đè PR kia, cấp mã -R<n> riêng cho đơn này
+      if (!prId && clientCode && existing.rows.length > 0) {
+        const soRef = (`${title || ""} ${description || ""}`.match(/SO\d{2}-[A-Z0-9]+-\d+/i) || [""])[0].toUpperCase();
+        const exText = `${existing.rows[0].title || ""} ${existing.rows[0].description || ""}`.toUpperCase();
+        if (!soRef || !exText.includes(soRef)) {
+          const base = code.replace(/-R\d+$/, "");
+          let n = 1;
+          while ((await query("SELECT 1 FROM workflow_requests WHERE workflow_code = $1", [`${base}-R${n}`])).rows.length > 0) n++;
+          code = `${base}-R${n}`;
+          existing.rows.length = 0;
+        }
+      }
       // Mã PR này đã bị hủy / từ chối: không sửa phiếu cũ (nó vẫn giữ trạng thái đã hủy) mà cấp mã mới, giữ phiếu cũ làm lịch sử
       if (existing.rows.length > 0 && ["CANCELLED", "REJECTED"].includes(String(existing.rows[0].status || "").toUpperCase())) {
         const base = String(existing.rows[0].workflow_code || code).replace(/-R\d+$/, "");
