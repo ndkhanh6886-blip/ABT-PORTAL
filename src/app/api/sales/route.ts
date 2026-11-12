@@ -2033,7 +2033,7 @@ export async function POST(req: NextRequest) {
                     results_summary = COALESCE(results_summary, '') || $2
               WHERE (workflow_code = $1 OR title ILIKE $3 OR description ILIKE $3)
                 AND status IN ('PENDING', 'IN_PROGRESS', 'APPROVED')`,
-            [body.pr_code || code.replace(/^SO/, "PR"), ` • [Hủy tự động do hủy đơn ${code}: ${reason}]`, prPattern]
+            [body.pr_code || "", ` • [Hủy tự động do hủy đơn ${code}: ${reason}]`, prPattern]
           );
           return { cancelled: true, order_code: code };
         }
@@ -2091,7 +2091,8 @@ export async function POST(req: NextRequest) {
         }
 
         // Hủy PR liên kết nếu đang chờ Cung ứng xử lý
-        const prCode = ord.pr_code || body.pr_code || code.replace(/^SO/, "PR");
+        // Không đoán mã PR từ mã SO (mã PR do bộ đếm cấp có thể thuộc PR khác): PR của đơn nhận theo pr_code đã lưu hoặc nội dung nhắc tới đơn
+        const prCode = ord.pr_code || body.pr_code || "";
         const prPattern = `%${code}%`;
         await c.query(
           `UPDATE workflow_requests
