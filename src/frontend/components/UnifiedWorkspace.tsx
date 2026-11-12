@@ -1824,6 +1824,8 @@ export const UnifiedWorkspace: React.FC = () => {
   // Lịch tuần theo NGÀY THẬT: tuần đang xem (0 = tuần này), lịch đang sửa
   const [weekOffset, setWeekOffset] = useState(0);
   const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null);
+  // Xem chi tiết một lịch (họp / công tác) — mọi người liên quan đều xem được, kể cả không có quyền sửa
+  const [viewingScheduleEvent, setViewingScheduleEvent] = useState<any | null>(null);
   const viewedWeek = useMemo(() => {
     const base = new Date(todayVN() + "T00:00:00");
     const dow = (base.getDay() + 6) % 7; // 0 = Thứ 2
@@ -2977,6 +2979,9 @@ export const UnifiedWorkspace: React.FC = () => {
   }, [openWorkspaceItemFromNotification, loading, tasks.length, workflows.length]);
 
   // Bộ lọc riêng của "Danh Sách Phiếu Phối Hợp": trạng thái, quá hạn, liên quan đến tôi, ưu tiên, sắp xếp
+  // "Phát lệnh nhanh" gọn trong 1 thanh chọn: bấm mới xổ danh sách mẫu quy trình (trước đây trải hết ra nhiều dòng)
+  const [quickLaunchOpen, setQuickLaunchOpen] = useState(false);
+  const [quickLaunchQuery, setQuickLaunchQuery] = useState("");
   const [templatesExpanded, setTemplatesExpanded] = useState<boolean>(() => {
     try { return typeof window !== "undefined" && localStorage.getItem("ws_templates_expanded") === "1"; } catch { return false; }
   });
@@ -8028,41 +8033,70 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
           {/* Quy trình mẫu: mặc định 1 thanh "Phát lệnh nhanh", bấm "Chi tiết" để xem dạng thẻ (mô tả, sửa / xóa) */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2.5 shadow-xs flex flex-wrap items-center gap-2">
             <span className="text-xs font-bold text-slate-700 dark:text-slate-200 shrink-0">Phát lệnh nhanh:</span>
-            {!templatesExpanded && (workflowTemplates.length > 0 ? workflowTemplates : DEFAULT_WORKFLOW_TEMPLATES).map((wf: any) => {
-              const Icon = getWorkflowIcon(wf.icon);
-              const stepsCount = Array.isArray(wf.steps) ? wf.steps.length : 3;
-              const slaDays = wf.sla_days || 3;
+            {!templatesExpanded && (() => {
+              const all = (workflowTemplates.length > 0 ? workflowTemplates : DEFAULT_WORKFLOW_TEMPLATES) as any[];
+              const fold = (v: any) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").toLowerCase();
+              const qq = fold(quickLaunchQuery.trim());
+              const list = qq ? all.filter((wf) => fold(`${wf.name} ${wf.source_dept || wf.sourceDept || ""} ${wf.target_dept || wf.targetDept || ""}`).includes(qq)) : all;
               return (
-                <div
-                  key={wf.id || wf.code}
-                  className="inline-flex items-center rounded-lg bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200/60 dark:border-indigo-800/60 overflow-hidden"
-                >
+                <div className="relative">
                   <button
                     type="button"
-                    onClick={() => handleInitiateFromTemplate(wf)}
-                    title={`${wf.name}\n${wf.source_dept || wf.sourceDept || ""} ➔ ${wf.target_dept || wf.targetDept || ""} · ${stepsCount} bước · SLA: ${slaDays} ngày\n${wf.description || ""}`}
-                    className="inline-flex items-center gap-1.5 max-w-[240px] px-2.5 py-1 text-xs font-semibold hover:bg-indigo-100 dark:hover:bg-indigo-900/60 text-indigo-700 dark:text-indigo-300 transition-colors cursor-pointer"
+                    onClick={() => setQuickLaunchOpen((v) => !v)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-bold bg-indigo-50 dark:bg-indigo-950/50 border border-indigo-200/70 dark:border-indigo-800/70 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 cursor-pointer"
                   >
-                    <Icon className="w-3.5 h-3.5 shrink-0" />
-                    <span className="truncate">{wf.name}</span>
-                    <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 shrink-0">
-                      {slaDays}d
-                    </span>
+                    ⚡ Chọn quy trình để phát lệnh ({all.length}) <ChevronDown className="w-3.5 h-3.5" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleEditTemplate(wf);
-                    }}
-                    title="Chỉnh sửa mẫu quy trình & thời gian SLA"
-                    className="px-2 py-1 text-[11px] font-bold border-l border-indigo-200/70 dark:border-indigo-800/70 text-indigo-600 dark:text-indigo-300 hover:bg-indigo-200/70 dark:hover:bg-indigo-800/70 transition-colors cursor-pointer shrink-0"
-                  >
-                    ✏️ Sửa
-                  </button>
+                  {quickLaunchOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setQuickLaunchOpen(false)} />
+                      <div className="absolute z-50 left-0 mt-1 w-[min(92vw,460px)] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl p-2 space-y-1.5">
+                        <input
+                          autoFocus
+                          value={quickLaunchQuery}
+                          onChange={(e) => setQuickLaunchQuery(e.target.value)}
+                          placeholder="Tìm quy trình (tên, phòng ban)..."
+                          className="w-full px-2.5 py-1.5 rounded-lg text-xs border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                        />
+                        <div className="max-h-80 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                          {list.map((wf: any) => {
+                            const Icon = getWorkflowIcon(wf.icon);
+                            const stepsCount = Array.isArray(wf.steps) ? wf.steps.length : 3;
+                            const slaDays = wf.sla_days || 3;
+                            return (
+                              <div key={wf.id || wf.code} className="flex items-center gap-1 py-1">
+                                <button
+                                  type="button"
+                                  onClick={() => { setQuickLaunchOpen(false); handleInitiateFromTemplate(wf); }}
+                                  title={wf.description || wf.name}
+                                  className="flex-1 min-w-0 flex items-center gap-2 px-2 py-1 rounded-lg text-left hover:bg-indigo-50 dark:hover:bg-indigo-950/50 cursor-pointer"
+                                >
+                                  <Icon className="w-3.5 h-3.5 shrink-0 text-indigo-600 dark:text-indigo-300" />
+                                  <span className="min-w-0">
+                                    <span className="block text-xs font-semibold text-slate-900 dark:text-white truncate">{wf.name}</span>
+                                    <span className="block text-[10px] text-slate-500 truncate">{wf.source_dept || wf.sourceDept || ""} ➔ {wf.target_dept || wf.targetDept || ""} · {stepsCount} bước</span>
+                                  </span>
+                                  <span className="ml-auto px-1.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950/80 text-amber-700 dark:text-amber-300 shrink-0">{slaDays}d</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => { setQuickLaunchOpen(false); handleEditTemplate(wf); }}
+                                  title="Chỉnh sửa mẫu quy trình & thời gian SLA"
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold text-indigo-600 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 cursor-pointer shrink-0"
+                                >
+                                  ✏️ Sửa
+                                </button>
+                              </div>
+                            );
+                          })}
+                          {list.length === 0 && <div className="px-2 py-3 text-xs text-slate-500">Không có quy trình khớp "{quickLaunchQuery}"</div>}
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               );
-            })}
+            })()}
             {templatesExpanded && <span className="text-[11px] text-slate-400">Chọn quy trình ở các thẻ bên dưới</span>}
             <div className="ml-auto flex items-center gap-1.5">
               <button
@@ -8928,6 +8962,46 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
       {/* TAB 3: LỊCH CÔNG TÁC TUẦN (MỞ TRỰC TIẾP KHÔNG QUA TAB PHỤ) */}
       {activeSubTab === "planner" && (
         <div className="space-y-4">
+                  {viewingScheduleEvent && (() => {
+                    const ev = viewingScheduleEvent;
+                    const actors = String(ev.actor || "").split(/[,;\n]+/).map((s: string) => s.trim()).filter(Boolean);
+                    const attendees = Array.from(new Set([...actors, ...(Array.isArray(ev.coActors) ? ev.coActors : [])])) as string[];
+                    const isMeeting = ev.eventType === "MEETING" || String(ev.title || "").toLowerCase().includes("họp");
+                    const row = (label: string, val: any) => val ? (
+                      <div className="grid grid-cols-[110px_1fr] gap-2 text-xs">
+                        <span className="font-bold text-slate-500">{label}</span>
+                        <span className="text-slate-900 dark:text-white whitespace-pre-line">{val}</span>
+                      </div>
+                    ) : null;
+                    return (
+                      <div className="fixed inset-0 z-[80] bg-slate-950/60 flex items-center justify-center p-4" onClick={() => setViewingScheduleEvent(null)}>
+                        <div className="w-full max-w-lg rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 shadow-2xl p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <div className="text-[10px] font-extrabold uppercase text-rose-600">{isMeeting ? "🎥 Cuộc họp" : "📅 Lịch công tác"}</div>
+                              <div className="text-base font-black text-slate-900 dark:text-white">{ev.title}</div>
+                            </div>
+                            <button type="button" onClick={() => setViewingScheduleEvent(null)} className="p-1 rounded-lg text-slate-400 hover:text-slate-700 cursor-pointer"><X className="w-5 h-5" /></button>
+                          </div>
+                          <div className="space-y-1.5">
+                            {row("Thời gian", `${ev.day ? `${ev.day} ` : ""}${ev.date ? `${String(ev.date).slice(8, 10)}/${String(ev.date).slice(5, 7)}/${String(ev.date).slice(0, 4)}` : ""}${ev.time ? ` • ${ev.time}` : ""}`)}
+                            {row("Địa điểm", ev.location)}
+                            {row("Chủ trì", actors[0])}
+                            {row("Nội dung", ev.meetingAgenda || ev.description || ev.notes)}
+                            {ev.meetingLink && row("Link họp", <a href={String(ev.meetingLink).startsWith("http") ? ev.meetingLink : `https://${ev.meetingLink}`} target="_blank" rel="noreferrer" className="text-indigo-600 underline break-all">{ev.meetingLink}</a>)}
+                            {row("Phòng ban", ev.category)}
+                            {attendees.length > 0 && row(`Thành viên (${attendees.length})`, attendees.join(", "))}
+                          </div>
+                          <div className="flex justify-end gap-2 pt-1">
+                            {isMeeting && (
+                              <button type="button" onClick={() => handleRemindMeetingNow(ev)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-500 text-white cursor-pointer">🔔 Nhắc họp</button>
+                            )}
+                            <button type="button" onClick={() => setViewingScheduleEvent(null)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200 cursor-pointer">Đóng</button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-5 shadow-xs">
               <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
                 <div>
@@ -9013,7 +9087,11 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                                   📍 {mtg.location || "Phòng họp"}
                                 </span>
                               </div>
-                              <div className="font-extrabold text-slate-900 dark:text-white text-xs">
+                              <div
+                                className="font-extrabold text-slate-900 dark:text-white text-xs cursor-pointer hover:underline"
+                                onClick={() => setViewingScheduleEvent(mtg)}
+                                title="Bấm để xem chi tiết cuộc họp"
+                              >
                                 {mtg.title}
                               </div>
                               {mtg.meetingAgenda && (
@@ -9163,7 +9241,12 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                             return (
                               <div
                                 key={ev.id}
-                                className={`group relative rounded-lg p-2 text-[11px] font-medium border transition-all ${
+                                onClick={(e) => {
+                                  if ((e.target as HTMLElement).closest("button, a")) return;
+                                  setViewingScheduleEvent(ev);
+                                }}
+                                title="Bấm để xem chi tiết"
+                                className={`group relative rounded-lg p-2 text-[11px] font-medium border transition-all cursor-pointer hover:ring-2 hover:ring-indigo-300 ${
                                   isMeeting
                                     ? "bg-rose-100/90 dark:bg-rose-950/60 border-rose-300 dark:border-rose-800 text-rose-950 dark:text-rose-100 shadow-2xs"
                                     : isApp

@@ -151,8 +151,11 @@ export function kitSpecMismatches(lot: any, spec: KitSpec): string[] {
   if (spec.icForm && have.icForm !== spec.icForm) {
     out.push(`${IC_LABEL[spec.icForm]} (lô: ${have.icForm ? IC_LABEL[have.icForm] : "?"})`);
   }
-  if (spec.tubeType && have.tubeType !== spec.tubeType) {
-    out.push(`Tube ${spec.tubeType} (lô: ${have.tubeType ? `Tube ${have.tubeType}` : "không ghi loại tube"})`);
+  // Loại tube chỉ xét được khi số lô có ghi mã tube, và chỉ với dạng CHIA SẴN (kit chia vào tube đó). Dạng không chia sẵn:
+  // tube là phụ kiện cấp kèm, không thể hiện trong số lô -> không loại lô (trước đây mọi lô SQS-112 bị ẩn vì "không ghi loại tube").
+  const tubeMatters = spec.packagingForm !== "WITH_ACCESSORIES" && have.packagingForm !== "WITH_ACCESSORIES";
+  if (spec.tubeType && tubeMatters && have.tubeType && have.tubeType !== spec.tubeType) {
+    out.push(`Tube ${spec.tubeType} (lô: Tube ${have.tubeType})`);
   }
   return out;
 }

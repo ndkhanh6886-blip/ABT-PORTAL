@@ -4338,6 +4338,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [slipPrintLandscape, setSlipPrintLandscape] = useState(false);
 
     // Mở cửa sổ in A4 độc lập nền trắng 100% (tránh lỗi in ra vùng đen của Dark Mode hoặc chữ bị thu nhỏ theo khung modal)
+    /** NVKD phụ trách đơn của phiếu giao (tên + SĐT) — in thay "Hotline" để khách liên hệ đúng người. */
+    const getSlipSalesRep = (slip: any): { name: string; phone: string } => {
+        const ord: any = slip ? resolveFactoryOrder({ order_id: slip.orderId, raw_code: slip.orderCode }) : null;
+        const name = String(ord?.salesRepName || ord?.sales_rep_name || slip?.salesRepName || "").trim();
+        const repId = String(ord?.salesRepId || ord?.sales_rep_id || "").trim();
+        const person: any = (salesPersonnel || []).find((p: any) =>
+            (repId && String(p?.id || p?.employee_id || p?.employee_code || "").trim() === repId) ||
+            (name && String(p?.name || p?.full_name || "").trim().toLowerCase() === name.toLowerCase()));
+        const phone = String((repId && salesPersonnelContacts[repId]?.phone) || person?.phone || "").trim();
+        return { name, phone };
+    };
+
     const handlePrintDeliverySlip = (slipArg?: any) => {
         const slip = slipArg || selectedViewDeliverySlip;
         if (!slip) return;
@@ -4446,8 +4458,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
         const totalMoney = (slip.items || []).reduce((s: number, it: any) => s + slipLinePrice(it) * (Number(it.quantity) || 0), 0);
         const receiverLine = `${escHtml(slip.receiverName || slip.customerContact || slip.customerPhone || "Theo hợp đồng")}${(slip.receiverPhone || (slip.receiverName && slip.customerPhone)) ? ` • SĐT: ${escHtml(slip.receiverPhone || slip.customerPhone)}` : ""}`;
-        const creatorSign = escHtml(slip.creatorName || (slip.dispatcherName !== "Kho Trung Tâm" ? slip.dispatcherName : ""));
-        const dispatcherSign = escHtml(slip.dispatcherName && slip.dispatcherName !== "Kho Trung Tâm" ? slip.dispatcherName : "");
+        // Để trống tên người lập / người giao: người in phiếu chưa chắc là người ký / người giao thực tế
+        const creatorSign = "";
+        const dispatcherSign = "";
         const customerSign = escHtml(slip.receiverName || slip.customerContact || slip.customerName || "");
 
         const htmlDoc = `<!DOCTYPE html>
@@ -4580,8 +4593,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
       <div>
         <div class="info-box-title">ĐƠN VỊ XUẤT GIAO HÀNG</div>
         <div class="info-row"><b>Địa điểm xuất:</b> ${escHtml(slip.dispatchLocation || slip.dispatcherLocation || "Kho Trung Tâm")}</div>
-        <div class="info-row"><b>Người giao hàng:</b> ${escHtml(slip.dispatcherName && slip.dispatcherName !== "Kho Trung Tâm" ? slip.dispatcherName : (slip.dispatcherName || "Theo điều phối"))}</div>
-        <div class="info-row"><b>Hotline hỗ trợ:</b> ${escHtml(slip.dispatcherPhone || companyPhone || "028 2216 0885")}</div>
+        <div class="info-row"><b>Người giao hàng:</b> ........................................</div>
+        <div class="info-row">${(() => { const r = getSlipSalesRep(slip); return r.name ? `<b>NVKD phụ trách:</b> ${escHtml(r.name)}${r.phone ? ` • SĐT: ${escHtml(r.phone)}` : ""}` : `<b>Hotline hỗ trợ:</b> ${escHtml(companyPhone || "028 2216 0885")}`; })()}</div>
       </div>
     </div>
 
@@ -16084,6 +16097,26 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 if (wrong.length > 0) {
                     showToast(`Mã ${getItemCode(it)}: lô ${it.lotNo} không đúng quy cách SO yêu cầu: ${wrong.join("; ")}. Vui lòng chọn lô đúng quy cách.`, "warning");
                     return;
+                }
+            }
+
+            // Nhiều dòng cùng chọn một lô: tổng SL các dòng không được vượt khả dụng của lô (vd 2 dòng DD-104 cùng lô B2610097 500 + 500)
+            {
+                const byLot = new Map<string, { qty: number; code: string; lot: string }>();
+                for (const it of slipItems) {
+                    const lot = String(it.lotNo || "").trim();
+                    if (!lot) continue;
+                    const k = `${getItemCode(it).toLowerCase()}__${lot.toLowerCase()}`;
+                    const cur = byLot.get(k) || { qty: 0, code: getItemCode(it), lot };
+                    cur.qty += Number(it.quantity) || 0;
+                    byLot.set(k, cur);
+                }
+                for (const { qty, code, lot } of byLot.values()) {
+                    const l = getAvailableLotsForProduct(code, "", deliveryTargetOrder?.order_code).find((x: any) => String(x.lot_number || "").trim().toLowerCase() === lot.toLowerCase());
+                    if (l && qty > (Number(l.available_qty ?? l.quantity_on_hand) || 0)) {
+                        showToast(`Mã ${code}: các dòng cùng chọn lô ${lot} với tổng ${qty}, vượt khả dụng của lô (${Number(l.available_qty ?? l.quantity_on_hand) || 0}). Vui lòng chọn thêm lô khác.`, "warning");
+                        return;
+                    }
                 }
             }
 
@@ -33929,7 +33962,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     {deliveryItems.map((item, idx) => {
                                         const ordCode = deliveryTargetOrder?.order_code;
                                         const requiredSpec: KitSpec = isTwoFormKit(item.productCode) ? kitSpecOf(item) : {};
-                                        const availLots = filterLotsByForm(item.productCode, getAvailableLotsForProduct(item.productCode, item.productName, ordCode), item);
+                                        const productLotsAll = getAvailableLotsForProduct(item.productCode, item.productName, ordCode);
+                                        const availLots = filterLotsByForm(item.productCode, productLotsAll, item);
+                                        const lotsHiddenBySpec = productLotsAll.length - availLots.length;
+                                        // Nhiều dòng (cùng mã / khác dòng SO) cùng chọn MỘT lô: tổng SL không được vượt khả dụng của lô
+                                        const sameLotRows = String(item.lotNo || "").trim()
+                                            ? deliveryItems.filter((x) => getItemCode(x).toLowerCase() === getItemCode(item).toLowerCase() &&
+                                                String(x.lotNo || "").trim().toLowerCase() === String(item.lotNo || "").trim().toLowerCase())
+                                            : [];
+                                        const sameLotTotal = sameLotRows.reduce((s, x) => s + (Number(x.quantity) || 0), 0);
                                         const typedLotMismatches = isTwoFormKit(item.productCode) ? kitSpecMismatches(item.lotNo, requiredSpec) : [];
                                         const typedLotWrongForm = typedLotMismatches.length > 0;
                                         const allWarehouseLots = getAllAvailableWarehouseLots(ordCode);
@@ -34215,6 +34256,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                 </span>
                                                             </div>
                                                         )}
+                                                        {matchedWarehouseLot && sameLotRows.length > 1 && sameLotTotal > (Number(selectedLotAvailQty) || 0) && (
+                                                            <div className="mt-1 px-1.5 py-0.5 rounded bg-rose-950/80 border border-rose-700/60 text-[10px] text-rose-300 font-bold">
+                                                                ⚠ {sameLotRows.length} dòng cùng chọn lô {item.lotNo}: tổng {sameLotTotal} vượt khả dụng của lô ({selectedLotAvailQty}) — chọn thêm lô khác
+                                                            </div>
+                                                        )}
 
                                                         {openDeliveryLotDropdownIndex === idx && (
                                                             <>
@@ -34329,7 +34375,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     </div>
                                                                                 ) : (
                                                                                     <div className="px-3 py-2 bg-amber-950/20 text-[10px] text-amber-300/90">
-                                                                                        ℹ️ Mã <strong className="font-mono">{item.productCode}</strong> hiện không có lô tồn khả dụng trong kho. Kiểm tra lại nhập kho của mã này (không xuất lô của mã khác).
+                                                                                        {lotsHiddenBySpec > 0 ? (
+                                                                                            <>ℹ️ Mã <strong className="font-mono">{item.productCode}</strong> có {lotsHiddenBySpec} lô tồn nhưng <strong>không lô nào đúng quy cách SO yêu cầu</strong> ({kitSpecLabel(kitSpecOf(item))}). Kiểm tra lại quy cách trên SO hoặc số lô khi nhập kho.</>
+                                                                                        ) : (
+                                                                                            <>ℹ️ Mã <strong className="font-mono">{item.productCode}</strong> hiện không có lô tồn khả dụng trong kho. Kiểm tra lại nhập kho của mã này (không xuất lô của mã khác).</>
+                                                                                        )}
                                                                                     </div>
                                                                                 )}
 
@@ -34753,8 +34803,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         🚚 ĐƠN VỊ XUẤT GIAO HÀNG:
                                     </div>
                                     <p><strong>Địa điểm xuất:</strong> {selectedViewDeliverySlip.dispatchLocation || selectedViewDeliverySlip.dispatcherLocation || "Kho Biolab"}</p>
-                                    <p><strong>Người giao hàng:</strong> {selectedViewDeliverySlip.dispatcherName && selectedViewDeliverySlip.dispatcherName !== "Kho Trung Tâm" ? selectedViewDeliverySlip.dispatcherName : (selectedViewDeliverySlip.dispatcherName || "Theo điều phối")}</p>
-                                    <p><strong>Hotline hỗ trợ:</strong> {selectedViewDeliverySlip.dispatcherPhone || companyPhone || "028 2216 0885"}</p>
+                                    <p><strong>Người giao hàng:</strong> ........................................</p>
+                                    {(() => {
+                                        const r = getSlipSalesRep(selectedViewDeliverySlip);
+                                        return r.name
+                                            ? <p><strong>NVKD phụ trách:</strong> {r.name}{r.phone ? ` • SĐT: ${r.phone}` : ""}</p>
+                                            : <p><strong>Hotline hỗ trợ:</strong> {companyPhone || "028 2216 0885"}</p>;
+                                    })()}
                                 </div>
                             </div>
 
@@ -34921,17 +34976,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                     <div className="font-bold uppercase text-slate-900">NGƯỜI LẬP PHIẾU</div>
                                     <div className="text-[10px] text-slate-500">(Ký, ghi rõ họ tên)</div>
                                     <div className="h-16"></div>
-                                    <div className="font-bold font-mono text-slate-700">
-                                        {selectedViewDeliverySlip.creatorName || (selectedViewDeliverySlip.dispatcherName !== "Kho Trung Tâm" ? selectedViewDeliverySlip.dispatcherName : "")}
-                                    </div>
+                                    <div className="font-bold font-mono text-slate-700">&nbsp;</div>
                                 </div>
                                 <div>
                                     <div className="font-bold uppercase text-slate-900">NGƯỜI GIAO HÀNG</div>
                                     <div className="text-[10px] text-slate-500">(Ký, ghi rõ họ tên)</div>
                                     <div className="h-16"></div>
-                                    <div className="font-bold font-mono text-slate-700">
-                                        {selectedViewDeliverySlip.dispatcherName && selectedViewDeliverySlip.dispatcherName !== "Kho Trung Tâm" ? selectedViewDeliverySlip.dispatcherName : ""}
-                                    </div>
+                                    <div className="font-bold font-mono text-slate-700">&nbsp;</div>
                                 </div>
                                 <div>
                                     <div className="font-bold uppercase text-slate-900">ĐẠI DIỆN KHÁCH HÀNG NHẬN</div>
