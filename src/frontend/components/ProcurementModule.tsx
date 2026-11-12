@@ -773,6 +773,12 @@ export const ProcurementModule: React.FC = () => {
 
   const handleRemovePRItem = (index: number) => {
     if (prForm.items.length <= 1) return;
+    // Dòng đã lên PO không xóa được khỏi PR (máy chủ giữ lại khi lưu) — báo rõ thay vì để người dùng xóa rồi thấy nó quay lại
+    const target = prForm.items[index];
+    if (target?.po_code) {
+      alert(`Mặt hàng ${target.product_code || ""} đã lên đơn mua ${target.po_code}, không xóa khỏi PR được.\n\nNếu dòng này không thuộc PR của bạn, hãy báo Quản trị viên kiểm tra.`);
+      return;
+    }
     setPRForm((prev: any) => ({
       ...prev,
       items: prev.items.filter((_: any, i: number) => i !== index)
@@ -8978,7 +8984,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                           </div>
                         </div>
 
-                        {prForm.items.length > 1 && (
+                        {it.po_code ? (
+                          <span
+                            className="px-2 py-0.5 rounded-md text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800 whitespace-nowrap"
+                            title="Dòng đã lên đơn mua (PO), không xóa khỏi PR được"
+                          >
+                            🔒 {it.po_code}
+                          </span>
+                        ) : prForm.items.length > 1 && (
                           <button
                             type="button"
                             onClick={() => handleRemovePRItem(idx)}
