@@ -3014,6 +3014,10 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const poItems = Array.isArray(o.items) ? o.items : [];
       const itSpec = String(it?.specification || "").trim();
       return poItems.some((poIt: any) => {
+        // PO gom nhiều PR (PO26-TB-1162): dòng PO ghi PR nguồn thì chỉ tính cho đúng PR đó. Trước đây mã trùng của
+        // PR khác trong cùng PO làm dòng của PR này hiện "Đã tạo PO" và bị loại khỏi "Lên PO cho các mã còn lại".
+        const srcPRs = String(itemSourcePR(poIt) || "").split(",").map((s: string) => s.trim()).filter(Boolean);
+        if (srcPRs.length > 0 && !srcPRs.includes(prCode)) return false;
         const codeMatch = Boolean(itCode && poIt.product_code === itCode);
         const nameMatch = Boolean(itName && poIt.product_name && (poIt.product_name.includes(itName) || itName.includes(poIt.product_name)));
         if (!codeMatch && !nameMatch) return false;
