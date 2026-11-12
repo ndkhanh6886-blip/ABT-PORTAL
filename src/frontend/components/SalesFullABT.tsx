@@ -33757,6 +33757,39 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 </div>
                             </div>
 
+                            {(() => {
+                                // Ghi chú NVKD trên SO (ghi chú chung + ghi chú từng dòng) hiển thị ngay đầu form,
+                                // để Kho thấy yêu cầu của sale khi lập phiếu (trước đây chỉ thấy khi in phiếu)
+                                const fo = resolveFactoryOrder(deliveryTargetOrder);
+                                const orderNote = String(fo?.orderNotes || fo?.order_notes || deliveryTargetOrder.orderNotes || deliveryTargetOrder.order_notes || "").trim();
+                                const lineNotes: { code: string; name: string; note: string }[] = [];
+                                const seen = new Set<string>();
+                                deliveryItems.forEach((it: any) => {
+                                    const note = String(it.soNote || "").trim();
+                                    if (it.isExtraLot || !note) return;
+                                    const k = `${it.productCode}|${note}`;
+                                    if (seen.has(k)) return;
+                                    seen.add(k);
+                                    lineNotes.push({ code: it.productCode, name: it.productName, note });
+                                });
+                                if (!orderNote && lineNotes.length === 0) return null;
+                                return (
+                                    <div className="rounded-lg border border-amber-500/60 bg-amber-950/40 p-2.5 space-y-1.5">
+                                        <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300">📝 Ghi chú của NVKD trên SO — Kho đọc trước khi lập phiếu</div>
+                                        {orderNote && (
+                                            <div className="text-xs text-amber-100 whitespace-pre-line"><span className="font-bold text-amber-300">Ghi chú đơn:</span> {orderNote}</div>
+                                        )}
+                                        {lineNotes.length > 0 && (
+                                            <ul className="text-xs text-amber-100 space-y-0.5 list-disc pl-4">
+                                                {lineNotes.map((ln, i) => (
+                                                    <li key={i}><span className="font-mono font-bold text-white">{ln.code}</span>{ln.name ? <span className="text-amber-200/80"> ({ln.name})</span> : null}: <span className="whitespace-pre-line">{ln.note}</span></li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </div>
+                                );
+                            })()}
+
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 pt-1">
                                 <div>
                                     <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
