@@ -12,7 +12,7 @@
  *  - Dòng đã có PO ẩn mặc định; bật công tắc thì hiện kèm mã PO.
  */
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { CheckSquare, Square, PackageCheck, Eye, AlertTriangle, FileSpreadsheet } from "lucide-react";
 import * as XLSX from "xlsx";
 import { Pager, usePaged, useDebouncedValue } from "@/frontend/components/Pager";
@@ -72,12 +72,26 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
   const debouncedSearch = useDebouncedValue(search, 250);
   const [supplierFilter, setSupplierFilter] = useState<string>("all");
   const [showConverted, setShowConverted] = useState(false);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [poSupplierId, setPoSupplierId] = useState<string>("");
+  // Bản nháp lựa chọn gom PO lưu trên máy theo từng người: tải lại trang / máy đứng / thoát ra không mất các dòng đã chọn
+  const draftKey = `pr_po_selection_draft_${String(actorName || "me").trim()}`;
+  const loadDraft = (): any => {
+    if (typeof window === "undefined") return null;
+    try { return JSON.parse(window.localStorage.getItem(draftKey) || "null"); } catch { return null; }
+  };
+  const [draft0] = useState<any>(() => loadDraft());
+  const [selected, setSelected] = useState<string[]>(() => (Array.isArray(draft0?.selected) ? draft0.selected : []));
+  const [poSupplierId, setPoSupplierId] = useState<string>(() => String(draft0?.poSupplierId || ""));
   // NCC người dùng đổi trên từng dòng (key dòng -> id NCC)
-  const [overrides, setOverrides] = useState<Record<string, string>>({});
-  const [expectedDelivery, setExpectedDelivery] = useState(toVNDateString(new Date(Date.now() + 14 * 86400000)));
-  const [notes, setNotes] = useState("");
+  const [overrides, setOverrides] = useState<Record<string, string>>(() => (draft0?.overrides && typeof draft0.overrides === "object" ? draft0.overrides : {}));
+  const [expectedDelivery, setExpectedDelivery] = useState(() => String(draft0?.expectedDelivery || toVNDateString(new Date(Date.now() + 14 * 86400000))));
+  const [notes, setNotes] = useState(() => String(draft0?.notes || ""));
+  const [restoredCount] = useState<number>(() => (Array.isArray(draft0?.selected) ? draft0.selected.length : 0));
+  useEffect(() => {
+    try {
+      if (selected.length === 0 && !notes && Object.keys(overrides).length === 0) window.localStorage.removeItem(draftKey);
+      else window.localStorage.setItem(draftKey, JSON.stringify({ selected, poSupplierId, overrides, expectedDelivery, notes, savedAt: Date.now() }));
+    } catch { /* bộ nhớ trình duyệt đầy / bị chặn: bỏ qua */ }
+  }, [draftKey, selected, poSupplierId, overrides, expectedDelivery, notes]);
   const [submitting, setSubmitting] = useState(false);
 
   const supplierById = useMemo(() => new Map(suppliers.map((s: any) => [String(s.id), s])), [suppliers]);
@@ -761,6 +775,9 @@ export function PRLineItemsView(props: PRLineItemsViewProps) {
               Tổng tiền dự kiến: <strong className="text-emerald-600">{fmtMoney(poTotal)} đ</strong>
               {zeroPriceItems.length > 0 && <span className="text-amber-600"> • {zeroPriceItems.length} mã chưa có giá</span>}
             </div>
+            {restoredCount > 0 && (
+              <div className="text-[10px] text-indigo-600 dark:text-indigo-300">↺ Lựa chọn được lưu tự động trên máy này (đã khôi phục {restoredCount} dòng). Bấm "Bỏ chọn" để xóa.</div>
+            )}
           </div>
           <div className="flex items-center gap-1.5 text-xs">
             <span className="text-slate-500">Ngày giao dự kiến</span>

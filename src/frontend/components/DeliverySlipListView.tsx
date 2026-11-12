@@ -144,6 +144,8 @@ export function DeliverySlipListView({
   const [q, setQ] = useState("");
   const [viewMode, setViewMode] = useState<"flat" | "by_so">("flat");
   const [selectedSOCode, setSelectedSOCode] = useState<string>("all");
+  // Lọc theo khách hàng: xem toàn bộ nhật ký giao hàng của 1 khách (mọi ngày, mọi SO)
+  const [selectedCustomer, setSelectedCustomer] = useState<string>("all");
   const [expandedSOs, setExpandedSOs] = useState<Record<string, boolean>>({});
 
   // Danh sách toàn bộ phiếu hợp lệ (không phải bản nháp xem trước)
@@ -158,6 +160,20 @@ export function DeliverySlipListView({
   }, [slips, getStatus]);
 
   // Danh sách tất cả các Mã đơn SO có phiếu giao để hiển thị trong Dropdown chọn nhanh Mã SO
+  const allCustomers = useMemo(() => {
+    const map = new Map<string, { name: string; slipCount: number; soCodes: Set<string> }>();
+    allValidSlips.forEach(({ slip }) => {
+      const name = String(slip.customerName || "").trim();
+      if (!name) return;
+      const cur = map.get(name) || { name, slipCount: 0, soCodes: new Set<string>() };
+      cur.slipCount += 1;
+      const so = String(slip.orderCode || slip.orderId || "").trim();
+      if (so) cur.soCodes.add(so);
+      map.set(name, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }, [allValidSlips]);
+
   const allSOCodes = useMemo(() => {
     const map = new Map<string, { code: string; customerName: string; slipCount: number }>();
     allValidSlips.forEach(({ slip }) => {
@@ -179,11 +195,16 @@ export function DeliverySlipListView({
 
   // Dữ liệu lọc theo điều kiện (Khi đã chọn 1 Mã SO cụ thể, tự động lấy tất cả các đợt của SO đó để không bị sót đợt cũ ngoài khoảng ngày)
   const rows = useMemo(() => {
-    const kw = q.trim().toLowerCase();
+    // Tìm không phân biệt dấu tiếng Việt / hoa thường
+    const fold = (v: any) => String(v || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
+    const kw = fold(q.trim());
     return allValidSlips
       .filter((r) => {
         if (selectedSOCode !== "all") {
           return String(r.slip.orderCode || r.slip.orderId || "").trim() === selectedSOCode;
+        }
+        if (selectedCustomer !== "all") {
+          return String(r.slip.customerName || "").trim() === selectedCustomer;
         }
         return (!from || r.date >= from) && (!to || r.date <= to);
       })
@@ -203,12 +224,12 @@ export function DeliverySlipListView({
           s.creatorName,
           s.dispatcherName,
           ...(s.items || []).map((it: any) => `${it.productCode} ${it.productName} ${it.lotNo}`),
-        ].some((v) => String(v || "").toLowerCase().includes(kw));
+        ].some((v) => fold(v).includes(kw));
       })
       .sort((a, b) =>
         a.date === b.date ? String(b.slip.id).localeCompare(String(a.slip.id)) : b.date.localeCompare(a.date)
       );
-  }, [allValidSlips, from, to, status, q, selectedSOCode, payFilter, getFinance]);
+  }, [allValidSlips, from, to, status, q, selectedSOCode, selectedCustomer, payFilter, getFinance]);
 
   const counts = useMemo(() => {
     const c = { all: rows.length, PENDING: 0, DELIVERED: 0, CANCELLED: 0 } as Record<string, number>;
@@ -403,7 +424,7 @@ export function DeliverySlipListView({
     return expandedSOs[orderCode] !== false; // Mặc định mở sẵn để nhìn thấy ngay các đợt giao & SL còn lại
   };
 
-  const filterResetKey = `${from}|${to}|${status}|${payFilter}|${q}|${selectedSOCode}|${viewMode}`;
+  const filterResetKey = `${from}|${to}|${status}|${payFilter}|${q}|${selectedSOCode}|${selectedCustomer}|${viewMode}`;
   const soGroupsPage = usePaged(soGroups, 20, filterResetKey);
   const rowsPage = usePaged(rows, 20, filterResetKey);
 
@@ -651,12 +672,35 @@ export function DeliverySlipListView({
           </select>
         </div>
 
+        {/* Lọc theo khách hàng: nhật ký giao hàng của 1 khách ở mọi ngày */}
+        <div className="min-w-[230px]">
+          <label className="block text-[10px] font-bold uppercase text-teal-300 mb-1">
+            Lọc theo khách hàng
+          </label>
+          <select
+            value={selectedCustomer}
+            onChange={(e) => {
+              setSelectedCustomer(e.target.value);
+              if (e.target.value !== "all") setSelectedSOCode("all");
+            }}
+            title="Chọn khách hàng để xem toàn bộ phiếu giao của khách (không giới hạn khoảng ngày)"
+            className="w-full bg-slate-950 border border-slate-700 hover:border-teal-500/60 rounded-lg px-2.5 py-1.5 text-white font-bold cursor-pointer outline-none"
+          >
+            <option value="all">-- Tất cả khách hàng ({allCustomers.length}) --</option>
+            {allCustomers.map((c) => (
+              <option key={c.name} value={c.name}>
+                {c.name} ({c.slipCount} phiếu · {c.soCodes.size} SO)
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div>
           <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Từ ngày giao</label>
           <DateInputVN
             value={from}
             onChange={(e) => setFrom(e.target.value)}
-            disabled={selectedSOCode !== "all"}
+            disabled={selectedSOCode !== "all" || selectedCustomer !== "all"}
             className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-white font-mono disabled:opacity-50"
           />
         </div>
@@ -665,7 +709,7 @@ export function DeliverySlipListView({
           <DateInputVN
             value={to}
             onChange={(e) => setTo(e.target.value)}
-            disabled={selectedSOCode !== "all"}
+            disabled={selectedSOCode !== "all" || selectedCustomer !== "all"}
             className="bg-slate-950 border border-slate-800 rounded-lg px-2 py-1.5 text-white font-mono disabled:opacity-50"
           />
         </div>
@@ -684,6 +728,7 @@ export function DeliverySlipListView({
               type="button"
               onClick={() => {
                 setSelectedSOCode("all");
+                setSelectedCustomer("all");
                 setRange(k);
               }}
               className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold cursor-pointer flex items-center gap-1"
