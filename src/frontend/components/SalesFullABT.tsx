@@ -16005,7 +16005,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 body: JSON.stringify({
                     transaction_code: `${isInbound ? "PNK" : "PXK"}-${cleanId}${suffix}`,
                     reference_code: slip.orderCode,
-                    date: todayVN(),
+                    // ngày xuất = ngày giao của phiếu (không phải ngày bấm lưu)
+                    date: slip.deliveryDate ? parseSlipDateToIso(slip.deliveryDate) : todayVN(),
                     performed_by: slip.dispatcherName || loggedInStaff?.full_name || "Thủ kho TBR",
                     warehouse_name: is13B ? "Kho Trung Tâm" : (slip.dispatchLocation || "Kho Trung Tâm"),
                     items: valid.map((it: any) => ({
@@ -16328,7 +16329,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         };
         setDeliverySlips(prev => prev.map(s => s.id === slip.id ? updated : s));
         if (selectedViewDeliverySlip?.id === slip.id) setSelectedViewDeliverySlip(updated);
-        persistDeliverySlip(updated);
+        persistDeliverySlip({ ...updated, keep_delivery_date: true }); // chỉ đổi trạng thái: giữ ngày giao trên máy chủ
         showToast(`🚚 Kho (${staffName}) đã xác nhận xuất giao hàng cho phiếu ${slip.id}! Chờ NVKD xác nhận khách đã nhận.`, "success");
     };
 
@@ -16350,7 +16351,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         };
         setDeliverySlips(prev => prev.map(s => s.id === slip.id ? updated : s));
         if (selectedViewDeliverySlip?.id === slip.id) setSelectedViewDeliverySlip(updated);
-        persistDeliverySlip(updated);
+        persistDeliverySlip({ ...updated, keep_delivery_date: true }); // chỉ đổi trạng thái: giữ ngày giao trên máy chủ
         showToast(
             nextStep === "PENDING_DELIVERY"
                 ? `Đã chuyển phiếu ${slip.id} về Bước 1: ⏳ Chờ giao (Chưa ra khỏi kho).`

@@ -1376,7 +1376,7 @@ export async function POST(req: NextRequest) {
       const cAddr = customer_address || customerAddress || null;
       const cPhone = customer_phone || customerPhone || null;
       const cContact = customer_contact || customerContact || null;
-      const dDate = delivery_date || deliveryDate || null;
+      let dDate = delivery_date || deliveryDate || null;
       const dLoc = dispatch_location || dispatchLocation || null;
       const dName = dispatcher_name || dispatcherName || null;
       const dPhone = dispatcher_phone || dispatcherPhone || null;
@@ -1412,6 +1412,9 @@ export async function POST(req: NextRequest) {
         const exRes = await query("SELECT delivery_date, items, status, extra_data FROM sales_delivery_slips WHERE slip_code = $1 LIMIT 1", [finalCode]).catch(() => ({ rows: [] as any[] }));
         const exRow = exRes.rows[0];
         if (exRow) {
+          // Thao tác chỉ đổi trạng thái (kho xác nhận đã xuất / chuyển bước) không được ghi đè ngày giao bằng ngày cũ
+          // còn trên màn hình người bấm (PX2611-0118: ngày giao bị ghi lại 12/11 sau khi đã sửa về 10/11)
+          if (body.keep_delivery_date && exRow.delivery_date) dDate = exRow.delivery_date;
           let exExtra: any = exRow.extra_data;
           if (typeof exExtra === "string") { try { exExtra = JSON.parse(exExtra || "{}"); } catch { exExtra = {}; } }
           exExtra = exExtra && typeof exExtra === "object" ? exExtra : {};
@@ -1492,6 +1495,12 @@ export async function POST(req: NextRequest) {
         ]
       );
 
+      // Một ngày duy nhất: "ngày giao thực tế" (deliveredAt) luôn theo ngày giao của phiếu khi phiếu đã xuất / đã giao
+      // (trước đây hai trường lệch nhau: danh sách phiếu đọc ngày giao, chỗ khác đọc ngày giao thực tế)
+      if (dDate && (body.deliveredAt || ["WAREHOUSE_DELIVERED", "DELIVERED"].includes(String(body.deliveryStatus || "").toUpperCase()))) {
+        body.deliveredAt = parseSqlDate(dDate);
+      }
+
       // Lưu thông tin mở rộng (đợt giao, trạng thái chờ giao/đã giao/hủy, POD...) vào extra_data
       if (!deliverySlipExtraColumnEnsured) {
         try {
@@ -1530,7 +1539,22 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      await logAudit("SAVE", "DELIVERY_SLIP", `Lưu phiếu xuất kho ${finalCode} cho đơn ${oCode || oId}`);
+      // Phiếu xuất kho (PXK-<mã phiếu>…) lấy NGÀY GIAO của phiếu làm ngày xuất (trước đây là ngày lập / sửa phiếu,
+      // nên Thẻ kho và báo cáo xuất nhập tồn lệch ngày với phiếu giao)
+      if (dDate && String(slipStatus).toUpperCase() !== "CANCELLED") {
+        try {
+          const isoSlipDate = parseSqlDate(dDate);
+          await query(
+            `UPDATE inventory_transactions SET date = $1::date
+              WHERE (transaction_code = $2 OR transaction_code LIKE $3) AND transaction_type = 'OUTBOUND' AND date <> $1::date`,
+            [isoSlipDate, `PXK-${finalCode}`, `PXK-${finalCode}-%`]
+          );
+        } catch (err) {
+          console.error("Failed to sync PXK date from delivery_slip:", err);
+        }
+      }
+
+      await logAudit("SAVE", "DELIVERY_SLIP", `Lưu phiếu xuất kho ${finalCode} cho đơn ${oCode || oId}${dDate ? ` (ngày giao ${dDate})` : ""}`);
 
       // Tự động bắn thông báo Zalo OA khi Kho xuất hàng (B2) hoặc Giao thành công (B3)
       const upperSlipSt = String(body.deliveryStatus || slipStatus || "").toUpperCase();
