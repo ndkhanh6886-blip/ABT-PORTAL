@@ -1056,13 +1056,8 @@ export function DeliverySlipListView({
           <table className="w-full text-left text-xs min-w-[1200px]">
             <thead>
               <tr className="bg-slate-900 text-slate-400 font-bold text-[11px]">
-                <th className="p-2.5">Mã phiếu</th>
-                <th className="p-2.5">Ngày giao</th>
-                <th className="p-2.5">Khách hàng</th>
-                <th className="p-2.5">Mã đơn SO</th>
-                <th className="p-2.5 text-center">Đợt</th>
-                <th className="p-2.5 text-center">Số mặt hàng</th>
-                <th className="p-2.5 text-center">SL giao đợt này</th>
+                <th className="p-2.5 whitespace-nowrap">Mã phiếu / Ngày giao</th>
+                <th className="p-2.5">Khách hàng / Đơn SO · Đợt · SL</th>
                 {getFinance && (
                   <>
                     <th className="p-2.5 text-right">Thành tiền</th>
@@ -1073,13 +1068,14 @@ export function DeliverySlipListView({
                 <th className="p-2.5 text-center">Còn lại của SO</th>
                 <th className="p-2.5">Người lập</th>
                 <th className="p-2.5 text-center">Trạng thái</th>
+                <th className="p-2.5">Ghi chú</th>
                 <th className="p-2.5 text-right">Thao tác</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={getFinance ? 14 : 11} className="p-6 text-center text-slate-500">
+                  <td colSpan={getFinance ? 11 : 8} className="p-6 text-center text-slate-500">
                     Không có phiếu giao nào trong khoảng đã chọn.
                   </td>
                 </tr>
@@ -1097,37 +1093,40 @@ export function DeliverySlipListView({
                       onClick={() => onView(slip)}
                       title="Bấm để xem / in phiếu"
                     >
-                      <td className="p-2.5 font-mono font-bold text-indigo-300">{slip.id}</td>
-                      <td className="p-2.5 font-mono text-slate-200">
-                        {fmtVN(date)}
-                        {isFuture && (
-                          <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-700/60">
-                            Lịch giao
+                      <td className="p-2.5 whitespace-nowrap align-top">
+                        <div className="font-mono font-bold text-indigo-300">{slip.id}</div>
+                        <div className="font-mono text-[11px] text-slate-400 mt-0.5">
+                          {fmtVN(date)}
+                          {isFuture && (
+                            <span className="ml-1.5 text-[9px] px-1.5 py-0.5 rounded bg-sky-950 text-sky-300 border border-sky-700/60">
+                              Lịch giao
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="p-2.5 align-top min-w-[220px]">
+                        <div className="text-white font-semibold line-clamp-1" title={slip.customerName}>{slip.customerName}</div>
+                        <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5 text-[11px] text-slate-400">
+                          <span
+                            className="font-mono text-indigo-300 hover:underline"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (slip.orderCode) {
+                                setSelectedSOCode(String(slip.orderCode));
+                                setViewMode("by_so");
+                              }
+                            }}
+                            title="Bấm vào Mã đơn SO để xem chi tiết tất cả các đợt giao & số lượng còn lại của đơn này"
+                          >
+                            {slip.orderCode}
                           </span>
-                        )}
-                      </td>
-                      <td className="p-2.5 text-white font-semibold">{slip.customerName}</td>
-                      <td
-                        className="p-2.5 font-mono text-indigo-300 hover:underline"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          if (slip.orderCode) {
-                            setSelectedSOCode(String(slip.orderCode));
-                            setViewMode("by_so");
-                          }
-                        }}
-                        title="Bấm vào Mã đơn SO để xem chi tiết tất cả các đợt giao & số lượng còn lại của đơn này"
-                      >
-                        {slip.orderCode}
-                      </td>
-                      <td className="p-2.5 text-center text-slate-300">
-                        <span className="px-1.5 py-0.5 rounded bg-slate-800 font-mono text-[11px]">
-                          Đợt {slip.batchNumber || 1}/{soGroup ? soGroup.activeSlips.length : 1}
-                        </span>
-                      </td>
-                      <td className="p-2.5 text-center text-slate-300">{items.length}</td>
-                      <td className="p-2.5 text-center font-mono text-emerald-300 font-bold">
-                        {items.reduce((a, it) => a + (Number(it.quantity) || 0), 0)}
+                          <span className="px-1.5 rounded bg-slate-800 font-mono text-[10px] text-slate-300">
+                            Đợt {slip.batchNumber || 1}/{soGroup ? soGroup.activeSlips.length : 1}
+                          </span>
+                          <span title="Số mặt hàng · Số lượng giao đợt này">
+                            {items.length} mã · SL <strong className="font-mono text-emerald-300">{items.reduce((a, it) => a + (Number(it.quantity) || 0), 0)}</strong>
+                          </span>
+                        </div>
                       </td>
                       {getFinance && (() => {
                         const f = getFinance(slip);
@@ -1213,6 +1212,15 @@ export function DeliverySlipListView({
                         >
                           {STATUS_META[st].label}
                         </span>
+                      </td>
+                      <td className="p-2.5 align-top max-w-[200px]">
+                        {String(slip.notes || "").trim() ? (
+                          <div className="text-[11px] text-slate-300 line-clamp-2 whitespace-pre-line" title={String(slip.notes)}>
+                            {String(slip.notes).trim()}
+                          </div>
+                        ) : (
+                          <span className="text-slate-600">—</span>
+                        )}
                       </td>
                       <td className="p-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-end gap-1 flex-wrap">
