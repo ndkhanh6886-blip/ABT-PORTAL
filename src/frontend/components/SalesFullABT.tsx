@@ -17209,16 +17209,30 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         candidates.forEach(cand => {
             let primaryKey = cand.canonical_code ? `CODE:${cand.canonical_code}` : `ID:${cand.order_id}`;
             
-            // Check if existing item in map represents the same order
+            // Check if existing item in map represents the same order.
+            // Ưu tiên khớp theo MÃ ĐƠN. "Cùng số HĐ + cùng khách" chỉ dùng khi một bên không có mã đơn (phiếu lẻ):
+            // một hóa đơn có thể xuất chung cho nhiều SO của cùng khách (HĐ 00004532 cho SO26-HT-1104 và SO26-HT-1102),
+            // trước đây hai SO bị gộp làm một dòng — SO kia hiện "Chờ xuất HĐ" và phiếu của nó hiện dưới SO khác.
             let matchKey = primaryKey;
-            for (const [k, v] of mergedMap.entries()) {
-                const sameCode = cand.canonical_code && v.canonical_code && cand.canonical_code === v.canonical_code;
-                const sameInvoiceAndCust = cand.invoiceNo && v.invoiceNo && cand.invoiceNo === v.invoiceNo && 
-                    (cand.customer_name === v.customer_name || (cand.customer_tax_code && cand.customer_tax_code === v.customer_tax_code));
-                
-                if (sameCode || sameInvoiceAndCust) {
-                    matchKey = k;
-                    break;
+            let found = false;
+            if (cand.canonical_code) {
+                for (const [k, v] of mergedMap.entries()) {
+                    if (v.canonical_code && v.canonical_code === cand.canonical_code) {
+                        matchKey = k;
+                        found = true;
+                        break;
+                    }
+                }
+            }
+            if (!found) {
+                for (const [k, v] of mergedMap.entries()) {
+                    const eitherWithoutCode = !cand.canonical_code || !v.canonical_code;
+                    const sameInvoiceAndCust = eitherWithoutCode && cand.invoiceNo && v.invoiceNo && cand.invoiceNo === v.invoiceNo &&
+                        (cand.customer_name === v.customer_name || (cand.customer_tax_code && cand.customer_tax_code === v.customer_tax_code));
+                    if (sameInvoiceAndCust) {
+                        matchKey = k;
+                        break;
+                    }
                 }
             }
 
