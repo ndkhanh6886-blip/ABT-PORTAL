@@ -64,6 +64,26 @@ import { DateInputVN, formatDayVN, toISODate } from "@/frontend/components/DateI
 import { printWarehouseSlip, exportWarehouseSlipExcel, txPartnerName } from "@/frontend/components/warehouse/warehouseSlipDocs";
 import { packagingFormOfLot, isPcrKitProduct, PACKAGING_LABEL } from "@/frontend/utils/packagingForm";
 
+/**
+ * Hỏi lại khi có dòng hàng mà hạn dùng ≤ ngày nhập kho (thường là gõ nhầm ngày sản xuất vào ô hạn dùng).
+ * Lô như vậy bị coi là hết hạn: không xuất được cho đơn hàng dù tồn kho vẫn tăng.
+ * Trả về false khi người nhập muốn quay lại sửa.
+ */
+function confirmInboundExpiries(items: any[], receiptDate: any): boolean {
+  const receiptIso = normalizeExcelDateToISO(receiptDate, "") || todayVN();
+  const vn = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
+  const bad = (items || [])
+    .map((it: any) => ({ it, exp: normalizeExcelDateToISO(it?.expiry_date, "") }))
+    .filter(({ exp }) => /^\d{4}-\d{2}-\d{2}$/.test(exp) && exp <= receiptIso)
+    .map(({ it, exp }) => `• ${String(it.product_code || "").trim()} — lô ${String(it.lot_number || "").trim() || "(trống)"}: hạn dùng ${vn(exp)}`);
+  if (bad.length === 0) return true;
+  return window.confirm(
+    `⚠️ ${bad.length} dòng có HẠN DÙNG sớm hơn hoặc bằng NGÀY NHẬP KHO (${vn(receiptIso)}):\n\n${bad.join("\n")}\n\n` +
+    `Lô hết hạn sẽ KHÔNG xuất được cho đơn hàng. Kiểm tra lại nhãn: có phải đã nhập nhầm ngày sản xuất vào ô hạn dùng?\n\n` +
+    `Bấm "Hủy" để quay lại sửa. Bấm "OK" chỉ khi hạn dùng này là đúng (hàng thật sự đã hết hạn).`
+  );
+}
+
 /** Dòng hàng của phiếu có khớp từ khóa tìm (mã hàng, tên, số lô). */
 function txItemMatches(it: any, q: string): boolean {
   if (!q) return false;
@@ -2417,6 +2437,9 @@ export const WarehouseModule: React.FC = () => {
       const supplierPart = inboundForm.supplier_name?.trim() ? ` NCC: ${inboundForm.supplier_name.trim()}.` : "";
       const refCodeClean = inboundForm.reference_code?.trim() || inboundForm.vat_invoice_no?.trim() || "N/A";
       const poPrefix = /^PO/i.test(refCodeClean) ? `Nhập kho theo PO ${refCodeClean} • ` : "";
+      // Hạn dùng sớm hơn hoặc bằng ngày nhập kho gần như luôn là gõ nhầm (vd. nhập ngày sản xuất vào ô hạn dùng):
+      // lô nhập vào sẽ bị coi là hết hạn và không xuất được cho đơn hàng (SO26-TS-1110 / PNK26-KH-1145)
+      if (!confirmInboundExpiries(inboundForm.items, inboundForm.date)) return;
       const payload = {
         ...inboundForm,
         id: editingInboundTxId || undefined,
@@ -3237,6 +3260,7 @@ export const WarehouseModule: React.FC = () => {
         excelInboundCodeRef.current = `PNK-EXCEL-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
       }
       const code = excelInboundCodeRef.current;
+      if (!confirmInboundExpiries(validRows, todayVN())) return;
       const payload = {
         transaction_code: code,
         date: todayVN(),

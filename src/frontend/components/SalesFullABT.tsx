@@ -14398,6 +14398,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const stockLacksForOrder = (analysis: any): boolean =>
         (analysis?.itemsBreakdown || []).some((ib: any) => ib.lineStatus === "NEEDS_PROCURE" && Number(ib.remainingQty) > 0);
 
+    // Số lượng nằm ở lô KHÔNG xuất được (hết hạn / đang cách ly) theo mã hàng (chữ thường).
+    // Tồn tổng của mã (inventory_items) vẫn cộng các lô này, nên SO từng báo "Kho đủ hàng" trong khi phiếu giao
+    // không có lô nào để chọn (SO26-TS-1110: lô 01112026 hạn 02/11/2026 nhập kho ngày 12/11/2026).
+    const unusableLotQtyByCode = useMemo(() => {
+        const today = todayVN();
+        const map: Record<string, number> = {};
+        (warehouseLots || []).forEach((l: any) => {
+            const code = String(l.product_code || "").trim().toLowerCase();
+            const qty = Number(l.quantity_on_hand) || 0;
+            if (!code || qty <= 0) return;
+            const expIso = normalizeLotExpiryIso(l.expiry_date || l.expiry_raw);
+            if (l.is_quarantined || (expIso && expIso < today)) map[code] = (map[code] || 0) + qty;
+        });
+        return map;
+    }, [warehouseLots]);
+
     // HÀM TÍNH TOÁN TỒN KHO KHẢ DỤNG (TRỪ GIỮ CHỖ) & HÀNG SẮP VỀ TỪ PO CHO TỪNG DÒNG HÀNG (Yêu cầu 1 & 2)
     const computeOrderStockAnalysis = (order: any) => {
         const items = order.items || [];
@@ -14475,7 +14491,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             // Còn lại = SL đặt − SL đã lập phiếu giao (gồm cả phiếu chờ giao)
             const remainingQty = Math.max(0, orderQty - Math.max(deliveredQty, allocatedQty));
 
-            const totalWarehouse = Number(stock13b[code] || 0);
+            // Chỉ tính hàng xuất được: trừ phần nằm ở lô hết hạn / cách ly (giống danh sách lô của phiếu giao)
+            const totalWarehouse = Math.max(0, Number(stock13b[code] || 0) - Number(unusableLotQtyByCode[code.toLowerCase()] || 0));
             const reserved = Number(reservedMap[code] || 0);
             const rawAvailableStock = Math.max(0, totalWarehouse - reserved);
             const unreceivedProcureQty = isStockOrder ? 0 : getOrderItemUnreceivedProcureQty(order, it, code, remainingQty);
@@ -33999,6 +34016,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         const productLotsAll = getAvailableLotsForProduct(item.productCode, item.productName, ordCode);
                                         const availLots = filterLotsByForm(item.productCode, productLotsAll, item);
                                         const lotsHiddenBySpec = productLotsAll.length - availLots.length;
+                                        // Lô của đúng mã này còn tồn nhưng không xuất được (hết hạn / cách ly): báo rõ để Kho sửa hạn dùng / xử lý lô,
+                                        // thay vì chỉ thấy "Hết tồn" trong khi SO đã báo có hàng
+                                        const unusableLots = (() => {
+                                            const codeLc = String(item.productCode || "").trim().toLowerCase();
+                                            if (!codeLc) return [] as { lot: string; reason: string }[];
+                                            const todayIso = todayVN();
+                                            return (warehouseLots || [])
+                                                .filter((l: any) => String(l.product_code || "").trim().toLowerCase() === codeLc && (Number(l.quantity_on_hand) || 0) > 0)
+                                                .map((l: any) => {
+                                                    const expIso = normalizeLotExpiryIso(l.expiry_date || l.expiry_raw);
+                                                    const reason = l.is_quarantined
+                                                        ? "đang cách ly"
+                                                        : (expIso && expIso < todayIso ? `hết hạn ${expIso.slice(8, 10)}/${expIso.slice(5, 7)}/${expIso.slice(0, 4)}` : "");
+                                                    return { lot: String(l.lot_number || "").trim() || "(không số lô)", reason, qty: Number(l.quantity_on_hand) || 0 };
+                                                })
+                                                .filter((x: any) => x.reason)
+                                                .map((x: any) => ({ lot: `${x.lot} (SL ${x.qty})`, reason: x.reason }));
+                                        })();
                                         // Nhiều dòng (cùng mã / khác dòng SO) cùng chọn MỘT lô: tổng SL không được vượt khả dụng của lô
                                         const sameLotRows = String(item.lotNo || "").trim()
                                             ? deliveryItems.filter((x) => getItemCode(x).toLowerCase() === getItemCode(item).toLowerCase() &&
@@ -34172,7 +34207,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             {availStock}
                                                         </span>
                                                         <span className={cn("text-[8px] mt-0.5 font-sans", availStock <= 0 ? "text-rose-500 font-semibold" : isEnough ? "text-teal-400" : "text-amber-400")}>
-                                                            {availStock <= 0 ? "Hết tồn" : isEnough ? "Đủ hàng" : "Thiếu"}
+                                                            {availStock <= 0 ? (unusableLots.length > 0 ? "Lô hết hạn / cách ly" : "Hết tồn") : isEnough ? "Đủ hàng" : "Thiếu"}
                                                         </span>
                                                     </div>
                                                 </td>
@@ -34411,6 +34446,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                     <div className="px-3 py-2 bg-amber-950/20 text-[10px] text-amber-300/90">
                                                                                         {lotsHiddenBySpec > 0 ? (
                                                                                             <>ℹ️ Mã <strong className="font-mono">{item.productCode}</strong> có {lotsHiddenBySpec} lô tồn nhưng <strong>không lô nào đúng quy cách SO yêu cầu</strong> ({kitSpecLabel(kitSpecOf(item))}). Kiểm tra lại quy cách trên SO hoặc số lô khi nhập kho.</>
+                                                                                        ) : unusableLots.length > 0 ? (
+                                                                                            <>⛔ Mã <strong className="font-mono">{item.productCode}</strong> có lô trong kho nhưng <strong>không xuất được</strong>: {unusableLots.map((u) => `lô ${u.lot} ${u.reason}`).join("; ")}. Nếu hạn dùng bị nhập sai, báo Kho sửa hạn dùng của lô rồi lập lại phiếu.</>
                                                                                         ) : (
                                                                                             <>ℹ️ Mã <strong className="font-mono">{item.productCode}</strong> hiện không có lô tồn khả dụng trong kho. Kiểm tra lại nhập kho của mã này (không xuất lô của mã khác).</>
                                                                                         )}
