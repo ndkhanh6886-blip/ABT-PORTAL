@@ -1763,11 +1763,9 @@ export function SalesFullABT() {
 
             let prCode = (o.prCode || o.pr_code) ? String(o.prCode || o.pr_code).trim() : undefined;
             if (prCode) {
-                if (!prCode.startsWith("PR26-") || /^PR-2026-/.test(prCode) || /^PR-/.test(prCode)) {
-                    prCode = orderId.startsWith("SO") ? orderId.replace(/^SO/, "PR") : `PR26-VI-1001`;
-                }
-            } else if ((o.procureStatus === "PR_PENDING" || o.procureStatus === "PR_CREATED" || o.procure_status === "PR_PENDING" || o.procure_status === "PR_CREATED") && orderId.startsWith("SO")) {
-                prCode = orderId.replace(/^SO/, "PR");
+                // Mã PR kiểu cũ không hợp lệ: bỏ, để bước gắn lại PR theo nội dung phiếu (bên dưới) tìm đúng PR của đơn.
+                // Không đoán mã PR từ mã SO nữa (mã PR nay do bộ đếm cấp, PR26-TB-1105 có thể là PR của đơn khác).
+                if (!/^PR\d{2}-/.test(prCode)) prCode = undefined;
             }
             let mfgOrderCode = cleanedMfgCode || (o.procureOrderCode ? String(o.procureOrderCode) : undefined);
             if (mfgOrderCode) {
@@ -2226,9 +2224,6 @@ export function SalesFullABT() {
                         // Thứ tự lập đơn trên máy chủ: dùng để xếp ưu tiên giữ hàng trong kho (đơn trước lấy trước)
                         if (raw0.id) merged.dbRowId = Number(raw0.id);
                         if (prev?.prCode && !o.prCode) merged.prCode = prev.prCode;
-                        if (!merged.prCode && (merged.procureStatus === "PR_PENDING" || merged.procureStatus === "PR_CREATED") && k.startsWith("SO")) {
-                            merged.prCode = k.replace(/^SO/, "PR");
-                        }
                         if (prev?.procureStatus && !o.procureStatus) merged.procureStatus = prev.procureStatus;
                         if (prev?.procureOrderCode && !o.procureOrderCode) merged.procureOrderCode = prev.procureOrderCode;
                         // The workflow status (Ready / Ordered / Delivered...) is tracked in app_storage; the DB row
@@ -2271,8 +2266,11 @@ export function SalesFullABT() {
                     for (const [k, ord] of orderMap) {
                         if (!k.startsWith("SO") || ord.prCode) continue;
                         const alive = prRows.filter((r: any) => !isDroppedPR(r));
+                        // PR của đơn = PR có nội dung nhắc tới đơn này. Không nhận theo mã suy từ SO: PR26-TB-1105 do bộ
+                        // đếm cấp có thể là PR của Cung ứng, trùng số với SO26-TB-1105.
+                        const mentionsOrder = (r: any) => `${r.title || ""} ${r.description || ""}`.includes(k);
                         const expected = k.replace(/^SO/, "PR");
-                        const pr = alive.filter((r: any) => r.workflow_code === expected || String(r.workflow_code || "").startsWith(`${expected}-R`)).pop() ||
+                        const pr = alive.filter((r: any) => (r.workflow_code === expected || String(r.workflow_code || "").startsWith(`${expected}-R`)) && mentionsOrder(r)).pop() ||
                             alive.find((r: any) => String(r.title || "").includes(k));
                         if (pr) {
                             const linkedPo = ord.procureOrderCode || ord.mfgOrderCode;
@@ -13876,9 +13874,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             formattedEstDate = targetReq.requestedDeliveryDate || todayVN();
         }
         const newNotes = (singleMfgNotes || "").trim();
-        const candidatePrCode = (targetReq.prCode && targetReq.prCode.startsWith("PR26-"))
-            ? targetReq.prCode
-            : ((targetReq.id && targetReq.id.startsWith("SO")) ? targetReq.id.replace(/^SO/, "PR") : "PR26-TB-1001");
+        // Mã PR do máy chủ cấp (bộ đếm), không suy từ mã SO: SO26-TB-1105 -> PR26-TB-1105 từng trùng mã PR của Cung ứng
+        const candidatePrCode = (targetReq.prCode && /^PR\d{2}-/.test(targetReq.prCode)) ? targetReq.prCode : "";
         const prCode = candidatePrCode;
 
         // 1. Update state immediately so UI updates in real-time
@@ -13890,7 +13887,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     hasMfg: true,
                     hasComm: true,
                     mfgStatus: "PENDING",
-                    prCode: prCode,
+                    prCode: prCode || undefined,
                     procureStatus: "PR_PENDING",
                     mfgNotes: newNotes,
                     mfgEstDate: formattedEstDate
@@ -13925,7 +13922,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-                workflow_code: prCode,
+                workflow_code: prCode || undefined,
+                so_code: targetReq.id,
                 title: `Đề xuất mua hàng đặt Hãng cho đơn ${targetReq.id} - ${targetReq.customerName || "Khách hàng"}`,
                 priority: "HIGH",
                 requester_name: reqNameSync,
@@ -13938,8 +13936,22 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }).then(res => res.json()).then(data => {
             if (data?.code) {
                 setFactoryOrders(prev => prev.map(o => o.id === targetReq.id ? { ...o, prCode: data.code } : o));
+                // Lưu mã PR máy chủ đã cấp vào đơn bán
+                if (data.code !== prCode) {
+                    fetch("/api/sales?action=order", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ id: targetReq.id, order_code: targetReq.order_code || targetReq.id, pr_code: data.code, procure_status: "PR_PENDING" })
+                    }).catch(e => console.warn("Background update sales order PR code error:", e));
+                }
+                showToast(`Đã gửi Đề xuất mua hàng ${data.code} sang phòng Cung Ứng (Cung ứng sẽ lập PO với nhà cung cấp).`, "success");
+            } else {
+                showToast(`Chưa gửi được đề xuất mua hàng: ${data?.error || "lỗi máy chủ"}. Vui lòng thử lại.`, "error");
             }
-        }).catch(err => console.warn("Auto create PR error:", err));
+        }).catch(err => {
+            console.warn("Auto create PR error:", err);
+            showToast("Không kết nối được máy chủ để gửi đề xuất mua hàng. Vui lòng thử lại.", "error");
+        });
 
         // 3. PO do phòng Cung ứng lập từ PR (Kinh doanh không tạo PO). 4. Lưu mã PR vào đơn bán.
         void mfgCode;
@@ -13949,13 +13961,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             body: JSON.stringify({
                 id: targetReq.id,
                 order_code: targetReq.order_code || targetReq.id,
-                pr_code: prCode,
+                ...(prCode ? { pr_code: prCode } : {}),
                 procure_status: "PR_PENDING",
                 fulfillment_source: targetReq.fulfillmentSource || "COMMERCIAL"
             })
         }).catch(e => console.warn("Background update sales order PR error:", e));
-
-        showToast(`Đã gửi Đề xuất mua hàng ${prCode} sang phòng Cung Ứng (Cung ứng sẽ lập PO với nhà cung cấp).`, "success");
         setSingleMfgTargetOrder(null);
     };
 
@@ -14931,9 +14941,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             `\n\nCung ứng sẽ không đặt NCC được nếu thiếu trình tự. Vẫn gửi PR?`
         )) return;
 
+        // Mã PR do máy chủ cấp (bộ đếm), không suy từ mã SO
         const candidatePrCode = (singleProcureTargetOrder.prCode && /^PR\d{2}-/.test(singleProcureTargetOrder.prCode))
             ? singleProcureTargetOrder.prCode
-            : ((singleProcureTargetOrder.id && singleProcureTargetOrder.id.startsWith("SO")) ? singleProcureTargetOrder.id.replace(/^SO/, "PR") : "PR26-TB-1001");
+            : "";
         let prCode = candidatePrCode;
         const prTitle = `Đề xuất mua hàng bổ sung cho đơn ${singleProcureTargetOrder.id} - ${singleProcureTargetOrder.customerName || "Khách hàng"}`;
 
@@ -14959,7 +14970,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    workflow_code: candidatePrCode,
+                    workflow_code: candidatePrCode || undefined,
+                    so_code: singleProcureTargetOrder.id,
                     title: prTitle,
                     priority: "HIGH",
                     requester_name: targetRepNameProcure,
@@ -24389,7 +24401,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     const linkedPODoneCount = linkedPOs.filter(isPODone).length;
 
                                                     const primaryPO = linkedPOs[0] || null;
-                                                    const resolvedPrCode = req.prCode || allOrderPOs.map((po: any) => (Array.isArray(po.pr_ids) && po.pr_ids[0]) || (Array.isArray(po.items) && po.items.map((it: any) => it?.source_pr_code).find(Boolean))).find(Boolean) || ((stockAnalysis.hasPR || allOrderPOs.length > 0 || ["PR_PENDING", "PR_CREATED", "ORDERED", "COMPLETED", "RECEIVED"].includes(String(req.procureStatus || ""))) && req.id?.startsWith("SO") ? req.id.replace(/^SO/, "PR") : "");
+                                                    const resolvedPrCode = req.prCode || allOrderPOs.map((po: any) => (Array.isArray(po.pr_ids) && po.pr_ids[0]) || (Array.isArray(po.items) && po.items.map((it: any) => it?.source_pr_code).find(Boolean))).find(Boolean) || "";
                                                     const hasLinkedPO = linkedPOs.length > 0;
                                                     const arePOsReceived = hasLinkedPO && linkedPOs.every((po: any) => 
                                                         po.status === "COMPLETED" || po.status === "Received" || po.status === "DELIVERED"
@@ -25250,7 +25262,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                                 </span>
                                                                                             ) : (req.prCode || stockAnalysis.hasPR) ? (
                                                                                                 <span className="text-amber-300">
-                                                                                                    Đã gửi đề xuất PR: <strong className="text-white">{req.prCode || (req.id?.startsWith("SO") ? req.id.replace(/^SO/, "PR") : "Chờ Cung ứng")}</strong> (Phòng Cung Ứng đang xử lý gom PO đặt NCC)
+                                                                                                    Đã gửi đề xuất PR: <strong className="text-white">{req.prCode || "Chờ Cung ứng"}</strong> (Phòng Cung Ứng đang xử lý gom PO đặt NCC)
                                                                                                 </span>
                                                                                             ) : (
                                                                                                 <span className="text-slate-400 italic">
@@ -32646,7 +32658,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             const vAnalysis = computeOrderStockAnalysis(viewingFactoryOrderItems);
                                                             const itemStat = (vAnalysis.itemsBreakdown || []).find((b: any) => (b.code || "").trim().toLowerCase() === itCode) || {};
                                                             const orderHasPR = Boolean(viewingFactoryOrderItems.prCode || vAnalysis.hasPR || viewingFactoryOrderItems.procureStatus === "PR_PENDING" || viewingFactoryOrderItems.procureStatus === "PR_CREATED");
-                                                            const activePrCode = viewingFactoryOrderItems.prCode || (orderHasPR && viewingFactoryOrderItems.id?.startsWith("SO") ? viewingFactoryOrderItems.id.replace(/^SO/, "PR") : "");
+                                                            const activePrCode = viewingFactoryOrderItems.prCode || "";
                                                             return (
                                                                 <div className="mt-1 flex items-center gap-1.5 flex-wrap">
                                                                     {itemStat.deliveredQty >= itemStat.orderQty ? (
@@ -32724,7 +32736,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                             }
 
                                                             const orderHasPR = Boolean(viewingFactoryOrderItems.prCode || vAnalysisTooltip.hasPR || viewingFactoryOrderItems.procureStatus === "PR_PENDING" || viewingFactoryOrderItems.procureStatus === "PR_CREATED");
-                                                            const activePrCode = viewingFactoryOrderItems.prCode || (orderHasPR && viewingFactoryOrderItems.id?.startsWith("SO") ? viewingFactoryOrderItems.id.replace(/^SO/, "PR") : "");
+                                                            const activePrCode = viewingFactoryOrderItems.prCode || "";
                                                             if (orderHasPR) {
                                                                 return (
                                                                     <div className="mt-1.5 p-1.5 rounded-lg bg-amber-950/70 border border-amber-700/60 flex flex-wrap items-center gap-2 text-[10px]">
@@ -33466,7 +33478,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         </span>
                                     </div>
                                     <span className="text-[11px] font-mono text-cyan-200">
-                                        Mã Đề xuất PR: <strong className="text-amber-300 font-bold">{singleProcureTargetOrder.prCode || (singleProcureTargetOrder.id.startsWith("SO") ? singleProcureTargetOrder.id.replace(/^SO/, "PR") : "PR26-TB-1001")}</strong>
+                                        Mã Đề xuất PR: <strong className="text-amber-300 font-bold">{singleProcureTargetOrder.prCode || "Cấp mã mới khi gửi"}</strong>
                                     </span>
                                 </div>
                                 <div className="flex flex-wrap items-center justify-between text-[11px] text-slate-300 gap-2">

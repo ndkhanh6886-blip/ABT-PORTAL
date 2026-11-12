@@ -1921,11 +1921,25 @@ export async function POST(req: NextRequest) {
         customPrefix: isStockOrder ? "STOCK" : "TBR",
         tagMode: isStockOrder ? "STOCK" : (customer_name ? "CUSTOMER" : "GENERAL")
       });
-      let code = clientCode || (await genPrCode());
+      // PR lập từ đơn bán không còn lấy mã theo mã SO (SO26-TB-1105 -> PR26-TB-1105 trùng dải số với bộ đếm).
+      // Đơn đã có PR đang hiệu lực thì cập nhật PR đó (như trước), chưa có thì lấy số mới từ bộ đếm.
+      const soCode = String(body.so_code || "").trim();
+      let soOwnPrCode = "";
+      if (!clientCode && !prId && /^SO\d{2}-/i.test(soCode)) {
+        const own = await query(
+          `SELECT workflow_code FROM workflow_requests
+            WHERE ${PR_ROW_SQL} AND UPPER(COALESCE(status, '')) NOT IN ('CANCELLED', 'REJECTED')
+              AND (title ILIKE $1 OR description ILIKE $2)
+            ORDER BY id DESC LIMIT 1`,
+          [`%cho đơn ${soCode} -%`, `[Đơn bán ${soCode}]%`]
+        );
+        soOwnPrCode = own.rows[0]?.workflow_code || "";
+      }
+      let code = clientCode || soOwnPrCode || (await genPrCode());
       // Mã cấp từ bộ đếm có thể trùng mã PR lập từ đơn bán (SO26-TB-1105 -> PR26-TB-1105 không qua bộ đếm).
       // Trước đây PR mới bị coi là "sửa" PR cũ trùng mã: ghi đè nội dung và kéo theo các dòng đã lên PO của phiếu cũ
       // (PR26-TB-1105 ngày 12/11/2026: 20 mã Biobasic bị gộp với MX-S, D1008 của PO26-TB-1135). Bỏ qua mã đã có.
-      if (!clientCode && !prId) {
+      if (!clientCode && !soOwnPrCode && !prId) {
         for (let tries = 0; tries < 200; tries++) {
           const used = await query("SELECT 1 FROM workflow_requests WHERE workflow_code = $1 LIMIT 1", [code]);
           if (used.rows.length === 0) break;
