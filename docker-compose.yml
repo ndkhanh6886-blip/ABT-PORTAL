@@ -38,7 +38,7 @@ services:
       PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       PGDATABASE: abt_portal
       PORT: 3008
-      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://portal.abtvn.com}
+      NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://abt-portal.com}
       # Khóa ký phiên đăng nhập (đặt chuỗi ngẫu nhiên >= 32 ký tự trong file .env của server)
       SESSION_SECRET: ${SESSION_SECRET:-}
       ZALO_OA_SECRET_KEY: ${ZALO_OA_SECRET_KEY:-}

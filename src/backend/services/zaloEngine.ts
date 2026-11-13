@@ -17,7 +17,7 @@ export interface ZaloMessageResponse {
   quoteData?: any;
 }
 
-const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tbr-portal.vn";
+const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://abt-portal.com";
 
 const QUOTE_CODE_REGEX = /BG-(?:TBR|VIA|ABT)-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
 const SO_CODE_REGEX = /SO[0-9]{2}-[A-Za-z0-9-]+|SO-(?:TBR|VIA|ABT)?-?[A-Za-z0-9-]+/i;

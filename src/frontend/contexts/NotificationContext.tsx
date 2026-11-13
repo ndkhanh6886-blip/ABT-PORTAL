@@ -576,7 +576,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             }
         }
 
-        const extractedCodeMatch = `${title || ""} ${message || ""}`.match(/\b((?:WF|TASK|PR|PO|BG|SO|HD|DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
+        const extractedCodeMatch = `${title || ""} ${message || ""}`.match(/\b((?:WF\d*|TSK|TASK|PR\d*|PO\d*|BG\d*|SO\d*|HD\d*|DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
         const autoItemId = link?.itemId
             || (params.taskId ? String(params.taskId) : undefined)
             || (params.workflowId ? String(params.workflowId) : undefined)
@@ -590,7 +590,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             itemId: link.itemId || autoItemId
         } : (category === "task" || category === "workflow" || category === "plan" || category === "daily" || (title || "").toLowerCase().includes("phối hợp") || (title || "").toLowerCase().includes("công việc")) ? {
             tab: "workspace",
-            subTab: (category === "workflow" || (title || "").toLowerCase().includes("phối hợp") || (autoItemId || "").toUpperCase().startsWith("WF-")) ? "workflows" : "tasks",
+            subTab: (category === "workflow" || (title || "").toLowerCase().includes("phối hợp") || /^WF\d*-/i.test(autoItemId || "")) ? "workflows" : "tasks",
             itemId: autoItemId
         } : undefined;
 
@@ -681,6 +681,26 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             return allNotifications;
         }
 
+        const normalizeNotifDeptKey = (raw: string): string => {
+            const s = (raw || "").trim().toLowerCase();
+            if (!s) return "";
+            if (s.includes("ứng dụng") || s.includes("application") || s.includes("kỹ thuật") || s.includes("lab")) return "application";
+            if (s.includes("kho") || s.includes("vận hành") || s.includes("warehouse") || s.includes("giao nhận")) return "warehouse";
+            if (s.includes("cung ứng") || s.includes("mua hàng") || s.includes("xnk") || s.includes("procurement")) return "procurement";
+            if (s.includes("kinh doanh") || s.includes("sales") || s.includes("marketing")) return "sales";
+            if (s.includes("pháp chế") || s.includes("legal") || s.includes("qa") || s.includes("qc") || s.includes("chất lượng")) return "legal";
+            if (s.includes("kế toán") || s.includes("tài chính") || s.includes("accounting")) return "accounting";
+            if (s.includes("giám đốc") || s.includes("bod")) return "director";
+            return s;
+        };
+
+        const isSameNotifDept = (deptA: string, deptB: string): boolean => {
+            const keysA = String(deptA || "").split(/[,;\n]+/).map(normalizeNotifDeptKey).filter(Boolean);
+            const keysB = String(deptB || "").split(/[,;\n]+/).map(normalizeNotifDeptKey).filter(Boolean);
+            if (keysA.length === 0 || keysB.length === 0) return false;
+            return keysA.some(ka => keysB.some(kb => ka === kb || ka.includes(kb) || kb.includes(ka)));
+        };
+
         const matchRoleAgainstPerson = (allTargetRoles: string[], deptStr: string, posStr: string, userRoleStr?: string) => {
             const deptLower = (deptStr || "").toLowerCase();
             const posLower = (posStr || "").toLowerCase();
@@ -765,6 +785,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 // 3. Recipient email or department match
                 if (n.recipientEmail && effectiveEmail && n.recipientEmail.toLowerCase() === effectiveEmail) return true;
                 if (n.recipientDept && effectiveDept && (
+                    isSameNotifDept(n.recipientDept, effectiveDept) ||
                     n.recipientDept.toLowerCase().includes(effectiveDept) ||
                     effectiveDept.includes(n.recipientDept.toLowerCase())
                 )) return true;
@@ -811,7 +832,10 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                     fullLower.includes(n.sender.name.toLowerCase())
                 )) return true;
                 if (textBlob.includes(fullLower)) return true;
-                if (n.recipientDept && targetPersonnel.department && n.recipientDept.toLowerCase() === targetPersonnel.department.toLowerCase()) return true;
+                if (n.recipientDept && targetPersonnel.department && (
+                    isSameNotifDept(n.recipientDept, targetPersonnel.department) ||
+                    n.recipientDept.toLowerCase() === targetPersonnel.department.toLowerCase()
+                )) return true;
 
                 // Role matching against targetRoles or recipientRole
                 const allTargetRoles = [n.recipientRole, ...(n.targetRoles || [])].filter(Boolean) as string[];

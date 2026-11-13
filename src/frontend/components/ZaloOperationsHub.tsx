@@ -539,7 +539,7 @@ export const ZaloOperationsHub: React.FC = () => {
     }
   };
 
-  const webhookPublicUrl = typeof window !== "undefined" ? `${window.location.origin}/api/zalo/webhook` : "https://portal.abtvn.com/api/zalo/webhook";
+  const webhookPublicUrl = typeof window !== "undefined" ? `${window.location.origin}/api/zalo/webhook` : "https://abt-portal.com/api/zalo/webhook";
 
   const handleCopyWebhook = () => {
     if (typeof navigator !== "undefined" && navigator.clipboard) {

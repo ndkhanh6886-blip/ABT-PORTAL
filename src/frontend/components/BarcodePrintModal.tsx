@@ -77,7 +77,7 @@ export const BarcodePrintModal: React.FC<BarcodePrintModalProps> = ({
       exp: item.expiry_date,
       storage: item.storage_condition || "-20°C",
       serial: item.serial_number || `SN-${item.batch_lot}-001`,
-      url: `https://portal.abtvn.com/verify?sku=${encodeURIComponent(item.product_code)}&lot=${encodeURIComponent(item.batch_lot)}`
+      url: `${process.env.NEXT_PUBLIC_APP_URL || (typeof window !== "undefined" ? window.location.origin : "https://abt-portal.com")}/verify?sku=${encodeURIComponent(item.product_code)}&lot=${encodeURIComponent(item.batch_lot)}`
     });
 
     QRCode.toDataURL(qrPayload, {

@@ -52,11 +52,16 @@ export function normalizeWorkspaceDept(raw: any): string {
 }
 
 export function isSameWorkspaceDept(a: any, b: any): boolean {
-  const na = normalizeWorkspaceDept(a);
-  const nb = normalizeWorkspaceDept(b);
-  if (!na || !nb) return false;
-  if (na === "all" || nb === "all") return true;
-  return na.toLowerCase() === nb.toLowerCase();
+  const splitDepts = (raw: any): string[] =>
+    String(raw || "")
+      .split(/[,;\n]+/)
+      .map((d) => normalizeWorkspaceDept(d.trim()))
+      .filter(Boolean);
+  const listA = splitDepts(a);
+  const listB = splitDepts(b);
+  if (listA.length === 0 || listB.length === 0) return false;
+  if (listA.includes("all") || listB.includes("all")) return true;
+  return listA.some((da) => listB.some((db) => da.toLowerCase() === db.toLowerCase()));
 }
 
 /**

@@ -134,11 +134,16 @@ export function normalizeWorkspaceDept(raw: any): string {
 }
 
 export function isSameWorkspaceDept(a: any, b: any): boolean {
-  const na = normalizeWorkspaceDept(a);
-  const nb = normalizeWorkspaceDept(b);
-  if (!na || !nb) return false;
-  if (na === "all" || nb === "all") return true;
-  return na.toLowerCase() === nb.toLowerCase();
+  const splitDepts = (raw: any): string[] =>
+    String(raw || "")
+      .split(/[,;\n]+/)
+      .map((d) => normalizeWorkspaceDept(d.trim()))
+      .filter(Boolean);
+  const listA = splitDepts(a);
+  const listB = splitDepts(b);
+  if (listA.length === 0 || listB.length === 0) return false;
+  if (listA.includes("all") || listB.includes("all")) return true;
+  return listA.some((da) => listB.some((db) => da.toLowerCase() === db.toLowerCase()));
 }
 
 export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
@@ -185,6 +190,20 @@ export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
     "Thỏa thuận Bảo mật & Hợp đồng Đại lý",
     "Bảo hộ Sở hữu trí tuệ thương hiệu TBR",
     "Tư vấn Pháp luật Doanh nghiệp & Lao động",
+    "Khác"
+  ],
+  "Kế Toán": [
+    "Thanh toán NCC / Ủy nhiệm chi (UNC)",
+    "Xuất hóa đơn GTGT & Chứng từ",
+    "Đối chiếu & Thu hồi công nợ",
+    "Tạm ứng & Hoàn ứng nội bộ",
+    "Báo cáo thuế & Tài chính",
+    "Khác"
+  ],
+  "Ban Giám Đốc": [
+    "Phê duyệt chủ trương & Ngân sách",
+    "Chỉ đạo điều hành liên phòng ban",
+    "Đánh giá KPI & Chiến lược",
     "Khác"
   ]
 };
@@ -2504,47 +2523,121 @@ export const UnifiedWorkspace: React.FC = () => {
     }
   }, [selectedAssignee]);
 
+  // Kiểm tra nhân sự có nằm trong danh sách người phụ trách (hỗ trợ nhiều người cách nhau bởi dấu phẩy)
+  const taskHasAssignee = useCallback((rawAssignee: any, targetName: any): boolean => {
+    const target = String(targetName || "").trim();
+    if (!target) return false;
+    const list = String(rawAssignee || "")
+      .split(/[,;\n]+/)
+      .map((a) => cleanWorkspaceAssignee(a))
+      .filter(Boolean);
+    return list.some((a) => sameStaffName(a, target));
+  }, []);
+
+  // Kiểm tra công việc có do nhân sự này khởi tạo / yêu cầu hay không (kể cả việc sinh tự động từ Phiếu phối hợp)
+  const isTaskCreatedByStaff = useCallback((t: any, targetName: any, targetUsername?: any): boolean => {
+    if (!t) return false;
+    const uName = String(targetUsername || "").trim().toLowerCase();
+    const createdBy = String(t.created_by || "").trim().toLowerCase();
+    if (uName && createdBy && uName === createdBy) return true;
+    const staff = String(targetName || "").trim();
+    if (!staff) return false;
+    if (t.created_by_name && sameStaffName(t.created_by_name, staff)) return true;
+    if (createdBy && sameStaffName(createdBy, staff)) return true;
+    const relWfCode = String(t.related_workflow_code || "").trim();
+    if (relWfCode) {
+      const linkedWf = workflows.find(
+        (w: any) => String(w.workflow_code || "").toUpperCase() === relWfCode.toUpperCase()
+      );
+      if (linkedWf && sameStaffName(linkedWf.requester_name, staff)) return true;
+    }
+    const descMatch = String(t.description || "").match(/Yêu cầu từ:\s*([^\n(]+)/i);
+    if (descMatch && sameStaffName(descMatch[1].trim(), staff)) return true;
+    if (Array.isArray(t.logs) && t.logs.length > 0 && t.logs[0]?.actor && sameStaffName(t.logs[0].actor, staff)) {
+      return true;
+    }
+    return false;
+  }, [workflows]);
+
+  // Kiểm tra Phiếu phối hợp có liên quan trực tiếp tới người đang đăng nhập (Người yêu cầu hoặc Người xử lý ở bất kỳ bước nào)
+  const wfInvolvesMe = useCallback((w: any, mode: "requested" | "assigned" | "any" = "any"): boolean => {
+    const me = String(currentStaffName || "").trim();
+    if (!me || !w) return false;
+    const isRequester = sameStaffName(String(w.requester_name || "").trim(), me);
+    if (mode === "requested") return isRequester;
+    const steps = Array.isArray(w.steps) ? w.steps : [];
+    const topAssignees = String(w.assignee_name || "")
+      .split(/[,;\n]+/)
+      .map((a: string) => cleanWorkspaceAssignee(a))
+      .filter(Boolean);
+    const isTopAssignee = topAssignees.some((a: string) => sameStaffName(a, me));
+    const isStepAssignee = steps.some((s: any) => {
+      const sAssignees =
+        Array.isArray(s?.assignees) && s.assignees.length > 0
+          ? s.assignees.map((a: string) => cleanWorkspaceAssignee(a))
+          : String(s?.assignee_name || "")
+              .split(/[,;\n]+/)
+              .map((a: string) => cleanWorkspaceAssignee(a));
+      return sAssignees.filter(Boolean).some((a: string) => sameStaffName(a, me));
+    });
+    const isAssignee = isTopAssignee || isStepAssignee;
+    if (mode === "assigned") return isAssignee;
+    return isRequester || isAssignee;
+  }, [currentStaffName]);
+
   // RBAC Filtered Tasks:
-  // - Staff: Views their assigned tasks + unassigned tasks in their department (so they can see incoming Demo/coordination requests)
-  // - Manager: Views all tasks in their department (or selected department if switched in dropdown)
+  // - Staff: Views their assigned tasks + tasks they created/requested + unassigned tasks in their department
+  // - Manager: Views all tasks in their department (or selected department) + tasks involving them or their department staff
   // - Director: Views company-wide or selected department
   const filteredTasks = useMemo(() => {
     return tasks.filter((t) => {
       const cleanAssignee = cleanWorkspaceAssignee(t.assignee_name);
+      const isAssignedToMe = taskHasAssignee(t.assignee_name, currentStaffName);
+      const isCreatedByMe = isTaskCreatedByStaff(t, currentStaffName, (user as any)?.username);
+
       if (rolePerspective === "staff") {
-        const isAssignedToMe = Boolean(cleanAssignee) && sameStaffName(cleanAssignee, currentStaffName);
         const isUnassignedInMyDept = !cleanAssignee && isSameWorkspaceDept(t.department, userDept);
-        if (!isAssignedToMe && !isUnassignedInMyDept) {
-          return false;
-        }
-      } else if (rolePerspective === "manager") {
-        const activeFilterDept = selectedDept === "all" ? "all" : selectedDept;
-        if (activeFilterDept !== "all" && !isSameWorkspaceDept(t.department, activeFilterDept)) {
+        if (!isAssignedToMe && !isCreatedByMe && !isUnassignedInMyDept) {
           return false;
         }
       } else {
-        if (selectedDept !== "all" && !isSameWorkspaceDept(t.department, selectedDept)) return false;
+        const activeFilterDept = selectedDept === "all" ? "all" : selectedDept;
+        if (activeFilterDept !== "all") {
+          const matchesDept = isSameWorkspaceDept(t.department, activeFilterDept);
+          const isMyOwnDeptFilter = isSameWorkspaceDept(activeFilterDept, userDept);
+          const involvesMeInOwnDept = isMyOwnDeptFilter && (isAssignedToMe || isCreatedByMe);
+          const involvesDeptStaff = departmentStaffList.some((p: any) => {
+            const pName = p.full_name || p;
+            return taskHasAssignee(t.assignee_name, pName) || isTaskCreatedByStaff(t, pName);
+          });
+          if (!matchesDept && !involvesMeInOwnDept && !involvesDeptStaff) {
+            return false;
+          }
+        }
       }
 
       // Filter by selected individual staff member (or "__UNASSIGNED__" for waiting assignment)
       if (selectedAssignee === "__UNASSIGNED__") {
         if (cleanAssignee) return false;
       } else if (selectedAssignee !== "all") {
-        if (!cleanAssignee || !sameStaffName(cleanAssignee, selectedAssignee)) {
+        if (!taskHasAssignee(t.assignee_name, selectedAssignee) && !isTaskCreatedByStaff(t, selectedAssignee)) {
           return false;
         }
       }
 
       const matchStatus = statusFilter === "all" || t.status === statusFilter;
+      const q = searchQuery.trim().toLowerCase();
       const matchSearch =
-        searchQuery === "" ||
-        (t.title && t.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (t.task_code && t.task_code.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (cleanAssignee && cleanAssignee.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (t.customer_name && t.customer_name.toLowerCase().includes(searchQuery.toLowerCase()));
+        q === "" ||
+        (t.title && t.title.toLowerCase().includes(q)) ||
+        (t.task_code && t.task_code.toLowerCase().includes(q)) ||
+        (cleanAssignee && cleanAssignee.toLowerCase().includes(q)) ||
+        (t.created_by_name && String(t.created_by_name).toLowerCase().includes(q)) ||
+        (t.description && String(t.description).toLowerCase().includes(q)) ||
+        (t.customer_name && t.customer_name.toLowerCase().includes(q));
       return matchStatus && matchSearch;
     });
-  }, [tasks, rolePerspective, managerDept, userDept, selectedDept, selectedAssignee, currentStaffName, statusFilter, searchQuery]);
+  }, [tasks, rolePerspective, managerDept, userDept, selectedDept, selectedAssignee, currentStaffName, statusFilter, searchQuery, user, departmentStaffList, taskHasAssignee, isTaskCreatedByStaff]);
 
   // RBAC Filtered Weekly Schedules:
   // - Staff: ONLY sees their own schedule items
@@ -2664,24 +2757,55 @@ export const UnifiedWorkspace: React.FC = () => {
       const stepDepts = Array.isArray(w.steps)
         ? w.steps.flatMap((s: any) => {
             const arr = Array.isArray(s?.departments) ? s.departments : [];
-            const split = s?.dept ? String(s.dept).split(",").map((d: string) => d.trim()) : [];
+            const split = s?.dept ? String(s.dept).split(/[,;\n]+/).map((d: string) => d.trim()) : [];
             return [...arr, ...split].filter(Boolean);
           })
         : [];
+      const involvesCurrentUser = wfInvolvesMe(w, "any");
+      const involvesSelectedStaff =
+        selectedAssignee !== "all" &&
+        selectedAssignee !== "__UNASSIGNED__" &&
+        (sameStaffName(w.requester_name, selectedAssignee) ||
+          taskHasAssignee(w.assignee_name, selectedAssignee) ||
+          (Array.isArray(w.steps) &&
+            w.steps.some((s: any) =>
+              taskHasAssignee(
+                Array.isArray(s?.assignees) && s.assignees.length > 0 ? s.assignees.join(", ") : s?.assignee_name,
+                selectedAssignee
+              )
+            )));
+      const involvesDeptStaff =
+        selectedDept !== "all" &&
+        departmentStaffList.some((p: any) => {
+          const pName = p.full_name || p;
+          return sameStaffName(w.requester_name, pName) || taskHasAssignee(w.assignee_name, pName);
+        });
       const matchDept =
         selectedDept === "all" ||
+        involvesCurrentUser ||
+        involvesSelectedStaff ||
+        involvesDeptStaff ||
         isSameWorkspaceDept(w.requester_dept, selectedDept) ||
-        String(w.target_dept || "").split(",").some((d: string) => isSameWorkspaceDept(d.trim(), selectedDept)) ||
+        String(w.target_dept || "").split(/[,;\n]+/).some((d: string) => isSameWorkspaceDept(d.trim(), selectedDept)) ||
         stepDepts.some((d: string) => isSameWorkspaceDept(d, selectedDept));
+      const q = searchQuery.trim().toLowerCase();
       const matchSearch =
-        searchQuery === "" ||
-        (w.title && w.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (w.workflow_code && w.workflow_code.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (w.customer_name && w.customer_name.toLowerCase().includes(searchQuery.toLowerCase())) ||
-        (w.product_info && w.product_info.toLowerCase().includes(searchQuery.toLowerCase()));
+        q === "" ||
+        (w.title && w.title.toLowerCase().includes(q)) ||
+        (w.workflow_code && w.workflow_code.toLowerCase().includes(q)) ||
+        (w.customer_name && w.customer_name.toLowerCase().includes(q)) ||
+        (w.product_info && w.product_info.toLowerCase().includes(q)) ||
+        (w.requester_name && w.requester_name.toLowerCase().includes(q)) ||
+        (w.assignee_name && w.assignee_name.toLowerCase().includes(q)) ||
+        (Array.isArray(w.steps) &&
+          w.steps.some(
+            (s: any) =>
+              (s?.assignee_name && String(s.assignee_name).toLowerCase().includes(q)) ||
+              (s?.title && String(s.title).toLowerCase().includes(q))
+          ));
       return matchDept && matchSearch;
     });
-  }, [workflows, selectedDept, searchQuery]);
+  }, [workflows, selectedDept, selectedAssignee, searchQuery, wfInvolvesMe, taskHasAssignee, departmentStaffList]);
 
   // Helper to re-index & normalize multi-department / multi-assignee workflow steps
   const reindexWorkflowSteps = useCallback((rawSteps: any[]) => {
@@ -2735,7 +2859,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const subTab = String(rawPayload.subTab || notif?.link?.subTab || "").trim();
     const fullText = `${rawCode} ${rawId} ${rawTitle} ${rawMsg}`.toLowerCase();
 
-    const codeMatch = `${rawCode} ${rawId} ${rawTitle} ${rawMsg}`.match(/\b((?:WF|TASK|DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
+    const codeMatch = `${rawCode} ${rawId} ${rawTitle} ${rawMsg}`.match(/\b((?:WF\d*|TSK|TASK|DXNP|DX|DNTT|DNTU|QT|TTR|DXM)-[A-Z0-9-]+)\b/i);
     const extractedCode = (codeMatch ? codeMatch[1] : rawCode || rawId).toUpperCase();
     const quoteMatches = Array.from(`${rawTitle} ${rawMsg}`.matchAll(/"([^"]{3,140})"/g)).map((m) => m[1].trim());
 
@@ -2824,7 +2948,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
     const preferWorkflow =
       subTab === "workflows" ||
-      extractedCode.startsWith("WF-") ||
+      /^WF\d*-/i.test(extractedCode) ||
       fullText.includes("phối hợp") ||
       fullText.includes("quy trình");
 
@@ -3392,24 +3516,10 @@ export const UnifiedWorkspace: React.FC = () => {
     if (s === "COMPLETED") return "COMPLETED";
     return "OTHER";
   };
-  const wfInvolvesMe = (w: any, mode: "requested" | "assigned") => {
-    const me = String(currentStaffName || "").trim();
-    if (!me) return false;
-    if (mode === "requested") return sameStaffName(String(w.requester_name || "").trim(), me);
-    const steps = Array.isArray(w.steps) ? w.steps : [];
-    const topAssignees = String(w.assignee_name || "").split(",").map((a: string) => cleanWorkspaceAssignee(a)).filter(Boolean);
-    if (topAssignees.some((a: string) => sameStaffName(a, me))) return true;
-    return steps.some((s: any) => {
-      const sAssignees = Array.isArray(s?.assignees) && s.assignees.length > 0
-        ? s.assignees.map((a: string) => cleanWorkspaceAssignee(a))
-        : String(s?.assignee_name || "").split(",").map((a: string) => cleanWorkspaceAssignee(a));
-      return sAssignees.filter(Boolean).some((a: string) => sameStaffName(a, me));
-    });
-  };
   const wfBase = useMemo(() => filteredWorkflows.filter((w) =>
     (wfMineFilter === "all" || wfInvolvesMe(w, wfMineFilter)) &&
     (wfPriorityFilter === "all" || String(w.priority || "MEDIUM").toUpperCase() === wfPriorityFilter)
-  ), [filteredWorkflows, wfMineFilter, wfPriorityFilter, currentStaffName]); // eslint-disable-line react-hooks/exhaustive-deps
+  ), [filteredWorkflows, wfMineFilter, wfPriorityFilter, wfInvolvesMe]);
 
   const wfCategoryCounts = useMemo(() => {
     const c: Record<string, number> = { all: 0, TENDER: 0, PROCUREMENT: 0, WAREHOUSE: 0, LAB: 0, FINANCE: 0, GENERAL: 0 };
@@ -3850,20 +3960,47 @@ export const UnifiedWorkspace: React.FC = () => {
           ? workflows.find((w: any) => w.workflow_code === (taskForm as any).related_workflow_code)
           : null;
         if (linkedWf && String(taskForm.result || "").trim() && String(taskForm.result || "").trim() !== String(prevTask?.result || "").trim()) {
+          const wfRecipients = Array.from(
+            new Set(
+              [
+                linkedWf.requester_name,
+                ...String(linkedWf.assignee_name || "").split(/[,;\n]+/),
+                ...(Array.isArray(linkedWf.steps)
+                  ? linkedWf.steps.flatMap((st: any) => [
+                      ...String(st?.assignee_name || "").split(/[,;\n]+/),
+                      ...(Array.isArray(st?.assignees) ? st.assignees : [])
+                    ])
+                  : [])
+              ]
+                .map((s) => String(s || "").trim())
+                .filter((s) => s && !sameStaffName(s, currentStaffName))
+            )
+          );
           notifyActivity({
             title: "Phản hồi phiếu phối hợp",
             message: `${currentStaffName} đã báo cáo trên phiếu ${linkedWf.workflow_code}: "${String(taskForm.result).trim().slice(0, 120)}"`,
             type: "info",
             category: "task",
             sender: { name: currentStaffName },
-            targetEmployeeNames: [linkedWf.requester_name].filter(Boolean),
-            targetDept: linkedWf.requester_dept,
+            targetEmployeeNames: wfRecipients,
+            targetDept: [linkedWf.requester_dept, linkedWf.target_dept].filter(Boolean).join(", "),
             workflowId: linkedWf.id,
             workflowCode: linkedWf.workflow_code,
             link: { tab: "workspace", subTab: "workflows", itemId: String(linkedWf.workflow_code || linkedWf.id) }
           });
         }
         const savedTaskId = data.task?.id || payload.id || taskForm.id;
+        const taskRecipients = Array.from(
+          new Set(
+            [
+              ...(taskForm.assignee_name ? taskForm.assignee_name.split(/[,;\n]+/) : []),
+              prevTask?.created_by_name,
+              linkedWf?.requester_name
+            ]
+              .map((s) => String(s || "").trim())
+              .filter(Boolean)
+          )
+        );
         notifyActivity({
           title: payload.id ? "Cập nhật công việc" : "Giao công việc mới",
           message: payload.id 
@@ -3872,7 +4009,7 @@ export const UnifiedWorkspace: React.FC = () => {
           type: "info",
           category: "task",
           sender: { name: user?.name || currentStaffName },
-          targetEmployeeNames: taskForm.assignee_name ? taskForm.assignee_name.split(",").map((s: string) => s.trim()).filter(Boolean) : [],
+          targetEmployeeNames: taskRecipients,
           targetDept: taskForm.department,
           taskId: savedTaskId,
           link: { tab: "workspace", subTab: "tasks", itemId: String(savedTaskId || taskForm.title) }
@@ -5019,7 +5156,7 @@ export const UnifiedWorkspace: React.FC = () => {
   const getDailyItemOriginMeta = useCallback((item: any) => {
     const rawTitle = String(item?.title || "");
     const rawCode = String(item?.task_code || "");
-    const wfMatch = rawTitle.match(/\b(WF-[A-Z0-9-]+)\b/i) || String(item?.workflow_code || "").match(/\b(WF-[A-Z0-9-]+)\b/i);
+    const wfMatch = rawTitle.match(/\b(WF\d*-[A-Z0-9-]+)\b/i) || String(item?.workflow_code || "").match(/\b(WF\d*-[A-Z0-9-]+)\b/i);
     const thematicMatch = rawCode.match(/^TSK-(.+)-S(\d+)$/i) || rawTitle.match(/\[([A-Z]+-[A-Z]+-\d+)\s*•\s*GĐ/i);
     const taskMatch = rawCode || (rawTitle.match(/\[(TSK-[A-Z0-9-]+)\]/i)?.[1] ?? "");
 
@@ -5079,7 +5216,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const meta = getDailyItemOriginMeta(item);
     const rawTitle = String(item?.title || "");
     const rawCode = String(item?.task_code || (rawTitle.match(/\[(TSK-[A-Z0-9-]+)\]/i)?.[1] ?? "")).trim();
-    const wfCode = String(item?.workflow_code || (rawTitle.match(/\b(WF-[A-Z0-9-]+)\b/i)?.[1] ?? "")).trim();
+    const wfCode = String(item?.workflow_code || (rawTitle.match(/\b(WF\d*-[A-Z0-9-]+)\b/i)?.[1] ?? "")).trim();
 
     if (meta.originTab === "workflows") {
       const matchedWf = workflows.find(
@@ -5165,7 +5302,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const matchingTasks = tasks.filter((t: any) => {
       const cleanAssignee = cleanWorkspaceAssignee(t.assignee_name);
       if (targetStaff) {
-        if (!cleanAssignee || !sameStaffName(cleanAssignee, targetStaff)) return false;
+        if (!cleanAssignee || !taskHasAssignee(t.assignee_name, targetStaff)) return false;
       } else if (targetDept && !isSameWorkspaceDept(t.department, targetDept)) {
         return false;
       }
@@ -5179,12 +5316,12 @@ export const UnifiedWorkspace: React.FC = () => {
     const itemsFromTasks = matchingTasks.map((t: any) => {
       const relCode = String(t.related_workflow_code || "").trim();
       const tCode = String(t.task_code || "").trim();
-      const wfMatch = relCode.match(/^WF-/i) || String(t.title || "").match(/\b(WF-[A-Z0-9-]+)\b/i);
+      const wfMatch = relCode.match(/^WF\d*-/i) || String(t.title || "").match(/\b(WF\d*-[A-Z0-9-]+)\b/i);
       const thematicStageMatch = tCode.match(/^TSK-(.+)-S(\d+)$/i);
       const isThematic = Boolean(
         thematicStageMatch ||
         t.task_category === "Kế hoạch chuyên đề" ||
-        (relCode && !relCode.toUpperCase().startsWith("WF-") && labProjects.some((p: any) => String(p.id).toUpperCase() === relCode.toUpperCase()))
+        (relCode && !/^WF\d*-/i.test(relCode) && labProjects.some((p: any) => String(p.id).toUpperCase() === relCode.toUpperCase()))
       );
 
       let origin_tab: "workflows" | "planner_thematic" | "tasks" = "tasks";
@@ -5199,7 +5336,7 @@ export const UnifiedWorkspace: React.FC = () => {
 
       if (wfMatch) {
         origin_tab = "workflows";
-        workflow_code = relCode.toUpperCase().startsWith("WF-") ? relCode : (wfMatch[1] || relCode);
+        workflow_code = /^WF\d*-/i.test(relCode) ? relCode : (wfMatch[1] || relCode);
         origin_badge = "🔄 Nguồn: Tab Quy Trình Phối Hợp";
         origin_detail = [
           workflow_code ? `Phiếu liên phòng: ${workflow_code}` : "",
@@ -7486,9 +7623,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                         return matchesDept && (actor.includes(target) || target.includes(actor));
                       }).length
                     : tasks.filter(t => {
-                        const matchesDept = selectedDept === "all" || isSameWorkspaceDept(t.department, selectedDept);
-                        const cleanAss = cleanWorkspaceAssignee(t.assignee_name);
-                        return matchesDept && cleanAss && cleanAss.toLowerCase().includes(name.toLowerCase());
+                        const matchesDept = selectedDept === "all" || isSameWorkspaceDept(t.department, selectedDept) || isTaskCreatedByStaff(t, name);
+                        return matchesDept && (taskHasAssignee(t.assignee_name, name) || isTaskCreatedByStaff(t, name));
                       }).length;
                   return (
                     <option key={p.id || p.employee_code || name} value={name}>
@@ -7809,9 +7945,8 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               {departmentStaffList.map((p: any) => {
                 const name = p.full_name || p;
                 const count = tasks.filter(t => {
-                  const matchesDept = selectedDept === "all" || isSameWorkspaceDept(t.department, selectedDept);
-                  const cleanAss = cleanWorkspaceAssignee(t.assignee_name);
-                  return matchesDept && cleanAss && cleanAss.toLowerCase().includes(name.toLowerCase());
+                  const matchesDept = selectedDept === "all" || isSameWorkspaceDept(t.department, selectedDept) || isTaskCreatedByStaff(t, name);
+                  return matchesDept && (taskHasAssignee(t.assignee_name, name) || isTaskCreatedByStaff(t, name));
                 }).length;
                 const isSelected = selectedAssignee === name;
                 return (
@@ -11891,6 +12026,13 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 <option value="Application">Application (Lab)</option>
                 <option value="Kho & Vận Hành">Kho &amp; Vận Hành</option>
                 <option value="Cung Ứng">Cung Ứng</option>
+                <option value="Kế Toán">Kế Toán - Tài Chính</option>
+                <option value="Pháp Chế">Pháp Chế &amp; Tuân Thủ</option>
+                <option value="Ban Giám Đốc">Ban Giám Đốc</option>
+                {taskForm.department &&
+                  !["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng", "Kế Toán", "Pháp Chế", "Ban Giám Đốc"].includes(taskForm.department) && (
+                    <option value={taskForm.department}>{taskForm.department}</option>
+                  )}
               </select>
             </div>
 
@@ -11901,11 +12043,15 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 onChange={(e) => setTaskForm({ ...taskForm, task_category: e.target.value })}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                {(DEPARTMENT_CATEGORIES[taskForm.department] || []).map((cat) => (
+                {(DEPARTMENT_CATEGORIES[taskForm.department] || DEPARTMENT_CATEGORIES[normalizeWorkspaceDept(taskForm.department)] || ["Phối hợp liên phòng ban", "Khác"]).map((cat) => (
                   <option key={cat} value={cat}>
                     {cat}
                   </option>
                 ))}
+                {taskForm.task_category &&
+                  !(DEPARTMENT_CATEGORIES[taskForm.department] || DEPARTMENT_CATEGORIES[normalizeWorkspaceDept(taskForm.department)] || ["Phối hợp liên phòng ban", "Khác"]).includes(taskForm.task_category) && (
+                    <option value={taskForm.task_category}>{taskForm.task_category}</option>
+                  )}
               </select>
             </div>
           </div>

@@ -10,7 +10,7 @@ import { sessionSecret, getSessionFromRequest } from "@/backend/services/session
 export type DocumentKind = "quotation" | "contract";
 
 const DEFAULT_TTL_DAYS = Number(process.env.DOCUMENT_LINK_TTL_DAYS || 30);
-const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://portal.abtvn.com";
+const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://abt-portal.com";
 
 function signature(kind: DocumentKind, code: string, exp: number): string {
   return crypto

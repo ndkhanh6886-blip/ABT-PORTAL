@@ -50,10 +50,15 @@ function normalizeDeptKey(raw: any): string {
 }
 
 function isSameDepartment(a: any, b: any): boolean {
-  const ka = normalizeDeptKey(a);
-  const kb = normalizeDeptKey(b);
-  if (!ka || !kb) return false;
-  return ka === kb || ka.includes(kb) || kb.includes(ka);
+  const splitKeys = (raw: any): string[] =>
+    String(raw || "")
+      .split(/[,;\n]+/)
+      .map((d) => normalizeDeptKey(d.trim()))
+      .filter(Boolean);
+  const listA = splitKeys(a);
+  const listB = splitKeys(b);
+  if (listA.length === 0 || listB.length === 0) return false;
+  return listA.some((ka) => listB.some((kb) => ka === kb || ka.includes(kb) || kb.includes(ka)));
 }
 
 /** Purchase requests (PR) are workflow tickets too; their approval belongs to the procurement approvers. */
@@ -69,11 +74,23 @@ function canApprovePurchaseRequest(me: AuthorizedUser) {
 function canActOnWorkflow(me: AuthorizedUser, wf: any, step?: any) {
   if (isAdminUser(me)) return true;
   if (hasPermission(me, "workspace.manage_templates") || hasPermission(me, "workspace.approve_dept")) return true;
-  const name = lower(me.full_name);
-  if (name && [wf?.requester_name, wf?.assignee_name, step?.assignee_name].map(lower).includes(name)) return true;
+  const fullName = String(me.full_name || "").trim();
+  if (fullName) {
+    const candidateNames = [
+      wf?.requester_name,
+      ...String(wf?.assignee_name || "").split(/[,;\n]+/),
+      ...String(step?.assignee_name || "").split(/[,;\n]+/),
+      ...(Array.isArray(step?.assignees) ? step.assignees : [])
+    ]
+      .map((s) => String(s || "").trim())
+      .filter(Boolean);
+    if (candidateNames.some((cand) => sameStaffName(cand, fullName))) return true;
+  }
   const dept = me.department;
   if (!dept) return false;
-  const stepDepts = Array.isArray(wf?.steps) ? wf.steps.map((s: any) => s?.dept) : [];
+  const stepDepts = Array.isArray(wf?.steps)
+    ? wf.steps.flatMap((s: any) => [s?.dept, ...(Array.isArray(s?.departments) ? s.departments : [])])
+    : [];
   return [wf?.target_dept, wf?.requester_dept, step?.dept, ...stepDepts]
     .filter(Boolean)
     .some(d => isSameDepartment(d, dept));
@@ -917,19 +934,27 @@ export async function POST(req: NextRequest) {
           if (formattedSteps[0].dept) finalTargetDept = formattedSteps[0].dept;
         }
 
-        await query(
+        const initialWfStatus =
+          status && status !== "PENDING"
+            ? status
+            : formattedSteps.length > 0 || Boolean(finalAssignee)
+            ? "IN_PROGRESS"
+            : status || "PENDING";
+
+        const wfInsertRes = await query(
           `INSERT INTO workflow_requests (
              workflow_code, workflow_type, title, priority, status,
              requester_name, requester_dept, assignee_name, target_dept,
              customer_name, product_info, due_date, description, results_summary,
              attachments, comments, logs, steps, current_step_index
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+           RETURNING id`,
           [
             code,
             workflow_type || "GENERAL",
             title,
             priority || "MEDIUM",
-            status || "PENDING",
+            initialWfStatus,
             requester_name || "",
             requester_dept || "",
             finalAssignee,
@@ -946,6 +971,7 @@ export async function POST(req: NextRequest) {
             0
           ]
         );
+        const createdWfId = wfInsertRes.rows[0]?.id;
 
         // Auto-create task for target department / initial step
         const autoTaskCode = `TSK-${code}`;
@@ -956,8 +982,9 @@ export async function POST(req: NextRequest) {
         await query(
           `INSERT INTO company_tasks (
              task_code, title, department, task_category, assignee_name, customer_name,
-             priority, status, deadline, description, related_workflow_code, logs
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+             priority, status, deadline, description, related_workflow_code, logs,
+             created_by, created_by_name
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
           [
             autoTaskCode,
             taskTitle,
@@ -972,11 +999,14 @@ export async function POST(req: NextRequest) {
             due_date || null,
             `Yêu cầu từ: ${requester_name} (${requester_dept})\nSản phẩm: ${product_info}\nNội dung: ${description}${formattedSteps.length > 0 ? `\nYêu cầu kết quả bước 1: ${formattedSteps[0].deliverables || 'N/A'}` : ''}`,
             code,
-            JSON.stringify([{ time: nowVNDateTime(), action: `Tiếp nhận yêu cầu liên phòng ban ${code}`, actor: requester_name || "Hệ Thống" }])
+            JSON.stringify([{ time: nowVNDateTime(), action: `Tiếp nhận yêu cầu liên phòng ban ${code}`, actor: requester_name || "Hệ Thống" }]),
+            me.username || null,
+            requester_name || me.full_name || me.username || null
           ]
         );
 
         await logAudit("CREATE", "WORKFLOW", `Khởi tạo quy trình liên phòng ban ${code}: ${title}`);
+        return NextResponse.json({ success: true, id: createdWfId, workflow_code: code });
       }
 
       return NextResponse.json({ success: true });
@@ -1150,8 +1180,9 @@ export async function POST(req: NextRequest) {
           await c.query(
             `INSERT INTO company_tasks (
                task_code, title, department, task_category, assignee_name, customer_name,
-               priority, status, deadline, description, related_workflow_code, logs
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+               priority, status, deadline, description, related_workflow_code, logs,
+               created_by, created_by_name
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
             [
               nextTaskCode,
               `[Bước ${nextIdx + 1}/${steps.length}] ${steps[nextIdx].title} (${wf.workflow_code})`,
@@ -1164,7 +1195,9 @@ export async function POST(req: NextRequest) {
               wf.due_date || null,
               `Nhiệm vụ: ${steps[nextIdx].deliverables || steps[nextIdx].title}\nKết quả bước trước: ${step_result || "Đã nghiệm thu"}`,
               wf.workflow_code,
-              JSON.stringify([{ time: nowVNDateTime(), action: `Tiếp nhận chuyển giao từ Bước ${currentIdx + 1}`, actor: actor || "Hệ Thống" }])
+              JSON.stringify([{ time: nowVNDateTime(), action: `Tiếp nhận chuyển giao từ Bước ${currentIdx + 1}`, actor: actor || "Hệ Thống" }]),
+              me.username || null,
+              wf.requester_name || actor || me.full_name || me.username || null
             ]
           );
         }
