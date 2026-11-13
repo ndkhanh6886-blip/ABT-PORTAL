@@ -9530,7 +9530,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       {/* ========================================================= */}
       {isConsolidateModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5">
-          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl w-[96vw] max-w-7xl max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-150">
+          <div className="bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-2xl w-[96vw] max-w-[1600px] max-h-[92vh] flex flex-col overflow-hidden animate-in fade-in zoom-in duration-150">
             {/* Header */}
             <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-800/40 shrink-0">
               <div className="flex items-center gap-3">
@@ -9739,14 +9739,14 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                   title="Chọn / Bỏ chọn tất cả sản phẩm"
                                 />
                               </th>
-                              <th className="py-3 px-3 w-44">Mã Sản Xuất (SKU)</th>
-                              <th className="py-3 px-4 min-w-[260px]">Tên Sản Phẩm Đặt Mua & Quy Cách</th>
-                              <th className="py-3 px-3 w-24 text-right">SL Cần</th>
-                              <th className="py-3 px-3 w-20 text-center">ĐVT</th>
-                              <th className="py-3 px-3 w-36 text-right">Đơn Giá Dự Kiến</th>
-                              <th className="py-3 px-3 w-36 text-right">Thành Tiền</th>
-                              <th className="py-3 px-3 w-48">Nhà Cung Cấp Phù Hợp</th>
-                              <th className="py-3 px-3 w-44 text-center">Mã PR Nguồn</th>
+                              <th className="py-3 px-3 w-40">Mã Sản Xuất (SKU)</th>
+                              <th className="py-3 px-4 min-w-[220px]">Tên Sản Phẩm Đặt Mua & Quy Cách</th>
+                              <th className="py-3 px-2 w-16 text-right">SL Cần</th>
+                              <th className="py-3 px-2 w-14 text-center">ĐVT</th>
+                              <th className="py-3 px-3 w-32 text-right">Đơn Giá Dự Kiến</th>
+                              <th className="py-3 px-3 w-32 text-right">Thành Tiền</th>
+                              <th className="py-3 px-3 w-40">Nhà Cung Cấp Phù Hợp</th>
+                              <th className="py-3 px-3 w-32 text-center whitespace-nowrap">Mã PR Nguồn</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -9835,7 +9835,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                     </td>
 
                                     {/* Suggested Supplier */}
-                                    <td className="py-3 px-3 whitespace-nowrap">
+                                    <td className="py-3 px-3 max-w-[11rem]">
                                       {isMatchSupplier ? (
                                         <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700">
                                           <Check className="w-3 h-3" />
@@ -9850,7 +9850,7 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
 
                                     {/* Source PR Code + Open PR Button */}
                                     <td className="py-3 px-3 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                      <div className="inline-flex items-center gap-1.5">
+                                      <div className="inline-flex flex-col items-center gap-1">
                                         <span className="font-mono font-bold text-slate-700 dark:text-slate-200 text-[11px]">
                                           {pr.workflow_code}
                                         </span>
