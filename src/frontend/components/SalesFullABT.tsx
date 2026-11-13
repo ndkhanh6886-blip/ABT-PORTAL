@@ -26520,8 +26520,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         <thead>
                                             <tr className="border-b border-slate-800 text-slate-400 font-bold uppercase tracking-wider text-[9px] bg-slate-950/60">
                                                 <th className="p-3 w-10 text-center">STT</th>
-                                                <th className="p-3">Mã Đơn / Ngày Giao</th>
-                                                <th className="p-3">Khách Hàng & MST</th>
+                                                <th className="p-3 whitespace-nowrap">Mã Đơn SO</th>
+                                                <th className="p-3">Khách Hàng & MST · Ngày Giao · NVKD</th>
                                                 <th className="p-3 text-right">Tổng Tiền (VNĐ)</th>
                                                 <th className="p-3 text-center">Phiếu Giao</th>
                                                 <th className="p-3 text-center">Trạng Thái HĐ</th>
@@ -26541,21 +26541,18 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 return (
                                                     <tr key={ord.order_code + idx} className="hover:bg-slate-950/40 transition-colors">
                                                         <td className="p-3 text-center font-mono text-slate-500 text-[11px]">{invoiceRowOffset + idx + 1}</td>
-                                                        <td className="p-3 font-mono">
-                                                            <div className="font-bold text-white text-xs flex items-center gap-1">
-                                                                <span>{ord.order_code}</span>
-                                                            </div>
-                                                            <div className="text-[10px] text-slate-400 mt-0.5">
-                                                                Giao ngày: <span className="text-slate-300 font-semibold">{ord.deliveredAt ? formatVNDate(ord.deliveredAt) : "—"}</span>
-                                                            </div>
-                                                            {ord.sales_rep_name && (
-                                                                <div className="text-[9px] text-indigo-300/80 font-sans mt-0.5">
-                                                                    👤 NVKD: {ord.sales_rep_name}
-                                                                </div>
-                                                            )}
+                                                        <td className="p-3 font-mono whitespace-nowrap">
+                                                            <div className="font-bold text-white text-xs">{ord.order_code}</div>
                                                         </td>
                                                         <td className="p-3">
                                                             <div className="font-bold text-slate-200 text-xs">{ord.customer_name}</div>
+                                                            {/* Ngày giao + NVKD trên một dòng (trước đây chen trong cột mã SO làm cột đó hẹp, xuống nhiều dòng) */}
+                                                            <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-slate-400 mt-0.5">
+                                                                <span>📅 Giao ngày: <span className="text-slate-300 font-semibold font-mono">{ord.deliveredAt ? formatVNDate(ord.deliveredAt) : "—"}</span></span>
+                                                                {ord.sales_rep_name && (
+                                                                    <span className="text-indigo-300/80">👤 NVKD: {ord.sales_rep_name}</span>
+                                                                )}
+                                                            </div>
                                                             {ord.customer_tax_code && (
                                                                 <div className="text-[10px] font-mono text-amber-400 mt-0.5">
                                                                     MST: {ord.customer_tax_code}
