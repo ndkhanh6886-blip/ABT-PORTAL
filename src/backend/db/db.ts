@@ -23,7 +23,7 @@ export function setAuditActorContext(actor: { username: string; fullName: string
   auditActorStore.enterWith(actor);
 }
 
-// Global database connection pool for ABT Portal (PostgreSQL 18)
+// Global database connection pool for TBRs Portal (PostgreSQL 18)
 if (process.env.NODE_ENV === "production" && !process.env.PGPASSWORD) {
   console.warn("⚠️ CẢNH BÁO AN NINH: Biến môi trường PGPASSWORD chưa được thiết lập trong môi trường Production!");
 }
@@ -33,7 +33,7 @@ const pool = new Pool({
   port: parseInt(process.env.PGPORT || "5432"),
   user: process.env.PGUSER || "postgres",
   password: process.env.PGPASSWORD || "12345678",
-  database: process.env.PGDATABASE || "abt_portal",
+  database: process.env.PGDATABASE || "tbrs_portal",
   max: 25,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
@@ -460,10 +460,16 @@ async function runIntegrityMigrations() {
           CONSTRAINT inventory_lots_unique UNIQUE (product_code, lot_number, warehouse_location)
         );
         ALTER TABLE inventory_lots ADD COLUMN IF NOT EXISTS unit_cost NUMERIC DEFAULT 0;
+        DO $$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inventory_items' AND column_name = 'expiry_date' AND data_type = 'date') THEN
+            ALTER TABLE inventory_items ALTER COLUMN expiry_date TYPE VARCHAR(50) USING to_char(expiry_date, 'YYYY-MM-DD');
+          END IF;
+          IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'inventory_lots' AND column_name = 'expiry_date' AND data_type = 'date') THEN
+            ALTER TABLE inventory_lots ALTER COLUMN expiry_date TYPE VARCHAR(50) USING to_char(expiry_date, 'YYYY-MM-DD');
+          END IF;
+        END $$;
         CREATE INDEX IF NOT EXISTS idx_inventory_lots_fefo ON inventory_lots (product_code, expiry_date);
-        CREATE INDEX IF NOT EXISTS idx_product_components_parent ON product_components (parent_product_code);
-        CREATE INDEX IF NOT EXISTS idx_inventory_transactions_date_id ON inventory_transactions (date DESC, id DESC);
-        CREATE INDEX IF NOT EXISTS idx_inventory_reservations_status_prod ON inventory_reservations (status, product_code);
         -- Backfill: one lot per product that has stock but no lot rows yet (idempotent)
         INSERT INTO inventory_lots (product_code, lot_number, expiry_date, warehouse_location, quantity_on_hand, is_quarantined, quarantine_reason)
         SELECT i.product_code,
@@ -806,25 +812,6 @@ async function runIntegrityMigrations() {
       );
     });
 
-    // Thông tin pháp nhân của ABT cho chứng từ in từ máy chủ (hợp đồng / báo giá gửi qua Zalo) ở CSDL mới.
-    // Chỉ tạo khi chưa có cấu hình; Quản trị viên sửa trong Cấu hình > Thông tin công ty.
-    await step("seed_company_config_abt", () =>
-      client.query(
-        `INSERT INTO app_storage (key, data, version, updated_at)
-         VALUES ('sales_company_config', $1::jsonb, 1, now())
-         ON CONFLICT (key) DO NOTHING`,
-        [JSON.stringify({
-          companyName: "Công ty TNHH Giải pháp Y sinh ABT",
-          companyAddress: "Xưởng 6.07 và 5.02, Lô L2, Đường Long Hậu-Hiệp Phước, KCN Long Hậu, Xã Cần Giuộc, Tỉnh Tây Ninh, Việt Nam",
-          companyPhone: "028 2216 0885",
-          companyEmail: "sales@abtvn.com",
-          companyTaxCode: "0315562387",
-          companyRepresentative: "NGUYỄN VĂN TÙNG",
-          companyRepresentativeRole: "Giám đốc",
-        })]
-      )
-    );
-
     // Tên đăng nhập riêng từ file nhập liệu (cột "Tên đăng nhập") khi khác Mã nhân viên
     await step("users_login_name", () =>
       client.query(`
@@ -846,6 +833,104 @@ async function runIntegrityMigrations() {
         END $$;
       `)
     );
+
+    await step("inventory_perf_indexes", () =>
+      client.query(`
+        CREATE INDEX IF NOT EXISTS idx_product_components_parent ON product_components (parent_product_code);
+        CREATE INDEX IF NOT EXISTS idx_inventory_transactions_date_id ON inventory_transactions (date DESC, id DESC);
+        CREATE INDEX IF NOT EXISTS idx_inventory_reservations_status_prod ON inventory_reservations (status, product_code);
+      `)
+    );
+
+    await step("purge_hardcoded_demo_products_v1", async () => {
+      const demoCodes = [
+        "LBC-021", "SQH-115", "SQH-115.A", "SQH-115.B", "SQH-116", "SQH-116.A", "SQH-116.B",
+        "EXS-021", "EXS-022", "SYS-PCR-96E", "SYS-EXT-32", "BSC-1300IIA2", "CEN-TGL-16M", "NANO-100", "SPEC-NANO-100",
+        "OLIGO-PRIMER", "OLIGO-PROBE", "OLIGO-BASE", "OLIGO-MOD", "OLIGO-PUR", "OLIGO-SVC", "CUSTOM-ORDER"
+      ];
+      await client.query(`DELETE FROM catalog_items WHERE code = ANY($1::text[])`, [demoCodes]);
+      await client.query(
+        `DELETE FROM inventory_items i
+          WHERE i.product_code = ANY($1::text[])
+            AND COALESCE(i.quantity_on_hand, 0) = 0
+            AND NOT EXISTS (SELECT 1 FROM inventory_lots l WHERE l.product_code = i.product_code AND l.quantity_on_hand > 0)`,
+        [demoCodes]
+      );
+      await client.query(
+        `DELETE FROM products p
+          WHERE p.code = ANY($1::text[])
+            AND NOT EXISTS (SELECT 1 FROM inventory_lots l WHERE l.product_code = p.code AND l.quantity_on_hand > 0)
+            AND NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = p.code AND COALESCE(i.quantity_on_hand, 0) > 0)`,
+        [demoCodes]
+      );
+    });
+
+    // Dịch vụ sửa chữa (DVSC, DV-*, Dịch vụ...) không có số lượng tồn kho, chỉ phát sinh khi có sửa chữa:
+    // xóa các lô/tồn kho ảo (VD: DVSC 999.999 Lần làm vọt giá trị tồn kho lên 183 nghìn tỷ),
+    // đồng bộ lại tồn tổng từ inventory_lots và cập nhật phân loại Dịch vụ & Khác.
+    await step("heal_service_and_inventory_valuation_v1", async () => {
+      await client.query(`
+        DELETE FROM inventory_lots l
+         USING products p
+         WHERE l.product_code = p.code
+           AND (
+             UPPER(TRIM(l.product_code)) IN ('DVSC', 'OLIGO-SVC')
+             OR UPPER(TRIM(l.product_code)) LIKE 'DV-%'
+             OR UPPER(TRIM(l.product_code)) LIKE 'SVC-%'
+             OR p.name ILIKE 'Dịch vụ%'
+             OR p.name ILIKE '%dịch vụ sửa chữa%'
+             OR p.category ILIKE '%Dịch vụ%'
+           );
+        DELETE FROM inventory_lots
+         WHERE UPPER(TRIM(product_code)) IN ('DVSC', 'OLIGO-SVC')
+            OR UPPER(TRIM(product_code)) LIKE 'DV-%'
+            OR UPPER(TRIM(product_code)) LIKE 'SVC-%'
+            OR quantity_on_hand >= 999000;
+        DELETE FROM inventory_items i
+         USING products p
+         WHERE i.product_code = p.code
+           AND (
+             UPPER(TRIM(i.product_code)) IN ('DVSC', 'OLIGO-SVC')
+             OR UPPER(TRIM(i.product_code)) LIKE 'DV-%'
+             OR UPPER(TRIM(i.product_code)) LIKE 'SVC-%'
+             OR p.name ILIKE 'Dịch vụ%'
+             OR p.name ILIKE '%dịch vụ sửa chữa%'
+             OR p.category ILIKE '%Dịch vụ%'
+           );
+        DELETE FROM inventory_items
+         WHERE UPPER(TRIM(product_code)) IN ('DVSC', 'OLIGO-SVC')
+            OR UPPER(TRIM(product_code)) LIKE 'DV-%'
+            OR UPPER(TRIM(product_code)) LIKE 'SVC-%'
+            OR product_name ILIKE 'Dịch vụ%'
+            OR quantity_on_hand >= 999000;
+        UPDATE products
+           SET category = 'Dịch vụ & Khác',
+               min_stock_level = 0
+         WHERE UPPER(TRIM(code)) IN ('DVSC', 'OLIGO-SVC')
+            OR UPPER(TRIM(code)) LIKE 'DV-%'
+            OR UPPER(TRIM(code)) LIKE 'SVC-%'
+            OR name ILIKE 'Dịch vụ%'
+            OR name ILIKE '%dịch vụ sửa chữa%';
+        UPDATE catalog_items
+           SET data = jsonb_set(data, '{category}', '"Dịch vụ & Khác"'::jsonb),
+               updated_at = now()
+         WHERE UPPER(TRIM(code)) IN ('DVSC', 'OLIGO-SVC')
+            OR UPPER(TRIM(code)) LIKE 'DV-%'
+            OR UPPER(TRIM(code)) LIKE 'SVC-%'
+            OR COALESCE(data->>'name', '') ILIKE 'Dịch vụ%'
+            OR COALESCE(data->>'name', '') ILIKE '%dịch vụ sửa chữa%';
+        UPDATE inventory_items i
+           SET quantity_on_hand = COALESCE(s.total_qty, 0)
+          FROM inventory_items i2
+          LEFT JOIN (
+            SELECT product_code, COALESCE(SUM(quantity_on_hand), 0)::int AS total_qty
+              FROM inventory_lots
+             GROUP BY product_code
+          ) s ON s.product_code = i2.product_code
+         WHERE i.id = i2.id
+           AND COALESCE(i.quantity_on_hand, -1) <> COALESCE(s.total_qty, 0);
+      `);
+    });
   } finally {
     if (locked) {
       await client.query("SELECT pg_advisory_unlock($1)", [INTEGRITY_MIGRATION_LOCK_KEY]).catch((e) =>
@@ -875,8 +960,8 @@ async function ensurePersonnelTableImpl() {
       const candidates = [
         path.join(process.cwd(), "src/backend/db/schema.sql"),
         path.join(__dirname, "schema.sql"),
-        "/var/www/ABT-portal/src/backend/db/schema.sql",
-        "/var/www/abt-portal/src/backend/db/schema.sql"
+        "/var/www/TBR-portal/src/backend/db/schema.sql",
+        "/var/www/tbr-portal/src/backend/db/schema.sql"
       ];
       for (const p of candidates) {
         if (fs.existsSync(p)) {
@@ -1016,7 +1101,7 @@ async function ensurePersonnelTableImpl() {
     const initialAdminPassword = (process.env.INITIAL_ADMIN_PASSWORD || "").trim() || generateTemporaryPassword(14);
     const adminIns = await pool.query(
       `INSERT INTO users (username, password_hash, full_name, role, department, email, is_active, must_change_password)
-       VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@abtvn.com', true, true)
+       VALUES ('admin', $1, 'Quản Trị Viên Hệ Thống', 'admin', 'Ban Giám Đốc', 'admin@tbrscientific.com', true, true)
        ON CONFLICT (username) DO NOTHING
        RETURNING id`,
       [hashPassword(initialAdminPassword)]

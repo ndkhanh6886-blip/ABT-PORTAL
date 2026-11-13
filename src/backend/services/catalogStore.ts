@@ -35,6 +35,46 @@ export function normalizeVnCategoryText(raw?: string | null): string {
 }
 
 /**
+ * Kiểm tra mặt hàng có phải là Dịch vụ (sửa chữa, bảo trì, hiệu chuẩn, lắp đặt...) hay không.
+ * Mặt hàng dịch vụ chỉ phát sinh khi có dịch vụ/sửa chữa, KHÔNG có số lượng tồn kho trong kho.
+ */
+export function isServiceProduct(item?: {
+  code?: string | null;
+  product_code?: string | null;
+  name?: string | null;
+  product_name?: string | null;
+  category?: string | null;
+  unit?: string | null;
+} | null): boolean {
+  if (!item) return false;
+  const cUp = String(item.code ?? item.product_code ?? "").trim().toUpperCase();
+  const nLow = normalizeVnCategoryText(item.name ?? item.product_name ?? "").toLowerCase();
+  const catLow = normalizeVnCategoryText(item.category ?? "").toLowerCase();
+  if (cUp === "DVSC" || cUp.startsWith("DV-") || cUp.startsWith("DV_") || cUp.startsWith("SVC-") || cUp === "OLIGO-SVC") {
+    return true;
+  }
+  if (catLow.includes("dịch vụ")) {
+    return true;
+  }
+  if (
+    nLow.startsWith("dịch vụ") ||
+    nLow.startsWith("sửa chữa") ||
+    nLow.startsWith("phí dịch vụ") ||
+    nLow.startsWith("phí sửa chữa") ||
+    nLow.startsWith("phí bảo trì") ||
+    nLow.startsWith("phí hiệu chuẩn") ||
+    nLow.includes("dịch vụ sửa chữa") ||
+    nLow.includes("dịch vụ bảo trì") ||
+    nLow.includes("dịch vụ bảo dưỡng") ||
+    nLow.includes("dịch vụ hiệu chuẩn") ||
+    nLow.includes("dịch vụ kiểm định")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Tự động suy luận phân loại thực tế khi mặt hàng đang mang phân loại mặc định chung chung
  * ("Hàng Thương Mại", "Vật tư y tế", "Sinh Phẩm & Nguyên Liệu"...) hoặc bị rơi vào mặc định "Thiết bị"
  * khi import file Excel không có cột phân loại ngành hàng.
@@ -44,6 +84,10 @@ export function resolveActualProductCategory(item: { code?: string; name?: strin
   const cUp = String(item?.code || "").trim().toUpperCase();
   const nLow = normalizeVnCategoryText(item?.name || "").toLowerCase();
   const catLow = cat.toLowerCase();
+
+  if (isServiceProduct(item)) {
+    return "Dịch vụ & Khác";
+  }
 
   const isGeneric =
     !catLow ||
@@ -56,6 +100,13 @@ export function resolveActualProductCategory(item: { code?: string; name?: strin
   const isSuspectEquipmentFallback = catLow === "thiết bị";
 
   if (isGeneric || isSuspectEquipmentFallback) {
+    // 0. Dịch vụ & Sửa chữa
+    if (
+      cUp === "DVSC" || cUp.startsWith("DV-") || cUp.startsWith("SVC-") ||
+      ["dịch vụ", "sửa chữa", "bảo trì", "bảo dưỡng", "hiệu chuẩn", "kiểm định"].some(k => nLow.includes(k))
+    ) {
+      return "Dịch vụ & Khác";
+    }
     // 1. Kit Tách chiết
     if (
       cUp.startsWith("EXS-") || cUp.startsWith("EXM-") || cUp.startsWith("HE-") || cUp.startsWith("HI-") || cUp.startsWith("HM-") ||

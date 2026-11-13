@@ -1,6 +1,6 @@
 import type { PoolClient } from "pg";
 import { HttpError } from "@/backend/db/db";
-import { appendCatalogEntry } from "@/backend/services/catalogStore";
+import { appendCatalogEntry, isServiceProduct } from "@/backend/services/catalogStore";
 import { todayVN, normalizeExcelDateToISO } from "@/backend/services/dates";
 
 /**
@@ -151,7 +151,7 @@ export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promis
       p.specification || "",
       Number(p.standard_price) || 0,
       Number(p.cost_price) || 0,
-      p.manufacturer || "ABT Phân Phối",
+      p.manufacturer || "TBR Phân Phối",
       p.origin || "Nhập khẩu / Chính hãng",
       Number(p.min_stock_level) || 10,
       p.storage_condition || null,
@@ -171,7 +171,7 @@ export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promis
               standard_price = CASE WHEN $3::numeric > 0 THEN $3::numeric ELSE standard_price END,
               storage_condition = COALESCE(NULLIF(storage_condition, ''), NULLIF($4::text, '')),
               manufacturer = CASE
-                WHEN (manufacturer IS NULL OR manufacturer = '' OR manufacturer = 'ABT' OR manufacturer = 'VIA' OR manufacturer ILIKE '%Phân Phối%')
+                WHEN (manufacturer IS NULL OR manufacturer = '' OR manufacturer = 'TBR' OR manufacturer = 'VIA' OR manufacturer ILIKE '%Phân Phối%')
                      AND $5::text <> '' AND $5::text NOT ILIKE '%Phân Phối%'
                 THEN $5::text
                 ELSE manufacturer
@@ -204,6 +204,8 @@ export async function addStock(c: Queryable, input: AddStockInput) {
   const code = String(input.productCode || "").trim();
   const qty = toQty(input.qty);
   if (!code || qty <= 0) return;
+  // Dịch vụ sửa chữa / bảo trì không có số lượng tồn kho, chỉ phát sinh khi có dịch vụ
+  if (isServiceProduct({ code, name: input.productName })) return;
 
   await ensureLotUnitCostCol(c);
   await c.query(
@@ -290,6 +292,10 @@ export async function removeStock(c: Queryable, input: RemoveStockInput): Promis
   const code = String(input.productCode || "").trim();
   const qty = toQty(input.qty);
   if (!code || qty <= 0) return { deducted: 0, shortfall: 0, consumedReservation: 0 };
+  // Dịch vụ sửa chữa / bảo trì không quản lý tồn kho: cho phép lập biên bản / phiếu giao mà không trừ tồn kho
+  if (isServiceProduct({ code, name: input.productName })) {
+    return { deducted: qty, shortfall: 0, consumedReservation: 0 };
+  }
   const lot = (input.lotNumber ?? "").toString().trim() || null;
   const allow = Boolean(input.allowInsufficient);
   const label = `${input.productName || code}${lot ? ` – Lô ${lot}` : ""}`;
@@ -394,6 +400,7 @@ export async function reserveStock(c: Queryable, r: ReserveInput): Promise<numbe
   const qty = toQty(r.qty);
   if (!code) throw new HttpError(400, "Thiếu mã sản phẩm cần giữ chỗ.");
   if (qty <= 0) throw new HttpError(400, "Số lượng giữ chỗ phải lớn hơn 0.");
+  if (isServiceProduct({ code, name: r.productName })) return 0;
 
   // Trả lại tồn của các phiếu giữ chỗ đã quá hạn trước khi tính tồn khả dụng
   await releaseExpiredReservations(c, code);

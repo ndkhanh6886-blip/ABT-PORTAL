@@ -121,6 +121,48 @@ function txFinanceMeta(tx: any) {
   return { supplier, invoice, inboundType, shipping: shipping === "N/A" ? "" : shipping, hasPrice, total };
 }
 
+/** Trích xuất nội dung ghi chú thực tế của người dùng trên phiếu kho (loại bỏ phần tiền tố hệ thống tự sinh). */
+function extractCleanTxNote(tx: any): string {
+  const raw = String(tx?.notes || "").replace(/\s*\[req:[^\]]+\]\s*$/i, "").trim();
+  let cleaned = raw;
+
+  if (cleaned.includes("•")) {
+    const parts = cleaned
+      .split("•")
+      .map((s) => s.trim())
+      .filter((p) => {
+        if (!p) return false;
+        if (/^Nhập kho theo PO\b/i.test(p)) return false;
+        if (/^(Loại|Loại hình|NCC|Nhà cung cấp|HĐ|HĐ\/Tờ khai|Vận chuyển|Kho):\s*/i.test(p)) return false;
+        return true;
+      });
+    cleaned = parts.join(" • ").trim();
+  }
+
+  const formMatch = cleaned.match(/^(?:.*?)\.\s*Vận chuyển:\s*(?:.*?)\.\s*HĐ:\s*(?:.*?)\.(?:\s*NCC:\s*(?:.*?)\.)?\s*(.*)$/i);
+  if (formMatch) {
+    cleaned = (formMatch[1] || "").trim();
+  }
+
+  cleaned = cleaned
+    .replace(/^Nhập mua hàng theo Đơn PO từ NCC\.?\s*/i, "")
+    .replace(/^Vận chuyển:\s*[^.]+\.\s*/i, "")
+    .replace(/^HĐ:\s*[^.]+\.\s*/i, "")
+    .replace(/^NCC:\s*[^.]+\.\s*/i, "")
+    .replace(/^Loại hình:\s*[^.•]+[.•]?\s*/i, "")
+    .trim();
+
+  const itemNotes = (Array.isArray(tx?.items) ? tx.items : [])
+    .map((it: any) => String(it?.notes || it?.item_notes || "").trim())
+    .filter(Boolean);
+
+  if (cleaned && itemNotes.length > 0) {
+    const uniqueItemNotes = itemNotes.filter((n: string) => !cleaned.includes(n));
+    return uniqueItemNotes.length > 0 ? `${cleaned} (${uniqueItemNotes.join("; ")})` : cleaned;
+  }
+  return cleaned || itemNotes.join("; ");
+}
+
 export const WarehouseModule: React.FC = () => {
   const companyConfig = useCompanyConfig();
   const { notifyActivity } = useNotification();
@@ -248,6 +290,7 @@ export const WarehouseModule: React.FC = () => {
   const [riskFilter, setRiskFilter] = useState<"all" | "near_exp" | "low_stock" | "slow_moving" | "safe">("all");
   const [tempFilter, setTempFilter] = useState<"all" | "-20C" | "2-8C" | "room">("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [stockWarehouseFilter, setStockWarehouseFilter] = useState<string>("all");
 
   // Multi-dimensional Valuation Dynamic Filters & Controls
   const [valFilterBrand, setValFilterBrand] = useState<string>("all");
@@ -604,7 +647,16 @@ export const WarehouseModule: React.FC = () => {
 
   // Enriched items with risk metadata & ATP metrics (Requirement 1 & 7)
   const enrichedItems = useMemo(() => {
-    return items.map((item) => {
+    return items
+      .filter((item) => {
+        const pCode = String(item.product_code || item.code || "").trim().toUpperCase();
+        const pName = String(item.product_name || item.name || "").trim().toLowerCase();
+        const pCat = String(item.category || "").trim().toLowerCase();
+        if (pCode === "DVSC" || pCode === "OLIGO-SVC" || pCode.startsWith("DV-") || pCode.startsWith("SVC-")) return false;
+        if (pCat.includes("dịch vụ") || pName.startsWith("dịch vụ") || pName.includes("dịch vụ sửa chữa") || pName.includes("dịch vụ bảo trì") || pName.includes("dịch vụ hiệu chuẩn")) return false;
+        return true;
+      })
+      .map((item) => {
       // Dynamic properties read directly from real inventory item
       // Mã nhiều lô: hiện lô hết hạn sớm nhất (FEFO) thay cho lô ghi trên dòng tồn của mã
       const isoToVN = (v: string) => (/^\d{4}-\d{2}-\d{2}/.test(v) ? `${v.slice(8, 10)}.${v.slice(5, 7)}.${v.slice(0, 4)}` : v);
@@ -665,7 +717,7 @@ export const WarehouseModule: React.FC = () => {
         industry_category = "Vật tư tiêu hao";
       } else if (pCat.includes("DỤNG CỤ") || pName.includes("pipet") || pName.includes("micropipet")) {
         industry_category = "Dụng cụ";
-      } else if (pCat.includes("DỊCH VỤ") || pName.includes("bảo dưỡng") || pName.includes("hiệu chuẩn") || pName.includes("đào tạo")) {
+      } else if (pCat.includes("DỊCH VỤ") || pCode === "DVSC" || pCode.startsWith("DV-") || pCode.startsWith("SVC-") || pName.includes("sửa chữa") || pName.includes("bảo dưỡng") || pName.includes("hiệu chuẩn") || pName.includes("đào tạo")) {
         industry_category = "Dịch vụ & Khác";
       } else if (item.category) {
         industry_category = item.category;
@@ -722,15 +774,15 @@ export const WarehouseModule: React.FC = () => {
         atpPromiseStatus = "CONDITIONAL_PO";
       }
 
-      // Valuation Prices & Manufacturer (Requirement 1)
-      const costPrice = Number(item.cost_price) > 0 
-        ? Number(item.cost_price) 
-        : (Number(matchedCatalogProd?.cost_price) > 0
-          ? Number(matchedCatalogProd.cost_price)
-          : (Number(item.standard_price) > 0 ? Math.round(Number(item.standard_price) * 0.7) : 0));
+      // Valuation Prices & Manufacturer (Requirement 1) — chỉ lấy giá vốn & giá niêm yết thực tế, tuyệt đối không tự suy diễn 70% giá bán
+      const costPrice = Number(item.lot_unit_cost) > 0
+        ? Number(item.lot_unit_cost)
+        : (Number(item.cost_price) > 0 
+          ? Number(item.cost_price) 
+          : (Number(matchedCatalogProd?.cost_price) > 0 ? Number(matchedCatalogProd.cost_price) : 0));
       const standardPrice = Number(item.standard_price) > 0 
         ? Number(item.standard_price) 
-        : (Number(matchedCatalogProd?.standard_price) > 0 ? Number(matchedCatalogProd.standard_price) : costPrice);
+        : (Number(matchedCatalogProd?.standard_price) > 0 ? Number(matchedCatalogProd.standard_price) : 0);
       const manufacturer = item.manufacturer || matchedCatalogProd?.manufacturer || (
         item.product_code?.startsWith("HI") || item.product_code?.startsWith("HM") || item.product_code?.startsWith("HE") ? "TopPURE (ABT)" :
         item.product_code?.startsWith("SQH") ? "TopSPEC (ABT)" :
@@ -784,15 +836,16 @@ export const WarehouseModule: React.FC = () => {
   const availableValuationWarehouses = useMemo(() => {
     const set = new Set<string>();
     enrichedItems.forEach(it => {
-      const w = it.warehouse_name || it.warehouse_id;
+      const w = it.warehouse_location || it.warehouse_name || it.warehouse_id;
       if (w) set.add(w);
     });
-    if (set.size === 0) set.add("Kho Trung Tâm");
+    ["Kho Trung Tâm", "Kho Trung tâm sửa chữa", "Kho thầu&Pháp danh"].forEach((w) => set.add(w));
     return Array.from(set).sort();
   }, [enrichedItems]);
 
   const filteredValuationItems = useMemo(() => {
     return enrichedItems.filter((it) => {
+      if ((Number(it.quantity_on_hand) || 0) <= 0) return false;
       if (valFilterBrand !== "all" && it.manufacturer !== valFilterBrand) return false;
       if (valFilterCategory !== "all") {
         const indCat = (it.industry_category || "").toLowerCase();
@@ -819,7 +872,7 @@ export const WarehouseModule: React.FC = () => {
         if (valFilterRisk === "low_stock" && !it.isStockoutRisk) return false;
       }
       if (valFilterWarehouse !== "all") {
-        const wh = it.warehouse_name || it.warehouse_id || "Kho Trung Tâm";
+        const wh = it.warehouse_location || it.warehouse_name || it.warehouse_id || "Kho Trung Tâm";
         if (wh !== valFilterWarehouse) return false;
       }
       if (valSearchQuery.trim()) {
@@ -877,7 +930,7 @@ export const WarehouseModule: React.FC = () => {
 
     filteredValuationItems.forEach((it) => {
       const qty = Number(it.quantity_on_hand) || 0;
-      const cVal = qty * (Number(it.cost_price) || 0);
+      const cVal = Number(it.lot_cost_valuation) > 0 ? Number(it.lot_cost_valuation) : qty * (Number(it.cost_price) || 0);
       const lVal = qty * (Number(it.standard_price) || 0);
       totalCostVal += cVal;
       totalListVal += lVal;
@@ -934,7 +987,7 @@ export const WarehouseModule: React.FC = () => {
       byRiskMap[riskLabel].listVal += lVal;
 
       // 5. By Warehouse
-      const wh = it.warehouse_name || it.warehouse_id || "Kho Trung Tâm";
+      const wh = it.warehouse_location || it.warehouse_name || it.warehouse_id || "Kho Trung Tâm";
       if (!byWarehouseMap[wh]) {
         byWarehouseMap[wh] = { warehouse: wh, count: 0, totalQty: 0, costVal: 0, listVal: 0 };
       }
@@ -964,7 +1017,7 @@ export const WarehouseModule: React.FC = () => {
       const qty = Number(it.quantity_on_hand) || 0;
       const cPrice = Number(it.cost_price) || 0;
       const lPrice = Number(it.standard_price) || 0;
-      const totalCost = qty * cPrice;
+      const totalCost = Number(it.lot_cost_valuation) > 0 ? Number(it.lot_cost_valuation) : qty * cPrice;
       const totalList = qty * lPrice;
       const profit = Math.max(0, totalList - totalCost);
       const margin = totalList > 0 ? (profit / totalList) * 100 : 0;
@@ -2078,6 +2131,7 @@ export const WarehouseModule: React.FC = () => {
 
       // 3. Temperature Filter
       if (tempFilter !== "all" && item.temp_category !== tempFilter) return false;
+      if (stockWarehouseFilter !== "all" && (item.warehouse_location || "Kho Trung Tâm") !== stockWarehouseFilter) return false;
 
       // 4. Category Filter
       if (categoryFilter !== "all") {
@@ -2094,7 +2148,7 @@ export const WarehouseModule: React.FC = () => {
 
       return true;
     });
-  }, [enrichedItems, debouncedSearch, riskFilter, tempFilter, categoryFilter]);
+  }, [enrichedItems, debouncedSearch, riskFilter, tempFilter, categoryFilter, stockWarehouseFilter]);
   // Bảng tồn kho chỉ vẽ một trang (3.000 dòng vẽ cùng lúc làm màn hình đứng nhiều giây)
   // Phụ kiện của một dòng tồn: số thực nhận ghi trên phiếu nhập kho; chưa có phiếu nào ghi phụ kiện thì hiện theo
   // định mức (BOM) và để trống số lô / hạn dùng / vị trí (trước đây tự dựng "<lô>-C1", "2028-12-31" và kệ theo nhiệt độ).
@@ -2117,7 +2171,7 @@ export const WarehouseModule: React.FC = () => {
     }));
   };
 
-  const stockPage = usePaged(filteredItems, 50, `${debouncedSearch}|${riskFilter}|${tempFilter}|${categoryFilter}`);
+  const stockPage = usePaged(filteredItems, 50, `${debouncedSearch}|${riskFilter}|${tempFilter}|${categoryFilter}|${stockWarehouseFilter}`);
   // Danh sách sản phẩm ở tab BOM: lọc sau khi ngừng gõ, đếm thành phần một lần, vẽ từng trang
   const bomSearchDebounced = useDebouncedValue(bomSearchQuery, 300);
   const bomFilteredProducts = useMemo(() => {
@@ -2281,6 +2335,7 @@ export const WarehouseModule: React.FC = () => {
     let vatInvoiceNo = firstItem?.vat_invoice_no || finMeta.invoice || "";
     let supplierName = firstItem?.supplier_name || finMeta.supplier || firstItem?.manufacturer || "";
     let cleanNotes = rawNotes.replace(/\s*\[req:[^\]]+\]\s*$/, "").trim();
+    cleanNotes = cleanNotes.replace(/^Nhập kho theo PO\s+\S+\s*•\s*/i, "").trim();
 
     const noteMatch = cleanNotes.match(/^(.*?)\.\s*Vận chuyển:\s*(.*?)\.\s*HĐ:\s*(.*?)\.(?:\s*NCC:\s*(.*?)\.)?\s*(.*)$/);
     if (noteMatch) {
@@ -2289,9 +2344,10 @@ export const WarehouseModule: React.FC = () => {
       if (!vatInvoiceNo && noteMatch[3] && noteMatch[3].trim() !== "N/A") vatInvoiceNo = noteMatch[3].trim();
       if (!supplierName && noteMatch[4] && noteMatch[4].trim() !== "N/A") supplierName = noteMatch[4].trim();
       cleanNotes = (noteMatch[5] || "").trim();
-    } else if (cleanNotes.includes("•")) {
+    }
+    if (cleanNotes.includes("•")) {
       const userParts = cleanNotes.split("•").map((s) => s.trim()).filter((p) => {
-        return p && !/^Nhập kho theo PO\s+/i.test(p) && !/^Loại:\s*/i.test(p) && !/^NCC:\s*/i.test(p) && !/^HĐ:\s*/i.test(p) && !/^Vận chuyển:\s*/i.test(p);
+        return p && !/^Nhập kho theo PO\s+/i.test(p) && !/^(Loại|Loại hình):\s*/i.test(p) && !/^NCC:\s*/i.test(p) && !/^(HĐ|HĐ\/Tờ khai):\s*/i.test(p) && !/^Vận chuyển:\s*/i.test(p);
       });
       cleanNotes = userParts.join(" • ");
     }
@@ -2316,7 +2372,7 @@ export const WarehouseModule: React.FC = () => {
         storage_condition: it.storage_condition || matchedCatalogProd?.storage_condition || "",
         shelf_position: it.shelf_position || (matchedCatalogProd as any)?.shelf_position || "Chưa phân bổ kệ",
         qc_status: it.qc_status || "Đạt chuẩn 100% (Nguyên niêm phong & COA)",
-        item_notes: it.item_notes || "",
+        item_notes: it.item_notes || it.notes || "",
         components: Array.isArray(it.components) ? it.components : [],
       };
     });
@@ -2477,7 +2533,8 @@ export const WarehouseModule: React.FC = () => {
             storage_location: inboundForm.warehouse_name || "Kho Trung Tâm",
             shelf_position: it.shelf_position || (matchedCatalogProd as any)?.shelf_position || "Chưa phân bổ kệ",
             qc_status: it.qc_status || "Đạt chuẩn 100%",
-            item_notes: it.item_notes || "",
+            item_notes: it.item_notes || it.notes || "",
+            notes: it.item_notes || it.notes || "",
             components: comps
           };
         })
@@ -2811,7 +2868,7 @@ export const WarehouseModule: React.FC = () => {
         "Số Lô (Lot)": "L260901",
         "Hạn dùng (Date)": "2027-12-31",
         "Số lượng": 50,
-        "Giá trị / Đơn giá đầu kỳ": Number(p1.cost_price) || 1800000,
+        "Đơn giá vốn đầu kỳ (VNĐ)": Number(p1.cost_price) || 1800000,
         "Nhiệt độ bảo quản": p1.storage_condition || "2–8°C (Tủ mát)",
         "Khu vực / Vị trí kho": "Kho Mát 2-8°C - Kệ B1"
       },
@@ -2820,7 +2877,7 @@ export const WarehouseModule: React.FC = () => {
         "Số Lô (Lot)": "L260902",
         "Hạn dùng (Date)": "2028-06-30",
         "Số lượng": 100,
-        "Giá trị / Đơn giá đầu kỳ": Number(p2.cost_price) || 2400000,
+        "Đơn giá vốn đầu kỳ (VNĐ)": Number(p2.cost_price) || 2400000,
         "Nhiệt độ bảo quản": p2.storage_condition || "15–25°C (Nhiệt độ phòng - RT)",
         "Khu vực / Vị trí kho": "Kho Trung Tâm - Kệ K02"
       }
@@ -2859,9 +2916,9 @@ export const WarehouseModule: React.FC = () => {
       },
       {
         "Nhóm Thông Tin": "5. ĐỊNH GIÁ TỒN ĐẦU KỲ",
-        "Tên Cột Trên Excel": "Giá trị / Đơn giá đầu kỳ",
+        "Tên Cột Trên Excel": "Đơn giá vốn đầu kỳ (VNĐ)",
         "Bắt Buộc / Tùy Chọn": "Khuyến nghị (Cho phép trống)",
-        "Quy Định & Giá Trị Hợp Lệ": "Đơn giá vốn / Giá đầu kỳ (VNĐ) của lô hàng để tính giá trị tồn kho. Nếu để trống hệ thống lấy giá vốn mặc định từ danh mục SP."
+        "Quy Định & Giá Trị Hợp Lệ": "Đơn giá vốn (VNĐ / 1 đơn vị) của lô hàng để tính giá trị tồn kho. Nếu để trống hệ thống lấy giá vốn mặc định từ danh mục SP."
       },
       {
         "Nhóm Thông Tin": "6. ĐIỀU KIỆN BẢO QUẢN",
@@ -3090,10 +3147,31 @@ export const WarehouseModule: React.FC = () => {
               0
             ) || 0;
 
+          const parseExcelNum = (v: any): number => {
+            if (typeof v === "number") return Number.isFinite(v) ? v : NaN;
+            const s = String(v ?? "").trim();
+            if (!s) return NaN;
+            if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+            const hasComma = s.includes(",");
+            const hasDot = s.includes(".");
+            let norm = s.replace(/[^\d.,-]/g, "");
+            if (hasComma && hasDot) {
+              if (norm.lastIndexOf(".") > norm.lastIndexOf(",")) norm = norm.replace(/,/g, "");
+              else norm = norm.replace(/\./g, "").replace(/,/g, ".");
+            } else if (hasComma) {
+              if (/^-?\d{1,3}(,\d{3})+$/.test(norm)) norm = norm.replace(/,/g, "");
+              else norm = norm.replace(/,/g, ".");
+            } else if (hasDot) {
+              if (/^-?\d{1,3}(\.\d{3})+$/.test(norm)) norm = norm.replace(/\./g, "");
+            }
+            return Number(norm);
+          };
+
           const rawPrice =
-            r["Giá trị / Đơn giá đầu kỳ"] ??
+            r["Đơn giá vốn đầu kỳ (VNĐ)"] ??
             r["Đơn giá đầu kỳ"] ??
             r["Giá đầu kỳ"] ??
+            r["Giá trị / Đơn giá đầu kỳ"] ??
             r["Đơn giá nhập (VNĐ)"] ??
             r["Đơn giá nhập"] ??
             r["Đơn giá"] ??
@@ -3102,15 +3180,20 @@ export const WarehouseModule: React.FC = () => {
             r["costPrice"] ??
             r["price"];
 
-          const parsedPrice =
-            rawPrice !== undefined && rawPrice !== null && String(rawPrice).trim() !== ""
-              ? Number(String(rawPrice).replace(/,/g, ""))
-              : NaN;
+          const rawTotalVal =
+            r["Giá trị đầu kỳ"] ??
+            r["Giá trị tồn đầu kỳ"] ??
+            r["Tổng giá trị đầu kỳ"];
+
+          const parsedPrice = parseExcelNum(rawPrice);
+          const parsedTotalVal = parseExcelNum(rawTotalVal);
 
           const unit_price =
-            Number.isFinite(parsedPrice) && parsedPrice >= 0
+            Number.isFinite(parsedPrice) && parsedPrice > 0
               ? parsedPrice
-              : Number(matchedProd?.cost_price) || 0;
+              : (Number.isFinite(parsedTotalVal) && parsedTotalVal > 0 && quantity > 0
+                ? Math.round(parsedTotalVal / quantity)
+                : (Number(matchedProd?.cost_price) || 0));
 
           const rawSellPrice =
             r["Giá niêm yết End-User (VNĐ)"] ??
@@ -3118,10 +3201,7 @@ export const WarehouseModule: React.FC = () => {
             r["Đơn giá bán"] ??
             r["Giá bán"] ??
             r["standard_price"];
-          const parsedSellPrice =
-            rawSellPrice !== undefined && rawSellPrice !== null && String(rawSellPrice).trim() !== ""
-              ? Number(String(rawSellPrice).replace(/,/g, ""))
-              : NaN;
+          const parsedSellPrice = parseExcelNum(rawSellPrice);
           const standard_price =
             Number.isFinite(parsedSellPrice) && parsedSellPrice >= 0
               ? parsedSellPrice
@@ -4020,12 +4100,13 @@ export const WarehouseModule: React.FC = () => {
               </div>
 
               {/* Reset filter button if any active */}
-              {(riskFilter !== "all" || tempFilter !== "all" || categoryFilter !== "all" || searchQuery) && (
+              {(riskFilter !== "all" || tempFilter !== "all" || categoryFilter !== "all" || stockWarehouseFilter !== "all" || searchQuery) && (
                 <button
                   onClick={() => {
                     setRiskFilter("all");
                     setTempFilter("all");
                     setCategoryFilter("all");
+                    setStockWarehouseFilter("all");
                     setSearchQuery("");
                   }}
                   className="flex items-center gap-1 text-xs font-semibold text-slate-500 hover:text-rose-600 transition-colors"
@@ -4158,6 +4239,17 @@ export const WarehouseModule: React.FC = () => {
                   <option value="extraction">Hóa chất &amp; Kít tách chiết</option>
                   <option value="equipment">Thiết bị y tế máy móc</option>
                   <option value="consumable">Vật tư tiêu hao phòng Lab</option>
+                </select>
+                <span className="text-[11px] font-bold text-slate-400 uppercase ml-2 mr-1">Kho:</span>
+                <select
+                  value={stockWarehouseFilter}
+                  onChange={(e: any) => setStockWarehouseFilter(e.target.value)}
+                  className="px-2.5 py-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs font-semibold text-slate-700 dark:text-slate-200 focus:outline-none focus:border-orange-500"
+                >
+                  <option value="all">Tất cả vị trí</option>
+                  {availableValuationWarehouses.map((wh) => (
+                    <option key={wh} value={wh}>{wh}</option>
+                  ))}
                 </select>
               </div>
             </div>
@@ -5101,14 +5193,15 @@ export const WarehouseModule: React.FC = () => {
             <table className="w-full text-left text-xs">
               <thead className="bg-slate-50 dark:bg-slate-800/80 text-slate-500 dark:text-slate-400 font-bold border-b border-slate-200 dark:border-slate-800">
                 <tr>
-                  <th className="py-3 px-4">Mã Phiếu</th>
-                  <th className="py-3 px-4">Loại Giao Dịch</th>
-                  <th className="py-3 px-4">Mã Tham Chiếu / PO / SO</th>
-                  <th className="py-3 px-4">Kho Lưu Trữ</th>
-                  <th className="py-3 px-4">Chi Tiết Hàng Hóa</th>
-                  <th className="py-3 px-4">Người Thực Hiện</th>
-                  <th className="py-3 px-4">Ngày Giao Dịch</th>
-                  <th className="py-3 px-4 text-right">Thao Tác</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Mã Phiếu</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Loại Giao Dịch</th>
+                  <th className="py-3 px-3">Mã Tham Chiếu / PO / SO</th>
+                  <th className="py-3 px-3">Kho Lưu Trữ</th>
+                  <th className="py-3 px-3 w-[260px] max-w-[260px]">Chi Tiết Hàng Hóa</th>
+                  <th className="py-3 px-3 w-[170px] max-w-[170px]">Ghi Chú</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Người Thực Hiện</th>
+                  <th className="py-3 px-3 whitespace-nowrap">Ngày Giao Dịch</th>
+                  <th className="py-3 px-3 text-right whitespace-nowrap">Thao Tác</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
@@ -5117,6 +5210,7 @@ export const WarehouseModule: React.FC = () => {
                   const itemsList = Array.isArray(tx.items) ? tx.items : [];
                   const fin = txFinanceMeta(tx);
                   const partner = txPartnerName(tx, fin);
+                  const cleanNote = extractCleanTxNote(tx);
                   // Đang tìm theo mã hàng / số lô: chỉ hiện các dòng khớp (tô màu) thay vì 5 dòng đầu phiếu
                   const matchedItems = txQ ? itemsList.filter((it: any) => txItemMatches(it, txQ)) : [];
                   const shownItems = matchedItems.length > 0 ? matchedItems : itemsList;
@@ -5133,7 +5227,7 @@ export const WarehouseModule: React.FC = () => {
                       title="Bấm để xem chi tiết phiếu (NCC, số HĐ, đơn giá, lô…)"
                       className="hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors cursor-pointer"
                     >
-                      <td className="py-3.5 px-4 font-mono font-bold text-slate-900 dark:text-white">
+                      <td className="py-3.5 px-3 font-mono font-bold text-slate-900 dark:text-white whitespace-nowrap">
                         <button
                           onClick={() => {
                             setSelectedTxDetail(tx);
@@ -5145,35 +5239,35 @@ export const WarehouseModule: React.FC = () => {
                           {tx.transaction_code}
                         </button>
                       </td>
-                      <td className="py-3.5 px-4">
+                      <td className="py-3.5 px-3 whitespace-nowrap">
                         {isInbound ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
                             <ArrowDownLeft className="w-3 h-3" /> NHẬP KHO
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-orange-100 text-orange-800 dark:bg-orange-950/60 dark:text-orange-300">
                             <ArrowUpRight className="w-3 h-3" /> XUẤT KHO
                           </span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 font-mono font-semibold text-slate-700 dark:text-slate-300">
+                      <td className="py-3.5 px-3 font-mono font-semibold text-slate-700 dark:text-slate-300">
                         {tx.reference_code || "—"}
                         {isInbound && (fin.supplier || fin.invoice) && (
-                          <div className="mt-0.5 font-sans font-normal text-[10px] text-slate-500 dark:text-slate-400 space-y-0.5 max-w-[220px]">
+                          <div className="mt-0.5 font-sans font-normal text-[10px] text-slate-500 dark:text-slate-400 space-y-0.5 max-w-[200px]">
                             {fin.supplier && <div className="truncate" title={fin.supplier}>NCC: <span className="text-slate-700 dark:text-slate-200">{fin.supplier}</span></div>}
                             {fin.invoice && <div>HĐ: <span className="font-mono text-slate-700 dark:text-slate-200">{fin.invoice}</span></div>}
                           </div>
                         )}
                         {!isInbound && partner && (
-                          <div className="mt-0.5 font-sans font-normal text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[220px]" title={partner}>
+                          <div className="mt-0.5 font-sans font-normal text-[10px] text-slate-500 dark:text-slate-400 truncate max-w-[200px]" title={partner}>
                             KH: <span className="text-slate-700 dark:text-slate-200">{partner}</span>
                           </div>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 text-slate-600 dark:text-slate-400">
+                      <td className="py-3.5 px-3 text-slate-600 dark:text-slate-400 max-w-[115px]">
                         {tx.warehouse_name || "Kho Trung Tâm"}
                       </td>
-                      <td className="py-3.5 px-4">
+                      <td className="py-3.5 px-3 w-[260px] max-w-[260px]">
                         <div className="space-y-1">
                           {matchedItems.length > 0 && (
                             <div className="text-[10px] font-bold text-amber-700 dark:text-amber-300">
@@ -5181,8 +5275,8 @@ export const WarehouseModule: React.FC = () => {
                             </div>
                           )}
                           {shownItems.slice(0, 5).map((it: any, idx: number) => (
-                            <div key={idx} className="text-[11px] text-slate-800 dark:text-slate-200">
-                              • <span className="inline-block px-1.5 rounded bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-mono font-black text-[12px] tracking-tight"><Hl text={it.product_code || it.productCode} q={txQ} /></span>{" "}
+                            <div key={idx} className="text-[11px] text-slate-800 dark:text-slate-200 leading-snug break-words">
+                              • <span className="inline-block px-1.5 rounded bg-slate-900 dark:bg-white text-white dark:text-slate-900 font-mono font-black text-[11px] tracking-tight"><Hl text={it.product_code || it.productCode} q={txQ} /></span>{" "}
                               <span className="text-slate-600 dark:text-slate-400"><Hl text={it.product_name || it.name} q={txQ} /></span> (SL: <strong>{it.quantity}</strong> {it.unit || ""})
                               {it.lot_number && <span className="ml-1 text-slate-500 font-mono text-[10px]">[Lô: <Hl text={it.lot_number} q={txQ} />]</span>}
                               {it.expiry_date && <span className="ml-1 text-emerald-600 font-mono text-[10px]">[EXP: {it.expiry_date}]</span>}
@@ -5202,23 +5296,32 @@ export const WarehouseModule: React.FC = () => {
                           )}
                         </div>
                       </td>
-                      <td className="py-3.5 px-4 text-slate-700 dark:text-slate-300">
+                      <td className="py-3.5 px-3 w-[170px] max-w-[170px] text-[11px] text-slate-600 dark:text-slate-300">
+                        {cleanNote ? (
+                          <div className="line-clamp-3 break-words" title={cleanNote}>
+                            {cleanNote}
+                          </div>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="py-3.5 px-3 text-slate-700 dark:text-slate-300 max-w-[120px]">
                         {tx.performed_by || "Thủ kho TBR"}
                       </td>
-                      <td className="py-3.5 px-4 font-mono text-slate-500">
+                      <td className="py-3.5 px-3 font-mono text-slate-500 whitespace-nowrap">
                         {tx.date ? formatDayVN(tx.date) : ""}
                       </td>
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="inline-flex items-center justify-end gap-1.5">
+                      <td className="py-3.5 px-3 text-right whitespace-nowrap">
+                        <div className="inline-flex items-center justify-end gap-1 whitespace-nowrap">
                           {canEditInboundTx(tx) && (
                             <button
                               type="button"
                               onClick={() => handleOpenEditInboundTx(tx)}
-                              title="Chỉnh sửa hoặc bổ sung thông tin phiếu nhập kho (PO, Hóa đơn, Nhà cung cấp, Hạn dùng, Vị trí kệ...)"
-                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800 transition-colors cursor-pointer"
+                              title="Chỉnh sửa hoặc bổ sung thông tin phiếu nhập kho (PO, Hóa đơn, Nhà cung cấp, Hạn dùng, Vị trí kệ, Ghi chú...)"
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-900/60 border border-amber-200 dark:border-amber-800 transition-colors cursor-pointer whitespace-nowrap"
                             >
-                              <Edit3 className="w-3 h-3" />
-                              <span>Sửa / Bổ Sung</span>
+                              <Edit3 className="w-3 h-3 shrink-0" />
+                              <span>Sửa</span>
                             </button>
                           )}
                           <button
@@ -5226,9 +5329,9 @@ export const WarehouseModule: React.FC = () => {
                               setSelectedTxDetail(tx);
                               setIsTxDetailModalOpen(true);
                             }}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 hover:text-emerald-600 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 transition-colors"
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-emerald-50 dark:hover:bg-emerald-950/60 hover:text-emerald-600 dark:hover:text-emerald-400 border border-slate-200 dark:border-slate-700 transition-colors whitespace-nowrap"
                           >
-                            <Eye className="w-3 h-3" />
+                            <Eye className="w-3 h-3 shrink-0" />
                             <span>Chi Tiết</span>
                           </button>
                         </div>
@@ -7873,8 +7976,11 @@ export const WarehouseModule: React.FC = () => {
                       className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
                     >
                       <option value="Kho Trung Tâm">Kho Trung Tâm</option>
+                      <option value="Kho Trung tâm sửa chữa">Kho Trung tâm sửa chữa</option>
+                      <option value="Kho thầu&Pháp danh">Kho thầu&amp;Pháp danh</option>
                       <option value="Kho Lạnh Âm Sâu -20°C (Khu A)">Kho Lạnh Âm Sâu -20°C (Khu A)</option>
                       <option value="Kho Mát 2-8°C (Khu B)">Kho Mát 2-8°C (Khu B)</option>
+                      <option value="Kho Thiết Bị & Demo (Khu C)">Kho Thiết Bị &amp; Demo (Khu C)</option>
                       <option value="Kho Chi Nhánh Hà Nội">Kho Chi Nhánh Hà Nội</option>
                     </select>
                   </div>
@@ -8286,6 +8392,8 @@ export const WarehouseModule: React.FC = () => {
                       className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
                     >
                       <option value="Kho Trung Tâm">Kho Trung Tâm</option>
+                      <option value="Kho Trung tâm sửa chữa">Kho Trung tâm sửa chữa</option>
+                      <option value="Kho thầu&Pháp danh">Kho thầu&amp;Pháp danh</option>
                       <option value="Kho Lạnh Âm Sâu -20°C (Khu A)">Kho Lạnh Âm Sâu -20°C (Khu A)</option>
                       <option value="Kho Mát 2-8°C (Khu B)">Kho Mát 2-8°C (Khu B)</option>
                       <option value="Kho Thiết Bị & Demo (Khu C)">Kho Thiết Bị & Demo (Khu C)</option>
@@ -8606,8 +8714,8 @@ export const WarehouseModule: React.FC = () => {
                         </div>
                       </div>
 
-                      {/* Line 3: Điều kiện bảo quản, Vị trí lưu kho, Tình trạng QC */}
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      {/* Line 3: Điều kiện bảo quản, Vị trí lưu kho, Tình trạng QC, Ghi chú dòng hàng */}
+                      <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
                         <div>
                           <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1 flex items-center gap-1">
                             <ThermometerSnowflake className="w-3.5 h-3.5 text-sky-500" />
@@ -8668,6 +8776,19 @@ export const WarehouseModule: React.FC = () => {
                             <option value="Bao bì xước nhẹ, niêm phong nguyên vẹn">Bao bì xước nhẹ, niêm phong nguyên vẹn</option>
                             <option value="Cảnh báo chênh lệch nhiệt độ vận chuyển">Cảnh báo chênh lệch nhiệt độ vận chuyển</option>
                           </select>
+                        </div>
+
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-600 dark:text-slate-400 mb-1">
+                            Ghi Chú Mặt Hàng
+                          </label>
+                          <input
+                            type="text"
+                            value={item.item_notes || item.notes || ""}
+                            onChange={(e) => handleInboundItemChange(idx, "item_notes", e.target.value)}
+                            placeholder="Ghi chú riêng cho dòng hàng này..."
+                            className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white text-xs"
+                          />
                         </div>
                       </div>
 
@@ -9466,6 +9587,7 @@ export const WarehouseModule: React.FC = () => {
                         <th className="py-2.5 px-3 text-right">Thành Tiền</th>
                         <th className="py-2.5 px-3">Nhiệt Độ / Vị Trí</th>
                         <th className="py-2.5 px-3">Tình Trạng QC</th>
+                        <th className="py-2.5 px-3">Ghi Chú</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-medium">
@@ -9473,7 +9595,7 @@ export const WarehouseModule: React.FC = () => {
                         <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                           <td className="py-2 px-3 font-mono text-slate-400">{idx + 1}</td>
                           <td className="py-2 px-3 font-mono font-black text-[13px] text-slate-900 dark:text-white whitespace-nowrap"><Hl text={it.product_code || it.productCode} q={dq} /></td>
-                          <td className="py-2 px-3 font-semibold text-slate-800 dark:text-slate-200 min-w-[260px]"><Hl text={it.product_name || it.name} q={dq} /></td>
+                          <td className="py-2 px-3 font-semibold text-slate-800 dark:text-slate-200 max-w-[260px]"><Hl text={it.product_name || it.name} q={dq} /></td>
                           <td className="py-2 px-3 font-mono text-orange-600 dark:text-orange-400 font-bold whitespace-nowrap"><Hl text={it.lot_number || "—"} q={dq} /></td>
                           <td className="py-2 px-3 font-mono text-emerald-600 dark:text-emerald-400 font-bold">{formatVNDate(it.expiry_date, it.expiry_date || "—")}</td>
                           <td className="py-2 px-3 text-right font-mono font-black text-slate-900 dark:text-white">{it.quantity}</td>
@@ -9493,10 +9615,13 @@ export const WarehouseModule: React.FC = () => {
                               {it.qc_status || "Đạt chuẩn 100%"}
                             </span>
                           </td>
+                          <td className="py-2 px-3 text-slate-600 dark:text-slate-300 max-w-[180px]">
+                            {it.notes || it.item_notes || "—"}
+                          </td>
                         </tr>
                       ))}
                       {shown.length === 0 && (
-                        <tr><td colSpan={11} className="py-6 text-center text-slate-500">Không có dòng hàng khớp "{txDetailSearch}"</td></tr>
+                        <tr><td colSpan={12} className="py-6 text-center text-slate-500">Không có dòng hàng khớp "{txDetailSearch}"</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -10625,6 +10750,8 @@ export const WarehouseModule: React.FC = () => {
                     className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-semibold"
                   >
                     <option value="Kho Trung Tâm">Kho Trung Tâm</option>
+                    <option value="Kho Trung tâm sửa chữa">Kho Trung tâm sửa chữa</option>
+                    <option value="Kho thầu&Pháp danh">Kho thầu&amp;Pháp danh</option>
                     <option value="Kho Mát 2-8°C (Khu B)">Kho Mát 2-8°C (Khu B)</option>
                     <option value="Kho Lạnh Âm Sâu -20°C (Khu A)">Kho Lạnh Âm Sâu -20°C (Khu A)</option>
                     <option value="Kho Âm Siêu Sâu -80°C">Kho Âm Siêu Sâu -80°C</option>

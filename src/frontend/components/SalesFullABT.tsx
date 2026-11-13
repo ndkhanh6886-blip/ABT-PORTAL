@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
+import { isServiceProduct } from "@/backend/services/catalogStore";
 import { packagingFormOfLot, normalizePackagingForm, normalizeIcForm, normalizeTubeType, withPackagingNote, isPcrKitProduct, PACKAGING_LABEL, IC_LABEL, PCR_TUBE_CODES, kitSpecOf, kitSpecLabel, lotKitSpec, lotMatchesKitSpec, kitSpecMismatches, missingKitSpec, hasKitSpec, type KitSpec } from "@/frontend/utils/packagingForm";
 import {
     Wallet,
@@ -10965,8 +10966,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const parseMoneyVal = (val: any): number => {
                     if (typeof val === "number") return Number.isFinite(val) ? val : 0;
                     if (!val) return 0;
-                    const cleaned = String(val).replace(/[^0-9.-]/g, "");
-                    const num = Number(cleaned);
+                    const s = String(val).trim();
+                    if (/^-?\d+(\.\d+)?$/.test(s)) {
+                        const num = Number(s);
+                        return Number.isFinite(num) ? num : 0;
+                    }
+                    const hasComma = s.includes(",");
+                    const hasDot = s.includes(".");
+                    let norm = s.replace(/[^0-9.,-]/g, "");
+                    if (hasComma && hasDot) {
+                        if (norm.lastIndexOf(".") > norm.lastIndexOf(",")) norm = norm.replace(/,/g, "");
+                        else norm = norm.replace(/\./g, "").replace(/,/g, ".");
+                    } else if (hasComma) {
+                        if (/^-?\d{1,3}(,\d{3})+$/.test(norm)) norm = norm.replace(/,/g, "");
+                        else norm = norm.replace(/,/g, ".");
+                    } else if (hasDot) {
+                        if (/^-?\d{1,3}(\.\d{3})+$/.test(norm)) norm = norm.replace(/\./g, "");
+                    }
+                    const num = Number(norm);
                     return Number.isFinite(num) ? num : 0;
                 };
 
@@ -14501,6 +14518,37 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             // Còn lại = SL đặt − SL đã lập phiếu giao (gồm cả phiếu chờ giao)
             const remainingQty = Math.max(0, orderQty - Math.max(deliveredQty, allocatedQty));
 
+            // Dịch vụ sửa chữa / bảo trì / hiệu chuẩn không có tồn kho vật lý, chỉ phát sinh theo thực tế khi sửa chữa
+            const matchedCatProd = allSalesProducts.find(p => String(p.code || "").trim().toLowerCase() === code.toLowerCase());
+            const isSvcItem = isServiceProduct({
+                code,
+                name: it.productName || it.name || matchedCatProd?.name || "",
+                category: it.category || matchedCatProd?.category || ""
+            });
+            if (isSvcItem) {
+                return {
+                    item: it,
+                    code,
+                    name: it.productName || it.name || code,
+                    orderQty,
+                    deliveredQty,
+                    remainingQty,
+                    availableStock: remainingQty,
+                    rawAvailableStock: remainingQty,
+                    unreceivedProcureQty: 0,
+                    incomingQty: 0,
+                    missingQty: 0,
+                    rawMissingQty: 0,
+                    lineStatus: (remainingQty === 0 ? "DELIVERED" : "IN_STOCK") as "DELIVERED" | "IN_STOCK" | "INCOMING" | "NEEDS_PROCURE",
+                    linkedPO: null,
+                    allocatedQty,
+                    onHandQty: 0,
+                    pendingDeliveryQty: 0,
+                    pendingDeliveryOrders: [],
+                    isServiceItem: true
+                };
+            }
+
             // Chỉ tính hàng xuất được: trừ phần nằm ở lô hết hạn / cách ly (giống danh sách lô của phiếu giao)
             const totalWarehouse = Math.max(0, Number(stock13b[code] || 0) - Number(unusableLotQtyByCode[code.toLowerCase()] || 0));
             const reserved = Number(reservedMap[code] || 0);
@@ -15674,8 +15722,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             if (matchingSlipItems.length === 0 && (editSlip || pg.remaining <= 0)) return;
 
             const itemName = it.productName || it.name || prod?.name || "Sản phẩm";
-            const lots = filterLotsByForm(code, getAvailableLotsForProduct(code, itemName, target.order_code), it);
-            const availStock = getAvailableStockForProduct(code, itemName, target.order_code);
+            const isSvcLine = isServiceProduct({ code, name: itemName, category: it.category || prod?.category || "" });
+            const lots = isSvcLine ? [] : filterLotsByForm(code, getAvailableLotsForProduct(code, itemName, target.order_code), it);
+            const availStock = isSvcLine ? pg.remaining : getAvailableStockForProduct(code, itemName, target.order_code);
             const firstLot = lots.length > 0 ? lots[0] : null;
 
             const linkedQuote = (fo?.quoteId || fo?.quote_code || target?.quoteId || target?.quote_code)
@@ -15691,7 +15740,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             if (matchingSlipItems.length > 0) {
                 matchingSlipItems.forEach((sIt: any, sIdx: number) => {
-                    const chosenLotNo = sIt?.lotNo || (firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || defLot));
+                    const chosenLotNo = sIt?.lotNo || (firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || (isSvcLine ? "DỊCH-VỤ" : defLot)));
                     const chosenExp = sIt?.expDate || (firstLot && firstLot.expiry_date ? String(firstLot.expiry_date).slice(0, 10) : (it.expDate || defExp));
                     const matchedChosenLot = lots.find((l: any) => l.lot_number === chosenLotNo) || firstLot;
                     items.push({
@@ -15728,7 +15777,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 const qty = mode === "FULL"
                     ? pg.remaining
                     : Math.max(0, Math.min(pg.remaining, Number(opts?.presetQtys?.[code] ?? pg.remaining)));
-                const chosenLotNo = firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || defLot);
+                const chosenLotNo = firstLot ? firstLot.lot_number : (it.lotNo || it.lotNumber || (isSvcLine ? "DỊCH-VỤ" : defLot));
                 const chosenExp = (firstLot && firstLot.expiry_date ? String(firstLot.expiry_date).slice(0, 10) : (it.expDate || defExp));
                 const matchedChosenLot = lots.find((l: any) => l.lot_number === chosenLotNo) || firstLot;
                 items.push({
@@ -16011,9 +16060,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         setDeliveryItems(prev => prev.filter((_, i) => i !== idx));
     };
 
-    // Ghi nhận biến động kho cho phiếu giao: xuất kho khi lập phiếu, nhập lại kho khi hủy / giảm SL
+    // Ghi nhận biến động kho cho phiếu giao: xuất kho khi lập phiếu, nhập lại kho khi hủy / giảm SL (không áp dụng cho Dịch vụ sửa chữa)
     const applySlipStockMovement = async (slip: any, items: any[], reverse: boolean, suffix: string, note: string) => {
-        const valid = (items || []).filter((it: any) => Number(it.quantity) > 0);
+        const valid = (items || []).filter((it: any) => {
+            if ((Number(it.quantity) || 0) <= 0) return false;
+            const code = getItemCode(it);
+            return !isServiceProduct({ code, name: it.productName || it.name || "", category: it.category || "" });
+        });
         if (valid.length === 0) return;
         const is13B = slip.customerName === "Kho Trung Tâm";
         const isInbound = is13B ? !reverse : reverse;
@@ -16118,7 +16171,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             const slipItems = normalizedItems
                 .filter(x => x.qty > 0)
-                .map(x => ({ ...x.item, quantity: x.qty }));
+                .map(x => {
+                    const code = getItemCode(x.item);
+                    const isSvc = isServiceProduct({ code, name: x.item.productName || x.item.name || "", category: x.item.category || "" });
+                    return {
+                        ...x.item,
+                        quantity: x.qty,
+                        lotNo: String(x.item.lotNo || "").trim() || (isSvc ? "DỊCH-VỤ" : "")
+                    };
+                });
 
             // Dòng SO yêu cầu quy cách kit (chia sẵn, IC, loại tube): lô xuất phải đúng quy cách ghi trong số lô
             for (const it of slipItems) {
@@ -32700,6 +32761,10 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                     ) : vIsStock ? (
                                                                         <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/50">
                                                                             🛒 Cần tạo PR mua hàng ({itemStat.orderQty || 1} sp)
+                                                                        </span>
+                                                                    ) : (itemStat.isServiceItem || isServiceProduct({ code: itemCode, name: it?.productName || it?.name || "", category: it?.category || "" })) ? (
+                                                                        <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-500/50">
+                                                                            🛠️ Dịch vụ kỹ thuật / Sửa chữa (Phát sinh theo thực tế – Không tính tồn kho)
                                                                         </span>
                                                                     ) : itemStat.lineStatus === "IN_STOCK" ? (
                                                                         <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-emerald-950 text-emerald-300 border border-emerald-500/50">

@@ -22,7 +22,7 @@ const WRITE_PERMISSIONS: Record<string, string[]> = {
 import { syncPersonnelToZaloBindings } from "@/backend/db/zaloDb";
 import { generateDocumentCode } from "@/backend/services/codeGenerator";
 import { syncCatalogSuppliersAndProducts, unmarkSupplierDeleted } from "@/backend/services/supplierCatalogSync";
-import { resolveActualProductCategory } from "@/backend/services/catalogStore";
+import { resolveActualProductCategory, isServiceProduct } from "@/backend/services/catalogStore";
 import { applyPOReceipt, reconcileHistoricalPOsWithInbound, markPOReconcileDirty } from "@/backend/services/poReceipt";
 import { isPcrKitProduct, packagingFormOfLot } from "@/frontend/utils/packagingForm";
 import {
@@ -75,6 +75,11 @@ export async function GET(req: NextRequest) {
              GROUP BY product_code, LOWER(TRIM(lot_number))
           ) res ON LOWER(TRIM(res.product_code)) = LOWER(TRIM(l.product_code)) AND res.norm_lot = LOWER(TRIM(l.lot_number))
          WHERE l.quantity_on_hand > 0
+           AND UPPER(TRIM(l.product_code)) NOT IN ('DVSC', 'OLIGO-SVC')
+           AND UPPER(TRIM(l.product_code)) NOT LIKE 'DV-%'
+           AND UPPER(TRIM(l.product_code)) NOT LIKE 'SVC-%'
+           AND COALESCE(p.category, '') NOT ILIKE '%Dịch vụ%'
+           AND COALESCE(p.name, i.product_name, '') NOT ILIKE 'Dịch vụ%'
          ORDER BY l.product_code ASC, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC
       `);
       const rows = r.rows;
@@ -109,6 +114,11 @@ export async function GET(req: NextRequest) {
             LEFT JOIN products p ON p.code = l.product_code
             LEFT JOIN inventory_items i ON i.product_code = l.product_code
            WHERE l.quantity_on_hand > 0
+             AND UPPER(TRIM(l.product_code)) NOT IN ('DVSC', 'OLIGO-SVC')
+             AND UPPER(TRIM(l.product_code)) NOT LIKE 'DV-%'
+             AND UPPER(TRIM(l.product_code)) NOT LIKE 'SVC-%'
+             AND COALESCE(p.category, '') NOT ILIKE '%Dịch vụ%'
+             AND COALESCE(p.name, i.product_name, '') NOT ILIKE 'Dịch vụ%'
         ), k AS (
           SELECT b.*, d.left_days,
                  CASE WHEN d.left_days IS NULL THEN 'no_expiry' WHEN d.left_days < 0 THEN 'expired'
@@ -141,7 +151,7 @@ export async function GET(req: NextRequest) {
       for (const r of countRes.rows) { counts[r.klass] = r.n; counts.all += r.n; }
       const total = Number(rowsRes.rows[0]?.total_rows || 0);
       const lots = rowsRes.rows.map(({ total_rows, cost_price, unit_cost, ...rest }: any) => (canSeeCost ? { ...rest, cost_price, unit_cost } : rest));
-      return NextResponse.json({ lots, total, page, size, counts, options: optRes.rows[0], today, nearDays });
+      return NextResponse.json({ lots, total, page, size, counts, options: { ...(optRes.rows[0] || {}), locations: Array.from(new Set([...(optRes.rows[0]?.locations || []), "Kho Trung Tâm", "Kho Trung tâm sửa chữa", "Kho thầu&Pháp danh"])) }, today, nearDays });
     }
 
     // Báo cáo Xuất – Nhập – Tồn theo kỳ: tồn đầu, nhập (mua / trả lại / khác), xuất, tồn cuối theo từng mã hàng
@@ -340,10 +350,44 @@ export async function GET(req: NextRequest) {
       if (Date.now() - lastOverviewSyncAt > 5 * 60_000) {
         lastOverviewSyncAt = Date.now();
         await query(`
+          DELETE FROM inventory_lots
+           WHERE UPPER(TRIM(product_code)) IN ('DVSC', 'OLIGO-SVC')
+              OR UPPER(TRIM(product_code)) LIKE 'DV-%'
+              OR UPPER(TRIM(product_code)) LIKE 'SVC-%'
+              OR product_code IN (
+                SELECT code FROM products
+                 WHERE category ILIKE '%Dịch vụ%'
+                    OR name ILIKE 'Dịch vụ%'
+                    OR name ILIKE '%dịch vụ sửa chữa%'
+              )
+        `).catch(() => {});
+
+        await query(`
+          DELETE FROM inventory_items
+           WHERE UPPER(TRIM(product_code)) IN ('DVSC', 'OLIGO-SVC')
+              OR UPPER(TRIM(product_code)) LIKE 'DV-%'
+              OR UPPER(TRIM(product_code)) LIKE 'SVC-%'
+              OR product_name ILIKE 'Dịch vụ%'
+              OR product_name ILIKE '%dịch vụ sửa chữa%'
+              OR product_code IN (
+                SELECT code FROM products
+                 WHERE category ILIKE '%Dịch vụ%'
+                    OR name ILIKE 'Dịch vụ%'
+                    OR name ILIKE '%dịch vụ sửa chữa%'
+              )
+        `).catch(() => {});
+
+        await query(`
           INSERT INTO inventory_items (product_id, product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position)
           SELECT p.id, p.code, p.name, 0, 0, 'Kho Trung Tâm', 'Chưa phân bổ kệ'
             FROM products p
            WHERE NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = p.code)
+             AND UPPER(TRIM(p.code)) NOT IN ('DVSC', 'OLIGO-SVC')
+             AND UPPER(TRIM(p.code)) NOT LIKE 'DV-%'
+             AND UPPER(TRIM(p.code)) NOT LIKE 'SVC-%'
+             AND COALESCE(p.category, '') NOT ILIKE '%Dịch vụ%'
+             AND COALESCE(p.name, '') NOT ILIKE 'Dịch vụ%'
+             AND COALESCE(p.name, '') NOT ILIKE '%dịch vụ sửa chữa%'
           ON CONFLICT (product_code) DO NOTHING
         `).catch(() => {});
 
@@ -354,6 +398,11 @@ export async function GET(req: NextRequest) {
             FROM inventory_lots l
             LEFT JOIN products p ON p.code = l.product_code
            WHERE l.quantity_on_hand > 0
+             AND UPPER(TRIM(l.product_code)) NOT IN ('DVSC', 'OLIGO-SVC')
+             AND UPPER(TRIM(l.product_code)) NOT LIKE 'DV-%'
+             AND UPPER(TRIM(l.product_code)) NOT LIKE 'SVC-%'
+             AND COALESCE(p.category, '') NOT ILIKE '%Dịch vụ%'
+             AND COALESCE(p.name, '') NOT ILIKE 'Dịch vụ%'
              AND NOT EXISTS (SELECT 1 FROM inventory_items i WHERE i.product_code = l.product_code)
            GROUP BY l.product_code
           ON CONFLICT (product_code) DO NOTHING
@@ -361,19 +410,20 @@ export async function GET(req: NextRequest) {
 
         await query(`
           UPDATE inventory_items i
-             SET quantity_on_hand = s.total_qty,
+             SET quantity_on_hand = COALESCE(s.total_qty, 0),
                  lot_number = COALESCE(s.earliest_lot, i.lot_number),
                  expiry_date = COALESCE(s.earliest_exp, i.expiry_date)
             FROM (
-              SELECT product_code,
-                     COALESCE(SUM(quantity_on_hand), 0)::int AS total_qty,
-                     (ARRAY_AGG(NULLIF(lot_number, 'NO-LOT') ORDER BY ${LOT_EXPIRY_ISO_SQL("expiry_date")} ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_lot,
-                     (ARRAY_AGG(expiry_date ORDER BY ${LOT_EXPIRY_ISO_SQL("expiry_date")} ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_exp
-                FROM inventory_lots
-               GROUP BY product_code
+              SELECT i2.product_code,
+                     COALESCE(SUM(l.quantity_on_hand), 0)::int AS total_qty,
+                     (ARRAY_AGG(NULLIF(l.lot_number, 'NO-LOT') ORDER BY ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC) FILTER (WHERE l.quantity_on_hand > 0))[1] AS earliest_lot,
+                     (ARRAY_AGG(l.expiry_date ORDER BY ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} ASC NULLS LAST, l.id ASC) FILTER (WHERE l.quantity_on_hand > 0))[1] AS earliest_exp
+                FROM inventory_items i2
+                LEFT JOIN inventory_lots l ON l.product_code = i2.product_code
+               GROUP BY i2.product_code
             ) s
            WHERE i.product_code = s.product_code
-             AND (COALESCE(i.quantity_on_hand, -1) <> s.total_qty OR (i.lot_number IS NULL AND s.earliest_lot IS NOT NULL))
+             AND (COALESCE(i.quantity_on_hand, -1) <> COALESCE(s.total_qty, 0) OR (i.lot_number IS NULL AND s.earliest_lot IS NOT NULL))
         `).catch(() => {});
 
         await reconcileHistoricalPOsWithInbound(query).catch(() => {});
@@ -385,6 +435,12 @@ export async function GET(req: NextRequest) {
           SELECT i.*, p.category, p.unit, p.specification, p.standard_price, p.cost_price, p.min_stock_level, p.manufacturer, p.origin, p.storage_condition 
           FROM inventory_items i
           LEFT JOIN products p ON p.code = i.product_code
+          WHERE UPPER(TRIM(i.product_code)) NOT IN ('DVSC', 'OLIGO-SVC')
+            AND UPPER(TRIM(i.product_code)) NOT LIKE 'DV-%'
+            AND UPPER(TRIM(i.product_code)) NOT LIKE 'SVC-%'
+            AND COALESCE(p.category, '') NOT ILIKE '%Dịch vụ%'
+            AND COALESCE(p.name, i.product_name, '') NOT ILIKE 'Dịch vụ%'
+            AND COALESCE(p.name, i.product_name, '') NOT ILIKE '%dịch vụ sửa chữa%'
           ORDER BY (COALESCE(i.quantity_on_hand, 0) > 0) DESC, i.id ASC
         `),
         query(`
@@ -428,13 +484,21 @@ export async function GET(req: NextRequest) {
           .catch(() => query("SELECT id, supplier_code, name, contact_person, phone, email, address, product_lines, payment_terms, rating FROM procurement_suppliers ORDER BY name ASC"))
           .catch(() => ({ rows: [] as any[] })),
         query(`
-          SELECT product_code,
-                 COUNT(*) FILTER (WHERE quantity_on_hand > 0)::int AS lot_count,
-                 COALESCE(SUM(quantity_on_hand), 0)::numeric AS lots_qty,
-                 (ARRAY_AGG(lot_number ORDER BY exp ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_lot,
-                 (ARRAY_AGG(exp ORDER BY exp ASC NULLS LAST, id ASC) FILTER (WHERE quantity_on_hand > 0))[1] AS earliest_expiry
+          SELECT x.product_code,
+                 COUNT(*) FILTER (WHERE x.quantity_on_hand > 0)::int AS lot_count,
+                 COALESCE(SUM(x.quantity_on_hand), 0)::numeric AS lots_qty,
+                 COALESCE(SUM(CASE WHEN x.quantity_on_hand > 0 THEN x.quantity_on_hand * COALESCE(NULLIF(x.unit_cost, 0), p.cost_price, 0) ELSE 0 END), 0)::numeric AS lot_cost_valuation,
+                 CASE
+                   WHEN COALESCE(SUM(CASE WHEN x.quantity_on_hand > 0 THEN x.quantity_on_hand ELSE 0 END), 0) > 0
+                   THEN (SUM(CASE WHEN x.quantity_on_hand > 0 THEN x.quantity_on_hand * COALESCE(NULLIF(x.unit_cost, 0), p.cost_price, 0) ELSE 0 END)
+                         / SUM(CASE WHEN x.quantity_on_hand > 0 THEN x.quantity_on_hand ELSE 0 END))::numeric
+                   ELSE NULL
+                 END AS lot_unit_cost,
+                 (ARRAY_AGG(x.lot_number ORDER BY x.exp ASC NULLS LAST, x.id ASC) FILTER (WHERE x.quantity_on_hand > 0))[1] AS earliest_lot,
+                 (ARRAY_AGG(x.exp ORDER BY x.exp ASC NULLS LAST, x.id ASC) FILTER (WHERE x.quantity_on_hand > 0))[1] AS earliest_expiry
             FROM (SELECT l.*, ${LOT_EXPIRY_ISO_SQL("l.expiry_date")} AS exp FROM inventory_lots l) x
-           GROUP BY product_code
+            LEFT JOIN products p ON p.code = x.product_code
+           GROUP BY x.product_code
         `).catch(() => ({ rows: [] as any[] })),
       ]);
 
@@ -521,6 +585,8 @@ export async function GET(req: NextRequest) {
         const inc = incomingByProduct[it.product_code] || { qty: 0, pos: [] };
         const ls = lotsByProduct.get(it.product_code);
         const lotsQty = ls ? Number(ls.lots_qty) || 0 : null;
+        const lotCostValuation = ls && ls.lot_cost_valuation !== null && ls.lot_cost_valuation !== undefined ? Number(ls.lot_cost_valuation) || 0 : null;
+        const lotUnitCost = ls && ls.lot_unit_cost !== null && ls.lot_unit_cost !== undefined ? Number(ls.lot_unit_cost) || 0 : null;
         return {
           ...it,
           incoming_po_qty: inc.qty,
@@ -529,6 +595,8 @@ export async function GET(req: NextRequest) {
           earliest_lot: ls?.earliest_lot || null,
           earliest_expiry: ls?.earliest_expiry || null,
           lots_qty: lotsQty,
+          lot_cost_valuation: lotCostValuation,
+          lot_unit_cost: lotUnitCost,
           received_components: Array.from(receivedComponents.get(it.product_code)?.values() || []),
           // chỉ so khi mã có sổ lô: tồn của mã phải bằng tổng tồn các lô
           lot_mismatch: ls && lotsQty !== itemQtyByProduct.get(it.product_code) ? { product_qty: itemQtyByProduct.get(it.product_code), lots_qty: lotsQty } : null,
@@ -863,7 +931,7 @@ export async function POST(req: NextRequest) {
           const newLot = String(item.lot_number || item.lotNumber || "").trim();
           const rawExp = item.expiry_date || item.expiryDate || "";
           const newExp = rawExp ? (normalizeExcelDateToISO(rawExp, String(rawExp).trim()) || null) : null;
-          const newLoc = String(item.storage_location || warehouse_name || existingTx.warehouse_name || "Kho Trung Tâm").trim();
+          const newLoc = String(warehouse_name || item.storage_location || existingTx.warehouse_name || "Kho Trung Tâm").trim();
           const newShelf = String(item.shelf_position || "Chưa phân bổ kệ").trim();
           const newStorageCond = String(item.storage_condition || item.storageCondition || "").trim();
           const newUnitCost = Number(item.cost_price ?? item.unit_price ?? 0) || 0;
@@ -1589,9 +1657,33 @@ export async function POST(req: NextRequest) {
           if (v === "") return null;
           const s = String(v).trim();
           if (!s || /^([-—]+|n\/?a|none|null|chưa có|chua co|liên hệ|lien he|không|khong)$/i.test(s)) return null;
-          // Số Excel đọc ra (265000000 hoặc 265000000.5) giữ nguyên; chữ có dấu phân cách hàng nghìn
-          // (265.000.000 / 265,000,000) thì bỏ dấu. Trước đây luôn bỏ mọi dấu, nên "26500000.0" thành 265000000.
-          const n = /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : Number(s.replace(/[^\d-]/g, ""));
+          // Hỗ trợ cả số chuẩn Excel (265000000 / 265000000.5), số có dấu phẩy + chấm thập phân (193,200.000),
+          // hoặc số phân cách hàng nghìn bằng dấu chấm (265.000.000) mà không nhân nhầm 1000 lần.
+          if (/^-?\d+(\.\d+)?$/.test(s)) {
+            const n = Number(s);
+            return Number.isFinite(n) ? n : null;
+          }
+          const hasComma = s.includes(",");
+          const hasDot = s.includes(".");
+          let normalized = s.replace(/[^\d.,-]/g, "");
+          if (hasComma && hasDot) {
+            if (normalized.lastIndexOf(".") > normalized.lastIndexOf(",")) {
+              normalized = normalized.replace(/,/g, "");
+            } else {
+              normalized = normalized.replace(/\./g, "").replace(/,/g, ".");
+            }
+          } else if (hasComma) {
+            if (/^-?\d{1,3}(,\d{3})+$/.test(normalized)) {
+              normalized = normalized.replace(/,/g, "");
+            } else {
+              normalized = normalized.replace(/,/g, ".");
+            }
+          } else if (hasDot) {
+            if (/^-?\d{1,3}(\.\d{3})+$/.test(normalized)) {
+              normalized = normalized.replace(/\./g, "");
+            }
+          }
+          const n = Number(normalized);
           return Number.isFinite(n) ? n : null;
         };
         const MAX_MIN_STOCK = 1_000_000;
@@ -1662,19 +1754,25 @@ export async function POST(req: NextRequest) {
             [pCode, pName, brand, cat, spec, unit, cost, stdPrice, minStock, storageCondition]
           );
 
-          // Ensure inventory item & heal placeholder name if it was created as "Sản phẩm <SKU>"
-          await query(
-            `INSERT INTO inventory_items (product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position)
-             VALUES ($1, $2, 0, 0, 'Kho Trung Tâm', 'Chưa phân bổ kệ')
-             ON CONFLICT (product_code) DO UPDATE
-             SET product_name = CASE
-                   WHEN (inventory_items.product_name IS NULL OR inventory_items.product_name = '' OR LOWER(inventory_items.product_name) = LOWER(inventory_items.product_code) OR inventory_items.product_name ILIKE 'Sản phẩm %')
-                        AND EXCLUDED.product_name <> '' AND EXCLUDED.product_name NOT ILIKE 'Sản phẩm %'
-                   THEN EXCLUDED.product_name
-                   ELSE inventory_items.product_name
-                 END`,
-            [pCode, pName || pCode]
-          );
+          const isSvc = isServiceProduct({ code: pCode, name: pName || pCode, category: cat || "" });
+          if (isSvc) {
+            await query("DELETE FROM inventory_lots WHERE product_code = $1", [pCode]).catch(() => {});
+            await query("DELETE FROM inventory_items WHERE product_code = $1", [pCode]).catch(() => {});
+          } else {
+            // Ensure inventory item & heal placeholder name if it was created as "Sản phẩm <SKU>"
+            await query(
+              `INSERT INTO inventory_items (product_code, product_name, quantity_on_hand, quantity_allocated, warehouse_location, shelf_position)
+               VALUES ($1, $2, 0, 0, 'Kho Trung Tâm', 'Chưa phân bổ kệ')
+               ON CONFLICT (product_code) DO UPDATE
+               SET product_name = CASE
+                     WHEN (inventory_items.product_name IS NULL OR inventory_items.product_name = '' OR LOWER(inventory_items.product_name) = LOWER(inventory_items.product_code) OR inventory_items.product_name ILIKE 'Sản phẩm %')
+                          AND EXCLUDED.product_name <> '' AND EXCLUDED.product_name NOT ILIKE 'Sản phẩm %'
+                     THEN EXCLUDED.product_name
+                     ELSE inventory_items.product_name
+                   END`,
+              [pCode, pName || pCode]
+            );
+          }
 
           // Đồng bộ sang catalog_items (ghi đè tên/quy cách/hãng nếu đang là placeholder, giữ nguyên giá nếu để trống)
           await appendCommercialCatalogEntry({ query } as any, {
@@ -1814,12 +1912,38 @@ export async function POST(req: NextRequest) {
           const expDate = normalizeExcelDateToISO(rawExpDate, "");
           const rawMfgDate = getVal(["Ngày sản xuất (MFG)", "Ngày sản xuất", "mfg_date"]);
           const mfgDate = normalizeExcelDateToISO(rawMfgDate, rawMfgDate);
+          const parseExcelMoney = (raw: any): number => {
+            if (typeof raw === "number") return Number.isFinite(raw) ? raw : 0;
+            const s = String(raw ?? "").trim();
+            if (!s) return NaN;
+            if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+            const hasComma = s.includes(",");
+            const hasDot = s.includes(".");
+            let norm = s.replace(/[^\d.,-]/g, "");
+            if (hasComma && hasDot) {
+              if (norm.lastIndexOf(".") > norm.lastIndexOf(",")) norm = norm.replace(/,/g, "");
+              else norm = norm.replace(/\./g, "").replace(/,/g, ".");
+            } else if (hasComma) {
+              if (/^-?\d{1,3}(,\d{3})+$/.test(norm)) norm = norm.replace(/,/g, "");
+              else norm = norm.replace(/,/g, ".");
+            } else if (hasDot) {
+              if (/^-?\d{1,3}(\.\d{3})+$/.test(norm)) norm = norm.replace(/\./g, "");
+            }
+            return Number(norm);
+          };
           const qtyRaw = getVal(["Số lượng", "Số lượng nhập (*)", "Số lượng nhập", "SL", "quantity"]);
-          const qty = Number(String(qtyRaw || "0").replace(/[^\d.-]/g, "")) || 0;
-          const unitCostRaw = getVal(["Giá trị / Đơn giá đầu kỳ", "Đơn giá đầu kỳ", "Giá đầu kỳ", "Giá trị đầu kỳ", "Đơn giá nhập (VNĐ)", "Đơn giá nhập", "Đơn giá", "Giá vốn", "unit_cost", "cost_price", "unitCost", "costPrice", "price"]);
-          const parsedUnitCost = unitCostRaw !== "" ? (Number(String(unitCostRaw).replace(/[^\d.-]/g, "")) || 0) : (Number(catalogProd?.cost_price) || 0);
+          const qty = Math.max(0, parseExcelMoney(qtyRaw) || 0);
+          const explicitUnitCostRaw = getVal(["Đơn giá vốn đầu kỳ (VNĐ)", "Đơn giá đầu kỳ", "Giá đầu kỳ", "Giá trị / Đơn giá đầu kỳ", "Đơn giá nhập (VNĐ)", "Đơn giá nhập", "Đơn giá", "Giá vốn", "unit_cost", "cost_price", "unitCost", "costPrice", "price"]);
+          const explicitTotalValRaw = getVal(["Giá trị đầu kỳ", "Giá trị tồn đầu kỳ", "Tổng giá trị đầu kỳ", "Thành tiền (VNĐ)", "Thành tiền"]);
+          const parsedExplicitUnit = parseExcelMoney(explicitUnitCostRaw);
+          const parsedExplicitTotal = parseExcelMoney(explicitTotalValRaw);
+          const parsedUnitCost = Number.isFinite(parsedExplicitUnit) && parsedExplicitUnit > 0
+            ? parsedExplicitUnit
+            : (Number.isFinite(parsedExplicitTotal) && parsedExplicitTotal > 0 && qty > 0
+              ? Math.round(parsedExplicitTotal / qty)
+              : (Number(catalogProd?.cost_price) || 0));
           const unitCost = Number.isFinite(parsedUnitCost) && parsedUnitCost >= 0 ? parsedUnitCost : 0;
-          const rawTotalAmt = Number(String(getVal(["Thành tiền (VNĐ)", "Thành tiền"]) || "0").replace(/[^\d.-]/g, "")) || 0;
+          const rawTotalAmt = Number.isFinite(parsedExplicitTotal) && parsedExplicitTotal > 0 ? parsedExplicitTotal : 0;
           const totalAmt = (Number.isFinite(rawTotalAmt) && rawTotalAmt > 0) ? rawTotalAmt : (qty * unitCost);
           const storageConditionRaw = getVal(["Nhiệt độ bảo quản", "Điều kiện nhiệt độ bảo quản", "Điều kiện bảo quản", "storage_condition"]);
           const storageCondition = storageConditionRaw || catalogProd?.storage_condition || "15–25°C (Nhiệt độ phòng - RT)";
