@@ -146,7 +146,7 @@ export const SalesPerformanceAnalytics: React.FC<SalesPerformanceAnalyticsProps>
       return { year: parseInt(isoMatch[1], 10), month: parseInt(isoMatch[2], 10), dateStr: str };
     }
     // Check DD/MM/YYYY
-    const slashMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    const slashMatch = str.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
     if (slashMatch) {
       return { year: parseInt(slashMatch[3], 10), month: parseInt(slashMatch[2], 10), dateStr: `${slashMatch[3]}-${String(slashMatch[2]).padStart(2, "0")}-${String(slashMatch[1]).padStart(2, "0")}` };
     }

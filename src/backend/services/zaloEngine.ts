@@ -2,7 +2,7 @@ import { query, withTransaction } from "@/backend/db/db";
 import { initZaloDatabase } from "@/backend/db/zaloDb";
 import crypto from "crypto";
 import { signedDocumentUrl } from "@/backend/services/documentLinks";
-import { todayVN, nowVNDateTime } from "@/backend/services/dates";
+import { todayVN, nowVNDateTime, formatVNDate, formatVNDateTime } from "@/backend/services/dates";
 import { isAdminUser, isAccountantUser } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
 import { sendZaloCustomerServiceMessage } from "@/backend/services/zaloTokenService";
@@ -17,7 +17,7 @@ export interface ZaloMessageResponse {
   quoteData?: any;
 }
 
-const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://abt-portal.com";
+const BASE_APP_URL = process.env.NEXT_PUBLIC_APP_URL || "https://tbr-portal.vn";
 
 const QUOTE_CODE_REGEX = /BG-(?:TBR|VIA|ABT)-[A-Za-z0-9-]+|BG[0-9]{2}-[A-Za-z0-9-]+|BG-[0-9-]+/i;
 const SO_CODE_REGEX = /SO[0-9]{2}-[A-Za-z0-9-]+|SO-(?:TBR|VIA|ABT)?-?[A-Za-z0-9-]+/i;
@@ -483,7 +483,7 @@ export async function generateZaloMorningDigest(discountThreshold = 10.0): Promi
 
   const expLines = expRes.rows.length > 0
     ? expRes.rows.map((r: any) => {
-        const dStr = r.expiry_date ? new Date(r.expiry_date).toLocaleDateString("vi-VN") : "—";
+        const dStr = r.expiry_date ? formatVNDate(r.expiry_date) : "—";
         return `  • [${r.product_code}] Lô ${r.lot_number || "—"} (HSD: ${dStr}) — Tồn: ${r.avail_qty}`;
       }).join("\n")
     : "  • Không có lô hàng nào cận hạn (< 90 ngày).";
@@ -493,7 +493,7 @@ export async function generateZaloMorningDigest(discountThreshold = 10.0): Promi
     : "  • Tất cả sản phẩm đều đảm bảo định mức tồn an toàn.";
 
   const text =
-`☀️ BẢN TIN ĐIỀU HÀNH ĐẦU NGÀY (${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })})
+`☀️ BẢN TIN ĐIỀU HÀNH ĐẦU NGÀY (${formatVNDate(new Date())})
 ━━━━━━━━━━━━━━━━━━━━━━
 ⏳ 1. HỒ SƠ CHỜ PHÊ DUYỆT (${pending.totalCount} hồ sơ):
   • Báo giá chờ duyệt (CK cao / 0đ): ${pending.quotations.length} phiếu
@@ -554,7 +554,7 @@ export async function processZaloInboundMessage(params: {
     console.warn("Binding lookup error:", err);
   }
 
-  // 1B. LINKING: the message contains a one-time code "LK-XXXXXX" created by the employee in ABT Portal
+  // 1B. LINKING: the message contains a one-time code "LK-XXXXXX" created by the employee in TBR Portal
   const linkCodeMatch = rawText.toUpperCase().replace(/\s+/g, "").match(/LK-?([A-F0-9]{6})/);
   if (linkCodeMatch) {
     try {
@@ -627,10 +627,10 @@ Gõ "menu" hoặc "help" bất kỳ lúc nào để xem danh sách lệnh hỗ t
       text: 
 `👋 Xin chào! Hệ thống nhận diện tin nhắn từ tài khoản Zalo của bạn tới trang Zalo OA Công ty Cổ phần Công nghệ TBR.
 
-⚠️ Hiện tại tài khoản Zalo này CHƯA ĐƯỢC LIÊN KẾT với hồ sơ nhân sự trên hệ thống ABT Portal.
+⚠️ Hiện tại tài khoản Zalo này CHƯA ĐƯỢC LIÊN KẾT với hồ sơ nhân sự trên hệ thống TBR Portal.
 
 👉 ĐỂ LIÊN KẾT TÀI KHOẢN (dành cho nhân viên TBR):
-1. Đăng nhập ABT Portal → bấm vào tên của bạn → "Bảo mật tài khoản" → "Tạo mã liên kết Zalo".
+1. Đăng nhập TBR Portal → bấm vào tên của bạn → "Bảo mật tài khoản" → "Tạo mã liên kết Zalo".
 2. Nhắn mã vừa nhận (dạng LK-XXXXXX, hiệu lực 30 phút) vào khung chat này.
 
 Vì lý do bảo mật, hệ thống không liên kết theo số điện thoại hay mã nhân viên.`
@@ -651,7 +651,7 @@ Vì lý do bảo mật, hệ thống không liên kết theo số điện thoạ
 Nhân sự: ${empName}${empCode}
 Trạng thái: ❌ KHÔNG KẾT NỐI (Chưa có số điện thoại Zalo trong hồ sơ)
 
-Hồ sơ nhân sự của bạn trên ABT Portal hiện đang để trống thông tin số điện thoại, do đó hệ thống chưa thể kích hoạt tính năng điều hành, kiểm tra kho và nhận lệnh qua Zalo.
+Hồ sơ nhân sự của bạn trên TBR Portal hiện đang để trống thông tin số điện thoại, do đó hệ thống chưa thể kích hoạt tính năng điều hành, kiểm tra kho và nhận lệnh qua Zalo.
 
 👉 HƯỚNG DẪN KÍCH HOẠT:
 Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số điện thoại chính thức vào danh mục nhân sự.`
@@ -978,7 +978,7 @@ Vui lòng liên hệ Quản trị viên hệ thống để cập nhật số đi
 💰 Tổng giá trị: ${fmtVnd(ord.total_amount)} VNĐ
 ⚡ Thao tác đã thực hiện: ${actionsDone.join(" • ")}
 ✍ Người phê duyệt: ${approverDisplay}
-📅 Thời điểm: ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+📅 Thời điểm: ${formatVNDateTime(new Date())}
 
 👉 Trạng thái đơn hiện tại: [${nextApprovalStatus === "APPROVED" ? "ĐÃ DUYỆT - SẴN SÀNG XUẤT KHO" : "ĐÃ MỞ KHÓA 1 PHẦN"}].`
       };
@@ -1362,7 +1362,7 @@ ${Number(row.total_amount) > 0 ? `💰 Giá trị: ${fmtVnd(row.total_amount)} V
 🏥 Khách Hàng: ${q.customer_name}
 👤 NVKD Phụ Trách: ${q.sales_rep_name || "Nhân viên kinh doanh"}
 💰 Tổng Tiền Duyệt: ${totalFmt} VNĐ (${isZeroPriceQuote ? "Có mặt hàng 0đ/Hàng mẫu" : `Chiết khấu ${q.discount_rate}%`})
-📅 Thời Điểm Duyệt: ${new Date().toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+📅 Thời Điểm Duyệt: ${formatVNDateTime(new Date())}
 ✍ Người Phê Duyệt: ${approverDisplay}
 
 📎 Link tải PDF Báo giá chính thức:
@@ -2225,12 +2225,12 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
       if (!val) return "Chưa có HSD";
       const s = String(val).trim();
       const dmyDot = s.match(/^(\d{2})[./-](\d{2})[./-](\d{4})$/);
-      if (dmyDot) return `${dmyDot[1]}/${dmyDot[2]}/${dmyDot[3]}`;
+      if (dmyDot) return `${dmyDot[1]}-${dmyDot[2]}-${dmyDot[3]}`;
       const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
-      if (ymd) return `${ymd[3]}/${ymd[2]}/${ymd[1]}`;
+      if (ymd) return `${ymd[3]}-${ymd[2]}-${ymd[1]}`;
       const d = new Date(s);
       if (!isNaN(d.getTime())) {
-        return d.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
+        return formatVNDate(d);
       }
       return s;
     };
@@ -2310,9 +2310,9 @@ ${signedDocumentUrl("quotation", quoteCode)}${notExistNotice}`;
 
         const lotDetails = prodLots.length > 0
           ? prodLots.map((l: any) =>
-              `   • Lô ${l.lot_number || "N/A"}: ${l.quantity_on_hand} ${row.unit || "Hộp"} • HSD: ${formatExpStr(l.expiry_date)}${l.is_quarantined ? " [ĐANG BIỆT TRỮ]" : ""} (${l.warehouse_location || row.warehouse_location || "Kho ABT"})`
+              `   • Lô ${l.lot_number || "N/A"}: ${l.quantity_on_hand} ${row.unit || "Hộp"} • HSD: ${formatExpStr(l.expiry_date)}${l.is_quarantined ? " [ĐANG BIỆT TRỮ]" : ""} (${l.warehouse_location || row.warehouse_location || "Kho TBR"})`
             ).join("\n")
-          : `   • Số Lô: ${row.lot_number || "Chưa có Lô"} • HSD: ${expDate} (${row.warehouse_location || "Kho ABT"})`;
+          : `   • Số Lô: ${row.lot_number || "Chưa có Lô"} • HSD: ${expDate} (${row.warehouse_location || "Kho TBR"})`;
 
         return `${i + 1}. [${row.product_code}] ${row.product_name}
    • Quy cách: ${row.specification || "Tiêu chuẩn"}${priceFmt}
@@ -2443,7 +2443,7 @@ ${lotDetails}
 
 📋 Khách hàng: ${customerName}
 📦 Mặt hàng: ${requestedQty} ${matchedItem.unit} ${matchedItem.name} (${matchedItem.code})
-⏱ Thời gian giữ chỗ: 48 giờ (Hiệu lực đến: ${expiresAt.toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh",hour: '2-digit', minute:'2-digit'})} ngày ${expiresAt.toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })})
+⏱ Thời gian giữ chỗ: 48 giờ (Hiệu lực đến: ${expiresAt.toLocaleTimeString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh",hour: '2-digit', minute:'2-digit'})} ngày ${formatVNDate(expiresAt)})
 👤 NVKD Giữ Chỗ: ${reservedBy}
 
 Hệ thống đã tự động cộng số lượng ${requestedQty} ${matchedItem.unit} vào mục giữ chỗ của kho, đảm bảo không bị xuất nhầm cho đơn vị khác.`
@@ -2485,7 +2485,7 @@ Hệ thống đã tự động cộng số lượng ${requestedQty} ${matchedIte
         text: `📝 ĐÃ GHI NHẬN BÁO CÁO NHẬT KÝ NGÀY (DAILY)!
 
 👤 Nhân sự: ${senderBinding?.display_name || senderName} (${senderBinding?.department || "Kinh Doanh"})
-📅 Ngày báo cáo: ${new Date().toLocaleDateString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" })}
+📅 Ngày báo cáo: ${formatVNDate(new Date())}
 📋 Nội dung: "${logContent}"
 
 Dữ liệu đã tự động đồng bộ vào mục [Nhật Ký Daily] trên Portal và thông báo cho Trưởng phòng xem xét chỉ đạo.`
@@ -2752,7 +2752,7 @@ ${newMediaFiles.length > 0 ? `📎 Ảnh POD đính kèm: ${newMediaFiles.length
         const qty = it.quantity ?? it.qtyDeliverNow ?? it.qty ?? 1;
         const unit = it.unit || "Hộp";
         const lot = it.lotNumber || it.lot_number ? ` | Lô: ${it.lotNumber || it.lot_number}` : "";
-        const exp = it.expiryDate || it.expiry_date ? ` | HSD: ${it.expiryDate || it.expiry_date}` : "";
+        const exp = it.expiryDate || it.expiry_date ? ` | HSD: ${formatVNDate(it.expiryDate || it.expiry_date, it.expiryDate || it.expiry_date)}` : "";
         return `  ${idx + 1}. [${code}] ${name}: ${qty} ${unit}${lot}${exp}`;
       }).join("\n");
 

@@ -65,6 +65,7 @@ export function buildWarehouseSlipHtml(tx: any, meta: SlipFinanceMeta, company: 
         <td class="r b">${esc(it.quantity)}</td>
         ${showPrice ? `<td class="r">${price === null ? "—" : money(price)}</td><td class="r b">${price === null ? "—" : money(price * (Number(it.quantity) || 0))}</td>` : ""}
         <td class="sub2">${esc(it.storage_condition || "")}${it.shelf_position ? ` · ${esc(it.shelf_position)}` : ""}</td>
+        <td class="sub2">${esc(it.notes || it.item_notes || "—")}</td>
       </tr>`;
     })
     .join("");
@@ -124,12 +125,12 @@ export function buildWarehouseSlipHtml(tx: any, meta: SlipFinanceMeta, company: 
   <table>
     <thead><tr>
       <th class="c">#</th><th>Mã hàng</th><th>Tên hàng hóa</th><th>Số lô</th><th class="c">Hạn dùng</th><th>ĐVT</th><th>SL</th>
-      ${showPrice ? "<th>Đơn giá</th><th>Thành tiền</th>" : ""}<th>Bảo quản / Vị trí</th>
+      ${showPrice ? "<th>Đơn giá</th><th>Thành tiền</th>" : ""}<th>Bảo quản / Vị trí</th><th>Ghi chú</th>
     </tr></thead>
     <tbody>${rows}</tbody>
     <tfoot><tr>
       <td colspan="6" class="r">Tổng cộng (${items.length} dòng)</td><td class="r">${totalQty}</td>
-      ${showPrice ? `<td></td><td class="r">${money(meta.total)}</td>` : ""}<td></td>
+      ${showPrice ? `<td></td><td class="r">${money(meta.total)}</td>` : ""}<td></td><td></td>
     </tr></tfoot>
   </table>
   <div class="sign">
@@ -170,7 +171,7 @@ export function exportWarehouseSlipExcel(tx: any, meta: SlipFinanceMeta) {
     [],
   ];
   const cols = ["STT", "Mã hàng", "Tên hàng hóa", "Quy cách", "Số lô", "Hạn dùng", "ĐVT", "Số lượng",
-    ...(showPrice ? ["Đơn giá", "Thành tiền"] : []), "Điều kiện bảo quản", "Vị trí kệ", "Tình trạng QC"];
+    ...(showPrice ? ["Đơn giá", "Thành tiền"] : []), "Điều kiện bảo quản", "Vị trí kệ", "Tình trạng QC", "Ghi chú"];
   const body = items.map((it: any, i: number) => {
     const price = hasUnitPrice(it) ? Number(it.unit_price) || 0 : "";
     return [
@@ -186,11 +187,12 @@ export function exportWarehouseSlipExcel(tx: any, meta: SlipFinanceMeta) {
       it.storage_condition || "",
       it.shelf_position || "",
       it.qc_status || "",
+      it.notes || it.item_notes || "",
     ];
   });
   const ws = XLSX.utils.aoa_to_sheet([...header, cols, ...body]);
   ws["!cols"] = [{ wch: 6 }, { wch: 18 }, { wch: 48 }, { wch: 16 }, { wch: 18 }, { wch: 12 }, { wch: 8 }, { wch: 10 },
-    ...(showPrice ? [{ wch: 14 }, { wch: 16 }] : []), { wch: 24 }, { wch: 18 }, { wch: 22 }];
+    ...(showPrice ? [{ wch: 14 }, { wch: 16 }] : []), { wch: 24 }, { wch: 18 }, { wch: 22 }, { wch: 24 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, isIn ? "PhieuNhapKho" : "PhieuXuatKho");
   const safeCode = String(tx?.transaction_code || "phieu").replace(/[^\w.-]+/g, "_");

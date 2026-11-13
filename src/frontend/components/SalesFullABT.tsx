@@ -16172,8 +16172,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const slipItems = normalizedItems
                 .filter(x => x.qty > 0)
                 .map(x => {
-                    const code = getItemCode(x.item);
-                    const isSvc = isServiceProduct({ code, name: x.item.productName || x.item.name || "", category: x.item.category || "" });
+                    const rawIt: any = x.item;
+                    const code = getItemCode(rawIt);
+                    const isSvc = isServiceProduct({ code, name: rawIt.productName || rawIt.name || "", category: rawIt.category || "" });
                     return {
                         ...x.item,
                         quantity: x.qty,
@@ -32762,7 +32763,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-cyan-950 text-cyan-300 border border-cyan-500/50">
                                                                             🛒 Cần tạo PR mua hàng ({itemStat.orderQty || 1} sp)
                                                                         </span>
-                                                                    ) : (itemStat.isServiceItem || isServiceProduct({ code: itemCode, name: it?.productName || it?.name || "", category: it?.category || "" })) ? (
+                                                                    ) : (itemStat.isServiceItem || isServiceProduct({ code: itCode, name: it?.productName || it?.name || "", category: it?.category || "" })) ? (
                                                                         <span className="text-[9px] px-1.5 py-0.5 rounded font-mono font-bold bg-indigo-950 text-indigo-300 border border-indigo-500/50">
                                                                             🛠️ Dịch vụ kỹ thuật / Sửa chữa (Phát sinh theo thực tế – Không tính tồn kho)
                                                                         </span>
