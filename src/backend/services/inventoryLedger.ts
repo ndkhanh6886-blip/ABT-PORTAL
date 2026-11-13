@@ -138,6 +138,7 @@ async function ensureLotUnitCostCol(c: Queryable) {
  * `standard_price` (only when `standard_price > 0` is explicitly provided, preserving any existing End-User price).
  */
 export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promise<{ id: number | null; created: boolean }> {
+  const isSvc = isServiceProduct({ code: p.code, name: p.name, category: p.category });
   const ins = await c.query(
     `INSERT INTO products (code, name, category, unit, specification, standard_price, cost_price, manufacturer, origin, min_stock_level, storage_condition)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
@@ -146,21 +147,22 @@ export async function ensureProduct(c: Queryable, p: ProductMasterInput): Promis
     [
       p.code,
       p.name || p.code,
-      p.category || "Hàng Thương Mại",
-      p.unit || "Hộp",
+      isSvc ? "Dịch vụ & Khác" : (p.category || "Hàng Thương Mại"),
+      p.unit || (isSvc ? "Lần" : "Hộp"),
       p.specification || "",
-      Number(p.standard_price) || 0,
-      Number(p.cost_price) || 0,
+      isSvc ? 0 : (Number(p.standard_price) || 0),
+      isSvc ? 0 : (Number(p.cost_price) || 0),
       p.manufacturer || "TBR Phân Phối",
       p.origin || "Nhập khẩu / Chính hãng",
-      Number(p.min_stock_level) || 10,
+      isSvc ? 0 : (Number(p.min_stock_level) || 10),
       p.storage_condition || null,
     ]
   );
   if (ins.rows.length > 0) return { id: ins.rows[0].id, created: true };
 
-  const newCost = Number(p.cost_price) || 0;
-  const newStdPrice = Number(p.standard_price) || 0;
+  // Dịch vụ sửa chữa mỗi lần mỗi giá theo thực tế phát sinh -> không tự động ghi đè giá cố định vào bảng danh mục products
+  const newCost = isSvc ? 0 : (Number(p.cost_price) || 0);
+  const newStdPrice = isSvc ? 0 : (Number(p.standard_price) || 0);
   const newStorage = p.storage_condition ? String(p.storage_condition).trim() : "";
   const newMfg = p.manufacturer ? String(p.manufacturer).trim() : "";
 

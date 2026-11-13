@@ -931,6 +931,30 @@ async function runIntegrityMigrations() {
            AND COALESCE(i.quantity_on_hand, -1) <> COALESCE(s.total_qty, 0);
       `);
     });
+
+    // Dịch vụ sửa chữa (DVSC, DV-*, SVC-*) mỗi lần phát sinh có đơn giá thực tế khác nhau, không lưu cứng giá cố định trong danh mục
+    await step("heal_service_dynamic_pricing_v1", async () => {
+      await client.query(`
+        UPDATE products
+           SET category = 'Dịch vụ & Khác',
+               min_stock_level = 0,
+               cost_price = 0,
+               standard_price = 0
+         WHERE UPPER(TRIM(code)) IN ('DVSC', 'OLIGO-SVC')
+            OR UPPER(TRIM(code)) LIKE 'DV-%'
+            OR UPPER(TRIM(code)) LIKE 'SVC-%'
+            OR name ILIKE '%dịch vụ sửa chữa%'
+            OR name ILIKE 'Dịch vụ sửa chữa%';
+        UPDATE catalog_items
+           SET data = data || '{"category":"Dịch vụ & Khác","costPrice":0,"price":0,"priceDealer1":0,"priceDealer2":0,"leadTime":"Theo phát sinh thực tế"}'::jsonb,
+               updated_at = now()
+         WHERE UPPER(TRIM(code)) IN ('DVSC', 'OLIGO-SVC')
+            OR UPPER(TRIM(code)) LIKE 'DV-%'
+            OR UPPER(TRIM(code)) LIKE 'SVC-%'
+            OR COALESCE(data->>'name', '') ILIKE '%dịch vụ sửa chữa%'
+            OR COALESCE(data->>'name', '') ILIKE 'Dịch vụ sửa chữa%';
+      `);
+    });
   } finally {
     if (locked) {
       await client.query("SELECT pg_advisory_unlock($1)", [INTEGRITY_MIGRATION_LOCK_KEY]).catch((e) =>

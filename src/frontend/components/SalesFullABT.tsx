@@ -793,9 +793,9 @@ export function SalesFullABT() {
                 specification: cust.specification !== undefined ? cust.specification : (p.specification || ""),
                 category: cust.category !== undefined ? cust.category : (p.category || "Khác"),
                 category2: cust.category2 !== undefined ? cust.category2 : (p.category2 || "Khác"),
-                price: cust.price !== undefined ? cust.price : (p.price || 1500000),
-                priceDealer1: cust.priceDealer1 !== undefined ? cust.priceDealer1 : (p.priceDealer1 || p.price || 1500000),
-                priceDealer2: cust.priceDealer2 !== undefined ? cust.priceDealer2 : (p.priceDealer2 || p.price || 1500000),
+                price: cust.price !== undefined ? cust.price : (Number(p.price) || 0),
+                priceDealer1: cust.priceDealer1 !== undefined ? cust.priceDealer1 : (Number(p.priceDealer1) || Number(p.price) || 0),
+                priceDealer2: cust.priceDealer2 !== undefined ? cust.priceDealer2 : (Number(p.priceDealer2) || Number(p.price) || 0),
                 registrationNo: cust.registrationNo !== undefined ? cust.registrationNo : (p.registrationNo || ""),
                 notes: cust.notes !== undefined ? cust.notes : (p.notes || "")
             };
@@ -3997,7 +3997,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     const [commercialStorageFilter, setCommercialStorageFilter] = useState<string>("all");
     const [commercialPriceFilter, setCommercialPriceFilter] = useState<"all" | "unpriced" | "priced">("all");
     const unpricedProducts = useMemo(() => {
-        return commercialProducts.filter(p => !p.price || Number(p.price) === 0);
+        return commercialProducts.filter(p => (!p.price || Number(p.price) === 0) && !isServiceProduct(p));
     }, [commercialProducts]);
     const [dbProductComponents, setDbProductComponents] = useState<any[]>([]);
     const [dbMasterProducts, setDbMasterProducts] = useState<any[]>([]);
@@ -18345,9 +18345,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
 
             if (!matchesSearch || !matchesCat || !matchesBrand || !matchesAvail) return false;
 
-            // Filter by price status
-            if (commercialPriceFilter === "unpriced" && (p.price && Number(p.price) > 0)) return false;
-            if (commercialPriceFilter === "priced" && (!p.price || Number(p.price) === 0)) return false;
+            // Filter by price status (dịch vụ sửa chữa định giá theo phát sinh thực tế nên không tính vào nhóm lỗi chưa có giá)
+            if (commercialPriceFilter === "unpriced" && ((p.price && Number(p.price) > 0) || isServiceProduct(p))) return false;
+            if (commercialPriceFilter === "priced" && (!p.price || Number(p.price) === 0) && !isServiceProduct(p)) return false;
 
             // Filter by components / accessories
             const comps = getProductComponentsList(p);
@@ -25910,7 +25910,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                 </tr>
                                             ) : (
                                                 paginatedCommercialProducts.map(p => {
-                                                    const isUnpriced = !p.price || Number(p.price) === 0;
+                                                    const isSvc = isServiceProduct(p);
+                                                    const isUnpriced = (!p.price || Number(p.price) === 0) && !isSvc;
                                                     const margin = p.price && p.costPrice ? Math.round(((p.price - p.costPrice) / p.price) * 100) : 0;
                                                     const comps = getProductComponentsList(p);
                                                     const hasComps = comps.length > 0;
@@ -25928,11 +25929,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                         <tr key={p.code} className={cn("transition-colors text-[11px]", isUnpriced ? "bg-amber-950/20 hover:bg-amber-950/30" : "hover:bg-slate-900/40")}>
                                                             <td className="py-2 px-2 font-mono font-bold text-sky-600 dark:text-sky-400 text-left select-all">
                                                                 <div>{p.code}</div>
-                                                                {isUnpriced && (
+                                                                {isSvc && (!p.price || Number(p.price) === 0) ? (
+                                                                    <span className="inline-block mt-0.5 px-1 py-0.2 rounded text-[9px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold whitespace-nowrap" title="Dịch vụ sửa chữa / kỹ thuật định giá theo từng lần phát sinh thực tế trên Báo giá / Đơn hàng">
+                                                                        🛠️ Giá theo phát sinh
+                                                                    </span>
+                                                                ) : isUnpriced ? (
                                                                     <span className="inline-block mt-0.5 px-1 py-0.2 rounded text-[9px] bg-amber-500/25 text-amber-300 border border-amber-500/40 font-bold whitespace-nowrap">
                                                                         ⚠️ Chưa có giá
                                                                     </span>
-                                                                )}
+                                                                ) : null}
                                                             </td>
                                                             <td className="py-2 px-2">
                                                                 <div className="font-bold text-slate-900 dark:text-slate-200" title={p.name}>{p.name}</div>
@@ -26051,10 +26056,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 ? "bg-rose-950/60 border border-rose-500 text-rose-300 focus:border-rose-400 ring-1 ring-rose-500/40"
                                                                                 : "bg-slate-900 border border-slate-750 text-emerald-300 focus:border-emerald-400"
                                                                         )}
-                                                                        placeholder={isUnpriced ? "Giá theo đợt..." : "Giá End User..."}
+                                                                        placeholder={isSvc && (!p.price || Number(p.price) === 0) ? "Theo phát sinh..." : isUnpriced ? "Giá theo đợt..." : "Giá End User..."}
                                                                     />
                                                                     <div className="flex items-center justify-between gap-1 mt-1">
-                                                                        {isUnpriced ? (
+                                                                        {isSvc && (!p.price || Number(p.price) === 0) ? (
+                                                                            <span className="px-1 py-0.2 rounded text-[9px] font-mono font-bold text-indigo-300 bg-indigo-950/60 border border-indigo-500/40 whitespace-nowrap">
+                                                                                Nhập khi báo giá / SO
+                                                                            </span>
+                                                                        ) : isUnpriced ? (
                                                                             <span className="px-1 py-0.2 rounded text-[9px] font-mono font-bold text-amber-400 bg-amber-950/50 border border-amber-500/30 whitespace-nowrap">
                                                                                 Chờ giá
                                                                             </span>

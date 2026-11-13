@@ -249,17 +249,22 @@ export async function replaceCatalog(c: Queryable, items: any[], canDelete: bool
 export async function appendCatalogEntry(c: Queryable, entry: Record<string, any>): Promise<void> {
   const code = cleanCode(entry?.code);
   if (!code) return;
+  const isSvc = isServiceProduct({ ...entry, code });
   const resolvedCategory = resolveActualProductCategory({ ...entry, code });
+  const initialPayload = isSvc
+    ? { ...entry, code, category: resolvedCategory, costPrice: 0, price: 0, priceDealer1: 0, priceDealer2: 0, leadTime: "Theo phát sinh thực tế" }
+    : { ...entry, code, category: resolvedCategory };
   const ins = await c.query(
     `INSERT INTO catalog_items (code, data, sort_order, updated_at) VALUES ($1, $2::jsonb, $3, now())
      ON CONFLICT (code) DO NOTHING
      RETURNING code`,
-    [code, JSON.stringify({ ...entry, code, category: resolvedCategory }), -Date.now()]
+    [code, JSON.stringify(initialPayload), -Date.now()]
   );
   if ((ins.rowCount || 0) > 0) return;
 
-  const newCost = Number(entry?.costPrice ?? entry?.cost_price) || 0;
-  const newPrice = Number(entry?.price ?? entry?.standard_price) || 0;
+  // Dịch vụ sửa chữa mỗi lần mỗi giá theo thực tế -> không ghi đè giá của 1 lần phát sinh vào danh mục chuẩn
+  const newCost = isSvc ? 0 : (Number(entry?.costPrice ?? entry?.cost_price) || 0);
+  const newPrice = isSvc ? 0 : (Number(entry?.price ?? entry?.standard_price) || 0);
   const newStorage = String(entry?.storageCondition ?? entry?.storage_condition ?? "").trim();
 
   const existingRes = await c.query("SELECT data FROM catalog_items WHERE code = $1", [code]);
