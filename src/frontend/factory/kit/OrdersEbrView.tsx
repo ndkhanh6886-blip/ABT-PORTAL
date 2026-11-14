@@ -868,7 +868,7 @@ export function OrdersEbrView({
     <div className="space-y-4">
       <ErrorNote error={error} />
 
-      {/* Thanh chuyển đổi chế độ: Điều hành Lệnh EBR vs Giám sát Nhân viên & Kế hoạch PO Hằng ngày */}
+      {/* Thanh chuyển đổi chế độ: Điều hành Lệnh EBR vs Giám sát & Tiến độ PO Hằng ngày */}
       <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/90 p-2.5 flex flex-wrap items-center justify-between gap-2 shadow-sm">
         <div className="flex flex-wrap items-center gap-2">
           <Button
@@ -890,7 +890,7 @@ export function OrdersEbrView({
             title="Bảng điều độ ca sản xuất, phân công nhân viên phụ trách từng bước công đoạn và theo dõi tiến độ triển khai kế hoạch PO hằng ngày"
             onClick={() => setViewMode("DAILY_TRACKER")}
           >
-            👨‍🔬 Giám sát Nhân viên &amp; Tiến độ PO Hằng ngày ({dailySteps.length} công đoạn)
+            👨‍🔬 Giám sát &amp; Tiến độ PO Hằng ngày ({dailySteps.length} công đoạn)
           </Button>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
