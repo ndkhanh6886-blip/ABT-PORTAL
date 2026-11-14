@@ -955,6 +955,24 @@ async function runIntegrityMigrations() {
             OR COALESCE(data->>'name', '') ILIKE 'Dịch vụ sửa chữa%';
       `);
     });
+
+    // Đồng bộ trạng thái NO_INVOICE cho các đơn hàng SO mà Sale đã bỏ tích xuất hóa đơn toàn bộ mặt hàng (needsInvoice = false, VD: SO26-DH-1119)
+    await step("heal_no_invoice_orders_v1", async () => {
+      await client.query(`
+        UPDATE sales_orders o
+           SET invoice_status = 'NO_INVOICE'
+         WHERE COALESCE(TRIM(o.invoice_no), '') = ''
+           AND COALESCE(UPPER(TRIM(o.invoice_status)), 'PENDING_INVOICE') NOT IN ('ISSUED', 'INVOICED', 'PARTIALLY_INVOICED', 'NO_INVOICE')
+           AND jsonb_typeof(o.items) = 'array'
+           AND jsonb_array_length(o.items) > 0
+           AND NOT EXISTS (
+             SELECT 1
+               FROM jsonb_array_elements(o.items) elem
+              WHERE COALESCE(elem->>'status', '') <> 'CANCELLED'
+                AND COALESCE((elem->>'needsInvoice')::boolean, (elem->>'needs_invoice')::boolean, true) = true
+           );
+      `);
+    });
   } finally {
     if (locked) {
       await client.query("SELECT pg_advisory_unlock($1)", [INTEGRITY_MIGRATION_LOCK_KEY]).catch((e) =>

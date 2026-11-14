@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
-import { isServiceProduct } from "@/backend/services/catalogRules";
+import { isServiceProduct } from "@/backend/services/catalogStore";
 import { packagingFormOfLot, normalizePackagingForm, normalizeIcForm, normalizeTubeType, withPackagingNote, isPcrKitProduct, PACKAGING_LABEL, IC_LABEL, PCR_TUBE_CODES, kitSpecOf, kitSpecLabel, lotKitSpec, lotMatchesKitSpec, kitSpecMismatches, missingKitSpec, hasKitSpec, type KitSpec } from "@/frontend/utils/packagingForm";
 import {
     Wallet,
@@ -2202,8 +2202,11 @@ export function SalesFullABT() {
                                 invoiceNotes: raw0.invoice_notes ?? undefined,
                                 invoice_notes: raw0.invoice_notes ?? undefined,
                                 invoice_status: raw0.invoice_status,
+                                invoiceStatus: raw0.invoice_status,
                                 invoice_no: raw0.invoice_no,
+                                invoiceNo: raw0.invoice_no ?? undefined,
                                 invoice_date: raw0.invoice_date,
+                                invoiceDate: raw0.invoice_date ? toVNDateString(raw0.invoice_date) : undefined,
                                 invoiced_delivery_slips: raw0.invoiced_delivery_slips,
                                 isCreditBlocked: raw0.is_credit_blocked !== undefined ? Boolean(raw0.is_credit_blocked) : undefined,
                                 creditBlockReason: raw0.credit_block_reason ?? undefined,
@@ -13430,9 +13433,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         const hasZeroPrice = items.some((it: any) => Number(it.unitPrice ?? it.price ?? 0) === 0);
         const priceApprovalStatus: "APPROVED" | "PENDING_APPROVAL" = (!isStockOrder && hasZeroPrice) ? "PENDING_APPROVAL" : "APPROVED";
         const priceApprovalNotes = (!isStockOrder && hasZeroPrice) ? "Đơn hàng có mặt hàng 0đ / quà tặng cần BGĐ duyệt" : "";
+        const orderNeedsInvoice = items.some((it: any) => it.needsInvoice !== false);
+        const resolvedOrderInvoiceStatus = orderNeedsInvoice ? "PENDING_INVOICE" : "NO_INVOICE";
 
         if (editingFactoryOrderId) {
             const targetOrdBeforeEdit = factoryOrders.find(o => o.id === editingFactoryOrderId);
+            const alreadyInvoicedEdit = Boolean(
+                targetOrdBeforeEdit?.invoiceNo ||
+                (targetOrdBeforeEdit as any)?.invoice_no ||
+                targetOrdBeforeEdit?.invoiceStatus === "ISSUED" ||
+                (targetOrdBeforeEdit as any)?.invoice_status === "ISSUED" ||
+                ((targetOrdBeforeEdit as any)?.invoiced_delivery_slips || []).some((s: any) => s && s.invoice_no)
+            );
+            const nextEditInvoiceStatus = alreadyInvoicedEdit
+                ? (targetOrdBeforeEdit?.invoiceStatus || (targetOrdBeforeEdit as any)?.invoice_status || "ISSUED")
+                : resolvedOrderInvoiceStatus;
             const isFromStockEdit = factoryOrderFulfillmentSource === "STOCK" || (factoryOrderFulfillmentSource === "AUTO" && targetOrdBeforeEdit?.procureStatus === "STOCK_DELIVERY");
             const nextFulfillmentSourceEdit = factoryOrderFulfillmentSource !== "AUTO" ? factoryOrderFulfillmentSource : targetOrdBeforeEdit?.fulfillmentSource;
             const nextProcureStatusEdit = isFromStockEdit
@@ -13482,11 +13497,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         orderNotes: factoryOrderNotes.trim(),
                         invoiceNotes: invoiceNotes.trim(),
                         invoice_notes: invoiceNotes.trim(),
-                        vat_requested: vatRequested,
-                        vat_company_name: vatRequested ? vatCompanyName : "",
-                        vat_tax_code: vatRequested ? vatTaxCode : "",
-                        vat_address: vatRequested ? vatAddress : "",
-                        vat_email: vatRequested ? vatEmail : "",
+                        invoiceStatus: nextEditInvoiceStatus,
+                        invoice_status: nextEditInvoiceStatus,
+                        vat_requested: orderNeedsInvoice ? vatRequested : false,
+                        vat_company_name: (orderNeedsInvoice && vatRequested) ? vatCompanyName : "",
+                        vat_tax_code: (orderNeedsInvoice && vatRequested) ? vatTaxCode : "",
+                        vat_address: (orderNeedsInvoice && vatRequested) ? vatAddress : "",
+                        vat_email: (orderNeedsInvoice && vatRequested) ? vatEmail : "",
                         shipping_method: shippingMethod,
                         tracking_code: trackingCode
                     };
@@ -13494,9 +13511,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 return order;
             }));
 
-            // Đồng bộ thông tin khách hàng, địa chỉ và đơn giá mặt hàng sang các Phiếu giao hàng liên kết (nếu có).
-            // Trước đây chỉ đổi trên trình duyệt: bảng phiếu giao trong CSDL giữ giá cũ và được ưu tiên khi tải lại, nên
-            // Kế toán sửa giá SO xong mở lại PXK vẫn thấy giá cũ. Giờ các phiếu có thay đổi được ghi lại vào CSDL.
+            // Đồng bộ thông tin khách hàng, địa chỉ, đơn giá và cờ xuất HĐ sang các Phiếu giao hàng liên kết (nếu có).
             const syncSlip = (slip: any) => {
                 const sameOrder = String(slip.orderCode || slip.order_code || "").trim() === String(editingFactoryOrderId).trim() ||
                     String(slip.orderId || slip.order_id || "").trim() === String(editingFactoryOrderId).trim();
@@ -13512,16 +13527,19 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         name: matchedOrdIt.productName || sit.name,
                         unitPrice: matchedOrdIt.unitPrice,
                         price: matchedOrdIt.unitPrice,
-                        vatRate: matchedOrdIt.vatRate ?? sit.vatRate
+                        vatRate: matchedOrdIt.vatRate ?? sit.vatRate,
+                        needsInvoice: matchedOrdIt.needsInvoice !== false
                     };
                 }) : slip.items;
+                const slipHasInv = Boolean(slip.invoiceNo || slip.invoiceNumber || slip.invoice_number || slip.invoiceStatus === "ISSUED");
                 return {
                     ...slip,
                     customerName: realCustomerName || slip.customerName,
                     contactPerson: resolvedContactPerson || slip.contactPerson,
                     contactPhone: resolvedContactPhone || slip.contactPhone,
                     deliveryAddress: resolvedDeliveryAddress || slip.deliveryAddress,
-                    items: updatedSlipItems
+                    items: updatedSlipItems,
+                    invoiceStatus: slipHasInv ? "ISSUED" : resolvedOrderInvoiceStatus
                 };
             };
             const changedSlips: any[] = [];
@@ -13556,11 +13574,12 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     notes: factoryOrderContractId ? `Hợp đồng: ${factoryOrderContractId}` : (isStockOrder ? "[SO STOCK - LƯU KHO GỐI ĐẦU]" : ""),
                     order_notes: factoryOrderNotes.trim(),
                     invoice_notes: invoiceNotes.trim(),
-                    vat_requested: vatRequested,
-                    vat_company_name: vatRequested ? vatCompanyName : "",
-                    vat_tax_code: vatRequested ? vatTaxCode : "",
-                    vat_address: vatRequested ? vatAddress : "",
-                    vat_email: vatRequested ? vatEmail : "",
+                    invoice_status: nextEditInvoiceStatus,
+                    vat_requested: orderNeedsInvoice ? vatRequested : false,
+                    vat_company_name: (orderNeedsInvoice && vatRequested) ? vatCompanyName : "",
+                    vat_tax_code: (orderNeedsInvoice && vatRequested) ? vatTaxCode : "",
+                    vat_address: (orderNeedsInvoice && vatRequested) ? vatAddress : "",
+                    vat_email: (orderNeedsInvoice && vatRequested) ? vatEmail : "",
                     shipping_method: shippingMethod,
                     tracking_code: trackingCode,
                     fulfillment_source: nextFulfillmentSourceEdit,
@@ -13693,11 +13712,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             orderNotes: factoryOrderNotes.trim(),
             invoiceNotes: invoiceNotes.trim(),
             invoice_notes: invoiceNotes.trim(),
-            vat_requested: vatRequested,
-            vat_company_name: vatRequested ? vatCompanyName : "",
-            vat_tax_code: vatRequested ? vatTaxCode : "",
-            vat_address: vatRequested ? vatAddress : "",
-            vat_email: vatRequested ? vatEmail : "",
+            invoiceStatus: resolvedOrderInvoiceStatus,
+            invoice_status: resolvedOrderInvoiceStatus,
+            vat_requested: orderNeedsInvoice ? vatRequested : false,
+            vat_company_name: (orderNeedsInvoice && vatRequested) ? vatCompanyName : "",
+            vat_tax_code: (orderNeedsInvoice && vatRequested) ? vatTaxCode : "",
+            vat_address: (orderNeedsInvoice && vatRequested) ? vatAddress : "",
+            vat_email: (orderNeedsInvoice && vatRequested) ? vatEmail : "",
             shipping_method: shippingMethod,
             tracking_code: trackingCode
         };
@@ -13722,16 +13743,16 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                 total_amount: totalAmount,
                 delivery_status: "PENDING",
                 payment_status: "UNPAID",
-                invoice_status: "PENDING_INVOICE",
+                invoice_status: resolvedOrderInvoiceStatus,
                 notes: newRequest.contractId ? `Hợp đồng: ${newRequest.contractId}` : (isStockOrder ? "[SO STOCK - LƯU KHO GỐI ĐẦU]" : ""),
                 order_notes: factoryOrderNotes.trim(),
                 invoice_notes: invoiceNotes.trim(),
                 applied_price_policy: isStockOrder ? "STOCK" : (matchedCust?.customer_type === "DEALER" ? "DEALER" : "STANDARD"),
-                vat_requested: vatRequested,
-                vat_company_name: vatRequested ? vatCompanyName : "",
-                vat_tax_code: vatRequested ? vatTaxCode : "",
-                vat_address: vatRequested ? vatAddress : "",
-                vat_email: vatRequested ? vatEmail : "",
+                vat_requested: orderNeedsInvoice ? vatRequested : false,
+                vat_company_name: (orderNeedsInvoice && vatRequested) ? vatCompanyName : "",
+                vat_tax_code: (orderNeedsInvoice && vatRequested) ? vatTaxCode : "",
+                vat_address: (orderNeedsInvoice && vatRequested) ? vatAddress : "",
+                vat_email: (orderNeedsInvoice && vatRequested) ? vatEmail : "",
                 shipping_method: shippingMethod,
                 tracking_code: trackingCode,
                 is_stock_order: isStockOrder
@@ -17149,6 +17170,35 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         document.body.removeChild(link);
     };
 
+    // Xác định trạng thái hóa đơn thực tế của đơn hàng / phiếu giao:
+    // Nếu tất cả mặt hàng trên đơn (hoặc trên phiếu giao) đều được Sale chọn "Bỏ HĐ" (needsInvoice === false),
+    // hoặc trạng thái đã là NO_INVOICE và chưa phát sinh số HĐ thì đơn thuộc diện "Không xuất HĐ" (NO_INVOICE).
+    const resolveEffectiveInvoiceStatus = (ordOrSlip: any, linkedSlips?: any[]): "ISSUED" | "NO_INVOICE" | "PENDING_INVOICE" => {
+        if (!ordOrSlip) return "PENDING_INVOICE";
+        const rawStatus = String(ordOrSlip.invoiceStatus || ordOrSlip.invoice_status || "").trim().toUpperCase();
+        const ownInvNo = String(ordOrSlip.invoiceNo || ordOrSlip.invoice_no || ordOrSlip.invoiceNumber || ordOrSlip.invoice_number || "").trim();
+        const slipInvNo = (linkedSlips || []).find(s => s && (s.invoiceNo || s.invoice_no || s.invoiceNumber || s.invoice_number));
+        const invSlipsArr = Array.isArray(ordOrSlip.invoiced_delivery_slips || ordOrSlip.invoicedDeliverySlips)
+            ? (ordOrSlip.invoiced_delivery_slips || ordOrSlip.invoicedDeliverySlips)
+            : [];
+        const hasPartialInvNo = invSlipsArr.some((r: any) => r && String(r.invoice_no || "").trim() !== "");
+        if (ownInvNo || slipInvNo || hasPartialInvNo || rawStatus === "ISSUED" || rawStatus === "INVOICED") {
+            return "ISSUED";
+        }
+        if (rawStatus === "NO_INVOICE") {
+            return "NO_INVOICE";
+        }
+        const activeOrdItems = (Array.isArray(ordOrSlip.items) ? ordOrSlip.items : []).filter((it: any) => it && it.status !== "CANCELLED");
+        if (activeOrdItems.length > 0 && activeOrdItems.every((it: any) => it.needsInvoice === false || it.needs_invoice === false)) {
+            return "NO_INVOICE";
+        }
+        const allSlipItems = (linkedSlips || []).flatMap(s => Array.isArray(s?.items) ? s.items : []);
+        if (activeOrdItems.length === 0 && allSlipItems.length > 0 && allSlipItems.every((it: any) => it.needsInvoice === false || it.needs_invoice === false)) {
+            return "NO_INVOICE";
+        }
+        return "PENDING_INVOICE";
+    };
+
     // Centralized Delivered Orders & Invoice Management logic (Giải pháp 2)
     const allDeliveredOrders = useMemo(() => {
         // Helper: Strip trailing parentheses like (FOR-2026-001), (DHX-...), (PO-...)
@@ -17218,9 +17268,9 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     deliveredAt: fo.deliveredAt || primarySlip?.deliveredAt || fo.updatedAt || fo.createdAt,
                     deliverySlip: primarySlip,
                     deliverySlips: linkedSlips,
-                    invoiceNo: fo.invoiceNo || primarySlip?.invoiceNo || "",
-                    invoiceDate: fo.invoiceDate || fo.deliveredAt || primarySlip?.deliveredAt || "",
-                    invoiceStatus: fo.invoiceStatus || (fo.invoiceNo || primarySlip?.invoiceNo ? "ISSUED" : "PENDING_INVOICE"),
+                    invoiceNo: fo.invoiceNo || (fo as any).invoice_no || primarySlip?.invoiceNo || "",
+                    invoiceDate: fo.invoiceDate || (fo as any).invoice_date || fo.deliveredAt || primarySlip?.deliveredAt || "",
+                    invoiceStatus: resolveEffectiveInvoiceStatus(fo, linkedSlips),
                     invoiceFiles: fo.invoiceFiles || primarySlip?.invoiceFiles || [],
                     deliveryNotes: fo.deliveryNotes || primarySlip?.notes || "",
                     rawOrder: fo,
@@ -17267,7 +17317,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     deliverySlips: [slip],
                     invoiceNo: slip.invoiceNo || "",
                     invoiceDate: slip.invoiceDate || slip.deliveredAt || "",
-                    invoiceStatus: slip.invoiceStatus || (slip.invoiceNo ? "ISSUED" : "PENDING_INVOICE"),
+                    invoiceStatus: resolveEffectiveInvoiceStatus(slip, [slip]),
                     invoiceFiles: slip.invoiceFiles || [],
                     deliveryNotes: slip.notes || "",
                     rawOrder: slip
@@ -17350,7 +17400,11 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     deliverySlips: uniqueSlips,
                     invoiceNo: existing.invoiceNo || cand.invoiceNo || "",
                     invoiceDate: existing.invoiceDate || cand.invoiceDate || "",
-                    invoiceStatus: (existing.invoiceStatus === "ISSUED" || cand.invoiceStatus === "ISSUED") ? "ISSUED" : (existing.invoiceStatus || cand.invoiceStatus),
+                    invoiceStatus: (existing.invoiceStatus === "ISSUED" || cand.invoiceStatus === "ISSUED")
+                        ? "ISSUED"
+                        : ((existing.invoiceStatus === "NO_INVOICE" || cand.invoiceStatus === "NO_INVOICE")
+                            ? "NO_INVOICE"
+                            : resolveEffectiveInvoiceStatus({ ...existing, items: bestItems }, uniqueSlips)),
                     invoiceFiles: uniqueFiles,
                     deliveredAt: existing.deliveredAt || cand.deliveredAt,
                     deliveryNotes: existing.deliveryNotes || cand.deliveryNotes || "",
@@ -18218,7 +18272,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         );
                         const idMatch = req.customerId === c.id || req.customer_id === c.id;
                         const isDelivered = req.status === "Delivered" || req.status === "COMPLETED";
-                        const isPendingInv = req.invoiceStatus === "PENDING_INVOICE" || (!req.invoiceNo && req.invoiceStatus !== "NO_INVOICE");
+                        const effInv = resolveEffectiveInvoiceStatus(req);
+                        const isPendingInv = effInv === "PENDING_INVOICE";
                         return (nameMatch || idMatch) && isDelivered && isPendingInv;
                     });
                     const hasDeliveredPendingSo = customerHistory.some(so => {
@@ -18227,7 +18282,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                             c.name.toLowerCase().includes(so.customerName.toLowerCase())
                         );
                         const isDelivered = so.status === "COMPLETED" || so.raw_status === "Delivered";
-                        const isPendingInv = so.invoiceStatus === "PENDING_INVOICE" || (!so.invoiceNo && so.invoiceStatus !== "NO_INVOICE");
+                        const effInv = resolveEffectiveInvoiceStatus(so);
+                        const isPendingInv = effInv === "PENDING_INVOICE";
                         return nameMatch && isDelivered && isPendingInv;
                     });
                     const hasDeliveredSlip = deliverySlips.some(slip => {
@@ -18237,7 +18293,8 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                         );
                         const idMatch = slip.customerId === c.id;
                         const isDelivered = slip.isDelivered;
-                        const isPendingInv = slip.invoiceStatus === "PENDING_INVOICE" || (!slip.invoiceNo && slip.invoiceStatus !== "NO_INVOICE");
+                        const effInv = resolveEffectiveInvoiceStatus(slip, [slip]);
+                        const isPendingInv = effInv === "PENDING_INVOICE";
                         return (nameMatch || idMatch) && isDelivered && isPendingInv;
                     });
                     if (!hasDeliveredPendingReq && !hasDeliveredPendingSo && !hasDeliveredSlip) return false;
@@ -20187,7 +20244,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         );
                                         const idMatch = req.customerId === c.id || req.customer_id === c.id;
                                         const isDelivered = req.status === "Delivered" || req.status === "COMPLETED";
-                                        const isPendingInv = req.invoiceStatus === "PENDING_INVOICE" || (!req.invoiceNo && req.invoiceStatus !== "NO_INVOICE");
+                                        const isPendingInv = resolveEffectiveInvoiceStatus(req) === "PENDING_INVOICE";
                                         return (nameMatch || idMatch) && isDelivered && isPendingInv;
                                     });
                                     const hasDeliveredPendingSo = customerHistory.some(so => {
@@ -20196,7 +20253,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             c.name.toLowerCase().includes(so.customerName.toLowerCase())
                                         );
                                         const isDelivered = so.status === "COMPLETED" || so.raw_status === "Delivered";
-                                        const isPendingInv = so.invoiceStatus === "PENDING_INVOICE" || (!so.invoiceNo && so.invoiceStatus !== "NO_INVOICE");
+                                        const isPendingInv = resolveEffectiveInvoiceStatus(so) === "PENDING_INVOICE";
                                         return nameMatch && isDelivered && isPendingInv;
                                     });
                                     const hasDeliveredSlip = deliverySlips.some(slip => {
@@ -20206,7 +20263,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         );
                                         const idMatch = slip.customerId === c.id;
                                         const isDelivered = slip.isDelivered;
-                                        const isPendingInv = slip.invoiceStatus === "PENDING_INVOICE" || (!slip.invoiceNo && slip.invoiceStatus !== "NO_INVOICE");
+                                        const isPendingInv = resolveEffectiveInvoiceStatus(slip, [slip]) === "PENDING_INVOICE";
                                         return (nameMatch || idMatch) && isDelivered && isPendingInv;
                                     });
                                     return hasDeliveredPendingReq || hasDeliveredPendingSo || hasDeliveredSlip;
@@ -20312,7 +20369,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                         );
                                         const idMatch = req.customerId === cust.id || req.customer_id === cust.id;
                                         const isDelivered = req.status === "Delivered" || req.status === "COMPLETED";
-                                        const isPendingInv = req.invoiceStatus === "PENDING_INVOICE" || (!req.invoiceNo && req.invoiceStatus !== "NO_INVOICE");
+                                        const isPendingInv = resolveEffectiveInvoiceStatus(req) === "PENDING_INVOICE";
                                         return (nameMatch || idMatch) && isDelivered && isPendingInv;
                                     });
                                     const custPendingInvSo = customerHistory.filter(so => {
@@ -20321,7 +20378,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             cust.name.toLowerCase().includes(so.customerName.toLowerCase())
                                         );
                                         const isDelivered = so.status === "COMPLETED" || so.raw_status === "Delivered";
-                                        const isPendingInv = so.invoiceStatus === "PENDING_INVOICE" || (!so.invoiceNo && so.invoiceStatus !== "NO_INVOICE");
+                                        const isPendingInv = resolveEffectiveInvoiceStatus(so) === "PENDING_INVOICE";
                                         return nameMatch && isDelivered && isPendingInv;
                                     });
                                     const totalPendingInvoicesCust = Math.max(custPendingInvOrders.length, custPendingInvSo.length);
@@ -21444,7 +21501,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                         </button>
 
                                                                                         {/* Nút Hóa đơn (chỉ cập nhật thông tin, không tạo đợt giao) */}
-                                                                                        {(ord.invoiceStatus === "PENDING_INVOICE" || (!ord.invoiceNo && ord.invoiceStatus !== "NO_INVOICE")) ? (
+                                                                                        {resolveEffectiveInvoiceStatus(ord) === "PENDING_INVOICE" ? (
                                                                                             <button
                                                                                                 onClick={() => handleOpenConfirmDeliveryModal(ord)}
                                                                                                 className="bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/50 text-[10px] px-2.5 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-sm"
@@ -21452,6 +21509,14 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             >
                                                                                                 <AlertTriangle className="w-3 h-3 text-amber-400" />
                                                                                                 <span>Chờ xuất HĐ</span>
+                                                                                            </button>
+                                                                                        ) : resolveEffectiveInvoiceStatus(ord) === "NO_INVOICE" ? (
+                                                                                            <button
+                                                                                                onClick={() => handleOpenConfirmDeliveryModal(ord)}
+                                                                                                className="bg-slate-800/80 hover:bg-slate-700 text-slate-400 border border-slate-700 text-[10px] px-2 py-1 rounded-lg font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                                                                                title="Đơn hàng được Sale chọn Không xuất hóa đơn. Bấm nếu cần cập nhật lại."
+                                                                                            >
+                                                                                                <span>Không xuất HĐ</span>
                                                                                             </button>
                                                                                         ) : (
                                                                                             <button
@@ -26751,7 +26816,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                         const slipInv = slipInvRec || (slipOwnInvNo ? { invoice_no: slipOwnInvNo, invoice_date: sl.invoiceDate || sl.invoice_date } : null);
 
                                                                         const slipItemsList = sl.items || [];
-                                                                        const itemsNeedInvoice = slipItemsList.filter((it: any) => it.needsInvoice !== false);
+                                                                        const orderItemsForSlip = ord.items || ord.rawOrder?.items || [];
+                                                                        const itemsNeedInvoice = slipItemsList.filter((it: any, idx: number) => {
+                                                                            const itSpec = String(it.specification || "").trim();
+                                                                            const ordItem = (itSpec ? orderItemsForSlip.find((oi: any) => getItemCode(oi) === getItemCode(it) && String(oi.specification || "").trim() === itSpec) : null)
+                                                                                || (orderItemsForSlip[idx] && getItemCode(orderItemsForSlip[idx]) === getItemCode(it) ? orderItemsForSlip[idx] : null)
+                                                                                || orderItemsForSlip.find((oi: any) => getItemCode(oi) === getItemCode(it));
+                                                                            return it.needsInvoice !== false && ordItem?.needsInvoice !== false;
+                                                                        });
+                                                                        const isSlipNoInvoice = isNoInv || (slipItemsList.length > 0 && itemsNeedInvoice.length === 0);
                                                                         const hasExcludedInvoice = slipItemsList.length > 0 && itemsNeedInvoice.length < slipItemsList.length;
 
                                                                         return (
@@ -26773,13 +26846,15 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                 {slipItemsList.length > 0 && (
                                                                                     <span
                                                                                         className={`text-[9px] px-1.5 py-0.5 rounded font-mono font-bold inline-flex items-center gap-1 ${
-                                                                                            hasExcludedInvoice
+                                                                                            isSlipNoInvoice
+                                                                                                ? "bg-slate-800/80 text-slate-400 border border-slate-700/60"
+                                                                                                : hasExcludedInvoice
                                                                                                 ? "bg-amber-950/70 text-amber-300 border border-amber-700/50"
                                                                                                 : "bg-emerald-950/70 text-emerald-300 border border-emerald-700/50"
                                                                                         }`}
-                                                                                        title={hasExcludedInvoice ? `Chỉ xuất ${itemsNeedInvoice.length}/${slipItemsList.length} mã (Sale đã bỏ tick ${slipItemsList.length - itemsNeedInvoice.length} mã)` : `Xuất hóa đơn đủ ${slipItemsList.length}/${slipItemsList.length} mã`}
+                                                                                        title={isSlipNoInvoice ? `Đơn không xuất hóa đơn (${itemsNeedInvoice.length}/${slipItemsList.length} mã)` : hasExcludedInvoice ? `Chỉ xuất ${itemsNeedInvoice.length}/${slipItemsList.length} mã (Sale đã bỏ tick ${slipItemsList.length - itemsNeedInvoice.length} mã)` : `Xuất hóa đơn đủ ${slipItemsList.length}/${slipItemsList.length} mã`}
                                                                                     >
-                                                                                        {hasExcludedInvoice ? "⚠️" : "⭐"} {itemsNeedInvoice.length}/{slipItemsList.length} mã HĐ
+                                                                                        {isSlipNoInvoice ? `Không xuất HĐ (${itemsNeedInvoice.length}/${slipItemsList.length} mã)` : `${hasExcludedInvoice ? "⚠️" : "⭐"} ${itemsNeedInvoice.length}/${slipItemsList.length} mã HĐ`}
                                                                                     </span>
                                                                                 )}
 
@@ -26817,7 +26892,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                             </button>
                                                                                         )}
                                                                                     </span>
-                                                                                ) : (
+                                                                                ) : !isSlipNoInvoice ? (
                                                                                     <button
                                                                                         type="button"
                                                                                         onClick={() => {
@@ -26864,7 +26939,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                                                         <Receipt className="w-2.5 h-2.5" />
                                                                                         <span>Xuất HĐ PGH</span>
                                                                                     </button>
-                                                                                )}
+                                                                                ) : null}
                                                                             </div>
                                                                         );
                                                                     })}
@@ -31354,7 +31429,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                                     checked={item.needsInvoice !== false}
                                                     onChange={(e) => {
                                                         const checked = e.target.checked;
-                                                        setFactoryOrderItems(prev => prev.map((it, i) => i === index ? { ...it, needsInvoice: checked } : it));
+                                                        setFactoryOrderItems(prev => {
+                                                            const next = prev.map((it, i) => i === index ? { ...it, needsInvoice: checked } : it);
+                                                            if (next.every(it => it.needsInvoice === false)) {
+                                                                setVatRequested(false);
+                                                            }
+                                                            return next;
+                                                        });
                                                     }}
                                                     className="w-3.5 h-3.5 rounded text-emerald-500 bg-slate-900 border-slate-700 cursor-pointer accent-emerald-500"
                                                 />
@@ -31757,11 +31838,13 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                             setVatTaxCode(matchedCust?.tax_code || (matchedCust as any)?.taxCode || "");
                                             setVatAddress((matchedCust as any)?.tax_address || (matchedCust as any)?.taxAddress || matchedCust?.address || "");
                                             setVatEmail(matchedCust?.email || "");
+                                            setFactoryOrderItems(prev => prev.every(it => it.needsInvoice === false) ? prev.map(it => ({ ...it, needsInvoice: true })) : prev);
                                         } else {
                                             setVatCompanyName("");
                                             setVatTaxCode("");
                                             setVatAddress("");
                                             setVatEmail("");
+                                            setFactoryOrderItems(prev => prev.map(it => ({ ...it, needsInvoice: false })));
                                         }
                                     }}
                                     className="w-4 h-4 rounded text-indigo-600 bg-slate-950 border-slate-700 cursor-pointer"
@@ -31776,25 +31859,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                                 <div className="space-y-3 pt-2 border-t border-slate-800/80 animate-in fade-in duration-200">
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                         <div>
-                                            <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Tên công ty / Bệnh viện xuất hóa đơn *</label>
+                                            <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Tên công ty / Bệnh viện xuất hóa đơn</label>
                                             <input
                                                 type="text"
                                                 placeholder="VD: Bệnh viện Đa khoa Quốc tế..."
                                                 value={vatCompanyName}
                                                 onChange={(e) => setVatCompanyName(e.target.value)}
                                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white"
-                                                required={vatRequested}
                                             />
                                         </div>
                                         <div>
-                                            <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Mã số thuế (MST) *</label>
+                                            <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">Mã số thuế (MST)</label>
                                             <input
                                                 type="text"
                                                 placeholder="VD: 0312345678"
                                                 value={vatTaxCode}
                                                 onChange={(e) => setVatTaxCode(e.target.value)}
                                                 className="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs text-amber-300 font-mono"
-                                                required={vatRequested}
                                             />
                                         </div>
                                     </div>

@@ -7,7 +7,7 @@ import { getAuthorizedUser, unauthorizedResponse, forbiddenResponse, isAdminUser
 import { hasPermission } from "@/backend/services/permissions";
 import { stripCostFields } from "@/backend/services/costVisibility";
 import { canApproveSalesOrders } from "@/backend/services/approvalGuard";
-import { todayVN, toVNDateString } from "@/backend/services/dates";
+import { todayVN, toVNDateString, parseVNDateToISO } from "@/backend/services/dates";
 import { mergeCatalogFields } from "@/backend/services/catalogStore";
 import { notifyZaloProactiveEvent } from "@/backend/services/zaloEngine";
 
@@ -31,7 +31,7 @@ function parseLooseDate(v: any): Date | null {
   const s = String(v).trim();
   let m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (m) return new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
-  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
   if (m) return new Date(Date.UTC(+m[3], +m[2] - 1, +m[1]));
   return null;
 }
@@ -263,6 +263,7 @@ const DELIVERY_STATUS_HIERARCHY: Record<string, number> = {
 };
 
 const INVOICE_STATUS_HIERARCHY: Record<string, number> = {
+  "NO_INVOICE": 0,
   "PENDING_INVOICE": 0,
   "PENDING": 0,
   "PARTIALLY_INVOICED": 1,
@@ -308,14 +309,9 @@ function resolveMonotonicStatus(
 
 function parseSqlDate(d: any): string {
   if (!d) return todayVN();
-  if (typeof d === 'string' && d.includes('/')) {
-    const parts = d.split('/');
-    if (parts.length === 3) {
-      const day = parts[0].padStart(2, '0');
-      const month = parts[1].padStart(2, '0');
-      const year = parts[2];
-      return `${year}-${month}-${day}`;
-    }
+  if (typeof d === 'string') {
+    const vn = parseVNDateToISO(d);
+    if (vn) return vn;
   }
   try {
     const parsed = new Date(d);
@@ -863,7 +859,7 @@ export async function GET(req: NextRequest) {
         if (!v) return "";
         if (v instanceof Date) return toVNDateString(v);
         const t = String(v);
-        const m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        const m = t.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
         if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
         return t.slice(0, 10);
       };
@@ -1043,7 +1039,7 @@ export async function GET(req: NextRequest) {
         if (!v) return null;
         if (v instanceof Date) return toVNDateString(v);
         const s = String(v);
-        const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        const m = s.match(/^(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})/);
         if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
         const d = new Date(s);
         return isNaN(d.getTime()) ? s.slice(0, 10) : toVNDateString(d);
@@ -1745,9 +1741,21 @@ export async function POST(req: NextRequest) {
         if (has("invoiced_delivery_slips")) set("invoiced_delivery_slips", JSON.stringify(body.invoiced_delivery_slips || []), "::jsonb");
         // Monotonic FSM: a stale form can never move an order backwards
         if (has("delivery_status")) set("delivery_status", resolveMonotonicStatus(existing.delivery_status, body.delivery_status, DELIVERY_STATUS_HIERARCHY, isRollback));
-        // Thanh toán chỉ đổi qua sổ thu tiền (record_customer_payment); hóa đơn chỉ Kế toán đổi
+        // Thanh toán chỉ đổi qua sổ thu tiền (record_customer_payment); hóa đơn chỉ Kế toán đổi sang ISSUED,
+        // nhưng nếu Sale bỏ tích xuất hóa đơn toàn bộ mặt hàng (needsInvoice = false) và đơn chưa xuất HĐ thì tự chuyển sang NO_INVOICE
         if (has("payment_status") && canSetFinanceStatus) set("payment_status", resolveMonotonicStatus(existing.payment_status, body.payment_status, PAYMENT_STATUS_HIERARCHY, isRollback));
-        if (has("invoice_status") && canSetFinanceStatus) set("invoice_status", resolveMonotonicStatus(existing.invoice_status, body.invoice_status, INVOICE_STATUS_HIERARCHY, isRollback));
+        const activeItemsForInv = itemsArr.filter((it: any) => it && it.status !== "CANCELLED");
+        const allItemsNoInvoice = activeItemsForInv.length > 0 && activeItemsForInv.every((it: any) => it.needsInvoice === false || it.needs_invoice === false);
+        const existingInvUpper = String(existing.invoice_status || "").trim().toUpperCase();
+        const alreadyInvoiced = Boolean(String(existing.invoice_no || "").trim()) || ["ISSUED", "INVOICED", "PARTIALLY_INVOICED"].includes(existingInvUpper);
+        if (has("invoice_status") && canSetFinanceStatus) {
+          set("invoice_status", resolveMonotonicStatus(existing.invoice_status, body.invoice_status, INVOICE_STATUS_HIERARCHY, isRollback || body.invoice_status === "NO_INVOICE"));
+        } else if (!alreadyInvoiced && has("items")) {
+          const autoInvStatus = (allItemsNoInvoice || body.invoice_status === "NO_INVOICE") ? "NO_INVOICE" : "PENDING_INVOICE";
+          if (autoInvStatus !== existingInvUpper) {
+            set("invoice_status", autoInvStatus);
+          }
+        }
 
         // Re-evaluate approvals when the content changes (an approved order could otherwise be edited
         // to 0đ items or a much larger amount without new approval)
@@ -1864,6 +1872,12 @@ export async function POST(req: NextRequest) {
             salesRepName: sales_rep_name,
             tagMode: isStockOrder ? "STOCK" : "CUSTOMER"
           });
+      const activeNewItemsForInv = itemsArr.filter((it: any) => it && it.status !== "CANCELLED");
+      const newOrderNoInvoice = (activeNewItemsForInv.length > 0 && activeNewItemsForInv.every((it: any) => it.needsInvoice === false || it.needs_invoice === false))
+        || String(body.invoice_status || "").trim().toUpperCase() === "NO_INVOICE";
+      const initialInvoiceStatus = (canSetFinanceStatus && body.invoice_status)
+        ? body.invoice_status
+        : (newOrderNoInvoice ? "NO_INVOICE" : "PENDING_INVOICE");
       const ins = await query(
         `INSERT INTO sales_orders (
           order_code, customer_id, customer_name, sales_rep_name, order_date, items, total_amount,
@@ -1878,7 +1892,7 @@ export async function POST(req: NextRequest) {
           code, resolvedCustomerId, customer_name, sales_rep_name, order_date || todayVN(),
           JSON.stringify(itemsArr), computedTotal, body.delivery_status || "PENDING",
           (canSetFinanceStatus && body.payment_status) || "UNPAID",
-          (canSetFinanceStatus && body.invoice_status) || "PENDING_INVOICE", body.notes,
+          initialInvoiceStatus, body.notes,
           isCreditBlocked, creditBlockReason, hasZeroPrice, priceApprovalStatus, safePricePolicy(body.applied_price_policy),
           Boolean(body.vat_requested), body.vat_company_name || null, body.vat_tax_code || null, body.vat_address || null, body.vat_email || null,
           body.shipping_method || "Xe lạnh chuyên dụng", body.tracking_code || null, JSON.stringify(body.invoiced_delivery_slips || []),
