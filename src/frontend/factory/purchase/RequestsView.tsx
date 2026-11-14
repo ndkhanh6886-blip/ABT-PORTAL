@@ -27,96 +27,346 @@ const ACTION_LABEL: Record<string, string> = {
   close: "Đóng đề nghị",
 };
 
-interface Option { id: string; code: string; name: string; warehouses: { id: string; code: string; name: string }[] }
-interface Line { item_id: string; label: string; qty: string; uom: string; est_price: string }
+interface PrReasonOption {
+  id: string;
+  category: string;
+  label: string;
+  value: string;
+  entity_type?: string;
+  entity_id?: string;
+}
 
-function ItemPicker({ onPick }: { onPick: (item: { id: string; code: string; name: string; base_uom: string }) => void }) {
-  const [q, setQ] = useState("");
-  const items = useQuery({
-    queryKey: ["factory", "items", "picker", q],
-    queryFn: () => api<{ rows: { id: string; code: string; name: string; base_uom: string }[] }>(`/api/factory/master/items?page_size=30&q=${encodeURIComponent(q)}`),
-    enabled: q.trim().length >= 2,
-  });
-  return (
-    <div className="relative">
-      <input className={inputClass} placeholder="Gõ ≥ 2 ký tự để tìm vật tư và thêm dòng…" value={q} onChange={(e) => setQ(e.target.value)} />
-      {items.data && q.trim().length >= 2 && (
-        <ul className="absolute z-10 mt-1 w-full max-h-60 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg text-xs">
-          {items.data.rows.length === 0 && <li className="px-3 py-2 text-slate-400">Không tìm thấy.</li>}
-          {items.data.rows.map((i) => (
-            <li key={i.id}>
-              <button type="button" className="w-full text-left px-3 py-2 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer" onClick={() => { onPick(i); setQ(""); }}>
-                <span className="font-mono font-semibold">{i.code}</span> — {i.name} ({i.base_uom})
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
+interface Option {
+  id: string;
+  code: string;
+  name: string;
+  warehouses: { id: string; code: string; name: string }[];
+  reasons?: PrReasonOption[];
+}
+
+interface CatalogMasterItem {
+  id: string;
+  code: string;
+  name: string;
+  base_uom: string;
+}
+
+interface Line {
+  mode: "CATALOG" | "NEW";
+  item_id: string;
+  label: string;
+  new_item_code: string;
+  new_item_name: string;
+  item_type: "RAW_MATERIAL" | "REAGENT" | "CONSUMABLE" | "COMPONENT";
+  qty: string;
+  uom: string;
+  est_price: string;
+  notes: string;
+}
+
+function emptyLine(mode: "CATALOG" | "NEW" = "CATALOG"): Line {
+  return {
+    mode,
+    item_id: "",
+    label: "",
+    new_item_code: "",
+    new_item_name: "",
+    item_type: "RAW_MATERIAL",
+    qty: "1",
+    uom: "Hộp",
+    est_price: "",
+    notes: "",
+  };
 }
 
 function NewRequestForm({ onDone }: { onDone: () => void }) {
   const qc = useQueryClient();
   const options = useQuery({ queryKey: ["factory", "pr-options"], queryFn: () => api<Option[]>("/api/factory/purchase/request-options") });
   const uoms = useQuery({ queryKey: ["factory", "uoms"], queryFn: () => api<{ code: string }[]>("/api/factory/master/uoms") });
-  const [head, setHead] = useState({ org_unit_id: "", target_warehouse_id: "", needed_by: "", reason: "" });
-  const [lines, setLines] = useState<Line[]>([]);
+  const catalogItems = useQuery({
+    queryKey: ["factory", "items", "pr-catalog-all"],
+    queryFn: () => api<{ rows: CatalogMasterItem[] }>("/api/factory/master/items?page_size=200&status=ACTIVE"),
+  });
+  const [head, setHead] = useState({
+    org_unit_id: "",
+    target_warehouse_id: "",
+    needed_by: "",
+    reasonPreset: "",
+    reason: "",
+    purpose_entity_type: null as string | null,
+    purpose_entity_id: null as string | null,
+  });
+  const [lines, setLines] = useState<Line[]>(() => [emptyLine("CATALOG")]);
+  const [quickItemId, setQuickItemId] = useState("");
+  const [searchQ, setSearchQ] = useState("");
   const unit = options.data?.find((o) => o.id === head.org_unit_id);
+
+  React.useEffect(() => {
+    if (!options.data?.length || head.org_unit_id) return;
+    const first = options.data[0];
+    const firstReason = first.reasons?.[0];
+    setHead({
+      org_unit_id: first.id,
+      target_warehouse_id: first.warehouses[0]?.id ?? "",
+      needed_by: "",
+      reasonPreset: firstReason?.id ?? "",
+      reason: firstReason?.value ?? "",
+      purpose_entity_type: firstReason?.entity_type ?? null,
+      purpose_entity_id: firstReason?.entity_id ?? null,
+    });
+  }, [options.data, head.org_unit_id]);
+
+  const searchItems = useQuery({
+    queryKey: ["factory", "items", "picker", searchQ],
+    queryFn: () => api<{ rows: CatalogMasterItem[] }>(`/api/factory/master/items?page_size=30&q=${encodeURIComponent(searchQ)}`),
+    enabled: searchQ.trim().length >= 1,
+  });
+
+  const groupedReasons = React.useMemo(() => {
+    const groups = new Map<string, PrReasonOption[]>();
+    for (const r of unit?.reasons ?? []) {
+      const list = groups.get(r.category) ?? [];
+      list.push(r);
+      groups.set(r.category, list);
+    }
+    return Array.from(groups.entries());
+  }, [unit]);
+
+  const validLines = lines.filter((l) => {
+    const q = Number(String(l.qty || "").replace(",", "."));
+    if (!(q > 0)) return false;
+    return l.mode === "CATALOG" ? Boolean(l.item_id) : Boolean(l.new_item_name.trim() || l.new_item_code.trim());
+  });
+
   const create = useMutation({
     mutationFn: () =>
       api("/api/factory/purchase/requests", {
         method: "POST",
         idempotent: true,
         json: {
-          ...head,
+          org_unit_id: head.org_unit_id,
+          target_warehouse_id: head.target_warehouse_id,
           needed_by: head.needed_by || null,
-          lines: lines.map((l) => ({ item_id: l.item_id, qty: Number(l.qty.replace(",", ".")), uom: l.uom, est_price: l.est_price ? Number(l.est_price) : null })),
+          reason: head.reason.trim(),
+          purpose_entity_type: head.purpose_entity_type,
+          purpose_entity_id: head.purpose_entity_id,
+          auto_submit: true,
+          lines: validLines.map((l) => ({
+            item_id: l.mode === "CATALOG" ? l.item_id : null,
+            new_item_code: l.mode === "NEW" ? l.new_item_code.trim() || null : null,
+            new_item_name: l.mode === "NEW" ? l.new_item_name.trim() || null : null,
+            item_type: l.mode === "NEW" ? l.item_type : null,
+            qty: Number(l.qty.replace(",", ".")),
+            uom: l.uom || "Hộp",
+            est_price: l.est_price ? Number(l.est_price) : null,
+            notes: l.notes.trim() || null,
+          })),
         },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "prs"] });
+      qc.invalidateQueries({ queryKey: ["factory", "items"] });
       onDone();
     },
   });
-  const setL = (i: number, p: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...p } : l)));
+  const setL = (i: number, p: Partial<Line>) => setLines((prev) => prev.map((l, j) => (j === i ? { ...l, ...p } : l)));
+
+  const addPickedItem = (it: CatalogMasterItem) => {
+    setLines((prev) => {
+      const emptyIdx = prev.findIndex((l) => l.mode === "CATALOG" && !l.item_id && !l.new_item_name.trim());
+      const next: Line = {
+        mode: "CATALOG",
+        item_id: it.id,
+        label: `${it.code} — ${it.name}`,
+        new_item_code: "",
+        new_item_name: "",
+        item_type: "RAW_MATERIAL",
+        qty: "1",
+        uom: it.base_uom || "Hộp",
+        est_price: "",
+        notes: "",
+      };
+      return emptyIdx !== -1 ? prev.map((item, j) => (j === emptyIdx ? next : item)) : [...prev, next];
+    });
+  };
 
   if (options.data && options.data.length === 0) {
     return <Card title="Đề nghị mua mới"><Empty>Bạn chưa được cấp quyền lập đề nghị mua cho phòng nào.</Empty><Button variant="ghost" onClick={onDone}>Đóng</Button></Card>;
   }
   return (
     <Card title="Đề nghị mua NVL mới">
-      <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Field label="Phòng đề nghị *">
-            <select className={inputClass} value={head.org_unit_id} onChange={(e) => setHead({ ...head, org_unit_id: e.target.value, target_warehouse_id: "" })} required>
-              <option value="">Chọn phòng</option>
-              {options.data?.map((o) => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Kho nhận *" hint="Chỉ các kho của phòng">
-            <select className={inputClass} value={head.target_warehouse_id} onChange={(e) => setHead({ ...head, target_warehouse_id: e.target.value })} required>
-              <option value="">Chọn kho</option>
-              {unit?.warehouses.map((w) => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}
-            </select>
-          </Field>
-          <Field label="Cần trước ngày"><input className={inputClass} type="date" value={head.needed_by} onChange={(e) => setHead({ ...head, needed_by: e.target.value })} /></Field>
-          <Field label="Mục đích / lý do *"><input className={inputClass} value={head.reason} onChange={(e) => setHead({ ...head, reason: e.target.value })} required /></Field>
+      <form className="flex flex-col gap-3 text-xs" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12">
+          <div className="lg:col-span-3">
+            <Field label="Phòng đề nghị *">
+              <select
+                className={inputClass}
+                value={head.org_unit_id}
+                onChange={(e) => {
+                  const nextId = e.target.value;
+                  const u = options.data?.find((o) => o.id === nextId);
+                  const r0 = u?.reasons?.[0];
+                  setHead({
+                    ...head,
+                    org_unit_id: nextId,
+                    target_warehouse_id: u?.warehouses[0]?.id ?? "",
+                    reasonPreset: r0?.id ?? "",
+                    reason: r0?.value ?? head.reason,
+                    purpose_entity_type: r0?.entity_type ?? null,
+                    purpose_entity_id: r0?.entity_id ?? null,
+                  });
+                }}
+                required
+              >
+                <option value="">Chọn phòng</option>
+                {options.data?.map((o) => <option key={o.id} value={o.id}>{o.code} — {o.name}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div className="lg:col-span-3">
+            <Field label="Kho nhận *">
+              <select className={inputClass} value={head.target_warehouse_id} onChange={(e) => setHead({ ...head, target_warehouse_id: e.target.value })} required>
+                <option value="">Chọn kho</option>
+                {unit?.warehouses.map((w) => <option key={w.id} value={w.id}>{w.code} — {w.name}</option>)}
+              </select>
+            </Field>
+          </div>
+          <div className="lg:col-span-2">
+            <Field label="Cần trước ngày"><input className={inputClass} type="date" value={head.needed_by} onChange={(e) => setHead({ ...head, needed_by: e.target.value })} /></Field>
+          </div>
+          <div className="lg:col-span-4">
+            <Field label="Chọn Lý do / Dự án / Lệnh SX từ danh mục *">
+              <select
+                className={inputClass}
+                value={head.reasonPreset}
+                onChange={(e) => {
+                  const valId = e.target.value;
+                  const found = unit?.reasons?.find((r) => r.id === valId);
+                  setHead({
+                    ...head,
+                    reasonPreset: valId,
+                    reason: found ? found.value : head.reason,
+                    purpose_entity_type: found?.entity_type ?? null,
+                    purpose_entity_id: found?.entity_id ?? null,
+                  });
+                }}
+              >
+                <option value="">-- Chọn từ danh mục Lý do / Dự án / Lệnh SX --</option>
+                {groupedReasons.map(([cat, items]) => (
+                  <optgroup key={cat} label={cat}>
+                    {items.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                  </optgroup>
+                ))}
+                <option value="__CUSTOM__">✍️ Tự nhập lý do khác...</option>
+              </select>
+            </Field>
+          </div>
         </div>
-        <ItemPicker onPick={(i) => setLines([...lines, { item_id: i.id, label: `${i.code} — ${i.name}`, qty: "", uom: i.base_uom, est_price: "" }])} />
+        <Field label="Chi tiết Lý do / Mã Lệnh SX / Dự án *">
+          <input className={inputClass} value={head.reason} onChange={(e) => setHead({ ...head, reason: e.target.value })} placeholder="Chọn từ danh mục phía trên hoặc nhập nội dung lý do cụ thể..." required />
+        </Field>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="grid gap-2 sm:grid-cols-2 flex-1">
+            <select
+              className={inputClass}
+              value={quickItemId}
+              onChange={(e) => {
+                const id = e.target.value;
+                setQuickItemId("");
+                const found = (catalogItems.data?.rows ?? []).find((x) => x.id === id);
+                if (found) addPickedItem(found);
+              }}
+            >
+              <option value="">📚 Chọn nhanh vật tư từ danh sách có sẵn ({catalogItems.data?.rows.length ?? 0} mã)...</option>
+              {(catalogItems.data?.rows ?? []).map((it) => (
+                <option key={it.id} value={it.id}>{it.code} — {it.name} ({it.base_uom})</option>
+              ))}
+            </select>
+            <div className="relative">
+              <input className={inputClass} placeholder="🔍 Tìm vật tư hoặc gõ tên nguyên liệu mới..." value={searchQ} onChange={(e) => setSearchQ(e.target.value)} />
+              {searchQ.trim().length >= 1 && (
+                <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg text-xs">
+                  {(searchItems.data?.rows ?? []).map((i) => (
+                    <li key={i.id}>
+                      <button type="button" className="w-full text-left px-3 py-2 hover:bg-sky-50 dark:hover:bg-sky-950/40 cursor-pointer" onClick={() => { addPickedItem(i); setSearchQ(""); }}>
+                        <span className="font-mono font-semibold">{i.code}</span> — {i.name} ({i.base_uom})
+                      </button>
+                    </li>
+                  ))}
+                  <li>
+                    <button
+                      type="button"
+                      className="w-full text-left px-3 py-2 bg-amber-50 dark:bg-amber-950/50 text-amber-800 dark:text-amber-300 font-bold cursor-pointer"
+                      onClick={() => {
+                        setLines((prev) => [...prev, { ...emptyLine("NEW"), new_item_name: searchQ.trim() }]);
+                        setSearchQ("");
+                      }}
+                    >
+                      ✨ + Thêm nguyên liệu mới: &ldquo;{searchQ.trim()}&rdquo;
+                    </button>
+                  </li>
+                </ul>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="secondary" onClick={() => setLines((prev) => [...prev, emptyLine("CATALOG")])}>+ Thêm từ DS có sẵn</Button>
+            <Button type="button" variant="secondary" onClick={() => setLines((prev) => [...prev, emptyLine("NEW")])}>✨ + Gõ mã/tên mới</Button>
+          </div>
+        </div>
         {lines.length > 0 && (
-          <Table head={["Vật tư", "Số lượng", "ĐVT", "Đơn giá ước tính (VND)", ""]}>
+          <Table head={["Nguồn", "Mã & Tên Vật tư / Hóa chất *", "Số lượng *", "ĐVT *", "Đơn giá ước tính (VND)", "Ghi chú", ""]}>
             {lines.map((l, i) => (
               <tr key={i}>
-                <td className="py-2 pr-3">{l.label}</td>
-                <td className="py-2 pr-3 w-32"><input className={inputClass} inputMode="decimal" value={l.qty} onChange={(e) => setL(i, { qty: e.target.value })} required /></td>
-                <td className="py-2 pr-3 w-28">
-                  <select className={inputClass} value={l.uom} onChange={(e) => setL(i, { uom: e.target.value })}>
-                    {uoms.data?.map((u) => <option key={u.code} value={u.code}>{u.code}</option>)}
+                <td className="py-2 pr-2 w-36">
+                  <select className={inputClass} value={l.mode} onChange={(e) => setL(i, { mode: e.target.value as "CATALOG" | "NEW" })}>
+                    <option value="CATALOG">📚 DS có sẵn</option>
+                    <option value="NEW">✨ Mã/tên mới</option>
                   </select>
                 </td>
-                <td className="py-2 pr-3 w-44"><input className={inputClass} inputMode="numeric" value={l.est_price} onChange={(e) => setL(i, { est_price: e.target.value.replace(/\D/g, "") })} /></td>
-                <td className="py-2 pr-3"><button type="button" className="text-rose-600 text-xs cursor-pointer" onClick={() => setLines(lines.filter((_, j) => j !== i))}>Xóa</button></td>
+                <td className="py-2 pr-2">
+                  {l.mode === "CATALOG" ? (
+                    <select
+                      className={inputClass}
+                      value={l.item_id}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        if (val === "__NEW__") {
+                          setL(i, { mode: "NEW", item_id: "" });
+                          return;
+                        }
+                        const found = (catalogItems.data?.rows ?? []).find((x) => x.id === val);
+                        setL(i, { item_id: val, label: found ? `${found.code} — ${found.name}` : "", uom: found?.base_uom || l.uom });
+                      }}
+                    >
+                      <option value="">-- Chọn nguyên vật liệu từ danh sách --</option>
+                      {(catalogItems.data?.rows ?? []).map((it) => (
+                        <option key={it.id} value={it.id}>{it.code} — {it.name} ({it.base_uom})</option>
+                      ))}
+                      <option value="__NEW__">✨ Không có trong DS → Chuyển sang Gõ mã/tên mới...</option>
+                    </select>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-1.5">
+                      <div className="sm:col-span-4">
+                        <input className={inputClass} placeholder="Mã mới (tự động nếu trống)" value={l.new_item_code} onChange={(e) => setL(i, { new_item_code: e.target.value.toUpperCase() })} />
+                      </div>
+                      <div className="sm:col-span-8">
+                        <input className={inputClass} placeholder="Tên nguyên vật liệu / hóa chất mới *" value={l.new_item_name} onChange={(e) => setL(i, { new_item_name: e.target.value })} required={l.mode === "NEW"} />
+                      </div>
+                    </div>
+                  )}
+                </td>
+                <td className="py-2 pr-2 w-24"><input className={inputClass} inputMode="decimal" value={l.qty} onChange={(e) => setL(i, { qty: e.target.value })} required /></td>
+                <td className="py-2 pr-2 w-28">
+                  <input className={inputClass} list="pr-req-uoms" value={l.uom} onChange={(e) => setL(i, { uom: e.target.value })} required />
+                  <datalist id="pr-req-uoms">
+                    {(uoms.data ?? []).map((u) => <option key={u.code} value={u.code} />)}
+                    <option value="Hộp" /><option value="Lọ" /><option value="Tube" /><option value="Bộ" /><option value="Cái" /><option value="mL" /><option value="g" />
+                  </datalist>
+                </td>
+                <td className="py-2 pr-2 w-36"><input className={inputClass} inputMode="numeric" value={l.est_price} onChange={(e) => setL(i, { est_price: e.target.value.replace(/\D/g, "") })} /></td>
+                <td className="py-2 pr-2 w-40"><input className={inputClass} placeholder="Quy cách, hãng..." value={l.notes} onChange={(e) => setL(i, { notes: e.target.value })} /></td>
+                <td className="py-2 pr-2"><button type="button" className="text-rose-600 text-xs cursor-pointer" onClick={() => setLines((prev) => prev.length > 1 ? prev.filter((_, j) => j !== i) : [emptyLine("CATALOG")])}>Xóa</button></td>
               </tr>
             ))}
           </Table>
@@ -124,7 +374,7 @@ function NewRequestForm({ onDone }: { onDone: () => void }) {
         <ErrorNote error={create.error ?? options.error} />
         <div className="flex justify-end gap-2">
           <Button type="button" variant="ghost" onClick={onDone}>Hủy</Button>
-          <Button type="submit" disabled={create.isPending || !lines.length}>{create.isPending ? "Đang lưu…" : "Lưu nháp"}</Button>
+          <Button type="submit" disabled={create.isPending || !validLines.length || !head.reason.trim()}>{create.isPending ? "Đang lưu…" : `Lưu & Gửi đề nghị mua (${validLines.length} mục)`}</Button>
         </div>
       </form>
     </Card>

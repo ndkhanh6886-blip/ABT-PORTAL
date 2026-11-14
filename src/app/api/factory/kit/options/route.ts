@@ -62,5 +62,22 @@ export const GET = factoryRoute(async (tx, { actor }) => {
 
   const { kit_staff, qa_staff } = await listDepartmentStaffForKitAndQa(tx);
 
-  return { units, warehouses, items, assets, lots, po_lines, kit_staff, qa_staff };
+  const effective_boms = (
+    await tx.query(
+      `SELECT b.id, b.code, b.name, b.product_item_id, b.bom_version,
+              coalesce(b.bom_type, CASE WHEN i.item_type = 'SEMI_FINISHED' THEN 'semi_finished' ELSE 'finished_good' END) AS bom_type,
+              coalesce(b.bom_category, 'PCR Kit') AS bom_category,
+              coalesce(b.variant_code, 'BASE') AS variant_code,
+              coalesce(b.supply_form, 'NO_SPLIT_NO_IC') AS supply_form,
+              b.tests_per_kit, b.status,
+              i.code AS product_code, i.name AS product_name
+         FROM kit.bom b
+         JOIN master.item i ON i.id = b.product_item_id
+        WHERE b.status IN ('EFFECTIVE', 'DRAFT')
+        ORDER BY CASE WHEN b.status = 'EFFECTIVE' THEN 0 ELSE 1 END, i.code ASC, b.variant_code ASC, b.bom_version DESC
+        LIMIT 500`
+    )
+  ).rows;
+
+  return { units, warehouses, items, assets, lots, po_lines, kit_staff, qa_staff, effective_boms };
 });

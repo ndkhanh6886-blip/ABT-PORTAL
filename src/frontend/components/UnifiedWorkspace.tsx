@@ -57,7 +57,10 @@ import {
   Circle,
   ListChecks,
   Star,
-  MessageCircle
+  MessageCircle,
+  ClipboardList,
+  Megaphone,
+  Wrench
 } from "lucide-react";
 import { Modal } from "@/frontend/components/Modal";
 import { useNotification } from "@/frontend/contexts/NotificationContext";
@@ -69,16 +72,31 @@ import { DateInputVN, formatDayVN } from "@/frontend/components/DateInputVN";
 import { ProposalsApprovalView, ProposalItem, isProposalWaitingForUser } from "@/frontend/components/ProposalsApprovalView";
 import { Pager, usePaged } from "@/frontend/components/Pager";
 
-// Configuration for Departments
+// Configuration for Departments across the entire company (Khối Kinh Doanh & Văn Phòng + Khối Kỹ Thuật – Nhà Máy)
 export const DEPARTMENTS = [
-  { id: "all", name: "Toàn công ty", icon: Building2 },
-  { id: "Kinh Doanh", name: "Kinh Doanh", icon: Briefcase },
-  { id: "Application", name: "Application (Lab)", icon: FlaskConical },
-  { id: "Kho & Vận Hành", name: "Kho & Vận Hành", icon: Package },
-  { id: "Cung Ứng", name: "Cung Ứng", icon: ShoppingCart },
-  { id: "Pháp Chế", name: "Pháp Chế & Tuân Thủ", icon: ShieldCheck },
-  { id: "Kế Toán", name: "Kế Toán - Tài Chính", icon: DollarSign },
-  { id: "Ban Giám Đốc", name: "Ban Giám Đốc", icon: Award },
+  { id: "all", name: "Toàn công ty", icon: Building2, block: "ALL" },
+  // Khối Kinh Doanh & Văn Phòng
+  { id: "Kinh Doanh", name: "Kinh Doanh (Sales)", icon: Briefcase, block: "COMMERCIAL" },
+  { id: "Sales Admin", name: "Sales Admin", icon: ClipboardList, block: "COMMERCIAL" },
+  { id: "Application", name: "Application (Lab KD)", icon: FlaskConical, block: "COMMERCIAL" },
+  { id: "Kho & Vận Hành", name: "Kho Kinh Doanh (Vận Hành)", icon: Package, block: "COMMERCIAL" },
+  { id: "Cung Ứng", name: "Cung Ứng Kinh Doanh", icon: ShoppingCart, block: "COMMERCIAL" },
+  { id: "PM", name: "Quản Lý Sản Phẩm (PM)", icon: Target, block: "COMMERCIAL" },
+  { id: "Marketing", name: "Marketing & Tiếp Thị", icon: Megaphone, block: "COMMERCIAL" },
+  { id: "Kế Toán", name: "Kế Toán - Tài Chính", icon: DollarSign, block: "COMMERCIAL" },
+  { id: "Pháp Chế", name: "Pháp Chế & Tuân Thủ", icon: ShieldCheck, block: "COMMERCIAL" },
+  { id: "Hành Chính Nhân Sự", name: "Hành Chính – Nhân Sự", icon: Users, block: "COMMERCIAL" },
+  // Khối Kỹ Thuật – Nhà Máy
+  { id: "Đơn Nội Bộ", name: "Đơn Nội Bộ (KD ↔ Nhà Máy)", icon: Layers, block: "TECHNICAL" },
+  { id: "Nghiên Cứu R&D", name: "Nghiên Cứu R&D", icon: Sparkles, block: "TECHNICAL" },
+  { id: "Sản Xuất Kit", name: "Sản Xuất Kit", icon: FlaskConical, block: "TECHNICAL" },
+  { id: "Tổng Hợp Oligo", name: "Tổng Hợp Oligo", icon: Activity, block: "TECHNICAL" },
+  { id: "Kỹ Thuật – Thiết Bị", name: "Kỹ Thuật – Thiết Bị", icon: Wrench, block: "TECHNICAL" },
+  { id: "QA/QC", name: "Đảm Bảo & Kiểm Soát CL (QA/QC)", icon: ShieldCheck, block: "TECHNICAL" },
+  { id: "Kho Nhà Máy", name: "Kho Nhà Máy (Kỹ Thuật)", icon: Package, block: "TECHNICAL" },
+  { id: "Cung Ứng Kỹ Thuật", name: "Cung Ứng Kỹ Thuật (NVL)", icon: ShoppingCart, block: "TECHNICAL" },
+  // Ban Giám Đốc
+  { id: "Ban Giám Đốc", name: "Ban Giám Đốc", icon: Award, block: "EXECUTIVE" },
 ];
 
 export const FICTIONAL_WORKSPACE_ASSIGNEES = new Set([
@@ -123,11 +141,47 @@ export function normalizeWorkspaceDept(raw: any): string {
   if (!s) return "";
   if (s === "all") return "all";
   const l = s.toLowerCase();
-  if (l.includes("ứng dụng") || l.includes("application") || l.includes("kỹ thuật")) return "Application";
+  // 1. Phân biệt rõ Kho Nhà Máy và Cung Ứng Kỹ Thuật (xét trước Kho & Cung ứng chung)
+  if (
+    l.includes("kho nhà máy") ||
+    l.includes("kho kỹ thuật") ||
+    l.includes("kho tổng nhà máy") ||
+    l.includes("kho vật tư") ||
+    l.includes("kho hóa chất") ||
+    l === "p-wh" ||
+    l === "factory_warehouse"
+  ) {
+    return "Kho Nhà Máy";
+  }
+  if (
+    l.includes("cung ứng kỹ thuật") ||
+    l.includes("cung ứng nhà máy") ||
+    l.includes("cung ứng nvl") ||
+    l.includes("mua hàng nhà máy") ||
+    l.includes("mua hàng kỹ thuật") ||
+    l.includes("mua sắm nvl") ||
+    l === "p-pur" ||
+    l === "factory_procurement"
+  ) {
+    return "Cung Ứng Kỹ Thuật";
+  }
+  // 2. Các phòng ban thuộc Khối Kỹ Thuật – Nhà Máy
+  if (l.includes("đơn nội bộ") || l.includes("điều phối sản xuất") || l.includes("điều phối đơn")) return "Đơn Nội Bộ";
+  if (l.includes("r&d") || l.includes("nghiên cứu") || l === "p-rd") return "Nghiên Cứu R&D";
+  if (l.includes("sản xuất kit") || l.includes("sx kit") || l === "p-kit") return "Sản Xuất Kit";
+  if (l.includes("oligo") || l === "p-oligo") return "Tổng Hợp Oligo";
+  if (l.includes("thiết bị") || l.includes("cơ điện") || l === "p-tb") return "Kỹ Thuật – Thiết Bị";
+  if (l.includes("qa") || l.includes("qc") || l.includes("chất lượng") || l === "p-qaqc") return "QA/QC";
+  // 3. Các phòng ban thuộc Khối Kinh Doanh & Văn Phòng
+  if (l.includes("sales admin")) return "Sales Admin";
+  if (l === "pm" || l.includes("product manager") || l.includes("quản lý sản phẩm")) return "PM";
+  if (l.includes("marketing") || l.includes("tiếp thị")) return "Marketing";
+  if (l.includes("nhân sự") || l.includes("hành chính") || l === "hr") return "Hành Chính Nhân Sự";
+  if (l.includes("ứng dụng") || l.includes("application") || l === "app") return "Application";
   if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
   if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
-  if (l.includes("kinh doanh") || l.includes("sales") || l.includes("marketing")) return "Kinh Doanh";
-  if (l.includes("pháp chế") || l.includes("legal") || l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "Pháp Chế";
+  if (l.includes("kinh doanh") || l.includes("sales")) return "Kinh Doanh";
+  if (l.includes("pháp chế") || l.includes("legal") || l.includes("tuân thủ")) return "Pháp Chế";
   if (l.includes("kế toán") || l.includes("tài chính") || l.includes("accounting")) return "Kế Toán";
   if (l.includes("giám đốc") || l.includes("bod")) return "Ban Giám Đốc";
   return s;
@@ -147,6 +201,7 @@ export function isSameWorkspaceDept(a: any, b: any): boolean {
 }
 
 export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
+  // === KHỐI KINH DOANH & VĂN PHÒNG ===
   "Kinh Doanh": [
     "Chăm sóc KH",
     "Báo giá & Đàm phán",
@@ -155,40 +210,63 @@ export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
     "Thu hồi Công nợ",
     "Phát triển Thị trường / Khách mới",
     "Hỗ trợ thầu / Dự án",
+    "Đặt hàng sản xuất nội bộ (sang Nhà máy)",
+    "Khác"
+  ],
+  "Sales Admin": [
+    "Xử lý đơn hàng bán (SO) & Kiểm tra công nợ",
+    "Làm hợp đồng & Hồ sơ thanh toán KH",
+    "Theo dõi tiến độ giao hàng & Chứng từ",
+    "Chuyển tiếp đơn đặt hàng nội bộ sang Nhà máy",
+    "Tổng hợp doanh số & Báo cáo KD",
     "Khác"
   ],
   "Application": [
     "Demo máy & Thiết bị tại viện",
-    "Thử nghiệm mẫu & Đánh giá Kit",
+    "Thử nghiệm mẫu & Đánh giá Kit cho KH",
     "Đào tạo / HDSD khách hàng",
-    "Đánh giá QC nội bộ",
-    "Khắc phục sự cố kỹ thuật (Troubleshooting)",
-    "Viết SOP / Hướng dẫn quy trình",
-    "Bảo trì / Hiệu chuẩn thiết bị",
+    "Khắc phục sự cố kỹ thuật tại viện (Troubleshooting)",
+    "Phối hợp phản hồi chuyên môn với R&D / Nhà máy",
+    "Viết tài liệu hướng dẫn ứng dụng (App Note)",
     "Khác"
   ],
   "Kho & Vận Hành": [
-    "Nhập kho PO",
-    "Soạn hàng & Đóng gói phiếu xuất",
-    "Kiểm kê định kỳ",
-    "Giao nhận vận chuyển",
-    "Bảo quản kho lạnh / âm sâu",
+    "Nhập Kho Kinh Doanh (Hàng thương mại PO KD / Nhận TP từ Nhà máy)",
+    "Soạn hàng & Đóng gói phiếu xuất bán (SO)",
+    "Kiểm kê định kỳ Kho Kinh Doanh",
+    "Giao nhận vận chuyển tới Khách hàng / Viện",
+    "Xuất mượn máy Demo & Vật tư cho Application",
+    "Bảo quản kho lạnh thương mại",
     "Khác"
   ],
   "Cung Ứng": [
-    "Tìm nguồn hàng & Đàm phán NCC",
-    "Lập đơn mua hàng (PO)",
-    "Theo dõi tiến độ giao hàng NCC",
-    "Thủ tục hải quan & Nhập khẩu",
-    "Đánh giá định kỳ NCC",
+    "Tìm nguồn hàng thương mại & Đàm phán NCC",
+    "Lập đơn mua hàng thương mại (PO Kinh Doanh)",
+    "Theo dõi tiến độ giao hàng thương mại",
+    "Thủ tục hải quan & Nhập khẩu hàng thương mại",
+    "Đánh giá định kỳ NCC thương mại",
+    "Khác"
+  ],
+  "PM": [
+    "Nghiên cứu thị trường & Định vị sản phẩm",
+    "Phối hợp R&D xây dựng yêu cầu sản phẩm mới (Design Input)",
+    "Đào tạo sản phẩm cho đội ngũ Sales",
+    "Hội thảo khoa học & KOLs",
+    "Khác"
+  ],
+  "Marketing": [
+    "Chiến dịch truyền thông & Thương hiệu ABT",
+    "Tổ chức sự kiện, Hội nghị & Triển lãm Y sinh",
+    "Thiết kế ấn phẩm, Brochure & Catalogue",
+    "Quản trị Website & Kênh truyền thông số",
     "Khác"
   ],
   "Pháp Chế": [
     "Thẩm định Hợp đồng Kinh tế & Mua bán",
     "Rà soát tính hợp pháp Hồ sơ Thầu Bệnh viện",
-    "Quản lý Giấy phép lưu hành & CFS / COA IVD",
-    "Thỏa thuận Bảo mật & Hợp đồng Đại lý",
-    "Bảo hộ Sở hữu trí tuệ thương hiệu TBR",
+    "Quản lý Giấy phép lưu hành & CFS / lưu hành IVD",
+    "Thỏa thuận Bảo mật (NDA) & Hợp đồng Đại lý",
+    "Bảo hộ Sở hữu trí tuệ thương hiệu ABT",
     "Tư vấn Pháp luật Doanh nghiệp & Lao động",
     "Khác"
   ],
@@ -197,60 +275,92 @@ export const DEPARTMENT_CATEGORIES: Record<string, string[]> = {
     "Xuất hóa đơn GTGT & Chứng từ",
     "Đối chiếu & Thu hồi công nợ",
     "Tạm ứng & Hoàn ứng nội bộ",
-    "Báo cáo thuế & Tài chính",
+    "Tính giá thành sản xuất lô (COGS) & Báo cáo thuế",
     "Khác"
   ],
+  "Hành Chính Nhân Sự": [
+    "Tuyển dụng & Đào tạo hội nhập",
+    "Chấm công, Tiền lương & Phúc lợi (C&B)",
+    "Đào tạo năng lực & Đánh giá nhân sự",
+    "Công tác hành chính & Nội vụ văn phòng/nhà máy",
+    "Khác"
+  ],
+  // === KHỐI KỸ THUẬT – NHÀ MÁY ===
+  "Đơn Nội Bộ": [
+    "Tiếp nhận & Điều phối Đơn hàng nội bộ (KD → Nhà máy)",
+    "Phát lệnh sản xuất sang Phòng Kit / Oligo / Thiết bị",
+    "Theo dõi tiến độ sản xuất & Cam kết ngày giao",
+    "Điều phối bàn giao thành phẩm từ Kho Nhà Máy sang Kho Kinh Doanh",
+    "Khác"
+  ],
+  "Nghiên Cứu R&D": [
+    "Thiết kế mồi/probe (In-silico) & Đầu vào thiết kế (Design Input)",
+    "Thực nghiệm tối ưu phản ứng PCR/qPCR & Nhật ký ELN",
+    "Đánh giá độ nhạy (LOD), độ đặc hiệu & Độ ổn định (Stability)",
+    "Hoàn thiện Hồ sơ lịch sử thiết kế (DHF) & Cổng Stage-Gate (G0-G4)",
+    "Chuyển giao công nghệ (Design Transfer) sang Sản xuất & QA/QC",
+    "Khác"
+  ],
+  "Sản Xuất Kit": [
+    "Pha chế đệm Buffer, Enzyme & MasterMix bán thành phẩm",
+    "Chia liều (Dispensing), Đóng gói & Dán nhãn lô Kit IVD",
+    "Ghi nhận Hồ sơ lô điện tử (eBR / DHR) & Đối chiếu hao hụt",
+    "Kiểm soát chất lượng bán thành phẩm trong quá trình (IPQC)",
+    "Cập nhật công thức Định mức BOM & Quy trình Routing",
+    "Khác"
+  ],
+  "Tổng Hợp Oligo": [
+    "Kiểm tra trình tự (5'→3') & Ghép mẻ máy tổng hợp Oligo (Plate/Column)",
+    "Cắt cột (Cleavage) & Khử bảo vệ (Deprotection)",
+    "Tinh sạch Oligo (Desalt / OPC / HPLC / PAGE)",
+    "Đo OD260, Định lượng nmol/µg, Chia tube & Đông khô (Lyophilization)",
+    "Kiểm tra QC trình tự & Xuất COA Đơn hàng / COA Amplicon",
+    "Khác"
+  ],
+  "Kỹ Thuật – Thiết Bị": [
+    "Lắp ráp cơ-điện-quang học & Chạy rà (Burn-in) thiết bị mới",
+    "Kiểm định xuất xưởng thiết bị (FQC) & Quản lý số Serial/mBOM",
+    "Bảo trì định kỳ & Hiệu chuẩn (Calibration) máy Lab/Nhà máy",
+    "Khắc phục sự cố máy sản xuất / máy Lab nội bộ",
+    "Xử lý thay đổi kỹ thuật (ECO) & Kiểm thử phần mềm (IEC 62304)",
+    "Khác"
+  ],
+  "QA/QC": [
+    "Lấy mẫu & Kiểm nghiệm nguyên vật liệu đầu vào (IQC)",
+    "Kiểm nghiệm bán thành phẩm (IPQC) & Thành phẩm xuất xưởng (FQC)",
+    "Thẩm định Hồ sơ lô (DHR) & Phê duyệt giải phóng lô (Lot Release / COA)",
+    "Xử lý Sự không phù hợp (NCR / OOS) & Hành động khắc phục (CAPA)",
+    "Kiểm soát tài liệu SOP, TCCS & Đánh giá nội bộ ISO 13485",
+    "Khác"
+  ],
+  "Kho Nhà Máy": [
+    "Tiếp nhận lô NVL/Hóa chất vào khu Biệt trữ (Quarantine) chờ IQC",
+    "Xuất cấp phát NVL/Hóa chất cho Sản xuất & R&D theo FEFO",
+    "Nhập kho Bán thành phẩm & Thành phẩm sản xuất đã đạt QC",
+    "Xuất bàn giao Thành phẩm từ Kho Nhà Máy sang Kho Kinh Doanh",
+    "Giám sát nhiệt độ tủ âm sâu (-80°C/-20°C) & Chu kỳ Rã đông (Freeze-Thaw)",
+    "Kiểm kê định kỳ Kho Tổng Nhà Máy & Các kho nhánh Lab",
+    "Khác"
+  ],
+  "Cung Ứng Kỹ Thuật": [
+    "Xử lý đề nghị mua sắm NVL/Hóa chất sản xuất (PR Nhà máy)",
+    "Tìm NCC Hóa chất, Amidite, Cột tổng hợp, Enzyme & Linh kiện thiết bị",
+    "Lập đơn đặt hàng kỹ thuật (PO Nhà máy) & Theo dõi Lead-time",
+    "Rà soát hồ sơ chất lượng lô hàng từ NCC (CoA, MSDS, thông số kỹ thuật)",
+    "Hoạch định nhu cầu vật tư (MRP) theo Định mức BOM sản xuất",
+    "Khác"
+  ],
+  // === BAN GIÁM ĐỐC ===
   "Ban Giám Đốc": [
-    "Phê duyệt chủ trương & Ngân sách",
-    "Chỉ đạo điều hành liên phòng ban",
-    "Đánh giá KPI & Chiến lược",
+    "Phê duyệt chủ trương & Ngân sách toàn công ty",
+    "Chỉ đạo điều hành liên khối (Kinh Doanh ↔ Kỹ Thuật Nhà Máy)",
+    "Phê duyệt Chuyển giao công nghệ & Đầu tư thiết bị/dự án",
+    "Đánh giá KPI & Chiến lược phát triển",
     "Khác"
   ]
 };
 
-
-export const DEPARTMENT_STAFF: Record<string, string[]> = {
-  "Ban Giám Đốc": [
-    "Nguyễn Văn Hưng (CEO)",
-    "Đỗ Ngọc Diễm Trúc (Phó Giám Đốc)",
-    "Võ Thị Cẩm Giang (Phó Giám Đốc)"
-  ],
-  "Application": [
-    "Vũ Nhật Tân (Trưởng Phòng)",
-    "Vũ Thị Quỳnh Như",
-    "Mai Quí Minh",
-    "Huỳnh Ngọc Nhi"
-  ],
-  "Kinh Doanh": [
-    "Lê Hữu Nhân",
-    "K' Trọng Nghĩa",
-    "Đỗ Phạm Bảo Ngọc",
-    "Nguyễn Ánh Nhựt",
-    "Phạm Nguyễn Minh Châu",
-    "Phan Minh Nghĩa",
-    "Phạm Thị Thu Thủy",
-    "Lê Thị Thuỳ Trang",
-    "Trần Thị Mỹ Linh",
-    "Ngô Thị Yến Nhi"
-  ],
-  "Kho & Vận Hành": [
-    "Dương Phương Bảo Khoa (Trưởng Bộ Phận)",
-    "Trần Thị Minh Hậu (Thủ Kho)",
-    "Hoàng Thị Huệ (Thủ Kho)"
-  ],
-  "Cung Ứng": [
-    "Trần Thị Trà My",
-    "Nguyễn Tấn Lộc"
-  ],
-  "Kế Toán": [
-    "Võ Thị Ngọc Giàu (Kế Toán Trưởng)",
-    "Nguyễn Thị Hạnh",
-    "Nguyễn Lệ Quân"
-  ],
-  "Pháp Chế": [
-    "Nguyễn Thị Ngọc Huyền"
-  ]
-};
+export const DEPARTMENT_STAFF: Record<string, string[]> = {};
 
 export interface ThematicStageTemplate {
   name: string;
@@ -595,8 +705,136 @@ export const DEPARTMENT_THEMATIC_TYPES: Record<string, ThematicTypeDefinition[]>
       defaultStages: [
         { name: "Tiếp nhận thông tin sự cố từ khách hàng, khoanh vùng mã lô (Lot) & điều kiện bảo quản", estimatedDays: 1, dept: "Kinh Doanh" },
         { name: "Trực tiếp xuống Lab khách hàng kiểm tra thiết bị, chạy mẫu đối chứng & xác định nguyên nhân gốc", estimatedDays: 2, dept: "Application" },
-        { name: "Xuất kho khẩn cấp hàng/máy thay thế tạm thời để duy trì hoạt động xét nghiệm cho khách", estimatedDays: 1, dept: "Kho & Vận Hành" },
-        { name: "Làm việc với Hãng sản xuất về báo cáo kỹ thuật (CAPA), bảo hành/đổi bù & nghiệm thu với khách hàng", estimatedDays: 3, dept: "Cung Ứng" }
+        { name: "Xuất Kho Kinh Doanh khẩn cấp hàng/máy thay thế tạm thời để duy trì hoạt động xét nghiệm cho khách", estimatedDays: 1, dept: "Kho & Vận Hành" },
+        { name: "Làm việc với Hãng sản xuất / QA-QC Nhà máy về báo cáo kỹ thuật (CAPA), bảo hành/đổi bù & nghiệm thu", estimatedDays: 3, dept: "Cung Ứng" }
+      ]
+    },
+    {
+      id: "cross_rnd_factory_commercialization",
+      name: "Nghiên Cứu, Sản Xuất Thử Nghiệm & Thương Mại Hóa Sản Phẩm Nội Bộ (R&D → Nhà Máy → Kinh Doanh)",
+      icon: "🧬",
+      codePrefix: "DA-RD-SX",
+      description: "Dự án liên khối toàn công ty: Từ nghiên cứu R&D, mua sắm NVL qua Cung ứng Kỹ thuật, sản xuất Pilot tại Nhà máy, thẩm định QA/QC đến bàn giao sang Kho Kinh Doanh và ra mắt thị trường.",
+      sampleObjectives: "Hoàn thành chuyển giao công nghệ 1 dòng Kit/Oligo/Thiết bị mới đạt chuẩn ISO 13485, sản xuất 3 lô thẩm định và bàn giao thương mại hóa.",
+      participatingDepts: ["Nghiên Cứu R&D", "Cung Ứng Kỹ Thuật", "Kho Nhà Máy", "Sản Xuất Kit", "QA/QC", "Kho & Vận Hành", "Kinh Doanh"],
+      defaultStages: [
+        { name: "Hoàn thiện thiết kế mồi/probe, tối ưu công thức & khóa Hồ sơ Thiết kế (DHF Gate 3)", estimatedDays: 7, dept: "Nghiên Cứu R&D" },
+        { name: "Mua sắm nguyên vật liệu, hóa chất & bao bì phục vụ sản xuất lô thẩm định (PO Kỹ thuật)", estimatedDays: 5, dept: "Cung Ứng Kỹ Thuật" },
+        { name: "Tiếp nhận NVL vào Kho Nhà Máy, kiểm định IQC đầu vào & cấp phát theo FEFO", estimatedDays: 2, dept: "Kho Nhà Máy" },
+        { name: "Sản xuất 3 lô Pilot theo hồ sơ DMR & ghi nhận Hồ sơ lô điện tử (eBR)", estimatedDays: 5, dept: "Sản Xuất Kit" },
+        { name: "Kiểm định QC thành phẩm, đánh giá độ ổn định & cấp chứng nhận COA xuất xưởng", estimatedDays: 3, dept: "QA/QC" },
+        { name: "Bàn giao thành phẩm từ Kho Nhà Máy sang Kho Kinh Doanh & triển khai chiến dịch bán hàng", estimatedDays: 5, dept: "Kinh Doanh" }
+      ]
+    }
+  ],
+  "Nghiên Cứu R&D": [
+    {
+      id: "rnd_new_ivd_kit",
+      name: "Nghiên Cứu & Phát Triển Kit Chẩn Đoán IVD Mới (Design Control ISO 13485)",
+      icon: "🧬",
+      codePrefix: "RD-KIT",
+      description: "Chuyên đề nghiên cứu phát triển bộ Kit PCR/qPCR/Tách chiết mới theo 5 cổng Stage-Gate (G0→G4) và lập hồ sơ DHF.",
+      sampleObjectives: "Đạt độ nhạy LOD ≤ 10 copies/phản ứng, độ đặc hiệu 100%, hoàn thành thẩm định lâm sàng và sẵn sàng chuyển giao sản xuất.",
+      defaultStages: [
+        { name: "Xác lập Đầu vào Thiết kế (Design Input), phân tích rủi ro ISO 14971 & thiết kế mồi/probe In-silico", estimatedDays: 5, dept: "Nghiên Cứu R&D" },
+        { name: "Đặt tổng hợp Oligo nội bộ & chuẩn bị hóa chất/enzyme thực nghiệm từ Kho Nhà Máy", estimatedDays: 3, dept: "Tổng Hợp Oligo" },
+        { name: "Thực nghiệm tối ưu hóa nồng độ MasterMix, chu trình nhiệt & ghi nhật ký điện tử ELN", estimatedDays: 7, dept: "Nghiên Cứu R&D" },
+        { name: "Thẩm tra Thiết kế (Design Verification): Đánh giá LOD, độ lặp lại, độ đặc hiệu & độ ổn định tăng tốc", estimatedDays: 7, dept: "QA/QC" },
+        { name: "Đóng gói Hồ sơ Lịch sử Thiết kế (DHF) & Chuyển giao công nghệ (Design Transfer) sang Sản xuất", estimatedDays: 3, dept: "Sản Xuất Kit" }
+      ]
+    }
+  ],
+  "Sản Xuất Kit": [
+    {
+      id: "kit_batch_campaign",
+      name: "Chiến Dịch Sản Xuất Lô Lớn & Tối Ưu Định Mức Hao Hụt (GMP / ISO 13485)",
+      icon: "🧪",
+      codePrefix: "SX-KIT",
+      description: "Tổ chức chiến dịch sản xuất hàng loạt các dòng Kit chủ lực, kiểm soát chặt chẽ tồn kho FEFO, IPQC và hồ sơ lô eBR.",
+      sampleObjectives: "Hoàn thành 100% kế hoạch sản xuất đúng tiến độ Đơn nội bộ, tỷ lệ hao hụt nguyên liệu < 2%, 100% lô đạt FQC ngay lần đầu.",
+      defaultStages: [
+        { name: "Rà soát kế hoạch Đơn nội bộ, tính toán MRP theo BOM & lĩnh NVL theo FEFO từ Kho Nhà Máy", estimatedDays: 2, dept: "Kho Nhà Máy" },
+        { name: "Kiểm tra điều kiện phòng sạch, hiệu chuẩn thiết bị & pha chế bán thành phẩm (MasterMix/Buffer)", estimatedDays: 3, dept: "Sản Xuất Kit" },
+        { name: "Kiểm tra bán thành phẩm giữa quá trình (IPQC) trước khi chia liều", estimatedDays: 1, dept: "QA/QC" },
+        { name: "Chia liều (Dispensing), đóng gói hoàn thiện bộ Kit, dán nhãn & hoàn tất hồ sơ lô eBR", estimatedDays: 3, dept: "Sản Xuất Kit" },
+        { name: "Kiểm nghiệm thành phẩm FQC, phê duyệt xuất xưởng (COA) & nhập Kho Nhà Máy", estimatedDays: 2, dept: "QA/QC" }
+      ]
+    }
+  ],
+  "Tổng Hợp Oligo": [
+    {
+      id: "oligo_high_throughput",
+      name: "Chuyên Đề Tổng Hợp & Tinh Sạch Oligo / Probe Độ Tinh Khiết Cao (HPLC / PAGE)",
+      icon: "🧬",
+      codePrefix: "SX-OLI",
+      description: "Tối ưu hóa lịch chạy máy tổng hợp Oligo, tinh sạch HPLC/PAGE cho TaqMan Probe và Amplicon, kiểm soát nhiễm chéo.",
+      sampleObjectives: "Đạt hiệu suất tổng hợp > 95%, độ tinh khiết Probe HPLC ≥ 90%, trả kết quả kèm COA Đơn hàng đúng cam kết.",
+      defaultStages: [
+        { name: "Kiểm tra trình tự 5'→3', tính toán thông số (Tm, MW, OD260) & lập sơ đồ giếng/cột tổng hợp", estimatedDays: 1, dept: "Tổng Hợp Oligo" },
+        { name: "Chạy máy tổng hợp, cắt cột (Cleavage), khử bảo vệ (Deprotection) & tinh sạch OPC/HPLC/PAGE", estimatedDays: 2, dept: "Tổng Hợp Oligo" },
+        { name: "Đo quang phổ OD260, kiểm tra QC trình tự, chia tube, đông khô & phát hành COA", estimatedDays: 1, dept: "QA/QC" }
+      ]
+    }
+  ],
+  "Kỹ Thuật – Thiết Bị": [
+    {
+      id: "device_assembly_calibration",
+      name: "Chiến Dịch Lắp Ráp Thiết Bị Mới & Hiệu Chuẩn Toàn Bộ Máy Móc Phòng Lab / Nhà Máy",
+      icon: "⚙️",
+      codePrefix: "KT-TB",
+      description: "Lắp ráp lô thiết bị thương mại theo mBOM, chạy Burn-in 48h và thực hiện bảo trì/hiệu chuẩn định kỳ thiết bị toàn nhà máy.",
+      sampleObjectives: "100% thiết bị xuất xưởng đạt FQC điện-quang-nhiệt, 100% thiết bị phòng Lab/SX được hiệu chuẩn đúng hạn ISO 13485.",
+      defaultStages: [
+        { name: "Lĩnh linh kiện cơ-điện-quang học từ Kho Nhà Máy & lắp ráp theo cây cấu trúc mBOM", estimatedDays: 4, dept: "Kỹ Thuật – Thiết Bị" },
+        { name: "Nạp firmware (IEC 62304), chạy rà thiết bị (Burn-in 48h) & hiệu chuẩn dải nhiệt/quang học", estimatedDays: 3, dept: "Kỹ Thuật – Thiết Bị" },
+        { name: "Kiểm định FQC xuất xưởng, dán tem Serial/Calibration & bàn giao nhập Kho Nhà Máy", estimatedDays: 2, dept: "QA/QC" }
+      ]
+    }
+  ],
+  "QA/QC": [
+    {
+      id: "qaqc_iso13485_audit",
+      name: "Đánh Giá Nội Bộ Hệ Thống Quản Lý Chất Lượng ISO 13485 / GMP & Rà Soát CAPA",
+      icon: "🛡️",
+      codePrefix: "QA-ISO",
+      description: "Tổng rà soát hồ sơ DHF, DMR, DHR, trạng thái biệt trữ Kho Nhà Máy, lịch hiệu chuẩn thiết bị và đóng các phiếu NCR/CAPA.",
+      sampleObjectives: "Đảm bảo 100% quy trình R&D, Sản xuất, Kho Nhà Máy và Cung ứng Kỹ thuật tuân thủ nghiêm ngặt ISO 13485:2016.",
+      defaultStages: [
+        { name: "Rà soát danh mục SOP, TCCS, Hồ sơ thiết kế (DHF) & Hồ sơ lô sản xuất (DHR/eBR)", estimatedDays: 3, dept: "QA/QC" },
+        { name: "Kiểm tra thực tế khu vực Biệt trữ (Quarantine), điều kiện bảo quản & tuân thủ FEFO tại Kho Nhà Máy", estimatedDays: 2, dept: "Kho Nhà Máy" },
+        { name: "Đánh giá hồ sơ đánh giá Nhà cung cấp nguyên vật liệu & CoA/MSDS tại Cung Ứng Kỹ Thuật", estimatedDays: 2, dept: "Cung Ứng Kỹ Thuật" },
+        { name: "Tổng hợp báo cáo đánh giá nội bộ, lập phiếu CAPA khắc phục & trình Ban Giám Đốc", estimatedDays: 3, dept: "QA/QC" }
+      ]
+    }
+  ],
+  "Kho Nhà Máy": [
+    {
+      id: "factory_wh_fefo_audit",
+      name: "Tổng Kiểm Kê Kho Nhà Máy, Chuẩn Hóa FEFO & Kiểm Soát Chu Kỳ Rã Đông Hóa Chất",
+      icon: "🏭",
+      codePrefix: "KHO-NM",
+      description: "Độc lập với Kho Kinh doanh: Kiểm kê toàn diện Nguyên vật liệu, Hóa chất, Enzyme, Bán thành phẩm và Thành phẩm tại Kho Tổng Nhà Máy & các Kho nhánh Lab.",
+      sampleObjectives: "Khớp 100% số liệu tồn kho theo Lô (Lot), tách biệt tuyệt đối hàng Biệt trữ (Quarantine) và hàng Đạt (Released), loại bỏ rủi ro quá hạn.",
+      defaultStages: [
+        { name: "Chốt sổ tồn kho hệ thống & kiểm đếm thực tế tại Kho Tổng Nhà Máy, Kho R&D, Kho Kit, Kho Oligo, Kho Thiết bị", estimatedDays: 2, dept: "Kho Nhà Máy" },
+        { name: "Rà soát hạn dùng FEFO, số lần rã đông (Freeze-Thaw) của Enzyme/MasterMix & nhật ký nhiệt độ tủ âm sâu", estimatedDays: 2, dept: "Kho Nhà Máy" },
+        { name: "Phối hợp QA/QC xử lý các lô cận hạn/quá hạn hoặc đang biệt trữ chờ IQC", estimatedDays: 2, dept: "QA/QC" },
+        { name: "Lập biên bản đối soát tồn kho Nhà máy & đề xuất Cung Ứng Kỹ Thuật mua bù các mã chạm ROP", estimatedDays: 1, dept: "Cung Ứng Kỹ Thuật" }
+      ]
+    }
+  ],
+  "Cung Ứng Kỹ Thuật": [
+    {
+      id: "factory_proc_mrp_sourcing",
+      name: "Hoạch Định Vật Tư Sản Xuất (MRP) & Chuẩn Hóa Nguồn Cung Hóa Chất / Linh Kiện Nhà Máy",
+      icon: "🧪",
+      codePrefix: "CU-KT",
+      description: "Độc lập với Cung ứng Kinh doanh: Đảm bảo nguồn cung nguyên vật liệu, hóa chất tổng hợp Oligo, enzyme và linh kiện phục vụ R&D và Sản xuất.",
+      sampleObjectives: "Đảm bảo 100% nguyên vật liệu đầu vào có đủ CoA/MSDS, tối ưu Lead-time nhập hàng kỹ thuật và không để đứt gãy dây chuyền sản xuất.",
+      defaultStages: [
+        { name: "Tổng hợp nhu cầu vật tư theo BOM sản xuất (MRP) & danh mục dưới tồn tối thiểu từ Kho Nhà Máy", estimatedDays: 2, dept: "Cung Ứng Kỹ Thuật" },
+        { name: "Đánh giá, đàm phán với NCC Hóa chất/Linh kiện & thẩm định trước CoA/MSDS cùng QA/QC", estimatedDays: 3, dept: "QA/QC" },
+        { name: "Trình duyệt PO Kỹ thuật, theo dõi tiến độ nhập hàng & bàn giao lô hàng vào khu Biệt trữ Kho Nhà Máy", estimatedDays: 5, dept: "Kho Nhà Máy" }
       ]
     }
   ]
@@ -612,7 +850,7 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     sourceDept: "Kinh Doanh",
     targetDept: "Application",
     icon: "FlaskConical",
-    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab TBR hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
+    description: "Yêu cầu kỹ sư Application hỗ trợ chạy thử mẫu tại Lab hoặc mang máy đi demo trực tiếp tại viện (Bộ phận Application sẽ tự phân công nhân sự phụ trách).",
     sla_days: 5,
     steps: [
       { step_index: 0, title: "Tiếp nhận & Thẩm định mẫu / Thiết bị", dept: "Application", assignee_name: "", sla_hours: 24, deliverables: "Xác nhận loại mẫu sinh học, hóa chất tương thích, phân công nhân sự & lịch Demo" },
@@ -623,46 +861,46 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
   {
     id: "SALES_TO_WAREHOUSE",
     code: "SALES_TO_WAREHOUSE",
-    name: "Sales ──► Kho: Yêu cầu Soạn & Xuất kho giao hàng",
+    name: "Sales ──► Kho Kinh Doanh: Yêu cầu Soạn & Xuất kho giao hàng (SO)",
     sourceDept: "Kinh Doanh",
     targetDept: "Kho & Vận Hành",
     icon: "Package",
-    description: "Yêu cầu thủ kho kiểm tra số lô (Lot), hạn dùng (Exp), đóng gói lạnh và tạo phiếu xuất kho giao khách.",
+    description: "Yêu cầu Kho Kinh Doanh (Thương Mại) kiểm tra số lô (Lot), hạn dùng (Exp), đóng gói lạnh và tạo phiếu xuất kho giao khách hàng.",
     sla_days: 2,
     steps: [
-      { step_index: 0, title: "Thẩm định tồn kho & Kiểm tra Lot/Hạn dùng", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Phiếu kiểm kho xác nhận đủ số lượng & hạn sử dụng > 6 tháng" },
-      { step_index: 1, title: "Đóng gói chuẩn lạnh & In phiếu xuất", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Thùng xốp gel đá/đá khô có dán tem niêm phong và phiếu xuất kho" },
+      { step_index: 0, title: "Thẩm định tồn Kho Kinh Doanh & Kiểm tra Lot/Hạn dùng", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Phiếu kiểm kho xác nhận đủ số lượng & hạn sử dụng > 6 tháng" },
+      { step_index: 1, title: "Đóng gói chuẩn lạnh & In phiếu xuất Kho Kinh Doanh", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Thùng xốp gel đá/đá khô có dán tem niêm phong và phiếu xuất kho" },
       { step_index: 2, title: "Giao hàng & Thu hồi biên bản bàn giao (POD)", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 24, deliverables: "Biên bản giao nhận ký xác nhận kèm ảnh chụp tại phòng khám/lab" }
     ]
   },
   {
     id: "TO_PROCUREMENT",
     code: "TO_PROCUREMENT",
-    name: "Kho / Sales ──► Cung Ứng: Đề xuất mua hàng (PR)",
+    name: "Kho KD / Sales ──► Cung Ứng KD: Đề xuất mua hàng thương mại (PR KD)",
     sourceDept: "Kho & Vận Hành",
     targetDept: "Cung Ứng",
     icon: "ShoppingCart",
-    description: "Đề xuất phòng Cung ứng đàm phán giá và tạo đơn mua hàng PO khi tồn kho chạm mức an toàn.",
+    description: "Đề xuất phòng Cung Ứng Kinh Doanh đàm phán giá và tạo đơn mua hàng thương mại (PO Kinh Doanh) khi tồn kho thương mại chạm mức an toàn.",
     sla_days: 7,
     steps: [
-      { step_index: 0, title: "Tiếp nhận đề xuất PR & Khảo sát nhà cung cấp", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
-      { step_index: 1, title: "Trình duyệt ban giám đốc & Phát hành đơn PO", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Đơn đặt hàng PO có chữ ký phê duyệt" },
-      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho TBR", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
+      { step_index: 0, title: "Tiếp nhận đề xuất PR KD & Khảo sát nhà cung cấp thương mại", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
+      { step_index: 1, title: "Trình duyệt Ban Giám Đốc & Phát hành đơn PO Kinh Doanh", dept: "Ban Giám Đốc", assignee_name: "", sla_hours: 24, deliverables: "Đơn đặt hàng PO thương mại có chữ ký phê duyệt" },
+      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập Kho Kinh Doanh", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập Kho Kinh Doanh (GRN)" }
     ]
   },
   {
     id: "APP_TO_WAREHOUSE",
     code: "APP_TO_WAREHOUSE",
-    name: "App ──► Kho: Đề nghị xuất vật tư & Mượn máy demo",
+    name: "App ──► Kho Kinh Doanh: Đề nghị xuất vật tư & Mượn máy demo",
     sourceDept: "Application",
     targetDept: "Kho & Vận Hành",
     icon: "FlaskConical",
-    description: "Đề nghị xuất kit test, hóa chất tiêu hao hoặc mượn máy demo mang đi công tác ngoại viện.",
+    description: "Đề nghị Kho Kinh Doanh xuất kit test, hóa chất tiêu hao hoặc mượn máy demo mang đi công tác ngoại viện.",
     sla_days: 3,
     steps: [
-      { step_index: 0, title: "Kiểm tra thiết bị & Phụ kiện đi kèm", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Checklist máy móc đủ dây nguồn, phụ kiện, vali chống sốc" },
-      { step_index: 1, title: "Ký biên bản bàn giao mượn thiết bị demo", dept: "Application", assignee_name: "", sla_hours: 8, deliverables: "Phiếu mượn máy có chữ ký người mượn và thủ kho" },
-      { step_index: 2, title: "Hoàn trả máy & Kiểm tra tình trạng nguyên vẹn", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 24, deliverables: "Biên bản nhận trả máy, ghi nhận tình trạng hoạt động tốt" }
+      { step_index: 0, title: "Kiểm tra thiết bị & Phụ kiện đi kèm tại Kho Kinh Doanh", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Checklist máy móc đủ dây nguồn, phụ kiện, vali chống sốc" },
+      { step_index: 1, title: "Ký biên bản bàn giao mượn thiết bị demo", dept: "Application", assignee_name: "", sla_hours: 8, deliverables: "Phiếu mượn máy có chữ ký người mượn và thủ kho KD" },
+      { step_index: 2, title: "Hoàn trả máy & Kiểm tra tình trạng nguyên vẹn", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 24, deliverables: "Biên bản nhận trả máy tại Kho Kinh Doanh, ghi nhận tình trạng hoạt động tốt" }
     ]
   },
   {
@@ -675,9 +913,86 @@ export const DEFAULT_WORKFLOW_TEMPLATES = [
     description: "Yêu cầu bộ phận Pháp chế thẩm định các điều khoản hợp đồng kinh tế, đại lý phân phối hoặc hồ sơ pháp lý dự thầu bệnh viện.",
     sla_days: 3,
     steps: [
-      { step_index: 0, title: "Tiếp nhận dự thảo hợp đồng & Kiểm tra tính pháp lý", dept: "Pháp Chế", assignee_name: "Nguyễn Thị Ngọc Huyền", sla_hours: 24, deliverables: "Biên bản thẩm tra pháp lý, rà soát điều khoản thanh toán, phạt vi phạm & bảo hành" },
-      { step_index: 1, title: "Hiệu chỉnh điều khoản & Phản hồi cho Sales", dept: "Pháp Chế", assignee_name: "Nguyễn Thị Ngọc Huyền", sla_hours: 24, deliverables: "Bản hợp đồng hoàn chỉnh (redline track changes) đạt chuẩn pháp lý" },
-      { step_index: 2, title: "Trình Ban Giám Đốc phê duyệt ký kết chính thức", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Hợp đồng kinh tế có chữ ký số / con dấu pháp nhân công ty" }
+      { step_index: 0, title: "Tiếp nhận dự thảo hợp đồng & Kiểm tra tính pháp lý", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Biên bản thẩm tra pháp lý, rà soát điều khoản thanh toán, phạt vi phạm & bảo hành" },
+      { step_index: 1, title: "Hiệu chỉnh điều khoản & Phản hồi cho Sales", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Bản hợp đồng hoàn chỉnh (redline track changes) đạt chuẩn pháp lý" },
+      { step_index: 2, title: "Trình Ban Giám Đốc phê duyệt ký kết chính thức", dept: "Ban Giám Đốc", assignee_name: "", sla_hours: 24, deliverables: "Hợp đồng kinh tế có chữ ký số / con dấu pháp nhân công ty" }
+    ]
+  },
+  {
+    id: "SALES_TO_FACTORY_ORDER",
+    code: "SALES_TO_FACTORY_ORDER",
+    name: "Kinh Doanh ──► Nhà Máy: Đặt sản xuất Đơn hàng Nội bộ (Kit / Oligo / Thiết bị)",
+    sourceDept: "Kinh Doanh",
+    targetDept: "Đơn Nội Bộ",
+    icon: "Layers",
+    description: "Luồng liên khối Kinh Doanh ↔ Khối Kỹ Thuật: Tiếp nhận đơn đặt hàng nội bộ (PO KD → Nhà máy), điều phối lệnh SX Kit/Oligo/Thiết bị, kiểm định QA/QC và bàn giao thành phẩm từ Kho Nhà Máy sang Kho Kinh Doanh.",
+    sla_days: 7,
+    steps: [
+      { step_index: 0, title: "Tiếp nhận Đơn Nội Bộ & Kiểm tra năng lực sản xuất / Tồn Kho Nhà Máy", dept: "Đơn Nội Bộ", assignee_name: "", sla_hours: 12, deliverables: "Xác nhận lịch giao cam kết và phát lệnh sản xuất về Phòng Kit / Oligo / Thiết bị" },
+      { step_index: 1, title: "Tổ chức Sản xuất Lô Kit / Tổng hợp Oligo / Lắp ráp Thiết bị", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 72, deliverables: "Hoàn thành Hồ sơ lô điện tử (eBR) / Mẻ tổng hợp Oligo và chuyển mẫu chờ QC" },
+      { step_index: 2, title: "Kiểm định Chất lượng (QC), Phê duyệt Xuất xưởng & Cấp COA", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Phiếu kết quả kiểm nghiệm đạt chuẩn ISO 13485 & Chứng nhận phân tích (COA)" },
+      { step_index: 3, title: "Xuất Kho Nhà Máy & Bàn giao thành phẩm sang Kho Kinh Doanh", dept: "Kho Nhà Máy", assignee_name: "", sla_hours: 12, deliverables: "Phiếu xuất Kho Nhà Máy kèm COA bàn giao sang Kho Kinh Doanh (hoặc giao thẳng)" }
+    ]
+  },
+  {
+    id: "FACTORY_TO_TECH_PROCUREMENT",
+    code: "FACTORY_TO_TECH_PROCUREMENT",
+    name: "Kho Nhà Máy / SX ──► Cung Ứng Kỹ Thuật: Đề nghị mua NVL & Hóa chất SX (PR Nhà máy)",
+    sourceDept: "Kho Nhà Máy",
+    targetDept: "Cung Ứng Kỹ Thuật",
+    icon: "ShoppingCart",
+    description: "Độc lập với Cung ứng Kinh doanh: Đề xuất Cung Ứng Kỹ Thuật mua sắm nguyên vật liệu, hóa chất tổng hợp Oligo, enzyme, cột tinh sạch, linh kiện thiết bị phục vụ R&D và Sản xuất.",
+    sla_days: 10,
+    steps: [
+      { step_index: 0, title: "Thẩm định PR Nhà máy, Tìm NCC Kỹ thuật & Đối chiếu CoA/MSDS mẫu", dept: "Cung Ứng Kỹ Thuật", assignee_name: "", sla_hours: 24, deliverables: "Bảng chào giá NCC hóa chất/linh kiện kèm tài liệu kỹ thuật CoA/MSDS" },
+      { step_index: 1, title: "Trình Ban Giám Đốc phê duyệt & Phát hành PO Kỹ thuật (Nhà máy)", dept: "Ban Giám Đốc", assignee_name: "", sla_hours: 24, deliverables: "Đơn đặt hàng PO Kỹ thuật đã phê duyệt" },
+      { step_index: 2, title: "Tiếp nhận hàng về Kho Nhà Máy (Khu Biệt trữ Quarantine) & Lấy mẫu IQC", dept: "Kho Nhà Máy", assignee_name: "", sla_hours: 48, deliverables: "Biên bản tiếp nhận lô NVL trạng thái QUARANTINE và yêu cầu QA/QC kiểm tra đầu vào" },
+      { step_index: 3, title: "Kiểm định IQC Đầu vào & Dán nhãn Released nhập Kho Nhà Máy", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Biên bản IQC Đạt (RELEASED) cho phép Kho Nhà Máy đưa vào cấp phát FEFO" }
+    ]
+  },
+  {
+    id: "FACTORY_WH_FEFO_ISSUE",
+    code: "FACTORY_WH_FEFO_ISSUE",
+    name: "Sản Xuất / R&D ──► Kho Nhà Máy: Yêu cầu Cấp phát NVL & Hóa chất theo FEFO",
+    sourceDept: "Sản Xuất Kit",
+    targetDept: "Kho Nhà Máy",
+    icon: "Package",
+    description: "Độc lập với Kho Kinh doanh: Các phòng Sản xuất Kit, Tổng hợp Oligo, R&D, Thiết bị yêu cầu Kho Nhà Máy xuất cấp phát hóa chất, enzyme, vật tư theo nguyên tắc FEFO (First Expired, First Out).",
+    sla_days: 1,
+    steps: [
+      { step_index: 0, title: "Kiểm tra Lô NVL trạng thái RELEASED, Hạn dùng FEFO & Chu kỳ Rã đông", dept: "Kho Nhà Máy", assignee_name: "", sla_hours: 4, deliverables: "Danh sách mã lô (Lot) xuất theo đúng thứ tự FEFO, không vượt ngưỡng Freeze-Thaw" },
+      { step_index: 1, title: "Soạn vật tư chuẩn nhiệt độ bảo quản (-20°C / 2-8°C) & Xuất Kho Nhà Máy", dept: "Kho Nhà Máy", assignee_name: "", sla_hours: 4, deliverables: "Phiếu xuất Kho Nhà Máy gắn mã Lệnh sản xuất / Đề tài R&D" },
+      { step_index: 2, title: "Ký nhận bàn giao vật tư & Đối chiếu thực tế tại Phòng Sản xuất / Lab", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 4, deliverables: "Xác nhận đủ số lượng, đúng mã Lot trên Hồ sơ lô điện tử (eBR)" }
+    ]
+  },
+  {
+    id: "RND_TECH_TRANSFER",
+    code: "RND_TECH_TRANSFER",
+    name: "Nghiên Cứu R&D ──► Sản Xuất & QA/QC: Chuyển giao Công nghệ & Hồ sơ DMR",
+    sourceDept: "Nghiên Cứu R&D",
+    targetDept: "Sản Xuất Kit",
+    icon: "FlaskConical",
+    description: "Quy trình chuyển giao thiết kế (Design Transfer - ISO 13485 Mục 7.3) từ phòng Nghiên cứu R&D sang Sản xuất và QA/QC để đưa sản phẩm mới vào sản xuất thương mại.",
+    sla_days: 7,
+    steps: [
+      { step_index: 0, title: "Đóng gói Hồ sơ DHF, Định mức BOM, Quy trình pha chế & Tiêu chuẩn QC", dept: "Nghiên Cứu R&D", assignee_name: "", sla_hours: 24, deliverables: "Bộ hồ sơ chuyển giao công nghệ (DMR dự thảo, SOP pha chế, Spec QC)" },
+      { step_index: 1, title: "Thẩm định Hồ sơ Thiết kế (DHF/DMR) & Phê duyệt Tiêu chuẩn Kiểm nghiệm", dept: "QA/QC", assignee_name: "", sla_hours: 48, deliverables: "Biên bản thẩm định QA/QC & Ban hành SOP/TCCS chính thức" },
+      { step_index: 2, title: "Sản xuất thử nghiệm Lô Pilot (3 lô thẩm định) & Nghiệm thu Chuyển giao", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 72, deliverables: "Báo cáo 3 lô Pilot đạt QC và Biên bản hoàn tất Design Transfer" }
+    ]
+  },
+  {
+    id: "LAB_TO_DEVICE_MAINT",
+    code: "LAB_TO_DEVICE_MAINT",
+    name: "Phòng Lab / SX ──► Kỹ Thuật – Thiết Bị: Yêu cầu Hiệu chuẩn & Sửa chữa Máy móc",
+    sourceDept: "QA/QC",
+    targetDept: "Kỹ Thuật – Thiết Bị",
+    icon: "Activity",
+    description: "Yêu cầu phòng Kỹ Thuật – Thiết Bị kiểm tra, bảo trì định kỳ, hiệu chuẩn (Calibration) hoặc khắc phục sự cố máy Realtime PCR, máy tổng hợp Oligo, HPLC, tủ âm sâu.",
+    sla_days: 3,
+    steps: [
+      { step_index: 0, title: "Tiếp nhận yêu cầu, Kiểm tra chẩn đoán lỗi & Tạm khóa thiết bị trên hệ thống", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 8, deliverables: "Biên bản chẩn đoán kỹ thuật và phương án sửa chữa / hiệu chuẩn" },
+      { step_index: 1, title: "Thực hiện Bảo trì / Sửa chữa / Hiệu chuẩn & Chạy mẫu chuẩn", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 24, deliverables: "Biên bản hiệu chuẩn / bảo trì kỹ thuật và thông số vận hành đạt chuẩn" },
+      { step_index: 2, title: "QA/QC nghiệm thu trạng thái thiết bị & Mở khóa đưa vào vận hành", dept: "QA/QC", assignee_name: "", sla_hours: 8, deliverables: "Tem hiệu chuẩn mới và xác nhận mở khóa thiết bị trên phần mềm" }
     ]
   }
 ];
@@ -940,17 +1255,28 @@ export const DEFAULT_CUSTOMERS_LIST: any[] = [];
 export const DEFAULT_PRODUCTS_LIST: any[] = [];
 
 export const ALL_DEPARTMENTS_OPTIONS = [
-  { value: "Kinh Doanh", label: "Kinh Doanh" },
-  { value: "Application", label: "Application (Kỹ Thuật & Ứng Dụng)" },
-  { value: "Kho & Vận Hành", label: "Kho & Vận Hành" },
-  { value: "Cung Ứng", label: "Mua Hàng & Cung Ứng" },
-  { value: "Pháp Chế", label: "Pháp Chế & Hợp Đồng Thầu" },
-  { value: "Kế Toán", label: "Kế Toán - Tài Chính" },
-  { value: "Ban Giám Đốc", label: "Ban Giám Đốc (BOD)" },
-  { value: "Kỹ Thuật", label: "Kỹ Thuật Thiết Bị" },
-  { value: "QA / QC", label: "Đảm Bảo Chất Lượng QA/QC" },
-  { value: "Marketing", label: "Tiếp Thị & Marketing" },
-  { value: "Hành Chính Nhân Sự", label: "Hành Chính Nhân Sự" }
+  // Khối Kinh Doanh & Văn Phòng
+  { value: "Kinh Doanh", label: "[KD] Kinh Doanh (Sales)" },
+  { value: "Sales Admin", label: "[KD] Sales Admin" },
+  { value: "Application", label: "[KD] Application (Kỹ Thuật & Ứng Dụng KD)" },
+  { value: "Kho & Vận Hành", label: "[KD] Kho Kinh Doanh & Vận Hành (Thương Mại)" },
+  { value: "Cung Ứng", label: "[KD] Cung Ứng Kinh Doanh (Mua Hàng Thương Mại)" },
+  { value: "PM", label: "[KD] Quản Lý Sản Phẩm (PM)" },
+  { value: "Marketing", label: "[KD] Tiếp Thị & Marketing" },
+  { value: "Pháp Chế", label: "[VP] Pháp Chế & Hợp Đồng Thầu" },
+  { value: "Kế Toán", label: "[VP] Kế Toán - Tài Chính" },
+  { value: "Hành Chính Nhân Sự", label: "[VP] Hành Chính – Nhân Sự" },
+  // Khối Kỹ Thuật – Nhà Máy
+  { value: "Đơn Nội Bộ", label: "[KT] Điều Phối Đơn Nội Bộ (KD ↔ Nhà Máy)" },
+  { value: "Nghiên Cứu R&D", label: "[KT] Nghiên Cứu & Phát Triển (R&D)" },
+  { value: "Sản Xuất Kit", label: "[KT] Sản Xuất Kit Sinh Học Phân Tử" },
+  { value: "Tổng Hợp Oligo", label: "[KT] Tổng Hợp & Tinh Sạch Oligo" },
+  { value: "Kỹ Thuật – Thiết Bị", label: "[KT] Kỹ Thuật – Công Nghệ Thiết Bị" },
+  { value: "QA/QC", label: "[KT] Đảm Bảo & Kiểm Soát Chất Lượng (QA/QC)" },
+  { value: "Kho Nhà Máy", label: "[KT] Kho Nhà Máy (Vật Tư, Hóa Chất & Thành Phẩm SX)" },
+  { value: "Cung Ứng Kỹ Thuật", label: "[KT] Cung Ứng Kỹ Thuật (Mua Sắm NVL/Hóa Chất Nhà Máy)" },
+  // Ban Giám Đốc
+  { value: "Ban Giám Đốc", label: "[BGĐ] Ban Giám Đốc (BOD)" }
 ];
 
 // Danh sách nhà cung cấp lấy từ CSDL (trang Nhà cung cấp, đơn mua). Trước đây trộn sẵn 15 tên viết cứng
@@ -3143,7 +3469,7 @@ export const UnifiedWorkspace: React.FC = () => {
     const targetDept = String(w?.target_dept || "").toLowerCase();
     const summary = String(w?.results_summary || "").toLowerCase();
 
-    // 1. Đề xuất mua hàng / Cung ứng (PR / PO)
+    // 1. Đề xuất mua hàng / Cung ứng (Phân biệt rõ Cung Ứng Kỹ Thuật Nhà Máy vs Cung Ứng Kinh Doanh)
     if (
       code.startsWith("PR") ||
       code.startsWith("PO") ||
@@ -3154,11 +3480,21 @@ export const UnifiedWorkspace: React.FC = () => {
       targetDept.includes("cung ứng") ||
       reqDept.includes("cung ứng")
     ) {
+      const isTechProcurement =
+        targetDept.includes("cung ứng kỹ thuật") ||
+        reqDept.includes("cung ứng kỹ thuật") ||
+        targetDept.includes("kho nhà máy") ||
+        reqDept.includes("kho nhà máy") ||
+        title.includes("cung ứng kỹ thuật") ||
+        title.includes("pr nhà máy") ||
+        title.includes("po kỹ thuật") ||
+        title.includes("nvl") ||
+        String(w?.workflow_type || "").toUpperCase() === "FACTORY_TO_TECH_PROCUREMENT";
       return {
         key: "PROCUREMENT",
-        label: "Đề Xuất Mua Hàng & Cung Ứng",
-        shortLabel: "Mua hàng (PR/PO)",
-        icon: "🛒",
+        label: isTechProcurement ? "Cung Ứng Kỹ Thuật (PR/PO Nhà Máy)" : "Cung Ứng Kinh Doanh (PR/PO Thương Mại)",
+        shortLabel: isTechProcurement ? "Cung ứng KT (NVL)" : "Cung ứng KD (PR/PO)",
+        icon: isTechProcurement ? "🧪" : "🛒",
         cardBorder: "border-emerald-300 dark:border-emerald-800/80 border-l-[6px] border-l-emerald-500",
         headerBg: "bg-gradient-to-r from-emerald-500/15 via-teal-500/5 to-transparent dark:from-emerald-950/60 dark:via-slate-900/80 dark:to-slate-900",
         badgeCls: "bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700",
@@ -3190,20 +3526,27 @@ export const UnifiedWorkspace: React.FC = () => {
       };
     }
 
-    // 3. Kho vận & Kiểm kê / Giao nhận
+    // 3. Kho vận & Kiểm kê / Giao nhận (Phân biệt rõ Kho Nhà Máy FEFO vs Kho Kinh Doanh)
     if (
       title.includes("kho") ||
       title.includes("kiểm kê") ||
       title.includes("giao hàng") ||
       title.includes("vận chuyển") ||
-      title.includes("điều拨") ||
-      (reqDept.includes("kho") && targetDept.includes("kho"))
+      title.includes("fefo") ||
+      targetDept.includes("kho") ||
+      reqDept.includes("kho")
     ) {
+      const isFactoryWh =
+        targetDept.includes("kho nhà máy") ||
+        reqDept.includes("kho nhà máy") ||
+        title.includes("kho nhà máy") ||
+        title.includes("fefo") ||
+        String(w?.workflow_type || "").toUpperCase() === "FACTORY_WH_FEFO_ISSUE";
       return {
         key: "WAREHOUSE",
-        label: "Kho Vận & Kiểm Kê Hàng Hóa",
-        shortLabel: "Kho vận & Kiểm kê",
-        icon: "📦",
+        label: isFactoryWh ? "Kho Nhà Máy (Cấp Phát FEFO & Biệt Trữ)" : "Kho Kinh Doanh & Vận Hành (Thương Mại)",
+        shortLabel: isFactoryWh ? "Kho Nhà Máy (FEFO)" : "Kho Kinh Doanh",
+        icon: isFactoryWh ? "🏭" : "📦",
         cardBorder: "border-cyan-300 dark:border-cyan-800/80 border-l-[6px] border-l-cyan-500",
         headerBg: "bg-gradient-to-r from-cyan-500/15 via-sky-500/5 to-transparent dark:from-cyan-950/60 dark:via-slate-900/80 dark:to-slate-900",
         badgeCls: "bg-cyan-100 text-cyan-800 border-cyan-300 dark:bg-cyan-950/80 dark:text-cyan-300 dark:border-cyan-700",
@@ -3213,8 +3556,26 @@ export const UnifiedWorkspace: React.FC = () => {
       };
     }
 
-    // 4. Kỹ thuật & Ứng dụng Lab (Application)
+    // 4. Khối Kỹ thuật – R&D, Sản xuất, Thiết bị, QA/QC & Application Lab
+    const isFactoryTech =
+      targetDept.includes("r&d") ||
+      reqDept.includes("r&d") ||
+      targetDept.includes("sản xuất kit") ||
+      reqDept.includes("sản xuất kit") ||
+      targetDept.includes("oligo") ||
+      reqDept.includes("oligo") ||
+      targetDept.includes("thiết bị") ||
+      reqDept.includes("thiết bị") ||
+      targetDept.includes("qa/qc") ||
+      reqDept.includes("qa/qc") ||
+      targetDept.includes("đơn nội bộ") ||
+      reqDept.includes("đơn nội bộ") ||
+      title.includes("r&d") ||
+      title.includes("chuyển giao công nghệ") ||
+      title.includes("đơn nội bộ") ||
+      title.includes("hiệu chuẩn");
     if (
+      isFactoryTech ||
       title.includes("lab") ||
       title.includes("demo") ||
       title.includes("chạy mẫu") ||
@@ -3225,9 +3586,9 @@ export const UnifiedWorkspace: React.FC = () => {
     ) {
       return {
         key: "LAB",
-        label: "Kỹ Thuật & Ứng Dụng Lab",
-        shortLabel: "Kỹ thuật & Lab",
-        icon: "🔬",
+        label: isFactoryTech ? "Khối Kỹ Thuật – R&D, Sản Xuất & QA/QC" : "Kỹ Thuật Ứng Dụng (Application KD)",
+        shortLabel: isFactoryTech ? "R&D / SX / QA-QC" : "Application Lab",
+        icon: isFactoryTech ? "🧬" : "🔬",
         cardBorder: "border-purple-300 dark:border-purple-800/80 border-l-[6px] border-l-purple-500",
         headerBg: "bg-gradient-to-r from-purple-500/15 via-fuchsia-500/5 to-transparent dark:from-purple-950/60 dark:via-slate-900/80 dark:to-slate-900",
         badgeCls: "bg-purple-100 text-purple-800 border-purple-300 dark:bg-purple-950/80 dark:text-purple-300 dark:border-purple-700",
@@ -3772,17 +4133,36 @@ export const UnifiedWorkspace: React.FC = () => {
       }
     }
 
-    // Department Breakdown Scorecard (4 core depts + Khối Hành Chính / Khác nếu có task để tổng số việc luôn khớp 100% với 26/26 việc)
-    const coreDepts = ["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng"];
+    // Department Breakdown Scorecard toàn công ty (Khối Kinh Doanh + Khối Kỹ Thuật – Nhà Máy + Khối Hành Chính/Văn Phòng)
+    const coreDepts = [
+      "Kinh Doanh",
+      "Application",
+      "Kho & Vận Hành",
+      "Cung Ứng",
+      "Nghiên Cứu R&D",
+      "Sản Xuất Kit",
+      "Tổng Hợp Oligo",
+      "Kỹ Thuật – Thiết Bị",
+      "QA/QC",
+      "Kho Nhà Máy",
+      "Cung Ứng Kỹ Thuật",
+      "Đơn Nội Bộ"
+    ];
     const isCoreDept = (deptName: string) => coreDepts.some(c => isSameWorkspaceDept(deptName, c));
+    const activeCoreDepts = coreDepts.filter(c =>
+      ["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng", "Nghiên Cứu R&D", "Sản Xuất Kit", "QA/QC", "Kho Nhà Máy", "Cung Ứng Kỹ Thuật"].includes(c) ||
+      scopeTasks.some(t => isSameWorkspaceDept(t.department, c)) ||
+      scopeWorkflows.some(w => isSameWorkspaceDept(w.target_dept, c) || isSameWorkspaceDept(w.requester_dept, c)) ||
+      scopePersonnel.some(p => isSameWorkspaceDept(p.department, c))
+    );
     const otherTasksCheck = scopeTasks.filter(t => !isCoreDept(t.department));
     const otherStaffCheck = scopePersonnel.filter(p => !isCoreDept(p.department));
     const departments = (otherTasksCheck.length > 0 || otherStaffCheck.length > 0)
-      ? [...coreDepts, "Khối Hành Chính & Khác"]
-      : coreDepts;
+      ? [...activeCoreDepts, "Khối Hành Chính & Văn Phòng"]
+      : activeCoreDepts;
 
     const deptScorecards = departments.map(dName => {
-      const isOtherGroup = dName === "Khối Hành Chính & Khác";
+      const isOtherGroup = dName === "Khối Hành Chính & Văn Phòng";
       const matchDeptFn = (deptVal: string) => isOtherGroup ? !isCoreDept(deptVal) : isSameWorkspaceDept(deptVal, dName);
 
       const dTasks = scopeTasks.filter(t => matchDeptFn(t.department));
@@ -7569,25 +7949,34 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 onChange={(e) => setSelectedDept(e.target.value)}
                 className="appearance-none pl-8 pr-8 py-1.5 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-white border border-transparent hover:border-slate-300 dark:hover:border-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 cursor-pointer transition-all"
               >
-                {DEPARTMENTS.map((d) => (
-                  <option key={d.id} value={d.id} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-1">
-                    {d.id === "all"
-                      ? "🏢 Toàn công ty"
-                      : d.id === "Kinh Doanh"
-                      ? "💼 Kinh Doanh"
-                      : d.id === "Application"
-                      ? "🔬 Application (Kỹ Thuật & Ứng Dụng)"
-                      : d.id === "Kho & Vận Hành"
-                      ? "📦 Kho & Vận Hành"
-                      : d.id === "Cung Ứng"
-                      ? "🛒 Mua Hàng & Cung Ứng"
-                      : d.id === "Pháp Chế"
-                      ? "⚖️ Pháp Chế & Tuân Thủ"
-                      : d.id === "Kế Toán"
-                      ? "💰 Kế Toán - Tài Chính"
-                      : "🏛️ Ban Giám Đốc"}
-                  </option>
-                ))}
+                <option value="all" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white py-1">
+                  🏢 Toàn công ty (Tất cả các Khối)
+                </option>
+                <optgroup label="🏢 Khối Kinh Doanh & Văn Phòng" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                  <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
+                  <option value="Sales Admin">📋 Sales Admin</option>
+                  <option value="Application">🔬 Application (Kỹ Thuật & Ứng Dụng KD)</option>
+                  <option value="Kho & Vận Hành">📦 Kho Kinh Doanh & Vận Hành (Thương Mại)</option>
+                  <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh (Mua Hàng TM & XNK)</option>
+                  <option value="PM">🎯 Quản Lý Sản Phẩm (PM)</option>
+                  <option value="Marketing">📢 Marketing & Tiếp Thị</option>
+                  <option value="Kế Toán">💰 Kế Toán - Tài Chính</option>
+                  <option value="Pháp Chế">⚖️ Pháp Chế & Tuân Thủ</option>
+                  <option value="Hành Chính Nhân Sự">👥 Hành Chính – Nhân Sự (HR)</option>
+                </optgroup>
+                <optgroup label="🏭 Khối Kỹ Thuật – Nhà Máy" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                  <option value="Đơn Nội Bộ">📑 Điều Phối Đơn Nội Bộ (KD ↔ Nhà Máy)</option>
+                  <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu & Phát Triển (R&D)</option>
+                  <option value="Sản Xuất Kit">🧪 Sản Xuất Kit Sinh Học Phân Tử</option>
+                  <option value="Tổng Hợp Oligo">🧬 Tổng Hợp & Tinh Sạch Oligo</option>
+                  <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Công Nghệ Thiết Bị</option>
+                  <option value="QA/QC">🛡️ Đảm Bảo & Kiểm Soát Chất Lượng (QA/QC)</option>
+                  <option value="Kho Nhà Máy">🏭 Kho Nhà Máy (Vật Tư, Hóa Chất & Thành Phẩm SX)</option>
+                  <option value="Cung Ứng Kỹ Thuật">🧪 Cung Ứng Kỹ Thuật (Mua Sắm NVL/Hóa Chất Nhà Máy)</option>
+                </optgroup>
+                <optgroup label="🏛️ Ban Lãnh Đạo" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-white">
+                  <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc (BOD)</option>
+                </optgroup>
               </select>
               <Filter className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500" />
               <ChevronDown className="w-3.5 h-3.5 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" />
@@ -12022,15 +12411,33 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                 }}
                 className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-white font-semibold"
               >
-                <option value="Kinh Doanh">Kinh Doanh</option>
-                <option value="Application">Application (Lab)</option>
-                <option value="Kho & Vận Hành">Kho &amp; Vận Hành</option>
-                <option value="Cung Ứng">Cung Ứng</option>
-                <option value="Kế Toán">Kế Toán - Tài Chính</option>
-                <option value="Pháp Chế">Pháp Chế &amp; Tuân Thủ</option>
-                <option value="Ban Giám Đốc">Ban Giám Đốc</option>
+                <optgroup label="🏢 Khối Kinh Doanh & Văn Phòng">
+                  <option value="Kinh Doanh">Kinh Doanh (Sales)</option>
+                  <option value="Sales Admin">Sales Admin</option>
+                  <option value="Application">Application (Lab Ứng Dụng KD)</option>
+                  <option value="Kho & Vận Hành">Kho Kinh Doanh &amp; Vận Hành (Thương Mại)</option>
+                  <option value="Cung Ứng">Cung Ứng Kinh Doanh (Mua Hàng Thương Mại)</option>
+                  <option value="PM">Quản Lý Sản Phẩm (PM)</option>
+                  <option value="Marketing">Marketing &amp; Tiếp Thị</option>
+                  <option value="Kế Toán">Kế Toán - Tài Chính</option>
+                  <option value="Pháp Chế">Pháp Chế &amp; Tuân Thủ</option>
+                  <option value="Hành Chính Nhân Sự">Hành Chính – Nhân Sự (HR)</option>
+                </optgroup>
+                <optgroup label="🏭 Khối Kỹ Thuật – Nhà Máy">
+                  <option value="Đơn Nội Bộ">Điều Phối Đơn Nội Bộ (KD ↔ Nhà Máy)</option>
+                  <option value="Nghiên Cứu R&D">Nghiên Cứu &amp; Phát Triển (R&amp;D)</option>
+                  <option value="Sản Xuất Kit">Sản Xuất Kit Sinh Học Phân Tử</option>
+                  <option value="Tổng Hợp Oligo">Tổng Hợp &amp; Tinh Sạch Oligo</option>
+                  <option value="Kỹ Thuật – Thiết Bị">Kỹ Thuật – Công Nghệ Thiết Bị</option>
+                  <option value="QA/QC">Đảm Bảo &amp; Kiểm Soát Chất Lượng (QA/QC)</option>
+                  <option value="Kho Nhà Máy">Kho Nhà Máy (Vật Tư, Hóa Chất &amp; Thành Phẩm SX)</option>
+                  <option value="Cung Ứng Kỹ Thuật">Cung Ứng Kỹ Thuật (Mua Sắm NVL/Hóa Chất Nhà Máy)</option>
+                </optgroup>
+                <optgroup label="🏛️ Ban Lãnh Đạo">
+                  <option value="Ban Giám Đốc">Ban Giám Đốc (BOD)</option>
+                </optgroup>
                 {taskForm.department &&
-                  !["Kinh Doanh", "Application", "Kho & Vận Hành", "Cung Ứng", "Kế Toán", "Pháp Chế", "Ban Giám Đốc"].includes(taskForm.department) && (
+                  !DEPARTMENTS.some((d) => d.id === taskForm.department) && (
                     <option value={taskForm.department}>{taskForm.department}</option>
                   )}
               </select>
@@ -14681,7 +15088,23 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
               : scheduleForm.title;
             const firstWithLoc = selectedObjs.find(o => o.location);
             const firstDept = selectedObjs[0]?.dept;
-            const validCategories = ["Application", "Kinh Doanh", "Kho & Vận Hành", "Cung Ứng", "Họp & Giao Ban"];
+            const validCategories = [
+              "Application",
+              "Kinh Doanh",
+              "Kho & Vận Hành",
+              "Cung Ứng",
+              "Kế Toán",
+              "Pháp Chế",
+              "Nghiên Cứu R&D",
+              "Sản Xuất Kit",
+              "Tổng Hợp Oligo",
+              "Kỹ Thuật – Thiết Bị",
+              "QA/QC",
+              "Kho Nhà Máy",
+              "Cung Ứng Kỹ Thuật",
+              "Đơn Nội Bộ",
+              "Họp & Giao Ban"
+            ];
             const matchedCat = firstDept && validCategories.includes(firstDept) ? firstDept : scheduleForm.category;
 
             setScheduleForm({
@@ -14863,11 +15286,25 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                       onChange={(e) => setScheduleForm({ ...scheduleForm, category: e.target.value })}
                       className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 text-slate-900 dark:text-white font-bold"
                     >
-                      <option value="Họp & Giao Ban">🎥 Họp &amp; Giao Ban: Họp nội bộ / Họp liên phòng / Họp Ban Giám Đốc</option>
-                      <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Trực Lab</option>
-                      <option value="Kinh Doanh">💼 Kinh Doanh: Đàm phán KH / Chăm sóc bệnh viện / Triển khai thầu</option>
-                      <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành: Soạn xuất hàng lớn / Nhập kho container / Kiểm kê</option>
-                      <option value="Cung Ứng">🛒 Cung Ứng: Làm việc NCC / Thủ tục hải quan</option>
+                      <option value="Họp & Giao Ban">🎥 Họp &amp; Giao Ban: Họp nội bộ / Họp liên khối / Họp Ban Giám Đốc</option>
+                      <optgroup label="🏢 Khối Kinh Doanh & Văn Phòng">
+                        <option value="Kinh Doanh">💼 Kinh Doanh: Đàm phán KH / Chăm sóc bệnh viện / Triển khai thầu</option>
+                        <option value="Application">🔬 Application: Demo máy / Thử mẫu ngoại viện / Hỗ trợ KH</option>
+                        <option value="Kho & Vận Hành">📦 Kho Kinh Doanh &amp; Vận Hành: Soạn xuất đơn SO / Nhập hàng thương mại / Kiểm kê</option>
+                        <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh: Làm việc NCC thương mại / Thủ tục hải quan</option>
+                        <option value="Kế Toán">💰 Kế Toán - Tài Chính: Đối soát công nợ / Thanh toán / Báo cáo</option>
+                        <option value="Pháp Chế">⚖️ Pháp Chế &amp; Tuân Thủ: Thẩm định hợp đồng / Hồ sơ pháp lý</option>
+                      </optgroup>
+                      <optgroup label="🏭 Khối Kỹ Thuật – Nhà Máy">
+                        <option value="Đơn Nội Bộ">📑 Điều Phối Đơn Nội Bộ: Lịch sản xuất &amp; Bàn giao KD ↔ Nhà máy</option>
+                        <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu R&amp;D: Thực nghiệm Lab / Đánh giá LOD / Chuyển giao công nghệ</option>
+                        <option value="Sản Xuất Kit">🧪 Sản Xuất Kit: Pha chế MasterMix / Chia liều &amp; Đóng gói lô Kit</option>
+                        <option value="Tổng Hợp Oligo">🧬 Tổng Hợp Oligo: Chạy mẻ máy tổng hợp / Tinh sạch HPLC-PAGE / Đông khô</option>
+                        <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Thiết Bị: Lắp ráp máy / Hiệu chuẩn &amp; Bảo trì thiết bị Lab</option>
+                        <option value="QA/QC">🛡️ QA/QC Nhà Máy: Kiểm nghiệm IQC-IPQC-FQC / Thẩm định lô &amp; Cấp COA</option>
+                        <option value="Kho Nhà Máy">🏭 Kho Nhà Máy: Cấp phát NVL theo FEFO / Tiếp nhận Biệt trữ / Kiểm kê</option>
+                        <option value="Cung Ứng Kỹ Thuật">🧪 Cung Ứng Kỹ Thuật: Mua sắm NVL, Hóa chất, Cột tổng hợp &amp; Linh kiện</option>
+                      </optgroup>
                     </select>
                   </div>
                 </div>
@@ -15677,14 +16114,32 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                   onChange={(e) => handleThematicDeptChange(e.target.value)}
                   className="w-full px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold cursor-pointer"
                 >
-                  <option value="Liên Phòng Ban">🚀 Dự Án Liên Phòng Ban (Nhiều bộ phận phối hợp)</option>
-                  <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
-                  <option value="Application">🔬 Application (Kỹ thuật &amp; Lab)</option>
-                  <option value="Cung Ứng">🛒 Cung Ứng (Procurement)</option>
-                  <option value="Kho & Vận Hành">📦 Kho &amp; Vận Hành</option>
-                  <option value="Pháp Chế">⚖️ Pháp Chế (Legal)</option>
-                  <option value="Kế Toán">💰 Kế Toán - Tài Chính</option>
-                  <option value="Ban Giám Đốc">🏆 Ban Giám Đốc</option>
+                  <option value="Liên Phòng Ban">🚀 Dự Án Liên Phòng Ban / Liên Khối Toàn Công Ty</option>
+                  <optgroup label="🏢 Khối Kinh Doanh & Văn Phòng">
+                    <option value="Kinh Doanh">💼 Kinh Doanh (Sales)</option>
+                    <option value="Sales Admin">📋 Sales Admin</option>
+                    <option value="Application">🔬 Application (Kỹ thuật &amp; Lab KD)</option>
+                    <option value="Kho & Vận Hành">📦 Kho Kinh Doanh &amp; Vận Hành (Thương Mại)</option>
+                    <option value="Cung Ứng">🛒 Cung Ứng Kinh Doanh (Mua Hàng TM)</option>
+                    <option value="PM">🎯 Quản Lý Sản Phẩm (PM)</option>
+                    <option value="Marketing">📢 Marketing &amp; Tiếp Thị</option>
+                    <option value="Pháp Chế">⚖️ Pháp Chế &amp; Tuân Thủ</option>
+                    <option value="Kế Toán">💰 Kế Toán - Tài Chính</option>
+                    <option value="Hành Chính Nhân Sự">👥 Hành Chính – Nhân Sự</option>
+                  </optgroup>
+                  <optgroup label="🏭 Khối Kỹ Thuật – Nhà Máy">
+                    <option value="Đơn Nội Bộ">📑 Điều Phối Đơn Nội Bộ (KD ↔ Nhà Máy)</option>
+                    <option value="Nghiên Cứu R&D">🧬 Nghiên Cứu &amp; Phát Triển (R&amp;D)</option>
+                    <option value="Sản Xuất Kit">🧪 Sản Xuất Kit Sinh Học Phân Tử</option>
+                    <option value="Tổng Hợp Oligo">🧬 Tổng Hợp &amp; Tinh Sạch Oligo</option>
+                    <option value="Kỹ Thuật – Thiết Bị">⚙️ Kỹ Thuật – Công Nghệ Thiết Bị</option>
+                    <option value="QA/QC">🛡️ Đảm Bảo &amp; Kiểm Soát Chất Lượng (QA/QC)</option>
+                    <option value="Kho Nhà Máy">🏭 Kho Nhà Máy (Vật Tư, Hóa Chất &amp; Thành Phẩm SX)</option>
+                    <option value="Cung Ứng Kỹ Thuật">🧪 Cung Ứng Kỹ Thuật (Mua Sắm NVL/Hóa Chất Nhà Máy)</option>
+                  </optgroup>
+                  <optgroup label="🏛️ Ban Lãnh Đạo">
+                    <option value="Ban Giám Đốc">🏛️ Ban Giám Đốc</option>
+                  </optgroup>
                 </select>
               </div>
 
@@ -16192,7 +16647,7 @@ Giai đoạn ${idx + 1} (${stageDept}): ${stg.name}`,
                               className="px-1.5 py-1 rounded border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-[10px] font-bold cursor-pointer"
                             >
                               {DEPARTMENTS.filter((d) => d.id !== "all").map((d) => (
-                                <option key={d.id} value={d.id}>🏢 {d.id}</option>
+                                <option key={d.id} value={d.id}>🏢 {d.name}</option>
                               ))}
                             </select>
 

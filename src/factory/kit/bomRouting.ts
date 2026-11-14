@@ -107,10 +107,16 @@ export const bomMachine = defineMachine<SpecDocStatus, KitBomRow>({
       signature: "APPROVED",
       guards: [notAuthorGuard("định mức BOM")],
       beforeUpdate: async ({ tx, actor, row }) => {
+        const varCode = String((row as any).variant_code || "BASE").trim().toUpperCase();
         const prevRows = (
           await tx.query(
-            "SELECT * FROM kit.bom WHERE product_item_id = $1 AND status = 'EFFECTIVE' AND id <> $2 FOR UPDATE",
-            [row.product_item_id, row.id]
+            `SELECT * FROM kit.bom
+              WHERE product_item_id = $1
+                AND upper(coalesce(nullif(trim(variant_code), ''), 'BASE')) = $2
+                AND status = 'EFFECTIVE'
+                AND id <> $3
+              FOR UPDATE`,
+            [row.product_item_id, varCode, row.id]
           )
         ).rows as KitBomRow[];
         for (const p of prevRows) {
@@ -122,7 +128,7 @@ export const bomMachine = defineMachine<SpecDocStatus, KitBomRow>({
               id: p.id,
               action: "supersede",
               expectedVersion: p.version,
-              reason: `Thay thế bởi BOM ${row.code} (v${row.bom_version})`,
+              reason: `Thay thế bởi BOM ${row.code} (v${row.bom_version} · Mã phụ ${varCode})`,
             },
             { trusted: true }
           );
@@ -242,6 +248,8 @@ const createBomSchema = z.object({
   clone_from_bom_id: z.string().uuid().optional().nullable(),
   bom_type: z.enum(["finished_good", "semi_finished"]).optional(),
   bom_category: z.string().trim().max(80).optional().nullable(),
+  variant_code: z.string().trim().max(40).optional().nullable(),
+  supply_form: z.enum(["NO_SPLIT_NO_IC", "NO_SPLIT_WITH_IC", "SPLIT_NO_IC", "SPLIT_WITH_IC"]).optional().nullable(),
   parent_item_code: z.string().trim().max(80).optional().nullable(),
   tccs_code: z.string().trim().max(120).optional().nullable(),
   tccs_file_name: z.string().trim().max(250).optional().nullable(),
@@ -341,7 +349,9 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
             ifu_file_size = $20,
             ifu_aliquoted_file_name = $21,
             ifu_aliquoted_file_url = $22,
-            ifu_aliquoted_file_size = $23
+            ifu_aliquoted_file_size = $23,
+            variant_code = $24,
+            supply_form = $25
       WHERE id = $1`,
     [
       bom.id,
@@ -367,6 +377,8 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
       d.ifu_aliquoted_file_name?.trim() || null,
       d.ifu_aliquoted_file_url || null,
       d.ifu_aliquoted_file_size?.trim() || null,
+      d.variant_code?.trim().toUpperCase() || "BASE",
+      d.supply_form || "NO_SPLIT_NO_IC",
     ]
   );
 
@@ -431,8 +443,10 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
               ph_min = $19,
               ph_max = $20,
               notes = $21,
+              variant_code = $22,
+              supply_form = $23,
               updated_at = now(),
-              updated_by = $22
+              updated_by = $24
         WHERE id = $1
         RETURNING *`,
       [
@@ -457,6 +471,8 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
         input.ph_min !== undefined && input.ph_min !== null && input.ph_min !== "" ? Number(input.ph_min) : null,
         input.ph_max !== undefined && input.ph_max !== null && input.ph_max !== "" ? Number(input.ph_max) : null,
         input.notes !== undefined ? (input.notes ? String(input.notes).trim() : null) : bom.notes,
+        input.variant_code !== undefined ? (String(input.variant_code).trim().toUpperCase() || "BASE") : String(bom.variant_code || "BASE"),
+        input.supply_form !== undefined ? String(input.supply_form || "NO_SPLIT_NO_IC") : String(bom.supply_form || "NO_SPLIT_NO_IC"),
         actor.userId,
       ]
     )
@@ -487,9 +503,11 @@ const bomLineItemSchema = z.object({
       "MASTER_MIX",
       "PRIMER_PROBE",
       "ENZYME",
+      "INTERNAL_CONTROL",
       "POSITIVE_CONTROL",
       "NEGATIVE_CONTROL",
       "EXTRACTION_BUFFER",
+      "PCR_TUBE_STRIP",
       "PACKAGING",
       "SEMI_FINISHED",
       "REAGENT",
@@ -989,34 +1007,6 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
   return { added };
 }
 
-const createRoutingSchema = z.object({
-  org_unit_id: z.string().uuid("chọn phòng Sản xuất Kit"),
-  product_item_id: z.string().uuid("chọn sản phẩm Kit / Bán thành phẩm"),
-  name: z.string().trim().min(3, "nhập tên quy trình công đoạn (Routing)").max(250),
-  notes: z.string().trim().max(2000).optional().nullable(),
-});
-
-export async function createRouting(tx: Tx, actor: AuthzActor, input: unknown) {
-  const d = parseInput(createRoutingSchema, input);
-  await authorize(tx, actor, "kit.bom.manage", d.org_unit_id);
-  const nextVer = Number(
-    (
-      await tx.query("SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id = $1", [
-        d.product_item_id,
-      ])
-    ).rows[0].v
-  );
-  const code = await nextNumber(tx, "KIT_ROUTING");
-  return insertRecord<KitRoutingRow>(tx, actor, "kit.routing", "kit_routing", {
-    code,
-    org_unit_id: d.org_unit_id,
-    product_item_id: d.product_item_id,
-    routing_version: nextVer,
-    name: d.name,
-    notes: d.notes ?? null,
-  });
-}
-
 const paramFieldSchema = z.object({
   key: z.string().trim().min(1),
   label: z.string().trim().min(1),
@@ -1029,14 +1019,43 @@ const paramFieldSchema = z.object({
 
 export type RoutingStepParamDef = z.infer<typeof paramFieldSchema>;
 
-const routingStepSchema = z.object({
-  routing_id: z.string().uuid("chọn quy trình Routing"),
+export const STEP_FUNCTION_ENUM = [
+  "LINE_CLEARANCE",
+  "MATERIAL_VERIFY_FEFO",
+  "FORMULATION_MIXING",
+  "IPQC_PH_GATE",
+  "DISPENSING_ALIQUOT",
+  "LYOPHILIZATION",
+  "LABELING_IFU_PACKAGING",
+  "FQC_RELEASE_HANDOVER",
+] as const;
+
+export type RoutingStepFunction = (typeof STEP_FUNCTION_ENUM)[number];
+
+const functionalFlagsSchema = z
+  .object({
+    qc_gate: z.boolean().optional(),
+    dual_sign: z.boolean().optional(),
+    require_line_clearance: z.boolean().optional(),
+    require_material_scan: z.boolean().optional(),
+    require_env_log: z.boolean().optional(),
+    require_yield_reconcile: z.boolean().optional(),
+    require_label_ifu_check: z.boolean().optional(),
+    expected_output: z.string().trim().max(300).optional().nullable(),
+  })
+  .passthrough()
+  .default({});
+
+const routingStepItemSchema = z.object({
   seq: z.coerce.number().int().positive().optional(),
   step_code: z.string().trim().min(2).max(40),
   step_name: z.string().trim().min(2, "nhập tên bước công đoạn").max(250),
   category: z
     .enum(["PREPARATION", "FORMULATION", "FILLING", "LYOPHILIZATION", "QC", "PACKAGING", "LABELING"])
     .default("FORMULATION"),
+  step_function: z.string().trim().max(60).optional().nullable(),
+  work_center: z.string().trim().max(160).optional().nullable(),
+  functional_flags: functionalFlagsSchema.optional(),
   instructions: z.string().trim().min(3, "nhập hướng dẫn thao tác công đoạn").max(4000),
   sop_doc_code: z.string().trim().max(80).optional().nullable(),
   required_training_doc_code: z.string().trim().max(80).optional().nullable(),
@@ -1049,7 +1068,71 @@ const routingStepSchema = z.object({
   std_duration_min: z.coerce.number().int().positive().default(30),
 });
 
+const routingStepSchema = routingStepItemSchema.extend({
+  routing_id: z.string().uuid("chọn quy trình Routing"),
+});
+
+const createRoutingSchema = z.object({
+  org_unit_id: z.string().uuid("chọn phòng Sản xuất Kit"),
+  product_item_id: z.string().uuid("chọn sản phẩm Kit / Bán thành phẩm"),
+  name: z.string().trim().min(3, "nhập tên quy trình công đoạn (Routing)").max(250),
+  notes: z.string().trim().max(2000).optional().nullable(),
+  template_key: z.string().trim().max(60).optional().nullable(),
+  steps: z.array(routingStepItemSchema).max(100).optional(),
+});
+
+export function inferCategoryFromFunction(stepFn: string | null | undefined, fallback = "FORMULATION"): string {
+  switch (stepFn) {
+    case "LINE_CLEARANCE":
+    case "MATERIAL_VERIFY_FEFO":
+      return "PREPARATION";
+    case "FORMULATION_MIXING":
+      return "FORMULATION";
+    case "IPQC_PH_GATE":
+    case "FQC_RELEASE_HANDOVER":
+      return "QC";
+    case "DISPENSING_ALIQUOT":
+      return "FILLING";
+    case "LYOPHILIZATION":
+      return "LYOPHILIZATION";
+    case "LABELING_IFU_PACKAGING":
+      return "PACKAGING";
+    default:
+      return fallback;
+  }
+}
+
+export async function createRouting(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  const d = parseInput(createRoutingSchema, input);
+  await authorize(tx, actor, "kit.bom.manage", d.org_unit_id);
+  const nextVer = Number(
+    (
+      await tx.query("SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id = $1", [
+        d.product_item_id,
+      ])
+    ).rows[0].v
+  );
+  const code = await nextNumber(tx, "KIT_ROUTING");
+  const created = await insertRecord<KitRoutingRow>(tx, actor, "kit.routing", "kit_routing", {
+    code,
+    org_unit_id: d.org_unit_id,
+    product_item_id: d.product_item_id,
+    routing_version: nextVer,
+    name: d.name,
+    notes: d.notes ?? null,
+  });
+
+  if (d.steps && d.steps.length > 0) {
+    await replaceAllRoutingSteps(tx, actor, created.id, d.steps);
+  } else if (d.template_key) {
+    await loadStandardKitRoutingSteps(tx, actor, created.id, d.template_key);
+  }
+  return created;
+}
+
 export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
   const d = parseInput(routingStepSchema, input);
   const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [d.routing_id])).rows[0] as
     | KitRoutingRow
@@ -1061,31 +1144,53 @@ export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) 
   const seq =
     d.seq ??
     Number(
-      (await tx.query("SELECT coalesce(max(seq), 0) + 1 AS s FROM kit.routing_step WHERE routing_id = $1", [d.routing_id])).rows[0].s
+      (await tx.query("SELECT coalesce(max(seq), 0) + 10 AS s FROM kit.routing_step WHERE routing_id = $1", [d.routing_id])).rows[0].s
     );
   const dup = await tx.query("SELECT 1 FROM kit.routing_step WHERE routing_id = $1 AND seq = $2", [d.routing_id, seq]);
-  if (dup.rowCount) throw conflict(`Bước thứ tự #${seq} đã tồn tại trong quy trình này.`, "DUPLICATE_STEP_SEQ");
+  if (dup.rowCount) {
+    // Auto-shift subsequent steps by +10 so users can easily insert a step between existing steps
+    await tx.query("UPDATE kit.routing_step SET seq = seq + 10 WHERE routing_id = $1 AND seq >= $2", [d.routing_id, seq]);
+  }
+
+  const stepFn = d.step_function?.trim() || "FORMULATION_MIXING";
+  const category = d.category || (inferCategoryFromFunction(stepFn) as any);
+  const isQc = Boolean(d.is_qc || d.functional_flags?.qc_gate || stepFn === "IPQC_PH_GATE");
+  const dualSign = Boolean(d.requires_check_signature || d.functional_flags?.dual_sign);
+  const flags = {
+    qc_gate: isQc,
+    dual_sign: dualSign,
+    require_line_clearance: Boolean(d.functional_flags?.require_line_clearance ?? stepFn === "LINE_CLEARANCE"),
+    require_material_scan: Boolean(d.functional_flags?.require_material_scan ?? stepFn === "MATERIAL_VERIFY_FEFO"),
+    require_env_log: Boolean(d.functional_flags?.require_env_log ?? ["LINE_CLEARANCE", "FORMULATION_MIXING", "LYOPHILIZATION"].includes(stepFn)),
+    require_yield_reconcile: Boolean(d.functional_flags?.require_yield_reconcile ?? ["DISPENSING_ALIQUOT", "FQC_RELEASE_HANDOVER"].includes(stepFn)),
+    require_label_ifu_check: Boolean(d.functional_flags?.require_label_ifu_check ?? stepFn === "LABELING_IFU_PACKAGING"),
+    expected_output: d.functional_flags?.expected_output ?? null,
+  };
 
   const row = (
     await tx.query(
       `INSERT INTO kit.routing_step
-         (routing_id, seq, step_code, step_name, category, instructions, sop_doc_code, required_training_doc_code,
+         (routing_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
+          instructions, sop_doc_code, required_training_doc_code,
           required_asset_id, param_schema, is_qc, qc_spec_id, requires_check_signature, allow_skip, std_duration_min)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11, $12, $13::jsonb, $14, $15, $16, $17, $18) RETURNING *`,
       [
         d.routing_id,
         seq,
         d.step_code,
         d.step_name,
-        d.category,
+        category,
+        stepFn,
+        d.work_center?.trim() || "Phòng sạch Class 10.000 (ISO 7)",
+        JSON.stringify(flags),
         d.instructions,
         d.sop_doc_code ?? null,
         d.required_training_doc_code ?? null,
-        d.required_asset_id ?? null,
+        d.required_asset_id || null,
         JSON.stringify(d.param_schema),
-        d.is_qc,
-        d.qc_spec_id ?? null,
-        d.requires_check_signature,
+        isQc,
+        d.qc_spec_id || null,
+        dualSign,
         d.allow_skip,
         d.std_duration_min,
       ]
@@ -1095,9 +1200,198 @@ export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) 
     entityType: "kit_routing",
     entityId: d.routing_id,
     action: "add_routing_step",
-    changes: { step: [null, `#${seq} ${d.step_code} — ${d.step_name}`] },
+    changes: { step: [null, `#${seq} [${stepFn}] ${d.step_code} — ${d.step_name}`] },
   });
   return row;
+}
+
+export async function updateRoutingStep(tx: Tx, actor: AuthzActor, routingId: string, stepId: string, input: unknown) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  const d = parseInput(routingStepItemSchema, input);
+  const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as
+    | KitRoutingRow
+    | undefined;
+  if (!rtg) throw notFound("quy trình công đoạn (Routing)");
+  await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
+  if (rtg.status === "OBSOLETE") throw invalid("Không thể chỉnh sửa bước công đoạn khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
+
+  const existing = (await tx.query("SELECT * FROM kit.routing_step WHERE id = $1 AND routing_id = $2", [stepId, routingId])).rows[0];
+  if (!existing) throw notFound("bước công đoạn Routing");
+
+  const seq = d.seq ?? Number(existing.seq);
+  const stepFn = d.step_function?.trim() || existing.step_function || "FORMULATION_MIXING";
+  const category = d.category || existing.category || inferCategoryFromFunction(stepFn);
+  const isQc = Boolean(d.is_qc || d.functional_flags?.qc_gate || stepFn === "IPQC_PH_GATE");
+  const dualSign = Boolean(d.requires_check_signature || d.functional_flags?.dual_sign);
+  const flags = {
+    qc_gate: isQc,
+    dual_sign: dualSign,
+    require_line_clearance: Boolean(d.functional_flags?.require_line_clearance ?? stepFn === "LINE_CLEARANCE"),
+    require_material_scan: Boolean(d.functional_flags?.require_material_scan ?? stepFn === "MATERIAL_VERIFY_FEFO"),
+    require_env_log: Boolean(d.functional_flags?.require_env_log ?? ["LINE_CLEARANCE", "FORMULATION_MIXING", "LYOPHILIZATION"].includes(stepFn)),
+    require_yield_reconcile: Boolean(d.functional_flags?.require_yield_reconcile ?? ["DISPENSING_ALIQUOT", "FQC_RELEASE_HANDOVER"].includes(stepFn)),
+    require_label_ifu_check: Boolean(d.functional_flags?.require_label_ifu_check ?? stepFn === "LABELING_IFU_PACKAGING"),
+    expected_output: d.functional_flags?.expected_output ?? null,
+  };
+
+  if (seq !== Number(existing.seq)) {
+    const conflictStep = (
+      await tx.query("SELECT id FROM kit.routing_step WHERE routing_id = $1 AND seq = $2 AND id <> $3", [routingId, seq, stepId])
+    ).rows[0];
+    if (conflictStep) {
+      await tx.query("UPDATE kit.routing_step SET seq = $1 WHERE id = $2", [existing.seq, conflictStep.id]);
+    }
+  }
+
+  const row = (
+    await tx.query(
+      `UPDATE kit.routing_step
+          SET seq = $3,
+              step_code = $4,
+              step_name = $5,
+              category = $6,
+              step_function = $7,
+              work_center = $8,
+              functional_flags = $9::jsonb,
+              instructions = $10,
+              sop_doc_code = $11,
+              required_training_doc_code = $12,
+              required_asset_id = $13,
+              param_schema = $14::jsonb,
+              is_qc = $15,
+              qc_spec_id = $16,
+              requires_check_signature = $17,
+              allow_skip = $18,
+              std_duration_min = $19
+        WHERE id = $1 AND routing_id = $2
+        RETURNING *`,
+      [
+        stepId,
+        routingId,
+        seq,
+        d.step_code,
+        d.step_name,
+        category,
+        stepFn,
+        d.work_center?.trim() || "Phòng sạch Class 10.000 (ISO 7)",
+        JSON.stringify(flags),
+        d.instructions,
+        d.sop_doc_code ?? null,
+        d.required_training_doc_code ?? null,
+        d.required_asset_id || null,
+        JSON.stringify(d.param_schema),
+        isQc,
+        d.qc_spec_id || null,
+        dualSign,
+        d.allow_skip,
+        d.std_duration_min,
+      ]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_routing",
+    entityId: routingId,
+    action: "update_routing_step",
+    changes: {
+      step: [
+        `#${existing.seq} ${existing.step_code} — ${existing.step_name}`,
+        `#${seq} [${stepFn}] ${d.step_code} — ${d.step_name}`,
+      ],
+    },
+  });
+  return row;
+}
+
+export async function deleteRoutingStep(tx: Tx, actor: AuthzActor, routingId: string, stepId: string) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as
+    | KitRoutingRow
+    | undefined;
+  if (!rtg) throw notFound("quy trình công đoạn (Routing)");
+  await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
+  if (rtg.status === "OBSOLETE") throw invalid("Không thể xóa bước công đoạn khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
+
+  const existing = (await tx.query("SELECT * FROM kit.routing_step WHERE id = $1 AND routing_id = $2", [stepId, routingId])).rows[0];
+  if (!existing) throw notFound("bước công đoạn Routing");
+
+  await tx.query("DELETE FROM kit.routing_step WHERE id = $1 AND routing_id = $2", [stepId, routingId]);
+  await tx.query(
+    `WITH ordered AS (
+       SELECT id, (row_number() OVER (ORDER BY seq ASC, id ASC)) * 10 AS new_seq
+         FROM kit.routing_step WHERE routing_id = $1
+     )
+     UPDATE kit.routing_step rs SET seq = ordered.new_seq FROM ordered WHERE rs.id = ordered.id`,
+    [routingId]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_routing",
+    entityId: routingId,
+    action: "delete_routing_step",
+    changes: { step: [`#${existing.seq} ${existing.step_code} — ${existing.step_name}`, null] },
+  });
+  return { deleted: true, id: stepId };
+}
+
+export async function moveRoutingStep(
+  tx: Tx,
+  actor: AuthzActor,
+  routingId: string,
+  stepId: string,
+  direction: "UP" | "DOWN"
+) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as
+    | KitRoutingRow
+    | undefined;
+  if (!rtg) throw notFound("quy trình công đoạn (Routing)");
+  await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
+  if (rtg.status === "OBSOLETE") throw invalid("Không thể đổi thứ tự bước khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
+
+  const steps = (
+    await tx.query("SELECT id, seq FROM kit.routing_step WHERE routing_id = $1 ORDER BY seq ASC, id ASC", [routingId])
+  ).rows as { id: string; seq: number }[];
+  const idx = steps.findIndex((s) => s.id === stepId);
+  if (idx < 0) throw notFound("bước công đoạn Routing");
+  const targetIdx = direction === "UP" ? idx - 1 : idx + 1;
+  if (targetIdx < 0 || targetIdx >= steps.length) return { moved: false };
+
+  const reordered = [...steps];
+  const [picked] = reordered.splice(idx, 1);
+  reordered.splice(targetIdx, 0, picked);
+
+  // Temporarily offset sequences to avoid unique constraint collision on (routing_id, seq)
+  await tx.query("UPDATE kit.routing_step SET seq = seq + 10000 WHERE routing_id = $1", [routingId]);
+  for (let i = 0; i < reordered.length; i++) {
+    await tx.query("UPDATE kit.routing_step SET seq = $2 WHERE id = $1", [reordered[i].id, (i + 1) * 10]);
+  }
+  return { moved: true };
+}
+
+export async function replaceAllRoutingSteps(
+  tx: Tx,
+  actor: AuthzActor,
+  routingId: string,
+  rawSteps: unknown[]
+) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as
+    | KitRoutingRow
+    | undefined;
+  if (!rtg) throw notFound("quy trình công đoạn (Routing)");
+  await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
+  if (rtg.status === "OBSOLETE") throw invalid("Không thể cập nhật bước công đoạn khi quy trình Routing đã hết hiệu lực (OBSOLETE).");
+
+  const parsedSteps = z.array(routingStepItemSchema).min(1, "Quy trình phải có ít nhất 1 bước công đoạn").max(100).parse(rawSteps);
+  await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routingId]);
+
+  for (let i = 0; i < parsedSteps.length; i++) {
+    const s = parsedSteps[i];
+    const seq = s.seq && s.seq > 0 ? s.seq : (i + 1) * 10;
+    await addRoutingStep(tx, actor, { ...s, routing_id: routingId, seq });
+  }
+  return { count: parsedSteps.length };
 }
 
 export interface ListFormulaFilter {
@@ -1131,6 +1425,8 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
       ADD COLUMN IF NOT EXISTS ifu_interpretation text,
       ADD COLUMN IF NOT EXISTS bom_type text DEFAULT 'finished_good',
       ADD COLUMN IF NOT EXISTS bom_category text DEFAULT 'PCR Kit',
+      ADD COLUMN IF NOT EXISTS variant_code text DEFAULT 'BASE',
+      ADD COLUMN IF NOT EXISTS supply_form text DEFAULT 'NO_SPLIT_NO_IC',
       ADD COLUMN IF NOT EXISTS parent_item_code text,
       ADD COLUMN IF NOT EXISTS tccs_code text,
       ADD COLUMN IF NOT EXISTS tccs_file_name text,
@@ -1163,6 +1459,44 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
       ADD COLUMN IF NOT EXISTS include_in_qc_retention boolean DEFAULT true
   `);
 
+  await tx.query(`
+    ALTER TABLE kit.routing_step
+      ADD COLUMN IF NOT EXISTS step_function text DEFAULT 'FORMULATION_MIXING',
+      ADD COLUMN IF NOT EXISTS work_center text DEFAULT 'Phòng sạch Class 10.000 (ISO 7)',
+      ADD COLUMN IF NOT EXISTS functional_flags jsonb DEFAULT '{}'::jsonb
+  `);
+
+  await tx.query(`
+    ALTER TABLE kit.production_step
+      ADD COLUMN IF NOT EXISTS step_function text DEFAULT 'FORMULATION_MIXING',
+      ADD COLUMN IF NOT EXISTS work_center text DEFAULT 'Phòng sạch Class 10.000 (ISO 7)',
+      ADD COLUMN IF NOT EXISTS functional_flags jsonb DEFAULT '{}'::jsonb
+  `);
+
+  await tx.query(`
+    UPDATE kit.routing_step
+       SET step_function = CASE
+             WHEN category = 'PREPARATION' AND (step_code ~* 'CLEAR' OR step_name ~* 'Line Clearance|UV') THEN 'LINE_CLEARANCE'
+             WHEN category = 'PREPARATION' THEN 'MATERIAL_VERIFY_FEFO'
+             WHEN is_qc = true OR category = 'QC' THEN 'IPQC_PH_GATE'
+             WHEN category = 'FILLING' THEN 'DISPENSING_ALIQUOT'
+             WHEN category = 'LYOPHILIZATION' THEN 'LYOPHILIZATION'
+             WHEN category IN ('PACKAGING', 'LABELING') THEN 'LABELING_IFU_PACKAGING'
+             ELSE 'FORMULATION_MIXING'
+           END,
+           work_center = coalesce(nullif(work_center, ''), 'Phòng sạch Class 10.000 (ISO 7)'),
+           functional_flags = jsonb_build_object(
+             'qc_gate', is_qc,
+             'dual_sign', requires_check_signature,
+             'require_line_clearance', (category = 'PREPARATION'),
+             'require_material_scan', (category IN ('PREPARATION', 'FORMULATION')),
+             'require_env_log', (category IN ('PREPARATION', 'FORMULATION', 'LYOPHILIZATION')),
+             'require_yield_reconcile', (category IN ('FILLING', 'PACKAGING')),
+             'require_label_ifu_check', (category IN ('PACKAGING', 'LABELING'))
+           )
+     WHERE step_function IS NULL OR functional_flags = '{}'::jsonb
+  `);
+
   // Backfill metadata on existing BOMs if missing
   await tx.query(`
     UPDATE kit.bom b
@@ -1192,6 +1526,31 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
      WHERE it.id = b.product_item_id
        AND (b.tccs_code IS NULL OR b.specification IS NULL)
   `);
+
+  // Ensure the 8 standard PCR Tube / Strip items (T02, T01, S02, S01, LQ02, MIC, R01, LP02) exist in master.item
+  const uomCheckRows = (await tx.query("SELECT code FROM master.uom WHERE status = 'ACTIVE'")).rows as Array<{ code: string }>;
+  const tubeBaseUom =
+    uomCheckRows.find((u) => ["tube", "pcs", "ea", "cai", "ống"].includes(u.code.toLowerCase()))?.code ??
+    uomCheckRows[0]?.code ??
+    "pcs";
+  const stdTubeItems = [
+    { code: "VT-TUBE-T02", name: "Strip 0.2 mL trong (Strip-8 · Mã nhận diện T02)" },
+    { code: "VT-TUBE-T01", name: "Strip 0.1 mL trong (Strip-8 · Mã nhận diện T01)" },
+    { code: "VT-TUBE-S02", name: "Strip 0.2 mL trắng đục (Strip-8 · Mã nhận diện S02)" },
+    { code: "VT-TUBE-S01", name: "Strip 0.1 mL trắng đục (Strip-8 · Mã nhận diện S01)" },
+    { code: "VT-TUBE-LQ02", name: "Tube qPCR 0.2 mL rời (Mã nhận diện LQ02)" },
+    { code: "VT-TUBE-MIC", name: "MIC TUBES and CAPS (Strip-4 · Mã nhận diện MIC)" },
+    { code: "VT-TUBE-R01", name: "Strip-4 0.1 mL trong (Strip-4 · Mã nhận diện R01)" },
+    { code: "VT-TUBE-LP02", name: "Tube PCR 0.2 mL rời (Mã nhận diện LP02)" },
+  ];
+  for (const ti of stdTubeItems) {
+    await tx.query(
+      `INSERT INTO master.item (code, name, item_type, base_uom, tracking, storage_condition, receipt_qc_required, is_purchasable, is_saleable, is_manufacturable, status)
+       VALUES ($1, $2, 'PACKAGING', $3, 'LOT', 'RT', false, true, false, false, 'ACTIVE')
+       ON CONFLICT (code) DO NOTHING`,
+      [ti.code, ti.name, tubeBaseUom]
+    );
+  }
 
   // Seed representative Semi-Finished BOMs & Finished Good BOMs from molecularkit-mes if no semi_finished BOM exists yet
   const semiCheck = await tx.query("SELECT count(*)::int AS c FROM kit.bom WHERE bom_type = 'semi_finished'");
@@ -1486,9 +1845,15 @@ export async function fastActivateBom(tx: Tx, actor: AuthzActor, bomId: string) 
   }
   const lineCount = Number((await tx.query("SELECT count(*)::int AS c FROM kit.bom_line WHERE bom_id = $1", [bomId])).rows[0]?.c ?? 0);
   if (lineCount === 0) throw invalid("Định mức BOM phải có ít nhất 1 dòng nguyên vật liệu trước khi kích hoạt hiệu lực (EFFECTIVE).");
+  const varCode = String((bom as any).variant_code || "BASE").trim().toUpperCase();
   await tx.query(
-    "UPDATE kit.bom SET status = 'OBSOLETE', updated_at = now() WHERE product_item_id = $1 AND status = 'EFFECTIVE' AND id <> $2",
-    [bom.product_item_id, bomId]
+    `UPDATE kit.bom
+        SET status = 'OBSOLETE', updated_at = now()
+      WHERE product_item_id = $1
+        AND upper(coalesce(nullif(trim(variant_code), ''), 'BASE')) = $2
+        AND status = 'EFFECTIVE'
+        AND id <> $3`,
+    [bom.product_item_id, varCode, bomId]
   );
   const updated = (
     await tx.query(
@@ -1506,6 +1871,7 @@ export async function fastActivateBom(tx: Tx, actor: AuthzActor, bomId: string) 
 }
 
 export async function cloneRouting(tx: Tx, actor: AuthzActor, routingId: string) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
   const src = (await tx.query("SELECT * FROM kit.routing WHERE id = $1", [routingId])).rows[0] as KitRoutingRow | undefined;
   if (!src) throw notFound("quy trình Routing");
   await authorize(tx, actor, "kit.bom.manage", src.org_unit_id);
@@ -1527,9 +1893,11 @@ export async function cloneRouting(tx: Tx, actor: AuthzActor, routingId: string)
   });
   await tx.query(
     `INSERT INTO kit.routing_step
-       (routing_id, seq, step_code, step_name, category, instructions, sop_doc_code, required_training_doc_code,
+       (routing_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
+        instructions, sop_doc_code, required_training_doc_code,
         required_asset_id, param_schema, is_qc, qc_spec_id, requires_check_signature, allow_skip, std_duration_min)
-     SELECT $1, seq, step_code, step_name, category, instructions, sop_doc_code, required_training_doc_code,
+     SELECT $1, seq, step_code, step_name, category, step_function, work_center, functional_flags,
+            instructions, sop_doc_code, required_training_doc_code,
             required_asset_id, param_schema, is_qc, qc_spec_id, requires_check_signature, allow_skip, std_duration_min
        FROM kit.routing_step WHERE routing_id = $2 ORDER BY seq`,
     [created.id, routingId]
@@ -1537,7 +1905,13 @@ export async function cloneRouting(tx: Tx, actor: AuthzActor, routingId: string)
   return created;
 }
 
-export async function loadStandardKitRoutingSteps(tx: Tx, actor: AuthzActor, routingId: string) {
+export async function loadStandardKitRoutingSteps(
+  tx: Tx,
+  actor: AuthzActor,
+  routingId: string,
+  templateKey = "PCR_5_STEPS"
+) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
   const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as KitRoutingRow | undefined;
   if (!rtg) throw notFound("quy trình Routing");
   await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
@@ -1546,68 +1920,437 @@ export async function loadStandardKitRoutingSteps(tx: Tx, actor: AuthzActor, rou
   }
   await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routingId]);
 
-  const stdSteps = [
-    {
-      seq: 10,
-      step_code: "STEP-CLEAR-PREP",
-      step_name: "Dọn dây chuyền (Line Clearance), Khử trùng UV & Rã đông Hóa chất",
-      category: "PREPARATION",
-      instructions: "Kiểm tra vệ sinh phòng sạch, chiếu UV 30 phút, rã đông Enzyme/MasterMix và Oligo trên đá lạnh (2–8°C).",
-      sop_doc_code: "SOP-KIT-001",
-      requires_check_signature: true,
-      is_qc: false,
-      param_schema: [
-        { key: "room_temp_c", label: "Nhiệt độ phòng pha chế", type: "number", unit: "°C", min: 18, max: 25, required: true },
-      ],
-    },
-    {
-      seq: 20,
-      step_code: "STEP-MIX-PH",
-      step_name: "Pha chế MasterMix / Dung dịch đệm trong Tủ ATSH & Đo kiểm pH",
-      category: "FORMULATION",
-      instructions: "Phối trộn MasterMix 2X, Primer/Probe Mix theo đúng bảng nổ BOM trên block lạnh, vortex nhẹ và đo pH thực tế.",
-      sop_doc_code: "SOP-KIT-002",
-      requires_check_signature: true,
-      is_qc: true,
-      param_schema: [
-        { key: "actual_ph", label: "Giá trị pH thực tế đo được", type: "number", unit: "pH", min: 8.1, max: 8.5, required: true },
-        { key: "cold_block_c", label: "Nhiệt độ block lạnh khi pha", type: "number", unit: "°C", min: 2, max: 8, required: true },
-      ],
-    },
-    {
-      seq: 30,
-      step_code: "STEP-ALIQUOT",
-      step_name: "Chia lẻ (Aliquot) vào Ống thành phần theo Chế độ PO (Thường / .D.IC / Demo)",
-      category: "FILLING",
-      instructions: "Chia lẻ chính xác thể tích vào từng ống thành phần theo cấu trúc Hộp/Ống của BOM, đóng nắp kín chống nhiễm chéo.",
-      sop_doc_code: "SOP-KIT-003",
-      requires_check_signature: true,
-      is_qc: false,
-      param_schema: [
-        { key: "fill_vol_ul", label: "Thể tích chiết rót kiểm tra", type: "number", unit: "µL", min: 15, max: 1500, required: true },
-      ],
-    },
-    {
-      seq: 40,
-      step_code: "STEP-LABEL-IFU-PACK",
-      step_name: "In & Dán Nhãn Ống/Hộp, Đóng kèm Tờ HDSD (IFU) & Bàn giao Mẫu QC",
-      category: "PACKAGING",
-      instructions: "In bộ nhãn Lô (LOT/MFG/EXP/QR) và Tờ Hướng dẫn sử dụng (IFU) hiệu lực, dán nhãn ống/hộp, tách mẫu lưu và gửi FQC.",
-      sop_doc_code: "SOP-KIT-004",
-      requires_check_signature: true,
-      is_qc: false,
-      param_schema: [
-        { key: "ifu_checked", label: "Tỷ lệ kiểm tra khớp Nhãn & Tờ HDSD (IFU)", type: "number", unit: "%", min: 100, max: 100, required: true },
-      ],
-    },
-  ];
+  const templates: Record<string, Array<Record<string, any>>> = {
+    PCR_5_STEPS: [
+      {
+        seq: 10,
+        step_code: "STEP-10-CLEAR",
+        step_name: "Dọn dây chuyền (Line Clearance), Khử trùng UV & Cấp phát Lô NVL FEFO",
+        category: "PREPARATION",
+        step_function: "LINE_CLEARANCE",
+        work_center: "Phòng sạch Chuẩn bị & Cấp phát (ISO 7)",
+        instructions:
+          "Kiểm tra vệ sinh dây chuyền, hủy toàn bộ nhãn thừa lô cũ, chiếu UV 30 phút, đối chiếu mã lô FEFO và rã đông Enzyme/MasterMix/Oligo trên block lạnh (2–8°C).",
+        sop_doc_code: "SOP-KIT-001",
+        std_duration_min: 30,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: {
+          qc_gate: false,
+          dual_sign: true,
+          require_line_clearance: true,
+          require_material_scan: true,
+          require_env_log: true,
+          require_yield_reconcile: false,
+          require_label_ifu_check: false,
+          expected_output: "Dây chuyền sạch 100%, đủ lô NVL theo phiếu xuất kho FEFO",
+        },
+        param_schema: [
+          { key: "room_temp_c", label: "Nhiệt độ phòng pha chế", type: "number", unit: "°C", min: 18, max: 25, required: true },
+          { key: "room_rh_pct", label: "Độ ẩm tương đối (RH)", type: "number", unit: "%", min: 35, max: 65, required: true },
+          { key: "uv_time_min", label: "Thời gian chiếu khử trùng UV", type: "number", unit: "phút", min: 30, max: 60, required: true },
+        ],
+      },
+      {
+        seq: 20,
+        step_code: "STEP-20-MIX",
+        step_name: "Pha chế Bán thành phẩm MasterMix & Hỗn hợp Primer/Probe trong Tủ BSC-II",
+        category: "FORMULATION",
+        step_function: "FORMULATION_MIXING",
+        work_center: "Phòng Pha chế MasterMix / PCR Hood (ISO 6)",
+        instructions:
+          "Phối trộn qPCR MasterMix 2X, Primer/Probe Mix và Chứng dương/Chứng âm theo đúng định mức nổ BOM trên block lạnh (2–8°C), vortex nhẹ 15 giây và spin-down ngắn.",
+        sop_doc_code: "SOP-KIT-002",
+        std_duration_min: 45,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: {
+          qc_gate: false,
+          dual_sign: true,
+          require_line_clearance: false,
+          require_material_scan: true,
+          require_env_log: true,
+          require_yield_reconcile: false,
+          require_label_ifu_check: false,
+          expected_output: "Dung dịch bán thành phẩm đồng nhất, bảo quản lạnh 2–8°C",
+        },
+        param_schema: [
+          { key: "cold_block_c", label: "Nhiệt độ block lạnh khi pha", type: "number", unit: "°C", min: 2, max: 8, required: true },
+          { key: "vortex_sec", label: "Thời gian trộn đồng nhất (Vortex)", type: "number", unit: "giây", min: 10, max: 30, required: true },
+        ],
+      },
+      {
+        seq: 30,
+        step_code: "STEP-30-IPQC",
+        step_name: "Kiểm soát Chất lượng Bán thành phẩm Xen kẽ (IPQC Gate: Đo pH & Chạy Ct thử nghiệm)",
+        category: "QC",
+        step_function: "IPQC_PH_GATE",
+        work_center: "Phòng Kiểm nghiệm QC Sinh học Phân tử",
+        instructions:
+          "Lấy mẫu bán thành phẩm đo pH thực tế và chạy kiểm tra tín hiệu khuếch đại Real-time PCR (Chứng dương FAM/HEX đạt ngưỡng Ct mục tiêu, Chứng âm NTC không lên tín hiệu). Khóa công đoạn chia lẻ cho tới khi QA/QC ký duyệt PASS.",
+        sop_doc_code: "SOP-QC-KIT-01",
+        std_duration_min: 60,
+        requires_check_signature: true,
+        is_qc: true,
+        functional_flags: {
+          qc_gate: true,
+          dual_sign: true,
+          require_line_clearance: false,
+          require_material_scan: false,
+          require_env_log: false,
+          require_yield_reconcile: false,
+          require_label_ifu_check: false,
+          expected_output: "Phiếu IPQC đạt (PASS) — Cho phép mở khóa bước Chia lẻ Aliquot",
+        },
+        param_schema: [
+          { key: "actual_ph", label: "Giá trị pH thực tế đo được", type: "number", unit: "pH", min: 8.1, max: 8.5, required: true },
+          { key: "pc_ct_fam", label: "Giá trị Ct Chứng dương (FAM)", type: "number", unit: "Ct", min: 22, max: 30, required: true },
+        ],
+      },
+      {
+        seq: 40,
+        step_code: "STEP-40-ALIQUOT",
+        step_name: "Chia lẻ (Aliquot) vào Ống / Strip theo Chế độ PO (Thường / Chia sẵn .D.IC / Demo)",
+        category: "FILLING",
+        step_function: "DISPENSING_ALIQUOT",
+        work_center: "Phòng Chiết rót Định lượng (ISO 7)",
+        instructions:
+          "Chia lẻ chính xác thể tích từng thành phần vào ống 1.5mL hoặc dải 8-strip (.D.IC) theo quy cách Hộp/Ống của BOM. Kiểm tra độ kín nắp và cân bằng lượng bán thành phẩm.",
+        sop_doc_code: "SOP-KIT-003",
+        std_duration_min: 60,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: {
+          qc_gate: false,
+          dual_sign: true,
+          require_line_clearance: false,
+          require_material_scan: false,
+          require_env_log: true,
+          require_yield_reconcile: true,
+          require_label_ifu_check: false,
+          expected_output: "Đủ số lượng ống thành phần theo cỡ lô, sai số thể tích ≤ ±2%",
+        },
+        param_schema: [
+          { key: "fill_vol_ul", label: "Thể tích chiết rót kiểm tra", type: "number", unit: "µL", min: 15, max: 1500, required: true },
+          { key: "yield_check_pct", label: "Tỷ lệ thu hồi bán thành phẩm", type: "number", unit: "%", min: 95, max: 100, required: true },
+        ],
+      },
+      {
+        seq: 50,
+        step_code: "STEP-50-LABEL-PACK",
+        step_name: "In & Dán Nhãn Ống/Hộp, Đính kèm Tờ HDSD (IFU), Tách Mẫu Lưu & Bàn giao FQC",
+        category: "PACKAGING",
+        step_function: "LABELING_IFU_PACKAGING",
+        work_center: "Khu vực Đóng gói Hoàn thiện & Biệt trữ",
+        instructions:
+          "In bộ nhãn Lô (LOT/MFG/EXP/UDI-DI) và Tờ Hướng dẫn sử dụng (IFU) hiệu lực, dán nhãn ống/hộp phụ/hộp ngoài, tách mẫu lưu QC (Retention Sample) và bàn giao lô sang chờ FQC giải phóng.",
+        sop_doc_code: "SOP-KIT-004",
+        std_duration_min: 45,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: {
+          qc_gate: false,
+          dual_sign: true,
+          require_line_clearance: false,
+          require_material_scan: false,
+          require_env_log: false,
+          require_yield_reconcile: true,
+          require_label_ifu_check: true,
+          expected_output: "Bộ Kit hoàn chỉnh + Mẫu lưu QC + Hồ sơ lô EBR chuyển FQC",
+        },
+        param_schema: [
+          { key: "ifu_checked", label: "Tỷ lệ kiểm tra khớp Nhãn & Tờ HDSD (IFU)", type: "number", unit: "%", min: 100, max: 100, required: true },
+        ],
+      },
+    ],
+    LYO_6_STEPS: [
+      {
+        seq: 10,
+        step_code: "LYO-10-CLEAR",
+        step_name: "Dọn dây chuyền (Line Clearance), Khử ẩm & Chuẩn bị Lô NVL Đông khô",
+        category: "PREPARATION",
+        step_function: "LINE_CLEARANCE",
+        work_center: "Phòng sạch Đông khô (RH < 40%)",
+        instructions: "Vệ sinh khử trùng UV, kiểm soát độ ẩm phòng < 40%, đối chiếu mã lô FEFO cho chất bảo vệ đông khô (Trehalose/Mannitol) và Enzyme.",
+        sop_doc_code: "SOP-LYO-001",
+        std_duration_min: 30,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_line_clearance: true, require_material_scan: true, require_env_log: true },
+        param_schema: [
+          { key: "room_rh_pct", label: "Độ ẩm phòng đông khô", type: "number", unit: "%", min: 20, max: 40, required: true },
+        ],
+      },
+      {
+        seq: 20,
+        step_code: "LYO-20-MIX",
+        step_name: "Pha chế Dịch Lyophilization MasterMix (Không Glycerol) & Primer/Probe",
+        category: "FORMULATION",
+        step_function: "FORMULATION_MIXING",
+        work_center: "Tủ ATSH BSC-II Phòng Pha chế",
+        instructions: "Phối trộn Glycerol-free Taq/RT Enzyme, dNTPs, Trehalose và Primer/Probe theo BOM trên block lạnh.",
+        sop_doc_code: "SOP-LYO-002",
+        std_duration_min: 45,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_material_scan: true, require_env_log: true },
+        param_schema: [
+          { key: "cold_block_c", label: "Nhiệt độ block lạnh", type: "number", unit: "°C", min: 2, max: 8, required: true },
+        ],
+      },
+      {
+        seq: 30,
+        step_code: "LYO-30-FILL",
+        step_name: "Chiết rót Định lượng vào Dải 8-Strip / Ống Đông khô & Đặt nắp hờ",
+        category: "FILLING",
+        step_function: "DISPENSING_ALIQUOT",
+        work_center: "Hệ thống Chiết rót Tự động",
+        instructions: "Chiết rót 20 µL/giếng vào strip 8 giếng chuyên dụng, đặt nắp thông khí và xếp lên khay inox máy đông khô.",
+        sop_doc_code: "SOP-LYO-003",
+        std_duration_min: 45,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_yield_reconcile: true },
+        param_schema: [
+          { key: "fill_vol_ul", label: "Thể tích chiết rót mỗi giếng", type: "number", unit: "µL", min: 19.5, max: 20.5, required: true },
+        ],
+      },
+      {
+        seq: 40,
+        step_code: "LYO-40-FREEZEDRY",
+        step_name: "Chạy Chu trình Đông khô Chân không (Cấp đông -45°C ➔ Sơ cấp ➔ Thứ cấp)",
+        category: "LYOPHILIZATION",
+        step_function: "LYOPHILIZATION",
+        work_center: "Buồng Đông khô Chân không",
+        instructions: "Chạy chu trình đông khô tự động 18–24h, kiểm tra áp suất chân không và đóng nắp kín trong môi trường khí Nitơ khô.",
+        sop_doc_code: "SOP-LYO-004",
+        std_duration_min: 1080,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_env_log: true },
+        param_schema: [
+          { key: "shelf_min_temp_c", label: "Nhiệt độ cấp đông sâu", type: "number", unit: "°C", min: -55, max: -40, required: true },
+          { key: "vacuum_mtorr", label: "Áp suất chân không buồng sấy", type: "number", unit: "mTorr", min: 30, max: 120, required: true },
+        ],
+      },
+      {
+        seq: 50,
+        step_code: "LYO-50-IPQC",
+        step_name: "Cổng Kiểm soát Chất lượng Bánh Đông khô (IPQC Gate: Độ ẩm tồn dư & Hoạt tính Ct)",
+        category: "QC",
+        step_function: "IPQC_PH_GATE",
+        work_center: "Phòng Kiểm nghiệm QC",
+        instructions: "Kiểm tra cảm quan bánh đông khô (trắng xốp, không sụp), độ ẩm tồn dư < 3% và chạy qPCR sau hoàn nguyên.",
+        sop_doc_code: "SOP-QC-LYO-01",
+        std_duration_min: 60,
+        requires_check_signature: true,
+        is_qc: true,
+        functional_flags: { qc_gate: true, dual_sign: true },
+        param_schema: [
+          { key: "residual_moisture_pct", label: "Độ ẩm tồn dư bánh đông khô", type: "number", unit: "%", min: 0.5, max: 3.0, required: true },
+        ],
+      },
+      {
+        seq: 60,
+        step_code: "LYO-60-PACK",
+        step_name: "Hàn túi Nhôm chống ẩm kèm Gói hút ẩm, Dán nhãn Hộp & Đính kèm IFU",
+        category: "PACKAGING",
+        step_function: "LABELING_IFU_PACKAGING",
+        work_center: "Khu Đóng gói Khô",
+        instructions: "Hàn kín túi nhôm phức hợp kèm gói hút ẩm Silica, dán nhãn hộp ngoài + IFU và bàn giao FQC.",
+        sop_doc_code: "SOP-KIT-004",
+        std_duration_min: 45,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_label_ifu_check: true, require_yield_reconcile: true },
+        param_schema: [
+          { key: "ifu_checked", label: "Tỷ lệ kiểm tra khớp Nhãn & IFU", type: "number", unit: "%", min: 100, max: 100, required: true },
+        ],
+      },
+    ],
+    EXTRACTION_5_STEPS: [
+      {
+        seq: 10,
+        step_code: "EXT-10-CLEAR",
+        step_name: "Dọn dây chuyền (Line Clearance) & Cân đong Hóa chất Pha đệm (Guanidine / Tris / Muối)",
+        category: "PREPARATION",
+        step_function: "MATERIAL_VERIFY_FEFO",
+        work_center: "Phòng Cân & Chuẩn bị Hóa chất",
+        instructions: "Kiểm tra dọn dây chuyền, quét mã lô FEFO các hóa chất rắn/lỏng, cân chính xác trên cân phân tích đã hiệu chuẩn.",
+        sop_doc_code: "SOP-EXT-001",
+        std_duration_min: 30,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_line_clearance: true, require_material_scan: true },
+        param_schema: [
+          { key: "room_temp_c", label: "Nhiệt độ phòng cân", type: "number", unit: "°C", min: 18, max: 26, required: true },
+        ],
+      },
+      {
+        seq: 20,
+        step_code: "EXT-20-FORMULATE",
+        step_name: "Hòa tan Khuấy từ Gia nhiệt, Hiệu chỉnh pH & Lọc vô trùng 0.22 µm",
+        category: "FORMULATION",
+        step_function: "FORMULATION_MIXING",
+        work_center: "Phòng Pha chế Đệm Tách chiết",
+        instructions: "Hòa tan hoàn toàn các thành phần đệm (Lysis/Wash/Elution Buffer) bằng máy khuấy từ, chuẩn độ pH và lọc qua màng 0.22 µm.",
+        sop_doc_code: "SOP-EXT-002",
+        std_duration_min: 60,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_env_log: true },
+        param_schema: [
+          { key: "stir_rpm", label: "Tốc độ khuấy từ", type: "number", unit: "rpm", min: 200, max: 600, required: true },
+        ],
+      },
+      {
+        seq: 30,
+        step_code: "EXT-30-IPQC",
+        step_name: "Cổng Kiểm soát Chất lượng Hệ đệm (IPQC Gate: Đo pH, Độ dẫn điện & Độ trong)",
+        category: "QC",
+        step_function: "IPQC_PH_GATE",
+        work_center: "Phòng Kiểm nghiệm QC Hóa lý",
+        instructions: "Đo kiểm pH thực tế, kiểm tra độ trong suốt (không kết tủa) và hiệu suất thu hồi ADN/ARN trên mẫu chuẩn trước khi chiết rót.",
+        sop_doc_code: "SOP-QC-EXT-01",
+        std_duration_min: 45,
+        requires_check_signature: true,
+        is_qc: true,
+        functional_flags: { qc_gate: true, dual_sign: true },
+        param_schema: [
+          { key: "actual_ph", label: "Giá trị pH thực tế đo được", type: "number", unit: "pH", min: 6.4, max: 8.6, required: true },
+        ],
+      },
+      {
+        seq: 40,
+        step_code: "EXT-40-FILL",
+        step_name: "Chiết rót Đệm vào Chai HDPE / Ống Proteinase K & Siết nắp Màng seal",
+        category: "FILLING",
+        step_function: "DISPENSING_ALIQUOT",
+        work_center: "Dây chuyền Chiết rót Chai Buffer",
+        instructions: "Chiết rót thể tích định mức vào chai HDPE 10mL/50mL, siết nắp lực chuẩn và kiểm tra độ kín.",
+        sop_doc_code: "SOP-EXT-003",
+        std_duration_min: 50,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_yield_reconcile: true },
+        param_schema: [
+          { key: "fill_vol_ml", label: "Thể tích chiết rót chai", type: "number", unit: "mL", min: 5, max: 60, required: true },
+        ],
+      },
+      {
+        seq: 50,
+        step_code: "EXT-50-PACK",
+        step_name: "Đóng hộp Cột lọc Silica / Hạt từ + Bộ chai Đệm, Dán nhãn & Kèm Tờ HDSD (IFU)",
+        category: "PACKAGING",
+        step_function: "LABELING_IFU_PACKAGING",
+        work_center: "Khu Đóng gói Kit Tách chiết",
+        instructions: "Tập hợp đủ túi Cột thu hồi Silica, ống Collection Tube, các chai đệm VBL/WB1/WB2/Elution, dán nhãn Lô và kèm IFU.",
+        sop_doc_code: "SOP-KIT-004",
+        std_duration_min: 45,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_label_ifu_check: true, require_yield_reconcile: true },
+        param_schema: [
+          { key: "ifu_checked", label: "Tỷ lệ kiểm tra khớp Nhãn & IFU", type: "number", unit: "%", min: 100, max: 100, required: true },
+        ],
+      },
+    ],
+    SEMI_FINISHED_4_STEPS: [
+      {
+        seq: 10,
+        step_code: "BTP-10-PREP",
+        step_name: "Dọn dây chuyền (Line Clearance) & Cấp phát Nguyên liệu gốc FEFO",
+        category: "PREPARATION",
+        step_function: "LINE_CLEARANCE",
+        work_center: "Phòng sạch Pha chế Bán thành phẩm",
+        instructions: "Khử trùng UV buồng pha chế, đối chiếu mã lô nguyên liệu gốc theo BOM Bán thành phẩm.",
+        sop_doc_code: "SOP-BTP-001",
+        std_duration_min: 20,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_line_clearance: true, require_material_scan: true },
+        param_schema: [
+          { key: "room_temp_c", label: "Nhiệt độ phòng pha chế", type: "number", unit: "°C", min: 18, max: 25, required: true },
+        ],
+      },
+      {
+        seq: 20,
+        step_code: "BTP-20-MIX",
+        step_name: "Phối trộn Bán thành phẩm (MasterMix gốc / Primer-Probe 10X / Đệm BTP)",
+        category: "FORMULATION",
+        step_function: "FORMULATION_MIXING",
+        work_center: "Tủ ATSH BSC-II / Máy Khuấy từ",
+        instructions: "Phối trộn theo đúng công thức BOM Bán thành phẩm, đồng nhất dung dịch và kiểm soát nhiệt độ.",
+        sop_doc_code: "SOP-BTP-002",
+        std_duration_min: 40,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_env_log: true },
+        param_schema: [
+          { key: "batch_vol_ml", label: "Tổng thể tích mẻ pha chế", type: "number", unit: "mL", min: 1, max: 5000, required: true },
+        ],
+      },
+      {
+        seq: 30,
+        step_code: "BTP-30-IPQC",
+        step_name: "Cổng Kiểm soát Chất lượng Bán thành phẩm (IPQC Gate: Đo pH / OD260 / Ct)",
+        category: "QC",
+        step_function: "IPQC_PH_GATE",
+        work_center: "Phòng Kiểm nghiệm QC",
+        instructions: "Đo kiểm pH thực tế và chỉ tiêu chất lượng bán thành phẩm trước khi nhập kho bán thành phẩm.",
+        sop_doc_code: "SOP-QC-BTP-01",
+        std_duration_min: 45,
+        requires_check_signature: true,
+        is_qc: true,
+        functional_flags: { qc_gate: true, dual_sign: true },
+        param_schema: [
+          { key: "actual_ph", label: "Giá trị pH thực tế đo được", type: "number", unit: "pH", min: 6.5, max: 8.6, required: true },
+        ],
+      },
+      {
+        seq: 40,
+        step_code: "BTP-40-STORE",
+        step_name: "Chiết chai/ống Bán thành phẩm, Dán nhãn BTP & Bàn giao Nhập kho",
+        category: "PACKAGING",
+        step_function: "FQC_RELEASE_HANDOVER",
+        work_center: "Kho Bán thành phẩm (-20°C / +4°C / RT)",
+        instructions: "Chiết vào chai/ống Falcon bảo quản, dán nhãn Lô Bán thành phẩm, tách mẫu lưu và nhập kho.",
+        sop_doc_code: "SOP-BTP-003",
+        std_duration_min: 25,
+        requires_check_signature: true,
+        is_qc: false,
+        functional_flags: { qc_gate: false, dual_sign: true, require_yield_reconcile: true, require_label_ifu_check: true },
+        param_schema: [
+          { key: "yield_pct", label: "Hiệu suất thu hồi mẻ BTP", type: "number", unit: "%", min: 95, max: 100, required: true },
+        ],
+      },
+    ],
+  };
+
+  const stdSteps = templates[templateKey] ?? templates.PCR_5_STEPS;
 
   for (const s of stdSteps) {
     await tx.query(
       `INSERT INTO kit.routing_step
-         (routing_id, seq, step_code, step_name, category, instructions, sop_doc_code, param_schema, is_qc, requires_check_signature, allow_skip, std_duration_min)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, false, 30)`,
-      [routingId, s.seq, s.step_code, s.step_name, s.category, s.instructions, s.sop_doc_code, JSON.stringify(s.param_schema), s.is_qc, s.requires_check_signature]
+         (routing_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
+          instructions, sop_doc_code, param_schema, is_qc, requires_check_signature, allow_skip, std_duration_min)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb, $12, $13, false, $14)`,
+      [
+        routingId,
+        s.seq,
+        s.step_code,
+        s.step_name,
+        s.category,
+        s.step_function,
+        s.work_center,
+        JSON.stringify(s.functional_flags ?? {}),
+        s.instructions,
+        s.sop_doc_code,
+        JSON.stringify(s.param_schema ?? []),
+        s.is_qc,
+        s.requires_check_signature,
+        s.std_duration_min ?? 30,
+      ]
     );
   }
 
@@ -1615,7 +2358,7 @@ export async function loadStandardKitRoutingSteps(tx: Tx, actor: AuthzActor, rou
     entityType: "kit_routing",
     entityId: routingId,
     action: "load_standard_steps",
-    changes: { step_count: [0, stdSteps.length] },
+    changes: { template: [null, templateKey], step_count: [0, stdSteps.length] },
   });
 }
 

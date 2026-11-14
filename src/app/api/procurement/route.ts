@@ -33,6 +33,13 @@ import { ensureProduct, addStock, reserveStock, appendCommercialCatalogEntry, so
 import { syncCatalogSuppliersAndProducts, markSupplierDeleted, unmarkSupplierDeleted, invalidateSupplierCatalogCache } from "@/backend/services/supplierCatalogSync";
 import { reconcileHistoricalPOsWithInbound, markPOReconcileDirty, attachInboundPriceComparisonToPOs } from "@/backend/services/poReceipt";
 import { PR_ROW_SQL } from "@/backend/services/prRows";
+import {
+  ensureDefaultInternalSuppliers,
+  syncPoWithFactoryIfInternal,
+  FACTORY_UNITS,
+  inferFactoryUnitFromSupplierName,
+  type FactoryUnit,
+} from "@/backend/services/factoryBridge";
 
 let supplierShortNameEnsured = false;
 async function ensureSupplierShortName() {
@@ -234,6 +241,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (action === "overview") {
+      await ensureDefaultInternalSuppliers();
       await syncCatalogSuppliersAndProducts();
       await reconcileHistoricalPOsWithInbound(query);
 
@@ -246,7 +254,7 @@ export async function GET(req: NextRequest) {
         }
       };
 
-      const [suppliersRes, ordersRes, productsRes, inventoryRes, prRes, inventoryItemsRes, reservationsRes, customersRes, supplierProductCountsRes, catalogItemsRes, allSupplierProductsRes] = await Promise.all([
+      const [suppliersRes, ordersRes, productsRes, inventoryRes, prRes, inventoryItemsRes, reservationsRes, customersRes, supplierProductCountsRes, catalogItemsRes, allSupplierProductsRes, bridgeSuppliersRes, bridgePosRes] = await Promise.all([
         safeQuery("SELECT * FROM procurement_suppliers ORDER BY supplier_code ASC, id ASC"),
         safeQuery("SELECT * FROM procurement_orders ORDER BY id DESC"),
         safeQuery("SELECT * FROM products ORDER BY code ASC"),
@@ -282,7 +290,9 @@ export async function GET(req: NextRequest) {
           FROM supplier_products sp
           LEFT JOIN procurement_suppliers ps ON ps.id = sp.supplier_id
           ORDER BY sp.last_updated_at DESC, sp.id DESC
-        `)
+        `),
+        safeQuery("SELECT supplier_id, factory_unit FROM factory_bridge_supplier"),
+        safeQuery("SELECT * FROM factory_bridge_po")
       ]);
 
       const inboundTxRes = await safeQuery(`
@@ -425,17 +435,82 @@ export async function GET(req: NextRequest) {
         productCountMap[Number(r.supplier_id)] = parseInt(r.product_count, 10) || 0;
       });
 
+      const bridgeSupMap = new Map<number, FactoryUnit>();
+      for (const b of bridgeSuppliersRes.rows || []) {
+        if (b.factory_unit && b.factory_unit in FACTORY_UNITS) {
+          bridgeSupMap.set(Number(b.supplier_id), b.factory_unit as FactoryUnit);
+        }
+      }
+
+      const bridgePoMap = new Map<number, any>();
+      for (const bp of bridgePosRes.rows || []) {
+        bridgePoMap.set(Number(bp.po_id), bp);
+      }
+
+      // Tự động đồng bộ các PO đã tạo cho 3 phòng ban nội bộ nhưng chưa có trong factory_bridge_po
+      for (const ord of orders) {
+        if (String(ord.status || "").toUpperCase() === "CANCELLED") continue;
+        const unit =
+          (ord.supplier_id && bridgeSupMap.get(Number(ord.supplier_id))) ||
+          inferFactoryUnitFromSupplierName(ord.supplier_name);
+        const bp = bridgePoMap.get(Number(ord.id));
+        if (unit && (!bp || !bp.factory_order_code)) {
+          const synced = await syncPoWithFactoryIfInternal(Number(ord.id), ord.created_by || "Hệ thống").catch(() => null);
+          if (synced?.synced) {
+            bridgePoMap.set(Number(ord.id), {
+              ...(bp || {}),
+              po_id: Number(ord.id),
+              po_code: ord.po_code,
+              factory_unit: synced.factory_unit || unit,
+              factory_order_code: synced.factory_order_code || bp?.factory_order_code || null,
+              factory_status: synced.factory_status || bp?.factory_status || "RECEIVED",
+            });
+          }
+        }
+      }
+
+      for (const ord of orders) {
+        const bp = bridgePoMap.get(Number(ord.id));
+        const unit: FactoryUnit | null =
+          (bp?.factory_unit as FactoryUnit) ||
+          (ord.supplier_id ? bridgeSupMap.get(Number(ord.supplier_id)) || null : null) ||
+          inferFactoryUnitFromSupplierName(ord.supplier_name);
+        ord.is_internal_po = Boolean(unit);
+        ord.factory_unit = unit || null;
+        ord.factory_unit_label = unit ? FACTORY_UNITS[unit] : null;
+        ord.factory_order_code = bp?.factory_order_code || null;
+        ord.factory_status = bp?.factory_status || (unit ? "RECEIVED" : null);
+        ord.factory_committed_date = bp?.committed_date ? toVNDateString(bp.committed_date) : null;
+      }
+
+      const INTERNAL_UNIT_ORDER: Record<FactoryUnit, number> = { OLIGO: 1, KIT: 2, DEVICE: 3 };
+
       // Attach statistics to suppliers
-      const suppliersWithStats = suppliers.map((sup: any) => {
-        const supOrders = orders.filter((o: any) => o.supplier_id === sup.id || o.supplier_name === sup.name);
-        const totalSpent = supOrders.reduce((acc: number, o: any) => acc + (parseFloat(o.total_amount) || 0), 0);
-        return {
-          ...sup,
-          order_count: supOrders.length,
-          total_spend: totalSpent,
-          product_count: productCountMap[Number(sup.id)] || 0
-        };
-      });
+      const suppliersWithStats = suppliers
+        .map((sup: any) => {
+          const supOrders = orders.filter((o: any) => o.supplier_id === sup.id || o.supplier_name === sup.name);
+          const totalSpent = supOrders.reduce((acc: number, o: any) => acc + (parseFloat(o.total_amount) || 0), 0);
+          const factoryUnit: FactoryUnit | null =
+            bridgeSupMap.get(Number(sup.id)) ||
+            inferFactoryUnitFromSupplierName(sup.name, sup.short_name, sup.supplier_code);
+          return {
+            ...sup,
+            is_internal: Boolean(factoryUnit),
+            factory_unit: factoryUnit || null,
+            factory_unit_label: factoryUnit ? FACTORY_UNITS[factoryUnit] : null,
+            order_count: supOrders.length,
+            total_spend: totalSpent,
+            product_count: productCountMap[Number(sup.id)] || 0
+          };
+        })
+        .sort((a: any, b: any) => {
+          if (a.is_internal && !b.is_internal) return -1;
+          if (!a.is_internal && b.is_internal) return 1;
+          if (a.is_internal && b.is_internal) {
+            return (INTERNAL_UNIT_ORDER[a.factory_unit as FactoryUnit] || 9) - (INTERNAL_UNIT_ORDER[b.factory_unit as FactoryUnit] || 9);
+          }
+          return String(a.supplier_code || "").localeCompare(String(b.supplier_code || ""));
+        });
 
       // Calculate global procurement metrics
       const liveOrders = orders.filter((o: any) => o.status !== "CANCELLED");
@@ -561,9 +636,11 @@ export async function POST(req: NextRequest) {
     // 1. Manage Supplier (Create / Update)
     if (action === "supplier") {
       await ensureSupplierShortName();
-      const { id, supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating } = body;
+      await ensureDefaultInternalSuppliers();
+      const { id, supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating, factory_unit } = body;
       const cleanShortName = short_name ? String(short_name).trim() : null;
       await unmarkSupplierDeleted(name, cleanShortName || undefined);
+      let savedSupplierId = id ? Number(id) : 0;
       if (id) {
         await query(
           `UPDATE procurement_suppliers 
@@ -574,12 +651,29 @@ export async function POST(req: NextRequest) {
         await logAudit("UPDATE", "PROCUREMENT", `Cập nhật thông tin NCC ${name} (${cleanShortName || '—'})`);
       } else {
         const code = supplier_code || `NCC-TBR-${Date.now().toString().slice(-4)}`;
-        await query(
+        const ins = await query(
           `INSERT INTO procurement_suppliers (supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
           [code, name, cleanShortName, contact_person, phone, email, address, product_lines, payment_terms || "Công nợ 30 ngày", rating || 5]
         );
+        savedSupplierId = Number(ins.rows[0]?.id || 0);
         await logAudit("CREATE", "PROCUREMENT", `Thêm mới nhà cung cấp ${name} (${code}) [${cleanShortName || '—'}]`);
+      }
+      if (savedSupplierId > 0 && factory_unit !== undefined) {
+        const cleanUnit = String(factory_unit || "").trim().toUpperCase();
+        if (cleanUnit && cleanUnit in FACTORY_UNITS) {
+          await query(
+            `INSERT INTO factory_bridge_supplier (supplier_id, factory_unit, updated_at)
+             VALUES ($1, $2, now())
+             ON CONFLICT (supplier_id) DO UPDATE SET factory_unit = EXCLUDED.factory_unit, updated_at = now()`,
+            [savedSupplierId, cleanUnit]
+          );
+        } else {
+          const inferred = inferFactoryUnitFromSupplierName(name, cleanShortName, supplier_code);
+          if (!inferred) {
+            await query("DELETE FROM factory_bridge_supplier WHERE supplier_id = $1", [savedSupplierId]);
+          }
+        }
       }
       invalidateSupplierCatalogCache();
       await syncCatalogSuppliersAndProducts({ force: true });
@@ -942,12 +1036,19 @@ export async function POST(req: NextRequest) {
     // 2. Delete Supplier
     if (action === "delete_supplier") {
       const { id, name } = body;
+      const supRes = await query("SELECT id, supplier_code, name, short_name FROM procurement_suppliers WHERE id = $1", [id]);
+      const supRow = supRes.rows[0];
+      const bridgeCheck = await query("SELECT factory_unit FROM factory_bridge_supplier WHERE supplier_id = $1", [id]);
+      if (bridgeCheck.rows.length > 0 || inferFactoryUnitFromSupplierName(supRow?.name || name, supRow?.short_name, supRow?.supplier_code)) {
+        return NextResponse.json(
+          { error: "Đây là 1 trong 3 Nhà cung cấp nội bộ mặc định của Phòng Cung ứng Khối Kinh doanh (Phòng Tổng hợp Oligo, Phòng Sản xuất Kit, Phòng Kỹ thuật - Thiết bị), không thể xóa!" },
+          { status: 400 }
+        );
+      }
       const orderCheck = await query("SELECT COUNT(*) FROM procurement_orders WHERE supplier_id = $1", [id]);
       if (parseInt(orderCheck.rows[0].count) > 0) {
         return NextResponse.json({ error: "Không thể xóa NCC này vì đã có đơn đặt hàng (PO) liên quan!" }, { status: 400 });
       }
-      const supRes = await query("SELECT name, short_name FROM procurement_suppliers WHERE id = $1", [id]);
-      const supRow = supRes.rows[0];
       await query("DELETE FROM procurement_suppliers WHERE id = $1", [id]);
       await markSupplierDeleted(supRow?.name || name, supRow?.short_name);
       await logAudit("DELETE", "PROCUREMENT", `Xóa hồ sơ nhà cung cấp ${supRow?.name || name || id}`);
@@ -979,7 +1080,8 @@ export async function POST(req: NextRequest) {
           })
         : undefined;
       const targetStatusUpper = String(status || "PENDING").toUpperCase();
-      if (items && items.length > 0 && !["DRAFT", "PENDING", "CANCELLED"].includes(targetStatusUpper)) {
+      const isInternalDeptSupplier = Boolean(inferFactoryUnitFromSupplierName(supplier_name));
+      if (items && items.length > 0 && !["DRAFT", "PENDING", "CANCELLED"].includes(targetStatusUpper) && !isInternalDeptSupplier) {
         const zeroPriceItems = items.filter((it: any) => !(Number(it?.unit_price) > 0));
         if (zeroPriceItems.length > 0) {
           const missingCodes = zeroPriceItems.map((it: any) => it.product_code || it.product_name || "SP").join(", ");
@@ -1235,7 +1337,26 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      return NextResponse.json({ success: true, po_code: finalPoCode, po_id: orderResult.po_id, version: orderResult.version });
+      const internalSync = await syncPoWithFactoryIfInternal(
+        Number(orderResult.po_id),
+        me.full_name || me.username,
+        {
+          ship_mode: body.ship_mode === "DROP_SHIP" ? "DROP_SHIP" : "TO_KD",
+          ship_to: body.ship_to || null,
+          kd_so_code: body.kd_so_code || null,
+        }
+      ).catch((e) => {
+        console.warn("[AUTO_SYNC_INTERNAL_ORDER_WARN]:", e?.message || e);
+        return { synced: false };
+      });
+
+      return NextResponse.json({
+        success: true,
+        po_code: finalPoCode,
+        po_id: orderResult.po_id,
+        version: orderResult.version,
+        internal_order: internalSync,
+      });
     }
 
     // 4. Delete PO (M1: protect completed/paid/inbounded POs)
@@ -1379,8 +1500,9 @@ export async function POST(req: NextRequest) {
         }
       });
 
+      const internalSync = await syncPoWithFactoryIfInternal(Number(id), me.full_name || me.username).catch(() => ({ synced: false }));
       await logAudit("UPDATE_STATUS", "PROCUREMENT", `Cập nhật trạng thái đơn PO ${po_code || id} thành ${status}${force_rollback ? ` [ROLLBACK: ${rollback_reason}]` : ''}`);
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, internal_order: internalSync });
     }
 
     // 5a. Update PO Payment Status (Interactive Payment Status badge on PO table - Requirement 6 / 4d)
@@ -2278,8 +2400,9 @@ export async function POST(req: NextRequest) {
         return { po_code: po.po_code, merged, added };
       });
 
+      const internalSyncAppend = await syncPoWithFactoryIfInternal(Number(po_id), actor).catch(() => ({ synced: false }));
       await logAudit("APPEND_PO", "PROCUREMENT", `Bổ sung ${items.length} dòng từ PR (${(pr_ids || []).join(", ")}) vào PO ${result.po_code}`);
-      return NextResponse.json({ success: true, ...result });
+      return NextResponse.json({ success: true, ...result, internal_order: internalSyncAppend });
     }
 
     if (action === "consolidate_prs_to_po") {
@@ -2381,8 +2504,13 @@ export async function POST(req: NextRequest) {
         return { po_id: newPoId };
       });
 
+      const internalSyncCons = await syncPoWithFactoryIfInternal(
+        Number(result.po_id),
+        created_by || me.full_name || me.username
+      ).catch(() => ({ synced: false }));
+
       await logAudit("CONSOLIDATE_PO", "PROCUREMENT", `Gom ${pr_ids?.length || 0} phiếu PR vào PO ${poCode} gửi NCC ${supplier_name}`);
-      return NextResponse.json({ success: true, po_code: poCode, po_id: result.po_id });
+      return NextResponse.json({ success: true, po_code: poCode, po_id: result.po_id, internal_order: internalSyncCons });
     }
 
     return NextResponse.json({ error: "Hành động POST không hợp lệ" }, { status: 400 });

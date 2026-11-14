@@ -16,11 +16,61 @@ interface WarehouseItem {
   owner_module_key?: string;
 }
 
+interface PrReasonOption {
+  id: string;
+  category: string;
+  label: string;
+  value: string;
+  entity_type?: string;
+  entity_id?: string;
+}
+
 interface PrOption {
   id: string;
   code: string;
   name: string;
+  module_key?: string;
   warehouses: { id: string; code: string; name: string }[];
+  reasons?: PrReasonOption[];
+}
+
+interface CatalogMasterItem {
+  id: string;
+  code: string;
+  name: string;
+  item_type?: string;
+  base_uom: string;
+  category_name?: string | null;
+}
+
+interface PrDraftLine {
+  mode: "CATALOG" | "NEW";
+  item_id: string;
+  label: string;
+  new_item_code: string;
+  new_item_name: string;
+  item_type: "RAW_MATERIAL" | "REAGENT" | "CONSUMABLE" | "COMPONENT";
+  qty: string;
+  uom: string;
+  est_price: string;
+  notes: string;
+}
+
+const DEFAULT_UOM_SUGGESTIONS = ["Hộp", "Lọ", "Tube", "Bộ", "Cái", "mL", "L", "g", "kg", "pcs", "Test", "Rxn"];
+
+function createEmptyPrLine(mode: "CATALOG" | "NEW" = "CATALOG"): PrDraftLine {
+  return {
+    mode,
+    item_id: "",
+    label: "",
+    new_item_code: "",
+    new_item_name: "",
+    item_type: "RAW_MATERIAL",
+    qty: "1",
+    uom: "Hộp",
+    est_price: "",
+    notes: "",
+  };
 }
 
 interface StockRow {
@@ -38,14 +88,6 @@ interface StockRow {
   location_code: string;
   qty_on_hand: string;
   qty_available: string;
-}
-
-interface PrDraftLine {
-  item_id: string;
-  label: string;
-  qty: string;
-  uom: string;
-  est_price: string;
 }
 
 export function DeptMaterialActionBar({
@@ -149,66 +191,138 @@ export function DeptMaterialActionBar({
     queryFn: () => api<{ code: string }[]>("/api/factory/master/uoms"),
     enabled: panel === "pr",
   });
+  const allCatalogItems = useQuery({
+    queryKey: ["factory", "items", "pr-catalog-all"],
+    queryFn: () =>
+      api<{ rows: CatalogMasterItem[] }>("/api/factory/master/items?page_size=200&status=ACTIVE"),
+    enabled: panel === "pr",
+  });
   const [prOrgUnitId, setPrOrgUnitId] = useState("");
   const [prWhId, setPrWhId] = useState("");
   const [prNeededBy, setPrNeededBy] = useState("");
+  const [prReasonPreset, setPrReasonPreset] = useState("");
   const [prReason, setPrReason] = useState("");
+  const [prPurposeEntityType, setPrPurposeEntityType] = useState<string | null>(null);
+  const [prPurposeEntityId, setPrPurposeEntityId] = useState<string | null>(null);
   const [prItemQ, setPrItemQ] = useState("");
-  const [prLines, setPrLines] = useState<PrDraftLine[]>([]);
+  const [prQuickSelectItemId, setPrQuickSelectItemId] = useState("");
+  const [prLines, setPrLines] = useState<PrDraftLine[]>(() => [createEmptyPrLine("CATALOG")]);
 
   React.useEffect(() => {
     if (!prOptions.data?.length || prOrgUnitId) return;
     const matched = prOptions.data.find((o) => {
-      const t = `${o.code} ${o.name}`.toUpperCase();
+      const t = `${o.code} ${o.name} ${o.module_key ?? ""}`.toUpperCase();
       if (moduleKey === "RD") return t.includes("RD") || t.includes("R&D") || t.includes("NGHIÊN CỨU");
       if (moduleKey === "KIT") return t.includes("KIT");
       if (moduleKey === "OLIGO") return t.includes("OLIGO");
       if (moduleKey === "DEVICE") return t.includes("DEV") || t.includes("THIẾT BỊ") || t.includes("KỸ THUẬT");
-      if (moduleKey === "QMS") return t.includes("QC") || t.includes("QA");
+      if (moduleKey === "QMS") return t.includes("QC") || t.includes("QA") || t.includes("QMS");
       return false;
     }) ?? prOptions.data[0];
     if (matched) {
       setPrOrgUnitId(matched.id);
       if (matched.warehouses[0]) setPrWhId(matched.warehouses[0].id);
+      if (!prReason && matched.reasons?.[0]) {
+        setPrReasonPreset(matched.reasons[0].id);
+        setPrReason(matched.reasons[0].value);
+        setPrPurposeEntityType(matched.reasons[0].entity_type ?? null);
+        setPrPurposeEntityId(matched.reasons[0].entity_id ?? null);
+      }
     }
-  }, [prOptions.data, prOrgUnitId, moduleKey]);
+  }, [prOptions.data, prOrgUnitId, moduleKey, prReason]);
 
   const prItemsSearch = useQuery({
     queryKey: ["factory", "items", "quick-pr-picker", prItemQ],
     queryFn: () =>
-      api<{ rows: { id: string; code: string; name: string; base_uom: string }[] }>(
-        `/api/factory/master/items?page_size=20&q=${encodeURIComponent(prItemQ)}`
+      api<{ rows: CatalogMasterItem[] }>(
+        `/api/factory/master/items?page_size=30&q=${encodeURIComponent(prItemQ)}`
       ),
-    enabled: panel === "pr" && prItemQ.trim().length >= 2,
+    enabled: panel === "pr" && prItemQ.trim().length >= 1,
+  });
+
+  const mergedUomOptions = React.useMemo(() => {
+    const fromDb = (uoms.data ?? []).map((u) => u.code);
+    return Array.from(new Set([...fromDb, ...DEFAULT_UOM_SUGGESTIONS]));
+  }, [uoms.data]);
+
+  const updatePrLine = (idx: number, patch: Partial<PrDraftLine>) => {
+    setPrLines((prev) => prev.map((item, j) => (j === idx ? { ...item, ...patch } : item)));
+  };
+
+  const addCatalogItemToPrLines = (it: CatalogMasterItem) => {
+    setPrLines((prev) => {
+      const emptyIdx = prev.findIndex(
+        (l) => l.mode === "CATALOG" && !l.item_id && !l.new_item_name.trim()
+      );
+      const nextLine: PrDraftLine = {
+        mode: "CATALOG",
+        item_id: it.id,
+        label: `${it.code} — ${it.name}`,
+        new_item_code: "",
+        new_item_name: "",
+        item_type: "RAW_MATERIAL",
+        qty: "1",
+        uom: it.base_uom || "Hộp",
+        est_price: "",
+        notes: "",
+      };
+      if (emptyIdx !== -1) {
+        return prev.map((item, j) => (j === emptyIdx ? nextLine : item));
+      }
+      return [...prev, nextLine];
+    });
+  };
+
+  const validPrLines = prLines.filter((l) => {
+    const q = Number(String(l.qty || "").replace(",", "."));
+    if (!(q > 0)) return false;
+    if (l.mode === "CATALOG") return Boolean(l.item_id);
+    return Boolean(l.new_item_name.trim() || l.new_item_code.trim());
   });
 
   const createPrMut = useMutation({
     mutationFn: () =>
-      api("/api/factory/purchase/requests", {
+      api<{ id: string; code: string }>("/api/factory/purchase/requests", {
         method: "POST",
         idempotent: true,
         json: {
           org_unit_id: prOrgUnitId,
           target_warehouse_id: prWhId,
           needed_by: prNeededBy || null,
-          reason: prReason,
-          lines: prLines.map((l) => ({
-            item_id: l.item_id,
+          reason: prReason.trim(),
+          purpose_entity_type: prPurposeEntityType,
+          purpose_entity_id: prPurposeEntityId,
+          auto_submit: true,
+          lines: validPrLines.map((l) => ({
+            item_id: l.mode === "CATALOG" ? l.item_id : null,
+            new_item_code: l.mode === "NEW" ? l.new_item_code.trim() || null : null,
+            new_item_name: l.mode === "NEW" ? l.new_item_name.trim() || null : null,
+            item_type: l.mode === "NEW" ? l.item_type : null,
             qty: Number(l.qty.replace(",", ".")),
-            uom: l.uom,
+            uom: l.uom || "Hộp",
             est_price: l.est_price ? Number(l.est_price) : null,
+            notes: l.notes.trim() || null,
           })),
         },
       }),
     onSuccess: () => {
-      setPrLines([]);
-      setPrReason("");
+      setPrLines([createEmptyPrLine("CATALOG")]);
       qc.invalidateQueries({ queryKey: ["factory", "prs"] });
+      qc.invalidateQueries({ queryKey: ["factory", "items"] });
       setPanel("none");
     },
   });
 
   const selectedPrUnit = prOptions.data?.find((o) => o.id === prOrgUnitId);
+  const groupedReasons = React.useMemo(() => {
+    const groups = new Map<string, PrReasonOption[]>();
+    for (const r of selectedPrUnit?.reasons ?? []) {
+      const list = groups.get(r.category) ?? [];
+      list.push(r);
+      groups.set(r.category, list);
+    }
+    return Array.from(groups.entries());
+  }, [selectedPrUnit]);
 
   const navigateToHub = (tab: "factory-warehouse" | "factory-purchase" | "factory-import") => {
     if (typeof window !== "undefined") {
@@ -472,141 +586,389 @@ export function DeptMaterialActionBar({
           actions={<Button variant="ghost" onClick={() => setPanel("none")}>Đóng</Button>}
         >
           <form
-            className="flex flex-col gap-3 text-xs"
+            className="flex flex-col gap-3.5 text-xs"
             onSubmit={(e) => {
               e.preventDefault();
               createPrMut.mutate();
             }}
           >
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label="Phòng đề nghị *">
-                <select
-                  className={inputClass}
-                  value={prOrgUnitId}
-                  onChange={(e) => {
-                    const nextId = e.target.value;
-                    setPrOrgUnitId(nextId);
-                    const u = prOptions.data?.find((o) => o.id === nextId);
-                    setPrWhId(u?.warehouses[0]?.id ?? "");
-                  }}
-                  required
-                >
-                  <option value="">Chọn phòng</option>
-                  {prOptions.data?.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.code} — {o.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Kho nhánh nhận hàng *">
-                <select className={inputClass} value={prWhId} onChange={(e) => setPrWhId(e.target.value)} required>
-                  <option value="">Chọn kho nhận</option>
-                  {selectedPrUnit?.warehouses.map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.code} — {w.name}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Cần trước ngày">
-                <input className={inputClass} type="date" value={prNeededBy} onChange={(e) => setPrNeededBy(e.target.value)} />
-              </Field>
-              <Field label="Lý do / Mã Lệnh SX / Dự án *">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12">
+              <div className="lg:col-span-3">
+                <Field label="Phòng đề nghị *">
+                  <select
+                    className={inputClass}
+                    value={prOrgUnitId}
+                    onChange={(e) => {
+                      const nextId = e.target.value;
+                      setPrOrgUnitId(nextId);
+                      const u = prOptions.data?.find((o) => o.id === nextId);
+                      setPrWhId(u?.warehouses[0]?.id ?? "");
+                      if (u?.reasons?.[0]) {
+                        setPrReasonPreset(u.reasons[0].id);
+                        setPrReason(u.reasons[0].value);
+                        setPrPurposeEntityType(u.reasons[0].entity_type ?? null);
+                        setPrPurposeEntityId(u.reasons[0].entity_id ?? null);
+                      }
+                    }}
+                    required
+                  >
+                    <option value="">Chọn phòng</option>
+                    {prOptions.data?.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.code} — {o.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <div className="lg:col-span-3">
+                <Field label="Kho nhánh nhận hàng *">
+                  <select className={inputClass} value={prWhId} onChange={(e) => setPrWhId(e.target.value)} required>
+                    <option value="">Chọn kho nhận</option>
+                    {selectedPrUnit?.warehouses.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.code} — {w.name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+              <div className="lg:col-span-2">
+                <Field label="Cần trước ngày">
+                  <input className={inputClass} type="date" value={prNeededBy} onChange={(e) => setPrNeededBy(e.target.value)} />
+                </Field>
+              </div>
+              <div className="lg:col-span-4">
+                <Field label="Chọn Lý do / Mã Lệnh SX / Dự án từ danh mục *">
+                  <select
+                    className={inputClass}
+                    value={prReasonPreset}
+                    onChange={(e) => {
+                      const valId = e.target.value;
+                      setPrReasonPreset(valId);
+                      if (valId === "__CUSTOM__") {
+                        setPrPurposeEntityType(null);
+                        setPrPurposeEntityId(null);
+                        return;
+                      }
+                      const found = selectedPrUnit?.reasons?.find((r) => r.id === valId);
+                      if (found) {
+                        setPrReason(found.value);
+                        setPrPurposeEntityType(found.entity_type ?? null);
+                        setPrPurposeEntityId(found.entity_id ?? null);
+                      }
+                    }}
+                  >
+                    <option value="">-- Chọn từ danh mục Lý do / Dự án / Lệnh SX có sẵn --</option>
+                    {groupedReasons.map(([cat, items]) => (
+                      <optgroup key={cat} label={cat}>
+                        {items.map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.label}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    <option value="__CUSTOM__">✍️ Tự nhập lý do / mã tham chiếu khác...</option>
+                  </select>
+                </Field>
+              </div>
+            </div>
+
+            <div>
+              <Field label="Chi tiết Lý do / Mã Lệnh SX / Dự án / Ghi chú mục đích mua * (Có thể chọn ở trên hoặc gõ bổ sung)">
                 <input
                   className={inputClass}
                   value={prReason}
                   onChange={(e) => setPrReason(e.target.value)}
-                  placeholder={defaultReasonPlaceholder ?? `Phục vụ kế hoạch ${deptLabel}`}
+                  placeholder={defaultReasonPlaceholder ?? `VD: Phục vụ dự án ${deptLabel} / Thí nghiệm ELN / Bổ sung định mức kho...`}
                   required
                 />
               </Field>
             </div>
 
-            <div className="relative">
-              <input
-                className={inputClass}
-                placeholder="Gõ ≥ 2 ký tự để tìm vật tư / hóa chất cần đặt mua..."
-                value={prItemQ}
-                onChange={(e) => setPrItemQ(e.target.value)}
-              />
-              {prItemsSearch.data && prItemQ.trim().length >= 2 && (
-                <ul className="mt-1 max-h-48 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-lg text-xs">
-                  {prItemsSearch.data.rows.map((it) => (
-                    <li key={it.id}>
-                      <button
-                        type="button"
-                        className="w-full text-left px-3 py-2 hover:bg-amber-50 dark:hover:bg-amber-950/40 cursor-pointer"
-                        onClick={() => {
-                          setPrLines([...prLines, { item_id: it.id, label: `${it.code} — ${it.name}`, qty: "", uom: it.base_uom, est_price: "" }]);
-                          setPrItemQ("");
-                        }}
-                      >
-                        <span className="font-mono font-semibold">{it.code}</span> — {it.name} ({it.base_uom})
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            {/* Thanh công cụ thêm nguyên vật liệu: Chọn từ danh sách có sẵn HOẶC Gõ mã mới, tên mới */}
+            <div className="p-3 rounded-2xl border border-amber-200 dark:border-amber-800/70 bg-amber-50/50 dark:bg-amber-950/20 space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                  🧪 Danh sách Nguyên vật liệu / Hóa chất đề nghị mua ({prLines.length} dòng)
+                </span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPrLines((prev) => [...prev, createEmptyPrLine("CATALOG")])}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-sky-600 hover:bg-sky-700 text-white shadow-2xs cursor-pointer transition-colors"
+                  >
+                    + Thêm dòng chọn từ DS có sẵn
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setPrLines((prev) => [...prev, createEmptyPrLine("NEW")])}
+                    className="px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-2xs cursor-pointer transition-colors"
+                  >
+                    ✨ + Gõ mã mới / Tên nguyên liệu mới
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid gap-2 sm:grid-cols-2">
+                <div>
+                  <select
+                    className={inputClass}
+                    value={prQuickSelectItemId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setPrQuickSelectItemId("");
+                      if (!id) return;
+                      const found = (allCatalogItems.data?.rows ?? []).find((x) => x.id === id);
+                      if (found) addCatalogItemToPrLines(found);
+                    }}
+                  >
+                    <option value="">
+                      📚 Chọn nhanh nguyên vật liệu từ danh mục có sẵn ({allCatalogItems.data?.rows.length ?? 0} mã)...
+                    </option>
+                    {(allCatalogItems.data?.rows ?? []).map((it) => (
+                      <option key={it.id} value={it.id}>
+                        {it.code} — {it.name} ({it.base_uom})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="relative">
+                  <input
+                    className={inputClass}
+                    placeholder="🔍 Hoặc gõ tìm nhanh theo mã / tên vật tư (hoặc gõ tên mới để thêm ngay)..."
+                    value={prItemQ}
+                    onChange={(e) => setPrItemQ(e.target.value)}
+                  />
+                  {prItemQ.trim().length >= 1 && (
+                    <ul className="absolute z-20 mt-1 w-full max-h-56 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-xl text-xs divide-y divide-slate-100 dark:divide-slate-800">
+                      {(prItemsSearch.data?.rows ?? []).map((it) => (
+                        <li key={it.id}>
+                          <button
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-amber-50 dark:hover:bg-amber-950/40 cursor-pointer flex items-center justify-between gap-2"
+                            onClick={() => {
+                              addCatalogItemToPrLines(it);
+                              setPrItemQ("");
+                            }}
+                          >
+                            <span>
+                              <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{it.code}</span> — {it.name}
+                            </span>
+                            <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 font-mono text-[11px] shrink-0">
+                              {it.base_uom}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                      <li>
+                        <button
+                          type="button"
+                          className="w-full text-left px-3 py-2 bg-amber-50/80 dark:bg-amber-950/50 hover:bg-amber-100 dark:hover:bg-amber-900/60 text-amber-800 dark:text-amber-300 font-bold cursor-pointer"
+                          onClick={() => {
+                            const typed = prItemQ.trim();
+                            setPrLines((prev) => [
+                              ...prev,
+                              {
+                                mode: "NEW",
+                                item_id: "",
+                                label: "",
+                                new_item_code: "",
+                                new_item_name: typed,
+                                item_type: "RAW_MATERIAL",
+                                qty: "1",
+                                uom: "Hộp",
+                                est_price: "",
+                                notes: "",
+                              },
+                            ]);
+                            setPrItemQ("");
+                          }}
+                        >
+                          ✨ + Thêm mới nguyên vật liệu: &ldquo;{prItemQ.trim()}&rdquo; (Tự gõ mã mới &amp; tên mới)
+                        </button>
+                      </li>
+                    </ul>
+                  )}
+                </div>
+              </div>
             </div>
 
             {prLines.length > 0 && (
-              <Table head={["Vật tư cần mua", "Số lượng", "ĐVT", "Đơn giá dự kiến (VND)", ""]}>
-                {prLines.map((l, idx) => (
-                  <tr key={idx}>
-                    <td className="py-1.5 pr-3">{l.label}</td>
-                    <td className="py-1.5 pr-3 w-32">
-                      <input
-                        className={inputClass}
-                        inputMode="decimal"
-                        value={l.qty}
-                        onChange={(e) => setPrLines(prLines.map((item, j) => (j === idx ? { ...item, qty: e.target.value } : item)))}
-                        required
-                      />
-                    </td>
-                    <td className="py-1.5 pr-3 w-28">
-                      <select
-                        className={inputClass}
-                        value={l.uom}
-                        onChange={(e) => setPrLines(prLines.map((item, j) => (j === idx ? { ...item, uom: e.target.value } : item)))}
-                      >
-                        {uoms.data?.map((u) => (
-                          <option key={u.code} value={u.code}>
-                            {u.code}
-                          </option>
-                        ))}
-                      </select>
-                    </td>
-                    <td className="py-1.5 pr-3 w-40">
-                      <input
-                        className={inputClass}
-                        inputMode="numeric"
-                        value={l.est_price}
-                        onChange={(e) =>
-                          setPrLines(prLines.map((item, j) => (j === idx ? { ...item, est_price: e.target.value.replace(/\D/g, "") } : item)))
-                        }
-                      />
-                    </td>
-                    <td className="py-1.5 pr-3 text-right">
-                      <button
-                        type="button"
-                        className="text-rose-600 cursor-pointer"
-                        onClick={() => setPrLines(prLines.filter((_, j) => j !== idx))}
-                      >
-                        Xóa
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </Table>
+              <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                <table className="w-full text-left text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 dark:bg-slate-800/80 text-slate-700 dark:text-slate-200 font-bold border-b border-slate-200 dark:border-slate-700">
+                      <th className="py-2 px-2.5 w-8 text-center">#</th>
+                      <th className="py-2 px-2.5 w-36">Nguồn chọn</th>
+                      <th className="py-2 px-2.5 min-w-[280px]">Mã &amp; Tên Nguyên vật liệu / Hóa chất *</th>
+                      <th className="py-2 px-2.5 w-24 text-center">Số lượng *</th>
+                      <th className="py-2 px-2.5 w-28 text-center">ĐVT *</th>
+                      <th className="py-2 px-2.5 w-36 text-right">Đơn giá dự kiến</th>
+                      <th className="py-2 px-2.5 w-44">Quy cách / Ghi chú dòng</th>
+                      <th className="py-2 px-2 w-12 text-center"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                    {prLines.map((l, idx) => (
+                      <tr key={idx} className="align-top hover:bg-slate-50/70 dark:hover:bg-slate-800/30">
+                        <td className="py-2 px-2.5 text-center font-mono text-slate-400 pt-3">{idx + 1}</td>
+                        <td className="py-2 px-2.5">
+                          <select
+                            className={inputClass}
+                            value={l.mode}
+                            onChange={(e) => {
+                              const mode = e.target.value as "CATALOG" | "NEW";
+                              updatePrLine(idx, { mode });
+                            }}
+                          >
+                            <option value="CATALOG">📚 DS có sẵn</option>
+                            <option value="NEW">✨ Gõ mã/tên mới</option>
+                          </select>
+                        </td>
+                        <td className="py-2 px-2.5">
+                          {l.mode === "CATALOG" ? (
+                            <select
+                              className={inputClass}
+                              value={l.item_id}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                if (val === "__SWITCH_NEW__") {
+                                  updatePrLine(idx, { mode: "NEW", item_id: "", label: "" });
+                                  return;
+                                }
+                                const found = (allCatalogItems.data?.rows ?? []).find((x) => x.id === val);
+                                updatePrLine(idx, {
+                                  item_id: val,
+                                  label: found ? `${found.code} — ${found.name}` : "",
+                                  uom: found?.base_uom || l.uom || "Hộp",
+                                });
+                              }}
+                            >
+                              <option value="">-- Chọn nguyên vật liệu từ danh sách có sẵn --</option>
+                              {(allCatalogItems.data?.rows ?? []).map((it) => (
+                                <option key={it.id} value={it.id}>
+                                  {it.code} — {it.name} ({it.base_uom})
+                                </option>
+                              ))}
+                              <option value="__SWITCH_NEW__">✨ Không có trong DS → Chuyển sang Gõ mã mới / Tên mới...</option>
+                            </select>
+                          ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-1.5">
+                              <div className="sm:col-span-4">
+                                <input
+                                  className={inputClass}
+                                  placeholder="Mã mới (VD: NVL-RD-01)"
+                                  value={l.new_item_code}
+                                  onChange={(e) => updatePrLine(idx, { new_item_code: e.target.value.toUpperCase() })}
+                                  title="Nhập mã nguyên vật liệu mới (hoặc để trống hệ thống tự cấp mã)"
+                                />
+                              </div>
+                              <div className="sm:col-span-5">
+                                <input
+                                  className={inputClass}
+                                  placeholder="Tên nguyên liệu / hóa chất mới *"
+                                  value={l.new_item_name}
+                                  onChange={(e) => updatePrLine(idx, { new_item_name: e.target.value })}
+                                  required={l.mode === "NEW"}
+                                />
+                              </div>
+                              <div className="sm:col-span-3">
+                                <select
+                                  className={inputClass}
+                                  value={l.item_type}
+                                  onChange={(e) =>
+                                    updatePrLine(idx, {
+                                      item_type: e.target.value as PrDraftLine["item_type"],
+                                    })
+                                  }
+                                  title="Phân loại vật tư mới"
+                                >
+                                  <option value="RAW_MATERIAL">Nguyên liệu</option>
+                                  <option value="REAGENT">Hóa chất/Thuốc thử</option>
+                                  <option value="CONSUMABLE">Vật tư tiêu hao</option>
+                                  <option value="COMPONENT">Linh kiện</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 px-2.5">
+                          <input
+                            className={`${inputClass} text-center font-bold`}
+                            inputMode="decimal"
+                            placeholder="SL"
+                            value={l.qty}
+                            onChange={(e) => updatePrLine(idx, { qty: e.target.value })}
+                            required
+                          />
+                        </td>
+                        <td className="py-2 px-2.5">
+                          <input
+                            className={`${inputClass} text-center`}
+                            list={`pr-uom-list-${moduleKey}`}
+                            placeholder="ĐVT"
+                            value={l.uom}
+                            onChange={(e) => updatePrLine(idx, { uom: e.target.value })}
+                            required
+                          />
+                        </td>
+                        <td className="py-2 px-2.5">
+                          <input
+                            className={`${inputClass} text-right font-mono`}
+                            inputMode="numeric"
+                            placeholder="0"
+                            value={l.est_price}
+                            onChange={(e) => updatePrLine(idx, { est_price: e.target.value.replace(/\D/g, "") })}
+                          />
+                        </td>
+                        <td className="py-2 px-2.5">
+                          <input
+                            className={inputClass}
+                            placeholder="Quy cách, hãng, CAS..."
+                            value={l.notes}
+                            onChange={(e) => updatePrLine(idx, { notes: e.target.value })}
+                          />
+                        </td>
+                        <td className="py-2 px-2 text-center pt-3">
+                          <button
+                            type="button"
+                            className="text-rose-600 hover:text-rose-700 font-bold cursor-pointer"
+                            onClick={() =>
+                              setPrLines((prev) =>
+                                prev.length > 1 ? prev.filter((_, j) => j !== idx) : [createEmptyPrLine("CATALOG")]
+                              )
+                            }
+                            title="Xóa dòng này"
+                          >
+                            Xóa
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <datalist id={`pr-uom-list-${moduleKey}`}>
+                  {mergedUomOptions.map((code) => (
+                    <option key={code} value={code} />
+                  ))}
+                </datalist>
+              </div>
             )}
 
             <ErrorNote error={createPrMut.error ?? prOptions.error} />
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={() => setPanel("none")}>Hủy</Button>
-              <Button type="submit" disabled={createPrMut.isPending || prLines.length === 0}>
-                {createPrMut.isPending ? "Đang gửi…" : "Lưu đề nghị mua (Chuyển sang Cung Ứng NVL)"}
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-slate-500">
+                💡 Bạn có thể chọn vật tư có sẵn trong kho hoặc chuyển cột <b>Nguồn chọn</b> sang <b>✨ Gõ mã/tên mới</b> để đề nghị mua vật tư mới chưa có trong danh mục.
+              </span>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="ghost" onClick={() => setPanel("none")}>Hủy</Button>
+                <Button type="submit" disabled={createPrMut.isPending || validPrLines.length === 0 || !prReason.trim()}>
+                  {createPrMut.isPending ? "Đang gửi…" : `Lưu đề nghị mua (${validPrLines.length} mục → Chuyển sang Cung Ứng NVL)`}
+                </Button>
+              </div>
             </div>
           </form>
         </Card>

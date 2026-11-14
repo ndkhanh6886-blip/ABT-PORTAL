@@ -6,14 +6,14 @@
 
 /** Recipient groups of the technical block: everyone holding the permission in any department. */
 export const TECHNICAL_MATRIX_ROLES: { code: string; label: string; short: string; permission: string }[] = [
-  { code: "factory_rd", label: "Phòng Nghiên cứu R&D", short: "R&D", permission: "rd.view" },
-  { code: "factory_kit", label: "Phòng Sản xuất Kit", short: "SX Kit", permission: "kit.view" },
-  { code: "factory_oligo", label: "Phòng Tổng hợp Oligo", short: "Oligo", permission: "oligo.view" },
-  { code: "factory_device", label: "Phòng Kỹ thuật – Thiết bị", short: "KT–Thiết bị", permission: "device.view" },
-  { code: "factory_qa", label: "QA/QC Nhà máy", short: "QA/QC NM", permission: "qms.qc.view" },
-  { code: "factory_wh", label: "Kho Nhà máy", short: "Kho NM", permission: "inv.stock.view" },
-  { code: "factory_purchase", label: "Mua hàng Nhà máy", short: "Mua hàng NM", permission: "purchase.po.view" },
-  { code: "factory_intake", label: "Điều phối Đơn Nội Bộ", short: "Đơn nội bộ", permission: "intake.order.accept" },
+  { code: "factory_rd", label: "Phòng Nghiên cứu R&D (Khối Kỹ thuật)", short: "R&D", permission: "rd.view" },
+  { code: "factory_kit", label: "Phòng Sản xuất Kit (Khối Kỹ thuật)", short: "SX Kit", permission: "kit.view" },
+  { code: "factory_oligo", label: "Phòng Tổng hợp Oligo (Khối Kỹ thuật)", short: "Oligo", permission: "oligo.view" },
+  { code: "factory_device", label: "Phòng Kỹ thuật – Thiết bị (Khối Kỹ thuật)", short: "KT–Thiết bị", permission: "device.view" },
+  { code: "factory_qa", label: "Phòng QA/QC Nhà máy (Khối Kỹ thuật)", short: "QA/QC NM", permission: "qms.qc.view" },
+  { code: "factory_wh", label: "Kho Nhà máy – Vật tư & Thành phẩm SX (Khối Kỹ thuật)", short: "Kho Nhà Máy", permission: "inv.stock.view" },
+  { code: "factory_purchase", label: "Cung ứng & Mua hàng Nhà máy – NVL/Hóa chất SX (Khối Kỹ thuật)", short: "Cung Ứng KT", permission: "purchase.po.view" },
+  { code: "factory_intake", label: "Điều phối Đơn Nội Bộ (Khối Kỹ thuật)", short: "Đơn Nội Bộ", permission: "intake.order.accept" },
 ];
 
 export const factoryNoticeKey = (type: string) => `factory_${type.toLowerCase()}`;
@@ -73,31 +73,39 @@ export const TRANSITION_NOTICES: { entity: string; action: string; notify: strin
   { entity: "ncr", action: "qa_approve_concession", notify: "qms.ncr.approve_bod", dept: "QA/QC", name: "Nhân nhượng chờ BGĐ phê duyệt", description: "QA đồng ý nhân nhượng sử dụng, chờ Ban Giám đốc. Mặc định gửi người duyệt cấp BGĐ." },
   { entity: "qms_controlled_document", action: "submit_review", notify: "qms.doc.approve", dept: "QA/QC", name: "Tài liệu kiểm soát chờ phê duyệt", description: "SOP / tài liệu mới hoặc sửa đổi chờ ban hành. Mặc định gửi người phê duyệt tài liệu." },
   { entity: "qms_controlled_document", action: "approve", notify: "qms.doc.manage", dept: "QA/QC", name: "Tài liệu kiểm soát có hiệu lực", description: "Tài liệu được ban hành — cần đào tạo / phân phối. Mặc định gửi người quản lý tài liệu." },
-  // Kho & Mua hàng nhà máy
-  { entity: "lot", action: "reject", notify: "inv.document.post", dept: "Kho Nhà máy", name: "Lô vật tư bị loại (QC không đạt)", description: "Lô bị loại, cần trả nhà cung cấp / hủy. Mặc định gửi người lập phiếu kho." },
-  { entity: "lot", action: "hold", notify: "inv.document.post", dept: "Kho Nhà máy", name: "Lô vật tư bị treo", description: "Lô bị treo, không được xuất dùng. Mặc định gửi người lập phiếu kho." },
-  { entity: "purchase_request", action: "submit", notify: "purchase.pr.approve", dept: "Mua hàng Nhà máy", name: "Đề nghị mua hàng (PR) chờ duyệt", description: "Phòng ban gửi PR. Mặc định gửi người duyệt PR." },
-  { entity: "purchase_request", action: "escalate", notify: "purchase.pr.approve_bod", dept: "Mua hàng Nhà máy", name: "PR vượt hạn mức — chờ BGĐ duyệt", description: "PR vượt thẩm quyền trưởng phòng. Mặc định gửi người duyệt cấp BGĐ." },
-  { entity: "purchase_request", action: "approve", notify: "purchase.po.manage", dept: "Mua hàng Nhà máy", name: "PR đã duyệt — lập đơn mua (PO)", description: "PR được duyệt. Mặc định gửi người lập PO." },
-  { entity: "purchase_request", action: "bod_approve", notify: "purchase.po.manage", dept: "Mua hàng Nhà máy", name: "PR được BGĐ duyệt — lập đơn mua (PO)", description: "BGĐ duyệt PR vượt hạn mức. Mặc định gửi người lập PO." },
-  { entity: "purchase_request", action: "reject", notify: "purchase.pr.create", dept: "Mua hàng Nhà máy", name: "PR bị từ chối", description: "PR không được duyệt. Mặc định gửi người lập PR của phòng." },
+  // Kho & Mua hàng nhà máy (Khối Kỹ thuật)
+  { entity: "lot", action: "reject", notify: "inv.document.post", dept: "Kho Nhà máy", name: "Lô vật tư/hóa chất bị loại (QC không đạt) — Kho Nhà máy", description: "Lô nguyên vật liệu/bán thành phẩm bị loại sau kiểm nghiệm QC, cần cô lập trả nhà cung cấp hoặc hủy theo SOP Kho Nhà máy." },
+  { entity: "lot", action: "hold", notify: "inv.document.post", dept: "Kho Nhà máy", name: "Lô vật tư/hóa chất bị treo (Hold) — Kho Nhà máy", description: "Lô vật tư kỹ thuật tại Kho Nhà máy bị tạm khóa trạng thái Hold, chặn xuất cấp phát cho sản xuất." },
+  { entity: "purchase_request", action: "submit", notify: "purchase.pr.approve", dept: "Mua hàng Nhà máy", name: "Đề nghị mua sắm NVL/Hóa chất kỹ thuật (PR Nhà máy) chờ duyệt", description: "Các phòng R&D, Sản xuất Kit, Oligo, Thiết bị, QA/QC gửi PR mua sắm vật tư kỹ thuật. Mặc định gửi Trưởng bộ phận / người duyệt PR." },
+  { entity: "purchase_request", action: "escalate", notify: "purchase.pr.approve_bod", dept: "Mua hàng Nhà máy", name: "PR Kỹ thuật vượt hạn mức — trình BGĐ phê duyệt", description: "Đề nghị mua sắm vật tư/thiết bị kỹ thuật vượt thẩm quyền trưởng phòng. Mặc định gửi Ban Giám Đốc." },
+  { entity: "purchase_request", action: "approve", notify: "purchase.po.manage", dept: "Mua hàng Nhà máy", name: "PR Kỹ thuật đã duyệt — Cung ứng Nhà máy lập PO", description: "PR vật tư kỹ thuật được duyệt, chuyển bộ phận Cung ứng Kỹ thuật tìm nhà cung cấp và lập đơn mua PO Nhà máy." },
+  { entity: "purchase_request", action: "bod_approve", notify: "purchase.po.manage", dept: "Mua hàng Nhà máy", name: "PR Kỹ thuật được BGĐ duyệt — lập đơn mua (PO Nhà máy)", description: "BGĐ duyệt PR kỹ thuật vượt hạn mức, chuyển bộ phận Cung ứng Kỹ thuật phát hành đơn mua PO." },
+  { entity: "purchase_request", action: "reject", notify: "purchase.pr.create", dept: "Mua hàng Nhà máy", name: "PR Kỹ thuật bị từ chối", description: "Đề nghị mua sắm vật tư kỹ thuật không được phê duyệt. Mặc định gửi người lập PR của phòng kỹ thuật." },
 ];
 
 export const transitionNoticeType = (entity: string, action: string) => `${entity}_${action}`.toUpperCase();
 
 /** Factory notice types, with who is notified by default (always, whatever the matrix adds). */
-export const FACTORY_NOTICE_EVENTS: { type: string; dept: string; name: string; description: string }[] = [
+export const FACTORY_NOTICE_EVENTS: { type: string; dept: string; name: string; description: string; defaultRoles?: string[] }[] = [
   ...TRANSITION_NOTICES.map((t) => ({ type: transitionNoticeType(t.entity, t.action), dept: t.dept, name: t.name, description: t.description })),
-  { type: "INTERNAL_ORDER_NEW", dept: "Đơn Nội Bộ", name: "Đơn nội bộ mới", description: "Kinh doanh / phòng ban đặt đơn nội bộ cho phòng sản xuất. Mặc định gửi người tiếp nhận đơn của phòng nhận." },
-  { type: "INTERNAL_ORDER_CANCEL_CONFLICT", dept: "Đơn Nội Bộ", name: "Hủy đơn nội bộ đang sản xuất", description: "Bên đặt hủy đơn khi phòng sản xuất đã bắt đầu. Mặc định gửi người tiếp nhận đơn của phòng nhận." },
-  { type: "KIT_QA_ASSIGNED", dept: "Sản xuất Kit", name: "Phân công QA giám sát lệnh Kit", description: "QA/QC được phân công giám sát lệnh sản xuất Kit. Mặc định gửi QA/QC." },
-  { type: "KIT_IPC_GATE_REQUEST", dept: "Sản xuất Kit", name: "Yêu cầu QC xen kẽ (IPQC) lệnh Kit", description: "Công đoạn kiểm soát trung gian chờ QC xác nhận. Mặc định gửi QA/QC." },
-  { type: "KIT_IPC_GATE_PASSED", dept: "Sản xuất Kit", name: "IPQC đạt — được tiếp tục công đoạn", description: "QC xác nhận đạt chốt kiểm soát trung gian. Mặc định gửi Phòng Sản xuất Kit." },
-  { type: "KIT_IPC_GATE_REJECTED", dept: "Sản xuất Kit", name: "IPQC không đạt — dừng công đoạn", description: "QC từ chối chốt kiểm soát trung gian. Mặc định gửi Phòng Sản xuất Kit." },
-  { type: "ASSET_EVENT_REQUEST", dept: "Kỹ thuật – Thiết bị", name: "Đề xuất bảo trì / hiệu chuẩn / báo hỏng thiết bị", description: "Phòng ban đề xuất bảo trì, hiệu chuẩn, sửa chữa hoặc báo ngừng máy. Mặc định gửi Phòng Kỹ thuật – Thiết bị." },
-  { type: "DEVICE_FQC_ASSIGNED", dept: "Kỹ thuật – Thiết bị", name: "Giao QC phụ trách kiểm tra xuất xưởng (FQC)", description: "Phòng KTCN chuyển thiết bị đã lão hóa đạt sang QC-QA. Mặc định gửi QC phụ trách được chọn." },
-  { type: "ASSET_EVENT_DONE", dept: "Kỹ thuật – Thiết bị", name: "Hoàn tất bảo trì / hiệu chuẩn thiết bị", description: "Phòng Kỹ thuật – Thiết bị hoàn thành phiếu. Mặc định gửi phòng sở hữu thiết bị." },
-  { type: "IQC_PENDING", dept: "QA/QC", name: "Lô nhập chờ lấy mẫu kiểm nghiệm (IQC)", description: "Nguyên vật liệu vừa nhận về đang biệt trữ chờ lấy mẫu. Mặc định gửi người lấy mẫu của kho nhận." },
-  { type: "QMS_DEVIATION", dept: "QA/QC", name: "Sự cố chất lượng / sai lệch mới", description: "Báo cáo sai lệch, sự cố chất lượng hoặc CAPA mới. Mặc định gửi người xem xét QC." },
-  { type: "INV_RECONCILE_MISMATCH", dept: "Kho Nhà máy", name: "Lệch đối soát tồn kho", description: "Đối soát định kỳ phát hiện lệch giữa sổ kho và tồn thực tế. Mặc định gửi người được đảo phiếu kho." },
+  { type: "INTERNAL_ORDER_NEW", dept: "Đơn Nội Bộ", name: "Đơn đặt hàng nội bộ mới (KD → Nhà máy)", description: "Khối Kinh doanh hoặc phòng ban phát hành đơn đặt hàng nội bộ (Kit / Oligo / Thiết bị) sang Nhà máy sản xuất.", defaultRoles: ["factory_intake", "factory_kit", "factory_oligo", "factory_device", "sales_head"] },
+  { type: "INTERNAL_ORDER_CANCEL_CONFLICT", dept: "Đơn Nội Bộ", name: "Cảnh báo hủy/điều chỉnh đơn nội bộ đang sản xuất", description: "Bên đặt yêu cầu hủy hoặc sửa đơn nội bộ khi phòng sản xuất đã triển khai lệnh.", defaultRoles: ["factory_intake", "factory_kit", "factory_oligo", "sales_head", "admin"] },
+  { type: "KIT_QA_ASSIGNED", dept: "Sản xuất Kit", name: "Phân công QA giám sát lệnh sản xuất Kit", description: "QA/QC được phân công giám sát hồ sơ lô điện tử (eBR) lệnh sản xuất Kit.", defaultRoles: ["factory_kit", "factory_qa"] },
+  { type: "KIT_IPC_GATE_REQUEST", dept: "Sản xuất Kit", name: "Yêu cầu QC kiểm tra bán thành phẩm xen kẽ (IPQC)", description: "Công đoạn pha chế/chia liều Kit chờ QC xác nhận điểm dừng kiểm soát trung gian (IPQC).", defaultRoles: ["factory_qa", "factory_kit"] },
+  { type: "KIT_IPC_GATE_PASSED", dept: "Sản xuất Kit", name: "IPQC đạt — mở khóa công đoạn sản xuất Kit tiếp theo", description: "QA/QC xác nhận đạt chốt kiểm soát trung gian, cho phép tiếp tục dây chuyền đóng gói/dán nhãn.", defaultRoles: ["factory_kit", "factory_qa"] },
+  { type: "KIT_IPC_GATE_REJECTED", dept: "Sản xuất Kit", name: "IPQC không đạt — tạm dừng công đoạn sản xuất Kit", description: "QA/QC từ chối chốt kiểm soát trung gian do thông số lệch chuẩn, yêu cầu xử lý sai lệch.", defaultRoles: ["factory_kit", "factory_qa", "admin"] },
+  { type: "ASSET_EVENT_REQUEST", dept: "Kỹ thuật – Thiết bị", name: "Đề xuất bảo trì / hiệu chuẩn / báo hỏng máy phòng Lab", description: "Các phòng Lab đề xuất bảo trì định kỳ, hiệu chuẩn ISO 13485 hoặc báo sự cố ngừng máy.", defaultRoles: ["factory_device", "factory_qa"] },
+  { type: "DEVICE_FQC_ASSIGNED", dept: "Kỹ thuật – Thiết bị", name: "Chuyển thiết bị sang QC kiểm tra xuất xưởng (FQC)", description: "Phòng Kỹ thuật – Thiết bị hoàn tất lắp ráp & burn-in, bàn giao QA/QC kiểm định xuất xưởng.", defaultRoles: ["factory_device", "factory_qa"] },
+  { type: "ASSET_EVENT_DONE", dept: "Kỹ thuật – Thiết bị", name: "Hoàn tất bảo trì / hiệu chuẩn & mở khóa thiết bị Lab", description: "Phòng Kỹ thuật – Thiết bị hoàn thành hiệu chuẩn/sửa chữa và cập nhật tem hiệu chuẩn hợp lệ.", defaultRoles: ["factory_device", "factory_qa", "factory_rd", "factory_kit", "factory_oligo"] },
+  { type: "IQC_PENDING", dept: "QA/QC", name: "Lô NVL/Hóa chất mới nhập chờ lấy mẫu kiểm nghiệm (IQC)", description: "Nguyên vật liệu, hóa chất, primer/probe vừa nhập Kho Nhà máy đang biệt trữ (Quarantine) chờ QA/QC lấy mẫu IQC.", defaultRoles: ["factory_qa", "factory_wh"] },
+  { type: "QMS_DEVIATION", dept: "QA/QC", name: "Báo cáo sai lệch chất lượng (Deviation / OOS / CAPA)", description: "Phát sinh kết quả ngoài tiêu chuẩn (OOS), sự không phù hợp (NCR) hoặc hành động khắc phục phòng ngừa (CAPA).", defaultRoles: ["factory_qa", "admin"] },
+  // Kho Nhà máy (Khối Kỹ thuật) bổ sung chuyên sâu
+  { type: "LOT_IQC_QUARANTINE", dept: "Kho Nhà máy", name: "Tiếp nhận lô NVL/Hóa chất về Kho Nhà máy (Biệt trữ chờ IQC)", description: "Kho Nhà máy tiếp nhận lô nguyên vật liệu, hóa chất, enzyme, vật tư tiêu hao từ PO Kỹ thuật vào khu biệt trữ chờ IQC.", defaultRoles: ["factory_wh", "factory_qa", "factory_purchase"] },
+  { type: "LOT_FEFO_ISSUED", dept: "Kho Nhà máy", name: "Xuất cấp phát NVL/Hóa chất theo FEFO cho lệnh sản xuất", description: "Kho Tổng Nhà máy xuất cấp phát hóa chất, enzyme, vật tư theo nguyên tắc FEFO sang Kho nhánh (R&D / SX Kit / Oligo / Thiết bị).", defaultRoles: ["factory_wh", "factory_kit", "factory_oligo", "factory_rd", "factory_device"] },
+  { type: "FINISHED_LOT_RECEIPT", dept: "Kho Nhà máy", name: "Nhập kho Thành phẩm / Bán thành phẩm từ dây chuyền SX", description: "Kho Nhà máy tiếp nhận lô thành phẩm (Kit IVD, Oligo, Thiết bị) sau khi QA giải phóng lô hoặc chuyển sang Kho Kinh doanh.", defaultRoles: ["factory_wh", "factory_qa", "warehouse"] },
+  { type: "FEFO_EXPIRY_FREEZE_THAW_ALERT", dept: "Kho Nhà máy", name: "Cảnh báo hạn dùng FEFO & số chu kỳ rã đông (Freeze-Thaw) hóa chất", description: "Cảnh báo tự động khi lô enzyme/sinh phẩm tại Kho Nhà máy hoặc Kho nhánh Lab cận hạn dùng hoặc vượt giới hạn rã đông.", defaultRoles: ["factory_wh", "factory_qa", "factory_rd", "factory_kit", "factory_oligo"] },
+  { type: "INV_RECONCILE_MISMATCH", dept: "Kho Nhà máy", name: "Lệch đối soát tồn kho Nhà máy & Kho nhánh phòng Lab", description: "Đối soát định kỳ phát hiện chênh lệch giữa sổ kho điện tử và tồn thực tế tại Kho Tổng Nhà máy hoặc Kho nhánh.", defaultRoles: ["factory_wh", "factory_qa", "accountant", "admin"] },
+  // Cung ứng & Mua hàng Nhà máy (Khối Kỹ thuật) bổ sung chuyên sâu
+  { type: "MRP_BOM_SHORTAGE_ALERT", dept: "Mua hàng Nhà máy", name: "Cảnh báo thiếu hụt định mức vật tư (MRP) theo BOM sản xuất", description: "Hệ thống MRP phát hiện tồn kho NVL/hóa chất khả dụng không đủ định mức BOM cho lệnh sản xuất, yêu cầu Cung ứng Kỹ thuật đặt hàng.", defaultRoles: ["factory_purchase", "factory_wh", "factory_kit", "factory_oligo", "factory_device"] },
+  { type: "FACTORY_PO_DELIVERY_TRACKING", dept: "Mua hàng Nhà máy", name: "Theo dõi tiến độ PO vật tư kỹ thuật & hồ sơ CoA/MSDS nhà cung cấp", description: "Thông báo lịch giao hàng đơn mua PO Nhà máy (hóa chất, cột tổng hợp, linh kiện) và nhắc kiểm tra CoA/MSDS trước khi nhập Kho Nhà máy.", defaultRoles: ["factory_purchase", "factory_wh", "factory_qa"] },
 ];

@@ -4,10 +4,10 @@ import { writeAudit } from "../core/audit";
 import { authorize, hasFactoryPermission, type AuthzActor } from "../core/authz";
 import { conflict, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
-import { parseInput } from "../core/records";
+import { insertRecord, parseInput } from "../core/records";
 import { getSetting } from "../core/settings";
-import { defineMachine, type Guard } from "../core/stateMachine";
-import { getItem, toBaseQty } from "../master/service";
+import { defineMachine, runTransition, type Guard } from "../core/stateMachine";
+import { getItem, toBaseQty, type Item } from "../master/service";
 import "./permissions";
 
 type PrStatus = "DRAFT" | "SUBMITTED" | "PENDING_BOD" | "APPROVED" | "REJECTED" | "ORDERED" | "CLOSED" | "CANCELLED";
@@ -23,7 +23,13 @@ export interface PurchaseRequest {
 }
 
 const lineSchema = z.object({
-  item_id: z.string().uuid(),
+  item_id: z.string().uuid().optional().nullable(),
+  new_item_code: z.string().trim().max(60).optional().nullable(),
+  new_item_name: z.string().trim().max(255).optional().nullable(),
+  item_type: z
+    .enum(["RAW_MATERIAL", "REAGENT", "CONSUMABLE", "COMPONENT", "SEMI_FINISHED", "FINISHED_KIT", "DEVICE", "OLIGO_SERVICE", "SPARE_PART"])
+    .optional()
+    .nullable(),
   qty: z.coerce.number().positive("số lượng phải lớn hơn 0").max(1e12),
   uom: z.string().trim().min(1),
   est_price: z.coerce.number().min(0).optional().nullable(),
@@ -36,6 +42,7 @@ const requestSchema = z.object({
   reason: z.string().trim().min(3, "nêu mục đích / lý do mua").max(1000),
   purpose_entity_type: z.string().trim().max(60).optional().nullable(),
   purpose_entity_id: z.string().uuid().optional().nullable(),
+  auto_submit: z.boolean().optional(),
   lines: z.array(lineSchema).min(1, "cần ít nhất một dòng vật tư").max(200),
 });
 
@@ -123,18 +130,127 @@ export const prMachine = defineMachine<PrStatus, PurchaseRequest>({
   ],
 });
 
-async function validateHeaderAndLines(tx: Tx, data: z.infer<typeof requestSchema>) {
-  const wh = (await tx.query("SELECT owner_org_unit_id, status FROM master.warehouse WHERE id = $1", [data.target_warehouse_id])).rows[0];
-  if (!wh || wh.status !== "ACTIVE") throw invalid("Kho nhận không tồn tại hoặc đã ngừng.");
-  if (wh.owner_org_unit_id !== data.org_unit_id) throw invalid("Kho nhận phải là kho của phòng đề nghị.");
-  for (const [i, l] of data.lines.entries()) {
-    const item = await getItem(tx, l.item_id);
-    if (item.status !== "ACTIVE" || !(item as any).is_purchasable) throw invalid(`Dòng ${i + 1}: vật tư ${item.code} không được phép mua.`);
-    await toBaseQty(tx, item, l.qty, l.uom); // refuses units without a declared conversion
+async function ensureUomExists(tx: Tx, rawUom: string): Promise<string> {
+  const clean = String(rawUom || "Cái").trim().slice(0, 20) || "Cái";
+  const existing = (
+    await tx.query(
+      "SELECT code FROM master.uom WHERE lower(code) = lower($1) ORDER BY (code = $1) DESC LIMIT 1",
+      [clean]
+    )
+  ).rows[0];
+  if (existing) {
+    await tx.query("UPDATE master.uom SET status = 'ACTIVE' WHERE code = $1 AND status <> 'ACTIVE'", [existing.code]);
+    return existing.code as string;
   }
+  await tx.query(
+    "INSERT INTO master.uom (code, name, status) VALUES ($1, $2, 'ACTIVE') ON CONFLICT (code) DO UPDATE SET status = 'ACTIVE'",
+    [clean, clean]
+  );
+  return clean;
 }
 
-async function insertLines(tx: Tx, prId: string, lines: z.infer<typeof lineSchema>[]) {
+async function resolveHeaderAndLines(
+  tx: Tx,
+  actor: AuthzActor,
+  data: z.infer<typeof requestSchema>
+): Promise<Array<{ item_id: string; qty: number; uom: string; est_price: number | null; notes: string | null }>> {
+  const wh = (await tx.query("SELECT owner_org_unit_id, status FROM master.warehouse WHERE id = $1", [data.target_warehouse_id])).rows[0];
+  if (!wh || wh.status !== "ACTIVE") throw invalid("Kho nhận không tồn tại hoặc đã ngừng.");
+  if (wh.owner_org_unit_id && wh.owner_org_unit_id !== data.org_unit_id) {
+    throw invalid("Kho nhận phải là kho của phòng đề nghị.");
+  }
+
+  const resolvedLines: Array<{ item_id: string; qty: number; uom: string; est_price: number | null; notes: string | null }> = [];
+
+  for (const [i, l] of data.lines.entries()) {
+    const canonicalUom = await ensureUomExists(tx, l.uom);
+    let item: Item | null = null;
+
+    if (l.item_id) {
+      item = await getItem(tx, l.item_id);
+      if (item.status !== "ACTIVE" || !(item as any).is_purchasable) {
+        await tx.query("UPDATE master.item SET status = 'ACTIVE', is_purchasable = true WHERE id = $1", [item.id]);
+      }
+    } else {
+      const rawName = String(l.new_item_name || l.new_item_code || "").trim();
+      if (!rawName) {
+        throw invalid(`Dòng ${i + 1}: Vui lòng chọn nguyên vật liệu từ danh sách hoặc nhập Tên nguyên vật liệu mới.`);
+      }
+      const rawCode = String(l.new_item_code || "")
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9._-]+/g, "-")
+        .replace(/^-+|-+$/g, "")
+        .slice(0, 40);
+
+      const matched = (
+        await tx.query(
+          `SELECT * FROM master.item
+            WHERE ($1 <> '' AND upper(code) = upper($1))
+               OR lower(name) = lower($2)
+            ORDER BY ($1 <> '' AND upper(code) = upper($1)) DESC, created_at ASC
+            LIMIT 1`,
+          [rawCode, rawName]
+        )
+      ).rows[0];
+
+      if (matched) {
+        if (matched.status !== "ACTIVE" || !matched.is_purchasable) {
+          await tx.query("UPDATE master.item SET status = 'ACTIVE', is_purchasable = true WHERE id = $1", [matched.id]);
+        }
+        item = matched as Item;
+      } else {
+        let codeToCreate = rawCode && rawCode.length >= 2 ? rawCode : await nextNumber(tx, "ITEM");
+        const dup = await tx.query("SELECT 1 FROM master.item WHERE upper(code) = upper($1)", [codeToCreate]);
+        if (dup.rowCount) {
+          codeToCreate = await nextNumber(tx, "ITEM");
+        }
+        item = await insertRecord<Item>(tx, actor, "master.item", "item", {
+          code: codeToCreate,
+          name: rawName,
+          item_type: l.item_type || "RAW_MATERIAL",
+          base_uom: canonicalUom,
+          tracking: "LOT",
+          storage_condition: "RT",
+          min_stock: 0,
+          reorder_qty: 0,
+          receipt_qc_required: true,
+          is_purchasable: true,
+          is_saleable: false,
+          is_manufacturable: false,
+          notes: l.notes || "Tạo trực tiếp từ Phiếu đề nghị mua nguyên vật liệu (PR)",
+        });
+      }
+    }
+
+    try {
+      await toBaseQty(tx, item, l.qty, canonicalUom);
+    } catch {
+      await tx.query(
+        `INSERT INTO master.uom_conversion (from_uom, to_uom, factor, item_id)
+         VALUES ($1, $2, 1, $3)
+         ON CONFLICT (from_uom, to_uom, item_id) DO NOTHING`,
+        [canonicalUom, item.base_uom, item.id]
+      );
+    }
+
+    resolvedLines.push({
+      item_id: item.id,
+      qty: l.qty,
+      uom: canonicalUom,
+      est_price: l.est_price ?? null,
+      notes: l.notes ?? null,
+    });
+  }
+
+  return resolvedLines;
+}
+
+async function insertLines(
+  tx: Tx,
+  prId: string,
+  lines: Array<{ item_id: string; qty: number; uom: string; est_price: number | null; notes: string | null }>
+) {
   let n = 0;
   for (const l of lines) {
     await tx.query(
@@ -147,18 +263,25 @@ async function insertLines(tx: Tx, prId: string, lines: z.infer<typeof lineSchem
 export async function createRequest(tx: Tx, actor: AuthzActor, input: unknown): Promise<PurchaseRequest> {
   const data = parseInput(requestSchema, input);
   await authorize(tx, actor, "purchase.pr.create", data.org_unit_id);
-  await validateHeaderAndLines(tx, data);
+  const resolvedLines = await resolveHeaderAndLines(tx, actor, data);
   const code = await nextNumber(tx, "PURCHASE_REQUEST");
-  const pr = (
+  let pr = (
     await tx.query(
       `INSERT INTO purchase.purchase_request (code, org_unit_id, requester_id, target_warehouse_id, needed_by, reason, purpose_entity_type, purpose_entity_id, created_by, updated_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $3, $3) RETURNING *`,
       [code, data.org_unit_id, actor.userId, data.target_warehouse_id, data.needed_by ?? null, data.reason, data.purpose_entity_type ?? null, data.purpose_entity_id ?? null]
     )
   ).rows[0];
-  await insertLines(tx, pr.id, data.lines);
+  await insertLines(tx, pr.id, resolvedLines);
   await tx.query("UPDATE purchase.purchase_request SET est_total = $2 WHERE id = $1", [pr.id, await estimate(tx, pr.id)]);
-  await writeAudit(tx, actor, { entityType: "purchase_request", entityId: pr.id, action: "create", changes: { code: [null, code], lines: [null, data.lines.length] } });
+  await writeAudit(tx, actor, { entityType: "purchase_request", entityId: pr.id, action: "create", changes: { code: [null, code], lines: [null, resolvedLines.length] } });
+  if (data.auto_submit) {
+    pr = await runTransition(tx, prMachine, actor, {
+      id: pr.id,
+      action: "submit",
+      expectedVersion: pr.version,
+    });
+  }
   return pr;
 }
 
@@ -171,9 +294,9 @@ export async function updateRequestDraft(tx: Tx, actor: AuthzActor, id: string, 
   if (cur.status !== "DRAFT") throw invalid("Chỉ sửa được đề nghị ở trạng thái nháp.");
   if (cur.version !== version) throw conflict("Đề nghị vừa được người khác sửa. Tải lại rồi thực hiện lại.", "STALE_VERSION");
   if (data.org_unit_id !== cur.org_unit_id) throw invalid("Không đổi phòng đề nghị; hãy hủy và lập đề nghị mới.");
-  await validateHeaderAndLines(tx, data);
+  const resolvedLines = await resolveHeaderAndLines(tx, actor, data);
   await tx.query("DELETE FROM purchase.purchase_request_line WHERE pr_id = $1", [id]);
-  await insertLines(tx, id, data.lines);
+  await insertLines(tx, id, resolvedLines);
   const upd = (
     await tx.query(
       `UPDATE purchase.purchase_request SET target_warehouse_id = $2, needed_by = $3, reason = $4, est_total = $5,
@@ -181,7 +304,7 @@ export async function updateRequestDraft(tx: Tx, actor: AuthzActor, id: string, 
       [id, data.target_warehouse_id, data.needed_by ?? null, data.reason, await estimate(tx, id), actor.userId]
     )
   ).rows[0];
-  await writeAudit(tx, actor, { entityType: "purchase_request", entityId: id, action: "update_draft", changes: { lines: [null, data.lines.length] } });
+  await writeAudit(tx, actor, { entityType: "purchase_request", entityId: id, action: "update_draft", changes: { lines: [null, resolvedLines.length] } });
   return upd;
 }
 

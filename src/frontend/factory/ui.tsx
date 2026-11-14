@@ -77,12 +77,12 @@ export function Button({
 }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "ghost" | "secondary" | "danger" }) {
   const styles =
     variant === "primary"
-      ? "bg-sky-700 hover:bg-sky-800 text-white disabled:bg-slate-300 dark:disabled:bg-slate-700"
+      ? "bg-sky-600 hover:bg-sky-700 text-white border border-sky-700/30 shadow-xs disabled:bg-slate-200 disabled:text-slate-500 disabled:border-slate-300"
       : variant === "danger"
-        ? "bg-rose-600 hover:bg-rose-700 text-white disabled:bg-slate-300 dark:disabled:bg-slate-700"
+        ? "bg-rose-600 hover:bg-rose-700 text-white border border-rose-700/30 shadow-xs disabled:bg-slate-200 disabled:text-slate-500 disabled:border-slate-300"
         : variant === "secondary"
-          ? "border border-sky-300 dark:border-sky-800 bg-sky-50/80 dark:bg-sky-950/40 text-sky-800 dark:text-sky-200 hover:bg-sky-100 dark:hover:bg-sky-900/60"
-          : "border border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800";
+          ? "border border-sky-300 dark:border-sky-800 bg-sky-50 dark:bg-sky-950/40 text-sky-800 dark:text-sky-200 hover:bg-sky-100 dark:hover:bg-sky-900/60 disabled:opacity-50"
+          : "border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50";
   const computedTitle = title || buildAutoVietnameseTooltip(extractTextFromNode(children));
   return (
     <button
@@ -106,7 +106,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
 }
 
 export const inputClass =
-  "factory-input-width min-h-9 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500";
+  "w-full factory-input-width min-h-9 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 px-3 py-1.5 text-sm text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-sky-500";
 
 export function ErrorNote({ error }: { error: unknown }) {
   if (!error) return null;

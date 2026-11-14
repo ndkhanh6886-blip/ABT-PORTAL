@@ -132,10 +132,16 @@ html:not(.dark) {
     color: #0f172a !important;
   }
 
-  /* 1. Main Backgrounds & Card Surfaces from Dark Codebases */
-  [class*="bg-slate-900"],
-  [class*="bg-slate-950"],
-  [class*="bg-slate-905"],
+  /* 1. Main Backgrounds & Card Surfaces from Dark Codebases (only bare tokens, never dark:/hover:/disabled: prefixes) */
+  [class~="bg-slate-900"],
+  [class^="bg-slate-900/"],
+  [class*=" bg-slate-900/"],
+  [class~="bg-slate-950"],
+  [class^="bg-slate-950/"],
+  [class*=" bg-slate-950/"],
+  [class~="bg-slate-905"],
+  [class^="bg-slate-905/"],
+  [class*=" bg-slate-905/"],
   [class*="bg-[#090D1A]"],
   [class*="bg-[#0a0f1d]"],
   [class*="bg-[#0f172a]"],
@@ -145,14 +151,22 @@ html:not(.dark) {
   }
 
   /* 2. Secondary Panels, Inset Well, Subtabs Containers */
-  [class*="bg-slate-800"],
-  [class*="bg-slate-850"],
-  [class*="bg-slate-750"] {
+  [class~="bg-slate-800"],
+  [class^="bg-slate-800/"],
+  [class*=" bg-slate-800/"],
+  [class~="bg-slate-850"],
+  [class^="bg-slate-850/"],
+  [class*=" bg-slate-850/"],
+  [class~="bg-slate-750"],
+  [class^="bg-slate-750/"],
+  [class*=" bg-slate-750/"] {
     background-color: #f8fafc !important;
   }
 
   /* 3. Subtle Badges & Subtle Wells */
-  [class*="bg-slate-700"] {
+  [class~="bg-slate-700"],
+  [class^="bg-slate-700/"],
+  [class*=" bg-slate-700/"] {
     background-color: #f1f5f9 !important;
   }
 
@@ -1307,6 +1321,56 @@ html:not(.dark) textarea {
   -webkit-text-fill-color: #0f172a !important;
 }
 
+/* Guarantee vivid buttons in Light Mode always retain their solid colored background when enabled */
+html:not(.dark) button:is([class~="bg-sky-500"], [class~="bg-sky-600"], [class~="bg-sky-700"], [class~="bg-sky-800"]):not(:disabled) {
+  background-color: #0284c7 !important;
+  border-color: #0369a1 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+html:not(.dark) button:is([class~="bg-sky-500"], [class~="bg-sky-600"], [class~="bg-sky-700"], [class~="bg-sky-800"]):not(:disabled):hover {
+  background-color: #0369a1 !important;
+}
+html:not(.dark) button:is([class~="bg-emerald-500"], [class~="bg-emerald-600"], [class~="bg-emerald-700"], [class~="bg-green-600"], [class~="bg-green-700"]):not(:disabled) {
+  background-color: #059669 !important;
+  border-color: #047857 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+html:not(.dark) button:is([class~="bg-rose-500"], [class~="bg-rose-600"], [class~="bg-rose-700"], [class~="bg-red-600"], [class~="bg-red-700"]):not(:disabled) {
+  background-color: #e11d48 !important;
+  border-color: #be123c !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+html:not(.dark) button:is([class~="bg-amber-600"], [class~="bg-amber-700"]):not(:disabled) {
+  background-color: #d97706 !important;
+  border-color: #b45309 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+html:not(.dark) button:is([class~="bg-purple-600"], [class~="bg-purple-700"], [class~="bg-violet-600"], [class~="bg-violet-700"]):not(:disabled) {
+  background-color: #7c3aed !important;
+  border-color: #6d28d9 !important;
+  color: #ffffff !important;
+  -webkit-text-fill-color: #ffffff !important;
+}
+
+/* Guarantee disabled buttons in Light Mode ALWAYS have readable dark-slate text on a soft slate-200 surface (never white-on-white) */
+html:not(.dark) button:disabled,
+html:not(.dark) button[disabled] {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+  -webkit-text-fill-color: #475569 !important;
+  opacity: 0.85 !important;
+}
+html:not(.dark) button:disabled :is(*, svg),
+html:not(.dark) button[disabled] :is(*, svg) {
+  color: #475569 !important;
+  -webkit-text-fill-color: #475569 !important;
+}
+
 /* ==========================================================================
    GIAO DIỆN SÁNG: CHỮ SÁNG TRÊN NỀN MÀU ĐẬM
    Quy tắc "mọi text-white thành chữ đen" ở trên (dành cho khung tối đã đổi sang nền trắng) có độ ưu tiên cao hơn
@@ -2052,6 +2116,23 @@ html:not(.dark) textarea {
 ) :is([class~="text-white"], [class~="text-slate-50"], [class~="text-slate-100"], [class~="text-slate-200"], h1, h2, h3, h4, h5, h6, label):not([class*="bg-"]):not([class*="text-slate-6"]):not([class*="text-slate-7"]):not([class*="text-slate-8"]):not([class*="text-slate-9"]) {
   color: #ffffff !important;
   -webkit-text-fill-color: #ffffff !important;
+}
+
+/* Final high-specificity safeguard: disabled buttons & explicit light/white buttons in Light Mode NEVER render white text */
+html:not(.dark) body button:disabled,
+html:not(.dark) body button[disabled],
+html:not(.dark) body button:disabled :is(*, svg),
+html:not(.dark) body button[disabled] :is(*, svg) {
+  background-color: #e2e8f0 !important;
+  border-color: #cbd5e1 !important;
+  color: #475569 !important;
+  -webkit-text-fill-color: #475569 !important;
+}
+
+html:not(.dark) body button:is([class~="bg-white"], [class~="bg-slate-50"], [class~="bg-slate-100"], [class~="bg-slate-200"], [class~="bg-stone-50"], [class~="bg-stone-100"]):not([class*="bg-sky-6"]):not([class*="bg-sky-7"]):not([class*="bg-blue-6"]):not([class*="bg-indigo-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-amber-6"]):not([class*="bg-purple-6"]),
+html:not(.dark) body button:is([class~="bg-white"], [class~="bg-slate-50"], [class~="bg-slate-100"], [class~="bg-slate-200"], [class~="bg-stone-50"], [class~="bg-stone-100"]):not([class*="bg-sky-6"]):not([class*="bg-sky-7"]):not([class*="bg-blue-6"]):not([class*="bg-indigo-6"]):not([class*="bg-emerald-6"]):not([class*="bg-rose-6"]):not([class*="bg-amber-6"]):not([class*="bg-purple-6"]) :is(*, svg) {
+  color: #0f172a !important;
+  -webkit-text-fill-color: #0f172a !important;
 }
 
 /* Nền vàng hổ phách (amber-500 / yellow-400..500) là nền SÁNG: luôn dùng chữ đậm (chữ trắng trên nền này rất khó đọc) */

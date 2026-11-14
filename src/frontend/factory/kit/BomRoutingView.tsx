@@ -5,7 +5,20 @@ import { ActionBar } from "../actions";
 import { api, fmtQty } from "../api";
 import { printElementHtml } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
-import { ACTION_LABELS, CONTAINER_LABELS, type KitOptions, ROLE_LABELS, STEP_CATEGORY_LABELS } from "./shared";
+import {
+  ABT_KIT_SUPPLY_FORMS,
+  ABT_TUBE_STRIP_CATALOG,
+  ACTION_LABELS,
+  CONTAINER_LABELS,
+  type KitOptions,
+  ROLE_LABELS,
+  ROUTING_STANDARD_TEMPLATES,
+  type RoutingStepDraft,
+  STEP_CATEGORY_LABELS,
+  STEP_FUNCTION_CATALOG,
+  type StepParamDraft,
+  WORK_CENTER_PRESETS,
+} from "./shared";
 import {
   KitLabelStudio,
   VisualLabelCanvas,
@@ -71,6 +84,8 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     name: "",
     bom_type: "finished_good" as "finished_good" | "semi_finished",
     bom_category: "PCR Kit",
+    variant_code: "BASE",
+    supply_form: "NO_SPLIT_NO_IC",
     parent_item_code: "",
     tccs_code: "TCCS 01:2026/ABT",
     tccs_file_name: "",
@@ -78,9 +93,9 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     registration_no: "2400189/ĐKLH-BYT-TB-CT",
     responsible_person_name: (options as any).kit_staff?.[0]?.display_name ?? "",
     qc_assignee_name: (options as any).qa_staff?.[0]?.display_name ?? "",
-    specification: "Hộp 50 test",
+    specification: "Hộp 50 test (75 test Mix + 80 tube)",
     storage_condition: "-20°C ± 2°C",
-    tests_per_kit: "50",
+    tests_per_kit: "75",
     shelf_life_months: "12",
     shelf_life_days: "365",
     qc_retention_qty: "1",
@@ -93,6 +108,8 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     name: "",
     bom_type: "finished_good" as "finished_good" | "semi_finished",
     bom_category: "PCR Kit",
+    variant_code: "BASE",
+    supply_form: "NO_SPLIT_NO_IC",
     parent_item_code: "",
     tccs_code: "",
     tccs_file_name: "",
@@ -102,7 +119,7 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     qc_assignee_name: "",
     specification: "",
     storage_condition: "",
-    tests_per_kit: "50",
+    tests_per_kit: "75",
     shelf_life_months: "12",
     shelf_life_days: "365",
     qc_retention_qty: "1",
@@ -164,24 +181,41 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     org_unit_id: options.units[0]?.id ?? "",
     product_item_id: "",
     name: "",
+    notes: "",
   });
+
+  const [rtTemplateKey, setRtTemplateKey] = useState<string>("PCR_5_STEPS");
+  const [rtDraftSteps, setRtDraftSteps] = useState<RoutingStepDraft[]>(() =>
+    JSON.parse(JSON.stringify(ROUTING_STANDARD_TEMPLATES[0].steps))
+  );
+  const [selectedTemplateForLoad, setSelectedTemplateForLoad] = useState<string>("PCR_5_STEPS");
+  const [editingStepId, setEditingStepId] = useState<string | null>(null);
 
   const [stepForm, setStepForm] = useState({
     seq: "10",
-    step_code: "STEP-01",
-    step_name: "Pha chế Master Mix",
+    step_code: "STEP-10",
+    step_name: "Pha chế Dung dịch gốc & Master Mix",
     category: "FORMULATION",
+    step_function: "FORMULATION_MIXING",
+    work_center: "Phòng sạch Pha chế (Class 10,000 / ISO 7)",
     instructions: "Rã đông hóa chất trên đá lạnh, phối trộn theo đúng tỷ lệ BOM và vortex nhẹ.",
     sop_doc_code: "SOP-KIT-001",
+    std_duration_min: "45",
     required_asset_id: "",
+    expected_output: "Dung dịch đồng nhất, pH đạt chuẩn",
     is_qc: false,
     requires_check_signature: true,
     allow_skip: false,
-    param_key: "temp_c",
-    param_label: "Nhiệt độ phòng pha chế",
-    param_unit: "°C",
-    param_min: "18",
-    param_max: "25",
+    functional_flags: {
+      require_line_clearance: false,
+      require_material_scan: true,
+      require_env_log: true,
+      require_yield_reconcile: false,
+      require_label_ifu_check: false,
+    },
+    params: [
+      { key: "temp_c", label: "Nhiệt độ phòng pha chế", type: "number", unit: "°C", min: "18", max: "25", required: true },
+    ] as StepParamDraft[],
   });
 
   const loadList = useCallback(async () => {
@@ -220,6 +254,8 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           name: d.bom.name ?? "",
           bom_type: isSemi ? "semi_finished" : "finished_good",
           bom_category: d.bom.bom_category ?? "PCR Kit",
+          variant_code: d.bom.variant_code ?? "BASE",
+          supply_form: d.bom.supply_form ?? "NO_SPLIT_NO_IC",
           parent_item_code: d.bom.parent_item_code ?? (String(d.bom.product_code || "").toUpperCase().endsWith(".D.IC") ? baseCode : ""),
           tccs_code: d.bom.tccs_code ?? (isSemi ? `TCCS-BTP-${baseCode}:2026/ABT` : "TCCS 01:2026/ABT"),
           tccs_file_name: d.bom.tccs_file_name ?? "",
@@ -324,6 +360,8 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           name: bomForm.name,
           bom_type: bomForm.bom_type,
           bom_category: bomForm.bom_category,
+          variant_code: bomForm.variant_code || "BASE",
+          supply_form: bomForm.supply_form || "NO_SPLIT_NO_IC",
           parent_item_code: bomForm.parent_item_code || null,
           tccs_code: bomForm.tccs_code || null,
           tccs_file_name: bomForm.tccs_file_name || null,
@@ -749,12 +787,15 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     }
   };
 
-  const handleLoadStandardSteps = async (id: string) => {
+  const handleLoadStandardSteps = async (id: string, templateKey?: string) => {
     setError(null);
     try {
       await api(`/api/factory/kit/routings/${id}`, {
         method: "POST",
-        json: { operation: "load_standard_steps" },
+        json: {
+          operation: "load_standard_steps",
+          template_key: templateKey || selectedTemplateForLoad || "PCR_5_STEPS",
+        },
       });
       await loadList();
       await loadRoutingDetail(id);
@@ -777,6 +818,96 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     }
   };
 
+  const applyTemplateToDraftSteps = (tplKey: string) => {
+    setRtTemplateKey(tplKey);
+    if (tplKey === "CUSTOM_EMPTY") {
+      setRtDraftSteps([]);
+      return;
+    }
+    const found = ROUTING_STANDARD_TEMPLATES.find((t) => t.key === tplKey);
+    if (found) {
+      setRtDraftSteps(JSON.parse(JSON.stringify(found.steps)));
+      if (!rtForm.name.trim()) {
+        setRtForm((p) => ({ ...p, name: found.label.replace(/^[^\s]+\s+/, "") }));
+      }
+    }
+  };
+
+  const handleAddDraftStepFromFunction = (funcKey: string) => {
+    const spec = STEP_FUNCTION_CATALOG[funcKey] || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+    const nextSeq = rtDraftSteps.length > 0 ? Math.max(...rtDraftSteps.map((s) => Number(s.seq) || 0)) + 10 : 10;
+    const newStep: RoutingStepDraft = {
+      seq: nextSeq,
+      step_code: `${spec.defaultStepCodePrefix || "STEP"}-${nextSeq}`,
+      step_name: spec.defaultStepName,
+      category: spec.defaultCategory,
+      step_function: spec.key,
+      work_center: spec.defaultWorkCenter,
+      instructions: spec.defaultInstructions,
+      sop_doc_code: spec.defaultSop,
+      std_duration_min: spec.defaultDurationMin,
+      required_asset_id: "",
+      is_qc: Boolean(spec.defaultFlags.qc_gate),
+      requires_check_signature: spec.defaultFlags.dual_sign !== false,
+      allow_skip: false,
+      functional_flags: { ...spec.defaultFlags },
+      param_schema: JSON.parse(JSON.stringify(spec.defaultParams)),
+    };
+    setRtDraftSteps((prev) => [...prev, newStep]);
+  };
+
+  const handleChangeDraftStepFunction = (idx: number, funcKey: string) => {
+    const spec = STEP_FUNCTION_CATALOG[funcKey];
+    if (!spec) return;
+    setRtDraftSteps((prev) =>
+      prev.map((step, i) =>
+        i !== idx
+          ? step
+          : {
+              ...step,
+              step_function: spec.key,
+              category: spec.defaultCategory,
+              step_name: spec.defaultStepName,
+              work_center: spec.defaultWorkCenter,
+              sop_doc_code: spec.defaultSop,
+              std_duration_min: spec.defaultDurationMin,
+              instructions: spec.defaultInstructions,
+              is_qc: Boolean(spec.defaultFlags.qc_gate),
+              requires_check_signature: spec.defaultFlags.dual_sign !== false,
+              functional_flags: { ...spec.defaultFlags },
+              param_schema: JSON.parse(JSON.stringify(spec.defaultParams)),
+            }
+      )
+    );
+  };
+
+  const handleMoveDraftStep = (idx: number, dir: "UP" | "DOWN") => {
+    setRtDraftSteps((prev) => {
+      const targetIdx = dir === "UP" ? idx - 1 : idx + 1;
+      if (targetIdx < 0 || targetIdx >= prev.length) return prev;
+      const next = [...prev];
+      const temp = next[idx];
+      next[idx] = next[targetIdx];
+      next[targetIdx] = temp;
+      return next.map((s, i) => ({
+        ...s,
+        seq: (i + 1) * 10,
+        step_code: `STEP-${(i + 1) * 10}`,
+      }));
+    });
+  };
+
+  const handleDeleteDraftStep = (idx: number) => {
+    setRtDraftSteps((prev) =>
+      prev
+        .filter((_, i) => i !== idx)
+        .map((s, i) => ({
+          ...s,
+          seq: (i + 1) * 10,
+        }))
+    );
+  };
+
   const handleCreateRouting = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -788,13 +919,153 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           org_unit_id: rtForm.org_unit_id || options.units[0]?.id,
           product_item_id: rtForm.product_item_id,
           name: rtForm.name,
+          notes: rtForm.notes || null,
+          steps: rtDraftSteps,
         },
       });
-      setRtForm((p) => ({ ...p, name: "" }));
+      setRtForm((p) => ({ ...p, name: "", notes: "" }));
       setShowCreateRouting(false);
       setSelectedRoutingId(res.routing.id);
       await loadList();
       await loadRoutingDetail(res.routing.id);
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleSelectStepFunctionInForm = (funcKey: string) => {
+    const spec = STEP_FUNCTION_CATALOG[funcKey];
+    if (!spec) return;
+    setStepForm((prev) => ({
+      ...prev,
+      step_function: spec.key,
+      category: spec.defaultCategory,
+      step_name: spec.defaultStepName,
+      work_center: spec.defaultWorkCenter,
+      sop_doc_code: spec.defaultSop,
+      std_duration_min: String(spec.defaultDurationMin),
+      instructions: spec.defaultInstructions,
+      expected_output: spec.defaultFlags.expected_output || "",
+      is_qc: Boolean(spec.defaultFlags.qc_gate),
+      requires_check_signature: spec.defaultFlags.dual_sign !== false,
+      functional_flags: {
+        require_line_clearance: Boolean(spec.defaultFlags.require_line_clearance),
+        require_material_scan: Boolean(spec.defaultFlags.require_material_scan),
+        require_env_log: Boolean(spec.defaultFlags.require_env_log),
+        require_yield_reconcile: Boolean(spec.defaultFlags.require_yield_reconcile),
+        require_label_ifu_check: Boolean(spec.defaultFlags.require_label_ifu_check),
+      },
+      params: JSON.parse(JSON.stringify(spec.defaultParams)),
+    }));
+  };
+
+  const handleStartEditStep = (s: any) => {
+    const flags = s.functional_flags && typeof s.functional_flags === "object" ? s.functional_flags : {};
+    setEditingStepId(s.id);
+    setStepForm({
+      seq: String(s.seq ?? 10),
+      step_code: s.step_code || `STEP-${s.seq ?? 10}`,
+      step_name: s.step_name || "",
+      category: s.category || "FORMULATION",
+      step_function: s.step_function || (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING"),
+      work_center: s.work_center || "Phòng sạch Pha chế (Class 10,000 / ISO 7)",
+      instructions: s.instructions || "",
+      sop_doc_code: s.sop_doc_code || "",
+      std_duration_min: String(s.std_duration_min ?? 30),
+      required_asset_id: s.required_asset_id || "",
+      expected_output: s.expected_output || flags.expected_output || "",
+      is_qc: Boolean(s.is_qc),
+      requires_check_signature: s.requires_check_signature !== false,
+      allow_skip: Boolean(s.allow_skip),
+      functional_flags: {
+        require_line_clearance: Boolean(flags.require_line_clearance),
+        require_material_scan: Boolean(flags.require_material_scan),
+        require_env_log: Boolean(flags.require_env_log),
+        require_yield_reconcile: Boolean(flags.require_yield_reconcile),
+        require_label_ifu_check: Boolean(flags.require_label_ifu_check),
+      },
+      params: Array.isArray(s.param_schema)
+        ? s.param_schema.map((p: any) => ({
+            key: String(p.key || "param_1"),
+            label: String(p.label || p.key || "Thông số"),
+            type: (p.type || "number") as "number" | "text" | "boolean",
+            unit: String(p.unit ?? ""),
+            min: p.min != null ? String(p.min) : "",
+            max: p.max != null ? String(p.max) : "",
+            required: p.required !== false,
+          }))
+        : [],
+    });
+    setShowAddStep(true);
+  };
+
+  const handleStartAddNewStep = () => {
+    const existingSteps = routingDetail?.steps || [];
+    const nextSeq = existingSteps.length > 0 ? Math.max(...existingSteps.map((s: any) => Number(s.seq) || 0)) + 10 : 10;
+    const spec = STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+    setEditingStepId(null);
+    setStepForm({
+      seq: String(nextSeq),
+      step_code: `STEP-${nextSeq}`,
+      step_name: spec.defaultStepName,
+      category: spec.defaultCategory,
+      step_function: spec.key,
+      work_center: spec.defaultWorkCenter,
+      instructions: spec.defaultInstructions,
+      sop_doc_code: spec.defaultSop,
+      std_duration_min: String(spec.defaultDurationMin),
+      required_asset_id: "",
+      expected_output: spec.defaultFlags.expected_output || "",
+      is_qc: Boolean(spec.defaultFlags.qc_gate),
+      requires_check_signature: spec.defaultFlags.dual_sign !== false,
+      allow_skip: false,
+      functional_flags: {
+        require_line_clearance: Boolean(spec.defaultFlags.require_line_clearance),
+        require_material_scan: Boolean(spec.defaultFlags.require_material_scan),
+        require_env_log: Boolean(spec.defaultFlags.require_env_log),
+        require_yield_reconcile: Boolean(spec.defaultFlags.require_yield_reconcile),
+        require_label_ifu_check: Boolean(spec.defaultFlags.require_label_ifu_check),
+      },
+      params: JSON.parse(JSON.stringify(spec.defaultParams)),
+    });
+    setShowAddStep(true);
+  };
+
+  const handleMoveRoutingStep = async (stepId: string, direction: "UP" | "DOWN") => {
+    if (!selectedRoutingId) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/routings/${selectedRoutingId}`, {
+        method: "POST",
+        json: {
+          operation: "move_step",
+          step_id: stepId,
+          direction,
+        },
+      });
+      await loadRoutingDetail(selectedRoutingId);
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleDeleteRoutingStep = async (stepId: string) => {
+    if (!selectedRoutingId) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/routings/${selectedRoutingId}`, {
+        method: "POST",
+        json: {
+          operation: "delete_step",
+          step_id: stepId,
+        },
+      });
+      if (editingStepId === stepId) {
+        setEditingStepId(null);
+        setShowAddStep(false);
+      }
+      await loadRoutingDetail(selectedRoutingId);
+      await loadList();
     } catch (err) {
       setError(err);
     }
@@ -805,36 +1076,42 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
     if (!selectedRoutingId) return;
     setError(null);
     try {
-      const param_schema = stepForm.param_key.trim()
-        ? [
-            {
-              key: stepForm.param_key.trim(),
-              label: stepForm.param_label.trim() || stepForm.param_key.trim(),
-              type: "number",
-              unit: stepForm.param_unit || null,
-              min: stepForm.param_min !== "" ? Number(stepForm.param_min) : null,
-              max: stepForm.param_max !== "" ? Number(stepForm.param_max) : null,
-              required: true,
-            },
-          ]
-        : [];
+      const param_schema = (stepForm.params || [])
+        .filter((p) => p.key.trim() || p.label.trim())
+        .map((p, idx) => ({
+          key: p.key.trim() || `param_${idx + 1}`,
+          label: p.label.trim() || p.key.trim() || `Thông số ${idx + 1}`,
+          type: p.type || "number",
+          unit: p.unit || null,
+          min: p.min !== null && p.min !== undefined && String(p.min) !== "" ? Number(p.min) : null,
+          max: p.max !== null && p.max !== undefined && String(p.max) !== "" ? Number(p.max) : null,
+          required: p.required !== false,
+        }));
       await api(`/api/factory/kit/routings/${selectedRoutingId}`, {
         method: "POST",
         json: {
+          operation: editingStepId ? "update_step" : undefined,
+          step_id: editingStepId ?? undefined,
           seq: Number(stepForm.seq),
           step_code: stepForm.step_code,
           step_name: stepForm.step_name,
           category: stepForm.category,
+          step_function: stepForm.step_function,
+          work_center: stepForm.work_center || null,
           instructions: stepForm.instructions,
           sop_doc_code: stepForm.sop_doc_code || null,
+          std_duration_min: Number(stepForm.std_duration_min || 30),
           required_asset_id: stepForm.required_asset_id || null,
+          expected_output: stepForm.expected_output || null,
           is_qc: stepForm.is_qc,
           requires_check_signature: stepForm.requires_check_signature,
           allow_skip: stepForm.allow_skip,
+          functional_flags: stepForm.functional_flags,
           param_schema,
         },
       });
-      setStepForm((p) => ({ ...p, seq: String(Number(p.seq) + 10) }));
+      setEditingStepId(null);
+      setShowAddStep(false);
       await loadRoutingDetail(selectedRoutingId);
       await loadList();
     } catch (err) {
@@ -1143,6 +1420,67 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                     </Field>
                   </div>
 
+                  {bomForm.bom_type === "finished_good" && bomForm.bom_category === "PCR Kit" && (
+                    <div className="p-2.5 rounded-lg bg-indigo-950/35 border border-indigo-700/50 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-indigo-300 uppercase">
+                          🧬 Đặc thù riêng của Kit PCR: Hỗ trợ 4 Dạng Cung Cấp × 8 Mã Tube PCR (Chung 1 Mã Chính — Phân Biệt Qua Lot)
+                        </span>
+                        <span className="text-[10px] text-slate-300 font-mono">
+                          Chỉ cần lập 1 BOM chung (BASE) hoặc tách BOM con (IC / C / C.IC)
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <Field label="Dạng cung cấp chuẩn ABT (Quy định Mix & Ống IC / Tube 1.5mL)">
+                          <select
+                            className={inputClass}
+                            value={bomForm.supply_form}
+                            onChange={(e) => {
+                              const sfKey = e.target.value;
+                              const sf = ABT_KIT_SUPPLY_FORMS[sfKey] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                              const nextVar =
+                                sfKey === "SPLIT_WITH_IC"
+                                  ? "C.IC"
+                                  : sfKey === "SPLIT_NO_IC"
+                                    ? "C"
+                                    : sfKey === "NO_SPLIT_WITH_IC"
+                                      ? "IC"
+                                      : "BASE";
+                              setBomForm({
+                                ...bomForm,
+                                supply_form: sfKey,
+                                variant_code: nextVar,
+                                tests_per_kit: String(sf.mix_tests_per_kit),
+                                specification: sf.is_aliquoted
+                                  ? `Hộp chia sẵn (${sf.mix_tests_per_kit} test Mix · ${sf.pcr_tubes_per_kit} tube PCR)`
+                                  : `Hộp không chia sẵn (${sf.mix_tests_per_kit} test Mix · ${sf.pcr_tubes_per_kit} tube PCR)`,
+                              });
+                            }}
+                          >
+                            {Object.values(ABT_KIT_SUPPLY_FORMS).map((sf) => (
+                              <option key={sf.key} value={sf.key}>
+                                {sf.label} — ({sf.mix_tests_per_kit} test Mix + {sf.pcr_tubes_per_kit} tube PCR)
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                        <Field label="Mã công thức (Mặc định BASE = Dùng chung cho cả 4 dạng)">
+                          <input
+                            className={`${inputClass} font-mono font-bold`}
+                            placeholder="BASE (hoặc IC, C, C.IC nếu tách riêng)"
+                            value={bomForm.variant_code}
+                            onChange={(e) => setBomForm({ ...bomForm, variant_code: e.target.value.toUpperCase() })}
+                          />
+                        </Field>
+                      </div>
+                    </div>
+                  )}
+                  {bomForm.bom_type === "finished_good" && bomForm.bom_category !== "PCR Kit" && (
+                    <div className="p-2.5 rounded-lg bg-slate-800/80 border border-slate-700 text-[11px] text-slate-300">
+                      🧪 <b>Nhóm Kit Tách chiết / Hệ đệm Buffer / Khác</b>: Không áp dụng quy tắc chia sẵn 64/75 test hay 80/64 tube PCR trên Số Lô. Hệ thống nổ BOM theo định mức chuẩn và hỗ trợ chế độ <b>Kit Demo</b> (giảm hóa chất theo tỉ lệ, giữ nguyên chai chứa).
+                    </div>
+                  )}
+
                   {/* Thông tin Truy xuất tự động & Giao việc tự động */}
                   <div className="p-2.5 rounded-lg bg-sky-950/30 border border-sky-800/50 space-y-2">
                     <div className="text-[11px] font-bold text-sky-300 uppercase">
@@ -1340,9 +1678,10 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                   );
                 }
                 return (
-                  <Table head={["Mã BOM & Phân loại", "Sản phẩm & Truy xuất tự động", "Ver", "Số dòng", "Trạng thái"]}>
+                  <Table head={["Mã BOM", "Phân loại Nhóm Kit", "Sản phẩm & Truy xuất tự động", "Ver", "Số dòng", "Trạng thái"]}>
                     {filteredBoms.map((b) => {
                       const isSemi = (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
+                      const isPcr = !isSemi && (b.bom_category || "PCR Kit") === "PCR Kit";
                       return (
                         <tr
                           key={b.id}
@@ -1358,19 +1697,51 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                             >
                               {isSemi ? "🧪 Bán thành phẩm" : "📦 Thành phẩm"}
                             </span>
-                            <div className="text-[10px] text-slate-400 mt-0.5">{b.bom_category || "PCR Kit"}</div>
                           </td>
                           <td className="px-3 py-2 text-xs">
-                            <div className="font-bold text-slate-100">
-                              {b.product_code}
+                            {isSemi ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 border border-amber-500/40 text-amber-300">
+                                ⚗️ Bán TP ({b.bom_category || "Mix/Buffer"})
+                              </span>
+                            ) : isPcr ? (
+                              <div className="space-y-0.5">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/25 border border-indigo-400/50 text-indigo-200">
+                                  🧬 Kit PCR
+                                </span>
+                                <div className="text-[10px] text-indigo-300 font-mono">
+                                  Áp dụng Lot .C/.IC/.Tube
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="space-y-0.5">
+                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 border border-teal-400/40 text-teal-200">
+                                  🧪 Tách chiết / Khác
+                                </span>
+                                <div className="text-[10px] text-slate-400">
+                                  Định mức chuẩn
+                                </div>
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            <div className="font-bold text-slate-100 flex flex-wrap items-center gap-1">
+                              <span>{b.product_code}</span>
+                              <span className="px-1.5 py-0.2 rounded bg-indigo-500/25 border border-indigo-400/40 text-indigo-200 font-mono text-[10px]">
+                                Mã con: {b.variant_code || "BASE"}
+                              </span>
                               {b.parent_item_code && (
-                                <span className="ml-1.5 px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono text-[10px]">
+                                <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono text-[10px]">
                                   Mã chính: {b.parent_item_code}
                                 </span>
                               )}
                             </div>
                             <div className="text-slate-400 line-clamp-1">{b.name}</div>
                             <div className="flex flex-wrap gap-2 mt-1 text-[10px] text-slate-300">
+                              {b.supply_form && ABT_KIT_SUPPLY_FORMS[b.supply_form] && (
+                                <span className="text-amber-300 font-semibold">
+                                  🧬 {ABT_KIT_SUPPLY_FORMS[b.supply_form].short_label} ({ABT_KIT_SUPPLY_FORMS[b.supply_form].mix_tests_per_kit}T/{ABT_KIT_SUPPLY_FORMS[b.supply_form].pcr_tubes_per_kit} tube)
+                                </span>
+                              )}
                               {b.tccs_code && <span className="font-mono text-sky-300">📜 {b.tccs_code}</span>}
                               {b.responsible_person_name && <span>👤 {b.responsible_person_name}</span>}
                             </div>
@@ -1509,6 +1880,27 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                           onChange={(e) => setEditHeaderForm({ ...editHeaderForm, parent_item_code: e.target.value })}
                           placeholder="VD: KIT-HBV-50T"
                         />
+                      </Field>
+                      <Field label="Mã công thức con (Variant Code)">
+                        <input
+                          className={`${inputClass} font-mono font-bold`}
+                          value={editHeaderForm.variant_code}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, variant_code: e.target.value.toUpperCase() })}
+                          placeholder="BASE / IC / C / C.IC"
+                        />
+                      </Field>
+                      <Field label="Dạng cung cấp chuẩn ABT">
+                        <select
+                          className={inputClass}
+                          value={editHeaderForm.supply_form}
+                          onChange={(e) => setEditHeaderForm({ ...editHeaderForm, supply_form: e.target.value })}
+                        >
+                          {Object.values(ABT_KIT_SUPPLY_FORMS).map((sf) => (
+                            <option key={sf.key} value={sf.key}>
+                              {sf.label}
+                            </option>
+                          ))}
+                        </select>
                       </Field>
                       <Field label="Số Tiêu chuẩn cơ sở (TCCS)">
                         <input
@@ -2630,25 +3022,37 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className={`${routingDetail ? "lg:col-span-5" : "lg:col-span-12"} space-y-4`}>
+          <div className={`${routingDetail && !showCreateRouting ? "lg:col-span-5" : "lg:col-span-12"} space-y-4`}>
             <Card
-              title="Danh sách phiên bản Routing"
+              title="Danh sách phiên bản Quy trình Công đoạn (Routing)"
               actions={
                 <Button onClick={() => setShowCreateRouting((v) => !v)}>
-                  {showCreateRouting ? "Đóng form tạo Routing" : "+ Tạo quy trình Routing mới"}
+                  {showCreateRouting ? "Đóng form tạo Routing" : "+ Tạo quy trình Routing nhiều bước"}
                 </Button>
               }
             >
               {showCreateRouting && (
-                <form onSubmit={handleCreateRouting} className="mb-4 p-3.5 rounded-xl border border-stone-200 dark:border-slate-800 bg-stone-50/70 dark:bg-slate-950/60 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-stone-800 dark:text-slate-200">Tạo quy trình công đoạn (Routing) mới</span>
+                <form
+                  onSubmit={handleCreateRouting}
+                  className="mb-4 p-4 rounded-xl border border-sky-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-900/70 space-y-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-200 dark:border-slate-800">
+                    <div>
+                      <div className="text-sm font-extrabold text-slate-900 dark:text-slate-100">
+                        🏗️ Thiết kế Quy trình Công đoạn Sản xuất Nhiều Bước (Multi-Step Routing Builder — ISO 13485 / GMP)
+                      </div>
+                      <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                        Chọn mẫu quy trình chuẩn hoặc tự thêm không giới hạn số bước (Bước 10, 20, 30...), gắn nhãn chức năng công đoạn và cờ kiểm soát EBR cho từng bước ngay khi khởi tạo.
+                      </div>
+                    </div>
                     <Button type="button" variant="ghost" onClick={() => setShowCreateRouting(false)}>
-                      Hủy
+                      Đóng
                     </Button>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <Field label="Phòng Sản xuất Kit">
+
+                  {/* Thông tin chung của Routing */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <Field label="Phòng Sản xuất Kit *">
                       <select
                         className={inputClass}
                         value={rtForm.org_unit_id}
@@ -2663,11 +3067,22 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                         ))}
                       </select>
                     </Field>
-                    <Field label="Sản phẩm Kit / Bán TP">
+                    <Field label="Sản phẩm Kit / Bán TP áp dụng *">
                       <select
                         className={inputClass}
                         value={rtForm.product_item_id}
-                        onChange={(e) => setRtForm({ ...rtForm, product_item_id: e.target.value })}
+                        onChange={(e) => {
+                          const prod = kitProducts.find((i) => i.id === e.target.value);
+                          setRtForm((p) => ({
+                            ...p,
+                            product_item_id: e.target.value,
+                            name:
+                              p.name ||
+                              (prod
+                                ? `Quy trình công đoạn chuẩn — ${prod.code} (${prod.name})`
+                                : "Quy trình pha chế, chiết rót & đóng gói Kit PCR"),
+                          }));
+                        }}
                         required
                       >
                         <option value="">-- Chọn sản phẩm --</option>
@@ -2678,26 +3093,437 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                         ))}
                       </select>
                     </Field>
+                    <Field label="Tên quy trình công đoạn (Routing) *">
+                      <input
+                        className={inputClass}
+                        placeholder="VD: Quy trình pha chế, chiết rót & đóng gói Kit PCR (5 bước)"
+                        value={rtForm.name}
+                        onChange={(e) => setRtForm({ ...rtForm, name: e.target.value })}
+                        required
+                      />
+                    </Field>
                   </div>
-                  <Field label="Tên quy trình công đoạn">
-                    <input
-                      className={inputClass}
-                      placeholder="VD: Quy trình pha chế, chiết rót & đóng gói Kit PCR"
-                      value={rtForm.name}
-                      onChange={(e) => setRtForm({ ...rtForm, name: e.target.value })}
-                      required
-                    />
-                  </Field>
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="ghost" onClick={() => setShowCreateRouting(false)}>
-                      Đóng
-                    </Button>
-                    <Button type="submit">Khởi tạo Routing (DRAFT)</Button>
+
+                  {/* Chọn Mẫu quy trình công đoạn chuẩn nhiều bước */}
+                  <div className="p-3 rounded-xl border border-sky-200 dark:border-sky-900/60 bg-white dark:bg-slate-950 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                        1️⃣ Chọn Khung Quy Trình Mẫu Chuẩn (Tự động nạp danh sách các bước &amp; chức năng chuẩn):
+                      </div>
+                      <span className="text-[11px] font-semibold text-sky-700 dark:text-sky-300">
+                        Đang thiết kế: {rtDraftSteps.length} bước công đoạn · Tổng định mức:{" "}
+                        {rtDraftSteps.reduce((acc, s) => acc + Number(s.std_duration_min || 0), 0)} phút ·{" "}
+                        {rtDraftSteps.filter((s) => s.is_qc).length} chốt chặn IPQC Gate
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2">
+                      {ROUTING_STANDARD_TEMPLATES.map((tpl) => {
+                        const active = rtTemplateKey === tpl.key;
+                        return (
+                          <button
+                            key={tpl.key}
+                            type="button"
+                            onClick={() => applyTemplateToDraftSteps(tpl.key)}
+                            className={`text-left p-2.5 rounded-lg border transition-all ${
+                              active
+                                ? "border-sky-600 bg-sky-50/90 dark:bg-sky-950/60 ring-1 ring-sky-500"
+                                : "border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/50 hover:border-sky-300"
+                            }`}
+                          >
+                            <div className="text-xs font-bold text-slate-900 dark:text-slate-100">{tpl.label}</div>
+                            <div className="text-[11px] text-slate-600 dark:text-slate-400 mt-0.5 line-clamp-2">{tpl.subtitle}</div>
+                            <div className="mt-1.5 flex items-center gap-1.5 text-[10px] font-semibold text-sky-700 dark:text-sky-300">
+                              <span>{tpl.steps.length} bước</span>
+                              <span>•</span>
+                              <span>{tpl.steps.filter((s) => s.is_qc).length} cổng QC</span>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Thanh thêm nhanh bước theo 8 chức năng chuẩn */}
+                    <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+                      <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                        2️⃣ Hoặc bấm để nối thêm Bước mới theo Chức năng Công đoạn chuẩn (Auto-fill SOP, Phòng sạch, Thông số &amp; Cờ EBR):
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {Object.values(STEP_FUNCTION_CATALOG).map((fn) => (
+                          <button
+                            key={fn.key}
+                            type="button"
+                            onClick={() => handleAddDraftStepFromFunction(fn.key)}
+                            title={fn.description}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 hover:bg-sky-50 dark:hover:bg-sky-950/50 hover:border-sky-400 transition-colors"
+                          >
+                            + {fn.icon} {fn.shortLabel}
+                          </button>
+                        ))}
+                        {rtDraftSteps.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => applyTemplateToDraftSteps("CUSTOM_EMPTY")}
+                            className="px-2.5 py-1 rounded-lg text-[11px] font-semibold border border-rose-300 dark:border-rose-800 bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 hover:bg-rose-100"
+                          >
+                            🗑️ Xóa trắng các bước để tự tạo từ đầu
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Danh sách các bước công đoạn trong dự thảo Routing */}
+                  <div className="space-y-2.5">
+                    <div className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                      3️⃣ Chi tiết từng Bước Công đoạn &amp; Đánh dấu Chức năng Kiểm soát ({rtDraftSteps.length} bước):
+                    </div>
+                    {rtDraftSteps.length === 0 ? (
+                      <Empty>
+                        Chưa có bước nào trong dự thảo. Hãy chọn 1 trong 4 khung mẫu bên trên hoặc bấm các nút &ldquo;+ Chức năng công đoạn&rdquo; để thêm bước.
+                      </Empty>
+                    ) : (
+                      <div className="space-y-2.5 max-h-[540px] overflow-y-auto pr-1">
+                        {rtDraftSteps.map((st, idx) => {
+                          const fnSpec = STEP_FUNCTION_CATALOG[st.step_function] || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+                          return (
+                            <div
+                              key={`${st.seq}-${idx}`}
+                              className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 space-y-2.5 shadow-2xs"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="px-2 py-0.5 rounded-md bg-slate-900 text-white dark:bg-sky-600 text-xs font-mono font-bold">
+                                    Bước {st.seq}
+                                  </span>
+                                  <span className={`px-2 py-0.5 rounded-md border text-[11px] font-bold ${fnSpec.badgeClass}`}>
+                                    {fnSpec.icon} {fnSpec.label}
+                                  </span>
+                                  {st.is_qc && (
+                                    <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 border border-amber-300 text-[11px] font-bold">
+                                      🛡️ Chốt chặn IPQC Gate (Khóa bước sau chờ QC PASS)
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    disabled={idx === 0}
+                                    onClick={() => handleMoveDraftStep(idx, "UP")}
+                                  >
+                                    ↑ Lên
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    disabled={idx === rtDraftSteps.length - 1}
+                                    onClick={() => handleMoveDraftStep(idx, "DOWN")}
+                                  >
+                                    ↓ Xuống
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="danger"
+                                    onClick={() => handleDeleteDraftStep(idx)}
+                                  >
+                                    🗑️ Xóa bước
+                                  </Button>
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+                                <div className="md:col-span-2">
+                                  <Field label="Chức năng chuẩn của Bước (Đánh dấu vai trò)">
+                                    <select
+                                      className={inputClass}
+                                      value={st.step_function}
+                                      onChange={(e) => handleChangeDraftStepFunction(idx, e.target.value)}
+                                    >
+                                      {Object.values(STEP_FUNCTION_CATALOG).map((fn) => (
+                                        <option key={fn.key} value={fn.key}>
+                                          {fn.icon} {fn.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </Field>
+                                </div>
+                                <Field label="Mã bước">
+                                  <input
+                                    className={`${inputClass} font-mono`}
+                                    value={st.step_code}
+                                    onChange={(e) =>
+                                      setRtDraftSteps((prev) =>
+                                        prev.map((item, i) => (i === idx ? { ...item, step_code: e.target.value } : item))
+                                      )
+                                    }
+                                    required
+                                  />
+                                </Field>
+                                <div className="md:col-span-2">
+                                  <Field label="Tên công đoạn hiển thị trên Hồ sơ lô (EBR)">
+                                    <input
+                                      className={inputClass}
+                                      value={st.step_name}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) => (i === idx ? { ...item, step_name: e.target.value } : item))
+                                        )
+                                      }
+                                      required
+                                    />
+                                  </Field>
+                                </div>
+                                <Field label="Định mức (phút)">
+                                  <input
+                                    type="number"
+                                    min={1}
+                                    className={inputClass}
+                                    value={st.std_duration_min}
+                                    onChange={(e) =>
+                                      setRtDraftSteps((prev) =>
+                                        prev.map((item, i) =>
+                                          i === idx ? { ...item, std_duration_min: Number(e.target.value || 15) } : item
+                                        )
+                                      )
+                                    }
+                                  />
+                                </Field>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+                                <Field label="Phòng sạch / Khu vực thực hiện (Work Center)">
+                                  <input
+                                    list="work-center-presets-list"
+                                    className={inputClass}
+                                    value={st.work_center}
+                                    onChange={(e) =>
+                                      setRtDraftSteps((prev) =>
+                                        prev.map((item, i) => (i === idx ? { ...item, work_center: e.target.value } : item))
+                                      )
+                                    }
+                                  />
+                                </Field>
+                                <Field label="Mã tài liệu SOP hướng dẫn">
+                                  <input
+                                    className={`${inputClass} font-mono`}
+                                    value={st.sop_doc_code}
+                                    onChange={(e) =>
+                                      setRtDraftSteps((prev) =>
+                                        prev.map((item, i) => (i === idx ? { ...item, sop_doc_code: e.target.value } : item))
+                                      )
+                                    }
+                                  />
+                                </Field>
+                                <Field label="Đầu ra mong đợi (Expected Output)">
+                                  <input
+                                    className={inputClass}
+                                    value={st.functional_flags.expected_output || ""}
+                                    onChange={(e) =>
+                                      setRtDraftSteps((prev) =>
+                                        prev.map((item, i) =>
+                                          i === idx
+                                            ? {
+                                                ...item,
+                                                functional_flags: {
+                                                  ...item.functional_flags,
+                                                  expected_output: e.target.value,
+                                                },
+                                              }
+                                            : item
+                                        )
+                                      )
+                                    }
+                                  />
+                                </Field>
+                              </div>
+
+                              <Field label="Hướng dẫn thao tác chuẩn tại công đoạn">
+                                <input
+                                  className={inputClass}
+                                  value={st.instructions}
+                                  onChange={(e) =>
+                                    setRtDraftSteps((prev) =>
+                                      prev.map((item, i) => (i === idx ? { ...item, instructions: e.target.value } : item))
+                                    )
+                                  }
+                                />
+                              </Field>
+
+                              {/* Các cờ chức năng đánh dấu cho từng bước */}
+                              <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
+                                <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                                  🏷️ Đánh dấu Chức năng Kiểm soát bắt buộc tại Bước {st.seq} (Tự động kích hoạt trên Hồ sơ lô điện tử EBR):
+                                </div>
+                                <div className="flex flex-wrap gap-3 text-xs">
+                                  <label className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={st.is_qc}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) => (i === idx ? { ...item, is_qc: e.target.checked } : item))
+                                        )
+                                      }
+                                    />
+                                    🛡️ Chốt chặn IPQC Gate (Khóa bước kế tiếp chờ QA/QC duyệt)
+                                  </label>
+                                  <label className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={st.requires_check_signature}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx ? { ...item, requires_check_signature: e.target.checked } : item
+                                          )
+                                        )
+                                      }
+                                    />
+                                    ✍️ Ký duyệt kép 2 người (Thực hiện + Kiểm tra chéo)
+                                  </label>
+                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={st.functional_flags.require_line_clearance}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx
+                                              ? {
+                                                  ...item,
+                                                  functional_flags: {
+                                                    ...item.functional_flags,
+                                                    require_line_clearance: e.target.checked,
+                                                  },
+                                                }
+                                              : item
+                                          )
+                                        )
+                                      }
+                                    />
+                                    🧹 Checklist Line Clearance &amp; UV
+                                  </label>
+                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={st.functional_flags.require_material_scan}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx
+                                              ? {
+                                                  ...item,
+                                                  functional_flags: {
+                                                    ...item.functional_flags,
+                                                    require_material_scan: e.target.checked,
+                                                  },
+                                                }
+                                              : item
+                                          )
+                                        )
+                                      }
+                                    />
+                                    📦 Quét đối chiếu Lô NVL FEFO
+                                  </label>
+                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={st.functional_flags.require_env_log}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx
+                                              ? {
+                                                  ...item,
+                                                  functional_flags: {
+                                                    ...item.functional_flags,
+                                                    require_env_log: e.target.checked,
+                                                  },
+                                                }
+                                              : item
+                                          )
+                                        )
+                                      }
+                                    />
+                                    🌡️ Ghi nhận Nhiệt độ / Độ ẩm phòng
+                                  </label>
+                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={st.functional_flags.require_yield_reconcile}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx
+                                              ? {
+                                                  ...item,
+                                                  functional_flags: {
+                                                    ...item.functional_flags,
+                                                    require_yield_reconcile: e.target.checked,
+                                                  },
+                                                }
+                                              : item
+                                          )
+                                        )
+                                      }
+                                    />
+                                    ⚖️ Cân bằng lượng &amp; Hao hụt
+                                  </label>
+                                  <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={st.functional_flags.require_label_ifu_check}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx
+                                              ? {
+                                                  ...item,
+                                                  functional_flags: {
+                                                    ...item.functional_flags,
+                                                    require_label_ifu_check: e.target.checked,
+                                                  },
+                                                }
+                                              : item
+                                          )
+                                        )
+                                      }
+                                    />
+                                    🏷️ Đối chiếu 100% Nhãn &amp; Tờ HDSD (IFU)
+                                  </label>
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div className="text-xs text-slate-600 dark:text-slate-400">
+                      💡 Sau khi khởi tạo, bạn vẫn có thể thêm/sửa/xóa bước hoặc bấm <b>&ldquo;✅ Kích hoạt Hiệu lực ngay (EFFECTIVE)&rdquo;</b> để áp dụng cho Lệnh sản xuất.
+                    </div>
+                    <div className="flex gap-2">
+                      <Button type="button" variant="ghost" onClick={() => setShowCreateRouting(false)}>
+                        Hủy
+                      </Button>
+                      <Button type="submit">
+                        🚀 Khởi tạo Quy trình Routing ({rtDraftSteps.length} bước)
+                      </Button>
+                    </div>
                   </div>
                 </form>
               )}
+
+              <datalist id="work-center-presets-list">
+                {WORK_CENTER_PRESETS.map((wc) => (
+                  <option key={wc} value={wc} />
+                ))}
+              </datalist>
+
               {routings.length === 0 ? (
-                <Empty>Chưa có quy trình công đoạn nào. Nhấn &ldquo;+ Tạo quy trình Routing mới&rdquo; ở góc phải trên để khởi tạo.</Empty>
+                <Empty>Chưa có quy trình công đoạn nào. Nhấn &ldquo;+ Tạo quy trình Routing nhiều bước&rdquo; ở góc phải trên để khởi tạo.</Empty>
               ) : (
                 <Table head={["Mã Routing", "Sản phẩm", "Ver", "Số bước", "Trạng thái"]}>
                   {routings.map((r) => (
@@ -2725,7 +3551,7 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
             </Card>
           </div>
 
-          {routingDetail && (
+          {routingDetail && !showCreateRouting && (
             <div className="lg:col-span-7 space-y-4">
               <Card
                 title={`${routingDetail.routing.code} (v${routingDetail.routing.routing_version}) — ${routingDetail.routing.name}`}
@@ -2744,39 +3570,110 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                   </div>
                 }
               >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <ActionBar
-                    endpoint={`/api/factory/kit/routings/${routingDetail.routing.id}/actions`}
-                    version={routingDetail.routing.version}
-                    actions={routingDetail.allowed_actions}
-                    labels={ACTION_LABELS}
-                    onDone={() => {
-                      loadList();
-                      loadRoutingDetail(routingDetail.routing.id);
-                    }}
-                  />
-                  <div className="flex flex-wrap gap-1.5">
-                    <Button
-                      variant="ghost"
-                      onClick={() => handleLoadStandardSteps(routingDetail.routing.id)}
-                    >
-                      ⚡ Nạp mẫu 4 bước công đoạn chuẩn Kit PCR
-                    </Button>
-                    {routingDetail.routing.status !== "EFFECTIVE" && (
+                <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <ActionBar
+                      endpoint={`/api/factory/kit/routings/${routingDetail.routing.id}/actions`}
+                      version={routingDetail.routing.version}
+                      actions={routingDetail.allowed_actions}
+                      labels={ACTION_LABELS}
+                      onDone={() => {
+                        loadList();
+                        loadRoutingDetail(routingDetail.routing.id);
+                      }}
+                    />
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      {routingDetail.routing.status === "DRAFT" && (
+                        <div className="flex items-center gap-1">
+                          <select
+                            className={`${inputClass} py-1 text-xs max-w-[230px]`}
+                            value={selectedTemplateForLoad}
+                            onChange={(e) => setSelectedTemplateForLoad(e.target.value)}
+                          >
+                            {ROUTING_STANDARD_TEMPLATES.map((tpl) => (
+                              <option key={tpl.key} value={tpl.key}>
+                                {tpl.label}
+                              </option>
+                            ))}
+                          </select>
+                          <Button
+                            variant="ghost"
+                            onClick={() => handleLoadStandardSteps(routingDetail.routing.id, selectedTemplateForLoad)}
+                          >
+                            ⚡ Nạp khung mẫu chuẩn
+                          </Button>
+                        </div>
+                      )}
+                      {routingDetail.routing.status !== "EFFECTIVE" && (
+                        <Button
+                          variant="secondary"
+                          onClick={() => handleFastActivateRouting(routingDetail.routing.id)}
+                        >
+                          ✅ Kích hoạt Hiệu lực ngay (EFFECTIVE)
+                        </Button>
+                      )}
                       <Button
-                        variant="secondary"
-                        onClick={() => handleFastActivateRouting(routingDetail.routing.id)}
+                        variant="ghost"
+                        onClick={() => handleCloneRouting(routingDetail.routing.id)}
                       >
-                        ✅ Kích hoạt Hiệu lực ngay (EFFECTIVE)
+                        📋 Nhân bản phiên bản mới (Clone v{Number(routingDetail.routing.routing_version || 1) + 1})
                       </Button>
-                    )}
-                    <Button
-                      variant="ghost"
-                      onClick={() => handleCloneRouting(routingDetail.routing.id)}
-                    >
-                      📋 Nhân bản phiên bản mới (Clone v{Number(routingDetail.routing.routing_version || 1) + 1})
-                    </Button>
+                    </div>
                   </div>
+
+                  {/* Sơ đồ luồng công đoạn trực quan (Visual Process Flow) */}
+                  {routingDetail.steps.length > 0 && (
+                    <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/50 space-y-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <span className="font-bold text-slate-800 dark:text-slate-200">
+                          ⛓️ Sơ đồ Luồng Công đoạn Chuẩn ({routingDetail.steps.length} bước nối tiếp):
+                        </span>
+                        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+                          ⏱️ Tổng thời gian định mức:{" "}
+                          <b>{routingDetail.steps.reduce((acc: number, s: any) => acc + Number(s.std_duration_min || 30), 0)} phút</b> ·{" "}
+                          🛡️ Chốt chặn IPQC Gate: <b>{routingDetail.steps.filter((s: any) => s.is_qc).length} bước</b>
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {routingDetail.steps.map((s: any, i: number) => {
+                          const fnKey = s.step_function || (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING");
+                          const fnSpec = STEP_FUNCTION_CATALOG[fnKey] || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+                          return (
+                            <React.Fragment key={s.id}>
+                              <div
+                                onClick={() => {
+                                  if (routingDetail.routing.status === "DRAFT") handleStartEditStep(s);
+                                }}
+                                className={`px-2.5 py-1.5 rounded-lg border text-xs transition-all ${
+                                  routingDetail.routing.status === "DRAFT" ? "cursor-pointer hover:ring-1 hover:ring-sky-500" : ""
+                                } ${
+                                  s.is_qc
+                                    ? "border-amber-400 bg-amber-50/90 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200"
+                                    : "border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-950 text-slate-800 dark:text-slate-200"
+                                }`}
+                              >
+                                <div className="flex items-center gap-1 font-bold">
+                                  <span className="font-mono text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-white dark:bg-sky-700">
+                                    B{s.seq}
+                                  </span>
+                                  <span>{fnSpec.icon}</span>
+                                  <span>{s.step_name}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 flex items-center gap-1.5">
+                                  <span>{fnSpec.shortLabel}</span>
+                                  {s.std_duration_min ? <span>• {s.std_duration_min}p</span> : null}
+                                  {s.is_qc ? <span className="font-bold text-amber-700 dark:text-amber-300">• 🛡️ IPQC Gate</span> : null}
+                                </div>
+                              </div>
+                              {i < routingDetail.steps.length - 1 && (
+                                <span className="text-slate-400 font-bold text-xs">➔</span>
+                              )}
+                            </React.Fragment>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </Card>
 
@@ -2784,65 +3681,231 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                 title={`Các bước công đoạn chuẩn (${routingDetail.steps.length} bước — Tự động sinh Hồ sơ lô EBR khi chạy PO)`}
                 actions={
                   <div className="flex flex-wrap gap-1.5">
-                    {routingDetail.routing.status !== "OBSOLETE" && (
-                      <Button variant="ghost" onClick={() => setShowAddStep((v) => !v)}>
-                        {showAddStep ? "Đóng form thêm bước" : "+ Thêm bước thủ công"}
+                    {routingDetail.routing.status === "DRAFT" && (
+                      <Button
+                        variant={showAddStep && !editingStepId ? "secondary" : "primary"}
+                        onClick={() => {
+                          if (showAddStep && !editingStepId) {
+                            setShowAddStep(false);
+                          } else {
+                            handleStartAddNewStep();
+                          }
+                        }}
+                      >
+                        {showAddStep && !editingStepId ? "Đóng form thêm bước" : "+ Thêm bước công đoạn mới"}
                       </Button>
                     )}
                   </div>
                 }
               >
                 {routingDetail.steps.length === 0 ? (
-                  <Empty>Chưa có bước công đoạn nào.</Empty>
+                  <Empty>
+                    Chưa có bước công đoạn nào. Hãy chọn khung mẫu ở trên rồi bấm &ldquo;⚡ Nạp khung mẫu chuẩn&rdquo; hoặc bấm &ldquo;+ Thêm bước công đoạn mới&rdquo;.
+                  </Empty>
                 ) : (
-                  <Table head={["Thứ tự", "Mã & Tên công đoạn", "Nhóm", "SOP / Thiết bị", "Thông số kiểm soát", "Chữ ký"]}>
-                    {routingDetail.steps.map((s: any) => (
-                      <tr key={s.id}>
-                        <td className="px-3 py-2 font-mono text-xs font-bold">{s.seq}</td>
-                        <td className="px-3 py-2 text-xs">
-                          <div className="font-semibold text-slate-800 dark:text-slate-100">
-                            {s.step_code} — {s.step_name}
-                          </div>
-                          <div className="text-slate-500 dark:text-slate-400">{s.instructions}</div>
-                        </td>
-                        <td className="px-3 py-2 text-xs">{STEP_CATEGORY_LABELS[s.category] ?? s.category}</td>
-                        <td className="px-3 py-2 text-xs">
-                          {s.sop_doc_code && <div className="font-mono">{s.sop_doc_code}</div>}
-                          {s.asset_code && <div className="text-stone-500">TB: {s.asset_code}</div>}
-                        </td>
-                        <td className="px-3 py-2 text-xs">
-                          {(s.param_schema || []).map((p: any) => (
-                            <div key={p.key}>
-                              {p.label}: [{p.min ?? "-"} .. {p.max ?? "-"}] {p.unit}
-                            </div>
-                          ))}
-                        </td>
-                        <td className="px-3 py-2 text-xs space-y-1">
-                          <div>{s.requires_check_signature ? "Thực hiện + Kiểm tra chéo" : "Thực hiện"}</div>
-                          {s.is_qc && (
-                            <span
-                              title="Bước Kiểm soát Chất lượng Trung gian Xen kẽ (IPQC Gate): Các bước phía sau trong Hồ sơ lô (EBR) sẽ tự động khóa cho tới khi bước này được QA/QC xác nhận thông qua"
-                              className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[10px]"
-                            >
-                              🛡️ Bước QC xen kẽ (Cần QC xác nhận thông qua)
+                  <Table
+                    head={[
+                      "Bước",
+                      "Mã & Tên công đoạn / Hướng dẫn",
+                      "Chức năng & Khu vực",
+                      "SOP / Thiết bị / TG",
+                      "Thông số kiểm soát (EBR)",
+                      "Cờ chức năng & Chữ ký",
+                      ...(routingDetail.routing.status === "DRAFT" ? ["Thao tác"] : []),
+                    ]}
+                  >
+                    {routingDetail.steps.map((s: any, idx: number) => {
+                      const fnKey = s.step_function || (s.is_qc ? "IPQC_PH_GATE" : s.category || "FORMULATION_MIXING");
+                      const fnSpec = STEP_FUNCTION_CATALOG[fnKey] || STEP_FUNCTION_CATALOG.FORMULATION_MIXING;
+                      const flags = s.functional_flags && typeof s.functional_flags === "object" ? s.functional_flags : {};
+                      return (
+                        <tr key={s.id} className="align-top">
+                          <td className="px-3 py-2.5 font-mono text-xs font-bold text-slate-800 dark:text-slate-100">
+                            <span className="inline-block px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-300 dark:border-slate-700">
+                              #{s.seq}
                             </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs max-w-[260px]">
+                            <div className="font-bold text-slate-900 dark:text-slate-100">
+                              <span className="font-mono text-sky-700 dark:text-sky-300">{s.step_code}</span> — {s.step_name}
+                            </div>
+                            <div className="text-slate-600 dark:text-slate-400 mt-0.5 leading-snug">{s.instructions}</div>
+                            {s.expected_output && (
+                              <div className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium mt-1">
+                                🎯 Đầu ra: {s.expected_output}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs space-y-1">
+                            <div>
+                              <span className={`inline-block px-2 py-0.5 rounded border text-[11px] font-bold ${fnSpec.badgeClass}`}>
+                                {fnSpec.icon} {fnSpec.shortLabel}
+                              </span>
+                            </div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                              Nhóm: {STEP_CATEGORY_LABELS[s.category] ?? s.category}
+                            </div>
+                            {s.work_center && (
+                              <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                                📍 {s.work_center}
+                              </div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs space-y-1">
+                            {s.sop_doc_code && (
+                              <div className="font-mono font-semibold text-sky-800 dark:text-sky-300">📄 {s.sop_doc_code}</div>
+                            )}
+                            {s.std_duration_min && (
+                              <div className="text-[11px] text-slate-600 dark:text-slate-300">⏱️ Định mức: {s.std_duration_min} phút</div>
+                            )}
+                            {s.asset_code && (
+                              <div className="text-[11px] text-slate-600 dark:text-slate-400">⚙️ TB: {s.asset_code}</div>
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs space-y-1">
+                            {(s.param_schema || []).length === 0 ? (
+                              <span className="text-slate-400 text-[11px]">Không yêu cầu nhập số đo</span>
+                            ) : (
+                              (s.param_schema || []).map((p: any) => (
+                                <div
+                                  key={p.key}
+                                  className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-[11px]"
+                                >
+                                  <b>{p.label}</b>: [{p.min ?? "-"} .. {p.max ?? "-"}] {p.unit}
+                                </div>
+                              ))
+                            )}
+                          </td>
+                          <td className="px-3 py-2.5 text-xs space-y-1">
+                            <div className="flex flex-wrap gap-1">
+                              {s.is_qc && (
+                                <span
+                                  title="Bước Kiểm soát Chất lượng Trung gian Xen kẽ (IPQC Gate): Các bước phía sau trong Hồ sơ lô (EBR) sẽ tự động khóa cho tới khi bước này được QA/QC xác nhận thông qua"
+                                  className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-900 border border-amber-300 font-bold text-[10px]"
+                                >
+                                  🛡️ Chốt chặn IPQC Gate
+                                </span>
+                              )}
+                              <span className="inline-block px-2 py-0.5 rounded bg-sky-50 dark:bg-sky-950/60 text-sky-800 dark:text-sky-200 border border-sky-200 dark:border-sky-800 font-semibold text-[10px]">
+                                {s.requires_check_signature ? "✍️ Ký 2 lớp (4-Eyes)" : "✍️ Ký 1 lớp"}
+                              </span>
+                              {flags.require_line_clearance && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-medium">
+                                  🧹 Line Clearance
+                                </span>
+                              )}
+                              {flags.require_material_scan && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-200 text-[10px] font-medium">
+                                  📦 Quét Lô FEFO
+                                </span>
+                              )}
+                              {flags.require_env_log && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-teal-50 dark:bg-teal-950/60 text-teal-800 dark:text-teal-200 text-[10px] font-medium">
+                                  🌡️ Nhiệt-Ẩm
+                                </span>
+                              )}
+                              {flags.require_yield_reconcile && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-purple-50 dark:bg-purple-950/60 text-purple-800 dark:text-purple-200 text-[10px] font-medium">
+                                  ⚖️ Cân bằng lượng
+                                </span>
+                              )}
+                              {flags.require_label_ifu_check && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 text-[10px] font-medium">
+                                  🏷️ Soát Nhãn &amp; IFU
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          {routingDetail.routing.status === "DRAFT" && (
+                            <td className="px-3 py-2.5 text-xs">
+                              <div className="flex flex-wrap gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  disabled={idx === 0}
+                                  onClick={() => handleMoveRoutingStep(s.id, "UP")}
+                                >
+                                  ↑
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  disabled={idx === routingDetail.steps.length - 1}
+                                  onClick={() => handleMoveRoutingStep(s.id, "DOWN")}
+                                >
+                                  ↓
+                                </Button>
+                                <Button type="button" variant="ghost" onClick={() => handleStartEditStep(s)}>
+                                  ✏️ Sửa
+                                </Button>
+                                <Button type="button" variant="danger" onClick={() => handleDeleteRoutingStep(s.id)}>
+                                  🗑️
+                                </Button>
+                              </div>
+                            </td>
                           )}
-                        </td>
-                      </tr>
-                    ))}
+                        </tr>
+                      );
+                    })}
                   </Table>
                 )}
 
                 {routingDetail.routing.status === "DRAFT" && showAddStep && (
-                  <form onSubmit={handleAddRoutingStep} className="mt-4 pt-3 border-t border-stone-200 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs font-semibold text-stone-700">Thêm bước công đoạn vào Routing</div>
-                      <Button type="button" variant="ghost" onClick={() => setShowAddStep(false)}>
+                  <form
+                    onSubmit={handleAddRoutingStep}
+                    className="mt-4 p-3.5 rounded-xl border border-sky-200 dark:border-slate-700 bg-slate-50/90 dark:bg-slate-900/70 space-y-3"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2">
+                      <div>
+                        <div className="text-xs font-extrabold text-slate-900 dark:text-slate-100">
+                          {editingStepId
+                            ? `✏️ Cập nhật Bước #${stepForm.seq} (${stepForm.step_code} — ${stepForm.step_name})`
+                            : "➕ Thêm Bước Công đoạn Mới vào Quy trình Routing"}
+                        </div>
+                        <div className="text-[11px] text-slate-500 dark:text-slate-400">
+                          Chọn chức năng chuẩn để tự động điền thông số gợi ý, hoặc tùy chỉnh toàn bộ các cờ kiểm soát và danh sách thông số đo EBR.
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingStepId(null);
+                          setShowAddStep(false);
+                        }}
+                      >
                         Đóng
                       </Button>
                     </div>
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                      <Field label="Thứ tự (seq)">
+
+                    {/* Chọn nhanh chức năng chuẩn */}
+                    <div className="space-y-1">
+                      <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                        Chọn nhanh Chức năng chuẩn của Bước (Click để nạp cấu hình gợi ý):
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {Object.values(STEP_FUNCTION_CATALOG).map((fn) => {
+                          const active = stepForm.step_function === fn.key;
+                          return (
+                            <button
+                              key={fn.key}
+                              type="button"
+                              onClick={() => handleSelectStepFunctionInForm(fn.key)}
+                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all ${
+                                active
+                                  ? "border-sky-600 bg-sky-600 text-white shadow-2xs"
+                                  : "border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200 hover:border-sky-400"
+                              }`}
+                            >
+                              {fn.icon} {fn.shortLabel}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
+                      <Field label="Thứ tự (seq) *">
                         <input
                           type="number"
                           className={inputClass}
@@ -2851,22 +3914,24 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                           required
                         />
                       </Field>
-                      <Field label="Mã bước">
+                      <Field label="Mã bước *">
                         <input
-                          className={inputClass}
+                          className={`${inputClass} font-mono`}
                           value={stepForm.step_code}
                           onChange={(e) => setStepForm({ ...stepForm, step_code: e.target.value })}
                           required
                         />
                       </Field>
-                      <Field label="Tên công đoạn">
-                        <input
-                          className={inputClass}
-                          value={stepForm.step_name}
-                          onChange={(e) => setStepForm({ ...stepForm, step_name: e.target.value })}
-                          required
-                        />
-                      </Field>
+                      <div className="md:col-span-2">
+                        <Field label="Tên công đoạn hiển thị *">
+                          <input
+                            className={inputClass}
+                            value={stepForm.step_name}
+                            onChange={(e) => setStepForm({ ...stepForm, step_name: e.target.value })}
+                            required
+                          />
+                        </Field>
+                      </div>
                       <Field label="Nhóm công đoạn">
                         <select
                           className={inputClass}
@@ -2880,19 +3945,32 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                           ))}
                         </select>
                       </Field>
-                    </div>
-                    <Field label="Hướng dẫn thao tác chuẩn">
-                      <input
-                        className={inputClass}
-                        value={stepForm.instructions}
-                        onChange={(e) => setStepForm({ ...stepForm, instructions: e.target.value })}
-                        required
-                      />
-                    </Field>
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
-                      <Field label="Mã SOP">
+                      <Field label="Định mức (phút)">
                         <input
+                          type="number"
+                          min={1}
                           className={inputClass}
+                          value={stepForm.std_duration_min}
+                          onChange={(e) => setStepForm({ ...stepForm, std_duration_min: e.target.value })}
+                        />
+                      </Field>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                      <div className="md:col-span-2">
+                        <Field label="Phòng sạch / Khu vực sản xuất (Work Center)">
+                          <input
+                            list="work-center-presets-list"
+                            className={inputClass}
+                            placeholder="VD: Phòng sạch Pha chế (Class 10,000 / ISO 7)"
+                            value={stepForm.work_center}
+                            onChange={(e) => setStepForm({ ...stepForm, work_center: e.target.value })}
+                          />
+                        </Field>
+                      </div>
+                      <Field label="Mã SOP hướng dẫn">
+                        <input
+                          className={`${inputClass} font-mono`}
                           value={stepForm.sop_doc_code}
                           onChange={(e) => setStepForm({ ...stepForm, sop_doc_code: e.target.value })}
                         />
@@ -2911,72 +3989,246 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                           ))}
                         </select>
                       </Field>
-                      <Field label="Thông số đo (key / nhãn)">
-                        <div className="flex gap-1">
-                          <input
-                            className={inputClass}
-                            placeholder="key"
-                            value={stepForm.param_key}
-                            onChange={(e) => setStepForm({ ...stepForm, param_key: e.target.value })}
-                          />
-                          <input
-                            className={inputClass}
-                            placeholder="Nhãn"
-                            value={stepForm.param_label}
-                            onChange={(e) => setStepForm({ ...stepForm, param_label: e.target.value })}
-                          />
-                        </div>
-                      </Field>
-                      <Field label="Ngưỡng Min / Max">
-                        <div className="flex gap-1">
-                          <input
-                            type="number"
-                            step="any"
-                            className={inputClass}
-                            placeholder="Min"
-                            value={stepForm.param_min}
-                            onChange={(e) => setStepForm({ ...stepForm, param_min: e.target.value })}
-                          />
-                          <input
-                            type="number"
-                            step="any"
-                            className={inputClass}
-                            placeholder="Max"
-                            value={stepForm.param_max}
-                            onChange={(e) => setStepForm({ ...stepForm, param_max: e.target.value })}
-                          />
-                        </div>
-                      </Field>
-                      <Field label="Đơn vị thông số">
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <Field label="Hướng dẫn thao tác chuẩn *">
                         <input
                           className={inputClass}
-                          value={stepForm.param_unit}
-                          onChange={(e) => setStepForm({ ...stepForm, param_unit: e.target.value })}
+                          value={stepForm.instructions}
+                          onChange={(e) => setStepForm({ ...stepForm, instructions: e.target.value })}
+                          required
+                        />
+                      </Field>
+                      <Field label="Kết quả / Bán thành phẩm đầu ra mong đợi (Expected Output)">
+                        <input
+                          className={inputClass}
+                          placeholder="VD: Dung dịch Master Mix đồng nhất, đạt pH chuẩn"
+                          value={stepForm.expected_output}
+                          onChange={(e) => setStepForm({ ...stepForm, expected_output: e.target.value })}
                         />
                       </Field>
                     </div>
-                    <div className="flex items-center justify-between pt-1">
-                      <div className="flex gap-4 text-xs text-stone-700">
-                        <label className="flex items-center gap-1">
-                          <input
-                            type="checkbox"
-                            checked={stepForm.requires_check_signature}
-                            onChange={(e) => setStepForm({ ...stepForm, requires_check_signature: e.target.checked })}
-                          />
-                          Yêu cầu chữ ký kiểm tra chéo (Checked)
-                        </label>
-                        <label
-                          className="flex items-center gap-1 font-semibold text-amber-900 dark:text-amber-300"
-                          title="Nếu bật: Khi triển khai sản xuất theo PO, các bước phía sau sẽ tự động khóa cho đến khi bộ phận QA/QC xác nhận thông qua bước kiểm soát trung gian (IPQC) này"
+
+                    {/* Quản lý danh sách nhiều thông số kiểm soát EBR */}
+                    <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                          📊 Danh sách Thông số Kiểm soát Định lượng trên Hồ sơ lô EBR ({stepForm.params.length} thông số):
+                        </span>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          onClick={() =>
+                            setStepForm((prev) => ({
+                              ...prev,
+                              params: [
+                                ...prev.params,
+                                {
+                                  key: `param_${prev.params.length + 1}`,
+                                  label: "",
+                                  type: "number",
+                                  unit: "",
+                                  min: "",
+                                  max: "",
+                                  required: true,
+                                },
+                              ],
+                            }))
+                          }
                         >
+                          + Thêm thông số đo
+                        </Button>
+                      </div>
+                      {stepForm.params.length === 0 ? (
+                        <div className="text-[11px] text-slate-400">
+                          Bước này chưa khai báo thông số đo định lượng. Nhấn &ldquo;+ Thêm thông số đo&rdquo; nếu cần ghi nhận nhiệt độ, độ ẩm, pH, thể tích...
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5">
+                          {stepForm.params.map((pm, pIdx) => (
+                            <div key={pIdx} className="grid grid-cols-1 md:grid-cols-12 gap-1.5 items-center">
+                              <div className="md:col-span-2">
+                                <input
+                                  className={`${inputClass} font-mono text-xs`}
+                                  placeholder="Mã key (vd: ph_val)"
+                                  value={pm.key}
+                                  onChange={(e) =>
+                                    setStepForm((prev) => ({
+                                      ...prev,
+                                      params: prev.params.map((item, i) => (i === pIdx ? { ...item, key: e.target.value } : item)),
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="md:col-span-4">
+                                <input
+                                  className={`${inputClass} text-xs`}
+                                  placeholder="Tên thông số hiển thị (vd: Độ pH dung dịch)"
+                                  value={pm.label}
+                                  onChange={(e) =>
+                                    setStepForm((prev) => ({
+                                      ...prev,
+                                      params: prev.params.map((item, i) => (i === pIdx ? { ...item, label: e.target.value } : item)),
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="md:col-span-2">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  className={`${inputClass} text-xs`}
+                                  placeholder="Ngưỡng Min"
+                                  value={pm.min ?? ""}
+                                  onChange={(e) =>
+                                    setStepForm((prev) => ({
+                                      ...prev,
+                                      params: prev.params.map((item, i) =>
+                                        i === pIdx ? { ...item, min: e.target.value } : item
+                                      ),
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="md:col-span-2">
+                                <input
+                                  type="number"
+                                  step="any"
+                                  className={`${inputClass} text-xs`}
+                                  placeholder="Ngưỡng Max"
+                                  value={pm.max ?? ""}
+                                  onChange={(e) =>
+                                    setStepForm((prev) => ({
+                                      ...prev,
+                                      params: prev.params.map((item, i) =>
+                                        i === pIdx ? { ...item, max: e.target.value } : item
+                                      ),
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="md:col-span-1">
+                                <input
+                                  className={`${inputClass} text-xs`}
+                                  placeholder="Đơn vị"
+                                  value={pm.unit ?? ""}
+                                  onChange={(e) =>
+                                    setStepForm((prev) => ({
+                                      ...prev,
+                                      params: prev.params.map((item, i) => (i === pIdx ? { ...item, unit: e.target.value } : item)),
+                                    }))
+                                  }
+                                />
+                              </div>
+                              <div className="md:col-span-1 flex justify-end">
+                                <Button
+                                  type="button"
+                                  variant="danger"
+                                  onClick={() =>
+                                    setStepForm((prev) => ({
+                                      ...prev,
+                                      params: prev.params.filter((_, i) => i !== pIdx),
+                                    }))
+                                  }
+                                >
+                                  ✕
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Các cờ chức năng đánh dấu cho bước */}
+                    <div className="p-2.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 space-y-1.5">
+                      <div className="text-[11px] font-bold text-slate-800 dark:text-slate-200">
+                        🏷️ Đánh dấu Chức năng Kiểm soát tại Bước này:
+                      </div>
+                      <div className="flex flex-wrap gap-3 text-xs">
+                        <label className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-300 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={stepForm.is_qc}
                             onChange={(e) => setStepForm({ ...stepForm, is_qc: e.target.checked })}
                           />
-                          🛡️ Bước QC xen kẽ (Cần QC xác nhận thông qua để chạy bước kế tiếp)
+                          🛡️ Chốt chặn IPQC Gate (Cần QC xác nhận PASS mới mở khóa bước kế tiếp)
                         </label>
-                        <label className="flex items-center gap-1">
+                        <label className="flex items-center gap-1.5 font-semibold text-slate-800 dark:text-slate-200 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={stepForm.requires_check_signature}
+                            onChange={(e) => setStepForm({ ...stepForm, requires_check_signature: e.target.checked })}
+                          />
+                          ✍️ Yêu cầu chữ ký kiểm tra chéo (2 người — 4-Eyes)
+                        </label>
+                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={stepForm.functional_flags.require_line_clearance}
+                            onChange={(e) =>
+                              setStepForm({
+                                ...stepForm,
+                                functional_flags: { ...stepForm.functional_flags, require_line_clearance: e.target.checked },
+                              })
+                            }
+                          />
+                          🧹 Checklist Dọn dây chuyền &amp; Khử trùng UV
+                        </label>
+                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={stepForm.functional_flags.require_material_scan}
+                            onChange={(e) =>
+                              setStepForm({
+                                ...stepForm,
+                                functional_flags: { ...stepForm.functional_flags, require_material_scan: e.target.checked },
+                              })
+                            }
+                          />
+                          📦 Quét đối chiếu Lô NVL FEFO
+                        </label>
+                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={stepForm.functional_flags.require_env_log}
+                            onChange={(e) =>
+                              setStepForm({
+                                ...stepForm,
+                                functional_flags: { ...stepForm.functional_flags, require_env_log: e.target.checked },
+                              })
+                            }
+                          />
+                          🌡️ Nhật ký Nhiệt độ / Độ ẩm phòng sạch
+                        </label>
+                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={stepForm.functional_flags.require_yield_reconcile}
+                            onChange={(e) =>
+                              setStepForm({
+                                ...stepForm,
+                                functional_flags: { ...stepForm.functional_flags, require_yield_reconcile: e.target.checked },
+                              })
+                            }
+                          />
+                          ⚖️ Cân bằng lượng &amp; Hao hụt bán thành phẩm
+                        </label>
+                        <label className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={stepForm.functional_flags.require_label_ifu_check}
+                            onChange={(e) =>
+                              setStepForm({
+                                ...stepForm,
+                                functional_flags: { ...stepForm.functional_flags, require_label_ifu_check: e.target.checked },
+                              })
+                            }
+                          />
+                          🏷️ Kiểm tra đối chiếu 100% Nhãn &amp; Tờ HDSD (IFU)
+                        </label>
+                        <label className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 cursor-pointer">
                           <input
                             type="checkbox"
                             checked={stepForm.allow_skip}
@@ -2985,7 +4237,22 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                           Cho phép bỏ qua có duyệt
                         </label>
                       </div>
-                      <Button type="submit">Lưu bước công đoạn</Button>
+                    </div>
+
+                    <div className="flex justify-end gap-2 pt-1">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        onClick={() => {
+                          setEditingStepId(null);
+                          setShowAddStep(false);
+                        }}
+                      >
+                        Hủy
+                      </Button>
+                      <Button type="submit">
+                        {editingStepId ? "💾 Lưu cập nhật bước công đoạn" : "💾 Lưu bước công đoạn vào Routing"}
+                      </Button>
                     </div>
                   </form>
                 )}

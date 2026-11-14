@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { X, CheckCircle2, AlertCircle, Info, Bell, CheckSquare, Calendar, FileText, Truck, Package, FlaskConical, FileCheck2 } from "lucide-react";
 import { cn } from "@/backend/services/utils";
 import { useAuth } from "@/frontend/contexts/AuthContext";
+import { FACTORY_NOTICE_EVENTS, factoryNoticeKey } from "@/factory/noticeMatrix";
 
 type ToastType = "success" | "error" | "info" | "warning";
 
@@ -67,11 +68,28 @@ export interface PersonnelItem {
     position: string;
 }
 
+export type NotificationMatrixCategory =
+    | "sales"
+    | "warehouse"
+    | "procurement"
+    | "application"
+    | "workspace"
+    | "finance"
+    | "quality"
+    | "factory_intake"
+    | "factory_rd"
+    | "factory_kit"
+    | "factory_oligo"
+    | "factory_device"
+    | "factory_warehouse"
+    | "factory_procurement";
+
 export interface NotificationMatrixEvent {
     key: string;
     name: string;
-    category: "sales" | "warehouse" | "procurement" | "application" | "workspace" | "finance" | "quality";
+    category: NotificationMatrixCategory;
     categoryLabel: string;
+    block?: "commercial" | "technical" | "general";
     description: string;
     enabled: boolean;
     enableToast: boolean;
@@ -80,13 +98,14 @@ export interface NotificationMatrixEvent {
     targetEmployeeNames?: string[];
 }
 
-export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent> = {
+const COMMERCIAL_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent> = {
     quote_approval_request: {
         key: "quote_approval_request",
-        name: "Phê duyệt báo giá (Hàng 0đ / Quà tặng)",
+        name: "Phê duyệt báo giá (Hàng 0đ / Quà tặng / Vượt chiết khấu)",
         category: "sales",
         categoryLabel: "Kinh Doanh & Báo Giá",
-        description: "Gửi thông báo khi có báo giá tạo mới hoặc sửa đổi cần Ban Giám Đốc hoặc Trưởng phòng phê duyệt.",
+        block: "commercial",
+        description: "Gửi thông báo khi có báo giá tạo mới hoặc sửa đổi cần Ban Giám Đốc hoặc Trưởng phòng Kinh doanh phê duyệt.",
         enabled: true,
         enableToast: true,
         targetRoles: ["admin", "sales_head"],
@@ -94,10 +113,11 @@ export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent
     },
     quote_approved: {
         key: "quote_approved",
-        name: "Kết quả duyệt báo giá",
+        name: "Kết quả duyệt báo giá (Khối Kinh Doanh)",
         category: "sales",
         categoryLabel: "Kinh Doanh & Báo Giá",
-        description: "Thông báo cho nhân viên kinh doanh phụ trách khi báo giá được duyệt hoặc từ chối.",
+        block: "commercial",
+        description: "Thông báo cho nhân viên kinh doanh phụ trách khi báo giá được phê duyệt hoặc từ chối.",
         enabled: true,
         enableToast: true,
         targetRoles: ["sales_rep", "sales_head"],
@@ -105,31 +125,133 @@ export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent
     },
     order_created: {
         key: "order_created",
-        name: "Đơn hàng bán mới",
+        name: "Đơn hàng bán mới (SO) — Khối Kinh Doanh",
         category: "sales",
         categoryLabel: "Kinh Doanh & Báo Giá",
-        description: "Thông báo khi có đơn hàng bán mới được tạo hoặc xác nhận, gửi tới Kho và Kế toán.",
+        block: "commercial",
+        description: "Thông báo khi có đơn hàng bán mới được tạo hoặc xác nhận, gửi tới Kho Kinh Doanh và Kế toán.",
         enabled: true,
         enableToast: true,
         targetRoles: ["admin", "sales_head", "warehouse", "accountant"],
         targetEmployeeIds: []
     },
-    plan_weekly_submit: {
-        key: "plan_weekly_submit",
-        name: "Gửi duyệt kế hoạch tuần",
-        category: "workspace",
-        categoryLabel: "Kế Hoạch & Lịch Trình",
-        description: "Thông báo khi nhân viên gửi kế hoạch công tác / lịch trình tuần mới để quản lý duyệt.",
+    // --- KHO KINH DOANH (THƯƠNG MẠI) ---
+    delivery_dispatched: {
+        key: "delivery_dispatched",
+        name: "Xuất kho giao hàng đơn bán (SO) — Kho Kinh Doanh",
+        category: "warehouse",
+        categoryLabel: "Kho Kinh Doanh (Thương Mại)",
+        block: "commercial",
+        description: "Thông báo khi Kho Kinh Doanh xuất hàng hóa thương mại/thành phẩm theo đơn bán (SO) và bàn giao vận chuyển tới khách hàng.",
         enabled: true,
         enableToast: true,
-        targetRoles: ["admin", "sales_head"],
+        targetRoles: ["warehouse", "sales_rep", "sales_head", "accountant"],
+        targetEmployeeIds: []
+    },
+    warehouse_po_received: {
+        key: "warehouse_po_received",
+        name: "Nhập kho hàng hóa thương mại từ PO — Kho Kinh Doanh",
+        category: "warehouse",
+        categoryLabel: "Kho Kinh Doanh (Thương Mại)",
+        block: "commercial",
+        description: "Thông báo khi hàng hóa kinh doanh từ đơn đặt mua thương mại (PO Kinh Doanh) được kiểm đếm và hoàn tất nhập Kho Kinh Doanh.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["warehouse", "procurement", "accountant", "sales_head"],
+        targetEmployeeIds: []
+    },
+    warehouse_commercial_low_stock: {
+        key: "warehouse_commercial_low_stock",
+        name: "Cảnh báo tồn kho thương mại tối thiểu & giữ hàng (Reservation) — Kho Kinh Doanh",
+        category: "warehouse",
+        categoryLabel: "Kho Kinh Doanh (Thương Mại)",
+        block: "commercial",
+        description: "Thông báo khi mặt hàng thương mại chạm ngưỡng tồn tối thiểu hoặc được giữ chỗ theo báo giá/đơn bán tại Kho Kinh Doanh.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["warehouse", "procurement", "sales_head"],
+        targetEmployeeIds: []
+    },
+    warehouse_internal_transfer_in: {
+        key: "warehouse_internal_transfer_in",
+        name: "Tiếp nhận thành phẩm từ Kho Nhà Máy sang Kho Kinh Doanh",
+        category: "warehouse",
+        categoryLabel: "Kho Kinh Doanh (Thương Mại)",
+        block: "commercial",
+        description: "Thông báo khi Kho Nhà Máy bàn giao lô Kit IVD / Oligo / Thiết bị đã qua QA giải phóng sang Kho Kinh Doanh để sẵn sàng giao khách.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["warehouse", "factory_wh", "sales_head", "sales_rep"],
+        targetEmployeeIds: []
+    },
+    // --- CUNG ỨNG KINH DOANH (THƯƠNG MẠI) ---
+    procurement_pr_approval: {
+        key: "procurement_pr_approval",
+        name: "Đề xuất mua hàng thương mại (PR Kinh Doanh) cần duyệt",
+        category: "procurement",
+        categoryLabel: "Cung Ứng Kinh Doanh (Thương Mại)",
+        block: "commercial",
+        description: "Thông báo khi có phiếu đề xuất mua sắm hàng hóa kinh doanh / thiết bị thương mại cần Trưởng phòng hoặc Ban Giám Đốc phê duyệt.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["admin", "procurement", "sales_head"],
+        targetEmployeeIds: []
+    },
+    procurement_po_commercial_approved: {
+        key: "procurement_po_commercial_approved",
+        name: "Phê duyệt & phát hành đơn đặt hàng thương mại (PO Kinh Doanh)",
+        category: "procurement",
+        categoryLabel: "Cung Ứng Kinh Doanh (Thương Mại)",
+        block: "commercial",
+        description: "Thông báo khi đơn đặt mua hàng hóa thương mại (PO Kinh Doanh) được duyệt phát hành và theo dõi lịch giao về Kho Kinh Doanh.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["procurement", "warehouse", "accountant", "admin"],
+        targetEmployeeIds: []
+    },
+    procurement_import_customs_tracking: {
+        key: "procurement_import_customs_tracking",
+        name: "Theo dõi thông quan XNK & chứng từ CO/CQ lô hàng thương mại",
+        category: "procurement",
+        categoryLabel: "Cung Ứng Kinh Doanh (Thương Mại)",
+        block: "commercial",
+        description: "Thông báo tiến độ tờ khai hải quan, lịch hàng cập cảng và hồ sơ CO/CQ của đơn hàng nhập khẩu thương mại khối Kinh Doanh.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["procurement", "warehouse", "accountant", "legal"],
+        targetEmployeeIds: []
+    },
+    // --- APPLICATION, CÔNG VIỆC, TÀI CHÍNH ---
+    app_issue_ticket: {
+        key: "app_issue_ticket",
+        name: "Sự cố thiết bị khách hàng / Hỗ trợ kỹ thuật Application",
+        category: "application",
+        categoryLabel: "Lab & Application (Khối KD)",
+        block: "commercial",
+        description: "Thông báo khi khách hàng hoặc bộ phận Application ghi nhận sự cố máy móc / sinh phẩm tại hiện trường cần xử lý.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["app_head", "app_rep", "admin"],
+        targetEmployeeIds: []
+    },
+    plan_weekly_submit: {
+        key: "plan_weekly_submit",
+        name: "Gửi duyệt kế hoạch công tác tuần",
+        category: "workspace",
+        categoryLabel: "Kế Hoạch & Công Việc",
+        block: "commercial",
+        description: "Thông báo khi nhân viên gửi kế hoạch công tác / lịch trình tuần mới để quản lý phê duyệt.",
+        enabled: true,
+        enableToast: true,
+        targetRoles: ["admin", "sales_head", "app_head"],
         targetEmployeeIds: []
     },
     task_assigned: {
         key: "task_assigned",
-        name: "Giao việc mới & Điều phối",
+        name: "Giao việc mới & Điều phối công việc",
         category: "workspace",
-        categoryLabel: "Công Việc & Tiến Độ",
+        categoryLabel: "Kế Hoạch & Công Việc",
+        block: "commercial",
         description: "Thông báo khi quản lý giao đầu việc mới cho nhân sự hoặc phòng ban cụ thể.",
         enabled: true,
         enableToast: true,
@@ -138,9 +260,10 @@ export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent
     },
     task_status_updated: {
         key: "task_status_updated",
-        name: "Cập nhật tiến độ / Hoàn thành việc",
+        name: "Cập nhật tiến độ / Hoàn thành công việc",
         category: "workspace",
-        categoryLabel: "Công Việc & Tiến Độ",
+        categoryLabel: "Kế Hoạch & Công Việc",
+        block: "commercial",
         description: "Thông báo khi nhân sự chuyển trạng thái công việc sang Đang thực hiện hoặc Hoàn tất (DONE).",
         enabled: true,
         enableToast: true,
@@ -151,8 +274,9 @@ export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent
         key: "workflow_cross_dept",
         name: "Yêu cầu phối hợp liên phòng ban",
         category: "workspace",
-        categoryLabel: "Quy Trình Phối Hợp",
-        description: "Thông báo khi phát sinh đề nghị phối hợp hỗ trợ chéo giữa các bộ phận.",
+        categoryLabel: "Kế Hoạch & Công Việc",
+        block: "commercial",
+        description: "Thông báo khi phát sinh đề nghị phối hợp hỗ trợ chéo giữa các bộ phận trong công ty.",
         enabled: true,
         enableToast: true,
         targetRoles: ["admin"],
@@ -160,65 +284,23 @@ export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent
     },
     daily_report_submitted: {
         key: "daily_report_submitted",
-        name: "Báo cáo công việc ngày",
+        name: "Báo cáo kết quả công việc ngày",
         category: "workspace",
-        categoryLabel: "Báo Cáo Hoạt Động",
+        categoryLabel: "Kế Hoạch & Công Việc",
+        block: "commercial",
         description: "Thông báo khi nhân sự nộp báo cáo kết quả hoạt động hoặc nhật ký thị trường cuối ngày.",
         enabled: true,
         enableToast: true,
         targetRoles: ["admin", "sales_head", "app_head"],
         targetEmployeeIds: []
     },
-    delivery_dispatched: {
-        key: "delivery_dispatched",
-        name: "Xuất kho & Lệnh giao hàng",
-        category: "warehouse",
-        categoryLabel: "Kho & Vận Hành",
-        description: "Thông báo khi kho xuất hàng thành công hoặc bàn giao cho đơn vị vận chuyển giao tới khách hàng.",
-        enabled: true,
-        enableToast: true,
-        targetRoles: ["sales_rep", "sales_head", "accountant", "warehouse"],
-        targetEmployeeIds: []
-    },
-    warehouse_po_received: {
-        key: "warehouse_po_received",
-        name: "Nhập kho PO mới từ nhà cung cấp",
-        category: "warehouse",
-        categoryLabel: "Kho & Vận Hành",
-        description: "Thông báo khi hàng hóa từ đơn mua hàng PO được kiểm đếm và hoàn tất nhập kho.",
-        enabled: true,
-        enableToast: true,
-        targetRoles: ["procurement", "warehouse", "qa_qc", "accountant"],
-        targetEmployeeIds: []
-    },
-    procurement_pr_approval: {
-        key: "procurement_pr_approval",
-        name: "Đề xuất mua hàng (PR) cần duyệt",
-        category: "procurement",
-        categoryLabel: "Cung Ứng & Mua Hàng",
-        description: "Thông báo khi có phiếu đề xuất mua sắm hàng hóa / vật tư cần Ban Giám Đốc phê duyệt.",
-        enabled: true,
-        enableToast: true,
-        targetRoles: ["admin", "procurement"],
-        targetEmployeeIds: []
-    },
-    app_issue_ticket: {
-        key: "app_issue_ticket",
-        name: "Sự cố thiết bị Lab / Hỗ trợ kỹ thuật",
-        category: "application",
-        categoryLabel: "Kỹ Thuật & Application",
-        description: "Thông báo khi khách hàng hoặc phòng lab ghi nhận sự cố máy móc / sinh phẩm cần xử lý gấp.",
-        enabled: true,
-        enableToast: true,
-        targetRoles: ["app_head", "app_rep", "admin"],
-        targetEmployeeIds: []
-    },
     invoice_vat_issued: {
         key: "invoice_vat_issued",
-        name: "Xuất hóa đơn VAT & Thanh toán",
+        name: "Xuất hóa đơn VAT & Xác nhận thanh toán công nợ",
         category: "finance",
         categoryLabel: "Kế Toán & Tài Chính",
-        description: "Thông báo khi kế toán xuất hóa đơn điện tử VAT hoặc xác nhận khách hàng thanh toán.",
+        block: "commercial",
+        description: "Thông báo khi kế toán xuất hóa đơn điện tử VAT hoặc xác nhận khách hàng thanh toán đơn hàng.",
         enabled: true,
         enableToast: true,
         targetRoles: ["accountant", "sales_rep", "admin"],
@@ -226,16 +308,157 @@ export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent
     },
     quality_coa_alert: {
         key: "quality_coa_alert",
-        name: "Cảnh báo chất lượng QA/QC & Hạn sử dụng",
+        name: "Cảnh báo chất lượng QA/QC, Hồ sơ COA & Hạn sử dụng",
         category: "quality",
-        categoryLabel: "Quản Lý Chất Lượng",
-        description: "Thông báo cảnh báo lô hàng cận hạn sử dụng, sai lệch nhiệt độ bảo quản hoặc COA.",
+        categoryLabel: "QA/QC & Quản Lý Chất Lượng",
+        block: "technical",
+        description: "Thông báo cảnh báo lô hàng cận hạn sử dụng, sai lệch nhiệt độ bảo quản hoặc phát hành chứng nhận phân tích COA.",
         enabled: true,
         enableToast: true,
-        targetRoles: ["qa_qc", "warehouse", "admin"],
+        targetRoles: ["qa_qc", "factory_qa", "warehouse", "factory_wh", "admin"],
         targetEmployeeIds: []
     }
 };
+
+function resolveFactoryCategoryAndRoles(ev: { type: string; dept: string; defaultRoles?: string[] }): {
+    category: NotificationMatrixCategory;
+    categoryLabel: string;
+    targetRoles: string[];
+} {
+    const t = ev.type.toUpperCase();
+    switch (ev.dept) {
+        case "Đơn Nội Bộ":
+            return {
+                category: "factory_intake",
+                categoryLabel: "Đơn Nội Bộ (KD ↔ Nhà Máy)",
+                targetRoles: ev.defaultRoles || ["factory_intake", "factory_kit", "factory_oligo", "factory_device", "sales_head"]
+            };
+        case "Nghiên cứu R&D": {
+            const roles = ["factory_rd"];
+            if (t.includes("GATE") || t.includes("HOLD") || t.includes("KILL") || t.includes("APPROVE")) roles.push("admin");
+            if (t.includes("TECH_TRANSFER")) roles.push("factory_kit", "factory_qa");
+            return {
+                category: "factory_rd",
+                categoryLabel: "Nghiên Cứu R&D (Khối Kỹ Thuật)",
+                targetRoles: ev.defaultRoles || Array.from(new Set(roles))
+            };
+        }
+        case "Sản xuất Kit": {
+            const roles = ["factory_kit"];
+            if (t.includes("QC") || t.includes("QA") || t.includes("EBR") || t.includes("BOM") || t.includes("ROUTING")) roles.push("factory_qa");
+            if (t.includes("FAIL_QC")) roles.push("admin");
+            return {
+                category: "factory_kit",
+                categoryLabel: "Sản Xuất Kit (Khối Kỹ Thuật)",
+                targetRoles: ev.defaultRoles || Array.from(new Set(roles))
+            };
+        }
+        case "Tổng hợp Oligo": {
+            const roles = ["factory_oligo"];
+            if (t.includes("QC")) roles.push("factory_qa");
+            if (t.includes("QC_PASSED")) roles.push("factory_intake");
+            return {
+                category: "factory_oligo",
+                categoryLabel: "Tổng Hợp Oligo (Khối Kỹ Thuật)",
+                targetRoles: ev.defaultRoles || Array.from(new Set(roles))
+            };
+        }
+        case "Kỹ thuật – Thiết bị": {
+            const roles = ["factory_device"];
+            if (t.includes("FQC") || t.includes("QA") || t.includes("VALIDATION") || t.includes("ECO")) roles.push("factory_qa");
+            if (t.includes("COMPLETE_PQ") || t.includes("ECO_SUBMIT")) roles.push("admin");
+            return {
+                category: "factory_device",
+                categoryLabel: "Kỹ Thuật – Thiết Bị (Khối Kỹ Thuật)",
+                targetRoles: ev.defaultRoles || Array.from(new Set(roles))
+            };
+        }
+        case "QA/QC": {
+            const roles = ["factory_qa", "qa_qc"];
+            if (t.includes("CONCESSION") || t.includes("DEVIATION") || t.includes("NCR")) roles.push("admin");
+            if (t.includes("IQC")) roles.push("factory_wh");
+            return {
+                category: "quality",
+                categoryLabel: "QA/QC Nhà Máy (Khối Kỹ Thuật)",
+                targetRoles: ev.defaultRoles || Array.from(new Set(roles))
+            };
+        }
+        case "Kho Nhà máy": {
+            const roles = ["factory_wh", "factory_qa"];
+            if (t.includes("REJECT")) roles.push("factory_purchase");
+            if (t.includes("RECONCILE")) roles.push("accountant", "admin");
+            return {
+                category: "factory_warehouse",
+                categoryLabel: "Kho Nhà Máy – Vật Tư & TP SX (Khối Kỹ Thuật)",
+                targetRoles: ev.defaultRoles || Array.from(new Set(roles))
+            };
+        }
+        case "Mua hàng Nhà máy": {
+            const roles = ["factory_purchase"];
+            if (t.includes("ESCALATE") || t.includes("BOD")) roles.push("admin");
+            if (t.includes("APPROVE") || t.includes("MRP") || t.includes("DELIVERY")) roles.push("factory_wh");
+            return {
+                category: "factory_procurement",
+                categoryLabel: "Cung Ứng Kỹ Thuật – Mua Hàng Nhà Máy",
+                targetRoles: ev.defaultRoles || Array.from(new Set(roles))
+            };
+        }
+        default:
+            return {
+                category: "quality",
+                categoryLabel: `${ev.dept} (Khối Kỹ Thuật)`,
+                targetRoles: ev.defaultRoles || ["factory_qa"]
+            };
+    }
+}
+
+function buildTechnicalNotificationMatrix(): Record<string, NotificationMatrixEvent> {
+    const out: Record<string, NotificationMatrixEvent> = {};
+    for (const ev of FACTORY_NOTICE_EVENTS) {
+        const key = factoryNoticeKey(ev.type);
+        const { category, categoryLabel, targetRoles } = resolveFactoryCategoryAndRoles(ev);
+        out[key] = {
+            key,
+            name: ev.name,
+            category,
+            categoryLabel,
+            block: "technical",
+            description: ev.description,
+            enabled: true,
+            enableToast: true,
+            targetRoles,
+            targetEmployeeIds: []
+        };
+    }
+    return out;
+}
+
+export const DEFAULT_NOTIFICATION_MATRIX: Record<string, NotificationMatrixEvent> = {
+    ...COMMERCIAL_NOTIFICATION_MATRIX,
+    ...buildTechnicalNotificationMatrix()
+};
+
+export function mergeNotificationMatrixWithDefaults(
+    stored?: Record<string, Partial<NotificationMatrixEvent>> | null
+): Record<string, NotificationMatrixEvent> {
+    const merged: Record<string, NotificationMatrixEvent> = {};
+    for (const [key, def] of Object.entries(DEFAULT_NOTIFICATION_MATRIX)) {
+        const custom = stored?.[key];
+        if (custom && typeof custom === "object") {
+            merged[key] = {
+                ...def,
+                enabled: typeof custom.enabled === "boolean" ? custom.enabled : def.enabled,
+                enableToast: typeof custom.enableToast === "boolean" ? custom.enableToast : def.enableToast,
+                targetRoles: Array.isArray(custom.targetRoles) && custom.targetRoles.length > 0 ? custom.targetRoles : def.targetRoles,
+                targetEmployeeIds: Array.isArray(custom.targetEmployeeIds) ? custom.targetEmployeeIds : def.targetEmployeeIds,
+                targetEmployeeNames: Array.isArray(custom.targetEmployeeNames) ? custom.targetEmployeeNames : def.targetEmployeeNames,
+            };
+        } else {
+            merged[key] = { ...def };
+        }
+    }
+    return merged;
+}
 
 export const TBR_PERSONNEL: PersonnelItem[] = [];
 
@@ -376,11 +599,11 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             fetch("/api/storage?key=system_notification_matrix")
                 .then(res => res.json())
                 .then(data => {
-                    if (data && data.data && typeof data.data === "object") {
-                        const merged = { ...DEFAULT_NOTIFICATION_MATRIX, ...data.data };
-                        setMatrixSettings(merged);
-                        localStorage.setItem("system_notification_matrix", JSON.stringify(merged));
-                    }
+                    const merged = mergeNotificationMatrixWithDefaults(
+                        data && data.data && typeof data.data === "object" ? data.data : undefined
+                    );
+                    setMatrixSettings(merged);
+                    localStorage.setItem("system_notification_matrix", JSON.stringify(merged));
                 })
                 .catch(() => {});
         }
@@ -394,7 +617,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 try {
                     const parsed = JSON.parse(stored);
                     if (parsed && typeof parsed === "object") {
-                        return { ...DEFAULT_NOTIFICATION_MATRIX, ...parsed };
+                        return mergeNotificationMatrixWithDefaults(parsed);
                     }
                 } catch (e) {}
             }
@@ -411,7 +634,7 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 } catch (err) {}
             } else if (e.key === "system_notification_matrix") {
                 try {
-                    setMatrixSettings(JSON.parse(e.newValue || "{}"));
+                    setMatrixSettings(mergeNotificationMatrixWithDefaults(JSON.parse(e.newValue || "{}")));
                 } catch (err) {}
             }
         };
@@ -684,11 +907,19 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
         const normalizeNotifDeptKey = (raw: string): string => {
             const s = (raw || "").trim().toLowerCase();
             if (!s) return "";
-            if (s.includes("ứng dụng") || s.includes("application") || s.includes("kỹ thuật") || s.includes("lab")) return "application";
+            if (s.includes("r&d") || s.includes("nghiên cứu")) return "factory_rd";
+            if (s.includes("sản xuất kit") || s.includes("sx kit")) return "factory_kit";
+            if (s.includes("oligo") || s.includes("tổng hợp oligo")) return "factory_oligo";
+            if (s.includes("kỹ thuật – thiết bị") || s.includes("kỹ thuật - thiết bị") || s.includes("thiết bị")) return "factory_device";
+            if (s.includes("đơn nội bộ") || s.includes("điều phối sản xuất")) return "factory_intake";
+            if (s.includes("kho nhà máy") || s.includes("kho kỹ thuật") || s.includes("kho tổng nhà máy")) return "factory_warehouse";
+            if (s.includes("cung ứng kỹ thuật") || s.includes("mua hàng nhà máy") || s.includes("cung ứng nhà máy") || s.includes("cung ứng nvl")) return "factory_procurement";
+            if (s.includes("ứng dụng") || s.includes("application") || s.includes("lab")) return "application";
             if (s.includes("kho") || s.includes("vận hành") || s.includes("warehouse") || s.includes("giao nhận")) return "warehouse";
             if (s.includes("cung ứng") || s.includes("mua hàng") || s.includes("xnk") || s.includes("procurement")) return "procurement";
             if (s.includes("kinh doanh") || s.includes("sales") || s.includes("marketing")) return "sales";
-            if (s.includes("pháp chế") || s.includes("legal") || s.includes("qa") || s.includes("qc") || s.includes("chất lượng")) return "legal";
+            if (s.includes("qa") || s.includes("qc") || s.includes("chất lượng")) return "quality";
+            if (s.includes("pháp chế") || s.includes("legal")) return "legal";
             if (s.includes("kế toán") || s.includes("tài chính") || s.includes("accounting")) return "accounting";
             if (s.includes("giám đốc") || s.includes("bod")) return "director";
             return s;
@@ -705,6 +936,9 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
             const deptLower = (deptStr || "").toLowerCase();
             const posLower = (posStr || "").toLowerCase();
             const uRoleLower = (userRoleStr || "").toLowerCase();
+            const isFactoryWhDept = deptLower.includes("kho nhà máy") || deptLower.includes("kho kỹ thuật") || deptLower.includes("kho tổng nhà máy");
+            const isFactoryProcurementDept = deptLower.includes("mua hàng nhà máy") || deptLower.includes("cung ứng nhà máy") || deptLower.includes("cung ứng kỹ thuật") || deptLower.includes("cung ứng nvl");
+
             for (const r of allTargetRoles) {
                 const rLower = (r || "").toLowerCase();
                 if (rLower === "admin" || rLower === "director") {
@@ -714,19 +948,37 @@ export const NotificationProvider = ({ children }: { children: ReactNode }) => {
                 } else if (rLower === "sales_rep" || rLower === "sales") {
                     if (deptLower.includes("kinh doanh") || uRoleLower.includes("sale")) return true;
                 } else if (rLower === "warehouse" || rLower === "warehouse_lead" || rLower === "warehouse_specialist") {
-                    if (deptLower.includes("kho") || uRoleLower.includes("warehouse")) return true;
+                    // Kho Kinh Doanh (Thương Mại) — tách biệt với Kho Nhà Máy
+                    if ((deptLower.includes("kho") && !isFactoryWhDept) || deptLower.includes("kho kinh doanh") || deptLower.includes("kho vận") || uRoleLower === "warehouse") return true;
                 } else if (rLower === "procurement" || rLower === "procurement_lead" || rLower === "procurement_specialist") {
-                    if (deptLower.includes("cung ứng") || deptLower.includes("mua hàng") || deptLower.includes("xnk") || uRoleLower.includes("procurement")) return true;
+                    // Cung Ứng Kinh Doanh (Thương Mại) — tách biệt với Cung Ứng Nhà Máy
+                    if (((deptLower.includes("cung ứng") || deptLower.includes("mua hàng") || deptLower.includes("xnk")) && !isFactoryProcurementDept) || deptLower.includes("cung ứng kinh doanh") || uRoleLower === "procurement") return true;
                 } else if (rLower === "app_head") {
-                    if ((deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab")) && (posLower.includes("trưởng") || posLower.includes("head"))) return true;
+                    if ((deptLower.includes("ứng dụng") || deptLower.includes("application") || deptLower.includes("lab")) && (posLower.includes("trưởng") || posLower.includes("head"))) return true;
                 } else if (rLower === "app_rep" || rLower === "application") {
-                    if (deptLower.includes("ứng dụng") || deptLower.includes("kỹ thuật") || deptLower.includes("lab") || uRoleLower.includes("app")) return true;
+                    if (deptLower.includes("ứng dụng") || deptLower.includes("application") || uRoleLower.includes("app")) return true;
                 } else if (rLower === "accountant" || rLower === "accountant_head") {
                     if (deptLower.includes("kế toán") || deptLower.includes("tài chính") || uRoleLower.includes("accountant") || uRoleLower.includes("finance")) return true;
-                } else if (rLower === "qa_qc" || rLower === "qa_qc_lead") {
-                    if (deptLower.includes("chất lượng") || deptLower.includes("qa") || deptLower.includes("qc")) return true;
+                } else if (rLower === "qa_qc" || rLower === "qa_qc_lead" || rLower === "factory_qa") {
+                    if (deptLower.includes("chất lượng") || deptLower.includes("qa") || deptLower.includes("qc") || uRoleLower.includes("qa") || uRoleLower.includes("qc")) return true;
                 } else if (rLower === "legal" || rLower === "legal_head") {
                     if (deptLower.includes("pháp chế") || deptLower.includes("luật")) return true;
+                } else if (rLower === "factory_rd") {
+                    if (deptLower.includes("r&d") || deptLower.includes("nghiên cứu") || uRoleLower.includes("rd_")) return true;
+                } else if (rLower === "factory_kit") {
+                    if (deptLower.includes("sản xuất kit") || deptLower.includes("sx kit") || uRoleLower.includes("kit_")) return true;
+                } else if (rLower === "factory_oligo") {
+                    if (deptLower.includes("oligo") || uRoleLower.includes("oligo_")) return true;
+                } else if (rLower === "factory_device") {
+                    if (deptLower.includes("thiết bị") || deptLower.includes("kỹ thuật – thiết bị") || deptLower.includes("kỹ thuật - thiết bị") || uRoleLower.includes("device_")) return true;
+                } else if (rLower === "factory_wh") {
+                    // Kho Nhà Máy (Khối Kỹ Thuật)
+                    if (isFactoryWhDept || (deptLower.includes("kho") && (deptLower.includes("nhà máy") || deptLower.includes("kỹ thuật"))) || uRoleLower.includes("factory_wh")) return true;
+                } else if (rLower === "factory_purchase") {
+                    // Cung Ứng & Mua Hàng Nhà Máy (Khối Kỹ Thuật)
+                    if (isFactoryProcurementDept || ((deptLower.includes("cung ứng") || deptLower.includes("mua hàng")) && (deptLower.includes("nhà máy") || deptLower.includes("kỹ thuật") || deptLower.includes("nvl"))) || uRoleLower.includes("factory_purchase")) return true;
+                } else if (rLower === "factory_intake") {
+                    if (deptLower.includes("đơn nội bộ") || deptLower.includes("điều phối") || deptLower.includes("sản xuất kit") || deptLower.includes("oligo") || deptLower.includes("thiết bị")) return true;
                 }
             }
             return false;

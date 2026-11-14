@@ -511,6 +511,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
 
   const [localMatrix, setLocalMatrix] = useState<Record<string, NotificationMatrixEvent>>({});
   const [matrixSearch, setMatrixSearch] = useState("");
+  const [matrixBlockFilter, setMatrixBlockFilter] = useState<"all" | "commercial" | "technical">("all");
   const [matrixCategoryFilter, setMatrixCategoryFilter] = useState("all");
   const [hasMatrixChanges, setHasMatrixChanges] = useState(false);
   const [expandedPersonnelEvent, setExpandedPersonnelEvent] = useState<string | null>(null);
@@ -1511,32 +1512,50 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
     return matchSearch && matchDept && matchStatus;
   });
 
-  // Notification Matrix Roles definition
-  const MATRIX_ROLES: { code: string; label: string; short: string; color: string }[] = [
-    { code: "admin", label: "Ban Giám Đốc (BOD / CEO)", short: "BGĐ", color: "bg-orange-500/10 text-orange-600 border-orange-500/30" },
-    { code: "sales_head", label: "Trưởng Phòng Kinh Doanh", short: "TP.KD", color: "bg-blue-500/10 text-blue-600 border-blue-500/30" },
-    { code: "sales_rep", label: "Chuyên Viên Kinh Doanh", short: "NVKD", color: "bg-sky-500/10 text-sky-600 border-sky-500/30" },
-    { code: "warehouse", label: "Kho Vận & Thủ Kho", short: "Kho", color: "bg-amber-500/10 text-amber-600 border-amber-500/30" },
-    { code: "procurement", label: "Mua Hàng & Cung Ứng", short: "Cung Ứng", color: "bg-cyan-500/10 text-cyan-600 border-cyan-500/30" },
-    { code: "app_head", label: "Trưởng Phòng Application", short: "TP.App", color: "bg-purple-500/10 text-purple-600 border-purple-500/30" },
-    { code: "app_rep", label: "Chuyên Viên Kỹ Thuật Lab", short: "KT Lab", color: "bg-violet-500/10 text-violet-600 border-violet-500/30" },
-    { code: "accountant", label: "Kế Toán & Tài Chính", short: "Kế Toán", color: "bg-rose-500/10 text-rose-600 border-rose-500/30" },
-    { code: "qa_qc", label: "Quản Lý Chất Lượng QA/QC", short: "QA/QC", color: "bg-teal-500/10 text-teal-600 border-teal-500/30" },
-    { code: "legal", label: "Pháp Chế & Tuân Thủ", short: "Pháp Chế", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30" }
+  // Notification Matrix Roles definition (Tách biệt rõ Khối Kinh Doanh & Văn Phòng vs Khối Kỹ Thuật – Nhà Máy)
+  const MATRIX_ROLES: { code: string; label: string; short: string; color: string; block: "commercial" | "technical" }[] = [
+    // Khối Kinh Doanh & Văn Phòng
+    { code: "admin", label: "Ban Giám Đốc (BOD / CEO)", short: "BGĐ", color: "bg-orange-500/10 text-orange-600 border-orange-500/30", block: "commercial" },
+    { code: "sales_head", label: "Trưởng Phòng Kinh Doanh", short: "TP.KD", color: "bg-blue-500/10 text-blue-600 border-blue-500/30", block: "commercial" },
+    { code: "sales_rep", label: "Chuyên Viên Kinh Doanh", short: "NVKD", color: "bg-sky-500/10 text-sky-600 border-sky-500/30", block: "commercial" },
+    { code: "warehouse", label: "Kho Kinh Doanh – Hàng Thương Mại & Giao Hàng SO", short: "Kho KD", color: "bg-amber-500/10 text-amber-600 border-amber-500/30", block: "commercial" },
+    { code: "procurement", label: "Cung Ứng Kinh Doanh – Mua Hàng Thương Mại & XNK", short: "Cung Ứng KD", color: "bg-cyan-500/10 text-cyan-600 border-cyan-500/30", block: "commercial" },
+    { code: "app_head", label: "Trưởng Phòng Application (Khối KD)", short: "TP.App", color: "bg-purple-500/10 text-purple-600 border-purple-500/30", block: "commercial" },
+    { code: "app_rep", label: "Kỹ Sư Ứng Dụng & Dịch Vụ Lab (Khối KD)", short: "KT Lab", color: "bg-violet-500/10 text-violet-600 border-violet-500/30", block: "commercial" },
+    { code: "accountant", label: "Kế Toán & Tài Chính", short: "Kế Toán", color: "bg-rose-500/10 text-rose-600 border-rose-500/30", block: "commercial" },
+    { code: "legal", label: "Pháp Chế & Tuân Thủ", short: "Pháp Chế", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30", block: "commercial" },
+    // Khối Kỹ Thuật – Nhà Máy
+    { code: "factory_intake", label: "Điều Phối Đơn Nội Bộ (KD ↔ Nhà Máy)", short: "Đơn Nội Bộ", color: "bg-indigo-500/10 text-indigo-600 border-indigo-500/30", block: "technical" },
+    { code: "factory_rd", label: "Phòng Nghiên Cứu R&D (Khối Kỹ Thuật)", short: "R&D", color: "bg-fuchsia-500/10 text-fuchsia-600 border-fuchsia-500/30", block: "technical" },
+    { code: "factory_kit", label: "Phòng Sản Xuất Kit IVD (Khối Kỹ Thuật)", short: "SX Kit", color: "bg-emerald-500/10 text-emerald-600 border-emerald-500/30", block: "technical" },
+    { code: "factory_oligo", label: "Phòng Tổng Hợp Oligo (Khối Kỹ Thuật)", short: "Oligo", color: "bg-violet-500/10 text-violet-600 border-violet-500/30", block: "technical" },
+    { code: "factory_device", label: "Phòng Kỹ Thuật – Thiết Bị (Khối Kỹ Thuật)", short: "KT–Thiết Bị", color: "bg-sky-500/10 text-sky-600 border-sky-500/30", block: "technical" },
+    { code: "factory_qa", label: "Phòng QA/QC Nhà Máy (Khối Kỹ Thuật)", short: "QA/QC NM", color: "bg-teal-500/10 text-teal-600 border-teal-500/30", block: "technical" },
+    { code: "factory_wh", label: "Kho Nhà Máy – NVL, Hóa Chất & Thành Phẩm SX (Khối Kỹ Thuật)", short: "Kho Nhà Máy", color: "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400 border-yellow-500/30", block: "technical" },
+    { code: "factory_purchase", label: "Cung Ứng Kỹ Thuật – Mua Sắm NVL/Hóa Chất Nhà Máy", short: "Cung Ứng KT", color: "bg-lime-500/10 text-lime-700 dark:text-lime-400 border-lime-500/30", block: "technical" }
   ];
+
+  const inferEventBlock = (ev: NotificationMatrixEvent): "commercial" | "technical" => {
+    if (ev.block === "technical") return "technical";
+    if (ev.block === "commercial") return "commercial";
+    if (ev.key.startsWith("factory_") || ev.category.startsWith("factory_") || ev.category === "quality") return "technical";
+    return "commercial";
+  };
 
   // Matrix Event Filtering
   const matrixEventsList = useMemo(() => {
     const events = Object.values(localMatrix);
     return events.filter(ev => {
+      const evBlock = inferEventBlock(ev);
+      const matchBlock = matrixBlockFilter === "all" || evBlock === matrixBlockFilter;
       const matchCategory = matrixCategoryFilter === "all" || ev.category === matrixCategoryFilter;
       const matchSearch = !matrixSearch || 
         ev.name.toLowerCase().includes(matrixSearch.toLowerCase()) ||
         ev.description.toLowerCase().includes(matrixSearch.toLowerCase()) ||
         ev.categoryLabel.toLowerCase().includes(matrixSearch.toLowerCase());
-      return matchCategory && matchSearch;
+      return matchBlock && matchCategory && matchSearch;
     });
-  }, [localMatrix, matrixCategoryFilter, matrixSearch]);
+  }, [localMatrix, matrixBlockFilter, matrixCategoryFilter, matrixSearch]);
 
   const handleToggleEventEnabled = (key: string) => {
     setLocalMatrix(prev => {
@@ -2980,11 +2999,13 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
           {/* Quick Metrics */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-              <span className="text-[11px] font-bold text-slate-400 uppercase block">Tổng Số Hoạt Động</span>
+              <span className="text-[11px] font-bold text-slate-400 uppercase block">Tổng Sự Kiện Thông Báo</span>
               <span className="text-2xl font-black font-mono text-slate-900 dark:text-white mt-1 block">
                 {Object.keys(localMatrix).length}
               </span>
-              <span className="text-[10px] text-slate-500">Phủ sóng 7 phân hệ</span>
+              <span className="text-[10px] text-slate-500">
+                KD: {Object.values(localMatrix).filter(e => inferEventBlock(e) === "commercial").length} · Kỹ thuật: {Object.values(localMatrix).filter(e => inferEventBlock(e) === "technical").length}
+              </span>
             </div>
             <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
               <span className="text-[11px] font-bold text-emerald-500 uppercase block">Đang Kích Hoạt (Bật)</span>
@@ -3009,47 +3030,198 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
             </div>
           </div>
 
-          {/* Filter & Search Bar */}
-          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-3">
-            <div className="flex items-center gap-2 flex-1 max-w-md bg-slate-50 dark:bg-slate-800/80 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
-              <Search className="w-4 h-4 text-slate-400 shrink-0" />
-              <input
-                type="text"
-                placeholder="Tìm hoạt động, phân hệ, từ khóa..."
-                value={matrixSearch}
-                onChange={(e) => setMatrixSearch(e.target.value)}
-                className="bg-transparent border-none text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden w-full"
-              />
-              {matrixSearch && (
-                <button onClick={() => setMatrixSearch("")} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer">
-                  <X className="w-3.5 h-3.5" />
+          {/* Phân tách rõ Kho & Cung Ứng giữa Khối Kinh Doanh vs Khối Kỹ Thuật – Nhà Máy */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div className="p-4 rounded-2xl border border-amber-200/80 dark:border-amber-800/60 bg-amber-50/40 dark:bg-amber-950/20 flex flex-col justify-between gap-2.5">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
+                    🏢 Khối Kinh Doanh — Kho Kinh Doanh & Cung Ứng Thương Mại
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                    Vai trò: Kho KD · Cung Ứng KD
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                  Phụ trách <strong>hàng hóa thương mại & thành phẩm giao khách</strong>: Xuất kho đơn bán (SO), Nhập kho PO thương mại, Cảnh báo tồn kho thương mại & giữ hàng, Tiếp nhận thành phẩm từ Nhà máy, Đề xuất PR/PO thương mại & Thông quan XNK (CO/CQ).
+                </p>
+              </div>
+              <div className="flex items-center flex-wrap gap-1.5 pt-1">
+                <button
+                  onClick={() => { setMatrixBlockFilter("commercial"); setMatrixCategoryFilter("warehouse"); }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                    matrixCategoryFilter === "warehouse"
+                      ? "bg-amber-600 text-white border-amber-600"
+                      : "bg-white dark:bg-slate-900 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-700 hover:bg-amber-100/60"
+                  }`}
+                >
+                  📦 Xem Kho Kinh Doanh ({Object.values(localMatrix).filter(e => e.category === "warehouse").length})
                 </button>
-              )}
+                <button
+                  onClick={() => { setMatrixBlockFilter("commercial"); setMatrixCategoryFilter("procurement"); }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                    matrixCategoryFilter === "procurement"
+                      ? "bg-cyan-600 text-white border-cyan-600"
+                      : "bg-white dark:bg-slate-900 text-cyan-700 dark:text-cyan-300 border-cyan-300 dark:border-cyan-700 hover:bg-cyan-100/60"
+                  }`}
+                >
+                  🚢 Xem Cung Ứng Kinh Doanh ({Object.values(localMatrix).filter(e => e.category === "procurement").length})
+                </button>
+              </div>
             </div>
 
-            <div className="flex items-center flex-wrap gap-1.5 text-xs font-semibold">
-              {[
-                { id: "all", label: "Tất cả" },
-                { id: "sales", label: "Kinh Doanh" },
-                { id: "warehouse", label: "Kho Vận" },
-                { id: "procurement", label: "Mua Hàng" },
-                { id: "application", label: "Lab & App" },
-                { id: "workspace", label: "Công Việc" },
-                { id: "finance", label: "Tài Chính" },
-                { id: "quality", label: "QA/QC" }
-              ].map(f => (
+            <div className="p-4 rounded-2xl border border-teal-200/80 dark:border-teal-800/60 bg-teal-50/40 dark:bg-teal-950/20 flex flex-col justify-between gap-2.5">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-extrabold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
+                    🏭 Khối Kỹ Thuật – Nhà Máy — Kho Nhà Máy & Cung Ứng Kỹ Thuật
+                  </span>
+                  <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/15 text-teal-700 dark:text-teal-300 border border-teal-500/30">
+                    Vai trò: Kho Nhà Máy · Cung Ứng KT
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 dark:text-slate-400 mt-1 leading-relaxed">
+                  Phụ trách <strong>nguyên vật liệu, hóa chất, enzyme, bán thành phẩm & vật tư sản xuất</strong>: Tiếp nhận lô biệt trữ chờ IQC, Xuất cấp phát theo FEFO cho lệnh SX, Cảnh báo hạn dùng FEFO & Freeze-Thaw, Lô bị loại/treo, PR/PO vật tư kỹ thuật & Cảnh báo thiếu hụt định mức MRP theo BOM.
+                </p>
+              </div>
+              <div className="flex items-center flex-wrap gap-1.5 pt-1">
                 <button
-                  key={f.id}
-                  onClick={() => setMatrixCategoryFilter(f.id)}
+                  onClick={() => { setMatrixBlockFilter("technical"); setMatrixCategoryFilter("factory_warehouse"); }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                    matrixCategoryFilter === "factory_warehouse"
+                      ? "bg-yellow-600 text-white border-yellow-600"
+                      : "bg-white dark:bg-slate-900 text-yellow-700 dark:text-yellow-300 border-yellow-300 dark:border-yellow-700 hover:bg-yellow-100/60"
+                  }`}
+                >
+                  🏭 Xem Kho Nhà Máy ({Object.values(localMatrix).filter(e => e.category === "factory_warehouse").length})
+                </button>
+                <button
+                  onClick={() => { setMatrixBlockFilter("technical"); setMatrixCategoryFilter("factory_procurement"); }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                    matrixCategoryFilter === "factory_procurement"
+                      ? "bg-lime-600 text-white border-lime-600"
+                      : "bg-white dark:bg-slate-900 text-lime-700 dark:text-lime-300 border-lime-300 dark:border-lime-700 hover:bg-lime-100/60"
+                  }`}
+                >
+                  🧪 Xem Cung Ứng Kỹ Thuật ({Object.values(localMatrix).filter(e => e.category === "factory_procurement").length})
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Filter & Search Bar */}
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+              {/* Block Switcher */}
+              <div className="flex items-center flex-wrap gap-1.5">
+                {[
+                  { id: "all", label: `Tất cả Khối (${Object.keys(localMatrix).length})` },
+                  { id: "commercial", label: `🏢 Khối Kinh Doanh & Văn Phòng (${Object.values(localMatrix).filter(e => inferEventBlock(e) === "commercial").length})` },
+                  { id: "technical", label: `🏭 Khối Kỹ Thuật – Nhà Máy (${Object.values(localMatrix).filter(e => inferEventBlock(e) === "technical").length})` }
+                ].map(b => (
+                  <button
+                    key={b.id}
+                    onClick={() => {
+                      setMatrixBlockFilter(b.id as "all" | "commercial" | "technical");
+                      setMatrixCategoryFilter("all");
+                    }}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                      matrixBlockFilter === b.id
+                        ? "bg-slate-900 dark:bg-orange-500 text-white shadow-xs"
+                        : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    {b.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Search Input */}
+              <div className="flex items-center gap-2 flex-1 max-w-md bg-slate-50 dark:bg-slate-800/80 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700">
+                <Search className="w-4 h-4 text-slate-400 shrink-0" />
+                <input
+                  type="text"
+                  placeholder="Tìm hoạt động, phòng ban, từ khóa (VD: Oligo, Kit, R&D, IQC, FEFO, PR, PO)..."
+                  value={matrixSearch}
+                  onChange={(e) => setMatrixSearch(e.target.value)}
+                  className="bg-transparent border-none text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-hidden w-full"
+                />
+                {matrixSearch && (
+                  <button onClick={() => setMatrixSearch("")} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 cursor-pointer">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Category Pills grouped by Block */}
+            <div className="space-y-2">
+              <div className="flex items-center flex-wrap gap-1.5 text-xs font-semibold">
+                <button
+                  onClick={() => setMatrixCategoryFilter("all")}
                   className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    matrixCategoryFilter === f.id
+                    matrixCategoryFilter === "all"
                       ? "bg-orange-500 text-white font-bold shadow-xs"
                       : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
                   }`}
                 >
-                  {f.label}
+                  Tất cả phân hệ ({matrixEventsList.length})
                 </button>
-              ))}
+
+                {(matrixBlockFilter === "all" || matrixBlockFilter === "commercial") && (
+                  <>
+                    <span className="text-[10px] font-extrabold uppercase text-slate-400 px-1.5">🏢 Kinh Doanh:</span>
+                    {[
+                      { id: "sales", label: "Kinh Doanh & Báo Giá" },
+                      { id: "warehouse", label: "Kho Kinh Doanh" },
+                      { id: "procurement", label: "Cung Ứng KD" },
+                      { id: "application", label: "Lab & App KD" },
+                      { id: "workspace", label: "Công Việc" },
+                      { id: "finance", label: "Tài Chính – Kế Toán" }
+                    ].map(f => (
+                      <button
+                        key={f.id}
+                        onClick={() => setMatrixCategoryFilter(f.id)}
+                        className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer ${
+                          matrixCategoryFilter === f.id
+                            ? "bg-orange-500 text-white font-bold shadow-xs"
+                            : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700"
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {(matrixBlockFilter === "all" || matrixBlockFilter === "technical") && (
+                  <>
+                    <span className="text-[10px] font-extrabold uppercase text-teal-600 dark:text-teal-400 px-1.5">🏭 Kỹ Thuật – Nhà Máy:</span>
+                    {[
+                      { id: "factory_intake", label: "Đơn Nội Bộ" },
+                      { id: "factory_rd", label: "Nghiên Cứu R&D" },
+                      { id: "factory_kit", label: "Sản Xuất Kit" },
+                      { id: "factory_oligo", label: "Tổng Hợp Oligo" },
+                      { id: "factory_device", label: "Kỹ Thuật – Thiết Bị" },
+                      { id: "quality", label: "QA/QC Nhà Máy" },
+                      { id: "factory_warehouse", label: "Kho Nhà Máy" },
+                      { id: "factory_procurement", label: "Cung Ứng Kỹ Thuật" }
+                    ].map(f => (
+                      <button
+                        key={f.id}
+                        onClick={() => setMatrixCategoryFilter(f.id)}
+                        className={`px-2.5 py-1.5 rounded-lg transition-all cursor-pointer ${
+                          matrixCategoryFilter === f.id
+                            ? "bg-teal-600 text-white font-bold shadow-xs"
+                            : "bg-teal-50/70 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200/60 dark:border-teal-800/60 hover:bg-teal-100 dark:hover:bg-teal-900/50"
+                        }`}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
@@ -3059,6 +3231,7 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
               const isEnabled = ev.enabled !== false;
               const hasSpecificPersonnel = ev.targetEmployeeIds && ev.targetEmployeeIds.length > 0;
               const isExpanded = expandedPersonnelEvent === ev.key;
+              const evBlock = inferEventBlock(ev);
 
               return (
                 <div
@@ -3094,12 +3267,26 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                             {ev.name}
                           </h4>
                           <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                            evBlock === "technical"
+                              ? "bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/25"
+                              : "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/25"
+                          }`}>
+                            {evBlock === "technical" ? "🏭 Khối Kỹ Thuật" : "🏢 Khối Kinh Doanh"}
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
                             ev.category === "sales" ? "bg-blue-500/10 text-blue-600 border-blue-500/20" :
                             ev.category === "warehouse" ? "bg-amber-500/10 text-amber-600 border-amber-500/20" :
                             ev.category === "procurement" ? "bg-cyan-500/10 text-cyan-600 border-cyan-500/20" :
                             ev.category === "application" ? "bg-purple-500/10 text-purple-600 border-purple-500/20" :
                             ev.category === "finance" ? "bg-rose-500/10 text-rose-600 border-rose-500/20" :
                             ev.category === "quality" ? "bg-teal-500/10 text-teal-600 border-teal-500/20" :
+                            ev.category === "factory_intake" ? "bg-indigo-500/10 text-indigo-600 border-indigo-500/20" :
+                            ev.category === "factory_rd" ? "bg-fuchsia-500/10 text-fuchsia-600 border-fuchsia-500/20" :
+                            ev.category === "factory_kit" ? "bg-emerald-500/10 text-emerald-600 border-emerald-500/20" :
+                            ev.category === "factory_oligo" ? "bg-violet-500/10 text-violet-600 border-violet-500/20" :
+                            ev.category === "factory_device" ? "bg-sky-500/10 text-sky-600 border-sky-500/20" :
+                            ev.category === "factory_warehouse" ? "bg-yellow-500/15 text-yellow-700 dark:text-yellow-400 border-yellow-500/30" :
+                            ev.category === "factory_procurement" ? "bg-lime-500/15 text-lime-700 dark:text-lime-400 border-lime-500/30" :
                             "bg-emerald-500/10 text-emerald-600 border-emerald-500/20"
                           }`}>
                             {ev.categoryLabel}
@@ -3144,28 +3331,51 @@ export const SettingsModule: React.FC<SettingsModuleProps> = ({ initialSubTab })
                   {/* Matrix Configuration: Roles & Specific Personnel */}
                   <div className="pt-3.5 grid grid-cols-1 md:grid-cols-2 gap-4">
                     {/* Roles Configuration */}
-                    <div className="space-y-1.5">
+                    <div className="space-y-2">
                       <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">
                         1. Nhóm Vai Trò Nhận Thông Báo ({ev.targetRoles?.length || 0})
                       </span>
-                      <div className="flex items-center flex-wrap gap-1.5">
-                        {MATRIX_ROLES.map(role => {
-                          const isSelected = (ev.targetRoles || []).includes(role.code);
-                          return (
-                            <button
-                              key={role.code}
-                              onClick={() => handleToggleEventRole(ev.key, role.code)}
-                              className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
-                                isSelected
-                                  ? `${role.color} border-current shadow-2xs`
-                                  : "bg-slate-100 dark:bg-slate-800 text-slate-400 border-transparent hover:border-slate-300 dark:hover:border-slate-700"
-                              }`}
-                              title={role.label}
-                            >
-                              {isSelected ? `✓ ${role.short}` : `+ ${role.short}`}
-                            </button>
-                          );
-                        })}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center flex-wrap gap-1.5">
+                          <span className="text-[10px] font-bold text-slate-400 w-24 shrink-0">🏢 Khối KD & VP:</span>
+                          {MATRIX_ROLES.filter(r => r.block === "commercial").map(role => {
+                            const isSelected = (ev.targetRoles || []).includes(role.code);
+                            return (
+                              <button
+                                key={role.code}
+                                onClick={() => handleToggleEventRole(ev.key, role.code)}
+                                className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                                  isSelected
+                                    ? `${role.color} border-current shadow-2xs`
+                                    : "bg-slate-100 dark:bg-slate-800 text-slate-400 border-transparent hover:border-slate-300 dark:hover:border-slate-700"
+                                }`}
+                                title={role.label}
+                              >
+                                {isSelected ? `✓ ${role.short}` : `+ ${role.short}`}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center flex-wrap gap-1.5">
+                          <span className="text-[10px] font-bold text-teal-600 dark:text-teal-400 w-24 shrink-0">🏭 Khối Kỹ Thuật:</span>
+                          {MATRIX_ROLES.filter(r => r.block === "technical").map(role => {
+                            const isSelected = (ev.targetRoles || []).includes(role.code);
+                            return (
+                              <button
+                                key={role.code}
+                                onClick={() => handleToggleEventRole(ev.key, role.code)}
+                                className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border transition-all cursor-pointer ${
+                                  isSelected
+                                    ? `${role.color} border-current shadow-2xs`
+                                    : "bg-slate-100 dark:bg-slate-800 text-slate-400 border-transparent hover:border-slate-300 dark:hover:border-slate-700"
+                                }`}
+                                title={role.label}
+                              >
+                                {isSelected ? `✓ ${role.short}` : `+ ${role.short}`}
+                              </button>
+                            );
+                          })}
+                        </div>
                       </div>
                     </div>
 

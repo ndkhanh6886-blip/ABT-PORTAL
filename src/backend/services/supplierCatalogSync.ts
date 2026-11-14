@@ -1,5 +1,6 @@
 import { query } from "@/backend/db/db";
 import { todayVN } from "@/backend/services/dates";
+import { ensureDefaultInternalSuppliers } from "@/backend/services/factoryBridge";
 
 const PLACEHOLDER_SUPPLIERS = new Set([
   "",
@@ -72,6 +73,51 @@ export function resolveCanonicalSupplier(raw?: string | null): CanonicalSupplier
   if (isPlaceholderSupplierName(raw)) return null;
   const clean = String(raw).trim().replace(/\s+/g, " ");
   const upper = clean.toUpperCase();
+
+  if (
+    upper.includes("PHÒNG TỔNG HỢP OLIGO") ||
+    upper.includes("PHONG TONG HOP OLIGO") ||
+    upper.includes("NHÀ CUNG CẤP TỔNG HỢP OLIGO") ||
+    upper.includes("NHA CUNG CAP TONG HOP OLIGO")
+  ) {
+    return {
+      canonicalKey: "INTERNAL_OLIGO",
+      shortName: "Phòng Tổng hợp Oligo",
+      defaultFullName: "Phòng Tổng hợp Oligo",
+      defaultProductLines: "Tổng hợp Oligo (Primer, Probe, Amplicon & Dịch vụ tinh sạch/điều chế)",
+      preferredCode: "NCC-NB-OLIGO",
+    };
+  }
+  if (
+    upper.includes("PHÒNG SẢN XUẤT KIT") ||
+    upper.includes("PHONG SAN XUAT KIT") ||
+    upper.includes("PHÒNG SX KIT") ||
+    upper.includes("PHONG SX KIT")
+  ) {
+    return {
+      canonicalKey: "INTERNAL_KIT",
+      shortName: "Phòng Sản xuất Kit",
+      defaultFullName: "Phòng Sản xuất Kit",
+      defaultProductLines: "Kit PCR, Kit tách chiết DNA/RNA, Hóa chất & Vật tư do Phòng Sản xuất cung cấp",
+      preferredCode: "NCC-NB-KIT",
+    };
+  }
+  if (
+    upper.includes("PHÒNG KỸ THUẬT - THIẾT BỊ") ||
+    upper.includes("PHONG KY THUAT - THIET BI") ||
+    upper.includes("PHÒNG KỸ THUẬT-THIẾT BỊ") ||
+    upper.includes("PHONG KY THUAT-THIET BI") ||
+    upper.includes("PHÒNG KỸ THUẬT - CÔNG NGHỆ") ||
+    upper.includes("PHONG KY THUAT - CONG NGHE")
+  ) {
+    return {
+      canonicalKey: "INTERNAL_DEVICE",
+      shortName: "Phòng Kỹ thuật - Thiết bị",
+      defaultFullName: "Phòng Kỹ thuật - Thiết bị",
+      defaultProductLines: "Thiết bị chẩn đoán, Máy PCR, Máy tách chiết & Phụ kiện thiết bị",
+      preferredCode: "NCC-NB-DEVICE",
+    };
+  }
 
   if (
     upper.includes("ABT") ||
@@ -414,6 +460,8 @@ export async function syncCatalogSuppliersAndProducts(
         await query("DELETE FROM app_storage WHERE key = 'deleted_procurement_suppliers'").catch(() => {});
       }
 
+      await ensureDefaultInternalSuppliers(Boolean(opts?.forceIncludeDeleted));
+
       const [suppliersRes, dbProductsRes, commStorageRes, deletedStorageRes, supplierProductsRes, ordersRes] =
         await Promise.all([
           query("SELECT * FROM procurement_suppliers ORDER BY id ASC"),
@@ -557,13 +605,60 @@ export async function syncCatalogSuppliersAndProducts(
 
       const groupsByCanonical = new Map<string, PendingSupplierGroup>();
 
+      const addItemToCanonicalGroup = (chosen: CanonicalSupplierInfo, item: UnifiedCatalogItem, rawNameOverride?: string) => {
+        const bestRawName = rawNameOverride || chosen.defaultFullName;
+        const existingGroup = groupsByCanonical.get(chosen.canonicalKey);
+        if (!existingGroup) {
+          groupsByCanonical.set(chosen.canonicalKey, {
+            info: chosen,
+            bestFullName: bestRawName,
+            categories: new Set(item.category ? [item.category] : []),
+            items: [item],
+          });
+        } else {
+          if (item.category) existingGroup.categories.add(item.category);
+          if (!existingGroup.items.some((x) => x.code.toUpperCase() === item.code.toUpperCase())) {
+            existingGroup.items.push(item);
+          }
+        }
+      };
+
+      const internalOligoInfo = resolveCanonicalSupplier("Phòng Tổng hợp Oligo")!;
+      const internalKitInfo = resolveCanonicalSupplier("Phòng Sản xuất Kit")!;
+      const internalDeviceInfo = resolveCanonicalSupplier("Phòng Kỹ thuật - Thiết bị")!;
+
       for (const item of catalogMap.values()) {
+        const codeUpper = item.code.toUpperCase();
+        const catUpper = (item.category || "").toUpperCase();
+        const isOligoItem =
+          codeUpper.startsWith("OLIGO-") ||
+          codeUpper.startsWith("OLI-") ||
+          catUpper.includes("OLIGO");
+
+        if (isOligoItem) {
+          addItemToCanonicalGroup(internalOligoInfo, item, internalOligoInfo.defaultFullName);
+        }
+
         const supInfo = resolveCanonicalSupplier(item.supplierRaw);
         const brandInfo = resolveCanonicalSupplier(item.brandRaw);
         const mfgInfo = resolveCanonicalSupplier(item.dbManufacturerRaw);
 
         let chosen: CanonicalSupplierInfo | null = supInfo || brandInfo || mfgInfo;
         if (!chosen) continue;
+
+        if (chosen.canonicalKey === "ABT") {
+          const isDevice =
+            catUpper.includes("THIẾT BỊ") ||
+            catUpper.includes("THIET BI") ||
+            codeUpper.startsWith("EQ-") ||
+            codeUpper.startsWith("DEV-") ||
+            codeUpper.startsWith("ABT-M");
+          if (isDevice) {
+            addItemToCanonicalGroup(internalDeviceInfo, item, internalDeviceInfo.defaultFullName);
+          } else {
+            addItemToCanonicalGroup(internalKitInfo, item, internalKitInfo.defaultFullName);
+          }
+        }
 
         const candidateRawNames = [item.supplierRaw, item.brandRaw, item.dbManufacturerRaw].filter(
           (r): r is string => Boolean(r && !isPlaceholderSupplierName(r))
@@ -584,27 +679,7 @@ export async function syncCatalogSuppliersAndProducts(
           }
         }
 
-        const existingGroup = groupsByCanonical.get(chosen.canonicalKey);
-        if (!existingGroup) {
-          groupsByCanonical.set(chosen.canonicalKey, {
-            info: chosen,
-            bestFullName: bestRawName,
-            categories: new Set(item.category ? [item.category] : []),
-            items: [item],
-          });
-        } else {
-          const upperNew = bestRawName.toUpperCase();
-          const upperCur = existingGroup.bestFullName.toUpperCase();
-          if (
-            (upperNew.startsWith("CÔNG TY") && !upperCur.startsWith("CÔNG TY")) ||
-            (upperNew.startsWith("CÔNG TY") === upperCur.startsWith("CÔNG TY") &&
-              bestRawName.length > existingGroup.bestFullName.length)
-          ) {
-            existingGroup.bestFullName = bestRawName;
-          }
-          if (item.category) existingGroup.categories.add(item.category);
-          existingGroup.items.push(item);
-        }
+        addItemToCanonicalGroup(chosen, item, bestRawName);
       }
 
       // 4. Ensure each supplier group exists in procurement_suppliers

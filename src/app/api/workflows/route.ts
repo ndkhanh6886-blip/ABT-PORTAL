@@ -39,13 +39,46 @@ function cleanAssigneeName(name: any): string {
 function normalizeDeptKey(raw: any): string {
   const s = lower(raw);
   if (!s) return "";
-  if (s.includes("ứng dụng") || s.includes("application") || s.includes("kỹ thuật")) return "application";
-  if (s.includes("kho") || s.includes("vận hành") || s.includes("warehouse")) return "warehouse";
-  if (s.includes("cung ứng") || s.includes("mua hàng") || s.includes("procurement")) return "procurement";
-  if (s.includes("kinh doanh") || s.includes("sales") || s.includes("marketing")) return "sales";
-  if (s.includes("pháp chế") || s.includes("legal") || s.includes("qa") || s.includes("qc") || s.includes("chất lượng")) return "legal";
-  if (s.includes("kế toán") || s.includes("account")) return "accounting";
-  if (s.includes("giám đốc") || s.includes("admin") || s.includes("bod")) return "director";
+  // 1. Phân biệt độc lập Kho Nhà Máy và Cung Ứng Kỹ Thuật (Khối Kỹ Thuật – Nhà Máy)
+  if (
+    s.includes("kho nhà máy") ||
+    s.includes("kho kỹ thuật") ||
+    s.includes("kho tổng nhà máy") ||
+    s.includes("kho vật tư") ||
+    s.includes("kho hóa chất") ||
+    s === "p-wh" ||
+    s === "factory_warehouse"
+  ) {
+    return "dept_factory_wh";
+  }
+  if (
+    s.includes("cung ứng kỹ thuật") ||
+    s.includes("cung ứng nhà máy") ||
+    s.includes("cung ứng nvl") ||
+    s.includes("mua hàng nhà máy") ||
+    s.includes("mua hàng kỹ thuật") ||
+    s.includes("mua sắm nvl") ||
+    s === "p-pur" ||
+    s === "factory_procurement"
+  ) {
+    return "dept_factory_proc";
+  }
+  // 2. Các phòng ban thuộc Khối Kỹ Thuật – Nhà Máy
+  if (s.includes("đơn nội bộ") || s.includes("điều phối sản xuất") || s.includes("điều phối đơn")) return "dept_internal_order";
+  if (s.includes("r&d") || s.includes("nghiên cứu") || s === "p-rd") return "dept_factory_rd";
+  if (s.includes("sản xuất kit") || s.includes("sx kit") || s === "p-kit") return "dept_factory_kit";
+  if (s.includes("oligo") || s === "p-oligo") return "dept_factory_oligo";
+  if (s.includes("thiết bị") || s.includes("cơ điện") || s === "p-tb") return "dept_factory_device";
+  if (s.includes("qa") || s.includes("qc") || s.includes("chất lượng") || s === "p-qaqc") return "dept_factory_qaqc";
+  // 3. Các phòng ban thuộc Khối Kinh Doanh & Văn Phòng (Kho KD và Cung ứng KD độc lập với Nhà máy)
+  if (s.includes("ứng dụng") || s.includes("application") || s === "app") return "dept_comm_app";
+  if (s.includes("kho") || s.includes("vận hành") || s.includes("warehouse") || s.includes("giao nhận")) return "dept_comm_wh";
+  if (s.includes("cung ứng") || s.includes("mua hàng") || s.includes("procurement")) return "dept_comm_proc";
+  if (s.includes("kinh doanh") || s.includes("sales") || s.includes("marketing") || s === "pm") return "dept_comm_sales";
+  if (s.includes("pháp chế") || s.includes("legal") || s.includes("tuân thủ")) return "dept_comm_legal";
+  if (s.includes("kế toán") || s.includes("tài chính") || s.includes("account")) return "dept_comm_acc";
+  if (s.includes("nhân sự") || s.includes("hành chính") || s === "hr") return "dept_comm_hr";
+  if (s.includes("giám đốc") || s.includes("admin") || s.includes("bod")) return "dept_exec_bod";
   return s;
 }
 
@@ -58,7 +91,7 @@ function isSameDepartment(a: any, b: any): boolean {
   const listA = splitKeys(a);
   const listB = splitKeys(b);
   if (listA.length === 0 || listB.length === 0) return false;
-  return listA.some((ka) => listB.some((kb) => ka === kb || ka.includes(kb) || kb.includes(ka)));
+  return listA.some((ka) => listB.some((kb) => ka === kb));
 }
 
 /** Purchase requests (PR) are workflow tickets too; their approval belongs to the procurement approvers. */
@@ -117,44 +150,44 @@ const DEFAULT_DB_WORKFLOW_TEMPLATES = [
   },
   {
     code: "SALES_TO_WAREHOUSE",
-    name: "Sales ──► Kho: Yêu cầu Soạn & Xuất kho giao hàng",
+    name: "Sales ──► Kho Kinh Doanh: Yêu cầu Soạn & Xuất kho giao hàng (SO)",
     source_dept: "Kinh Doanh",
     target_dept: "Kho & Vận Hành",
     icon: "Package",
-    description: "Yêu cầu thủ kho kiểm tra số lô (Lot), hạn dùng (Exp), đóng gói lạnh và tạo phiếu xuất kho giao khách.",
+    description: "Yêu cầu Kho Kinh Doanh (Thương Mại) kiểm tra số lô (Lot), hạn dùng (Exp), đóng gói lạnh và tạo phiếu xuất kho giao khách hàng.",
     sla_days: 2,
     steps: [
-      { step_index: 0, title: "Thẩm định tồn kho & Kiểm tra Lot/Hạn dùng", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Phiếu kiểm kho xác nhận đủ số lượng & hạn sử dụng > 6 tháng" },
-      { step_index: 1, title: "Đóng gói chuẩn lạnh & In phiếu xuất", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Thùng xốp gel đá/đá khô có dán tem niêm phong và phiếu xuất kho" },
+      { step_index: 0, title: "Thẩm định tồn Kho Kinh Doanh & Kiểm tra Lot/Hạn dùng", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Phiếu kiểm kho xác nhận đủ số lượng & hạn sử dụng > 6 tháng" },
+      { step_index: 1, title: "Đóng gói chuẩn lạnh & In phiếu xuất Kho Kinh Doanh", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Thùng xốp gel đá/đá khô có dán tem niêm phong và phiếu xuất kho" },
       { step_index: 2, title: "Giao hàng & Thu hồi biên bản bàn giao (POD)", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 24, deliverables: "Biên bản giao nhận ký xác nhận kèm ảnh chụp tại phòng khám/lab" }
     ]
   },
   {
     code: "TO_PROCUREMENT",
-    name: "Kho / Sales ──► Cung Ứng: Đề xuất mua hàng (PR)",
+    name: "Kho KD / Sales ──► Cung Ứng KD: Đề xuất mua hàng thương mại (PR KD)",
     source_dept: "Kho & Vận Hành",
     target_dept: "Cung Ứng",
     icon: "ShoppingCart",
-    description: "Đề xuất phòng Cung ứng đàm phán giá và tạo đơn mua hàng PO khi tồn kho chạm mức an toàn.",
+    description: "Đề xuất phòng Cung Ứng Kinh Doanh đàm phán giá và tạo đơn mua hàng thương mại (PO Kinh Doanh) khi tồn kho thương mại chạm mức an toàn.",
     sla_days: 7,
     steps: [
-      { step_index: 0, title: "Tiếp nhận đề xuất PR & Khảo sát nhà cung cấp", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
-      { step_index: 1, title: "Trình duyệt ban giám đốc & Phát hành đơn PO", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Đơn đặt hàng PO có chữ ký phê duyệt" },
-      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập kho ABT", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập kho (GRN)" }
+      { step_index: 0, title: "Tiếp nhận đề xuất PR KD & Khảo sát nhà cung cấp thương mại", dept: "Cung Ứng", assignee_name: "", sla_hours: 24, deliverables: "Bảng đối chiếu báo giá tối thiểu 2 NCC và thời gian giao hàng (Lead-time)" },
+      { step_index: 1, title: "Trình duyệt Ban Giám Đốc & Phát hành đơn PO Kinh Doanh", dept: "Ban Giám Đốc", assignee_name: "", sla_hours: 24, deliverables: "Đơn đặt hàng PO thương mại có chữ ký phê duyệt" },
+      { step_index: 2, title: "Theo dõi hải quan / giao nhận & Nhập Kho Kinh Doanh", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 72, deliverables: "Biên bản kiểm tra CO/CQ và phiếu nhập Kho Kinh Doanh (GRN)" }
     ]
   },
   {
     code: "APP_TO_WAREHOUSE",
-    name: "App ──► Kho: Đề nghị xuất vật tư & Mượn máy demo",
+    name: "App ──► Kho Kinh Doanh: Đề nghị xuất vật tư & Mượn máy demo",
     source_dept: "Application",
     target_dept: "Kho & Vận Hành",
     icon: "FlaskConical",
-    description: "Đề nghị xuất kit test, hóa chất tiêu hao hoặc mượn máy demo mang đi công tác ngoại viện.",
+    description: "Đề nghị Kho Kinh Doanh xuất kit test, hóa chất tiêu hao hoặc mượn máy demo mang đi công tác ngoại viện.",
     sla_days: 3,
     steps: [
-      { step_index: 0, title: "Kiểm tra thiết bị & Phụ kiện đi kèm", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Checklist máy móc đủ dây nguồn, phụ kiện, vali chống sốc" },
-      { step_index: 1, title: "Ký biên bản bàn giao mượn thiết bị demo", dept: "Application", assignee_name: "", sla_hours: 8, deliverables: "Phiếu mượn máy có chữ ký người mượn và thủ kho" },
-      { step_index: 2, title: "Hoàn trả máy & Kiểm tra tình trạng nguyên vẹn", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 24, deliverables: "Biên bản nhận trả máy, ghi nhận tình trạng hoạt động tốt" }
+      { step_index: 0, title: "Kiểm tra thiết bị & Phụ kiện đi kèm tại Kho Kinh Doanh", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 8, deliverables: "Checklist máy móc đủ dây nguồn, phụ kiện, vali chống sốc" },
+      { step_index: 1, title: "Ký biên bản bàn giao mượn thiết bị demo", dept: "Application", assignee_name: "", sla_hours: 8, deliverables: "Phiếu mượn máy có chữ ký người mượn và thủ kho KD" },
+      { step_index: 2, title: "Hoàn trả máy & Kiểm tra tình trạng nguyên vẹn", dept: "Kho & Vận Hành", assignee_name: "", sla_hours: 24, deliverables: "Biên bản nhận trả máy tại Kho Kinh Doanh, ghi nhận tình trạng hoạt động tốt" }
     ]
   },
   {
@@ -168,7 +201,79 @@ const DEFAULT_DB_WORKFLOW_TEMPLATES = [
     steps: [
       { step_index: 0, title: "Tiếp nhận dự thảo hợp đồng & Kiểm tra tính pháp lý", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Biên bản thẩm tra pháp lý, rà soát điều khoản thanh toán, phạt vi phạm & bảo hành" },
       { step_index: 1, title: "Hiệu chỉnh điều khoản & Phản hồi cho Sales", dept: "Pháp Chế", assignee_name: "", sla_hours: 24, deliverables: "Bản hợp đồng hoàn chỉnh (redline track changes) đạt chuẩn pháp lý" },
-      { step_index: 2, title: "Trình Ban Giám Đốc phê duyệt ký kết chính thức", dept: "Ban Giám Đốc", assignee_name: "BOD", sla_hours: 24, deliverables: "Hợp đồng kinh tế có chữ ký số / con dấu pháp nhân công ty" }
+      { step_index: 2, title: "Trình Ban Giám Đốc phê duyệt ký kết chính thức", dept: "Ban Giám Đốc", assignee_name: "", sla_hours: 24, deliverables: "Hợp đồng kinh tế có chữ ký số / con dấu pháp nhân công ty" }
+    ]
+  },
+  {
+    code: "SALES_TO_FACTORY_ORDER",
+    name: "Kinh Doanh ──► Nhà Máy: Đặt sản xuất Đơn hàng Nội bộ (Kit / Oligo / Thiết bị)",
+    source_dept: "Kinh Doanh",
+    target_dept: "Đơn Nội Bộ",
+    icon: "Factory",
+    description: "Luồng liên khối Kinh Doanh ↔ Khối Kỹ Thuật: Tiếp nhận đơn đặt hàng nội bộ (PO KD → Nhà máy), điều phối lệnh SX Kit/Oligo/Thiết bị, kiểm định QA/QC và bàn giao thành phẩm từ Kho Nhà Máy sang Kho Kinh Doanh.",
+    sla_days: 7,
+    steps: [
+      { step_index: 0, title: "Tiếp nhận Đơn Nội Bộ & Kiểm tra năng lực sản xuất / Tồn Kho Nhà Máy", dept: "Đơn Nội Bộ", assignee_name: "", sla_hours: 12, deliverables: "Xác nhận lịch giao cam kết và phát lệnh sản xuất về Phòng Kit / Oligo / Thiết bị" },
+      { step_index: 1, title: "Tổ chức Sản xuất Lô Kit / Tổng hợp Oligo / Lắp ráp Thiết bị", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 72, deliverables: "Hoàn thành Hồ sơ lô điện tử (eBR) / Mẻ tổng hợp Oligo và chuyển mẫu chờ QC" },
+      { step_index: 2, title: "Kiểm định Chất lượng (QC), Phê duyệt Xuất xưởng & Cấp COA", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Phiếu kết quả kiểm nghiệm đạt chuẩn ISO 13485 & Chứng nhận phân tích (COA)" },
+      { step_index: 3, title: "Xuất Kho Nhà Máy & Bàn giao thành phẩm sang Kho Kinh Doanh", dept: "Kho Nhà Máy", assignee_name: "", sla_hours: 12, deliverables: "Phiếu xuất Kho Nhà Máy kèm COA bàn giao sang Kho Kinh Doanh ( hoặc giao thẳng)" }
+    ]
+  },
+  {
+    code: "FACTORY_TO_TECH_PROCUREMENT",
+    name: "Kho Nhà Máy / SX ──► Cung Ứng Kỹ Thuật: Đề nghị mua NVL & Hóa chất SX (PR Nhà máy)",
+    source_dept: "Kho Nhà Máy",
+    target_dept: "Cung Ứng Kỹ Thuật",
+    icon: "ShoppingCart",
+    description: "Độc lập với Cung ứng Kinh doanh: Đề xuất Cung Ứng Kỹ Thuật mua sắm nguyên vật liệu, hóa chất tổng hợp Oligo, enzyme, cột tinh sạch, linh kiện thiết bị phục vụ R&D và Sản xuất.",
+    sla_days: 10,
+    steps: [
+      { step_index: 0, title: "Thẩm định PR Nhà máy, Tìm NCC Kỹ thuật & Đối chiếu CoA/MSDS mẫu", dept: "Cung Ứng Kỹ Thuật", assignee_name: "", sla_hours: 24, deliverables: "Bảng chào giá NCC hóa chất/linh kiện kèm tài liệu kỹ thuật CoA/MSDS" },
+      { step_index: 1, title: "Trình Ban Giám Đốc phê duyệt & Phát hành PO Kỹ thuật (Nhà máy)", dept: "Ban Giám Đốc", assignee_name: "", sla_hours: 24, deliverables: "Đơn đặt hàng PO Kỹ thuật đã phê duyệt" },
+      { step_index: 2, title: "Tiếp nhận hàng về Kho Nhà Máy (Khu Biệt trữ Quarantine) & Lấy mẫu IQC", dept: "Kho Nhà Máy", assignee_name: "", sla_hours: 48, deliverables: "Biên bản tiếp nhận lô NVL trạng thái QUARANTINE và yêu cầu QA/QC kiểm tra đầu vào" },
+      { step_index: 3, title: "Kiểm định IQC Đầu vào & Dán nhãn Released nhập Kho Nhà Máy", dept: "QA/QC", assignee_name: "", sla_hours: 24, deliverables: "Biên bản IQC Đạt (RELEASED) cho phép Kho Nhà Máy đưa vào cấp phát FEFO" }
+    ]
+  },
+  {
+    code: "FACTORY_WH_FEFO_ISSUE",
+    name: "Sản Xuất / R&D ──► Kho Nhà Máy: Yêu cầu Cấp phát NVL & Hóa chất theo FEFO",
+    source_dept: "Sản Xuất Kit",
+    target_dept: "Kho Nhà Máy",
+    icon: "Package",
+    description: "Độc lập với Kho Kinh doanh: Các phòng Sản xuất Kit, Tổng hợp Oligo, R&D, Thiết bị yêu cầu Kho Nhà Máy xuất cấp phát hóa chất, enzyme, vật tư theo nguyên tắc FEFO (First Expired, First Out).",
+    sla_days: 1,
+    steps: [
+      { step_index: 0, title: "Kiểm tra Lô NVL trạng thái RELEASED, Hạn dùng FEFO & Chu kỳ Rã đông", dept: "Kho Nhà Máy", assignee_name: "", sla_hours: 4, deliverables: "Danh sách mã lô (Lot) xuất theo đúng thứ tự FEFO, không vượt ngưỡng Freeze-Thaw" },
+      { step_index: 1, title: "Soạn vật tư chuẩn nhiệt độ bảo quản (-20°C / 2-8°C) & Xuất Kho Nhà Máy", dept: "Kho Nhà Máy", assignee_name: "", sla_hours: 4, deliverables: "Phiếu xuất Kho Nhà Máy gắn mã Lệnh sản xuất / Đề tài R&D" },
+      { step_index: 2, title: "Ký nhận bàn giao vật tư & Đối chiếu thực tế tại Phòng Sản xuất / Lab", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 4, deliverables: "Xác nhận đủ số lượng, đúng mã Lot trên Hồ sơ lô điện tử (eBR)" }
+    ]
+  },
+  {
+    code: "RND_TECH_TRANSFER",
+    name: "Nghiên Cứu R&D ──► Sản Xuất & QA/QC: Chuyển giao Công nghệ & Hồ sơ DMR",
+    source_dept: "Nghiên Cứu R&D",
+    target_dept: "Sản Xuất Kit",
+    icon: "FlaskConical",
+    description: "Quy trình chuyển giao thiết kế (Design Transfer - ISO 13485 Mục 7.3) từ phòng Nghiên cứu R&D sang Sản xuất và QA/QC để đưa sản phẩm mới vào sản xuất thương mại.",
+    sla_days: 7,
+    steps: [
+      { step_index: 0, title: "Đóng gói Hồ sơ DHF, Định mức BOM, Quy trình pha chế & Tiêu chuẩn QC", dept: "Nghiên Cứu R&D", assignee_name: "", sla_hours: 24, deliverables: "Bộ hồ sơ chuyển giao công nghệ (DMR dự thảo, SOP pha chế, Spec QC)" },
+      { step_index: 1, title: "Thẩm định Hồ sơ Thiết kế (DHF/DMR) & Phê duyệt Tiêu chuẩn Kiểm nghiệm", dept: "QA/QC", assignee_name: "", sla_hours: 48, deliverables: "Biên bản thẩm định QA/QC & Ban hành SOP/TCCS chính thức" },
+      { step_index: 2, title: "Sản xuất thử nghiệm Lô Pilot (3 lô thẩm định) & Nghiệm thu Chuyển giao", dept: "Sản Xuất Kit", assignee_name: "", sla_hours: 72, deliverables: "Báo cáo 3 lô Pilot đạt QC và Biên bản hoàn tất Design Transfer" }
+    ]
+  },
+  {
+    code: "LAB_TO_DEVICE_MAINT",
+    name: "Phòng Lab / SX ──► Kỹ Thuật – Thiết Bị: Yêu cầu Hiệu chuẩn & Sửa chữa Máy móc",
+    source_dept: "QA/QC",
+    target_dept: "Kỹ Thuật – Thiết Bị",
+    icon: "Wrench",
+    description: "Yêu cầu phòng Kỹ Thuật – Thiết Bị kiểm tra, bảo trì định kỳ, hiệu chuẩn (Calibration) hoặc khắc phục sự cố máy Realtime PCR, máy tổng hợp Oligo, HPLC, tủ âm sâu.",
+    sla_days: 3,
+    steps: [
+      { step_index: 0, title: "Tiếp nhận yêu cầu, Kiểm tra chẩn đoán lỗi & Tạm khóa thiết bị trên hệ thống", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 8, deliverables: "Biên bản chẩn đoán kỹ thuật và phương án sửa chữa / hiệu chuẩn" },
+      { step_index: 1, title: "Thực hiện Bảo trì / Sửa chữa / Hiệu chuẩn & Chạy тест chuẩn", dept: "Kỹ Thuật – Thiết Bị", assignee_name: "", sla_hours: 24, deliverables: "Biên bản hiệu chuẩn / bảo trì kỹ thuật và thông số vận hành đạt chuẩn" },
+      { step_index: 2, title: "QA/QC nghiệm thu trạng thái thiết bị & Mở khóa đưa vào vận hành", dept: "QA/QC", assignee_name: "", sla_hours: 8, deliverables: "Tem hiệu chuẩn mới và xác nhận mở khóa thiết bị trên phần mềm" }
     ]
   }
 ];
@@ -178,8 +283,8 @@ async function ensureFictionalAssigneesCleaned() {
   if (fictionalCleanupDone) return;
   fictionalCleanupDone = true;
   try {
-    // 1. Seed 5 built-in workflow templates if any are missing in workflow_templates table
-    const existingCodesRes = await query(`SELECT code FROM workflow_templates`);
+    // 1. Seed 10 built-in workflow templates if any are missing in workflow_templates table, and update legacy titles for Warehouse/Procurement clarity
+    const existingCodesRes = await query(`SELECT code, name FROM workflow_templates`);
     const existingCodes = new Set(existingCodesRes.rows.map((r: any) => String(r.code || "").toUpperCase()));
     for (const def of DEFAULT_DB_WORKFLOW_TEMPLATES) {
       if (!existingCodes.has(def.code.toUpperCase())) {
@@ -187,6 +292,11 @@ async function ensureFictionalAssigneesCleaned() {
           `INSERT INTO workflow_templates (code, name, source_dept, target_dept, icon, description, sla_days, steps, is_active)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)`,
           [def.code, def.name, def.source_dept, def.target_dept, def.icon, def.description, def.sla_days, JSON.stringify(def.steps)]
+        );
+      } else if (["SALES_TO_WAREHOUSE", "TO_PROCUREMENT", "APP_TO_WAREHOUSE"].includes(def.code.toUpperCase())) {
+        await query(
+          `UPDATE workflow_templates SET name = $1, description = $2 WHERE UPPER(code) = $3`,
+          [def.name, def.description, def.code.toUpperCase()]
         );
       }
     }

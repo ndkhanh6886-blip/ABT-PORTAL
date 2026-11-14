@@ -76,6 +76,11 @@ export interface ProductionOrderRow {
   released_by: number | null;
   released_at: string | null;
   order_mode?: "STANDARD" | "ALIQUOTED" | "DEMO";
+  supply_form?: "NO_SPLIT_NO_IC" | "NO_SPLIT_WITH_IC" | "SPLIT_NO_IC" | "SPLIT_WITH_IC" | string | null;
+  tube_code?: string | null;
+  bom_variant_code?: string | null;
+  mix_tests_per_kit?: number | null;
+  pcr_tubes_per_kit?: number | null;
   is_aliquoted?: boolean;
   is_demo?: boolean;
   demo_specification?: string | null;
@@ -160,14 +165,85 @@ export interface ExplodedBomLine {
  * - Handles QC retention kits (`qc_retention_qty`, `no_retention`, `include_in_qc_retention`).
  * - Applies discrete unit ceiling (`CEIL` for bottles, tubes, boxes, labels).
  */
+/**
+ * Giải mã cấu trúc Số Lô chuẩn ABT (VD: B2611001.C.IC.T02, B2611001.IC.S01, B2611001.T02)
+ * để tự động suy ra Dạng cung cấp (`supply_form`) và Mã nhận diện Tube (`tube_code`) ngay khi người dùng gõ Số Lô.
+ */
+const ABT_KNOWN_TUBE_CODES = new Set(["T02", "T01", "S02", "S01", "LQ02", "MIC", "R01", "LP02"]);
+
+function parseLotCodeToSupplyFormAndTube(lotCode: string | null | undefined): {
+  baseLot: string;
+  supplyForm: "NO_SPLIT_NO_IC" | "NO_SPLIT_WITH_IC" | "SPLIT_NO_IC" | "SPLIT_WITH_IC" | null;
+  tubeCode: string | null;
+} {
+  const raw = String(lotCode || "").trim().toUpperCase();
+  if (!raw || !raw.includes(".")) {
+    return { baseLot: raw, supplyForm: null, tubeCode: null };
+  }
+  const tokens = raw.split(".").filter(Boolean);
+  const baseLot = tokens[0] || raw;
+  const rest = tokens.slice(1);
+  const last = rest[rest.length - 1] || "";
+  const tubeCode = ABT_KNOWN_TUBE_CODES.has(last) ? last : null;
+  const mid = (tubeCode ? rest.slice(0, -1) : rest).join(".");
+
+  let supplyForm: "NO_SPLIT_NO_IC" | "NO_SPLIT_WITH_IC" | "SPLIT_NO_IC" | "SPLIT_WITH_IC" | null = null;
+  if (mid === "C.IC" || mid === "IC.C") supplyForm = "SPLIT_WITH_IC";
+  else if (mid === "C") supplyForm = "SPLIT_NO_IC";
+  else if (mid === "IC") supplyForm = "NO_SPLIT_WITH_IC";
+  else if (mid === "" && tubeCode) supplyForm = "NO_SPLIT_NO_IC";
+
+  return { baseLot, supplyForm, tubeCode };
+}
+
 export async function explodeKitBom(tx: Tx, order: ProductionOrderRow, bom: KitBomRow): Promise<ExplodedBomLine[]> {
   const prod = await getItem(tx, order.product_item_id);
+  let lotCodeStr = String((order as any).lot_code || "").trim();
+  if (!lotCodeStr && order.lot_id) {
+    const lr = (await tx.query("SELECT code FROM inv.lot WHERE id = $1", [order.lot_id])).rows[0];
+    lotCodeStr = String(lr?.code || "").trim();
+  }
+  const parsedFromLot = parseLotCodeToSupplyFormAndTube(lotCodeStr);
+
+  const isPcrKit =
+    prod.item_type !== "SEMI_FINISHED" &&
+    (bom as any).bom_type !== "semi_finished" &&
+    String((bom as any).bom_category || "PCR Kit") === "PCR Kit";
+
+  const supplyForm = isPcrKit
+    ? String(parsedFromLot.supplyForm || (order as any).supply_form || (bom as any).supply_form || "")
+        .trim()
+        .toUpperCase()
+    : "";
+  const tubeCode = isPcrKit
+    ? String(parsedFromLot.tubeCode || (order as any).tube_code || "")
+        .trim()
+        .toUpperCase()
+    : "";
+  const bomVariant = String((bom as any).variant_code || "BASE").trim().toUpperCase();
+
   const isAliquoted =
-    Boolean(order.is_aliquoted) ||
-    order.order_mode === "ALIQUOTED" ||
-    prod.code.toUpperCase().includes(".D.IC");
+    isPcrKit &&
+    (supplyForm === "SPLIT_NO_IC" ||
+      supplyForm === "SPLIT_WITH_IC" ||
+      Boolean(order.is_aliquoted) ||
+      order.order_mode === "ALIQUOTED" ||
+      prod.code.toUpperCase().includes(".D.IC") ||
+      bomVariant === "C" ||
+      bomVariant === "C.IC");
+
+  const hasPreMixedIc =
+    isPcrKit &&
+    (supplyForm === "NO_SPLIT_WITH_IC" ||
+      supplyForm === "SPLIT_WITH_IC" ||
+      bomVariant === "IC" ||
+      bomVariant === "C.IC" ||
+      prod.code.toUpperCase().includes(".IC"));
+
   const isDemo = Boolean(order.is_demo) || order.order_mode === "DEMO";
-  const baseTests = isAliquoted ? 48 : Number(bom.tests_per_kit || 50);
+  const targetMixTests = isAliquoted ? 64 : 75;
+  const targetPcrTubes = isAliquoted ? 64 : 80;
+  const baseTests = Number((order as any).mix_tests_per_kit || bom.tests_per_kit || (isPcrKit ? targetMixTests : 50));
   const demoRatio = isDemo ? parseDemoRatio(order.demo_specification, baseTests) : 1;
 
   const plannedQty = Number(order.planned_qty) || 0;
@@ -185,37 +261,122 @@ export async function explodeKitBom(tx: Tx, order: ProductionOrderRow, bom: KitB
     )
   ).rows;
 
+  // Look up selected tube strip item if tubeCode is specified (e.g. T02 -> VT-TUBE-T02)
+  let selectedTubeItem: any = null;
+  if (tubeCode) {
+    selectedTubeItem = (
+      await tx.query(
+        "SELECT * FROM master.item WHERE upper(code) IN ($1, $2) AND status = 'ACTIVE' LIMIT 1",
+        [`VT-TUBE-${tubeCode}`, tubeCode]
+      )
+    ).rows[0];
+  }
+
+  let hasHandledPcrTubeStrip = false;
   const result: ExplodedBomLine[] = [];
+
   for (const l of lines) {
-    const unitNorm =
+    const codeUpper = String(l.component_code || "").toUpperCase();
+    const nameLower = String(l.component_name || "").toLowerCase();
+
+    // 1. Quy tắc IC: Dạng có sẵn IC trong PCR Mix (.IC / .C.IC) thì KHÔNG cung cấp kèm ống IC rời (A001, A002, A003)
+    const isStandaloneIcTube =
+      l.component_role === "INTERNAL_CONTROL" ||
+      /^A00[123]$/i.test(codeUpper) ||
+      (!codeUpper.includes("MIX") && /\b(ống ic|amplicon ic|internal control|chứng nội rời)\b/i.test(nameLower));
+    if (hasPreMixedIc && isStandaloneIcTube && bomVariant === "BASE") {
+      continue;
+    }
+
+    // 2. Quy tắc Tube 1.5mL chứa PCR Mix (CTT1.5): Dạng chia sẵn (.C / .C.IC) chia trực tiếp vào 64 tube PCR nên không kèm tube 1.5mL chứa Mix
+    const isMix15Tube =
+      codeUpper === "CTT1.5" ||
+      (l.component_role === "PACKAGING" &&
+        (nameLower.includes("1.5") || codeUpper.includes("1.5")) &&
+        (nameLower.includes("mix") || String(l.notes || "").toLowerCase().includes("mix")));
+    if (isAliquoted && isMix15Tube) {
+      continue;
+    }
+
+    // 3. Quy tắc Tube/Strip PCR theo máy khách hàng (8 mã: T02, T01, S02, S01, LQ02, MIC, R01, LP02)
+    const isPcrTubeLine =
+      l.component_role === "PCR_TUBE_STRIP" ||
+      codeUpper.startsWith("VT-TUBE-");
+
+    let compItemId = l.component_item_id;
+    let compCode = l.component_code;
+    let compName = l.component_name;
+    let compUom = l.uom;
+    let unitNorm =
       isAliquoted && l.qty_per_base_aliquoted !== null && Number(l.qty_per_base_aliquoted) > 0
         ? Number(l.qty_per_base_aliquoted)
         : Number(l.qty_per_base);
 
-    const includeQcRet = l.include_in_qc_retention !== false && l.component_role !== "PACKAGING";
+    const isPcrMixLine =
+      l.component_role === "MASTER_MIX" ||
+      (/^M[A-Z0-9]/i.test(codeUpper) && (nameLower.includes("mix") || String(compUom || "").toLowerCase().includes("test")));
+
+    // 3b. Tự động hoán đổi mã Bán thành phẩm PCR Mix (Mxxx <-> MxxxIC) khi chạy công thức cơ bản cho Lô có sẵn IC (.IC / .C.IC)
+    if (isPcrKit && isPcrMixLine && hasPreMixedIc && !codeUpper.endsWith("IC")) {
+      const strippedRp = codeUpper.replace(/RP$/i, "");
+      const candidateCodes = [`${codeUpper}IC`, `${strippedRp}IC`, `${codeUpper}.IC`, `${codeUpper}-IC`];
+      const icMixItem = (
+        await tx.query(
+          "SELECT * FROM master.item WHERE upper(code) = ANY($1::text[]) AND status = 'ACTIVE' ORDER BY CASE WHEN upper(code) = $2 THEN 0 ELSE 1 END LIMIT 1",
+          [candidateCodes, `${codeUpper}IC`]
+        )
+      ).rows[0];
+      if (icMixItem) {
+        compItemId = icMixItem.id;
+        compCode = icMixItem.code;
+        compName = icMixItem.name;
+      }
+    }
+
+    if (isPcrTubeLine) {
+      hasHandledPcrTubeStrip = true;
+      if (selectedTubeItem) {
+        compItemId = selectedTubeItem.id;
+        compCode = selectedTubeItem.code;
+        compName = selectedTubeItem.name;
+        compUom = selectedTubeItem.base_uom;
+      }
+      unitNorm = targetPcrTubes;
+    } else if (
+      isAliquoted &&
+      (l.qty_per_base_aliquoted === null || Number(l.qty_per_base_aliquoted) <= 0) &&
+      bomVariant === "BASE" &&
+      (isPcrMixLine || ["MASTER_MIX", "PRIMER_PROBE", "ENZYME"].includes(l.component_role))
+    ) {
+      // Nếu dùng chung 1 BOM gốc (75 test) để chạy lệnh Chia sẵn (64 test) và chưa điền cột định mức chia sẵn riêng, tự động quy đổi 64/75
+      unitNorm = Math.round(((unitNorm * 64) / 75) * 1e4) / 1e4;
+    }
+
+    const includeQcRet = l.include_in_qc_retention !== false && l.component_role !== "PACKAGING" && !isPcrTubeLine;
     const effectiveOrderQty = includeQcRet ? plannedQty + retQty : plannedQty;
     const scale = effectiveOrderQty / baseQty;
 
+    // 4. Quy tắc Demo: Hóa chất giảm theo tỉ lệ, nhưng vật tư cố định (chai chứa, vỏ hộp) giữ nguyên
     const isFixedInDemo = Boolean(l.is_demo_fixed_component) || l.component_role === "PACKAGING";
     const lineDemoRatio = isDemo && !isFixedInDemo && l.is_mix_component !== false ? demoRatio : 1;
 
     const scrapFactor = 1 + Number(l.scrap_pct || 0) / 100;
     const rawQty = scale * unitNorm * lineDemoRatio * scrapFactor;
-    const isDiscrete = DISCRETE_UOMS.has(String(l.uom || "").trim().toUpperCase());
+    const isDiscrete = DISCRETE_UOMS.has(String(compUom || "").trim().toUpperCase()) || isPcrTubeLine;
     const requiredQty = isDiscrete ? Math.ceil(rawQty - 1e-9) : Math.round(rawQty * 1e6) / 1e6;
 
-    const compItem = await getItem(tx, l.component_item_id);
-    const qtyBase = Math.round((await toBaseQty(tx, compItem, requiredQty, l.uom)) * 1e6) / 1e6;
+    const compItem = await getItem(tx, compItemId);
+    const qtyBase = Math.round((await toBaseQty(tx, compItem, requiredQty, compUom)) * 1e6) / 1e6;
 
     result.push({
       bom_line_id: l.id,
       line_no: Number(l.line_no),
       box_no: Number(l.box_no),
-      component_item_id: l.component_item_id,
-      component_code: l.component_code,
-      component_name: l.component_name,
+      component_item_id: compItemId,
+      component_code: compCode,
+      component_name: compName,
       component_role: l.component_role,
-      uom: l.uom,
+      uom: compUom,
       base_uom: compItem.base_uom,
       unit_norm: unitNorm,
       effective_order_qty: effectiveOrderQty,
@@ -229,6 +390,37 @@ export async function explodeKitBom(tx: Tx, order: ProductionOrderRow, bom: KitB
       allow_substitute: Boolean(l.allow_substitute),
     });
   }
+
+  // Nếu trong Công thức BOM chung chưa khai báo dòng PCR_TUBE_STRIP nhưng trên Lot có mã nhận diện Tube (VD: .T02, .S01...), tự động bổ sung dòng Tube PCR tương ứng (80 tube hoặc 64 tube)
+  if (!hasHandledPcrTubeStrip && selectedTubeItem) {
+    const unitNorm = targetPcrTubes;
+    const effectiveOrderQty = plannedQty;
+    const scale = effectiveOrderQty / baseQty;
+    const requiredQty = Math.ceil(scale * unitNorm - 1e-9);
+    const qtyBase = Math.round((await toBaseQty(tx, selectedTubeItem, requiredQty, selectedTubeItem.base_uom)) * 1e6) / 1e6;
+    result.push({
+      bom_line_id: `auto-tube-${selectedTubeItem.code}`,
+      line_no: result.length + 1,
+      box_no: 1,
+      component_item_id: selectedTubeItem.id,
+      component_code: selectedTubeItem.code,
+      component_name: selectedTubeItem.name,
+      component_role: "PCR_TUBE_STRIP",
+      uom: selectedTubeItem.base_uom,
+      base_uom: selectedTubeItem.base_uom,
+      unit_norm: unitNorm,
+      effective_order_qty: effectiveOrderQty,
+      demo_ratio_applied: 1,
+      scrap_pct: 0,
+      raw_qty: requiredQty,
+      required_qty: requiredQty,
+      qty_base: qtyBase,
+      is_bundled: false,
+      bundle_parent_code: null,
+      allow_substitute: false,
+    });
+  }
+
   return result;
 }
 
@@ -453,15 +645,19 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
         // 2. Reserve FEFO/FIFO materials for all non-bundled BOM lines via ABT Smart BOM Explosion Engine (`explodeKitBom`)
         await ensureOrderMaterialConsumptions(tx, actor, row);
 
-        // 3. Copy EBR steps from Routing
+        // 3. Copy EBR steps from Routing (including functional step tags & operational flags)
+        await ensureKitBomRoutingAndIfuSchema(tx);
         await ensureKitDailyTrackerAndQcGateSchema(tx);
         await tx.query(
           `INSERT INTO kit.production_step
-             (order_id, routing_step_id, seq, step_code, step_name, category, instructions,
-              sop_doc_code, required_training_doc_code, required_asset_id, asset_id, param_schema,
+             (order_id, routing_step_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
+              instructions, sop_doc_code, required_training_doc_code, required_asset_id, asset_id, param_schema,
               is_qc, requires_check_signature, allow_skip, qc_gate_status)
-           SELECT $1, id, seq, step_code, step_name, category, instructions,
-                  sop_doc_code, required_training_doc_code, required_asset_id, required_asset_id, param_schema,
+           SELECT $1, id, seq, step_code, step_name, category,
+                  coalesce(step_function, 'FORMULATION_MIXING'),
+                  coalesce(work_center, 'Phòng sạch Class 10.000 (ISO 7)'),
+                  coalesce(functional_flags, '{}'::jsonb),
+                  instructions, sop_doc_code, required_training_doc_code, required_asset_id, required_asset_id, param_schema,
                   is_qc, requires_check_signature, allow_skip,
                   CASE WHEN is_qc THEN 'WAITING_QC' ELSE 'NONE' END
              FROM kit.routing_step WHERE routing_id = $2 ORDER BY seq`,
@@ -1428,6 +1624,8 @@ const createOrderSchema = z.object({
   mfg_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   priority: z.enum(["LOW", "NORMAL", "HIGH", "URGENT"]).default("NORMAL"),
   order_mode: z.enum(["STANDARD", "ALIQUOTED", "DEMO"]).optional(),
+  supply_form: z.enum(["NO_SPLIT_NO_IC", "NO_SPLIT_WITH_IC", "SPLIT_NO_IC", "SPLIT_WITH_IC"]).optional().nullable(),
+  tube_code: z.string().trim().max(20).optional().nullable(),
   is_aliquoted: z.boolean().optional(),
   is_demo: z.boolean().optional(),
   demo_specification: z.string().trim().max(100).optional().nullable(),
@@ -1438,6 +1636,53 @@ const createOrderSchema = z.object({
   notes: z.string().trim().max(2000).optional().nullable(),
 });
 
+/**
+ * Tự động sinh Mã Lô thành phẩm Kit PCR theo chuẩn ABT:
+ * - B{YYMM}{NNN}.[mã tube]: không chia sẵn, không sẵn IC
+ * - B{YYMM}{NNN}.IC.[mã tube]: không chia sẵn, sẵn IC
+ * - B{YYMM}{NNN}.C.[mã tube]: chia sẵn, không sẵn IC
+ * - B{YYMM}{NNN}.C.IC.[mã tube]: chia sẵn, sẵn IC
+ */
+async function generateAbtStructuredKitLotCode(
+  tx: Tx,
+  mfgDate: string,
+  supplyForm: string | null | undefined,
+  tubeCode: string | null | undefined
+): Promise<string> {
+  const dt = /^\d{4}-\d{2}/.test(mfgDate) ? mfgDate : vnToday();
+  const yy = dt.slice(2, 4);
+  const mm = dt.slice(5, 7);
+  const prefix = `B${yy}${mm}`;
+  const existingRows = (
+    await tx.query("SELECT code FROM inv.lot WHERE upper(code) LIKE $1", [`${prefix}%`])
+  ).rows as Array<{ code: string }>;
+
+  let maxSeq = 0;
+  for (const r of existingRows) {
+    const basePart = String(r.code || "").split(".")[0].toUpperCase();
+    const m = basePart.match(/^B\d{4}(\d{3,4})$/);
+    if (m) {
+      const n = Number(m[1]);
+      if (n > maxSeq) maxSeq = n;
+    }
+  }
+  const baseLot = `${prefix}${String(maxSeq + 1).padStart(3, "0")}`;
+  const sf = String(supplyForm || "").toUpperCase();
+  const infix =
+    sf === "SPLIT_WITH_IC"
+      ? "C.IC"
+      : sf === "SPLIT_NO_IC"
+        ? "C"
+        : sf === "NO_SPLIT_WITH_IC"
+          ? "IC"
+          : "";
+  const tube = String(tubeCode || "").trim().toUpperCase();
+  const parts = [baseLot];
+  if (infix) parts.push(infix);
+  if (tube) parts.push(tube);
+  return parts.join(".");
+}
+
 export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensureKitBomRoutingAndIfuSchema(tx);
   await ensureKitDailyTrackerAndQcGateSchema(tx);
@@ -1445,12 +1690,40 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   await authorize(tx, actor, "kit.order.manage", d.org_unit_id);
   const product = await getItem(tx, d.product_item_id);
 
+  const parsedTypedLot = parseLotCodeToSupplyFormAndTube(d.lot_code);
+
+  const requestedSupplyForm =
+    parsedTypedLot.supplyForm ||
+    d.supply_form ||
+    (d.order_mode === "ALIQUOTED" || d.is_aliquoted
+      ? "SPLIT_WITH_IC"
+      : "NO_SPLIT_NO_IC");
+  const targetVariantCode =
+    requestedSupplyForm === "SPLIT_WITH_IC"
+      ? "C.IC"
+      : requestedSupplyForm === "SPLIT_NO_IC"
+        ? "C"
+        : requestedSupplyForm === "NO_SPLIT_WITH_IC"
+          ? "IC"
+          : "BASE";
+
   let bomId = d.bom_id ?? null;
   if (!bomId) {
+    // Ưu tiên tìm BOM con (variant_code / supply_form) khớp với dạng cung cấp của Mã sản phẩm chính, nếu không có thì lấy BOM gốc EFFECTIVE của Mã chính
     const effBom = (
-      await tx.query("SELECT id FROM kit.bom WHERE product_item_id = $1 AND status = 'EFFECTIVE' LIMIT 1", [
-        d.product_item_id,
-      ])
+      await tx.query(
+        `SELECT id FROM kit.bom
+          WHERE product_item_id = $1 AND status = 'EFFECTIVE'
+          ORDER BY
+            CASE
+              WHEN upper(coalesce(supply_form, '')) = $2 OR upper(coalesce(variant_code, 'BASE')) = $3 THEN 0
+              WHEN upper(coalesce(variant_code, 'BASE')) = 'BASE' THEN 1
+              ELSE 2
+            END ASC,
+            bom_version DESC
+          LIMIT 1`,
+        [d.product_item_id, requestedSupplyForm, targetVariantCode]
+      )
     ).rows[0];
     if (!effBom) throw invalid("Sản phẩm chưa có định mức BOM đang có hiệu lực (EFFECTIVE).");
     bomId = effBom.id;
@@ -1474,16 +1747,58 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   const expiryDate = addDays(mfgDate, bom.shelf_life_days || product.shelf_life_days || 365);
   const code = await nextNumber(tx, "KIT_ORDER");
 
-  const customLotCode = d.lot_code?.trim() || undefined;
+  const isPcrKit =
+    product.item_type !== "SEMI_FINISHED" &&
+    String(bom.bom_type || "finished_good") !== "semi_finished" &&
+    String(bom.bom_category || "PCR Kit") === "PCR Kit";
+
+  const resolvedSupplyForm = isPcrKit
+    ? parsedTypedLot.supplyForm ||
+      d.supply_form ||
+      (bom.supply_form ? String(bom.supply_form) : null) ||
+      requestedSupplyForm
+    : null;
+  const resolvedTubeCode = isPcrKit
+    ? parsedTypedLot.tubeCode ||
+      (d.tube_code !== undefined ? (d.tube_code ? d.tube_code.trim().toUpperCase() : null) : "T02")
+    : null;
+
+  let customLotCode = d.lot_code?.trim() || undefined;
+  // Nếu là Kit PCR và người dùng chỉ gõ mã lô gốc (VD: B2611001) mà chưa gõ hậu tố, tự động ghép hậu tố [.C][.IC].[Mã Tube]
+  if (isPcrKit && customLotCode && !customLotCode.includes(".") && resolvedTubeCode) {
+    const sf = String(resolvedSupplyForm || "").toUpperCase();
+    const infix =
+      sf === "SPLIT_WITH_IC"
+        ? "C.IC"
+        : sf === "SPLIT_NO_IC"
+          ? "C"
+          : sf === "NO_SPLIT_WITH_IC"
+            ? "IC"
+            : "";
+    customLotCode = [customLotCode.toUpperCase(), infix, resolvedTubeCode].filter(Boolean).join(".");
+  }
+
+  const isAliquoted =
+    isPcrKit &&
+    (resolvedSupplyForm === "SPLIT_NO_IC" ||
+      resolvedSupplyForm === "SPLIT_WITH_IC" ||
+      Boolean(d.is_aliquoted) ||
+      d.order_mode === "ALIQUOTED" ||
+      product.code.toUpperCase().includes(".D.IC"));
+  const isDemo = Boolean(d.is_demo) || d.order_mode === "DEMO";
+  const orderMode = isDemo ? "DEMO" : isAliquoted ? "ALIQUOTED" : d.order_mode ?? "STANDARD";
+  const mixTestsPerKit = isPcrKit ? (isAliquoted ? 64 : 75) : Number(bom.tests_per_kit || 50);
+  const pcrTubesPerKit = isPcrKit ? (isAliquoted ? 64 : 80) : 0;
+  const bomVariantCode = isPcrKit ? String(bom.variant_code || targetVariantCode || "BASE") : "BASE";
+
+  if (isPcrKit && !customLotCode && resolvedTubeCode) {
+    customLotCode = await generateAbtStructuredKitLotCode(tx, mfgDate, resolvedSupplyForm, resolvedTubeCode);
+  }
   if (customLotCode) {
     const dup = await tx.query("SELECT 1 FROM inv.lot WHERE lower(code) = lower($1) LIMIT 1", [customLotCode]);
     if (dup.rowCount) throw invalid(`Mã số lô '${customLotCode}' đã tồn tại trong hệ thống kho.`);
   }
 
-  const isAliquoted =
-    d.is_aliquoted ?? (d.order_mode === "ALIQUOTED" || product.code.toUpperCase().includes(".D.IC"));
-  const isDemo = d.is_demo ?? d.order_mode === "DEMO";
-  const orderMode = isDemo ? "DEMO" : isAliquoted ? "ALIQUOTED" : d.order_mode ?? "STANDARD";
   const defaultBomRetention = Number(bom.qc_retention_qty ?? 0);
   const retQty = d.no_retention ? 0 : Number(d.qc_retention_qty || defaultBomRetention || 0);
   const autoResponsible = bom.responsible_person_name ? String(bom.responsible_person_name) : null;
@@ -1505,6 +1820,11 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     expiry_date: expiryDate,
     priority: d.priority,
     order_mode: orderMode,
+    supply_form: resolvedSupplyForm,
+    tube_code: resolvedTubeCode,
+    bom_variant_code: bomVariantCode,
+    mix_tests_per_kit: mixTestsPerKit,
+    pcr_tubes_per_kit: pcrTubesPerKit,
     is_aliquoted: isAliquoted,
     is_demo: isDemo,
     demo_specification: d.demo_specification ?? (isDemo ? "25 test" : null),
@@ -1799,7 +2119,16 @@ export async function updateOrderDates(
 
   let desiredLotCode: string | undefined;
   if (input.regenerate_lot_code) {
-    desiredLotCode = await nextNumber(tx, "LOT_KIT");
+    if ((order as any).tube_code || (order as any).supply_form) {
+      desiredLotCode = await generateAbtStructuredKitLotCode(
+        tx,
+        mfgDate,
+        (order as any).supply_form,
+        (order as any).tube_code
+      );
+    } else {
+      desiredLotCode = await nextNumber(tx, "LOT_KIT");
+    }
   } else if (input.lot_code !== undefined && input.lot_code !== null && input.lot_code.trim() !== "") {
     desiredLotCode = input.lot_code.trim();
   }
@@ -2087,7 +2416,7 @@ export async function ensureKitDailyTrackerAndQcGateSchema(tx: Tx) {
       ADD COLUMN IF NOT EXISTS qc_gate_note text
   `);
 
-  // Kế hoạch sản xuất theo PO (Trưởng nhóm lập) & QA phụ trách giám sát (Phòng QA/QC phân bổ)
+  // Kế hoạch sản xuất theo PO (Trưởng nhóm lập) & QA phụ trách giám sát (Phòng QA/QC phân bổ) + Quy cách Lô ABT (4 dạng cung cấp & 8 mã Tube)
   await tx.query(`
     ALTER TABLE kit.production_order
       ADD COLUMN IF NOT EXISTS planned_start_date date,
@@ -2095,7 +2424,12 @@ export async function ensureKitDailyTrackerAndQcGateSchema(tx: Tx) {
       ADD COLUMN IF NOT EXISTS team_lead_name text,
       ADD COLUMN IF NOT EXISTS qa_assignee_name text,
       ADD COLUMN IF NOT EXISTS qa_assigned_at timestamptz,
-      ADD COLUMN IF NOT EXISTS plan_note text
+      ADD COLUMN IF NOT EXISTS plan_note text,
+      ADD COLUMN IF NOT EXISTS supply_form text DEFAULT 'NO_SPLIT_NO_IC',
+      ADD COLUMN IF NOT EXISTS tube_code text,
+      ADD COLUMN IF NOT EXISTS bom_variant_code text DEFAULT 'BASE',
+      ADD COLUMN IF NOT EXISTS mix_tests_per_kit int,
+      ADD COLUMN IF NOT EXISTS pcr_tubes_per_kit int
   `);
   await tx.query(`ALTER TABLE kit.production_step ADD COLUMN IF NOT EXISTS qa_assignee_name text`);
 

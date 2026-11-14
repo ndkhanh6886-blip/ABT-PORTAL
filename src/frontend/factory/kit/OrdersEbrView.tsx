@@ -6,7 +6,16 @@ import JsBarcode from "jsbarcode";
 import { ActionBar } from "../actions";
 import { api, fmtDate, fmtDateTime, fmtQty, vnToday } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
-import { ACTION_LABELS, type KitOptions, ROLE_LABELS, STEP_CATEGORY_LABELS } from "./shared";
+import {
+  ABT_KIT_SUPPLY_FORMS,
+  ABT_TUBE_STRIP_CATALOG,
+  ACTION_LABELS,
+  buildAbtKitLotCode,
+  type KitOptions,
+  parseAbtKitLotCode,
+  ROLE_LABELS,
+  STEP_CATEGORY_LABELS,
+} from "./shared";
 import { ProductionPlanView } from "./ProductionPlanView";
 
 const SHIFT_LABELS: Record<string, string> = {
@@ -74,8 +83,12 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
     org_unit_id: options.units[0]?.id ?? "",
     internal_order_line_id: "",
     product_item_id: "",
+    bom_id: "",
     warehouse_id: options.warehouses[0]?.id ?? "",
     planned_qty: "100",
+    supply_form: "NO_SPLIT_NO_IC",
+    tube_code: "T02",
+    is_demo: false,
     order_mode: "STANDARD" as "STANDARD" | "ALIQUOTED" | "DEMO",
     demo_specification: "25 test",
     qc_retention_qty: "2",
@@ -192,18 +205,23 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
     e.preventDefault();
     setError(null);
     try {
+      const sfSpec = ABT_KIT_SUPPLY_FORMS[orderForm.supply_form] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+      const effectiveMode = orderForm.is_demo ? "DEMO" : sfSpec.is_aliquoted ? "ALIQUOTED" : "STANDARD";
       const res = await api<{ order: any }>("/api/factory/kit/orders", {
         method: "POST",
         idempotent: true,
         json: {
           org_unit_id: orderForm.org_unit_id || options.units[0]?.id,
           product_item_id: orderForm.product_item_id,
+          bom_id: orderForm.bom_id || null,
           warehouse_id: orderForm.warehouse_id || options.warehouses[0]?.id,
           planned_qty: Number(orderForm.planned_qty),
-          order_mode: orderForm.order_mode,
-          is_aliquoted: orderForm.order_mode === "ALIQUOTED",
-          is_demo: orderForm.order_mode === "DEMO",
-          demo_specification: orderForm.order_mode === "DEMO" ? orderForm.demo_specification : null,
+          supply_form: orderForm.supply_form,
+          tube_code: orderForm.tube_code || null,
+          order_mode: effectiveMode,
+          is_aliquoted: sfSpec.is_aliquoted,
+          is_demo: orderForm.is_demo,
+          demo_specification: orderForm.is_demo ? orderForm.demo_specification : null,
           qc_retention_qty: orderForm.no_retention ? 0 : Number(orderForm.qc_retention_qty || 0),
           no_retention: orderForm.no_retention,
           lot_code: orderForm.lot_code.trim() || null,
@@ -937,85 +955,306 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
                     ))}
                   </select>
                 </Field>
-                <Field label="Sản phẩm Kit / Bán TP (lấy BOM & Routing EFFECTIVE)">
-                  <select
-                    className={inputClass}
-                    value={orderForm.product_item_id}
-                    onChange={(e) => {
-                      const it = kitProducts.find((x) => x.id === e.target.value);
-                      const autoAliq = Boolean(it?.code?.toUpperCase().includes(".D.IC"));
-                      setOrderForm({
-                        ...orderForm,
-                        product_item_id: e.target.value,
-                        order_mode: autoAliq ? "ALIQUOTED" : orderForm.order_mode,
-                      });
-                    }}
-                    required
-                  >
-                    <option value="">-- Chọn sản phẩm --</option>
-                    {kitProducts.map((i) => (
-                      <option key={i.id} value={i.id}>
-                        {i.code} — {i.name} ({i.base_uom})
-                      </option>
-                    ))}
-                  </select>
-                </Field>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <Field label="Chế độ Lệnh sản xuất (Chuẩn ABT)">
+                  <Field label="Mã Chính Thành phẩm Kit / Bán TP (Xuất kho & Giao hàng) *">
                     <select
                       className={inputClass}
-                      value={orderForm.order_mode}
-                      onChange={(e) =>
-                        setOrderForm({ ...orderForm, order_mode: e.target.value as "STANDARD" | "ALIQUOTED" | "DEMO" })
-                      }
+                      value={orderForm.product_item_id}
+                      onChange={(e) => {
+                        const nextProdId = e.target.value;
+                        const it = kitProducts.find((x) => x.id === nextProdId);
+                        const matchingBoms = (options.effective_boms ?? []).filter((b) => b.product_item_id === nextProdId);
+                        const defaultBom = matchingBoms[0];
+                        const nextSupplyForm = defaultBom?.supply_form || orderForm.supply_form || "NO_SPLIT_NO_IC";
+                        const sf = ABT_KIT_SUPPLY_FORMS[nextSupplyForm] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                        const isSemi = it?.item_type === "SEMI_FINISHED";
+                        setOrderForm({
+                          ...orderForm,
+                          product_item_id: nextProdId,
+                          bom_id: defaultBom?.id ?? "",
+                          supply_form: nextSupplyForm,
+                          tube_code: isSemi ? "" : orderForm.tube_code || "T02",
+                          order_mode: orderForm.is_demo ? "DEMO" : sf.is_aliquoted ? "ALIQUOTED" : "STANDARD",
+                        });
+                      }}
+                      required
                     >
-                      <option value="STANDARD">Lệnh thường (STANDARD)</option>
-                      <option value="ALIQUOTED">Lệnh Chia sẵn (.D.IC / ALIQUOTED)</option>
-                      <option value="DEMO">Lệnh Kit Demo (Co giãn Mix)</option>
+                      <option value="">-- Chọn Mã chính (Master SKU) --</option>
+                      {kitProducts.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.code} — {i.name} ({i.base_uom})
+                        </option>
+                      ))}
                     </select>
                   </Field>
-                  {orderForm.order_mode === "DEMO" ? (
-                    <Field label="Quy cách Kit Demo">
-                      <select
-                        className={inputClass}
-                        value={orderForm.demo_specification}
-                        onChange={(e) => setOrderForm({ ...orderForm, demo_specification: e.target.value })}
-                      >
-                        <option value="25 test">25 test (1/2 bộ chuẩn 50T)</option>
-                        <option value="24 test">24 test (1/2 bộ chia sẵn 48T)</option>
-                        <option value="1/2 bộ">1/2 bộ (50% Mix, giữ 1 vỏ hộp)</option>
-                        <option value="10 test">10 test (20% Mix, giữ 1 vỏ hộp)</option>
-                      </select>
-                    </Field>
-                  ) : (
-                    <Field label="Mẫu lưu QC (Bộ/ĐVT)">
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          type="number"
-                          step="any"
-                          disabled={orderForm.no_retention}
-                          className={inputClass}
-                          value={orderForm.qc_retention_qty}
-                          onChange={(e) => setOrderForm({ ...orderForm, qc_retention_qty: e.target.value })}
-                        />
-                        <label className="flex items-center gap-1 text-[11px] whitespace-nowrap text-stone-600">
+                  <Field label="Công thức BOM theo mã con (Sub-Formula EFFECTIVE)">
+                    <select
+                      className={inputClass}
+                      value={orderForm.bom_id}
+                      onChange={(e) => {
+                        const nextBomId = e.target.value;
+                        const chosenBom = (options.effective_boms ?? []).find((b) => b.id === nextBomId);
+                        const nextSf = chosenBom?.supply_form || orderForm.supply_form;
+                        const sf = ABT_KIT_SUPPLY_FORMS[nextSf] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                        setOrderForm({
+                          ...orderForm,
+                          bom_id: nextBomId,
+                          supply_form: nextSf,
+                          order_mode: orderForm.is_demo ? "DEMO" : sf.is_aliquoted ? "ALIQUOTED" : "STANDARD",
+                        });
+                      }}
+                    >
+                      <option value="">-- Tự động chọn BOM khớp Dạng cung cấp --</option>
+                      {(options.effective_boms ?? [])
+                        .filter((b) => !orderForm.product_item_id || b.product_item_id === orderForm.product_item_id)
+                        .map((b) => (
+                          <option key={b.id} value={b.id}>
+                            [{b.variant_code || "BASE"}] {b.code} (v{b.bom_version}) — {b.name}
+                          </option>
+                        ))}
+                    </select>
+                  </Field>
+                </div>
+
+                {(() => {
+                  const selectedProd = kitProducts.find((x) => x.id === orderForm.product_item_id);
+                  const matchingBoms = (options.effective_boms ?? []).filter(
+                    (b) => b.product_item_id === orderForm.product_item_id
+                  );
+                  const activeBom =
+                    matchingBoms.find((b) => b.id === orderForm.bom_id) || matchingBoms[0];
+                  const isPcrKit =
+                    selectedProd?.item_type !== "SEMI_FINISHED" &&
+                    activeBom?.bom_type !== "semi_finished" &&
+                    (activeBom?.bom_category || "PCR Kit") === "PCR Kit";
+
+                  if (!isPcrKit) {
+                    return (
+                      <div className="p-3 rounded-xl border border-teal-300 dark:border-teal-800/70 bg-teal-50/50 dark:bg-teal-950/25 space-y-2.5">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="text-[11px] font-extrabold text-teal-900 dark:text-teal-300 uppercase">
+                            🧪 Nhóm Kit Tách Chiết / Bán Thành Phẩm (Nổ BOM theo công thức chuẩn — Không áp dụng hậu tố Tube PCR)
+                          </span>
+                          <label className="flex items-center gap-1.5 text-xs font-bold text-amber-800 dark:text-amber-300 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={orderForm.is_demo}
+                              onChange={(e) => {
+                                const isDemo = e.target.checked;
+                                setOrderForm({
+                                  ...orderForm,
+                                  is_demo: isDemo,
+                                  tube_code: "",
+                                  order_mode: isDemo ? "DEMO" : "STANDARD",
+                                });
+                              }}
+                            />
+                            🧪 Sản xuất Kit Demo (Giảm nguyên liệu theo tỉ lệ, giữ nguyên chai chứa / vỏ hộp)
+                          </label>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {orderForm.is_demo && (
+                            <Field label="Quy cách đóng gói Kit Demo (Giảm nguyên liệu theo tỉ lệ)">
+                              <select
+                                className={inputClass}
+                                value={orderForm.demo_specification}
+                                onChange={(e) => setOrderForm({ ...orderForm, demo_specification: e.target.value })}
+                              >
+                                <option value="25 test">25 test (1/2 bộ chuẩn 50T, giữ nguyên chai chứa)</option>
+                                <option value="1/2 bộ">1/2 bộ (50% hóa chất, giữ nguyên 1 bộ chai chứa &amp; vỏ hộp)</option>
+                                <option value="10 test">10 test (Demo nhỏ, giữ nguyên chai chứa &amp; vỏ hộp)</option>
+                              </select>
+                            </Field>
+                          )}
+                          <Field label="Mẫu lưu QC (Bộ/ĐVT)">
+                            <div className="flex items-center gap-1.5">
+                              <input
+                                type="number"
+                                step="any"
+                                disabled={orderForm.no_retention}
+                                className={inputClass}
+                                value={orderForm.qc_retention_qty}
+                                onChange={(e) => setOrderForm({ ...orderForm, qc_retention_qty: e.target.value })}
+                              />
+                              <label className="flex items-center gap-1 text-[11px] whitespace-nowrap text-stone-600 dark:text-slate-300">
+                                <input
+                                  type="checkbox"
+                                  checked={orderForm.no_retention}
+                                  onChange={(e) => setOrderForm({ ...orderForm, no_retention: e.target.checked })}
+                                />
+                                Không lưu
+                              </label>
+                            </div>
+                          </Field>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="p-3 rounded-xl border border-indigo-300 dark:border-indigo-800/70 bg-indigo-50/60 dark:bg-indigo-950/25 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-1">
+                        <span className="text-[11px] font-extrabold text-indigo-900 dark:text-indigo-300 uppercase">
+                          🧬 Phân Loại: KIT PCR — Quy Cách Cung Cấp &amp; Mã Nhận Diện Lô Chuẩn ABT (Chung 1 Mã Chính — Phân Biệt Qua Lot)
+                        </span>
+                        <label className="flex items-center gap-1.5 text-xs font-bold text-amber-800 dark:text-amber-300 cursor-pointer">
                           <input
                             type="checkbox"
-                            checked={orderForm.no_retention}
-                            onChange={(e) => setOrderForm({ ...orderForm, no_retention: e.target.checked })}
+                            checked={orderForm.is_demo}
+                            onChange={(e) => {
+                              const isDemo = e.target.checked;
+                              const sf = ABT_KIT_SUPPLY_FORMS[orderForm.supply_form] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                              setOrderForm({
+                                ...orderForm,
+                                is_demo: isDemo,
+                                order_mode: isDemo ? "DEMO" : sf.is_aliquoted ? "ALIQUOTED" : "STANDARD",
+                              });
+                            }}
                           />
-                          Không lưu
+                          🧪 Sản xuất Kit Demo (Giảm Mix theo tỉ lệ, giữ nguyên chai/vỏ hộp)
                         </label>
                       </div>
-                    </Field>
-                  )}
-                </div>
-                <Field label="Số Lô thành phẩm (Lot No.) — Để trống hệ thống tự sinh ngay">
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <Field label="1. Dạng cung cấp Kit PCR (4 dạng chuẩn ABT)">
+                          <select
+                            className={inputClass}
+                            value={orderForm.supply_form}
+                            onChange={(e) => {
+                              const sfKey = e.target.value;
+                              const sf = ABT_KIT_SUPPLY_FORMS[sfKey] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                              const matchedBom = (options.effective_boms ?? []).find(
+                                (b) => b.product_item_id === orderForm.product_item_id && b.supply_form === sfKey
+                              );
+                              setOrderForm({
+                                ...orderForm,
+                                supply_form: sfKey,
+                                bom_id: matchedBom ? matchedBom.id : orderForm.bom_id,
+                                order_mode: orderForm.is_demo ? "DEMO" : sf.is_aliquoted ? "ALIQUOTED" : "STANDARD",
+                              });
+                            }}
+                          >
+                            {Object.values(ABT_KIT_SUPPLY_FORMS).map((sf) => (
+                              <option key={sf.key} value={sf.key}>
+                                {sf.label} ({sf.mix_tests_per_kit}T Mix + {sf.pcr_tubes_per_kit} tube PCR)
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                        <Field label="2. Mã nhận diện Tube / Strip PCR cấp kèm (8 loại chuẩn)">
+                          <select
+                            className={`${inputClass} font-mono`}
+                            value={orderForm.tube_code}
+                            onChange={(e) => setOrderForm({ ...orderForm, tube_code: e.target.value })}
+                          >
+                            <option value="">-- Không kèm mã Tube trên Lot --</option>
+                            {ABT_TUBE_STRIP_CATALOG.map((tb) => (
+                              <option key={tb.code} value={tb.code}>
+                                {tb.code} — {tb.name} ({tb.note})
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                      </div>
+
+                      {(() => {
+                        const sf = ABT_KIT_SUPPLY_FORMS[orderForm.supply_form] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                        const tb = ABT_TUBE_STRIP_CATALOG.find((t) => t.code === orderForm.tube_code);
+                        const yymm = (orderForm.mfg_date || vnToday()).replace(/\D/g, "").slice(2, 6) || "2611";
+                        const sampleLot = buildAbtKitLotCode({
+                          baseLot: `B${yymm}001`,
+                          supplyForm: orderForm.supply_form,
+                          tubeCode: orderForm.tube_code,
+                        });
+                        return (
+                          <div className="p-2 rounded-lg bg-white/90 dark:bg-slate-900/90 border border-indigo-200 dark:border-indigo-900/60 text-[11px] flex flex-wrap items-center justify-between gap-2">
+                            <div className="space-y-0.5">
+                              <div className="font-bold text-slate-800 dark:text-slate-100">
+                                📌 Quy tắc nổ BOM tự động: <span className="text-indigo-700 dark:text-indigo-300">{sf.description}</span>
+                              </div>
+                              <div className="text-slate-600 dark:text-slate-400">
+                                • Định mức Mix: <b>{sf.mix_tests_per_kit} test/kit</b> · Số lượng Tube PCR cấp kèm:{" "}
+                                <b>
+                                  {sf.pcr_tubes_per_kit} tube ({tb ? `${tb.code} — ${tb.name} [${tb.note}]` : "Không kèm tube"})
+                                </b>{" "}
+                                · Ống IC rời: <b>{sf.include_ic_tube ? "Có cấp kèm" : "Không kèm (Đã pha sẵn trong Mix)"}</b> · Tube 1.5mL chứa Mix:{" "}
+                                <b>{sf.include_mix_1_5ml_tubes ? "Có cấp kèm" : "Không kèm (Chia sẵn vào tube PCR)"}</b>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <div className="text-[10px] uppercase text-slate-500 font-bold">Mẫu Lot tự sinh:</div>
+                              <div className="font-mono font-extrabold text-sm text-sky-700 dark:text-sky-300">{sampleLot}</div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {orderForm.is_demo && (
+                          <Field label="Quy cách đóng gói Kit Demo (Giảm nguyên liệu theo tỉ lệ)">
+                            <select
+                              className={inputClass}
+                              value={orderForm.demo_specification}
+                              onChange={(e) => setOrderForm({ ...orderForm, demo_specification: e.target.value })}
+                            >
+                              <option value="25 test">25 test (Co giãn Mix theo tỉ lệ, giữ nguyên chai/hộp)</option>
+                              <option value="24 test">24 test (1/2 bộ chia sẵn, giữ nguyên vỏ hộp)</option>
+                              <option value="1/2 bộ">1/2 bộ (50% Mix, giữ nguyên 1 bộ chai chứa &amp; vỏ hộp)</option>
+                              <option value="10 test">10 test (Demo nhỏ, giữ nguyên chai chứa &amp; vỏ hộp)</option>
+                            </select>
+                          </Field>
+                        )}
+                        <Field label="Mẫu lưu QC (Bộ/ĐVT)">
+                          <div className="flex items-center gap-1.5">
+                            <input
+                              type="number"
+                              step="any"
+                              disabled={orderForm.no_retention}
+                              className={inputClass}
+                              value={orderForm.qc_retention_qty}
+                              onChange={(e) => setOrderForm({ ...orderForm, qc_retention_qty: e.target.value })}
+                            />
+                            <label className="flex items-center gap-1 text-[11px] whitespace-nowrap text-stone-600 dark:text-slate-300">
+                              <input
+                                type="checkbox"
+                                checked={orderForm.no_retention}
+                                onChange={(e) => setOrderForm({ ...orderForm, no_retention: e.target.checked })}
+                              />
+                              Không lưu
+                            </label>
+                          </div>
+                        </Field>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <Field label="Số Lô thành phẩm (Lot No.) — Gõ trực tiếp (VD: B2611001.C.IC.T02) hệ thống tự nhận diện quy cách & nổ BOM, hoặc để trống hệ thống tự cấp">
                   <input
-                    className={`${inputClass} font-mono`}
-                    placeholder="VD: 010326 (để trống hệ thống tự cấp ngay)"
+                    className={`${inputClass} font-mono font-bold`}
+                    placeholder="VD: B2611001.C.IC.T02 hoặc B2611001.IC.S01 (Để trống hệ thống tự cấp theo lựa chọn trên)"
                     value={orderForm.lot_code}
-                    onChange={(e) => setOrderForm({ ...orderForm, lot_code: e.target.value })}
+                    onChange={(e) => {
+                      const typedLot = e.target.value;
+                      const parsed = parseAbtKitLotCode(typedLot);
+                      if (parsed.isAbtStructuredLot) {
+                        const nextSf = parsed.supplyForm?.key || orderForm.supply_form;
+                        const sfSpec = ABT_KIT_SUPPLY_FORMS[nextSf] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                        const matchedBom = (options.effective_boms ?? []).find(
+                          (b) => b.product_item_id === orderForm.product_item_id && b.supply_form === nextSf
+                        );
+                        setOrderForm({
+                          ...orderForm,
+                          lot_code: typedLot,
+                          supply_form: nextSf,
+                          tube_code: parsed.tubeSpec ? parsed.tubeSpec.code : orderForm.tube_code,
+                          bom_id: matchedBom ? matchedBom.id : orderForm.bom_id,
+                          order_mode: orderForm.is_demo ? "DEMO" : sfSpec.is_aliquoted ? "ALIQUOTED" : "STANDARD",
+                        });
+                      } else {
+                        setOrderForm({ ...orderForm, lot_code: typedLot });
+                      }
+                    }}
                   />
                 </Field>
                 <div className="grid grid-cols-3 gap-2">
@@ -1055,7 +1294,7 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
                   <Button type="button" variant="ghost" onClick={() => setShowCreateOrder(false)}>
                     Hủy
                   </Button>
-                  <Button type="submit">Tạo lệnh sản xuất &amp; Cấp Số Lô ngay</Button>
+                  <Button type="submit">Tạo lệnh sản xuất &amp; Cấp Số Lô Chuẩn ABT</Button>
                 </div>
               </form>
             )}
@@ -1063,31 +1302,47 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
             {orders.length === 0 ? (
               <Empty>Chưa có lệnh sản xuất Kit nào. Bấm &ldquo;+ Phát hành Lệnh sản xuất Kit&rdquo; ở góc phải để tạo mới.</Empty>
             ) : (
-              <Table head={["Mã lệnh", "Sản phẩm / Số Lô", "Tiến độ EBR", "Trạng thái"]}>
-                {orders.map((o) => (
-                  <tr
-                    key={o.id}
-                    onClick={() => setSelectedOrderId(o.id)}
-                    className={`cursor-pointer hover:bg-amber-50/60 dark:hover:bg-slate-800/60 ${selectedOrderId === o.id ? "bg-amber-50 dark:bg-sky-950/30" : ""}`}
-                  >
-                    <td className="px-3 py-2 font-mono text-xs font-semibold text-sky-700 dark:text-sky-400">{o.code}</td>
-                    <td className="px-3 py-2 text-xs">
-                      <div className="font-medium text-stone-800 dark:text-slate-200">
-                        {o.product_code} ({fmtQty(o.planned_qty)} {o.uom})
-                      </div>
-                      <div className="text-sky-700 dark:text-sky-400 font-mono font-semibold">
-                        {o.lot_code ? `Lô: ${o.lot_code}` : "Chưa cấp lô"}
-                        {o.expiry_date ? ` · HSD: ${fmtDate(o.expiry_date)}` : ""}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2 text-xs">
-                      {o.done_steps}/{o.total_steps} bước
-                    </td>
-                    <td className="px-3 py-2">
-                      <StatusBadge status={o.status} />
-                    </td>
-                  </tr>
-                ))}
+              <Table head={["Mã lệnh", "Mã Chính & Số Lô Phân Biệt Quy Cách", "Tiến độ EBR", "Trạng thái"]}>
+                {orders.map((o) => {
+                  const decoded = parseAbtKitLotCode(o.lot_code);
+                  return (
+                    <tr
+                      key={o.id}
+                      onClick={() => setSelectedOrderId(o.id)}
+                      className={`cursor-pointer hover:bg-amber-50/60 dark:hover:bg-slate-800/60 ${selectedOrderId === o.id ? "bg-amber-50 dark:bg-sky-950/30" : ""}`}
+                    >
+                      <td className="px-3 py-2 font-mono text-xs font-semibold text-sky-700 dark:text-sky-400">
+                        <div>{o.code}</div>
+                        {o.bom_variant_code && (
+                          <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 text-[10px]">
+                            BOM: {o.bom_variant_code}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        <div className="font-bold text-stone-800 dark:text-slate-100">
+                          {o.product_code} ({fmtQty(o.planned_qty)} {o.uom})
+                        </div>
+                        <div className="text-sky-700 dark:text-sky-400 font-mono font-bold">
+                          {o.lot_code ? `LOT: ${o.lot_code}` : "Chưa cấp lô"}
+                          {o.expiry_date ? ` · HSD: ${fmtDate(o.expiry_date)}` : ""}
+                        </div>
+                        {o.lot_code && (
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                            🧬 {decoded.supplyForm ? decoded.supplyForm.short_label : "Chuẩn"}
+                            {decoded.tubeSpec ? ` · Tube ${decoded.tubeSpec.code} (${decoded.tubeSpec.name})` : ""}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {o.done_steps}/{o.total_steps} bước
+                      </td>
+                      <td className="px-3 py-2">
+                        <StatusBadge status={o.status} />
+                      </td>
+                    </tr>
+                  );
+                })}
               </Table>
             )}
           </Card>
@@ -1096,7 +1351,7 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
         {detail && (
           <div className="lg:col-span-8 space-y-4">
             <Card
-              title={`Lệnh ${detail.order.code} — ${detail.order.product_code} ${detail.order.product_name}`}
+              title={`Lệnh ${detail.order.code} — Mã chính: ${detail.order.product_code} (${detail.order.product_name})`}
               actions={
                 <div className="flex items-center gap-2">
                   <StatusBadge status={detail.order.status} />
@@ -1112,6 +1367,41 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
                 </div>
               }
             >
+                {/* Giải mã trực quan Số Lô chuẩn ABT (Lot Decoder Banner) */}
+                {detail.order.lot_code && (() => {
+                  const decoded = parseAbtKitLotCode(detail.order.lot_code);
+                  const sfSpec =
+                    (detail.order.supply_form && ABT_KIT_SUPPLY_FORMS[detail.order.supply_form]) ||
+                    decoded.supplyForm ||
+                    ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+                  const tubeSpec =
+                    ABT_TUBE_STRIP_CATALOG.find((t) => t.code === detail.order.tube_code) ||
+                    decoded.tubeSpec;
+                  return (
+                    <div className="mb-3 p-2.5 rounded-xl border border-indigo-300 dark:border-indigo-800/70 bg-indigo-50/70 dark:bg-indigo-950/30 flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="space-y-0.5">
+                        <div className="font-bold text-indigo-950 dark:text-indigo-200 flex flex-wrap items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded bg-indigo-600 text-white font-mono text-[11px]">
+                            LOT: {detail.order.lot_code}
+                          </span>
+                          <span>➔ {sfSpec.label}</span>
+                          {tubeSpec && (
+                            <span className="px-2 py-0.5 rounded bg-sky-500/20 border border-sky-500/40 text-sky-800 dark:text-sky-200 font-mono text-[11px]">
+                              Tube: {tubeSpec.code} — {tubeSpec.name} ({tubeSpec.note})
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[11px] text-slate-600 dark:text-slate-300">
+                          📦 Xuất kho &amp; Giao hàng theo <b>Mã chính {detail.order.product_code}</b> · Công thức BOM con:{" "}
+                          <b className="font-mono">{detail.order.bom_code} [{detail.order.bom_variant_code || "BASE"}]</b> · Định mức Mix:{" "}
+                          <b>{detail.order.mix_tests_per_kit || sfSpec.mix_tests_per_kit} test/kit</b> · Tube PCR cấp kèm:{" "}
+                          <b>{detail.order.pcr_tubes_per_kit || sfSpec.pcr_tubes_per_kit} tube/kit</b>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* Review-by-Exception (RbE) & Actual Batch Costing Banner */}
                 {(() => {
                   const steps = detail.steps ?? [];
@@ -1201,13 +1491,17 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
                     </strong>
                   </div>
                   <div>
-                    Chế độ Lệnh &amp; Độ pH thực tế:{" "}
+                    Dạng cung cấp &amp; Chế độ:{" "}
                     <strong className="font-mono text-sky-700 dark:text-sky-300">
-                      {detail.order.order_mode === "DEMO"
-                        ? `KIT DEMO (${detail.order.demo_specification || "1/2 bộ"})`
+                      {detail.order.supply_form && ABT_KIT_SUPPLY_FORMS[detail.order.supply_form]
+                        ? ABT_KIT_SUPPLY_FORMS[detail.order.supply_form].short_label
                         : detail.order.order_mode === "ALIQUOTED" || detail.order.is_aliquoted
-                          ? "CHIA SẴN (.D.IC)"
-                          : "THƯỜNG"}
+                          ? "Chia sẵn (.C)"
+                          : "Không chia sẵn"}
+                      {detail.order.tube_code ? ` · Tube ${detail.order.tube_code}` : ""}
+                      {detail.order.order_mode === "DEMO" || detail.order.is_demo
+                        ? ` · DEMO (${detail.order.demo_specification || "1/2 bộ"})`
+                        : ""}
                     </strong>
                     {detail.order.actual_ph && (
                       <span className="ml-1.5 px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/70 text-emerald-800 dark:text-emerald-300 font-mono">

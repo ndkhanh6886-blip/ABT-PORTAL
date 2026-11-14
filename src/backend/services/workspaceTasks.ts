@@ -3,44 +3,78 @@
  * phòng ban, phân loại, trạng thái, đối tượng liên quan và quyền sửa / xóa.
  */
 
-/** Phòng ban của ABT dùng khi tạo công việc & điều hành chuyên môn (id giữ nguyên giá trị cũ để dữ liệu cũ vẫn khớp) */
-export const WORKSPACE_TASK_DEPARTMENTS: { id: string; label: string }[] = [
-  { id: "Ban Giám Đốc", label: "Ban Giám Đốc" },
-  { id: "Nghiên Cứu R&D", label: "Nghiên Cứu & Phát Triển (R&D)" },
-  { id: "Sản Xuất Kit", label: "Sản Xuất Kit Sinh Học Phân Tử" },
-  { id: "Tổng Hợp Oligo", label: "Tổng Hợp & Tinh Sạch Oligo" },
-  { id: "Kỹ Thuật – Thiết Bị", label: "Kỹ Thuật – Công Nghệ Thiết Bị" },
-  { id: "QA/QC", label: "Đảm Bảo & Kiểm Soát Chất Lượng (QA/QC)" },
-  { id: "Application", label: "Application (Kỹ Thuật & Ứng Dụng)" },
-  { id: "Kinh Doanh", label: "Kinh Doanh (Sales)" },
-  { id: "Sales Admin", label: "Sales Admin" },
-  { id: "PM", label: "Quản Lý Sản Phẩm (PM)" },
-  { id: "Marketing", label: "Marketing & Tiếp Thị" },
-  { id: "Kho & Vận Hành", label: "Kho & Vận Hành (Warehouse & Logistics)" },
-  { id: "Cung Ứng", label: "Mua Hàng & Cung Ứng (Procurement)" },
-  { id: "Kế Toán", label: "Tài Chính – Kế Toán" },
-  { id: "Pháp Chế", label: "Pháp Chế & Tuân Thủ (Legal)" },
-  { id: "Hành Chính Nhân Sự", label: "Hành Chính – Nhân Sự (HR)" },
-  { id: "Lab", label: "Phòng Lab" },
+/** Phòng ban của ABT dùng khi tạo công việc & điều hành chuyên môn toàn công ty (Khối Kinh Doanh & Khối Kỹ Thuật – Nhà Máy) */
+export const WORKSPACE_TASK_DEPARTMENTS: { id: string; label: string; block?: "EXECUTIVE" | "COMMERCIAL" | "TECHNICAL" }[] = [
+  // Ban Giám Đốc & Quản Trị Chung
+  { id: "Ban Giám Đốc", label: "Ban Giám Đốc (BOD)", block: "EXECUTIVE" },
+  // Khối Kinh Doanh & Văn Phòng
+  { id: "Kinh Doanh", label: "Kinh Doanh (Sales)", block: "COMMERCIAL" },
+  { id: "Sales Admin", label: "Sales Admin", block: "COMMERCIAL" },
+  { id: "Application", label: "Application (Lab Ứng Dụng KD)", block: "COMMERCIAL" },
+  { id: "Kho & Vận Hành", label: "Kho Kinh Doanh & Vận Hành (Thương Mại)", block: "COMMERCIAL" },
+  { id: "Cung Ứng", label: "Cung Ứng Kinh Doanh (Mua Hàng TM & XNK)", block: "COMMERCIAL" },
+  { id: "PM", label: "Quản Lý Sản Phẩm (PM)", block: "COMMERCIAL" },
+  { id: "Marketing", label: "Marketing & Tiếp Thị", block: "COMMERCIAL" },
+  { id: "Kế Toán", label: "Tài Chính – Kế Toán", block: "COMMERCIAL" },
+  { id: "Pháp Chế", label: "Pháp Chế & Tuân Thủ (Legal)", block: "COMMERCIAL" },
+  { id: "Hành Chính Nhân Sự", label: "Hành Chính – Nhân Sự (HR)", block: "COMMERCIAL" },
+  { id: "Lab", label: "Phòng Lab (Thử nghiệm KD)", block: "COMMERCIAL" },
+  // Khối Kỹ Thuật – Nhà Máy
+  { id: "Đơn Nội Bộ", label: "Điều Phối Đơn Nội Bộ (KD ↔ Nhà Máy)", block: "TECHNICAL" },
+  { id: "Nghiên Cứu R&D", label: "Nghiên Cứu & Phát Triển (R&D)", block: "TECHNICAL" },
+  { id: "Sản Xuất Kit", label: "Sản Xuất Kit Sinh Học Phân Tử", block: "TECHNICAL" },
+  { id: "Tổng Hợp Oligo", label: "Tổng Hợp & Tinh Sạch Oligo", block: "TECHNICAL" },
+  { id: "Kỹ Thuật – Thiết Bị", label: "Kỹ Thuật – Công Nghệ Thiết Bị", block: "TECHNICAL" },
+  { id: "QA/QC", label: "Đảm Bảo & Kiểm Soát Chất Lượng (QA/QC)", block: "TECHNICAL" },
+  { id: "Kho Nhà Máy", label: "Kho Nhà Máy (Vật Tư, Hóa Chất & Thành Phẩm SX)", block: "TECHNICAL" },
+  { id: "Cung Ứng Kỹ Thuật", label: "Cung Ứng Kỹ Thuật (Mua Sắm NVL/Hóa Chất Nhà Máy)", block: "TECHNICAL" },
 ];
 
-/** Chuẩn hóa tên phòng ban về id ở trên (tên trong Nhân sự có thể khác: "Kỹ Thuật & Ứng Dụng", "Mua Hàng & Cung Ứng"...) */
+/** Chuẩn hóa tên phòng ban về id ở trên, phân biệt rõ Kho/Cung ứng của Khối Kinh Doanh và Khối Kỹ Thuật – Nhà Máy */
 export function normalizeWorkspaceDept(raw: any): string {
   const s = String(raw || "").trim();
   if (!s) return "";
   if (s === "all") return "all";
   const l = s.toLowerCase();
-  // các phòng riêng phải xét trước các nhóm rộng (Sales Admin trước Kinh Doanh, Lab trước Application)
-  if (l.includes("sales admin")) return "Sales Admin";
-  if (l.includes("r&d") || l.includes("nghiên cứu")) return "Nghiên Cứu R&D";
+  // 1. Phân biệt rõ Kho Nhà Máy và Cung Ứng Kỹ Thuật (xét trước Kho & Cung ứng chung)
+  if (
+    l.includes("kho nhà máy") ||
+    l.includes("kho kỹ thuật") ||
+    l.includes("kho tổng nhà máy") ||
+    l.includes("kho vật tư") ||
+    l.includes("kho hóa chất") ||
+    l === "p-wh" ||
+    l === "factory_warehouse"
+  ) {
+    return "Kho Nhà Máy";
+  }
+  if (
+    l.includes("cung ứng kỹ thuật") ||
+    l.includes("cung ứng nhà máy") ||
+    l.includes("cung ứng nvl") ||
+    l.includes("mua hàng nhà máy") ||
+    l.includes("mua hàng kỹ thuật") ||
+    l.includes("mua sắm nvl") ||
+    l === "p-pur" ||
+    l === "factory_procurement"
+  ) {
+    return "Cung Ứng Kỹ Thuật";
+  }
+  // 2. Các phòng ban thuộc Khối Kỹ Thuật – Nhà Máy
+  if (l.includes("đơn nội bộ") || l.includes("điều phối sản xuất") || l.includes("điều phối đơn")) return "Đơn Nội Bộ";
+  if (l.includes("r&d") || l.includes("nghiên cứu") || l === "p-rd") return "Nghiên Cứu R&D";
   if (l.includes("sản xuất kit") || l.includes("sx kit") || l === "p-kit") return "Sản Xuất Kit";
   if (l.includes("oligo") || l === "p-oligo") return "Tổng Hợp Oligo";
-  if (l.includes("thiết bị") || l.includes("công nghệ") || l === "p-tb") return "Kỹ Thuật – Thiết Bị";
-  if (l.includes("qa") || l.includes("qc") || l.includes("chất lượng")) return "QA/QC";
+  if (l.includes("thiết bị") || l.includes("cơ điện") || l === "p-tb") return "Kỹ Thuật – Thiết Bị";
+  if (l.includes("qa") || l.includes("qc") || l.includes("chất lượng") || l === "p-qaqc") return "QA/QC";
+  // 3. Các phòng ban thuộc Khối Kinh Doanh & Văn Phòng
+  if (l.includes("sales admin")) return "Sales Admin";
   if (l === "pm" || l.includes("product manager") || l.includes("quản lý sản phẩm")) return "PM";
   if (l.includes("marketing") || l.includes("tiếp thị")) return "Marketing";
-  if (l === "lab" || /(^|[\s(])lab($|[\s)])/.test(l) || l.includes("phòng lab")) return "Lab";
-  if (l.includes("ứng dụng") || l.includes("application") || l.includes("kỹ thuật") || l === "app") return "Application";
+  if (l === "lab" || /(^|[\s(])lab($|[\s)])/.test(l) || l.includes("phòng lab")) {
+    if (!l.includes("application") && !l.includes("ứng dụng")) return "Lab";
+  }
+  if (l.includes("ứng dụng") || l.includes("application") || l === "app") return "Application";
   if (l.includes("kho") || l.includes("vận hành") || l.includes("warehouse") || l.includes("giao nhận")) return "Kho & Vận Hành";
   if (l.includes("cung ứng") || l.includes("mua hàng") || l.includes("procurement")) return "Cung Ứng";
   if (l.includes("kinh doanh") || l.includes("sales")) return "Kinh Doanh";
@@ -129,6 +163,16 @@ export const DEFAULT_TASK_CATEGORIES: string[] = [
   "Check hợp đồng Nhà Cung Cấp",
   "Check hợp đồng Khách Hàng",
   "Check hợp đồng Thầu",
+  "Thiết kế mồi/probe & Thực nghiệm R&D",
+  "Chuyển giao công nghệ (Tech Transfer)",
+  "Pha chế & Sản xuất lô Kit (eBR)",
+  "Tổng hợp & Tinh sạch Oligo",
+  "Lắp ráp, Hiệu chuẩn & Bảo trì Thiết bị",
+  "Kiểm định IQC / IPQC / FQC & Cấp COA",
+  "Xử lý NCR / OOS / CAPA (ISO 13485)",
+  "Cấp phát NVL/Hóa chất theo FEFO (Kho Nhà máy)",
+  "Mua sắm NVL, Hóa chất & Linh kiện SX (Cung ứng KT)",
+  "Điều phối Đơn đặt hàng nội bộ (KD ↔ Nhà máy)",
   "Khác",
 ];
 
@@ -144,22 +188,34 @@ export const taskStatusLabel = (status: any): string =>
 
 /** Loại đối tượng "Liên quan tới" */
 export const TASK_RELATED_TYPES: { id: string; label: string }[] = [
-  { id: "CUSTOMER", label: "Khách hàng" },
+  { id: "CUSTOMER", label: "Khách hàng / Viện / Bệnh viện" },
   { id: "EMPLOYEE", label: "Nhân viên" },
-  { id: "ORDER", label: "Đơn hàng" },
+  { id: "ORDER", label: "Đơn hàng Kinh doanh (SO / PO KD)" },
+  { id: "INTERNAL_ORDER", label: "Đơn đặt hàng Nội bộ (KD → Nhà máy)" },
+  { id: "PRODUCTION_BATCH", label: "Lô sản xuất Kit / Mẻ tổng hợp Oligo / Lô NVL" },
+  { id: "RND_PROJECT", label: "Đề tài R&D / Thiết bị / Hồ sơ QA-QC" },
   { id: "CONTACT", label: "Người liên hệ" },
   { id: "LEAD", label: "Đầu mối (Cơ hội bán hàng)" },
-  { id: "PROJECT", label: "Dự án" },
+  { id: "PROJECT", label: "Dự án liên phòng ban" },
 ];
 export const TASK_RELATED_TYPE_IDS = new Set(TASK_RELATED_TYPES.map(t => t.id));
 
 export type TaskActor = { username?: string; full_name?: string; role?: string; department?: string; isAdmin?: boolean };
 export type TaskRecord = { department?: string; assignee_name?: string; created_by?: string | null; created_by_name?: string | null };
 
-/** Trưởng / Phó phòng theo vai trò hệ thống (sales_head, app_head, warehouse_lead, accountant_head...) */
+/** Trưởng / Phó phòng theo vai trò hệ thống (sales_head, app_head, warehouse_lead, rd_head, kit_head, oligo_head, device_head, qa_manager, factory_wh_lead, factory_proc_lead...) */
 export function isDeptManagerRole(role: any): boolean {
   const r = String(role || "").toLowerCase();
-  return r.includes("head") || r.includes("lead") || r.includes("manager") || r.includes("trưởng phòng") || r.includes("phó phòng");
+  return (
+    r.includes("head") ||
+    r.includes("lead") ||
+    r.includes("manager") ||
+    r.includes("trưởng phòng") ||
+    r.includes("phó phòng") ||
+    r.includes("quản đốc") ||
+    r.includes("giám đốc chất lượng") ||
+    r.includes("chủ nhiệm")
+  );
 }
 
 /**

@@ -1,18 +1,152 @@
 import { query, withTransaction, HttpError, logAudit } from "@/backend/db/db";
 import { AuthorizedUser, isAdminUser } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
-import { handleKdEvent } from "@/factory/intake/kdEvents";
+import { handleKdEvent, getFactoryInternalOrderSummary } from "@/factory/intake/kdEvents";
 import type { BridgeEvent } from "@/factory/intake/gateway";
 
 /**
  * Kinh doanh side of the bridge to the factory (docs/nha-may/00 §4, §7). The factory is an internal
  * supplier: a PO to it is sent as KdPoIssued; the factory answers with acceptance, progress and
  * shipments. Messages go through an outbox / inbox pair in this database, so a lost or repeated
- * delivery never loses or doubles an effect. The factory database is never read from here.
+ * delivery never loses or doubles an effect.
  */
 
-export const FACTORY_UNITS = { KIT: "Phòng SX Kit", OLIGO: "Phòng Tổng hợp Oligo", DEVICE: "Phòng Kỹ thuật-Công nghệ (thiết bị)" } as const;
+export const FACTORY_UNITS = {
+  OLIGO: "Phòng Tổng hợp Oligo",
+  KIT: "Phòng Sản xuất Kit",
+  DEVICE: "Phòng Kỹ thuật - Thiết bị",
+} as const;
 export type FactoryUnit = keyof typeof FACTORY_UNITS;
+
+export interface DefaultInternalSupplierSpec {
+  factory_unit: FactoryUnit;
+  preferred_code: string;
+  name: string;
+  short_name: string;
+  legacy_names: string[];
+  contact_person: string;
+  phone: string;
+  email: string;
+  address: string;
+  product_lines: string;
+  payment_terms: string;
+  rating: number;
+  notes: string;
+}
+
+export const DEFAULT_INTERNAL_SUPPLIERS: readonly DefaultInternalSupplierSpec[] = [
+  {
+    factory_unit: "OLIGO",
+    preferred_code: "NCC-NB-OLIGO",
+    name: "Phòng Tổng hợp Oligo",
+    short_name: "Phòng Tổng hợp Oligo",
+    legacy_names: [
+      "Nhà cung cấp tổng hợp Oligo",
+      "Phòng Tổng Hợp Oligo",
+      "Nhà máy Nội bộ ABT - Tổng hợp Oligo",
+      "Tổng hợp Oligo",
+    ],
+    contact_person: "Phòng Tổng hợp Oligo (Khối Kỹ thuật)",
+    phone: "",
+    email: "",
+    address: "Khối Kỹ thuật & Sản xuất ABT — Phòng Tổng hợp Oligo",
+    product_lines: "Tổng hợp Oligo (Primer, Probe, Amplicon & Dịch vụ tinh sạch/điều chế)",
+    payment_terms: "Đối soát nội bộ",
+    rating: 5,
+    notes: "Nhà cung cấp nội bộ mặc định của Phòng Cung ứng Khối Kinh doanh — PO tự động chuyển sang Đơn hàng nội bộ (Phòng Tổng hợp Oligo).",
+  },
+  {
+    factory_unit: "KIT",
+    preferred_code: "NCC-NB-KIT",
+    name: "Phòng Sản xuất Kit",
+    short_name: "Phòng Sản xuất Kit",
+    legacy_names: [
+      "Phòng SX Kit",
+      "Phòng Sản Xuất Kit",
+      "Nhà máy Nội bộ ABT - Sản xuất Kit",
+      "Sản xuất Kit",
+    ],
+    contact_person: "Phòng Sản xuất Kit (Khối Kỹ thuật)",
+    phone: "",
+    email: "",
+    address: "Khối Kỹ thuật & Sản xuất ABT — Phòng Sản xuất Kit",
+    product_lines: "Kit PCR, Kit tách chiết DNA/RNA, Hóa chất & Vật tư do Phòng Sản xuất cung cấp",
+    payment_terms: "Đối soát nội bộ",
+    rating: 5,
+    notes: "Nhà cung cấp nội bộ mặc định của Phòng Cung ứng Khối Kinh doanh — PO tự động chuyển sang Đơn hàng nội bộ (Phòng Sản xuất Kit).",
+  },
+  {
+    factory_unit: "DEVICE",
+    preferred_code: "NCC-NB-DEVICE",
+    name: "Phòng Kỹ thuật - Thiết bị",
+    short_name: "Phòng Kỹ thuật - Thiết bị",
+    legacy_names: [
+      "Phòng Kỹ thuật-thiết bị",
+      "Phòng Kỹ thuật - Công nghệ",
+      "Phòng Kỹ thuật-Công nghệ (thiết bị)",
+      "Phòng Kỹ thuật Thiết bị",
+      "Kỹ thuật - Thiết bị",
+    ],
+    contact_person: "Phòng Kỹ thuật - Thiết bị (Khối Kỹ thuật)",
+    phone: "",
+    email: "",
+    address: "Khối Kỹ thuật & Sản xuất ABT — Phòng Kỹ thuật - Thiết bị",
+    product_lines: "Thiết bị chẩn đoán, Máy PCR, Máy tách chiết & Phụ kiện thiết bị",
+    payment_terms: "Đối soát nội bộ",
+    rating: 5,
+    notes: "Nhà cung cấp nội bộ mặc định của Phòng Cung ứng Khối Kinh doanh — PO tự động chuyển sang Đơn hàng nội bộ (Phòng Kỹ thuật - Thiết bị).",
+  },
+] as const;
+
+function foldVi(value?: string | null): string {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .replace(/Đ/g, "D")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+export function inferFactoryUnitFromSupplierName(
+  name?: string | null,
+  shortName?: string | null,
+  code?: string | null
+): FactoryUnit | null {
+  const c = String(code || "").trim().toUpperCase();
+  if (c === "NCC-NB-OLIGO" || c === "P-OLIGO") return "OLIGO";
+  if (c === "NCC-NB-KIT" || c === "P-KIT") return "KIT";
+  if (c === "NCC-NB-DEVICE" || c === "P-DEVICE") return "DEVICE";
+
+  const combined = `${foldVi(name)} ${foldVi(shortName)}`.trim();
+  if (!combined) return null;
+
+  for (const spec of DEFAULT_INTERNAL_SUPPLIERS) {
+    if (
+      foldVi(spec.name) === foldVi(name) ||
+      foldVi(spec.short_name) === foldVi(shortName) ||
+      spec.legacy_names.some((ln) => foldVi(ln) === foldVi(name) || foldVi(ln) === foldVi(shortName))
+    ) {
+      return spec.factory_unit;
+    }
+  }
+
+  if (combined.includes("tong hop oligo") || (combined.includes("phong") && combined.includes("oligo"))) {
+    return "OLIGO";
+  }
+  if (combined.includes("san xuat kit") || combined.includes("sx kit")) {
+    return "KIT";
+  }
+  if (
+    combined.includes("ky thuat thiet bi") ||
+    combined.includes("ky thuat cong nghe") ||
+    (combined.includes("phong ky thuat") && combined.includes("thiet bi"))
+  ) {
+    return "DEVICE";
+  }
+  return null;
+}
 
 let schemaReady: Promise<void> | null = null;
 export function ensureBridgeSchema(): Promise<void> {
@@ -96,6 +230,374 @@ export async function setInternalSupplier(me: AuthorizedUser, supplierId: number
     await query("DELETE FROM factory_bridge_supplier WHERE supplier_id = $1", [supplierId]);
   }
   await logAudit("FACTORY_SUPPLIER", "PROCUREMENT", `Nhà cung cấp #${supplierId}: ${unit ? `là nội bộ ${FACTORY_UNITS[unit]}` : "bỏ đánh dấu nội bộ"}`);
+}
+
+let internalSuppliersEnsuredAt = 0;
+
+/**
+ * Đảm bảo 3 nhà cung cấp nội bộ mặc định của Phòng Cung ứng Khối Kinh doanh luôn tồn tại:
+ * 1. Phòng Tổng hợp Oligo (`OLIGO`)
+ * 2. Phòng Sản xuất Kit (`KIT`)
+ * 3. Phòng Kỹ thuật - Thiết bị (`DEVICE`)
+ * Đồng thời chuyển đổi bản ghi cũ "Nhà cung cấp tổng hợp Oligo" (nếu có) sang "Phòng Tổng hợp Oligo"
+ * và tự động liên kết vào `factory_bridge_supplier`.
+ */
+export async function ensureDefaultInternalSuppliers(force = false): Promise<Record<FactoryUnit, { id: number; supplier_code: string; name: string }>> {
+  await ensureBridgeSchema();
+  const now = Date.now();
+  if (!force && now - internalSuppliersEnsuredAt < 15_000) {
+    const existingRows = (
+      await query(
+        `SELECT s.id, s.supplier_code, s.name, b.factory_unit
+           FROM factory_bridge_supplier b
+           JOIN procurement_suppliers s ON s.id = b.supplier_id`
+      )
+    ).rows;
+    if (existingRows.length >= 3) {
+      const map = {} as Record<FactoryUnit, { id: number; supplier_code: string; name: string }>;
+      for (const r of existingRows) {
+        if (r.factory_unit in FACTORY_UNITS && !map[r.factory_unit as FactoryUnit]) {
+          map[r.factory_unit as FactoryUnit] = { id: Number(r.id), supplier_code: r.supplier_code, name: r.name };
+        }
+      }
+      if (map.OLIGO && map.KIT && map.DEVICE) return map;
+    }
+  }
+
+  const seeded = await withTransaction(async (c) => {
+    const allSuppliers = (await c.query("SELECT * FROM procurement_suppliers ORDER BY id ASC")).rows;
+    const bridgeRows = (await c.query("SELECT supplier_id, factory_unit FROM factory_bridge_supplier")).rows;
+    const bridgeByUnit = new Map<FactoryUnit, number>();
+    for (const b of bridgeRows) {
+      if (b.factory_unit in FACTORY_UNITS && !bridgeByUnit.has(b.factory_unit as FactoryUnit)) {
+        bridgeByUnit.set(b.factory_unit as FactoryUnit, Number(b.supplier_id));
+      }
+    }
+
+    const result = {} as Record<FactoryUnit, { id: number; supplier_code: string; name: string }>;
+
+    for (const spec of DEFAULT_INTERNAL_SUPPLIERS) {
+      let matched = allSuppliers.find((s: any) => Number(s.id) === bridgeByUnit.get(spec.factory_unit));
+      if (!matched) {
+        matched = allSuppliers.find(
+          (s: any) =>
+            String(s.supplier_code || "").toUpperCase() === spec.preferred_code ||
+            foldVi(s.name) === foldVi(spec.name) ||
+            foldVi(s.short_name) === foldVi(spec.short_name) ||
+            spec.legacy_names.some((ln) => foldVi(ln) === foldVi(s.name) || foldVi(ln) === foldVi(s.short_name))
+        );
+      }
+
+      if (matched) {
+        const oldName = String(matched.name || "");
+        const updated = (
+          await c.query(
+            `UPDATE procurement_suppliers
+                SET name = $2,
+                    short_name = $3,
+                    contact_person = CASE WHEN COALESCE(contact_person, '') IN ('', 'Phòng Kinh Doanh / Cung Ứng') THEN $4 ELSE contact_person END,
+                    address = CASE WHEN COALESCE(address, '') = '' THEN $5 ELSE address END,
+                    product_lines = CASE WHEN COALESCE(product_lines, '') IN ('', 'Hóa chất & Sinh phẩm, Dịch vụ & Khác', 'Hóa chất & Sinh phẩm') THEN $6 ELSE product_lines END,
+                    payment_terms = CASE WHEN COALESCE(payment_terms, '') IN ('', 'Công nợ 30 ngày') THEN $7 ELSE payment_terms END,
+                    notes = CASE WHEN COALESCE(notes, '') = '' OR notes LIKE 'Đồng bộ tự động từ Danh mục%' THEN $8 ELSE notes END
+              WHERE id = $1
+              RETURNING id, supplier_code, name`,
+            [
+              matched.id,
+              spec.name,
+              spec.short_name,
+              spec.contact_person,
+              spec.address,
+              spec.product_lines,
+              spec.payment_terms,
+              spec.notes,
+            ]
+          )
+        ).rows[0];
+        matched = updated;
+
+        if (oldName && oldName !== spec.name) {
+          await c.query("UPDATE procurement_orders SET supplier_name = $2 WHERE supplier_id = $1 OR supplier_name = $3", [
+            matched.id,
+            spec.name,
+            oldName,
+          ]);
+          await c.query("UPDATE catalog_items SET supplier = $1 WHERE supplier = $2", [spec.name, oldName]);
+        }
+      } else {
+        const codeTaken = allSuppliers.some((s: any) => String(s.supplier_code || "").toUpperCase() === spec.preferred_code);
+        const codeToUse = codeTaken ? `${spec.preferred_code}-${Math.floor(10 + Math.random() * 89)}` : spec.preferred_code;
+        const inserted = (
+          await c.query(
+            `INSERT INTO procurement_suppliers
+               (supplier_code, name, short_name, contact_person, phone, email, address, product_lines, payment_terms, rating, notes)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+             RETURNING id, supplier_code, name`,
+            [
+              codeToUse,
+              spec.name,
+              spec.short_name,
+              spec.contact_person,
+              spec.phone,
+              spec.email,
+              spec.address,
+              spec.product_lines,
+              spec.payment_terms,
+              spec.rating,
+              spec.notes,
+            ]
+          )
+        ).rows[0];
+        matched = inserted;
+        allSuppliers.push(inserted);
+      }
+
+      await c.query(
+        `INSERT INTO factory_bridge_supplier (supplier_id, factory_unit, updated_at)
+         VALUES ($1, $2, now())
+         ON CONFLICT (supplier_id) DO UPDATE SET factory_unit = EXCLUDED.factory_unit, updated_at = now()`,
+        [matched.id, spec.factory_unit]
+      );
+
+      // Cũng tự động gắn factory_bridge_supplier cho các bản ghi nhà cung cấp trùng tên phòng ban nội bộ (nếu có)
+      for (const s of allSuppliers) {
+        if (Number(s.id) === Number(matched.id)) continue;
+        const inferred = inferFactoryUnitFromSupplierName(s.name, s.short_name, s.supplier_code);
+        if (inferred === spec.factory_unit) {
+          await c.query(
+            `INSERT INTO factory_bridge_supplier (supplier_id, factory_unit, updated_at)
+             VALUES ($1, $2, now())
+             ON CONFLICT (supplier_id) DO UPDATE SET factory_unit = EXCLUDED.factory_unit, updated_at = now()`,
+            [s.id, spec.factory_unit]
+          );
+        }
+      }
+
+      result[spec.factory_unit] = {
+        id: Number(matched.id),
+        supplier_code: matched.supplier_code,
+        name: matched.name,
+      };
+    }
+
+    // Đồng bộ tên nhà cung cấp cũ trong catalog_items sang Phòng Tổng hợp Oligo
+    await c.query(
+      "UPDATE catalog_items SET supplier = 'Phòng Tổng hợp Oligo' WHERE supplier = 'Nhà cung cấp tổng hợp Oligo'"
+    );
+
+    return result;
+  });
+
+  internalSuppliersEnsuredAt = now;
+  return seeded;
+}
+
+/**
+ * Tự động chuyển / đồng bộ PO của Phòng Cung ứng Khối Kinh doanh sang Đơn hàng nội bộ (`intake.internal_order`)
+ * cho đúng phòng ban liên quan (`OLIGO` — Phòng Tổng hợp Oligo, `KIT` — Phòng Sản xuất Kit, `DEVICE` — Phòng Kỹ thuật - Thiết bị)
+ * ngay khi PO được tạo hoặc cập nhật.
+ */
+export async function syncPoWithFactoryIfInternal(
+  poId: number,
+  actorName?: string,
+  opts?: {
+    ship_mode?: "TO_KD" | "DROP_SHIP";
+    ship_to?: { name?: string; address?: string; receiver?: string; phone?: string } | null;
+    kd_so_code?: string | null;
+  }
+): Promise<{
+  synced: boolean;
+  factory_unit?: FactoryUnit;
+  department_name?: string;
+  factory_order_code?: string | null;
+  factory_status?: string | null;
+}> {
+  await ensureBridgeSchema();
+  const defaultMap = await ensureDefaultInternalSuppliers();
+
+  const txInfo = await withTransaction(async (c) => {
+    const po = (await c.query("SELECT * FROM procurement_orders WHERE id = $1 FOR UPDATE", [poId])).rows[0];
+    if (!po) return null;
+
+    let supplierRow: any = null;
+    if (po.supplier_id) {
+      supplierRow = (await c.query("SELECT * FROM procurement_suppliers WHERE id = $1", [po.supplier_id])).rows[0] || null;
+    }
+    if (!supplierRow && po.supplier_name) {
+      supplierRow =
+        (
+          await c.query(
+            "SELECT * FROM procurement_suppliers WHERE lower(name) = lower($1) OR lower(short_name) = lower($1) ORDER BY id ASC LIMIT 1",
+            [String(po.supplier_name).trim()]
+          )
+        ).rows[0] || null;
+    }
+
+    let factoryUnit: FactoryUnit | null = null;
+    if (po.supplier_id) {
+      const bridgeSup = (
+        await c.query("SELECT factory_unit FROM factory_bridge_supplier WHERE supplier_id = $1", [po.supplier_id])
+      ).rows[0];
+      if (bridgeSup?.factory_unit && bridgeSup.factory_unit in FACTORY_UNITS) {
+        factoryUnit = bridgeSup.factory_unit as FactoryUnit;
+      }
+    }
+
+    if (!factoryUnit) {
+      factoryUnit = inferFactoryUnitFromSupplierName(
+        po.supplier_name || supplierRow?.name,
+        supplierRow?.short_name,
+        supplierRow?.supplier_code
+      );
+    }
+
+    if (!factoryUnit) {
+      return null;
+    }
+
+    const canonicalSup = defaultMap[factoryUnit];
+    const targetSupplierId = supplierRow?.id ? Number(supplierRow.id) : canonicalSup?.id;
+    const targetSupplierName = canonicalSup?.name || FACTORY_UNITS[factoryUnit];
+
+    if (targetSupplierId && (!po.supplier_id || po.supplier_name === "Nhà cung cấp tổng hợp Oligo")) {
+      await c.query(
+        "UPDATE procurement_orders SET supplier_id = COALESCE(supplier_id, $2), supplier_name = $3 WHERE id = $1",
+        [poId, targetSupplierId, targetSupplierName]
+      );
+      po.supplier_id = po.supplier_id || targetSupplierId;
+      po.supplier_name = targetSupplierName;
+    }
+    if (po.supplier_id) {
+      await c.query(
+        `INSERT INTO factory_bridge_supplier (supplier_id, factory_unit, updated_at)
+         VALUES ($1, $2, now())
+         ON CONFLICT (supplier_id) DO UPDATE SET factory_unit = EXCLUDED.factory_unit, updated_at = now()`,
+        [po.supplier_id, factoryUnit]
+      );
+    }
+
+    const existingBridgePo = (await c.query("SELECT * FROM factory_bridge_po WHERE po_id = $1 FOR UPDATE", [poId])).rows[0];
+    const poStatusUpper = String(po.status || "PENDING").toUpperCase();
+
+    if (poStatusUpper === "CANCELLED") {
+      if (existingBridgePo) {
+        await c.query("INSERT INTO factory_bridge_outbox (event_type, payload) VALUES ('KdPoCancelled', $1)", [
+          JSON.stringify({ kd_po_code: po.po_code, reason: "Hủy đơn PO từ Phòng Cung ứng Khối Kinh doanh" }),
+        ]);
+        await c.query(
+          "UPDATE factory_bridge_po SET factory_status = 'CANCEL_REQUESTED', updated_at = now() WHERE po_id = $1",
+          [poId]
+        );
+      }
+      return { po_code: String(po.po_code), factory_unit: factoryUnit, cancelled: true };
+    }
+
+    let items = po.items;
+    if (typeof items === "string") {
+      try {
+        items = JSON.parse(items);
+      } catch {
+        items = [];
+      }
+    }
+    const rawItems = Array.isArray(items) ? items : [];
+    const lines = rawItems
+      .map((it: any, i: number) => ({
+        line_index: i,
+        product_code: String(it.product_code || it.sku || it.code || `ITEM-${i + 1}`).trim(),
+        product_name: it.product_name || it.name || null,
+        unit: it.unit || (factoryUnit === "OLIGO" ? "tube" : factoryUnit === "DEVICE" ? "Cái" : "Hộp"),
+        quantity: Number(it.quantity) || 0,
+        unit_price: Number(it.unit_price) || 0,
+      }))
+      .filter((l) => l.product_code && l.quantity > 0);
+
+    if (!lines.length) {
+      return null;
+    }
+
+    let kdSoCode = opts?.kd_so_code || existingBridgePo?.kd_so_code || null;
+    if (!kdSoCode) {
+      const itemWithSo = rawItems.find((it: any) => it?.order_code || it?.so_code);
+      if (itemWithSo) kdSoCode = String(itemWithSo.order_code || itemWithSo.so_code).trim();
+    }
+    if (!kdSoCode && po.notes) {
+      const m = String(po.notes).match(/\b(SO\d{2}-[A-Z0-9-]+|SO-[A-Z0-9-]+)\b/i);
+      if (m) kdSoCode = m[1].toUpperCase();
+    }
+
+    const shipMode: "TO_KD" | "DROP_SHIP" =
+      opts?.ship_mode || (existingBridgePo?.ship_mode === "DROP_SHIP" ? "DROP_SHIP" : "TO_KD");
+    const shipTo =
+      shipMode === "DROP_SHIP" ? opts?.ship_to || existingBridgePo?.ship_to || null : null;
+    const requestedDate =
+      po.expected_delivery_date && /^\d{4}-\d{2}-\d{2}/.test(String(po.expected_delivery_date))
+        ? String(po.expected_delivery_date).slice(0, 10)
+        : null;
+
+    await c.query(
+      `INSERT INTO factory_bridge_po (po_id, po_code, factory_unit, ship_mode, ship_to, kd_so_code, sent_by, factory_status, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'SENT', now())
+       ON CONFLICT (po_id) DO UPDATE
+         SET factory_unit = EXCLUDED.factory_unit,
+             ship_mode = EXCLUDED.ship_mode,
+             ship_to = COALESCE(EXCLUDED.ship_to, factory_bridge_po.ship_to),
+             kd_so_code = COALESCE(EXCLUDED.kd_so_code, factory_bridge_po.kd_so_code),
+             updated_at = now()`,
+      [
+        poId,
+        po.po_code,
+        factoryUnit,
+        shipMode,
+        shipTo ? JSON.stringify(shipTo) : null,
+        kdSoCode,
+        actorName || po.created_by || "Cung Ứng KD",
+      ]
+    );
+
+    await c.query("INSERT INTO factory_bridge_outbox (event_type, payload) VALUES ('KdPoIssued', $1)", [
+      JSON.stringify({
+        kd_po_id: Number(poId),
+        kd_po_code: String(po.po_code),
+        factory_unit: factoryUnit,
+        ship_mode: shipMode,
+        ship_to: shipTo,
+        kd_so_code: kdSoCode,
+        requested_date: requestedDate,
+        notes: po.notes || null,
+        lines,
+      }),
+    ]);
+
+    return { po_code: String(po.po_code), factory_unit: factoryUnit, cancelled: false };
+  });
+
+  if (!txInfo) {
+    return { synced: false };
+  }
+
+  await dispatchKdOutbox();
+
+  const summary = await getFactoryInternalOrderSummary(txInfo.po_code).catch(() => null);
+  if (summary) {
+    await query(
+      `UPDATE factory_bridge_po
+          SET factory_order_code = $2,
+              factory_status = $3,
+              committed_date = COALESCE($4::date, committed_date),
+              updated_at = now()
+        WHERE po_id = $1`,
+      [poId, summary.code, summary.status, summary.committed_date]
+    );
+  }
+
+  return {
+    synced: true,
+    factory_unit: txInfo.factory_unit,
+    department_name: FACTORY_UNITS[txInfo.factory_unit],
+    factory_order_code: summary?.code ?? null,
+    factory_status: summary?.status ?? "RECEIVED",
+  };
 }
 
 interface SendInput {
@@ -218,7 +720,10 @@ export async function applyFactoryEvent(event: BridgeEvent): Promise<void> {
         await c.query("UPDATE factory_bridge_po SET factory_order_code = $2, factory_status = 'REJECTED', reject_reason = $3, updated_at = now() WHERE po_id = $1", [bp.po_id, p.order_code, p.reason]);
         break;
       case "FactoryOrderProgress":
-        await c.query("UPDATE factory_bridge_po SET factory_status = $2, committed_date = COALESCE($3, committed_date), updated_at = now() WHERE po_id = $1", [bp.po_id, p.status, p.committed_date ?? null]);
+        await c.query(
+          "UPDATE factory_bridge_po SET factory_order_code = COALESCE($4, factory_order_code), factory_status = $2, committed_date = COALESCE($3, committed_date), updated_at = now() WHERE po_id = $1",
+          [bp.po_id, p.status, p.committed_date ?? null, p.order_code ?? null]
+        );
         break;
       case "FactoryShipmentPosted":
         await c.query(

@@ -8,9 +8,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  # ============================================================================
+  # STAGE 1: Continuous Integration (CI) - Type Check & Next.js Production Build
+  # ============================================================================
   ci-build:
     name: Build & Code Quality Check
     runs-on: ubuntu-latest
+    outputs:
+      has_ssh_secret: ${{ steps.check_mode.outputs.has_ssh_secret }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -24,15 +29,94 @@ jobs:
       - name: Install Dependencies
         run: npm ci || npm install --prefer-offline --no-audit
 
+      - name: TypeScript Type Check
+        run: npx tsc --noEmit
+
       - name: Build Production Application
         run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: 1
           NODE_ENV: production
 
+      - name: Detect Deployment Mode (SSH Secret vs Self-Hosted Runner)
+        id: check_mode
+        env:
+          SSH_HOST_CHECK: ${{ secrets.SERVER_HOST }}
+        run: |
+          if [ -n "$SSH_HOST_CHECK" ]; then
+            echo "has_ssh_secret=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_ssh_secret=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ============================================================================
+  # STAGE 2A: Auto Deploy via SSH (When SERVER_HOST & SERVER_SSH_KEY are set)
+  # ============================================================================
+  deploy-ssh:
+    name: Deploy via SSH to Production Server (abt-portal.com)
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.ci-build.outputs.has_ssh_secret == 'true'
+    needs: ci-build
+    runs-on: ubuntu-latest
+    concurrency:
+      group: production-deploy
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Remote SSH Deploy to abt-portal.com
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          envs: GH_TOKEN,GITHUB_REPOSITORY,GITHUB_SHA
+          script: |
+            set -euo pipefail
+            TARGET_DIR="/var/www/abt-portal"
+            if [ ! -d "$TARGET_DIR" ] && [ -d "/var/www/ABT-portal" ]; then
+              TARGET_DIR="/var/www/ABT-portal"
+            fi
+            cd "$TARGET_DIR"
+
+            echo "Fetching commit ${GITHUB_SHA::7}..."
+            AUTH_B64=$(printf "x-access-token:%s" "$GH_TOKEN" | base64 -w0)
+            git -c http.extraheader="AUTHORIZATION: basic ${AUTH_B64}" fetch "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
+            git reset --hard FETCH_HEAD
+
+            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^abt_portal_app$'; then
+              echo "Deploying via Docker Compose..."
+              docker compose up -d --build app worker
+              docker exec abt_portal_app npm run factory:migrate || true
+            else
+              echo "Deploying via Node.js & PM2..."
+              touch .env.local
+              if ! grep -q "^SESSION_SECRET=.\+" .env.local; then
+                echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
+              fi
+              npm ci || npm install --no-audit --no-fund
+              npm run build
+              npm run factory:migrate || true
+              pm2 restart abt-portal --update-env || pm2 start npm --name "abt-portal" -- start
+            fi
+
+            for i in $(seq 1 30); do
+              curl -fsS -o /dev/null http://127.0.0.1:3008/api/health && echo "Deploy OK: $(git rev-parse --short HEAD)" && exit 0
+              sleep 2
+            done
+            echo "Health check failed after 60s"
+            exit 1
+
+  # ============================================================================
+  # STAGE 2B: Auto Deploy on Self-Hosted Runner (Docker Compose or PM2)
+  # ============================================================================
   deploy:
-    name: Deploy on Production Server (Self-Hosted Docker)
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    name: Deploy on Production Server (Self-Hosted Runner)
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && needs.ci-build.outputs.has_ssh_secret != 'true'
     needs: ci-build
     runs-on: self-hosted
     concurrency:
@@ -41,12 +125,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Pull Latest Code, Rebuild Containers & Migrate
+      - name: Pull Latest Code, Build/Rebuild & Migrate (abt-portal.com)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TARGET_DIR="/var/www/abt-portal"
+          if [ ! -d "$TARGET_DIR" ] && [ -d "/var/www/ABT-portal" ]; then
+            TARGET_DIR="/var/www/ABT-portal"
+          fi
           cd "$TARGET_DIR"
 
           echo "Fetching commit ${GITHUB_SHA::7}..."
@@ -54,9 +141,21 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: basic ${AUTH_B64}" fetch "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
           git reset --hard FETCH_HEAD
 
-          echo "Building & restarting Docker services..."
-          docker compose up -d --build app worker
-          docker exec abt_portal_app npm run factory:migrate
+          if command -v docker >/dev/null 2>&1 && (docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^abt_portal_app$' || [ -f docker-compose.yml ] && grep -q 'PGHOST=db' .env 2>/dev/null); then
+            echo "Building & restarting Docker services..."
+            docker compose up -d --build app worker
+            docker exec abt_portal_app npm run factory:migrate || true
+          else
+            echo "Building & restarting via Node.js & PM2..."
+            touch .env.local
+            if ! grep -q "^SESSION_SECRET=.\+" .env.local; then
+              echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
+            fi
+            npm ci || npm install --no-audit --no-fund
+            npm run build
+            npm run factory:migrate || true
+            pm2 restart abt-portal --update-env || pm2 start npm --name "abt-portal" -- start
+          fi
 
           for i in $(seq 1 30); do
             curl -fsS -o /dev/null http://127.0.0.1:3008/api/health && echo "Deploy OK: $(git rev-parse --short HEAD)" && exit 0

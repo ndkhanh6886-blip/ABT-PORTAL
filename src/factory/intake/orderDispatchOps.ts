@@ -221,7 +221,7 @@ export async function createInternalOrderManual(tx: Tx, actor: AuthzActor, input
  * được liên kết với `device.device_model` và có phiên bản BOM/DMR (`current_revision_id`)
  * để đồng bộ sang **Đơn PO Sản Xuất & Nổ BOM MRP (Tab 3: po_mrp)**.
  */
-async function ensureDeviceModelForPoLine(
+export async function ensureDeviceModelForPoLine(
   tx: Tx,
   actor: AuthzActor,
   order: { id: string; org_unit_id: string },

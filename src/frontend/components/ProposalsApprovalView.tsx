@@ -234,8 +234,8 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Kế toán kiểm tra chứng từ & ngân sách", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 8 },
-      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt chi", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Nguyễn Văn Hưng", slaHours: 12, conditionMinAmount: 5000000 }
+      { stepOrder: 2, stepName: "Kế toán kiểm tra chứng từ & ngân sách", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 8 },
+      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt chi", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 12, conditionMinAmount: 5000000 }
     ]
   },
   {
@@ -257,8 +257,8 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận duyệt nhu cầu", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Kế toán kiểm tra công nợ tạm ứng", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 4 },
-      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Đỗ Ngọc Diễm Trúc", slaHours: 8 }
+      { stepOrder: 2, stepName: "Kế toán kiểm tra công nợ tạm ứng", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 4 },
+      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 8 }
     ]
   },
   {
@@ -280,8 +280,8 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận thực tế", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Kế toán hậu kiểm hóa đơn hợp lệ", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 12 },
-      { stepOrder: 3, stepName: "Ban Giám Đốc duyệt quyết toán", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Nguyễn Văn Hưng", slaHours: 8 }
+      { stepOrder: 2, stepName: "Kế toán hậu kiểm hóa đơn hợp lệ", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 12 },
+      { stepOrder: 3, stepName: "Ban Giám Đốc duyệt quyết toán", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 8 }
     ]
   },
 
@@ -305,7 +305,7 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận duyệt & sắp xếp nhân sự", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Hành chính - Pháp chế ghi nhận công phép", roleType: "REVIEWER", defaultDept: "Pháp Chế", defaultApprover: "Nguyễn Thị Ngọc Huyền", slaHours: 4 }
+      { stepOrder: 2, stepName: "Hành chính - Nhân sự ghi nhận công phép", roleType: "REVIEWER", defaultDept: "Hành Chính Nhân Sự", defaultApprover: "Hành Chính Nhân Sự", slaHours: 4 }
     ]
   },
   {
@@ -326,7 +326,7 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận khối lượng việc", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Ban Giám Đốc / HCNS phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Đỗ Ngọc Diễm Trúc", slaHours: 4 }
+      { stepOrder: 2, stepName: "Ban Giám Đốc / HCNS phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 4 }
     ]
   },
   {
@@ -350,8 +350,8 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận duyệt lịch trình", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Kế toán rà soát định mức công tác phí", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 4 },
-      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt công lệnh", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Võ Thị Cẩm Giang", slaHours: 8 }
+      { stepOrder: 2, stepName: "Kế toán rà soát định mức công tác phí", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 4 },
+      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt công lệnh", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 8 }
     ]
   },
 
@@ -375,9 +375,9 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
       { key: "competitorInfo", label: "Thông tin đối thủ cạnh tranh / Lý do cần hỗ trợ giá", type: "textarea", placeholder: "Phân tích giá đối thủ và biên lợi nhuận còn lại..." }
     ],
     defaultSteps: [
-      { stepOrder: 1, stepName: "Trưởng bộ phận Kinh doanh thẩm định", roleType: "DEPT_HEAD", defaultDept: "Kinh Doanh", defaultApprover: "Lê Hữu Nhân", slaHours: 4 },
-      { stepOrder: 2, stepName: "Kế toán kiểm tra biên lợi nhuận (Margin)", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 4 },
-      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt chính sách giá", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Nguyễn Văn Hưng", slaHours: 4 }
+      { stepOrder: 1, stepName: "Trưởng bộ phận Kinh doanh thẩm định", roleType: "DEPT_HEAD", defaultDept: "Kinh Doanh", defaultApprover: "Trưởng phòng Kinh Doanh", slaHours: 4 },
+      { stepOrder: 2, stepName: "Kế toán kiểm tra biên lợi nhuận (Margin)", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 4 },
+      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt chính sách giá", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 4 }
     ]
   },
   {
@@ -398,77 +398,123 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
       { key: "guaranteeNote", label: "Căn cứ đảm bảo thu hồi nợ (Hợp đồng thầu, Cam kết...)", type: "textarea", placeholder: "Nêu rõ lịch giải ngân của kho bạc/bệnh viện..." }
     ],
     defaultSteps: [
-      { stepOrder: 1, stepName: "Kế toán công nợ đối chiếu tuổi nợ", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 4 },
-      { stepOrder: 2, stepName: "Ban Giám Đốc phê duyệt ngoại lệ công nợ", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Nguyễn Văn Hưng", slaHours: 8 }
+      { stepOrder: 1, stepName: "Kế toán công nợ đối chiếu tuổi nợ", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 4 },
+      { stepOrder: 2, stepName: "Ban Giám Đốc phê duyệt ngoại lệ công nợ", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 8 }
     ]
   },
 
-  // 4. KỸ THUẬT, KHO VẬN & MUA HÀNG
+  // 4. KỸ THUẬT, KHO VẬN & MUA SẮM (PHÂN BIỆT RÕ KHỐI KINH DOANH VÀ KHỐI KỸ THUẬT – NHÀ MÁY)
   {
     id: "tmpl_demo_sample_issue",
     codePrefix: "DXDM",
     category: "TECHNICAL_OPS",
-    name: "Đề xuất Xuất mẫu thử (Sample) / Mượn thiết bị Demo",
+    name: "Đề xuất Xuất Kho Kinh Doanh: Mẫu thử (Sample) / Mượn máy Demo",
     icon: "🧪",
-    description: "Đề xuất xuất kho hóa chất/Kit mẫu (0đ) để chạy thử nghiệm đánh giá tại Bệnh viện hoặc xuất mượn máy Demo có thời hạn.",
+    description: "Dành cho Khối Kinh Doanh & Application: Đề xuất xuất Kho Kinh Doanh hóa chất/Kit mẫu (0đ) để chạy thử nghiệm tại Bệnh viện hoặc mượn máy Demo.",
     hasAmount: true,
     hasLineItems: true,
     lineItemColumns: { col1: "Mã - Tên Kit / Thiết bị xuất mẫu", col2: "Quy cách / Số Lot", col3: "Số lượng", col4: "Giá vốn ước tính (VNĐ)" },
     autoDirectorThreshold: 0,
     slaTotalHours: 16,
     fields: [
-      { key: "demoType", label: "Hình thức xuất", type: "select", options: ["Xuất mẫu thử không thu hồi (Sample Test)", "Xuất mượn máy / thiết bị Demo có hoàn trả", "Xuất bảo hành / Đổi trả RMA"], required: true },
+      { key: "demoType", label: "Hình thức xuất Kho Kinh Doanh", type: "select", options: ["Xuất mẫu thử không thu hồi (Sample Test)", "Xuất mượn máy / thiết bị Demo có hoàn trả", "Xuất bảo hành / Đổi trả RMA"], required: true },
       { key: "expectedReturnDate", label: "Ngày dự kiến hoàn trả máy / Nghiệm thu kết quả", type: "date", required: true },
-      { key: "applicationStaff", label: "Kỹ sư Application phụ trách chạy mẫu", type: "text", placeholder: "VD: Vũ Nhật Tân / Mai Quí Minh" }
+      { key: "applicationStaff", label: "Kỹ sư Application phụ trách chạy mẫu", type: "text", placeholder: "Nhập tên kỹ sư Application..." }
     ],
     defaultSteps: [
-      { stepOrder: 1, stepName: "Trưởng phòng Application / Kỹ thuật thẩm định", roleType: "DEPT_HEAD", defaultDept: "Application", defaultApprover: "Vũ Nhật Tân", slaHours: 4 },
-      { stepOrder: 2, stepName: "Ban Giám Đốc phê duyệt xuất mẫu", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Võ Thị Cẩm Giang", slaHours: 6 },
-      { stepOrder: 3, stepName: "Kho & Vận hành xuất kho thực thi", roleType: "EXECUTOR", defaultDept: "Kho & Vận Hành", defaultApprover: "Dương Phương Bảo Khoa", slaHours: 6 }
+      { stepOrder: 1, stepName: "Trưởng phòng Application thẩm định", roleType: "DEPT_HEAD", defaultDept: "Application", defaultApprover: "Trưởng phòng Application", slaHours: 4 },
+      { stepOrder: 2, stepName: "Ban Giám Đốc phê duyệt xuất mẫu", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 6 },
+      { stepOrder: 3, stepName: "Kho Kinh Doanh & Vận hành xuất kho thực thi", roleType: "EXECUTOR", defaultDept: "Kho & Vận Hành", defaultApprover: "Trưởng Kho Kinh Doanh", slaHours: 6 }
+    ]
+  },
+  {
+    id: "tmpl_factory_fefo_special_issue",
+    codePrefix: "DXKNM",
+    category: "TECHNICAL_OPS",
+    name: "Đề xuất Xuất Kho Nhà Máy: Cấp phát NVL/Hóa chất R&D & Lô Thẩm định",
+    icon: "🏭",
+    description: "Độc lập với Kho Kinh Doanh: Đề xuất Kho Nhà Máy xuất nguyên vật liệu, enzyme, cột tổng hợp hoặc bán thành phẩm phục vụ thực nghiệm R&D, thẩm định QC hoặc bù hao hụt sản xuất.",
+    hasAmount: true,
+    hasLineItems: true,
+    lineItemColumns: { col1: "Mã - Tên NVL / Hóa chất / Bán thành phẩm", col2: "Số Lot FEFO & Hạn dùng", col3: "Số lượng lĩnh", col4: "Đơn giá vốn (VNĐ)" },
+    autoDirectorThreshold: 3000000,
+    slaTotalHours: 12,
+    fields: [
+      { key: "factoryIssueType", label: "Mục đích lĩnh vật tư tại Kho Nhà Máy", type: "select", options: ["Thực nghiệm Đề tài R&D (ELN)", "Chạy mẫu Kiểm nghiệm QA/QC & Độ ổn định", "Xuất bù hao hụt Lệnh sản xuất Kit / Mẻ Oligo", "Lắp ráp / Thử nghiệm Thiết bị mới"], required: true },
+      { key: "batchOrProjectRef", label: "Mã Lệnh sản xuất / Đề tài R&D liên quan", type: "text", placeholder: "VD:LSX-KIT-2611 / RD-HPV-01", required: true }
+    ],
+    defaultSteps: [
+      { stepOrder: 1, stepName: "Trưởng phòng chuyên môn (R&D / SX / Thiết bị) duyệt", roleType: "DEPT_HEAD", defaultDept: "Nghiên Cứu R&D", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
+      { stepOrder: 2, stepName: "QA/QC kiểm tra trạng thái lô Released & FEFO", roleType: "REVIEWER", defaultDept: "QA/QC", defaultApprover: "Trưởng phòng QA/QC", slaHours: 4 },
+      { stepOrder: 3, stepName: "Kho Nhà Máy xuất cấp phát thực thi", roleType: "EXECUTOR", defaultDept: "Kho Nhà Máy", defaultApprover: "Thủ kho Nhà Máy", slaHours: 4 }
     ]
   },
   {
     id: "tmpl_scrap_writeoff",
     codePrefix: "DXHH",
     category: "TECHNICAL_OPS",
-    name: "Tờ trình Xử lý / Hủy hàng hết hạn, hỏng hoặc lệch chuẩn",
+    name: "Tờ trình Xử lý / Hủy hàng hết hạn, hỏng hoặc lệch chuẩn (Kho KD / Kho Nhà Máy)",
     icon: "⚠️",
-    description: "Phê duyệt biên bản xử lý, thanh lý hoặc tiêu hủy lô hàng hết hạn sử dụng (Expired), hư hỏng lạnh hoặc lỗi kỹ thuật.",
+    description: "Phê duyệt biên bản xử lý, thanh lý hoặc tiêu hủy lô hàng hết hạn sử dụng (Expired), hư hỏng lạnh hoặc không đạt QC (Rejected/OOS).",
     hasAmount: true,
     hasLineItems: true,
     lineItemColumns: { col1: "Mã - Tên hàng hóa / Vật tư", col2: "Số Lot & Hạn dùng", col3: "Số lượng hủy", col4: "Giá trị tổn thất (VNĐ)" },
     autoDirectorThreshold: 0,
     slaTotalHours: 24,
     fields: [
-      { key: "causeCategory", label: "Nguyên nhân phát sinh", type: "select", options: ["Hết hạn sử dụng (Expired) lưu kho", "Hư hỏng trong quá trình vận chuyển", "Sự cố nhiệt độ bảo quản", "Lỗi chất lượng từ Nhà sản xuất", "Hao hụt thử nghiệm R&D / QC"], required: true },
-      { key: "disposalMethod", label: "Phương án xử lý đề xuất", type: "select", options: ["Tiêu hủy theo quy định chất thải y tế", "Chuyển mục đích sử dụng nội bộ R&D / Đào tạo", "Trả hàng / Yêu cầu NCC bồi hoàn (Claim)"], required: true }
+      { key: "warehouseBlock", label: "Thuộc Kho nào", type: "select", options: ["Kho Nhà Máy (NVL / Hóa chất / BTP / Thành phẩm SX)", "Kho Kinh Doanh (Hàng hóa thương mại)"], required: true },
+      { key: "causeCategory", label: "Nguyên nhân phát sinh", type: "select", options: ["Hết hạn sử dụng (Expired) lưu kho", "Không đạt kiểm định QA/QC (Rejected / OOS)", "Hư hỏng trong quá trình vận chuyển", "Sự cố nhiệt độ bảo quản / Quá chu kỳ Freeze-Thaw", "Hao hụt thử nghiệm R&D / QC"], required: true },
+      { key: "disposalMethod", label: "Phương án xử lý đề xuất", type: "select", options: ["Tiêu hủy theo quy định chất thải y tế / sinh học", "Chuyển mục đích sử dụng nội bộ R&D / Đào tạo", "Trả hàng / Yêu cầu NCC bồi hoàn (Claim)"], required: true }
     ],
     defaultSteps: [
-      { stepOrder: 1, stepName: "Trưởng bộ phận Kho / QA xác nhận hiện trạng", roleType: "DEPT_HEAD", defaultDept: "Kho & Vận Hành", defaultApprover: "Dương Phương Bảo Khoa", slaHours: 6 },
-      { stepOrder: 2, stepName: "Kế toán hạch toán dự phòng tổn thất", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 8 },
-      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt quyết định xử lý", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Nguyễn Văn Hưng", slaHours: 10 }
+      { stepOrder: 1, stepName: "QA/QC & Trưởng bộ phận Kho xác nhận hiện trạng", roleType: "DEPT_HEAD", defaultDept: "QA/QC", defaultApprover: "Trưởng phòng QA/QC", slaHours: 6 },
+      { stepOrder: 2, stepName: "Kế toán hạch toán dự phòng tổn thất", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 8 },
+      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt quyết định xử lý", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 10 }
     ]
   },
   {
     id: "tmpl_capex_procurement",
-    codePrefix: "DXMS",
+    codePrefix: "DXMS-KD",
     category: "TECHNICAL_OPS",
-    name: "Đề xuất Mua sắm Thiết bị, Vật tư, VPP & Sửa chữa tài sản",
+    name: "Đề xuất Cung Ứng Kinh Doanh: Mua sắm Hàng thương mại, VPP & Dịch vụ",
     icon: "🛒",
-    description: "Đề xuất mua máy móc phòng Lab, trang thiết bị IT, văn phòng phẩm, hóa chất chuẩn hoặc thuê dịch vụ hiệu chuẩn/bảo trì.",
+    description: "Độc lập với Cung ứng Kỹ thuật: Đề xuất Cung Ứng Kinh Doanh mua hàng hóa thương mại phân phối, trang thiết bị văn phòng, IT hoặc dịch vụ thương mại.",
     hasAmount: true,
     hasLineItems: true,
-    lineItemColumns: { col1: "Tên thiết bị / Vật tư / Dịch vụ cần mua", col2: "Thông số kỹ thuật / Hãng", col3: "Số lượng", col4: "Đơn giá báo giá (VNĐ)" },
+    lineItemColumns: { col1: "Tên hàng hóa thương mại / Thiết bị / Dịch vụ", col2: "Thông số / Hãng", col3: "Số lượng", col4: "Đơn giá báo giá (VNĐ)" },
     autoDirectorThreshold: 3000000,
     slaTotalHours: 24,
     fields: [
-      { key: "urgencyReason", label: "Mục đích sử dụng & Tính cấp thiết", type: "textarea", placeholder: "Giải trình nhu cầu phục vụ công việc/dự án...", required: true },
-      { key: "recommendedVendor", label: "Nhà cung cấp đề xuất (kèm so sánh báo giá)", type: "text", placeholder: "Nhập tên NCC có giá và tiến độ tốt nhất..." }
+      { key: "urgencyReason", label: "Mục đích mua sắm thương mại & Tính cấp thiết", type: "textarea", placeholder: "Giải trình nhu cầu phục vụ đơn hàng khách hàng / văn phòng...", required: true },
+      { key: "recommendedVendor", label: "Nhà cung cấp thương mại đề xuất", type: "text", placeholder: "Nhập tên NCC có giá và tiến độ tốt nhất..." }
     ],
     defaultSteps: [
       { stepOrder: 1, stepName: "Trưởng bộ phận duyệt nhu cầu", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-      { stepOrder: 2, stepName: "Bộ phận Cung ứng / Kế toán thẩm định giá", roleType: "REVIEWER", defaultDept: "Cung Ứng", defaultApprover: "Trần Thị Trà My", slaHours: 8 },
-      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt ngân sách mua", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Nguyễn Văn Hưng", slaHours: 12 }
+      { stepOrder: 2, stepName: "Cung Ứng Kinh Doanh thẩm định giá & NCC", roleType: "REVIEWER", defaultDept: "Cung Ứng", defaultApprover: "Trưởng bộ phận Cung Ứng KD", slaHours: 8 },
+      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt ngân sách mua", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 12 }
+    ]
+  },
+  {
+    id: "tmpl_factory_nvl_procurement",
+    codePrefix: "DXMS-KT",
+    category: "TECHNICAL_OPS",
+    name: "Đề xuất Cung Ứng Kỹ Thuật: Mua sắm NVL, Hóa chất SX, Linh kiện & Hiệu chuẩn",
+    icon: "🧬",
+    description: "Độc lập với Cung ứng Kinh doanh: Đề xuất Cung Ứng Kỹ Thuật mua nguyên vật liệu sản xuất Kit, Amidite/cột tổng hợp Oligo, enzyme, linh kiện thiết bị hoặc thuê hiệu chuẩn ISO 13485.",
+    hasAmount: true,
+    hasLineItems: true,
+    lineItemColumns: { col1: "Mã - Tên NVL / Hóa chất / Linh kiện / Dịch vụ HC", col2: "Hãng / Tiêu chuẩn CoA-MSDS", col3: "Số lượng", col4: "Đơn giá dự kiến (VNĐ)" },
+    autoDirectorThreshold: 3000000,
+    slaTotalHours: 24,
+    fields: [
+      { key: "techSpecRequirement", label: "Yêu cầu thông số kỹ thuật / Độ tinh khiết / CoA & MSDS", type: "textarea", placeholder: "VD: Độ tinh khiết HPLC ≥ 99%, kèm CoA theo lô và MSDS...", required: true },
+      { key: "productionPlanRef", label: "Phục vụ Kế hoạch sản xuất / Đề tài R&D / Thiết bị nào", type: "text", placeholder: "VD: Định mức MRP Quý 4 / Lô Kit HPV / Máy tổng hợp Oligo...", required: true },
+      { key: "recommendedTechVendor", label: "Nhà cung cấp Kỹ thuật đề xuất", type: "text", placeholder: "Nhập tên NCC Hóa chất / Linh kiện đạt chuẩn..." }
+    ],
+    defaultSteps: [
+      { stepOrder: 1, stepName: "Trưởng phòng Khối Kỹ Thuật (R&D/SX/QA/Kho NM) duyệt", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
+      { stepOrder: 2, stepName: "Cung Ứng Kỹ Thuật thẩm định NCC & Lead-time", roleType: "REVIEWER", defaultDept: "Cung Ứng Kỹ Thuật", defaultApprover: "Phụ trách Cung Ứng Kỹ Thuật", slaHours: 8 },
+      { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt PO Kỹ thuật", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 12 }
     ]
   },
 
@@ -477,21 +523,21 @@ export const DEFAULT_PROPOSAL_TEMPLATES: ProposalTemplate[] = [
     id: "tmpl_executive_memo",
     codePrefix: "TTr",
     category: "EXECUTIVE",
-    name: "Tờ trình Ban Giám Đốc (Chủ trương / Dự án / Hợp tác)",
+    name: "Tờ trình Ban Giám Đốc (Chủ trương / Chuyển giao Công nghệ / Dự án)",
     icon: "🏛️",
-    description: "Tờ trình xin phê duyệt chủ trương đầu tư, ký kết hợp đồng đại lý phân phối độc quyền, ban hành quy chế mới hoặc tổ chức sự kiện.",
+    description: "Tờ trình xin phê duyệt chủ trương đầu tư, chuyển giao công nghệ R&D sang Sản xuất (Design Transfer), ký kết hợp đồng đại lý hoặc ban hành SOP/quy chế mới.",
     hasAmount: true,
     hasLineItems: false,
     autoDirectorThreshold: 0,
     slaTotalHours: 24,
     fields: [
-      { key: "backgroundBasis", label: "Căn cứ pháp lý / Bối cảnh thực tiễn", type: "textarea", placeholder: "Trình bày căn cứ và thực trạng hiện nay...", required: true },
+      { key: "backgroundBasis", label: "Căn cứ pháp lý / Tiêu chuẩn ISO / Bối cảnh thực tiễn", type: "textarea", placeholder: "Trình bày căn cứ và thực trạng hiện nay...", required: true },
       { key: "proposedSolution", label: "Nội dung phương án & Kiến nghị phê duyệt", type: "textarea", placeholder: "Trình bày chi tiết phương án đề xuất...", required: true },
-      { key: "expectedImpact", label: "Hiệu quả dự kiến & Rủi ro kiểm soát", type: "textarea", placeholder: "Đánh giá lợi ích kinh tế / vận hành..." }
+      { key: "expectedImpact", label: "Hiệu quả dự kiến & Rủi ro kiểm soát", type: "textarea", placeholder: "Đánh giá lợi ích kinh tế / vận hành / chất lượng..." }
     ],
     defaultSteps: [
-      { stepOrder: 1, stepName: "Trưởng bộ phận / Pháp chế thẩm định", roleType: "REVIEWER", defaultDept: "Pháp Chế", defaultApprover: "Nguyễn Thị Ngọc Huyền", slaHours: 8 },
-      { stepOrder: 2, stepName: "Ban Giám Đốc phê duyệt chủ trương", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Nguyễn Văn Hưng", slaHours: 16 }
+      { stepOrder: 1, stepName: "Trưởng bộ phận / QA-QC / Pháp chế thẩm định", roleType: "REVIEWER", defaultDept: "Pháp Chế", defaultApprover: "Trưởng bộ phận thẩm định", slaHours: 8 },
+      { stepOrder: 2, stepName: "Ban Giám Đốc phê duyệt chủ trương", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 16 }
     ]
   }
 ];
@@ -689,8 +735,8 @@ export function ProposalsApprovalView({
       ],
       defaultSteps: [
         { stepOrder: 1, stepName: "Trưởng bộ phận xác nhận", roleType: "DEPT_HEAD", defaultDept: "Theo phòng người tạo", defaultApprover: "Trưởng bộ phận", slaHours: 4 },
-        { stepOrder: 2, stepName: "Phòng chuyên môn thẩm định", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Võ Thị Ngọc Giàu", slaHours: 8 },
-        { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Nguyễn Văn Hưng", slaHours: 12, conditionMinAmount: 5000000 }
+        { stepOrder: 2, stepName: "Phòng chuyên môn thẩm định", roleType: "REVIEWER", defaultDept: "Kế Toán", defaultApprover: "Kế toán trưởng", slaHours: 8 },
+        { stepOrder: 3, stepName: "Ban Giám Đốc phê duyệt", roleType: "DIRECTOR", defaultDept: "Ban Giám Đốc", defaultApprover: "Ban Giám Đốc", slaHours: 12, conditionMinAmount: 5000000 }
       ]
     });
     setIsTemplateBuilderOpen(true);
@@ -754,39 +800,35 @@ export function ProposalsApprovalView({
       const n = String(p?.full_name || p || "").replace(/\s*\(.*?\)/g, "").trim();
       if (n) names.add(n);
     });
-    [
-      "Nguyễn Văn Hưng",
-      "Đỗ Ngọc Diễm Trúc",
-      "Võ Thị Cẩm Giang",
-      "Võ Thị Ngọc Giàu",
-      "Vũ Nhật Tân",
-      "Lê Hữu Nhân",
-      "Dương Phương Bảo Khoa",
-      "Trần Thị Trà My",
-      "Nguyễn Thị Ngọc Huyền"
-    ].forEach((n) => names.add(n));
     if (currentStaffName) names.add(currentStaffName);
     return Array.from(names);
   }, [personnelList, currentStaffName]);
 
-  // Tìm Trưởng bộ phận mặc định theo phòng ban
+  // Tìm Trưởng bộ phận mặc định theo phòng ban (hỗ trợ cả Khối Kinh Doanh & Khối Kỹ Thuật)
   const getDefaultDeptHead = (deptName: string): string => {
     const d = String(deptName || "").toLowerCase();
     const matchedLead = (personnelList || []).find((p: any) => {
       const pDept = String(p?.department || "").toLowerCase();
       const pos = String(p?.position || "").toLowerCase();
-      return pDept && d && pDept.includes(d) && (pos.includes("trưởng") || pos.includes("head") || pos.includes("lead") || pos.includes("quản lý"));
+      return pDept && d && pDept.includes(d) && (pos.includes("trưởng") || pos.includes("head") || pos.includes("lead") || pos.includes("quản lý") || pos.includes("quản đốc") || pos.includes("giám đốc"));
     });
     if (matchedLead?.full_name) {
       return String(matchedLead.full_name).replace(/\s*\(.*?\)/g, "").trim();
     }
-    if (d.includes("application") || d.includes("kỹ thuật")) return "Vũ Nhật Tân";
-    if (d.includes("kinh doanh") || d.includes("sales")) return "Lê Hữu Nhân";
-    if (d.includes("kho")) return "Dương Phương Bảo Khoa";
-    if (d.includes("kế toán")) return "Võ Thị Ngọc Giàu";
-    if (d.includes("cung ứng") || d.includes("mua")) return "Trần Thị Trà My";
-    if (d.includes("pháp chế")) return "Nguyễn Thị Ngọc Huyền";
-    return "Đỗ Ngọc Diễm Trúc";
+    if (d.includes("kho nhà máy")) return "Trưởng Kho Nhà Máy";
+    if (d.includes("kho")) return "Trưởng Kho Kinh Doanh";
+    if (d.includes("cung ứng kỹ thuật")) return "Trưởng Cung Ứng Kỹ Thuật";
+    if (d.includes("cung ứng") || d.includes("mua")) return "Trưởng Cung Ứng Kinh Doanh";
+    if (d.includes("r&d") || d.includes("nghiên cứu")) return "Trưởng phòng R&D";
+    if (d.includes("sản xuất kit")) return "Trưởng phòng Sản Xuất Kit";
+    if (d.includes("oligo")) return "Trưởng phòng Tổng Hợp Oligo";
+    if (d.includes("thiết bị")) return "Trưởng phòng Kỹ Thuật – Thiết Bị";
+    if (d.includes("qa") || d.includes("qc")) return "Trưởng phòng QA/QC";
+    if (d.includes("application") || d.includes("ứng dụng")) return "Trưởng phòng Application";
+    if (d.includes("kinh doanh") || d.includes("sales")) return "Trưởng phòng Kinh Doanh";
+    if (d.includes("kế toán")) return "Kế toán trưởng";
+    if (d.includes("pháp chế")) return "Trưởng phòng Pháp chế";
+    return "Trưởng bộ phận";
   };
 
   // Form State khi tạo/sửa đề xuất
@@ -4880,7 +4922,7 @@ export function ProposalsApprovalView({
                           stepName: `Cấp phê duyệt ${editingTemplate.defaultSteps.length + 1}`,
                           roleType: "DIRECTOR",
                           defaultDept: "Ban Giám Đốc",
-                          defaultApprover: "Nguyễn Văn Hưng",
+                          defaultApprover: "Ban Giám Đốc",
                           slaHours: 8
                         }
                       ]

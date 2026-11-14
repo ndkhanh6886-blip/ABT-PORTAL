@@ -362,26 +362,27 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       const sp = `sp_inv_${i}`;
       await tx.query(`SAVEPOINT ${sp}`);
       try {
-        const itemCode = normCode(r.item_code || r["Mã vật tư"]);
-        const itemName = normStr(r.item_name || r["Tên vật tư"]);
+        const itemCode = normCode(r.item_code || r["Mã vật tư"] || r["Mã vật tư (SKU)"]);
+        const itemName = normStr(r.item_name || r["Tên vật tư"] || r["Tên vật tư / Sản phẩm"]);
         if (!itemCode || !itemName) {
           throw new Error("Thiếu Mã vật tư (item_code) hoặc Tên vật tư (item_name)");
         }
         const itemRes = await ensureItemByCode(tx, actor, {
           code: itemCode,
           name: itemName,
-          item_type: normStr(r.item_type || r["Phân loại"], "RAW_MATERIAL"),
+          item_type: normStr(r.item_type || r["Phân loại"] || r["Loại hàng"], "RAW_MATERIAL"),
           base_uom: normStr(r.base_uom || r["Đơn vị"], "pcs"),
           storage_condition: normStr(r.storage_condition || r["Bảo quản"], "RT"),
           shelf_life_days: normNum(r.shelf_life_days || r["Hạn dùng (ngày)"], 365),
-          min_stock: normNum(r.min_stock || r["Tồn tối thiểu"], 0),
+          min_stock: normNum(r.min_stock || r["Tồn tối thiểu"] || r["Định mức (Min)"], 0),
           notes: normStr(r.notes || r["Ghi chú"]) || null,
         });
         if (itemRes.created) createdCount++;
         else updatedCount++;
 
-        const qty = normNum(r.qty_on_hand ?? r.qty ?? r["Số lượng tồn"], 0);
-        const lotCode = normCode(r.lot_code || r["Số lô"], `${itemCode}-L01`);
+        const qty = normNum(r.qty_on_hand ?? r.qty ?? r["Số lượng tồn"] ?? r["Số lượng tồn kho"], 0);
+        const rawLotCode = normStr(r.lot_code || r["Số lô"] || r["Số Lô"]);
+        let lotCode = normCode(rawLotCode && rawLotCode !== "-" ? rawLotCode : `${itemCode}-L01`, `${itemCode}-L01`);
         if (qty > 0 && itemRes.tracking !== "NONE") {
           const lotStatus = canReleaseOpeningLot ? "RELEASED" : "QUARANTINE";
           const whLoc = await resolveWarehouseAndLocation(
@@ -391,9 +392,21 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             normStr(r.dept_code || r["Mã phòng"]) || targetDeptCode,
             lotStatus === "QUARANTINE"
           );
-          const mfgDate = normDate(r.mfg_date || r["Ngày SX"]);
-          const expiryDate = normDate(r.expiry_date || r["Hạn dùng"]) || "2027-12-31";
-          const mfrLot = normStr(r.mfr_lot_no || r["Lô NSX"], lotCode);
+          const mfgDate = normDate(r.mfg_date || r["Ngày SX"] || r["Ngày sản xuất"]);
+          const expiryDate = normDate(r.expiry_date || r["Hạn dùng"] || r["Hạn sử dụng"]) || "2027-12-31";
+          const rawMfrLot = normStr(r.mfr_lot_no || r["Lô NSX"] || r["Số lô NSX (Mfg Lot)"]);
+          const mfrLot = rawMfrLot && rawMfrLot !== "-" ? rawMfrLot : lotCode;
+
+          // Kiểm tra nếu mã lô bị trùng với vật tư khác (do nhiều vật tư chung số lô NSX), tự động gắn tiền tố mã vật tư
+          const conflictLot = (
+            await tx.query("SELECT item_id FROM inv.lot WHERE upper(code) = upper($1) AND item_id <> $2 LIMIT 1", [
+              lotCode,
+              itemRes.id,
+            ])
+          ).rows[0];
+          if (conflictLot) {
+            lotCode = `${itemCode}-${lotCode}`;
+          }
 
           let lot = (
             await tx.query("SELECT id, status FROM inv.lot WHERE item_id = $1 AND upper(code) = upper($2) LIMIT 1", [
@@ -564,14 +577,36 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
     }
   } else if (templateKey === "KIT_BOM_FORMULA") {
     await authorize(tx, actor, "kit.bom.manage");
+    const STAFF_CODE_MAP: Record<string, string> = {
+      SX01: "Nguyễn Thị Thùy Trâm (NV-ABT-037)",
+      SX02: "Võ Thanh Ngân (NV-ABT-038)",
+      SX03: "Mai Hoàng Khánh Chi (NV-ABT-051)",
+      SX04: "Nguyễn Cao Mỹ Anh (NV-ABT-039)",
+      SX05: "Võ Thị Lệ Quyên (NV-ABT-040)",
+      SX06: "Nguyễn Lê Thảo Phương (NV-ABT-041)",
+      SX07: "Đoàn Hồng Sơn (NV-ABT-036)",
+      SX10: "Nguyễn Thị Tuyết Nhi (NV-ABT-042)",
+      SX11: "Trương Thị Ngọc Thùy (NV-ABT-043)",
+      SX12: "Đặng Thị Thanh Mai (NV-ABT-044)",
+      SX14: "Sơn Minh Nghĩa (NV-ABT-081)",
+      SX15: "Sơn Minh Tình (NV-ABT-014)",
+    };
+
     const grouped = new Map<string, Record<string, unknown>[]>();
+    let currentBomCode = "";
     for (const r of rawRows) {
-      const bCode = normCode(r.bom_code || r["Mã BOM"]);
-      if (!bCode) continue;
-      const arr = grouped.get(bCode) ?? [];
+      const explicitCode = normCode(
+        r.bom_code || r["Mã BOM"] || r.product_code || r["Mã sản phẩm"] || r["Mã sản phẩm (*)"]
+      );
+      if (explicitCode) {
+        currentBomCode = explicitCode.toUpperCase().startsWith("BOM-") ? explicitCode : `BOM-${explicitCode}`;
+      }
+      if (!currentBomCode) continue;
+      const arr = grouped.get(currentBomCode) ?? [];
       arr.push(r);
-      grouped.set(bCode, arr);
+      grouped.set(currentBomCode, arr);
     }
+
     let groupIdx = 0;
     for (const [bomCode, lines] of grouped.entries()) {
       groupIdx++;
@@ -579,25 +614,85 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
       await tx.query(`SAVEPOINT ${sp}`);
       try {
         const first = lines[0];
-        const bomType = normStr(first.bom_type || first["Loại BOM"], "FINISHED_KIT").toUpperCase().includes("SEMI")
-          ? "SEMI_FINISHED"
-          : "FINISHED_KIT";
-        const productCode = normCode(first.product_code || first["Mã sản phẩm"], `${bomCode}-PRD`);
-        const productName = normStr(first.product_name || first["Tên sản phẩm"], `Sản phẩm ${bomCode}`);
-        const bomName = normStr(first.bom_name || first["Tên công thức BOM"], `Định mức ${productName}`);
-        const testsPerKit = Math.max(1, Math.round(normNum(first.tests_per_kit || first["Số test/bộ"], 50)));
-        const shelfLifeDays = Math.max(1, Math.round(normNum(first.shelf_life_days || first["Hạn dùng (ngày)"], 365)));
-        const tccsCode = normStr(first.tccs_code || first["Mã TCCS"], `TCCS ${productCode}:2026/ABT`);
-        const responsible = normStr(first.responsible_person || first["Người phụ trách"], actorDisplayName);
-        const category = normStr(first.product_category || first["Nhóm sản phẩm"], "PCR Kit / MasterMix");
+        const rawType = normStr(
+          first.bom_type || first["Loại BOM"] || (fileName.toLowerCase().includes("ban_thanh_pham") || fileName.toLowerCase().includes("semi") ? "SEMI_FINISHED" : "FINISHED_KIT"),
+          "FINISHED_KIT"
+        ).toUpperCase();
+        const isSemiFinished = rawType.includes("SEMI") || rawType.includes("BTP") || rawType.includes("BAN_THANH_PHAM");
+        const dbBomType = isSemiFinished ? "semi_finished" : "finished_good";
+
+        const productCode = normCode(
+          first.product_code || first["Mã sản phẩm"] || first["Mã sản phẩm (*)"],
+          bomCode.replace(/^BOM-/i, "")
+        );
+        const productName = normStr(
+          first.product_name || first["Tên sản phẩm"] || first["Tên sản phẩm (*)"],
+          `Sản phẩm ${productCode}`
+        );
+        const parentItemCode =
+          normStr(first.parent_item_code || first["Mã sản phẩm chính"]) || productCode;
+
+        const rawCat = normStr(
+          first.bom_category || first.product_category || first["Phân loại Kit"] || first["Nhóm sản phẩm"] || first["Danh mục (PCR Kit/..)"]
+        );
+        const bomCategory =
+          rawCat === "PCR Kit" || rawCat === "Tách chiết / Khác"
+            ? rawCat
+            : /pcr|mix/i.test(`${rawCat} ${productName}`) && !/tách chiết|extraction/i.test(`${rawCat} ${productName}`)
+              ? "PCR Kit"
+              : "Tách chiết / Khác";
+
+        const specStr = normStr(first.specification || first["Quy cách"]);
+        const specMatch = specStr.match(/(\d+(?:\.\d+)?)/);
+        const parsedSpecNum = specMatch ? Number(specMatch[1]) : 0;
+
+        const baseUomRaw = normStr(
+          first.base_uom || first["Đơn vị tính SP"] || first["Đơn vị tính SP (*)"],
+          isSemiFinished ? "mL" : "bộ"
+        );
+        const baseQty = isSemiFinished
+          ? Math.max(1, normNum(first.base_qty, parsedSpecNum > 0 ? parsedSpecNum : 1))
+          : Math.max(1, normNum(first.base_qty, 1));
+        const testsPerKit = Math.max(
+          1,
+          Math.round(normNum(first.tests_per_kit || first["Số test/bộ"], parsedSpecNum > 0 ? parsedSpecNum : 50))
+        );
+
+        const shelfLifeMonths = Math.max(
+          1,
+          Math.round(normNum(first.shelf_life_months || first["Hạn sử dụng (tháng)"], 12))
+        );
+        const shelfLifeDays = Math.max(
+          1,
+          Math.round(normNum(first.shelf_life_days || first["Hạn dùng (ngày)"], shelfLifeMonths * 30))
+        );
+        const storageStr = normStr(
+          first.storage_condition || first["Điều kiện bảo quản"],
+          bomCategory === "PCR Kit" ? "-20°C" : "15-25°C"
+        );
+        const qcRetQty = Math.max(0, normNum(first.qc_retention_qty || first["Lượng QC/lưu kho"], isSemiFinished ? 0 : 1));
+        const phRaw = normStr(first.ph_range || first["Phạm vi pH (Min-Max)"]);
+        const phParts = phRaw.match(/(\d+(?:\.\d+)?)\s*[-–~]\s*(\d+(?:\.\d+)?)/);
+        const phMin = phParts ? Number(phParts[1]) : null;
+        const phMax = phParts ? Number(phParts[2]) : null;
+
+        const rawStaff = normStr(
+          first.responsible_person || first["Người phụ trách"] || first["Người phụ trách (Mã NV)"] || first["Người phụ trách \n(Mã NV)"] || first["Người phụ trách \r\n(Mã NV)"]
+        );
+        const responsible = STAFF_CODE_MAP[rawStaff.toUpperCase()] || rawStaff || actorDisplayName;
+        const tccsCode = normStr(first.tccs_code || first["Mã TCCS"], `TCCS ${parentItemCode}:2026/ABT`);
+        const bomName = normStr(
+          first.bom_name || first["Tên công thức BOM"],
+          `Định mức ${productName}${specStr ? ` (${specStr})` : ""}`
+        );
         const orgUnitId = await resolveOrgUnitId(tx, normStr(first.dept_code) || targetDeptCode || "P-KIT");
 
         const prodItem = await ensureItemByCode(tx, actor, {
           code: productCode,
           name: productName,
-          item_type: bomType === "SEMI_FINISHED" ? "SEMI_FINISHED" : "FINISHED_KIT",
-          base_uom: bomType === "SEMI_FINISHED" ? "mL" : "kit",
-          storage_condition: normStr(first.storage_condition, "-20"),
+          item_type: isSemiFinished ? "SEMI_FINISHED" : "FINISHED_KIT",
+          base_uom: baseUomRaw,
+          storage_condition: storageStr,
           shelf_life_days: shelfLifeDays,
         });
 
@@ -605,11 +700,34 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         if (bom) {
           await tx.query(
             `UPDATE kit.bom
-                SET name = $2, product_item_id = $3, tests_per_kit = $4, shelf_life_days = $5,
-                    bom_type = $6, product_category = $7, tccs_code = $8, responsible_person = $9,
-                    updated_at = now(), updated_by = $10
+                SET name = $2, product_item_id = $3, base_qty = $4, base_uom = $5,
+                    tests_per_kit = $6, shelf_life_days = $7, shelf_life_months = $8,
+                    bom_type = $9, bom_category = $10, parent_item_code = $11,
+                    tccs_code = $12, responsible_person_name = $13, specification = $14,
+                    storage_condition = $15, qc_retention_qty = $16, ph_min = $17, ph_max = $18,
+                    status = 'EFFECTIVE', updated_at = now(), updated_by = $19
               WHERE id = $1`,
-            [bom.id, bomName, prodItem.id, testsPerKit, shelfLifeDays, bomType, category, tccsCode, responsible, actor.userId]
+            [
+              bom.id,
+              bomName,
+              prodItem.id,
+              baseQty,
+              prodItem.base_uom,
+              testsPerKit,
+              shelfLifeDays,
+              shelfLifeMonths,
+              dbBomType,
+              bomCategory,
+              parentItemCode,
+              tccsCode,
+              responsible,
+              specStr || `${testsPerKit} tests`,
+              storageStr,
+              qcRetQty,
+              phMin,
+              phMax,
+              actor.userId,
+            ]
           );
           await tx.query("DELETE FROM kit.bom_line WHERE bom_id = $1", [bom.id]);
           updatedCount++;
@@ -618,22 +736,38 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             await tx.query(
               `INSERT INTO kit.bom (
                  code, org_unit_id, product_item_id, bom_version, name, base_qty, base_uom,
-                 tests_per_kit, shelf_life_days, bom_type, product_category, tccs_code,
-                 responsible_person, status, created_by, updated_by
-               ) VALUES ($1, $2, $3, 1, $4, 1, $5, $6, $7, $8, $9, $10, $11, 'DRAFT', $12, $12)
+                 tests_per_kit, shelf_life_days, shelf_life_months, bom_type, bom_category,
+                 parent_item_code, tccs_code, responsible_person_name, specification,
+                 storage_condition, qc_retention_qty, ph_min, ph_max, variant_code, supply_form,
+                 status, created_by, updated_by
+               ) VALUES (
+                 $1, $2, $3, 1, $4, $5, $6,
+                 $7, $8, $9, $10, $11,
+                 $12, $13, $14, $15,
+                 $16, $17, $18, $19, 'BASE', 'NO_SPLIT_NO_IC',
+                 'EFFECTIVE', $20, $20
+               )
                RETURNING id`,
               [
                 bomCode,
                 orgUnitId,
                 prodItem.id,
                 bomName,
+                baseQty,
                 prodItem.base_uom,
                 testsPerKit,
                 shelfLifeDays,
-                bomType,
-                category,
+                shelfLifeMonths,
+                dbBomType,
+                bomCategory,
+                parentItemCode,
                 tccsCode,
                 responsible,
+                specStr || `${testsPerKit} tests`,
+                storageStr,
+                qcRetQty,
+                phMin,
+                phMax,
                 actor.userId,
               ]
             )
@@ -641,31 +775,89 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           createdCount++;
         }
 
+        const VALID_ROLES = new Set([
+          "MASTER_MIX",
+          "PRIMER_PROBE",
+          "ENZYME",
+          "INTERNAL_CONTROL",
+          "POSITIVE_CONTROL",
+          "NEGATIVE_CONTROL",
+          "EXTRACTION_BUFFER",
+          "PCR_TUBE_STRIP",
+          "PACKAGING",
+          "SEMI_FINISHED",
+          "REAGENT",
+        ]);
+
+        let lineNo = 0;
         for (let idx = 0; idx < lines.length; idx++) {
           const l = lines[idx];
-          const compCode = normCode(l.component_code || l["Mã NVL thành phần"]);
+          const compCode = normCode(l.component_code || l["Mã NVL thành phần"] || l["Mã nguyên liệu (*)"]);
+          if (!compCode || compCode.toUpperCase() === productCode.toUpperCase()) continue;
           const compName = normStr(l.component_name || l["Tên NVL thành phần"], compCode);
-          if (!compCode) continue;
-          const compUom = normStr(l.uom || l["Đơn vị"], "mL");
+          const compUom = normStr(l.uom || l["Đơn vị"] || l["Đơn vị ND (*)"], "mL");
+          const compUomVerified = await ensureUomExists(tx, compUom);
+
+          const codeU = compCode.toUpperCase();
+          const rawRole = normStr(l.component_role || l["Vai trò thành phần"]).toUpperCase();
+          const inferredRole = VALID_ROLES.has(rawRole)
+            ? rawRole
+            : codeU.startsWith("VT-TUBE-")
+              ? "PCR_TUBE_STRIP"
+              : /^A00[123]$/i.test(codeU)
+                ? "INTERNAL_CONTROL"
+                : codeU === "NC"
+                  ? "NEGATIVE_CONTROL"
+                  : /^(PS|PM|SD)/i.test(codeU)
+                    ? "POSITIVE_CONTROL"
+                    : /^M[A-Z0-9]/i.test(codeU) && compUom.toLowerCase().includes("test")
+                      ? "MASTER_MIX"
+                      : /^(CTT|DGM|HGM|HGPK|DGU|HGU|CNM|CNN|CNV|FAL|TIP)/i.test(codeU)
+                        ? "PACKAGING"
+                        : /^(F|R|P)\d/i.test(codeU)
+                          ? "PRIMER_PROBE"
+                          : /^ST\d/i.test(codeU)
+                            ? "EXTRACTION_BUFFER"
+                            : "REAGENT";
+
           const compItem = await ensureItemByCode(tx, actor, {
             code: compCode,
             name: compName,
-            item_type: "REAGENT",
-            base_uom: compUom,
-            storage_condition: normStr(l.storage_condition, "-20"),
+            item_type:
+              inferredRole === "MASTER_MIX" || inferredRole === "EXTRACTION_BUFFER"
+                ? "SEMI_FINISHED"
+                : inferredRole === "PACKAGING" || inferredRole === "PCR_TUBE_STRIP"
+                  ? "CONSUMABLE"
+                  : "REAGENT",
+            base_uom: compUomVerified,
+            storage_condition: storageStr,
           });
-          const qtyPerBase = Math.max(0.0001, normNum(l.qty_per_base || l["Định mức/bộ"], 1));
-          const scrapPct = normNum(l.scrap_pct || l["Hao hụt (%)"], 2);
-          const stageName = normStr(l.stage_name || l["Vai trò / Công đoạn"], "Pha chế & Chia lẻ");
-          const vialLabel = normStr(l.vial_label || l["Nhãn ống thành phần"], compName);
-          const fillVolUl = normNum(l.fill_volume_ul || l["Thể tích nạp (µL)"], 500);
+          const qtyPerBase = Math.max(0.000001, normNum(l.qty_per_base || l["Định mức/bộ"] || l["Số lượng ND (*)"], 1));
+          const scrapPct = normNum(l.scrap_pct || l["Hao hụt (%)"], 0);
+          const lineNotes = normStr(l.notes || l["Ghi chú"]) || null;
+          const isPackaging = inferredRole === "PACKAGING" || inferredRole === "PCR_TUBE_STRIP";
 
+          lineNo++;
           await tx.query(
             `INSERT INTO kit.bom_line (
                bom_id, line_no, component_item_id, qty_per_base, uom, scrap_pct,
-               stage_name, is_critical, vial_label, fill_volume_ul, vials_per_kit
-             ) VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, 1)`,
-            [bom.id, idx + 1, compItem.id, qtyPerBase, compItem.base_uom, scrapPct, stageName, vialLabel, fillVolUl]
+               box_no, component_role, is_critical, is_mix_component,
+               is_demo_fixed_component, include_in_qc_retention, notes, created_by, updated_by
+             ) VALUES ($1, $2, $3, $4, $5, $6, 1, $7, true, $8, $9, $10, $11, $12, $12)`,
+            [
+              bom.id,
+              lineNo,
+              compItem.id,
+              qtyPerBase,
+              compUomVerified,
+              scrapPct,
+              inferredRole,
+              !isPackaging,
+              isPackaging,
+              !isPackaging,
+              lineNotes,
+              actor.userId,
+            ]
           );
         }
         await tx.query(`RELEASE SAVEPOINT ${sp}`);
