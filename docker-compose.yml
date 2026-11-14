@@ -1,9 +1,9 @@
-version: "3.8"
+name: abt-portal
 
 services:
-  # 1. Cơ sở dữ liệu PostgreSQL cách ly hoàn toàn với Internet
+  # 1. Cơ sở dữ liệu PostgreSQL 18 (hỗ trợ uuidv7 cho phân hệ Nhà máy)
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     container_name: abt_postgres_db
     restart: always
     environment:
@@ -13,38 +13,46 @@ services:
       TZ: Asia/Ho_Chi_Minh
       PGTZ: Asia/Ho_Chi_Minh
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
+      - ./scripts/abt_schema_init.sql:/docker-entrypoint-initdb.d/01-abt-schema.sql:ro
     networks:
       - abt_internal_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d abt_portal"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # 2. Ứng dụng Next.js ABT Portal (Chạy quyền non-root user)
+  # 2. Ứng dụng Next.js ABT Portal (cổng nội bộ 3008, đứng sau Nginx máy chủ + Cloudflare Tunnel)
   app:
+    image: abt-portal-app:latest
     build:
       context: .
       dockerfile: Dockerfile
     container_name: abt_portal_app
     restart: always
+    ports:
+      - "127.0.0.1:3008:3008"
     environment:
       NODE_ENV: production
       TZ: Asia/Ho_Chi_Minh
+      PORT: 3008
+      HOSTNAME: 0.0.0.0
       PGHOST: db
       PGPORT: 5432
       PGUSER: postgres
       PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       PGDATABASE: abt_portal
-      PORT: 3008
+      FACTORY_PGDATABASE: abt_factory
+      FACTORY_FILE_DIR: /app/uploads/factory
+      FACTORY_ALLOW_DEMO_SEED: "0"
       NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://abt-portal.com}
-      # Khóa ký phiên đăng nhập (đặt chuỗi ngẫu nhiên >= 32 ký tự trong file .env của server)
-      SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_SECRET: ${SESSION_SECRET:?SESSION_SECRET is required}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
       ZALO_OA_SECRET_KEY: ${ZALO_OA_SECRET_KEY:-}
       DOCUMENT_LINK_TTL_DAYS: ${DOCUMENT_LINK_TTL_DAYS:-30}
     volumes:
-      - ./uploads:/app/uploads
+      - uploads_data:/app/uploads
     depends_on:
       db:
         condition: service_healthy
@@ -55,20 +63,26 @@ services:
       retries: 5
     networks:
       - abt_internal_net
-    expose:
-      - "3008"
 
-  # 3. Nginx Reverse Proxy (Tường lửa cổng trước, SSL HTTPS & Rate Limiting)
-  nginx:
-    image: nginx:alpine
-    container_name: abt_nginx_proxy
+  # 3. Worker đồng bộ Outbox Kinh doanh <-> Nhà máy và tác vụ định kỳ
+  worker:
+    image: abt-portal-app:latest
+    container_name: abt_factory_worker
     restart: always
-    ports:
-      - "80:80"
-      - "443:443"
+    command: ["npm", "run", "factory:worker"]
+    environment:
+      NODE_ENV: production
+      TZ: Asia/Ho_Chi_Minh
+      PGHOST: db
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      PGDATABASE: abt_portal
+      FACTORY_PGDATABASE: abt_factory
+      FACTORY_FILE_DIR: /app/uploads/factory
+      FACTORY_ALLOW_DEMO_SEED: "0"
     volumes:
-      - ./nginx/abt-portal.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      - uploads_data:/app/uploads
     depends_on:
       app:
         condition: service_healthy
@@ -81,4 +95,4 @@ networks:
 
 volumes:
   postgres_data:
-    driver: local
+  uploads_data:

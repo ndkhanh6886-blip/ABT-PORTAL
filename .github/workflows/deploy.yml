@@ -31,7 +31,7 @@ jobs:
           NODE_ENV: production
 
   deploy:
-    name: Deploy on Production Server (Self-Hosted)
+    name: Deploy on Production Server (Self-Hosted Docker)
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: ci-build
     runs-on: self-hosted
@@ -41,12 +41,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Pull Latest Code, Build & Restart
+      - name: Pull Latest Code, Rebuild Containers & Migrate
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          TARGET_DIR="/var/www/ABT-portal"
+          TARGET_DIR="/var/www/abt-portal"
           cd "$TARGET_DIR"
 
           echo "Fetching commit ${GITHUB_SHA::7}..."
@@ -54,16 +54,13 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: basic ${AUTH_B64}" fetch "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
           git reset --hard FETCH_HEAD
 
-          touch .env.local
-          if ! grep -q "^SESSION_SECRET=.\+" .env.local; then
-            echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
-          fi
+          echo "Building & restarting Docker services..."
+          docker compose up -d --build app worker
+          docker exec abt_portal_app npm run factory:migrate
 
-          echo "Installing dependencies & building..."
-          npm ci || npm install --no-audit --no-fund
-          npm run build
-
-          echo "Restarting abt-portal..."
-          pm2 restart abt-portal
-          sleep 8
-          curl -fsS -o /dev/null http://localhost:3008/api/health && echo "Deploy OK: $(git rev-parse --short HEAD)"
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:3008/api/health && echo "Deploy OK: $(git rev-parse --short HEAD)" && exit 0
+            sleep 2
+          done
+          echo "Health check failed after 60s"
+          exit 1

@@ -8,6 +8,7 @@ import { LoginScreen } from "@/frontend/components/LoginScreen";
 import { SearchableSelectEnhancer } from "@/frontend/components/SearchableSelectEnhancer";
 import { DataSyncGate } from "@/frontend/components/DataSyncGate";
 import { AccountSecurityModal } from "@/frontend/components/AccountSecurityModal";
+import { BUSINESS_TABS, BusinessTabs, TECHNICAL_TABS, TechnicalTabs, SETTINGS_TABS, SettingsTabs } from "@/frontend/components/GroupTabs";
 
 const SalesFullABT = dynamic(() => import("@/frontend/components/SalesFullABT").then(m => m.SalesFullABT), { ssr: false });
 const WarehouseModule = dynamic(() => import("@/frontend/components/WarehouseModule").then(m => m.WarehouseModule), { ssr: false });
@@ -20,17 +21,34 @@ const EnterpriseChatModule = dynamic(() => import("@/frontend/components/Enterpr
 const ZaloOperationsHub = dynamic(() => import("@/frontend/components/ZaloOperationsHub").then(m => m.ZaloOperationsHub), { ssr: false });
 const FloatingChatWidget = dynamic(() => import("@/frontend/components/FloatingChatWidget").then(m => m.FloatingChatWidget), { ssr: false });
 
+const FactoryWarehouseModule = dynamic(() => import("@/frontend/factory/warehouse/FactoryWarehouseModule").then(m => m.FactoryWarehouseModule), { ssr: false });
+const FactorySettingsModule = dynamic(() => import("@/frontend/factory/settings/FactorySettingsModule").then(m => m.FactorySettingsModule), { ssr: false });
+const FactoryPurchaseModule = dynamic(() => import("@/frontend/factory/purchase/FactoryPurchaseModule").then(m => m.FactoryPurchaseModule), { ssr: false });
+const FactoryOrdersModule = dynamic(() => import("@/frontend/factory/orders/FactoryOrdersModule").then(m => m.FactoryOrdersModule), { ssr: false });
+const FactoryOligoModule = dynamic(() => import("@/frontend/factory/oligo/FactoryOligoModule").then(m => m.FactoryOligoModule), { ssr: false });
+const FactoryQaModule = dynamic(() => import("@/frontend/factory/qa/FactoryQaModule").then(m => m.FactoryQaModule), { ssr: false });
+const FactoryRdModule = dynamic(() => import("@/frontend/factory/rd/FactoryRdModule").then(m => m.FactoryRdModule), { ssr: false });
+const FactoryDeviceModule = dynamic(() => import("@/frontend/factory/device/FactoryDeviceModule"), { ssr: false });
+const FactoryKitModule = dynamic(() => import("@/frontend/factory/kit/FactoryKitModule"), { ssr: false });
+const FactoryAnalyticsModule = dynamic(() => import("@/frontend/factory/analytics/FactoryAnalyticsModule"), { ssr: false });
+const FactoryExcelImportModule = dynamic(() => import("@/frontend/factory/import/FactoryExcelImportModule"), { ssr: false });
+
+const VALID_TABS: MainTab[] = [
+  "workspace", "sales", "warehouse", "application", "procurement", "legal", "chat", "zalo", "settings",
+  "factory-warehouse", "factory-settings", "factory-qa", "factory-purchase", "factory-orders",
+  "factory-oligo", "factory-rd", "factory-device", "factory-kit", "factory-analytics", "factory-import"
+];
+
 export default function Home() {
   const [activeTab, setActiveTabState] = useState<MainTab>(() => {
     if (typeof window !== "undefined") {
       try {
         const params = new URLSearchParams(window.location.search);
         const tabParam = params.get("tab") as MainTab | null;
-        const validTabs: MainTab[] = ["workspace", "sales", "warehouse", "application", "procurement", "legal", "chat", "zalo", "settings"];
-        if (tabParam && validTabs.includes(tabParam)) {
+        if (tabParam && VALID_TABS.includes(tabParam)) {
           return tabParam;
         }
-      } catch (e) {}
+      } catch {}
     }
     return "workspace";
   });
@@ -46,11 +64,11 @@ export default function Home() {
         const url = new URL(window.location.href);
         const prevTab = url.searchParams.get("tab");
         url.searchParams.set("tab", nextTab);
-        if (prevTab && prevTab !== nextTab) {
+        if (prevTab && prevTab !== nextTab && nextTab !== "sales") {
           url.searchParams.delete("sub");
         }
         window.history.replaceState({}, "", url.toString());
-      } catch (e) {}
+      } catch {}
     }
   };
 
@@ -60,17 +78,15 @@ export default function Home() {
       try {
         const params = new URLSearchParams(window.location.search);
         const tabParam = params.get("tab") as MainTab | null;
-        const validTabs: MainTab[] = ["workspace", "sales", "warehouse", "application", "procurement", "legal", "chat", "zalo", "settings"];
-        const initial = tabParam && validTabs.includes(tabParam) ? tabParam : activeTab;
+        const initial = tabParam && VALID_TABS.includes(tabParam) ? tabParam : activeTab;
         setActiveTabState(initial);
         setVisitedTabs(prev => ({ ...prev, [initial]: true }));
-      } catch (e) {}
+      } catch {}
     }
   }, []);
 
-  // Tự động làm ấm bộ nhớ đệm (prefetch ngầm) cho các phân hệ người dùng được cấp quyền
   useEffect(() => {
-    if (!user) return;
+    if (!user || user.mustChangePassword) return;
     const t = setTimeout(() => {
       try {
         if (activeTab !== "workspace") fetch("/api/workflows?action=overview").catch(() => {});
@@ -125,7 +141,6 @@ export default function Home() {
     return () => window.removeEventListener("tbr-navigate" as any, handleNav);
   }, []);
 
-  // Tự động chuyển hướng về phân hệ được cấp quyền nếu người dùng vô tình truy cập phân hệ bị ẩn
   useEffect(() => {
     if (!user) return;
     const tabPermissionMap: Record<string, string> = {
@@ -148,8 +163,8 @@ export default function Home() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900 text-slate-300">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-3 border-orange-500 border-t-transparent rounded-full animate-spin" />
-          <span className="text-xs font-mono">Đang kết nối TBR Portal...</span>
+          <div className="w-8 h-8 border-3 border-sky-500 border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs font-mono">Đang kết nối ABT Portal...</span>
         </div>
       </div>
     );
@@ -159,7 +174,6 @@ export default function Home() {
     return <LoginScreen />;
   }
 
-  // Mật khẩu mặc định / tạm thời: bắt buộc đổi trước khi vào hệ thống (máy chủ cũng chặn mọi API khác)
   if (user.mustChangePassword) {
     return <AccountSecurityModal forced />;
   }
@@ -170,6 +184,10 @@ export default function Home() {
 
       <main className="flex-1 w-full px-2 sm:px-4 lg:px-6 py-3.5 sm:py-4 pb-24 lg:pb-5">
         <DataSyncGate key={user.username || user.id}>
+          {BUSINESS_TABS.includes(activeTab) && <BusinessTabs active={activeTab} onChange={setActiveTab} />}
+          {TECHNICAL_TABS.includes(activeTab) && <TechnicalTabs active={activeTab} onChange={setActiveTab} />}
+          {SETTINGS_TABS.includes(activeTab) && <SettingsTabs active={activeTab} onChange={setActiveTab} />}
+
           {(activeTab === "workspace" || visitedTabs.workspace) && (
             <div className={activeTab === "workspace" ? "block" : "hidden"}>
               <UnifiedWorkspace />
@@ -215,13 +233,22 @@ export default function Home() {
               <SettingsModule initialSubTab={settingsSubTab} />
             </div>
           )}
+
+          {activeTab === "factory-warehouse" && <FactoryWarehouseModule />}
+          {activeTab === "factory-settings" && <FactorySettingsModule />}
+          {activeTab === "factory-orders" && <FactoryOrdersModule />}
+          {activeTab === "factory-oligo" && <FactoryOligoModule />}
+          {activeTab === "factory-rd" && <FactoryRdModule />}
+          {activeTab === "factory-device" && <FactoryDeviceModule />}
+          {activeTab === "factory-kit" && <FactoryKitModule />}
+          {activeTab === "factory-purchase" && <FactoryPurchaseModule />}
+          {activeTab === "factory-qa" && <FactoryQaModule />}
+          {activeTab === "factory-analytics" && <FactoryAnalyticsModule />}
+          {activeTab === "factory-import" && <FactoryExcelImportModule />}
         </DataSyncGate>
       </main>
 
-      {/* Floating Quick Chat Widget accessible across all modules */}
       <FloatingChatWidget activeTab={activeTab} setActiveTab={setActiveTab} />
-
-      {/* Bổ sung ô gõ tìm nhanh cho mọi danh sách xổ (select) trong portal */}
       <SearchableSelectEnhancer />
     </div>
   );

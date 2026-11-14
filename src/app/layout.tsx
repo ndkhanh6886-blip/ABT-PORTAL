@@ -3,6 +3,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/frontend/contexts/ThemeContext";
 import { AuthProvider } from "@/frontend/contexts/AuthContext";
 import { NotificationProvider } from "@/frontend/contexts/NotificationContext";
+import { FactoryProvider } from "@/frontend/factory/FactoryProvider";
 import ErrorBoundary from "@/frontend/components/ErrorBoundary";
 
 export const metadata: Metadata = {
@@ -34,11 +35,13 @@ export default function RootLayout({
       </head>
       <body className="font-sans antialiased">
         <ErrorBoundary>
-          <AuthProvider>
-            <NotificationProvider>
-              <ThemeProvider>{children}</ThemeProvider>
-            </NotificationProvider>
-          </AuthProvider>
+          <FactoryProvider>
+            <AuthProvider>
+              <NotificationProvider>
+                <ThemeProvider>{children}</ThemeProvider>
+              </NotificationProvider>
+            </AuthProvider>
+          </FactoryProvider>
         </ErrorBoundary>
       </body>
     </html>
