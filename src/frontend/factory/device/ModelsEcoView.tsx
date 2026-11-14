@@ -2220,9 +2220,9 @@ export function ModelsEcoView({
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                       {specsEditList.map((sp, idx) => (
-                        <div key={idx} className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded-lg p-2.5">
+                        <div key={idx} className="bg-slate-900 border border-slate-800 rounded-lg p-2.5">
                           {isEditingBom ? (
-                            <>
+                            <div className="grid grid-cols-[5fr_7fr_28px] gap-2 items-center">
                               <input
                                 value={sp.key}
                                 onChange={(e) => {
@@ -2230,8 +2230,8 @@ export function ModelsEcoView({
                                   next[idx] = { ...sp, key: e.target.value };
                                   setSpecsEditList(next);
                                 }}
-                                placeholder="Tên thông số"
-                                className="w-1/2 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300"
+                                placeholder="Tên thông số (VD: Công suất)"
+                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-slate-300"
                               />
                               <input
                                 value={sp.value}
@@ -2240,8 +2240,8 @@ export function ModelsEcoView({
                                   next[idx] = { ...sp, value: e.target.value };
                                   setSpecsEditList(next);
                                 }}
-                                placeholder="Giá trị"
-                                className="flex-1 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-emerald-400 font-bold"
+                                placeholder="Giá trị (VD: ~180W)"
+                                className="w-full bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-emerald-400 font-bold"
                               />
                               <button
                                 type="button"
@@ -2250,7 +2250,7 @@ export function ModelsEcoView({
                               >
                                 🗑️
                               </button>
-                            </>
+                            </div>
                           ) : (
                             <div className="flex justify-between w-full text-xs">
                               <span className="text-slate-400">{sp.key}:</span>
@@ -2702,24 +2702,72 @@ export function ModelsEcoView({
               </div>
 
               <div className="border-t border-slate-800 pt-3">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="font-bold text-slate-300">Thông số kỹ thuật tiêu chuẩn hiển thị trên thẻ:</span>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEqForm({
-                        ...eqForm,
-                        specs_list: [...eqForm.specs_list, { key: "", value: "" }],
-                      })
-                    }
-                    className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded text-xs font-bold cursor-pointer"
-                  >
-                    + Thêm dòng thông số
-                  </button>
+                <div className="flex flex-wrap justify-between items-center gap-2 mb-2">
+                  <div>
+                    <span className="font-bold text-slate-300">Thông số kỹ thuật tiêu chuẩn hiển thị trên thẻ:</span>
+                    <p className="text-[11px] text-slate-400">
+                      Cột trái nhập <b>Tên thông số</b> (VD: Công suất), cột phải nhập <b>Giá trị / Định mức</b> (VD: ~180W / 220V-50Hz).
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEqForm({
+                          ...eqForm,
+                          specs_list: [
+                            { key: "Công suất", value: "~180W (220V / 50Hz)" },
+                            { key: "Cường độ sáng", value: "≥ 750 lux" },
+                            { key: "Kích thước trong (DxRxC)", value: "935 x 590 x 620 mm" },
+                            { key: "Kích thước ngoài (DxRxC)", value: "1000 x 742 x 1200 mm" },
+                          ],
+                        })
+                      }
+                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
+                      title="Nạp bộ thông số mẫu cho Tủ thao tác PCR / Tủ ATSH"
+                    >
+                      ⚡ Mẫu Tủ PCR
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEqForm({
+                          ...eqForm,
+                          specs_list: [
+                            { key: "Công suất xử lý", value: "1 – 32 mẫu / mẻ" },
+                            { key: "Thể tích làm việc", value: "50 – 1000 µL" },
+                            { key: "Độ thu hồi hạt từ", value: "≥ 98%" },
+                            { key: "Kích thước ngoài (DxRxC)", value: "400 x 470 x 450 mm" },
+                          ],
+                        })
+                      }
+                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer"
+                      title="Nạp bộ thông số mẫu cho Máy tách chiết tự động"
+                    >
+                      ⚡ Mẫu Máy Tách Chiết
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEqForm({
+                          ...eqForm,
+                          specs_list: [...eqForm.specs_list, { key: "", value: "" }],
+                        })
+                      }
+                      className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded text-xs font-bold cursor-pointer"
+                    >
+                      + Thêm dòng thông số
+                    </button>
+                  </div>
+                </div>
+                <div className="grid grid-cols-[5fr_7fr_36px] gap-2 px-1 pb-1 text-[11px] font-bold text-slate-400">
+                  <span>Tên thông số kỹ thuật (Cột trái)</span>
+                  <span>Giá trị / Định mức hiển thị (Cột phải)</span>
+                  <span className="text-center">Xóa</span>
                 </div>
                 <div className="space-y-2">
                   {eqForm.specs_list.map((sp, i) => (
-                    <div key={i} className="flex gap-2">
+                    <div key={i} className="grid grid-cols-[5fr_7fr_36px] gap-2 items-center">
                       <input
                         value={sp.key}
                         onChange={(e) => {
@@ -2727,8 +2775,8 @@ export function ModelsEcoView({
                           next[i] = { ...sp, key: e.target.value };
                           setEqForm({ ...eqForm, specs_list: next });
                         }}
-                        placeholder="Tên thông số (VD: Kích thước ngoài)"
-                        className={`${inputClass} w-1/2`}
+                        placeholder="Tên thông số (VD: Công suất)"
+                        className={inputClass}
                       />
                       <input
                         value={sp.value}
@@ -2737,8 +2785,8 @@ export function ModelsEcoView({
                           next[i] = { ...sp, value: e.target.value };
                           setEqForm({ ...eqForm, specs_list: next });
                         }}
-                        placeholder="Giá trị (VD: 1000 x 742 x 1200 mm)"
-                        className={`${inputClass} flex-1`}
+                        placeholder="Nhập giá trị (VD: ~180W, ≥ 750 lux, 1000 x 742 x 1200 mm...)"
+                        className={`${inputClass} font-semibold`}
                       />
                       <button
                         type="button"
@@ -2748,7 +2796,8 @@ export function ModelsEcoView({
                             specs_list: eqForm.specs_list.filter((_, idx) => idx !== i),
                           })
                         }
-                        className="text-rose-400 px-2"
+                        className="text-rose-400 hover:text-rose-300 flex items-center justify-center h-9 rounded-lg hover:bg-rose-500/10 cursor-pointer"
+                        title="Xóa dòng thông số này"
                       >
                         🗑️
                       </button>
