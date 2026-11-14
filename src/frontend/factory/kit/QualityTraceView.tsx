@@ -4,7 +4,9 @@ import React, { useCallback, useEffect, useState } from "react";
 import { ActionBar } from "../actions";
 import { api, fmtDate, fmtDateTime, fmtQty } from "../api";
 import { printKitCoaCertificate } from "../coa";
+import { type QcFormsConfig } from "../qcSignatures";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { QcDocumentPreview } from "../qa/QcDocumentPreview";
 import { ACTION_LABELS, type KitOptions } from "./shared";
 
 export function QualityTraceView({ options }: { options: KitOptions }) {
@@ -14,6 +16,7 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
   const [retains, setRetains] = useState<any[]>([]);
   const [studies, setStudies] = useState<any[]>([]);
   const [coas, setCoas] = useState<any[]>([]);
+  const [qcFormsConfig, setQcFormsConfig] = useState<Partial<QcFormsConfig> | null>(null);
   const [selectedCoa, setSelectedCoa] = useState<any | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [showCreateRetain, setShowCreateRetain] = useState(false);
@@ -40,12 +43,16 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
   const loadQuality = useCallback(async () => {
     setError(null);
     try {
-      const res = await api<{ retain_samples: any[]; stability_studies: any[]; coas: any[] }>(
-        "/api/factory/kit/quality"
-      );
+      const res = await api<{
+        retain_samples: any[];
+        stability_studies: any[];
+        coas: any[];
+        qc_forms_config?: Partial<QcFormsConfig>;
+      }>("/api/factory/kit/quality");
       setRetains(res.retain_samples);
       setStudies(res.stability_studies);
       setCoas(res.coas);
+      setQcFormsConfig(res.qc_forms_config ?? null);
     } catch (e) {
       setError(e);
     }
@@ -313,9 +320,17 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
                       {c.analyst_name && <div className="text-stone-500">KN: {c.analyst_name}</div>}
                       <div className="font-semibold text-emerald-700 dark:text-emerald-400">Duyệt: {c.issued_by_name}</div>
                       <div className="text-stone-500 mb-1">{fmtDateTime(c.issued_at)}</div>
-                      <Button variant="ghost" onClick={() => setSelectedCoa(c)}>
-                        📄 Xem &amp; In COA Song ngữ
-                      </Button>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        <Button variant="ghost" onClick={() => setSelectedCoa(c)}>
+                          📄 Xem &amp; Xuất COA (VI / EN)
+                        </Button>
+                        <Button variant="ghost" onClick={() => printKitCoaCertificate(c, qcFormsConfig, "VI")}>
+                          🇻🇳 Việt
+                        </Button>
+                        <Button variant="ghost" onClick={() => printKitCoaCertificate(c, qcFormsConfig, "EN")}>
+                          🇬🇧 EN
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -325,132 +340,14 @@ export function QualityTraceView({ options }: { options: KitOptions }) {
 
           {selectedCoa && (
             <Card
-              title={`Bản in Chứng nhận Phân tích Song ngữ — CERTIFICATE OF ANALYSIS (${selectedCoa.code} · Ánh xạ từ Phòng QA/QC)`}
+              title={`Chứng nhận Phân tích Xuất xưởng — ${selectedCoa.code} (BM-QC-COA-01 · Ánh xạ từ Phòng QA/QC)`}
               actions={
-                <div className="flex gap-2">
-                  <Button onClick={() => printKitCoaCertificate(selectedCoa)}>🖨️ In COA (Print / PDF)</Button>
-                  <Button variant="ghost" onClick={() => setSelectedCoa(null)}>
-                    Đóng
-                  </Button>
-                </div>
+                <Button variant="ghost" onClick={() => setSelectedCoa(null)}>
+                  Đóng
+                </Button>
               }
             >
-              <div className="p-6 border-2 border-stone-800 rounded-xl bg-white text-stone-900 space-y-4">
-                <div className="text-center border-b-2 border-stone-800 pb-3">
-                  <div className="text-xs font-bold tracking-widest text-sky-900">
-                    CÔNG TY TNHH GIẢI PHÁP Y SINH ABT — ABT BIOLOGICAL SOLUTIONS CO., LTD
-                  </div>
-                  <div className="text-lg font-extrabold uppercase mt-1">
-                    GIẤY CHỨNG NHẬN PHÂN TÍCH / CERTIFICATE OF ANALYSIS (COA)
-                  </div>
-                  <div className="text-xs font-mono text-stone-600">
-                    Số chứng nhận / Certificate No.: <strong>{selectedCoa.code}</strong>
-                    {selectedCoa.qc_test_code ? <> · Phiếu QC gốc / QC Test Ref: <strong>{selectedCoa.qc_test_code}</strong></> : null}
-                    {" "}· Cấp bởi Phòng QA/QC (ISO 13485:2016)
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs bg-stone-50 p-3 rounded-lg border border-stone-200">
-                  <div>
-                    <div className="text-stone-500">Tên sản phẩm / Product Name:</div>
-                    <div className="font-bold">{selectedCoa.product_name}</div>
-                  </div>
-                  <div>
-                    <div className="text-stone-500">Mã sản phẩm / Catalog No. (REF):</div>
-                    <div className="font-mono font-bold">{selectedCoa.product_code}</div>
-                  </div>
-                  <div>
-                    <div className="text-stone-500">Số lô / Lot Number (LOT):</div>
-                    <div className="font-mono font-bold text-sky-800">{selectedCoa.lot_code}</div>
-                  </div>
-                  <div>
-                    <div className="text-stone-500">Ngày sản xuất / Manufacturing Date:</div>
-                    <div className="font-semibold">{fmtDate(selectedCoa.mfg_date)}</div>
-                  </div>
-                  <div>
-                    <div className="text-stone-500">Hạn sử dụng / Expiry Date:</div>
-                    <div className="font-semibold">{fmtDate(selectedCoa.expiry_date)}</div>
-                  </div>
-                  <div>
-                    <div className="text-stone-500">Quy cách &amp; Độ pH / Spec &amp; Actual pH:</div>
-                    <div className="font-semibold">
-                      {selectedCoa.tests_per_kit} tests ({fmtQty(selectedCoa.good_qty)} {selectedCoa.uom})
-                      {selectedCoa.actual_ph ? ` · pH thực tế: ${selectedCoa.actual_ph}` : ""}
-                    </div>
-                  </div>
-                </div>
-
-                {Array.isArray(selectedCoa.packaging_snapshot) && selectedCoa.packaging_snapshot.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="text-xs font-bold uppercase text-stone-700">
-                      1. Quy cách đóng gói thành phần / Kit Components &amp; Packaging
-                    </div>
-                    <Table head={["Hộp / Box", "Thành phần / Component", "Quy cách ống / Volume", "Số lượng / Qty", "Bảo quản / Storage"]}>
-                      {selectedCoa.packaging_snapshot.map((pk: any, idx: number) => (
-                        <tr key={idx}>
-                          <td className="px-3 py-1.5 text-xs">
-                            Hộp {pk.box_no}: {pk.box_name}
-                          </td>
-                          <td className="px-3 py-1.5 text-xs font-semibold">{pk.component_name}</td>
-                          <td className="px-3 py-1.5 text-xs font-mono">
-                            {fmtQty(pk.fill_qty)} {pk.fill_uom}
-                          </td>
-                          <td className="px-3 py-1.5 text-xs">{pk.units_per_kit} ống/Kit</td>
-                          <td className="px-3 py-1.5 text-xs font-mono">{pk.storage_temp}</td>
-                        </tr>
-                      ))}
-                    </Table>
-                  </div>
-                )}
-
-                <div className="space-y-1">
-                  <div className="text-xs font-bold uppercase text-stone-700">
-                    2. Kết quả kiểm nghiệm chất lượng (Do Phòng QA/QC Cấp) / Quality Control Results
-                  </div>
-                  <Table head={["#", "Chỉ tiêu kiểm nghiệm / Parameter", "Phương pháp / Method", "Yêu cầu / Specification", "Kết quả QC / Observed Result", "Kết luận / Result"]}>
-                    {(Array.isArray(selectedCoa.qc_results_snapshot) ? selectedCoa.qc_results_snapshot : []).map(
-                      (st: any, idx: number) => (
-                        <tr key={idx}>
-                          <td className="px-3 py-1.5 text-xs font-mono">{st.seq ?? idx + 1}</td>
-                          <td className="px-3 py-1.5 text-xs font-semibold">
-                            {st.parameter_name ?? `${st.step_code ?? ""} — ${st.step_name ?? ""}`}
-                          </td>
-                          <td className="px-3 py-1.5 text-xs">{st.method ?? "SOP-QC"}</td>
-                          <td className="px-3 py-1.5 text-xs font-mono">{st.spec_limit ?? "Đạt chuẩn / Conforms"}</td>
-                          <td className="px-3 py-1.5 text-xs font-mono font-semibold">
-                            {st.observed_value ??
-                              (st.param_values && Object.keys(st.param_values).length > 0
-                                ? Object.entries(st.param_values)
-                                    .map(([k, v]) => `${k}: ${v}`)
-                                    .join(" · ")
-                                : "Đạt chuẩn quy trình / Conforms")}
-                          </td>
-                          <td className="px-3 py-1.5 text-xs font-bold text-emerald-700">
-                            {st.passed === false ? "KHÔNG ĐẠT / FAIL" : "ĐẠT / PASS"}
-                          </td>
-                        </tr>
-                      )
-                    )}
-                  </Table>
-                </div>
-
-                <div className="flex items-center justify-between pt-3 border-t border-stone-300 text-xs">
-                  <div>
-                    <div>
-                      Kết luận xuất xưởng / Final Disposition: <strong className="text-emerald-700">{selectedCoa.qc_summary}</strong>
-                    </div>
-                    {selectedCoa.analyst_name && (
-                      <div className="text-stone-600">Chuyên viên kiểm nghiệm / QC Analyst: <strong>{selectedCoa.analyst_name}</strong></div>
-                    )}
-                    <div className="text-stone-500">Chứng nhận điện tử do Phòng QA/QC cấp phát tuân thủ 21 CFR Part 11 &amp; ISO 13485</div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-bold">Phòng QA/QC Phê duyệt &amp; Cấp COA / Approved by QA/QC:</div>
-                    <div className="font-mono text-sky-900 font-semibold">{selectedCoa.issued_by_name}</div>
-                    <div className="text-stone-500">{fmtDateTime(selectedCoa.issued_at)}</div>
-                  </div>
-                </div>
-              </div>
+              <QcDocumentPreview kind="COA" data={selectedCoa} formsConfig={qcFormsConfig} />
             </Card>
           )}
         </div>

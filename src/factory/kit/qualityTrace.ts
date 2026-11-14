@@ -11,6 +11,7 @@ import { allocate, findCandidates } from "../inv/allocation";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { getItem, toBaseQty } from "../master/service";
 import { raiseDeviation } from "../qms/incidents";
+import { loadQcFormsConfig } from "../qms/qaOps";
 import { productionOrderMachine } from "./ordersEbr";
 import "./permissions";
 
@@ -497,15 +498,37 @@ export async function listQualityRecords(tx: Tx, actor: AuthzActor) {
 
   const coas = (
     await tx.query(
-      `SELECT c.*, po.actual_ph::float AS actual_ph,
+      `SELECT c.*, po.code AS order_code, io.kd_po_code AS kd_po_code, po.actual_ph::float AS actual_ph,
+              COALESCE(b.tccs_code, b_item.tccs_code) AS tccs_code,
+              COALESCE(b.specification, b_item.specification) AS bom_specification,
+              COALESCE(b.storage_condition, b_item.storage_condition) AS bom_storage_condition,
+              COALESCE(b.shelf_life_months, b_item.shelf_life_months) AS shelf_life_months,
+              i.storage_condition AS item_storage_condition,
+              rv.display_name AS reviewer_name,
               (c.superseded_by_id IS NOT NULL OR EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)) AS is_superseded
          FROM kit.coa_certificate c
          LEFT JOIN kit.production_order po ON po.id = c.production_order_id
+         LEFT JOIN intake.internal_order_line iol ON iol.id = po.internal_order_line_id
+         LEFT JOIN intake.internal_order io ON io.id = iol.order_id
+         LEFT JOIN inv.lot l ON l.id = c.lot_id
+         LEFT JOIN master.item i ON i.id = l.item_id
+         LEFT JOIN kit.bom b ON b.id = po.bom_id
+         LEFT JOIN LATERAL (
+           SELECT b2.tccs_code, b2.specification, b2.storage_condition, b2.shelf_life_months
+             FROM kit.bom b2
+            WHERE b2.product_item_id = l.item_id
+            ORDER BY (b2.status = 'EFFECTIVE') DESC, b2.bom_version DESC
+            LIMIT 1
+         ) b_item ON po.bom_id IS NULL AND l.item_id IS NOT NULL
+         LEFT JOIN qms.qc_test qt ON qt.id = c.qc_test_id
+         LEFT JOIN core.user_profile rv ON rv.user_id = qt.reviewer_id
         ORDER BY c.issued_at DESC, c.revision_no DESC LIMIT 100`
     )
   ).rows;
 
-  return { retain_samples, stability_studies, coas };
+  const { qcFormsConfig } = await loadQcFormsConfig(tx);
+
+  return { retain_samples, stability_studies, coas, qc_forms_config: qcFormsConfig };
 }
 
 /**

@@ -10,7 +10,35 @@ import { insertSignature, recordHash, type SignatureCredential } from "../core/s
 import { raiseDeviation } from "./incidents";
 import { createQcTest, registerQcSubject, runTransition } from "./qcTests";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
+import { normalizeQcFormsConfig, type QcFormsConfig } from "../../frontend/factory/qcSignatures";
 import "./permissions";
+
+const QC_FORMS_SETTING_KEY = "qms.qc_forms_config";
+
+export async function loadQcFormsConfig(tx: Tx): Promise<{ coaTemplate: any; qcFormsConfig: QcFormsConfig }> {
+  const coaTplRow = (await tx.query("SELECT * FROM qms.coa_template_config WHERE id = 1")).rows[0] ?? null;
+  let formsSettingVal: Partial<QcFormsConfig> | null = null;
+  try {
+    const settingRow = (await tx.query("SELECT value FROM core.setting WHERE key = $1", [QC_FORMS_SETTING_KEY])).rows[0];
+    if (settingRow?.value && typeof settingRow.value === "object") {
+      formsSettingVal = settingRow.value as Partial<QcFormsConfig>;
+    }
+  } catch {
+    // core.setting may be minimal in stripped unit test DBs
+  }
+  const qcFormsConfig = normalizeQcFormsConfig(coaTplRow, formsSettingVal);
+  const coaTemplate = coaTplRow ?? {
+    company_name: `${qcFormsConfig.company_name_vi} — ${qcFormsConfig.company_name_en}`,
+    document_title: `${qcFormsConfig.coa.title_bi_main} / ${qcFormsConfig.coa.title_bi_sub}`,
+    iso_subtitle: qcFormsConfig.iso_badge_vi,
+    address_line: qcFormsConfig.address_vi,
+    footer_statement: qcFormsConfig.footer_note,
+    approver_title: `${qcFormsConfig.manager_label_vi} / ${qcFormsConfig.manager_label_en}`,
+    results_display_mode: qcFormsConfig.coa.results_mode,
+    default_coa_parameters: qcFormsConfig.coa.custom_summary_rows,
+  };
+  return { coaTemplate, qcFormsConfig };
+}
 
 registerQcSubject("LOT", {
   label: async (tx, id) => {
@@ -232,25 +260,38 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
     await tx.query(
       `SELECT c.*,
               po.code AS order_code,
+              io.kd_po_code AS kd_po_code,
               po.actual_ph::float AS actual_ph,
+              COALESCE(b.tccs_code, b_item.tccs_code) AS tccs_code,
+              COALESCE(b.specification, b_item.specification) AS bom_specification,
+              COALESCE(b.storage_condition, b_item.storage_condition) AS bom_storage_condition,
+              COALESCE(b.shelf_life_months, b_item.shelf_life_months) AS shelf_life_months,
+              i.storage_condition AS item_storage_condition,
+              rv.display_name AS reviewer_name,
               (c.superseded_by_id IS NOT NULL OR EXISTS (SELECT 1 FROM kit.coa_certificate child WHERE child.amended_from_id = c.id)) AS is_superseded
          FROM kit.coa_certificate c
          LEFT JOIN kit.production_order po ON po.id = c.production_order_id
+         LEFT JOIN intake.internal_order_line iol ON iol.id = po.internal_order_line_id
+         LEFT JOIN intake.internal_order io ON io.id = iol.order_id
+         LEFT JOIN inv.lot l ON l.id = c.lot_id
+         LEFT JOIN master.item i ON i.id = l.item_id
+         LEFT JOIN kit.bom b ON b.id = po.bom_id
+         LEFT JOIN LATERAL (
+           SELECT b2.tccs_code, b2.specification, b2.storage_condition, b2.shelf_life_months
+             FROM kit.bom b2
+            WHERE b2.product_item_id = l.item_id
+            ORDER BY (b2.status = 'EFFECTIVE') DESC, b2.bom_version DESC
+            LIMIT 1
+         ) b_item ON po.bom_id IS NULL AND l.item_id IS NOT NULL
+         LEFT JOIN qms.qc_test qt ON qt.id = c.qc_test_id
+         LEFT JOIN core.user_profile rv ON rv.user_id = qt.reviewer_id
         ORDER BY c.issued_at DESC, c.revision_no DESC
         LIMIT 100`
     )
   ).rows;
 
-  // 8. Global COA Template Configuration
-  const coaTemplate =
-    (await tx.query("SELECT * FROM qms.coa_template_config WHERE id = 1")).rows[0] ?? {
-      company_name: "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT — ABT BIOLOGICAL SOLUTIONS CO., LTD",
-      document_title: "GIẤY CHỨNG NHẬN PHÂN TÍCH / CERTIFICATE OF ANALYSIS (COA)",
-      iso_subtitle: "Do Phòng QA/QC Cấp Phát (ISO 13485:2016 & GMP-IVD)",
-      address_line: "Nhà máy & Phòng Lab QA/QC Đạt Chuẩn ISO 13485:2016",
-      footer_statement: "Chứng nhận điện tử cấp bởi Phòng QA/QC tuân thủ 21 CFR Part 11 & ISO 13485",
-      approver_title: "Phòng QA/QC Phê duyệt & Cấp COA / Approved by QA/QC:",
-    };
+  // 8. Global COA & QC Report Template Configuration
+  const { coaTemplate, qcFormsConfig } = await loadQcFormsConfig(tx);
 
   return {
     reception_queue: queueLots,
@@ -261,6 +302,7 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
     retention_samples: retentionSamples,
     issued_coas: issuedCoas,
     coa_template: coaTemplate,
+    qc_forms_config: qcFormsConfig,
   };
 }
 
@@ -618,13 +660,58 @@ export async function issueCoaFromQcTest(
     };
   });
 
+  let testsPerKit = 0;
+  let tccsCode: string | null = null;
+  let packRows: any[] = [];
+  if (order?.bom_id) {
+    const bomRow = (await tx.query("SELECT tests_per_kit, tccs_code FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0];
+    if (bomRow?.tests_per_kit) testsPerKit = Number(bomRow.tests_per_kit);
+    if (bomRow?.tccs_code) tccsCode = String(bomRow.tccs_code).trim() || null;
+    packRows = (
+      await tx.query("SELECT * FROM kit.kit_packaging WHERE bom_id = $1 ORDER BY box_no, id", [order.bom_id])
+    ).rows;
+  } else {
+    const bomItemRow = (
+      await tx.query(
+        "SELECT tests_per_kit, tccs_code FROM kit.bom WHERE product_item_id = $1 ORDER BY (status = 'EFFECTIVE') DESC, bom_version DESC LIMIT 1",
+        [lot.item_id]
+      )
+    ).rows[0];
+    if (bomItemRow?.tccs_code) tccsCode = String(bomItemRow.tccs_code).trim() || null;
+    if (bomItemRow?.tests_per_kit) testsPerKit = Number(bomItemRow.tests_per_kit);
+    else if (String(lot.base_uom ?? "").toUpperCase() === "KIT") testsPerKit = 50;
+  }
+
   // Gather COA template config to determine how parameters should be displayed on the COA
-  const tplCfg = (await tx.query("SELECT * FROM qms.coa_template_config WHERE id = 1")).rows[0];
-  const displayMode: string = tplCfg?.results_display_mode ?? "MEASURED_VALUES";
-  const tplDefaultParams: any[] = Array.isArray(tplCfg?.default_coa_parameters) ? tplCfg.default_coa_parameters : [];
+  const { qcFormsConfig } = await loadQcFormsConfig(tx);
+  const displayMode: string = qcFormsConfig.coa.results_mode ?? "TCCS_CONFORMANCE";
+  const tplDefaultParams = qcFormsConfig.coa.custom_summary_rows;
 
   let finalCoaResults = qcParamRows;
-  if (displayMode === "SUMMARY_TEMPLATE" && tplDefaultParams.length > 0) {
+  if (displayMode === "TCCS_CONFORMANCE") {
+    const resolvedTccs = tccsCode || test.spec_code || "";
+    const tccsSpecText = resolvedTccs
+      ? qcFormsConfig.coa.tccs_spec_template_vi.replace(/\{TCCS\}/g, resolvedTccs)
+      : qcFormsConfig.coa.tccs_spec_fallback_vi;
+    const isPass = test.overall_result !== "FAIL";
+    finalCoaResults = [
+      {
+        seq: 1,
+        source: "COA_TCCS",
+        parameter_name: qcFormsConfig.coa.tccs_param_vi,
+        method: qcFormsConfig.coa.tccs_method_vi,
+        spec_limit: tccsSpecText,
+        observed_value: isPass ? "ĐẠT (PASS)" : "KHÔNG ĐẠT (FAIL)",
+        passed: isPass,
+        step_code: "COA-01",
+        step_name: qcFormsConfig.coa.tccs_param_vi,
+        param_values: {
+          "Yêu cầu": tccsSpecText,
+          "Kết quả QC": isPass ? "ĐẠT (PASS)" : "KHÔNG ĐẠT (FAIL)",
+        },
+      },
+    ];
+  } else if (displayMode === "SUMMARY_TEMPLATE" && tplDefaultParams.length > 0) {
     finalCoaResults = tplDefaultParams.map((p: any, idx: number) => ({
       seq: p.seq ?? idx + 1,
       source: "COA_TEMPLATE",
@@ -670,18 +757,6 @@ export async function issueCoaFromQcTest(
       [test.id]
     )
   ).rows;
-
-  let testsPerKit = 0;
-  let packRows: any[] = [];
-  if (order?.bom_id) {
-    const bomRow = (await tx.query("SELECT tests_per_kit FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0];
-    if (bomRow?.tests_per_kit) testsPerKit = Number(bomRow.tests_per_kit);
-    packRows = (
-      await tx.query("SELECT * FROM kit.kit_packaging WHERE bom_id = $1 ORDER BY box_no, id", [order.bom_id])
-    ).rows;
-  } else if (String(lot.base_uom ?? "").toUpperCase() === "KIT") {
-    testsPerKit = 50;
-  }
 
   const ohRow = (
     await tx.query("SELECT COALESCE(SUM(qty_on_hand), 0)::float AS qty FROM inv.stock_balance WHERE lot_id = $1", [lot.id])
@@ -1433,40 +1508,93 @@ export async function triggerStabilityQcTest(tx: Tx, actor: AuthzActor, input: u
 const coaResultLineSchema = z.object({
   seq: z.coerce.number().int().min(1).optional(),
   parameter_name: z.string().trim().min(1),
+  parameter_name_en: z.string().trim().optional(),
   method: z.string().trim().default("SOP-QC"),
+  method_en: z.string().trim().optional(),
   spec_limit: z.string().trim().default("Đạt / Conforms"),
+  spec_limit_en: z.string().trim().optional(),
   observed_value: z.string().trim().default("Đạt / Pass"),
+  observed_value_en: z.string().trim().optional(),
   passed: z.boolean().default(true),
 });
 
+function isSafeSignatureUrl(url: string): boolean {
+  const s = url.trim();
+  if (!s) return false;
+  if (s.startsWith("/signatures/")) return true;
+  if (s.startsWith("https://")) return true;
+  if (/^data:image\/(png|jpeg|jpg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(s)) return true;
+  return false;
+}
+
 const coaTemplateSchema = z.object({
-  company_name: z.string().trim().min(3).max(300),
-  document_title: z.string().trim().min(3).max(300),
-  iso_subtitle: z.string().trim().max(300).default("Do Phòng QA/QC Cấp Phát (ISO 13485:2016)"),
+  company_name: z.string().trim().min(3).max(300).optional(),
+  document_title: z.string().trim().min(3).max(300).optional(),
+  iso_subtitle: z.string().trim().max(300).default("✓ HỆ THỐNG QUẢN LÝ CHẤT LƯỢNG ĐẠT TIÊU CHUẨN ISO 13485:2016 & ISO 9001:2015"),
   address_line: z.string().trim().max(400).default(""),
   footer_statement: z.string().trim().max(500).default(""),
-  approver_title: z.string().trim().max(250).default("Phòng QA/QC Phê duyệt & Cấp COA / Approved by QA/QC:"),
-  results_display_mode: z.enum(["MEASURED_VALUES", "SUMMARY_TEMPLATE", "CONFORMS_ONLY", "DETAILED_QC"]).default("MEASURED_VALUES"),
+  approver_title: z.string().trim().max(250).default("TRƯỞNG PHÒNG QC/QA / QC/QA Manager"),
+  results_display_mode: z
+    .enum(["TCCS_CONFORMANCE", "MEASURED_VALUES", "SUMMARY_TEMPLATE", "CONFORMS_ONLY", "DETAILED_QC"])
+    .default("TCCS_CONFORMANCE"),
   default_coa_parameters: z.array(coaResultLineSchema).default([]),
   apply_to_existing_coas: z.boolean().default(true),
+  qc_forms_config: z.record(z.unknown()).optional(),
 });
 
 /**
- * Updates the global COA Template Configuration (`qms.coa_template_config`) and syncs `core.setting`
- * (`company.coa_header`, `company.coa_footer`) so all printed COAs reflect the latest template.
+ * Updates the global QC Result Report (`BM-QC-TR-01`) & COA (`BM-QC-COA-01`) Configuration
+ * (`qms.coa_template_config` + `core.setting['qms.qc_forms_config']`) and syncs legacy header/footer settings.
+ * Never mutates historical `kit.coa_certificate` rows (21 CFR Part 11 append-only).
  */
 export async function saveCoaTemplateConfig(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensureQaOpsSchema(tx);
   await authorize(tx, actor, "qms.qc.review");
   const d = parseInput(coaTemplateSchema, input);
 
-  const normalizedParams = d.default_coa_parameters.map((r, i) => ({
+  const normalizedForms = normalizeQcFormsConfig(
+    {
+      results_display_mode: d.results_display_mode,
+      default_coa_parameters: d.default_coa_parameters,
+    },
+    d.qc_forms_config as Partial<QcFormsConfig> | undefined
+  );
+
+  // Sanitize any custom staff signature URLs to prevent unsafe schemes
+  normalizedForms.staff_signatures = normalizedForms.staff_signatures
+    .filter((s) => isSafeSignatureUrl(s.signature_url))
+    .map((s) => ({
+      ...s,
+      full_name: String(s.full_name).trim(),
+      signature_url: String(s.signature_url).trim(),
+    }));
+
+  const effectiveResultsMode: QcFormsConfig["coa"]["results_mode"] =
+    (d.qc_forms_config as Partial<QcFormsConfig> | undefined)?.coa?.results_mode ??
+    (d.results_display_mode === "MEASURED_VALUES" ? "DETAILED_QC" : d.results_display_mode);
+  normalizedForms.coa.results_mode = effectiveResultsMode;
+
+  const companyName = d.company_name?.trim() || `${normalizedForms.company_name_vi} — ${normalizedForms.company_name_en}`;
+  const docTitle = d.document_title?.trim() || `${normalizedForms.coa.title_bi_main} / ${normalizedForms.coa.title_bi_sub}`;
+  const isoSub = d.iso_subtitle || normalizedForms.iso_badge_vi;
+  const addressLine = d.address_line || normalizedForms.address_vi;
+  const footerStatement = d.footer_statement ?? normalizedForms.footer_note;
+  const approverTitle = d.approver_title || `${normalizedForms.manager_label_vi} / ${normalizedForms.manager_label_en}`;
+
+  const effectiveParams =
+    d.default_coa_parameters.length > 0 ? d.default_coa_parameters : normalizedForms.coa.custom_summary_rows;
+
+  const normalizedParams = effectiveParams.map((r, i) => ({
     seq: r.seq ?? i + 1,
     source: "COA_TEMPLATE",
     parameter_name: r.parameter_name,
+    parameter_name_en: r.parameter_name_en,
     method: r.method || "TCCS / SOP-QC",
+    method_en: r.method_en,
     spec_limit: r.spec_limit || "Đạt tiêu chuẩn / Conforms",
+    spec_limit_en: r.spec_limit_en,
     observed_value: r.observed_value || "Đạt tiêu chuẩn / Conforms",
+    observed_value_en: r.observed_value_en,
     passed: r.passed ?? true,
     step_code: `COA-${String(i + 1).padStart(2, "0")}`,
     step_name: r.parameter_name,
@@ -1475,6 +1603,8 @@ export async function saveCoaTemplateConfig(tx: Tx, actor: AuthzActor, input: un
       "Kết quả QC": r.observed_value || "Đạt tiêu chuẩn / Conforms",
     },
   }));
+
+  normalizedForms.coa.custom_summary_rows = normalizedParams;
 
   const row = (
     await tx.query(
@@ -1495,29 +1625,57 @@ export async function saveCoaTemplateConfig(tx: Tx, actor: AuthzActor, input: un
          updated_at = now()
        RETURNING *`,
       [
-        d.company_name,
-        d.document_title,
-        d.iso_subtitle,
-        d.address_line,
-        d.footer_statement,
-        d.approver_title,
-        d.results_display_mode,
+        companyName,
+        docTitle,
+        isoSub,
+        addressLine,
+        footerStatement,
+        approverTitle,
+        effectiveResultsMode,
         JSON.stringify(normalizedParams),
         actor.userId,
       ]
     )
   ).rows[0];
 
-  // Sync to core.setting (`company.coa_header` and `company.coa_footer`) for Phiếu KQ / Oligo COA printing
-  const headerStr = [d.company_name, d.address_line].filter(Boolean).join("\n");
-  const footerStr = d.footer_statement;
+  // Persist dual template settings & QC staff signature registry in core.setting
   await tx.query(
-    "UPDATE core.setting SET value = $2::jsonb, version = version + 1, updated_at = now(), updated_by = $3 WHERE key = $1",
-    ["company.coa_header", JSON.stringify(headerStr), actor.userId]
+    `INSERT INTO core.setting (key, value, description, version, updated_at, updated_by)
+     VALUES ($1, $2::jsonb, $3, 1, now(), $4)
+     ON CONFLICT (key) DO UPDATE SET
+       value = EXCLUDED.value,
+       version = core.setting.version + 1,
+       updated_at = now(),
+       updated_by = EXCLUDED.updated_by`,
+    [
+      QC_FORMS_SETTING_KEY,
+      JSON.stringify(normalizedForms),
+      "Cấu hình Biểu mẫu Phiếu trả kết quả QC (BM-QC-TR-01), Phiếu COA (BM-QC-COA-01) & Chữ ký Nhân viên QC",
+      actor.userId,
+    ]
+  );
+
+  // Sync to core.setting (`company.coa_header` and `company.coa_footer`) for Oligo COA / legacy printing
+  const headerStr = [companyName, addressLine].filter(Boolean).join("\n");
+  await tx.query(
+    `INSERT INTO core.setting (key, value, description, version, updated_at, updated_by)
+     VALUES ($1, $2::jsonb, $3, 1, now(), $4)
+     ON CONFLICT (key) DO UPDATE SET
+       value = EXCLUDED.value,
+       version = core.setting.version + 1,
+       updated_at = now(),
+       updated_by = EXCLUDED.updated_by`,
+    ["company.coa_header", JSON.stringify(headerStr), "Tiêu đề công ty trên COA", actor.userId]
   );
   await tx.query(
-    "UPDATE core.setting SET value = $2::jsonb, version = version + 1, updated_at = now(), updated_by = $3 WHERE key = $1",
-    ["company.coa_footer", JSON.stringify(footerStr), actor.userId]
+    `INSERT INTO core.setting (key, value, description, version, updated_at, updated_by)
+     VALUES ($1, $2::jsonb, $3, 1, now(), $4)
+     ON CONFLICT (key) DO UPDATE SET
+       value = EXCLUDED.value,
+       version = core.setting.version + 1,
+       updated_at = now(),
+       updated_by = EXCLUDED.updated_by`,
+    ["company.coa_footer", JSON.stringify(footerStatement), "Chân trang COA", actor.userId]
   );
 
   await writeAudit(tx, actor, {
@@ -1525,13 +1683,14 @@ export async function saveCoaTemplateConfig(tx: Tx, actor: AuthzActor, input: un
     entityId: "1",
     action: "update_template",
     changes: {
-      company_name: [null, d.company_name],
+      company_name: [null, companyName],
       results_display_mode: [null, d.results_display_mode],
       parameters_count: [null, normalizedParams.length],
+      staff_signatures_count: [null, normalizedForms.staff_signatures.length],
     },
   });
 
-  return row;
+  return { ...row, qc_forms_config: normalizedForms };
 }
 
 const updateCoaCertSchema = z.object({

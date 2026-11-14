@@ -5,8 +5,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate, fmtQty, useFactoryMe } from "../api";
 import { printKitCoaCertificate, printTestCoa } from "../coa";
+import {
+  DEFAULT_QC_FORMS_CONFIG,
+  normalizeQcFormsConfig,
+  type QcFormsConfig,
+  type QcStaffSignatureEntry,
+} from "../qcSignatures";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
-import { Barcode128 } from "../barcodeSvg";
+import { QcDocumentPreview } from "./QcDocumentPreview";
 
 interface QcRow {
   id: string;
@@ -99,16 +105,26 @@ function QcDetailPanel({
   id,
   standards,
   standardUsages,
+  formsConfig,
+  issuedCoas,
   onClose,
 }: {
   id: string;
   standards: any[];
   standardUsages: any[];
+  formsConfig: QcFormsConfig;
+  issuedCoas: any[];
   onClose: () => void;
 }) {
   const qc = useQueryClient();
   const me = useFactoryMe();
   const test = useQuery({ queryKey: ["factory", "qc-test", id], queryFn: () => api<QcDetail>(`/api/factory/qms/tests/${id}`) });
+  const [previewMode, setPreviewMode] = useState<null | "QC_REPORT" | "COA">(null);
+  const reportQuery = useQuery({
+    queryKey: ["factory", "qc-test-coa", id],
+    queryFn: () => api<any>(`/api/factory/qms/tests/${id}/coa`),
+    enabled: test.data?.status === "REVIEWED" && (previewMode !== null || Boolean(test.data?.coa_code)),
+  });
   const [values, setValues] = useState<Record<string, string>>({});
 
   // Reference Standard usage form state
@@ -240,6 +256,11 @@ function QcDetailPanel({
   const result = (pid: string) => t?.results.find((r) => r.parameter_id === pid);
   const linkedUsages = standardUsages.filter((u) => u.test_id === id);
   const activeStandards = standards.filter((s) => s.status === "ACTIVE");
+  const linkedCoa = t
+    ? issuedCoas.find((c) => c.qc_test_id === t.id || (t.coa_code && c.code === t.coa_code)) ??
+      reportQuery.data?.linked_coa ??
+      null
+    : null;
 
   return (
     <Card title={t ? `Phiếu ${t.code} — ${t.spec_code} rev ${t.spec_version} (${t.test_kind})` : "Phiếu QC"} actions={<Button variant="ghost" onClick={onClose}>Đóng</Button>}>
@@ -391,63 +412,109 @@ function QcDetailPanel({
           )}
 
           {t.status === "REVIEWED" && (
-            <div className="flex flex-wrap items-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
-              <Button variant="ghost" onClick={() => printTestCoa(t.id).catch((e) => window.alert(e.message))}>
-                🖨️ In phiếu kết quả &amp; COA (Bản QC)
-              </Button>
-              {["LOT", "PRODUCTION_ORDER"].includes(t.entity_type) && t.overall_result === "PASS" && (
-                <>
-                  <div className="flex flex-wrap items-end gap-2 p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40">
-                    <Field label="Ký số (21 CFR Part 11)">
-                      <select
-                        className={`${inputClass} w-28`}
-                        value={sigMethod}
-                        onChange={(e) => setSigMethod(e.target.value as "PIN" | "PASSWORD")}
-                      >
-                        <option value="PIN">Mã PIN</option>
-                        <option value="PASSWORD">Mật khẩu</option>
-                      </select>
-                    </Field>
-                    <Field label="PIN / Mật khẩu *">
-                      <input
-                        type="password"
-                        className={`${inputClass} w-36`}
-                        placeholder="Nhập để ký COA/Lô"
-                        value={sigSecret}
-                        onChange={(e) => setSigSecret(e.target.value)}
-                      />
-                    </Field>
-                  </div>
-                  {t.coa_code ? (
-                    <div className="px-3 py-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/30 text-xs font-semibold text-sky-900 dark:text-sky-200 flex items-center gap-2">
-                      <span>📜 Đã cấp COA chính thức: <b className="font-mono">{t.coa_code}</b> (Đã ánh xạ sang Sản xuất Kit &amp; Kinh doanh)</span>
-                    </div>
-                  ) : (
-                    <Button onClick={() => issueCoaMut.mutate()} disabled={issueCoaMut.isPending}>
-                      📜 Cấp COA Chính Thức &amp; Ánh Xạ Sang Sản Xuất / Kinh Doanh
-                    </Button>
-                  )}
-                  <div className="flex flex-wrap items-end gap-2 p-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20">
-                    <Field label="Số lượng trích Mẫu lưu QC">
-                      <input
-                        type="number"
-                        min="0"
-                        step="any"
-                        className={`${inputClass} w-28`}
-                        value={retainQty}
-                        onChange={(e) => setRetainQty(e.target.value)}
-                      />
-                    </Field>
-                    <Button onClick={() => releaseLotMut.mutate()} disabled={releaseLotMut.isPending}>
-                      ✅ Giải phóng Lô &amp; Cấp COA ngay tại QC
-                    </Button>
-                  </div>
-                </>
-              )}
-              {me.data?.permissions.includes("qms.qc.lead") && (
-                <Button variant="ghost" onClick={() => { const r = window.prompt("Lý do kiểm lại:"); if (r) retest.mutate(r); }}>
-                  🔄 Tạo phiếu kiểm lại (Retest)
+            <div className="space-y-3 pt-2 border-t border-slate-200 dark:border-slate-800">
+              <div className="flex flex-wrap items-end gap-2">
+                <Button
+                  variant={previewMode === "QC_REPORT" ? "primary" : "ghost"}
+                  onClick={() => setPreviewMode((m) => (m === "QC_REPORT" ? null : "QC_REPORT"))}
+                >
+                  👁️ {previewMode === "QC_REPORT" ? "Ẩn" : "Xem"} Phiếu Trả KQ QC (BM-QC-TR-01)
                 </Button>
+                <Button variant="ghost" onClick={() => printTestCoa(t.id, formsConfig).catch((e) => window.alert(e.message))}>
+                  🖨️ In Phiếu Trả KQ QC (A4)
+                </Button>
+                {linkedCoa && (
+                  <>
+                    <Button
+                      variant={previewMode === "COA" ? "primary" : "ghost"}
+                      onClick={() => setPreviewMode((m) => (m === "COA" ? null : "COA"))}
+                    >
+                      👁️ {previewMode === "COA" ? "Ẩn" : "Xem"} COA (BM-QC-COA-01)
+                    </Button>
+                    <Button variant="ghost" onClick={() => printKitCoaCertificate(linkedCoa, formsConfig, "BI")}>
+                      📄 Xuất COA (Mẫu chuẩn)
+                    </Button>
+                    <Button variant="ghost" onClick={() => printKitCoaCertificate(linkedCoa, formsConfig, "VI")}>
+                      🇻🇳 COA (Tiếng Việt)
+                    </Button>
+                    <Button variant="ghost" onClick={() => printKitCoaCertificate(linkedCoa, formsConfig, "EN")}>
+                      🇬🇧 COA (English)
+                    </Button>
+                  </>
+                )}
+                {["LOT", "PRODUCTION_ORDER"].includes(t.entity_type) && t.overall_result === "PASS" && (
+                  <>
+                    <div className="flex flex-wrap items-end gap-2 p-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-900/40">
+                      <Field label="Ký số (21 CFR Part 11)">
+                        <select
+                          className={`${inputClass} w-28`}
+                          value={sigMethod}
+                          onChange={(e) => setSigMethod(e.target.value as "PIN" | "PASSWORD")}
+                        >
+                          <option value="PIN">Mã PIN</option>
+                          <option value="PASSWORD">Mật khẩu</option>
+                        </select>
+                      </Field>
+                      <Field label="PIN / Mật khẩu *">
+                        <input
+                          type="password"
+                          className={`${inputClass} w-36`}
+                          placeholder="Nhập để ký COA/Lô"
+                          value={sigSecret}
+                          onChange={(e) => setSigSecret(e.target.value)}
+                        />
+                      </Field>
+                    </div>
+                    {t.coa_code ? (
+                      <div className="px-3 py-2 rounded-xl border border-sky-200 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/30 text-xs font-semibold text-sky-900 dark:text-sky-200 flex items-center gap-2">
+                        <span>📜 Đã cấp COA chính thức: <b className="font-mono">{t.coa_code}</b> (Đã ánh xạ sang Sản xuất Kit &amp; Kinh doanh)</span>
+                      </div>
+                    ) : (
+                      <Button onClick={() => issueCoaMut.mutate()} disabled={issueCoaMut.isPending}>
+                        📜 Cấp COA Chính Thức &amp; Ánh Xạ Sang Sản Xuất / Kinh Doanh
+                      </Button>
+                    )}
+                    <div className="flex flex-wrap items-end gap-2 p-2 rounded-xl border border-emerald-200 dark:border-emerald-800 bg-emerald-50/40 dark:bg-emerald-950/20">
+                      <Field label="Số lượng trích Mẫu lưu QC">
+                        <input
+                          type="number"
+                          min="0"
+                          step="any"
+                          className={`${inputClass} w-28`}
+                          value={retainQty}
+                          onChange={(e) => setRetainQty(e.target.value)}
+                        />
+                      </Field>
+                      <Button onClick={() => releaseLotMut.mutate()} disabled={releaseLotMut.isPending}>
+                        ✅ Giải phóng Lô &amp; Cấp COA ngay tại QC
+                      </Button>
+                    </div>
+                  </>
+                )}
+                {me.data?.permissions.includes("qms.qc.lead") && (
+                  <Button variant="ghost" onClick={() => { const r = window.prompt("Lý do kiểm lại:"); if (r) retest.mutate(r); }}>
+                    🔄 Tạo phiếu kiểm lại (Retest)
+                  </Button>
+                )}
+              </div>
+
+              {previewMode === "QC_REPORT" && reportQuery.data && (
+                <div className="pt-2">
+                  <QcDocumentPreview
+                    kind="QC_REPORT"
+                    data={reportQuery.data}
+                    formsConfig={formsConfig}
+                    onPrintReport={(sigOverrides) =>
+                      printTestCoa(t.id, formsConfig, sigOverrides).catch((e) => window.alert(e.message))
+                    }
+                  />
+                </div>
+              )}
+
+              {previewMode === "COA" && linkedCoa && (
+                <div className="pt-2">
+                  <QcDocumentPreview kind="COA" data={linkedCoa} formsConfig={formsConfig} />
+                </div>
               )}
             </div>
           )}
@@ -474,69 +541,10 @@ export function QcTestsView() {
   const [proactiveKind, setProactiveKind] = useState<"IQC" | "IPQC" | "FQC" | "RELEASE" | "STABILITY">("IQC");
   const [proactiveSpecId, setProactiveSpecId] = useState("");
 
-  // COA Template Config & COA Certificate Editor States
+  // Dual Template Config (BM-QC-TR-01 & BM-QC-COA-01) + Staff Signatures + COA Editor States
   const [showCoaTemplateConfig, setShowCoaTemplateConfig] = useState(false);
-  const [tplForm, setTplForm] = useState<{
-    company_name: string;
-    document_title: string;
-    iso_subtitle: string;
-    address_line: string;
-    footer_statement: string;
-    approver_title: string;
-    results_display_mode: "MEASURED_VALUES" | "SUMMARY_TEMPLATE" | "CONFORMS_ONLY" | "DETAILED_QC";
-    default_coa_parameters: {
-      seq: number;
-      parameter_name: string;
-      method: string;
-      spec_limit: string;
-      observed_value: string;
-      passed: boolean;
-    }[];
-    apply_to_existing_coas: boolean;
-  }>({
-    company_name: "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT — ABT BIOLOGICAL SOLUTIONS CO., LTD",
-    document_title: "GIẤY CHỨNG NHẬN PHÂN TÍCH / CERTIFICATE OF ANALYSIS (COA)",
-    iso_subtitle: "Do Phòng QA/QC Cấp Phát (ISO 13485:2016 & GMP-IVD)",
-    address_line: "Nhà máy & Phòng Lab QA/QC Đạt Chuẩn ISO 13485:2016",
-    footer_statement: "Chứng nhận điện tử cấp bởi Phòng QA/QC tuân thủ 21 CFR Part 11 & ISO 13485",
-    approver_title: "Phòng QA/QC Phê duyệt & Cấp COA / Approved by QA/QC:",
-    results_display_mode: "SUMMARY_TEMPLATE",
-    default_coa_parameters: [
-      {
-        seq: 1,
-        parameter_name: "Ngoại quan & Quy cách đóng gói / Appearance & Packaging",
-        method: "Kiểm tra ngoại quan (TCCS)",
-        spec_limit: "Đồng nhất, nguyên vẹn, đúng quy cách / Conforms",
-        observed_value: "Đạt tiêu chuẩn / Conforms",
-        passed: true,
-      },
-      {
-        seq: 2,
-        parameter_name: "Độ tinh khiết & Tính toàn vẹn thành phần / Purity & Integrity",
-        method: "Tiêu chuẩn cơ sở ABT (TCCS)",
-        spec_limit: "Đạt giới hạn chất lượng công bố / Meets Spec",
-        observed_value: "Đạt tiêu chuẩn / Conforms",
-        passed: true,
-      },
-      {
-        seq: 3,
-        parameter_name: "Hoạt tính sinh học & Hiệu năng phản ứng / Functional Performance",
-        method: "Thử nghiệm hoạt tính (SOP-QC)",
-        spec_limit: "Đạt độ nhạy & độ đặc hiệu chuẩn / Conforms",
-        observed_value: "Đạt tiêu chuẩn / Conforms",
-        passed: true,
-      },
-      {
-        seq: 4,
-        parameter_name: "Kiểm tra độ sạch & Không nhiễm chéo / Contamination Check",
-        method: "Kiểm nghiệm đối chứng âm (NTC)",
-        spec_limit: "Không phát hiện tín hiệu nhiễm / Negative",
-        observed_value: "Đạt tiêu chuẩn / Conforms",
-        passed: true,
-      },
-    ],
-    apply_to_existing_coas: true,
-  });
+  const [formsConfig, setFormsConfig] = useState<QcFormsConfig>(() => structuredClone(DEFAULT_QC_FORMS_CONFIG));
+  const [sigUploadNotice, setSigUploadNotice] = useState<string | null>(null);
   const [editingCoa, setEditingCoa] = useState<any | null>(null);
   const [coaNotice, setCoaNotice] = useState<string | null>(null);
   const [coaSigMethod, setCoaSigMethod] = useState<"PIN" | "PASSWORD">("PIN");
@@ -556,35 +564,36 @@ export function QcTestsView() {
   });
 
   useEffect(() => {
-    if (qaOps.data?.coa_template) {
-      const t = qaOps.data.coa_template;
-      setTplForm((prev) => ({
-        company_name: t.company_name ?? prev.company_name,
-        document_title: t.document_title ?? prev.document_title,
-        iso_subtitle: t.iso_subtitle ?? prev.iso_subtitle,
-        address_line: t.address_line ?? prev.address_line,
-        footer_statement: t.footer_statement ?? prev.footer_statement,
-        approver_title: t.approver_title ?? prev.approver_title,
-        results_display_mode: t.results_display_mode ?? "SUMMARY_TEMPLATE",
-        default_coa_parameters:
-          Array.isArray(t.default_coa_parameters) && t.default_coa_parameters.length > 0
-            ? t.default_coa_parameters
-            : prev.default_coa_parameters,
-        apply_to_existing_coas: true,
-      }));
+    if (qaOps.data?.coa_template || qaOps.data?.qc_forms_config) {
+      setFormsConfig(normalizeQcFormsConfig(qaOps.data?.coa_template, qaOps.data?.qc_forms_config));
     }
-  }, [qaOps.data?.coa_template]);
+  }, [qaOps.data?.coa_template, qaOps.data?.qc_forms_config]);
 
   const saveTplMut = useMutation({
-    mutationFn: (payload: typeof tplForm) =>
+    mutationFn: (cfg: QcFormsConfig) =>
       api<any>("/api/factory/qms/ops", {
         method: "POST",
-        json: { op: "save_coa_template", ...payload },
+        json: {
+          op: "save_coa_template",
+          company_name: `${cfg.company_name_vi} — ${cfg.company_name_en}`,
+          document_title: `${cfg.coa.title_bi_main} / ${cfg.coa.title_bi_sub}`,
+          iso_subtitle: cfg.iso_badge_vi,
+          address_line: cfg.address_vi,
+          footer_statement: cfg.footer_note,
+          approver_title: `${cfg.manager_label_vi} / ${cfg.manager_label_en}`,
+          results_display_mode: cfg.coa.results_mode,
+          default_coa_parameters: cfg.coa.custom_summary_rows,
+          apply_to_existing_coas: true,
+          qc_forms_config: cfg,
+        },
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["factory", "qa-ops"] });
+      qc.invalidateQueries({ queryKey: ["factory", "qc-test-coa"] });
       setShowCoaTemplateConfig(false);
-      setCoaNotice("✅ Đã lưu cài đặt Biểu mẫu COA (áp dụng cho các COA cấp mới, giữ nguyên lịch sử COA đã phát hành)!");
+      setCoaNotice(
+        "✅ Đã lưu cài đặt Mẫu Phiếu trả kết quả QC (BM-QC-TR-01), Mẫu COA (BM-QC-COA-01) và Chữ ký Nhân viên QC (giữ nguyên toàn vẹn dữ liệu COA đã phát hành)!"
+      );
     },
   });
 
@@ -670,6 +679,8 @@ export function QcTestsView() {
           id={selected}
           standards={qaOps.data?.standards ?? []}
           standardUsages={qaOps.data?.standard_usages ?? []}
+          formsConfig={formsConfig}
+          issuedCoas={qaOps.data?.issued_coas ?? []}
           onClose={() => setSelected(null)}
         />
       )}
@@ -855,7 +866,7 @@ export function QcTestsView() {
         title={`📜 Sổ Cấp Phát Giấy Chứng Nhận Phân Tích (COA) — Do Phòng QA/QC Cấp & Ánh Xạ Sang Sản Xuất / Kinh Doanh (${(qaOps.data?.issued_coas ?? []).length})`}
         actions={
           <Button variant="ghost" onClick={() => setShowCoaTemplateConfig((v) => !v)}>
-            ⚙️ {showCoaTemplateConfig ? "Đóng Cài đặt Biểu mẫu COA" : "Cài đặt Biểu mẫu COA (Header / Footer / Tiêu đề)"}
+            ⚙️ {showCoaTemplateConfig ? "Đóng Cài đặt Biểu mẫu QC & COA" : "Cài đặt Mẫu Phiếu trả KQ QC, Mẫu COA & Chữ ký Nhân viên"}
           </Button>
         }
       >
@@ -871,238 +882,415 @@ export function QcTestsView() {
 
         {showCoaTemplateConfig && (
           <form
-            className="mb-4 p-4 rounded-xl border border-sky-300 dark:border-sky-800 bg-sky-50/40 dark:bg-sky-950/20 space-y-3"
+            className="mb-4 p-4 rounded-xl border border-sky-300 dark:border-sky-800 bg-sky-50/40 dark:bg-sky-950/20 space-y-5"
             onSubmit={(e) => {
               e.preventDefault();
-              saveTplMut.mutate(tplForm);
+              saveTplMut.mutate(formsConfig);
             }}
           >
-            <div className="flex items-center justify-between border-b border-sky-200 dark:border-sky-800 pb-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sky-200 dark:border-sky-800 pb-3">
               <div>
                 <div className="text-xs font-extrabold uppercase text-sky-800 dark:text-sky-300">
-                  ⚙️ Cài đặt Biểu mẫu Giấy Chứng Nhận Phân Tích (COA Template) — Áp dụng toàn hệ thống
+                  ⚙️ Cài đặt 2 Biểu mẫu Chuẩn Phòng QC (Phiếu trả KQ QC `BM-QC-TR-01` &amp; Phiếu COA `BM-QC-COA-01`) + Chữ ký Nhân viên
                 </div>
                 <div className="text-[11px] text-slate-500">
-                  Tùy chỉnh Quốc hiệu / Tên công ty, Tiêu đề song ngữ, Dòng chứng nhận ISO 13485, Địa chỉ Phòng Lab và Lời cam kết pháp lý ở chân trang COA.
+                  Thiết lập chuẩn 2 mẫu đang áp dụng tại Chi nhánh Long Hậu, hỗ trợ xuất COA Tiếng Việt / Tiếng Anh / Song ngữ kèm chữ ký tay từng nhân viên QC.
                 </div>
               </div>
-              <div className="flex gap-2">
-                <Button type="submit" disabled={saveTplMut.isPending}>
-                  💾 Lưu Biểu mẫu COA
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => {
+                    setFormsConfig(structuredClone(DEFAULT_QC_FORMS_CONFIG));
+                    setSigUploadNotice("Đã nạp lại chuẩn 2 Mẫu ABT Long Hậu & 7 chữ ký NVQC. Bấm 'Lưu Cấu hình' để áp dụng.");
+                  }}
+                >
+                  ⚡ Khôi phục chuẩn 2 Mẫu ABT Long Hậu
                 </Button>
-                <Button variant="ghost" onClick={() => setShowCoaTemplateConfig(false)}>
+                <Button type="submit" disabled={saveTplMut.isPending}>
+                  💾 Lưu Cấu hình Mẫu &amp; Chữ ký
+                </Button>
+                <Button type="button" variant="ghost" onClick={() => setShowCoaTemplateConfig(false)}>
                   Hủy
                 </Button>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="1. Tên Công ty / Đơn vị cấp phát trên Header (Song ngữ) *">
+
+            {/* PHẦN I: THÔNG TIN PHÁP NHÂN & HEADER DÙNG CHUNG */}
+            <div className="space-y-2">
+              <div className="text-xs font-extrabold uppercase text-blue-900 dark:text-sky-300">
+                I. Thông tin Pháp nhân, Địa chỉ &amp; Tiêu chuẩn ISO (Dùng chung cho cả 2 biểu mẫu)
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Tên Công ty (Tiếng Việt) *">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.company_name_vi}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, company_name_vi: e.target.value })}
+                    required
+                  />
+                </Field>
+                <Field label="Tên Công ty (Tiếng Anh) *">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.company_name_en}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, company_name_en: e.target.value })}
+                    required
+                  />
+                </Field>
+                <Field label="Địa chỉ (Tiếng Việt)">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.address_vi}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, address_vi: e.target.value })}
+                  />
+                </Field>
+                <Field label="Địa chỉ (Tiếng Anh)">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.address_en}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, address_en: e.target.value })}
+                  />
+                </Field>
+                <Field label="Số điện thoại">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.phone}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, phone: e.target.value })}
+                  />
+                </Field>
+                <Field label="Email liên hệ">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.email}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, email: e.target.value })}
+                  />
+                </Field>
+                <Field label="Dòng chứng nhận ISO (Tiếng Việt / Song ngữ)">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.iso_badge_vi}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, iso_badge_vi: e.target.value })}
+                  />
+                </Field>
+                <Field label="Dòng chứng nhận ISO (Tiếng Anh)">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.iso_badge_en}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, iso_badge_en: e.target.value })}
+                  />
+                </Field>
+              </div>
+              <Field label="Ghi chú chân trang (Footer Note)">
                 <input
                   className={inputClass}
-                  value={tplForm.company_name}
-                  onChange={(e) => setTplForm({ ...tplForm, company_name: e.target.value })}
-                  required
-                />
-              </Field>
-              <Field label="2. Tiêu đề chính của Biểu mẫu COA *">
-                <input
-                  className={inputClass}
-                  value={tplForm.document_title}
-                  onChange={(e) => setTplForm({ ...tplForm, document_title: e.target.value })}
-                  required
-                />
-              </Field>
-              <Field label="3. Dòng tiêu chuẩn / Thẩm quyền cấp phát (Sub-header)">
-                <input
-                  className={inputClass}
-                  value={tplForm.iso_subtitle}
-                  onChange={(e) => setTplForm({ ...tplForm, iso_subtitle: e.target.value })}
-                />
-              </Field>
-              <Field label="4. Địa chỉ Nhà máy / Phòng Lab QA/QC (In trên Header A4)">
-                <input
-                  className={inputClass}
-                  value={tplForm.address_line}
-                  onChange={(e) => setTplForm({ ...tplForm, address_line: e.target.value })}
-                />
-              </Field>
-              <Field label="5. Dòng cam kết chữ ký điện tử ở Chân trang (Footer Statement)">
-                <input
-                  className={inputClass}
-                  value={tplForm.footer_statement}
-                  onChange={(e) => setTplForm({ ...tplForm, footer_statement: e.target.value })}
-                />
-              </Field>
-              <Field label="6. Chức danh Người phê duyệt COA (Cột chữ ký phải)">
-                <input
-                  className={inputClass}
-                  value={tplForm.approver_title}
-                  onChange={(e) => setTplForm({ ...tplForm, approver_title: e.target.value })}
+                  value={formsConfig.footer_note}
+                  onChange={(e) => setFormsConfig({ ...formsConfig, footer_note: e.target.value })}
                 />
               </Field>
             </div>
 
-            {/* PHẦN II: CÀI ĐẶT CHẾ ĐỘ & CÁC CHỈ TIÊU HIỂN THỊ TRÊN COA */}
+            {/* PHẦN II: MẪU 1 — PHIẾU TRẢ KẾT QUẢ KIỂM NGHIỆM QC (BM-QC-TR-01) */}
             <div className="pt-3 border-t border-sky-200 dark:border-sky-800 space-y-3">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <div className="text-xs font-extrabold uppercase text-sky-800 dark:text-sky-300">
-                    📋 II. Cài đặt Chế độ &amp; Danh sách Chỉ tiêu Hiển thị trên COA
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    Tùy chọn hiển thị các chỉ tiêu mang tính khái quát/chung chung trên bản COA gửi khách hàng (không lộ thông số kỹ thuật hay số đo nội bộ của phòng Lab).
-                  </div>
+              <div>
+                <div className="text-xs font-extrabold uppercase text-blue-900 dark:text-sky-300">
+                  II. Cài đặt Mẫu 1 — Phiếu Trả Kết Quả Kiểm Nghiệm Chất Lượng ({formsConfig.qc_report.form_code})
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <Button
-                    variant="ghost"
-                    onClick={() =>
-                      setTplForm({
-                        ...tplForm,
-                        results_display_mode: "SUMMARY_TEMPLATE",
-                        default_coa_parameters: [
-                          {
-                            seq: 1,
-                            parameter_name: "Ngoại quan & Quy cách đóng gói / Appearance & Packaging",
-                            method: "Kiểm tra ngoại quan (TCCS)",
-                            spec_limit: "Đồng nhất, nguyên vẹn, đúng quy cách / Conforms",
-                            observed_value: "Đạt tiêu chuẩn / Conforms",
-                            passed: true,
-                          },
-                          {
-                            seq: 2,
-                            parameter_name: "Độ tinh khiết & Tính toàn vẹn thành phần / Purity & Integrity",
-                            method: "Tiêu chuẩn cơ sở ABT (TCCS)",
-                            spec_limit: "Đạt giới hạn chất lượng công bố / Meets Spec",
-                            observed_value: "Đạt tiêu chuẩn / Conforms",
-                            passed: true,
-                          },
-                          {
-                            seq: 3,
-                            parameter_name: "Hoạt tính sinh học & Hiệu năng phản ứng / Functional Performance",
-                            method: "Thử nghiệm hoạt tính (SOP-QC)",
-                            spec_limit: "Đạt độ nhạy & độ đặc hiệu chuẩn / Conforms",
-                            observed_value: "Đạt tiêu chuẩn / Conforms",
-                            passed: true,
-                          },
-                          {
-                            seq: 4,
-                            parameter_name: "Kiểm tra độ sạch & Không nhiễm chéo / Contamination Check",
-                            method: "Kiểm nghiệm đối chứng âm (NTC)",
-                            spec_limit: "Không phát hiện tín hiệu nhiễm / Negative",
-                            observed_value: "Đạt tiêu chuẩn / Conforms",
-                            passed: true,
-                          },
-                        ],
+                <div className="text-[11px] text-slate-500">
+                  Hiển thị chi tiết từng chỉ tiêu thử nghiệm, phương pháp kiểm tra, thiết bị đo chuyên dụng, yêu cầu kỹ thuật và giá trị đo thực tế.
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Mã biểu mẫu Phiếu KQ QC">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.qc_report.form_code}
+                    onChange={(e) =>
+                      setFormsConfig({
+                        ...formsConfig,
+                        qc_report: { ...formsConfig.qc_report, form_code: e.target.value },
                       })
                     }
-                  >
-                    📋 Nạp Mẫu COA Tổng quát (4 chỉ tiêu chung)
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    onClick={() =>
-                      setTplForm({
-                        ...tplForm,
-                        results_display_mode: "SUMMARY_TEMPLATE",
-                        default_coa_parameters: [
-                          {
-                            seq: 1,
-                            parameter_name: "Cảm quan dung dịch & Bao bì / Appearance",
-                            method: "Kiểm tra cảm quan (TCCS)",
-                            spec_limit: "Dung dịch trong suốt, đồng nhất / Clear & homogeneous",
-                            observed_value: "Đạt tiêu chuẩn / Conforms",
-                            passed: true,
-                          },
-                          {
-                            seq: 2,
-                            parameter_name: "Chỉ tiêu Hóa lý & Độ ổn định pH / Physicochemical Spec",
-                            method: "Tiêu chuẩn cơ sở ABT (TCCS)",
-                            spec_limit: "Nằm trong dải tiêu chuẩn nhà sản xuất / Within Spec",
-                            observed_value: "Đạt tiêu chuẩn / Conforms",
-                            passed: true,
-                          },
-                          {
-                            seq: 3,
-                            parameter_name: "Hoạt tính khuếch đại trên mẫu chuẩn / Functional Assay",
-                            method: "Real-time qPCR (SOP-QC)",
-                            spec_limit: "Đạt hiệu năng khuếch đại & không nhiễm âm / Conforms",
-                            observed_value: "Đạt tiêu chuẩn / Conforms",
-                            passed: true,
-                          },
-                        ],
+                  />
+                </Field>
+                <Field label="Tiền tố mã phiếu KQ (VD: TR-)">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.qc_report.doc_prefix}
+                    onChange={(e) =>
+                      setFormsConfig({
+                        ...formsConfig,
+                        qc_report: { ...formsConfig.qc_report, doc_prefix: e.target.value },
                       })
                     }
-                  >
-                    🧪 Nạp Mẫu COA Bán thành phẩm / Hóa chất (3 chỉ tiêu chung)
-                  </Button>
+                  />
+                </Field>
+                <Field label="Tiêu đề chính (EN)">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.qc_report.title_en}
+                    onChange={(e) =>
+                      setFormsConfig({
+                        ...formsConfig,
+                        qc_report: { ...formsConfig.qc_report, title_en: e.target.value },
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Tiêu đề phụ (VI)">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.qc_report.title_vi}
+                    onChange={(e) =>
+                      setFormsConfig({
+                        ...formsConfig,
+                        qc_report: { ...formsConfig.qc_report, title_vi: e.target.value },
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+              <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formsConfig.qc_report.show_equipment_in_method}
+                  onChange={(e) =>
+                    setFormsConfig({
+                      ...formsConfig,
+                      qc_report: { ...formsConfig.qc_report, show_equipment_in_method: e.target.checked },
+                    })
+                  }
+                />
+                Hiển thị dòng &quot;Thiết bị:&quot; màu xanh ngay dưới dòng &quot;Phương pháp:&quot; trong bảng Kết quả Phiếu QC
+              </label>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Nội dung Kết luận khi ĐẠT (Phiếu KQ QC)">
+                  <textarea
+                    rows={2}
+                    className={inputClass}
+                    value={formsConfig.qc_report.conclusion_pass_bi}
+                    onChange={(e) =>
+                      setFormsConfig({
+                        ...formsConfig,
+                        qc_report: { ...formsConfig.qc_report, conclusion_pass_bi: e.target.value },
+                      })
+                    }
+                  />
+                </Field>
+                <Field label="Nội dung Kết luận khi KHÔNG ĐẠT (Phiếu KQ QC)">
+                  <textarea
+                    rows={2}
+                    className={inputClass}
+                    value={formsConfig.qc_report.conclusion_fail_bi}
+                    onChange={(e) =>
+                      setFormsConfig({
+                        ...formsConfig,
+                        qc_report: { ...formsConfig.qc_report, conclusion_fail_bi: e.target.value },
+                      })
+                    }
+                  />
+                </Field>
+              </div>
+            </div>
+
+            {/* PHẦN III: MẪU 2 — PHIẾU COA (BM-QC-COA-01) & NGÔN NGỮ */}
+            <div className="pt-3 border-t border-sky-200 dark:border-sky-800 space-y-3">
+              <div>
+                <div className="text-xs font-extrabold uppercase text-blue-900 dark:text-sky-300">
+                  III. Cài đặt Mẫu 2 — Giấy Chứng Nhận Phân Tích COA ({formsConfig.coa.form_code}) &amp; Ngôn ngữ xuất
+                </div>
+                <div className="text-[11px] text-slate-500">
+                  Mặc định COA chỉ ghi kết luận ĐẠT / KHÔNG ĐẠT so với Tiêu chuẩn Cơ sở (TCCS), không công bố số đo nội bộ chi tiết. Khi xem/in có thể chuyển nhanh giữa Song ngữ, Tiếng Việt và Tiếng Anh.
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2 items-end">
-                <Field label="7. Chế độ hiển thị Bảng chỉ tiêu trên COA *">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label="Mã biểu mẫu COA">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.coa.form_code}
+                    onChange={(e) =>
+                      setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, form_code: e.target.value } })
+                    }
+                  />
+                </Field>
+                <Field label="Tiền tố mã COA (VD: COA-)">
+                  <input
+                    className={inputClass}
+                    value={formsConfig.coa.doc_prefix}
+                    onChange={(e) =>
+                      setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, doc_prefix: e.target.value } })
+                    }
+                  />
+                </Field>
+                <Field label="Ngôn ngữ xuất COA mặc định">
                   <select
                     className={inputClass}
-                    value={tplForm.results_display_mode}
-                    onChange={(e) => setTplForm({ ...tplForm, results_display_mode: e.target.value as any })}
+                    value={formsConfig.coa.default_lang}
+                    onChange={(e) =>
+                      setFormsConfig({
+                        ...formsConfig,
+                        coa: { ...formsConfig.coa, default_lang: e.target.value as any },
+                      })
+                    }
                   >
-                    <option value="MEASURED_VALUES">
-                      1. Giá trị đo thực tế chuẩn hóa theo Phiếu QC (MEASURED_VALUES — Khuyến nghị ISO 13485)
-                    </option>
-                    <option value="SUMMARY_TEMPLATE">
-                      2. Nêu chung theo Bộ chỉ tiêu chuẩn của Biểu mẫu COA bên dưới (Ẩn chỉ tiêu &amp; số đo chi tiết nội bộ)
-                    </option>
-                    <option value="CONFORMS_ONLY">
-                      3. Lấy tên chỉ tiêu từ Phiếu QC nhưng chỉ ghi chung &quot;Đạt tiêu chuẩn / Conforms&quot; (Ẩn số đo pH, Ct...)
-                    </option>
-                    <option value="DETAILED_QC">
-                      4. Hiển thị chi tiết từng chỉ tiêu &amp; số đo thực tế từ Phiếu QC
-                    </option>
+                    <option value="BI">Song ngữ Mẫu chuẩn (BI)</option>
+                    <option value="VI">🇻🇳 Tiếng Việt hoàn toàn (VI)</option>
+                    <option value="EN">🇬🇧 Tiếng Anh hoàn toàn (EN)</option>
                   </select>
                 </Field>
-                <div className="pb-1.5">
-                  <label className="flex items-center gap-2 text-xs font-semibold text-sky-900 dark:text-sky-200 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={tplForm.apply_to_existing_coas}
-                      onChange={(e) => setTplForm({ ...tplForm, apply_to_existing_coas: e.target.checked })}
-                    />
-                    ⚡ Cập nhật áp dụng luôn bộ chỉ tiêu hiển thị này cho tất cả COA đã cấp trong sổ
-                  </label>
-                </div>
+                <Field label="Chế độ Bảng kết quả trên COA">
+                  <select
+                    className={inputClass}
+                    value={formsConfig.coa.results_mode}
+                    onChange={(e) =>
+                      setFormsConfig({
+                        ...formsConfig,
+                        coa: { ...formsConfig.coa, results_mode: e.target.value as any },
+                      })
+                    }
+                  >
+                    <option value="TCCS_CONFORMANCE">1. Chỉ ghi Đạt / Không đạt theo TCCS (Mẫu ABT đang áp dụng)</option>
+                    <option value="SUMMARY_TEMPLATE">2. Bộ chỉ tiêu tổng quát tự cấu hình bên dưới</option>
+                    <option value="CONFORMS_ONLY">3. Tên chỉ tiêu từ QC nhưng chỉ ghi Đạt chuẩn</option>
+                    <option value="DETAILED_QC">4. Hiển thị chi tiết giá trị đo thực tế từ QC</option>
+                  </select>
+                </Field>
               </div>
 
-              {tplForm.results_display_mode === "SUMMARY_TEMPLATE" && (
+              {formsConfig.coa.results_mode === "TCCS_CONFORMANCE" && (
+                <div className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2.5">
+                  <div className="text-[11px] font-bold text-slate-700 dark:text-slate-200">
+                    Nội dung dòng Chỉ tiêu đánh giá theo TCCS (dùng <code>{"{TCCS}"}</code> để tự động chèn mã TCCS của sản phẩm):
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="Chỉ tiêu (VI / Song ngữ)">
+                      <input
+                        className={inputClass}
+                        value={formsConfig.coa.tccs_param_vi}
+                        onChange={(e) =>
+                          setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, tccs_param_vi: e.target.value } })
+                        }
+                      />
+                    </Field>
+                    <Field label="Chỉ tiêu (English)">
+                      <input
+                        className={inputClass}
+                        value={formsConfig.coa.tccs_param_en}
+                        onChange={(e) =>
+                          setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, tccs_param_en: e.target.value } })
+                        }
+                      />
+                    </Field>
+                    <Field label="Phương pháp kiểm tra (VI / Song ngữ)">
+                      <input
+                        className={inputClass}
+                        value={formsConfig.coa.tccs_method_vi}
+                        onChange={(e) =>
+                          setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, tccs_method_vi: e.target.value } })
+                        }
+                      />
+                    </Field>
+                    <Field label="Phương pháp kiểm tra (English)">
+                      <input
+                        className={inputClass}
+                        value={formsConfig.coa.tccs_method_en}
+                        onChange={(e) =>
+                          setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, tccs_method_en: e.target.value } })
+                        }
+                      />
+                    </Field>
+                    <Field label="Mẫu Yêu cầu kỹ thuật (VI · dùng {TCCS})">
+                      <input
+                        className={inputClass}
+                        value={formsConfig.coa.tccs_spec_template_vi}
+                        onChange={(e) =>
+                          setFormsConfig({
+                            ...formsConfig,
+                            coa: { ...formsConfig.coa, tccs_spec_template_vi: e.target.value },
+                          })
+                        }
+                      />
+                    </Field>
+                    <Field label="Mẫu Yêu cầu kỹ thuật (EN · dùng {TCCS})">
+                      <input
+                        className={inputClass}
+                        value={formsConfig.coa.tccs_spec_template_en}
+                        onChange={(e) =>
+                          setFormsConfig({
+                            ...formsConfig,
+                            coa: { ...formsConfig.coa, tccs_spec_template_en: e.target.value },
+                          })
+                        }
+                      />
+                    </Field>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Kết luận ĐẠT trên COA (Tiếng Việt / Song ngữ)">
+                  <textarea
+                    rows={2}
+                    className={inputClass}
+                    value={formsConfig.coa.conclusion_pass_vi}
+                    onChange={(e) =>
+                      setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, conclusion_pass_vi: e.target.value } })
+                    }
+                  />
+                </Field>
+                <Field label="Kết luận ĐẠT trên COA (English)">
+                  <textarea
+                    rows={2}
+                    className={inputClass}
+                    value={formsConfig.coa.conclusion_pass_en}
+                    onChange={(e) =>
+                      setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, conclusion_pass_en: e.target.value } })
+                    }
+                  />
+                </Field>
+              </div>
+
+              {formsConfig.coa.results_mode === "SUMMARY_TEMPLATE" && (
                 <div className="space-y-2 bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800">
                   <div className="flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-700 dark:text-slate-200">
-                      Danh sách các Chỉ tiêu Chung hiển thị trên Biểu mẫu COA ({tplForm.default_coa_parameters.length} dòng):
+                      Danh sách Chỉ tiêu Tổng quát trên COA ({formsConfig.coa.custom_summary_rows.length} dòng):
                     </span>
                     <Button
+                      type="button"
                       variant="ghost"
                       onClick={() =>
-                        setTplForm({
-                          ...tplForm,
-                          default_coa_parameters: [
-                            ...tplForm.default_coa_parameters,
-                            {
-                              seq: tplForm.default_coa_parameters.length + 1,
-                              parameter_name: "Chỉ tiêu chất lượng chung",
-                              method: "Tiêu chuẩn cơ sở (TCCS)",
-                              spec_limit: "Đạt tiêu chuẩn nhà sản xuất / Conforms",
-                              observed_value: "Đạt tiêu chuẩn / Conforms",
-                              passed: true,
-                            },
-                          ],
+                        setFormsConfig({
+                          ...formsConfig,
+                          coa: {
+                            ...formsConfig.coa,
+                            custom_summary_rows: [
+                              ...formsConfig.coa.custom_summary_rows,
+                              {
+                                seq: formsConfig.coa.custom_summary_rows.length + 1,
+                                parameter_name: "Cảm quan và kỹ thuật",
+                                parameter_name_en: "Sensory & Technical",
+                                method: "Kiểm tra theo SOP",
+                                method_en: "Tested according to SOP",
+                                spec_limit: "Đạt yêu cầu theo TCCS",
+                                spec_limit_en: "Conforms to TCCS",
+                                observed_value: "ĐẠT (PASS)",
+                                observed_value_en: "PASS",
+                                passed: true,
+                              },
+                            ],
+                          },
                         })
                       }
                     >
-                      + Thêm dòng chỉ tiêu hiển thị trên COA
+                      + Thêm dòng chỉ tiêu COA
                     </Button>
                   </div>
 
-                  <Table head={["#", "Tên chỉ tiêu hiển thị trên COA (Song ngữ / Chung)", "Phương pháp / Tham chiếu", "Mức yêu cầu hiển thị chung", "Kết quả hiển thị trên COA", "Kết luận", ""]}>
-                    {tplForm.default_coa_parameters.map((row, idx) => (
+                  <Table head={["#", "Chỉ tiêu (VI)", "Chỉ tiêu (EN)", "Phương pháp (VI)", "Yêu cầu (VI)", "Kết luận", ""]}>
+                    {formsConfig.coa.custom_summary_rows.map((row, idx) => (
                       <tr key={idx}>
                         <td className="py-1.5 pr-2 font-mono text-xs w-8">{idx + 1}</td>
                         <td className="py-1.5 pr-2">
@@ -1110,9 +1298,20 @@ export function QcTestsView() {
                             className={inputClass}
                             value={row.parameter_name}
                             onChange={(e) => {
-                              const next = [...tplForm.default_coa_parameters];
+                              const next = [...formsConfig.coa.custom_summary_rows];
                               next[idx] = { ...next[idx], parameter_name: e.target.value };
-                              setTplForm({ ...tplForm, default_coa_parameters: next });
+                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
+                            }}
+                          />
+                        </td>
+                        <td className="py-1.5 pr-2">
+                          <input
+                            className={inputClass}
+                            value={row.parameter_name_en ?? ""}
+                            onChange={(e) => {
+                              const next = [...formsConfig.coa.custom_summary_rows];
+                              next[idx] = { ...next[idx], parameter_name_en: e.target.value };
+                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
                             }}
                           />
                         </td>
@@ -1121,9 +1320,9 @@ export function QcTestsView() {
                             className={inputClass}
                             value={row.method}
                             onChange={(e) => {
-                              const next = [...tplForm.default_coa_parameters];
+                              const next = [...formsConfig.coa.custom_summary_rows];
                               next[idx] = { ...next[idx], method: e.target.value };
-                              setTplForm({ ...tplForm, default_coa_parameters: next });
+                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
                             }}
                           />
                         </td>
@@ -1132,20 +1331,9 @@ export function QcTestsView() {
                             className={inputClass}
                             value={row.spec_limit}
                             onChange={(e) => {
-                              const next = [...tplForm.default_coa_parameters];
+                              const next = [...formsConfig.coa.custom_summary_rows];
                               next[idx] = { ...next[idx], spec_limit: e.target.value };
-                              setTplForm({ ...tplForm, default_coa_parameters: next });
-                            }}
-                          />
-                        </td>
-                        <td className="py-1.5 pr-2">
-                          <input
-                            className={inputClass}
-                            value={row.observed_value}
-                            onChange={(e) => {
-                              const next = [...tplForm.default_coa_parameters];
-                              next[idx] = { ...next[idx], observed_value: e.target.value };
-                              setTplForm({ ...tplForm, default_coa_parameters: next });
+                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
                             }}
                           />
                         </td>
@@ -1154,9 +1342,9 @@ export function QcTestsView() {
                             className={inputClass}
                             value={row.passed ? "PASS" : "FAIL"}
                             onChange={(e) => {
-                              const next = [...tplForm.default_coa_parameters];
+                              const next = [...formsConfig.coa.custom_summary_rows];
                               next[idx] = { ...next[idx], passed: e.target.value === "PASS" };
-                              setTplForm({ ...tplForm, default_coa_parameters: next });
+                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
                             }}
                           >
                             <option value="PASS">ĐẠT / PASS</option>
@@ -1167,10 +1355,10 @@ export function QcTestsView() {
                           <button
                             type="button"
                             className="text-rose-600 hover:text-rose-800 font-bold px-2 py-1 cursor-pointer"
-                            title="Xóa dòng chỉ tiêu này"
+                            title="Xóa dòng"
                             onClick={() => {
-                              const next = tplForm.default_coa_parameters.filter((_, i) => i !== idx);
-                              setTplForm({ ...tplForm, default_coa_parameters: next });
+                              const next = formsConfig.coa.custom_summary_rows.filter((_, i) => i !== idx);
+                              setFormsConfig({ ...formsConfig, coa: { ...formsConfig.coa, custom_summary_rows: next } });
                             }}
                           >
                             ✕
@@ -1181,6 +1369,182 @@ export function QcTestsView() {
                   </Table>
                 </div>
               )}
+            </div>
+
+            {/* PHẦN IV: QUẢN LÝ CHỮ KÝ NHÂN VIÊN PHÒNG QC/QA */}
+            <div className="pt-3 border-t border-sky-200 dark:border-sky-800 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="text-xs font-extrabold uppercase text-blue-900 dark:text-sky-300">
+                    IV. Quản lý Chữ ký Tay Nhân viên Phòng QC/QA ({formsConfig.staff_signatures.length} nhân sự)
+                  </div>
+                  <div className="text-[11px] text-slate-500">
+                    Hệ thống tự động ghép ảnh chữ ký tương ứng theo tên Người kiểm nghiệm &amp; Trưởng phòng QC/QA khi in Phiếu trả KQ QC và COA.
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={() => {
+                    const nextIdx = formsConfig.staff_signatures.length + 1;
+                    const newEntry: QcStaffSignatureEntry = {
+                      id: `nv-custom-${Date.now()}`,
+                      emp_code: `NV.QC${String(nextIdx).padStart(2, "0")}`,
+                      full_name: `Nhân viên QC ${nextIdx}`,
+                      title_vi: "NHÂN VIÊN KIỂM TRA CHẤT LƯỢNG",
+                      title_en: "QC Analyst",
+                      role: "ANALYST",
+                      signature_url: "/signatures/qc/chukythithong.png",
+                      aliases: [],
+                      active: true,
+                    };
+                    setFormsConfig({
+                      ...formsConfig,
+                      staff_signatures: [...formsConfig.staff_signatures, newEntry],
+                    });
+                  }}
+                >
+                  + Thêm nhân viên ký tên
+                </Button>
+              </div>
+
+              {sigUploadNotice && (
+                <div className="p-2 rounded-lg bg-sky-100/70 dark:bg-sky-900/40 text-xs text-sky-900 dark:text-sky-200">
+                  {sigUploadNotice}
+                </div>
+              )}
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Người kiểm nghiệm mặc định (Nếu phiếu chưa ghi tên)">
+                  <select
+                    className={inputClass}
+                    value={formsConfig.default_analyst_name}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, default_analyst_name: e.target.value })}
+                  >
+                    {formsConfig.staff_signatures.map((s) => (
+                      <option key={s.id} value={s.full_name}>
+                        {s.emp_code ? `${s.emp_code} — ` : ""}{s.full_name}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label="Trưởng phòng QC/QA ký duyệt mặc định">
+                  <select
+                    className={inputClass}
+                    value={formsConfig.default_manager_name}
+                    onChange={(e) => setFormsConfig({ ...formsConfig, default_manager_name: e.target.value })}
+                  >
+                    {formsConfig.staff_signatures.map((s) => (
+                      <option key={s.id} value={s.full_name}>
+                        {s.emp_code ? `${s.emp_code} — ` : ""}{s.full_name} ({s.title_vi})
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {formsConfig.staff_signatures.map((sig, idx) => (
+                  <div
+                    key={sig.id}
+                    className="p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-800">
+                        {sig.emp_code || "NV.QC"}
+                      </span>
+                      <select
+                        className="text-[11px] rounded border border-slate-300 dark:border-slate-700 bg-transparent px-1.5 py-0.5"
+                        value={sig.role}
+                        onChange={(e) => {
+                          const next = [...formsConfig.staff_signatures];
+                          next[idx] = { ...next[idx], role: e.target.value as "ANALYST" | "MANAGER" };
+                          setFormsConfig({ ...formsConfig, staff_signatures: next });
+                        }}
+                      >
+                        <option value="ANALYST">Kiểm nghiệm viên (Analyst)</option>
+                        <option value="MANAGER">Trưởng phòng QC/QA (Manager)</option>
+                      </select>
+                      {formsConfig.staff_signatures.length > 1 && (
+                        <button
+                          type="button"
+                          className="text-rose-600 hover:text-rose-800 text-xs font-bold cursor-pointer"
+                          title="Xóa chữ ký này"
+                          onClick={() => {
+                            const next = formsConfig.staff_signatures.filter((_, i) => i !== idx);
+                            setFormsConfig({ ...formsConfig, staff_signatures: next });
+                          }}
+                        >
+                          ✕
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid gap-1.5">
+                      <input
+                        className={`${inputClass} !text-xs`}
+                        placeholder="Mã NV"
+                        value={sig.emp_code}
+                        onChange={(e) => {
+                          const next = [...formsConfig.staff_signatures];
+                          next[idx] = { ...next[idx], emp_code: e.target.value };
+                          setFormsConfig({ ...formsConfig, staff_signatures: next });
+                        }}
+                      />
+                      <input
+                        className={`${inputClass} !text-xs font-semibold`}
+                        placeholder="Họ và tên nhân viên"
+                        value={sig.full_name}
+                        onChange={(e) => {
+                          const next = [...formsConfig.staff_signatures];
+                          next[idx] = { ...next[idx], full_name: e.target.value };
+                          setFormsConfig({ ...formsConfig, staff_signatures: next });
+                        }}
+                      />
+                    </div>
+
+                    <div className="h-16 rounded-lg border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center p-1">
+                      {sig.signature_url ? (
+                        <img
+                          src={sig.signature_url}
+                          alt={`Chữ ký ${sig.full_name}`}
+                          className="max-h-14 max-w-full object-contain"
+                        />
+                      ) : (
+                        <span className="text-[11px] text-slate-400">Chưa có chữ ký</span>
+                      )}
+                    </div>
+
+                    <label className="block text-[11px] font-semibold text-sky-700 hover:text-sky-800 cursor-pointer">
+                      <span>📤 Đổi / Tải ảnh chữ ký PNG mới</span>
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (file.size > 1_500_000) {
+                            setSigUploadNotice("⚠️ Ảnh chữ ký quá lớn (>1.5MB). Vui lòng nén ảnh PNG nhỏ hơn 1.5MB.");
+                            return;
+                          }
+                          const reader = new FileReader();
+                          reader.onload = () => {
+                            if (typeof reader.result === "string") {
+                              const next = [...formsConfig.staff_signatures];
+                              next[idx] = { ...next[idx], signature_url: reader.result };
+                              setFormsConfig({ ...formsConfig, staff_signatures: next });
+                              setSigUploadNotice(`✅ Đã tải ảnh chữ ký mới cho ${sig.full_name}. Bấm 'Lưu Cấu hình' để lưu.`);
+                            }
+                          };
+                          reader.readAsDataURL(file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+                  </div>
+                ))}
+              </div>
             </div>
           </form>
         )}
@@ -1249,17 +1613,33 @@ export function QcTestsView() {
                   />
                 </td>
                 <td className="py-2 pr-3 text-xs whitespace-nowrap">
-                  <div className="inline-flex items-center gap-1">
+                  <div className="inline-flex flex-wrap items-center gap-1">
                     <button
                       type="button"
-                      title="Xem & In COA Song ngữ"
+                      title="Xem & Tùy chọn Ngôn ngữ COA"
                       className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                       onClick={() => {
                         setEditingCoa(null);
                         setSelectedCoa(c);
                       }}
                     >
-                      📄 Xem/In
+                      📄 Xem COA
+                    </button>
+                    <button
+                      type="button"
+                      title="Xuất COA Tiếng Việt"
+                      className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      onClick={() => printKitCoaCertificate(c, formsConfig, "VI")}
+                    >
+                      🇻🇳 Việt
+                    </button>
+                    <button
+                      type="button"
+                      title="Export COA in English"
+                      className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                      onClick={() => printKitCoaCertificate(c, formsConfig, "EN")}
+                    >
+                      🇬🇧 EN
                     </button>
                     <button
                       type="button"
@@ -1272,11 +1652,11 @@ export function QcTestsView() {
                     {c.qc_test_id && (
                       <button
                         type="button"
-                        title="In Phiếu Kết quả QC gốc"
+                        title="In Phiếu Trả Kết quả QC gốc (BM-QC-TR-01)"
                         className="px-2 py-1 rounded-lg text-[11px] font-medium border border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
-                        onClick={() => printTestCoa(c.qc_test_id).catch((e) => window.alert(e.message))}
+                        onClick={() => printTestCoa(c.qc_test_id, formsConfig).catch((e) => window.alert(e.message))}
                       >
-                        🖨️ Phiếu KQ
+                        🖨️ Phiếu KQ QC
                       </button>
                     )}
                   </div>
@@ -1289,13 +1669,15 @@ export function QcTestsView() {
 
       {selectedCoa && (
         <Card
-          title={`Bản in Chứng nhận Phân tích Song ngữ — CERTIFICATE OF ANALYSIS (${selectedCoa.code} · Cấp bởi Phòng QA/QC)`}
+          title={`Phiếu Chứng nhận Phân tích COA (${selectedCoa.code} · BM-QC-COA-01 · Cấp bởi Phòng QA/QC)`}
           actions={
             <div className="flex flex-wrap gap-2">
               <Button variant="ghost" onClick={() => (editingCoa ? setEditingCoa(null) : startEditingCoa(selectedCoa))}>
                 {editingCoa ? "👁️ Xem trước Bản in COA" : "✏️ Chỉnh sửa thông tin & chỉ tiêu COA"}
               </Button>
-              <Button onClick={() => printKitCoaCertificate(selectedCoa, tplForm)}>🖨️ In COA (Print / PDF)</Button>
+              <Button onClick={() => printKitCoaCertificate(selectedCoa, formsConfig, "BI")}>📄 In COA (Mẫu chuẩn)</Button>
+              <Button variant="secondary" onClick={() => printKitCoaCertificate(selectedCoa, formsConfig, "VI")}>🇻🇳 Xuất Tiếng Việt</Button>
+              <Button variant="secondary" onClick={() => printKitCoaCertificate(selectedCoa, formsConfig, "EN")}>🇬🇧 Export English</Button>
               <Button
                 variant="ghost"
                 onClick={() => {
@@ -1598,126 +1980,7 @@ export function QcTestsView() {
             </form>
           )}
 
-          <div className="p-6 border-2 border-stone-800 rounded-xl bg-white text-stone-900 space-y-4">
-            <div className="text-center border-b-2 border-stone-800 pb-3">
-              <div className="text-xs font-bold tracking-widest text-sky-900">
-                {tplForm.company_name}
-              </div>
-              {tplForm.address_line && (
-                <div className="text-[11px] text-stone-600">{tplForm.address_line}</div>
-              )}
-              <div className="text-lg font-extrabold uppercase mt-1">
-                {tplForm.document_title}
-              </div>
-              <div className="text-xs font-mono text-stone-600">
-                Số chứng nhận / Certificate No.: <strong>{selectedCoa.code}</strong>
-                {selectedCoa.revision_no ? <> · Phiên bản / Rev: <strong>v{selectedCoa.revision_no}</strong></> : null}
-                {selectedCoa.qc_test_code ? <> · Phiếu QC gốc / QC Test Ref: <strong>{selectedCoa.qc_test_code}</strong></> : null}
-                {tplForm.iso_subtitle ? <> · {tplForm.iso_subtitle}</> : null}
-                {selectedCoa.sha256_hash ? <> · SHA-256: <code>{String(selectedCoa.sha256_hash).slice(0, 16)}…</code></> : null}
-              </div>
-              {selectedCoa.is_superseded && (
-                <div className="mt-2 px-3 py-1.5 rounded border border-red-400 bg-red-50 text-red-700 text-xs font-bold">
-                  ⚠️ BẢN ĐÃ THAY THẾ / SUPERSEDED — CHỈ DÙNG TRA CỨU LỊCH SỬ
-                </div>
-              )}
-              <div className="mt-2 flex flex-wrap justify-center gap-4">
-                <Barcode128 value={selectedCoa.code} height={28} showText />
-                {selectedCoa.lot_code && <Barcode128 value={selectedCoa.lot_code} height={28} showText />}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs bg-stone-50 p-3 rounded-lg border border-stone-200">
-              <div>
-                <div className="text-stone-500">Tên sản phẩm / Product Name:</div>
-                <div className="font-bold">{selectedCoa.product_name}</div>
-              </div>
-              <div>
-                <div className="text-stone-500">Mã sản phẩm / Catalog No. (REF):</div>
-                <div className="font-mono font-bold">{selectedCoa.product_code}</div>
-              </div>
-              <div>
-                <div className="text-stone-500">Số lô / Lot Number (LOT):</div>
-                <div className="font-mono font-bold text-sky-800">{selectedCoa.lot_code}</div>
-              </div>
-              <div>
-                <div className="text-stone-500">Ngày sản xuất / Manufacturing Date:</div>
-                <div className="font-semibold">{fmtDate(selectedCoa.mfg_date)}</div>
-              </div>
-              <div>
-                <div className="text-stone-500">Hạn sử dụng / Expiry Date:</div>
-                <div className="font-semibold">{fmtDate(selectedCoa.expiry_date)}</div>
-              </div>
-              <div>
-                <div className="text-stone-500">Quy cách &amp; Tiêu chuẩn áp dụng / Spec:</div>
-                <div className="font-semibold">
-                  {Number(selectedCoa.tests_per_kit) > 0
-                    ? `${selectedCoa.tests_per_kit} tests (${fmtQty(selectedCoa.good_qty)} ${selectedCoa.uom})`
-                    : `${fmtQty(selectedCoa.good_qty)} ${selectedCoa.uom}`}
-                  {selectedCoa.spec_code ? ` · ${selectedCoa.spec_code}` : ""}
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-1">
-              <div className="text-xs font-bold uppercase text-stone-700">
-                Kết quả kiểm nghiệm chất lượng (Do Phòng QA/QC Thực hiện) / Quality Control Analytical Results
-              </div>
-              <Table head={["#", "Chỉ tiêu kiểm nghiệm / Parameter", "Phương pháp thử / Method", "Mức yêu cầu / Specification", "Kết quả phân tích / Result", "Đánh giá / Conclusion"]}>
-                {(Array.isArray(selectedCoa.qc_results_snapshot) && selectedCoa.qc_results_snapshot.length > 0) ? (
-                  selectedCoa.qc_results_snapshot.map((st: any, idx: number) => (
-                    <tr key={idx}>
-                      <td className="px-3 py-1.5 text-xs font-mono">{st.seq ?? idx + 1}</td>
-                      <td className="px-3 py-1.5 text-xs font-semibold">
-                        {st.parameter_name ?? `${st.step_code ?? ""} ${st.step_name ?? ""}`}
-                      </td>
-                      <td className="px-3 py-1.5 text-xs">{st.method ?? "SOP-QC"}</td>
-                      <td className="px-3 py-1.5 text-xs font-mono">{st.spec_limit ?? "Đạt chuẩn / Conforms"}</td>
-                      <td className="px-3 py-1.5 text-xs font-mono font-semibold">
-                        {st.observed_value ??
-                          (st.param_values && Object.keys(st.param_values).length > 0
-                            ? Object.entries(st.param_values)
-                                .map(([k, v]) => `${k}: ${v}`)
-                                .join(" · ")
-                            : "—")}
-                      </td>
-                      <td className="px-3 py-1.5 text-xs font-bold text-emerald-700">
-                        {st.passed === true ? "ĐẠT / PASS" : st.passed === false ? "KHÔNG ĐẠT / FAIL" : "CHƯA ĐÁNH GIÁ"}
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-2 text-xs text-center text-stone-500">
-                      Chưa có dữ liệu kiểm nghiệm QC được phê duyệt
-                    </td>
-                  </tr>
-                )}
-              </Table>
-            </div>
-
-            {selectedCoa.custom_notes && (
-              <div className="text-xs text-stone-700 bg-stone-50 p-2.5 rounded border border-stone-200">
-                <strong>Ghi chú / Remarks:</strong> {selectedCoa.custom_notes}
-              </div>
-            )}
-
-            <div className="flex items-center justify-between pt-3 border-t border-stone-300 text-xs">
-              <div>
-                <div>
-                  Kết luận xuất xưởng / Final Disposition: <strong className="text-emerald-700">{selectedCoa.qc_summary}</strong>
-                </div>
-                {selectedCoa.analyst_name && (
-                  <div className="text-stone-600">Chuyên viên kiểm nghiệm / QC Analyst: <strong>{selectedCoa.analyst_name}</strong></div>
-                )}
-                <div className="text-stone-500">{tplForm.footer_statement}</div>
-              </div>
-              <div className="text-right">
-                <div className="font-bold">{tplForm.approver_title}</div>
-                <div className="font-mono text-sky-900 font-semibold">{selectedCoa.issued_by_name}</div>
-              </div>
-            </div>
-          </div>
+          <QcDocumentPreview kind="COA" data={selectedCoa} formsConfig={formsConfig} />
         </Card>
       )}
     </div>
