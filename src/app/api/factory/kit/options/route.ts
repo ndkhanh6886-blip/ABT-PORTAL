@@ -67,7 +67,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
 
   const effective_boms = (
     await tx.query(
-      `SELECT b.id, b.code, b.name, b.product_item_id, b.bom_version,
+      `SELECT b.id, b.code, b.name, b.product_item_id, b.routing_id, b.bom_version,
               coalesce(b.bom_type, CASE WHEN i.item_type = 'SEMI_FINISHED' THEN 'semi_finished' ELSE 'finished_good' END) AS bom_type,
               coalesce(b.bom_category, 'PCR Kit') AS bom_category,
               coalesce(b.variant_code, 'BASE') AS variant_code,

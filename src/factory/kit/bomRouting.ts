@@ -16,6 +16,7 @@ export interface KitBomRow {
   code: string;
   org_unit_id: string;
   product_item_id: string;
+  routing_id?: string | null;
   bom_version: number;
   name: string;
   base_qty: string;
@@ -35,7 +36,8 @@ export interface KitRoutingRow {
   id: string;
   code: string;
   org_unit_id: string;
-  product_item_id: string;
+  product_item_id: string | null;
+  routing_category?: string | null;
   routing_version: number;
   name: string;
   notes: string | null;
@@ -195,6 +197,7 @@ export const routingMachine = defineMachine<SpecDocStatus, KitRoutingRow>({
       signature: "APPROVED",
       guards: [notAuthorGuard("quy trình công đoạn Routing")],
       beforeUpdate: async ({ tx, actor, row }) => {
+        if (!row.product_item_id) return;
         const prevRows = (
           await tx.query(
             "SELECT * FROM kit.routing WHERE product_item_id = $1 AND status = 'EFFECTIVE' AND id <> $2 FOR UPDATE",
@@ -237,6 +240,7 @@ export const routingMachine = defineMachine<SpecDocStatus, KitRoutingRow>({
 const createBomSchema = z.object({
   org_unit_id: z.string().uuid("chọn phòng Sản xuất Kit"),
   product_item_id: z.string().uuid("chọn sản phẩm Kit / Bán thành phẩm"),
+  routing_id: z.string().uuid().optional().nullable().or(z.literal("")),
   name: z.string().trim().min(3, "nhập tên định mức BOM").max(250),
   base_qty: z.coerce.number().positive().default(1),
   base_uom: z.string().trim().min(1).optional(),
@@ -326,6 +330,29 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
     notes: d.notes ?? null,
   });
 
+  let resolvedRoutingId: string | null = d.routing_id ? String(d.routing_id).trim() || null : null;
+  if (!resolvedRoutingId && d.clone_from_bom_id) {
+    const srcBom = (await tx.query("SELECT routing_id FROM kit.bom WHERE id = $1", [d.clone_from_bom_id])).rows[0];
+    if (srcBom?.routing_id) resolvedRoutingId = String(srcBom.routing_id);
+  }
+  if (!resolvedRoutingId) {
+    const prefCode =
+      inferredBomType === "semi_finished"
+        ? "RTG-BTP-MIX"
+        : /đông khô|lyo/i.test(`${product.code} ${product.name} ${d.name}`)
+          ? "RTG-PCR-LYO"
+          : inferredCategory === "PCR Kit"
+            ? "RTG-PCR-STD"
+            : "RTG-EXT-BUF";
+    const defRt = (
+      await tx.query(
+        "SELECT id FROM kit.routing WHERE status <> 'OBSOLETE' ORDER BY CASE WHEN code = $1 THEN 0 WHEN status = 'EFFECTIVE' THEN 1 ELSE 2 END, routing_version DESC LIMIT 1",
+        [prefCode]
+      )
+    ).rows[0];
+    if (defRt?.id) resolvedRoutingId = String(defRt.id);
+  }
+
   await tx.query(
     `UPDATE kit.bom
         SET bom_type = $2,
@@ -351,7 +378,8 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
             ifu_aliquoted_file_url = $22,
             ifu_aliquoted_file_size = $23,
             variant_code = $24,
-            supply_form = $25
+            supply_form = $25,
+            routing_id = $26
       WHERE id = $1`,
     [
       bom.id,
@@ -379,6 +407,7 @@ export async function createBom(tx: Tx, actor: AuthzActor, input: unknown) {
       d.ifu_aliquoted_file_size?.trim() || null,
       d.variant_code?.trim().toUpperCase() || "BASE",
       d.supply_form || "NO_SPLIT_NO_IC",
+      resolvedRoutingId,
     ]
   );
 
@@ -445,8 +474,9 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
               notes = $21,
               variant_code = $22,
               supply_form = $23,
+              routing_id = $24,
               updated_at = now(),
-              updated_by = $24
+              updated_by = $25
         WHERE id = $1
         RETURNING *`,
       [
@@ -473,6 +503,11 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
         input.notes !== undefined ? (input.notes ? String(input.notes).trim() : null) : bom.notes,
         input.variant_code !== undefined ? (String(input.variant_code).trim().toUpperCase() || "BASE") : String(bom.variant_code || "BASE"),
         input.supply_form !== undefined ? String(input.supply_form || "NO_SPLIT_NO_IC") : String(bom.supply_form || "NO_SPLIT_NO_IC"),
+        input.routing_id !== undefined
+          ? input.routing_id
+            ? String(input.routing_id).trim()
+            : null
+          : bom.routing_id ?? null,
         actor.userId,
       ]
     )
@@ -486,6 +521,47 @@ export async function updateBomHeader(tx: Tx, actor: AuthzActor, bomId: string, 
       bom_type: [bom.bom_type, updated.bom_type],
       tccs_code: [bom.tccs_code, updated.tccs_code],
       responsible_person_name: [bom.responsible_person_name, updated.responsible_person_name],
+      routing_id: [bom.routing_id ?? null, updated.routing_id ?? null],
+    },
+  });
+  return updated;
+}
+
+export async function assignBomRouting(
+  tx: Tx,
+  actor: AuthzActor,
+  bomId: string,
+  routingId: string | null
+) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as Record<string, unknown> | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  await authorize(tx, actor, "kit.bom.manage", String(bom.org_unit_id));
+
+  const cleanRoutingId = routingId && String(routingId).trim() ? String(routingId).trim() : null;
+  if (cleanRoutingId) {
+    const rt = (await tx.query("SELECT id, code, name FROM kit.routing WHERE id = $1", [cleanRoutingId])).rows[0];
+    if (!rt) throw notFound("quy trình công đoạn (Routing)");
+  }
+
+  const updated = (
+    await tx.query(
+      `UPDATE kit.bom
+          SET routing_id = $2,
+              updated_at = now(),
+              updated_by = $3
+        WHERE id = $1
+        RETURNING *`,
+      [bomId, cleanRoutingId, actor.userId]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_bom",
+    entityId: bomId,
+    action: "assign_routing",
+    changes: {
+      routing_id: [bom.routing_id ?? null, cleanRoutingId],
     },
   });
   return updated;
@@ -1271,7 +1347,8 @@ const routingStepSchema = routingStepItemSchema.extend({
 
 const createRoutingSchema = z.object({
   org_unit_id: z.string().uuid("chọn phòng Sản xuất Kit"),
-  product_item_id: z.string().uuid("chọn sản phẩm Kit / Bán thành phẩm"),
+  product_item_id: z.string().uuid().optional().nullable().or(z.literal("")),
+  routing_category: z.string().trim().max(80).optional().nullable(),
   name: z.string().trim().min(3, "nhập tên quy trình công đoạn (Routing)").max(250),
   notes: z.string().trim().max(2000).optional().nullable(),
   template_key: z.string().trim().max(60).optional().nullable(),
@@ -1303,22 +1380,36 @@ export async function createRouting(tx: Tx, actor: AuthzActor, input: unknown) {
   await ensureKitBomRoutingAndIfuSchema(tx);
   const d = parseInput(createRoutingSchema, input);
   await authorize(tx, actor, "kit.bom.manage", d.org_unit_id);
-  const nextVer = Number(
-    (
-      await tx.query("SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id = $1", [
-        d.product_item_id,
-      ])
-    ).rows[0].v
-  );
+  const cleanProductId = d.product_item_id && String(d.product_item_id).trim() ? String(d.product_item_id).trim() : null;
+  const nextVer = cleanProductId
+    ? Number(
+        (
+          await tx.query("SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id = $1", [
+            cleanProductId,
+          ])
+        ).rows[0].v
+      )
+    : Number(
+        (
+          await tx.query(
+            "SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id IS NULL AND lower(name) = lower($1)",
+            [d.name]
+          )
+        ).rows[0].v
+      );
   const code = await nextNumber(tx, "KIT_ROUTING");
   const created = await insertRecord<KitRoutingRow>(tx, actor, "kit.routing", "kit_routing", {
     code,
     org_unit_id: d.org_unit_id,
-    product_item_id: d.product_item_id,
+    product_item_id: cleanProductId,
     routing_version: nextVer,
     name: d.name,
     notes: d.notes ?? null,
   });
+
+  if (d.routing_category) {
+    await tx.query("UPDATE kit.routing SET routing_category = $2 WHERE id = $1", [created.id, d.routing_category.trim()]);
+  }
 
   if (d.steps && d.steps.length > 0) {
     await replaceAllRoutingSteps(tx, actor, created.id, d.steps);
@@ -1649,6 +1740,13 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
       ADD COLUMN IF NOT EXISTS ifu_aliquoted_file_url text,
       ADD COLUMN IF NOT EXISTS ifu_aliquoted_file_size text,
       ADD COLUMN IF NOT EXISTS label_design_json jsonb DEFAULT '{}'::jsonb
+  `);
+
+  await tx.query(`
+    ALTER TABLE kit.routing ALTER COLUMN product_item_id DROP NOT NULL;
+    ALTER TABLE kit.routing ADD COLUMN IF NOT EXISTS routing_category text DEFAULT 'PCR Kit';
+    DROP INDEX IF EXISTS kit.kit_routing_one_effective;
+    ALTER TABLE kit.bom ADD COLUMN IF NOT EXISTS routing_id uuid REFERENCES kit.routing(id) ON DELETE SET NULL;
   `);
 
   await tx.query(`
@@ -2001,6 +2099,103 @@ export async function ensureKitBomRoutingAndIfuSchema(tx: Tx) {
     }
   }
 
+  // Ensure the 4 Standard Shared Master Routings (dùng chung cho nhiều công thức BOM) exist and have steps
+  const defaultKitOrg =
+    (await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-KIT' LIMIT 1")).rows[0]?.id ??
+    (await tx.query("SELECT id FROM core.org_unit WHERE status = 'ACTIVE' ORDER BY code LIMIT 1")).rows[0]?.id;
+  if (defaultKitOrg) {
+    const sharedMasterRoutings = [
+      {
+        code: "RTG-PCR-STD",
+        name: "Quy trình Chuẩn 5 bước Sản xuất & Đóng gói Kit Real-time PCR / RT-qPCR (Dùng chung)",
+        routing_category: "PCR Kit",
+        template_key: "PCR_5_STEPS",
+        notes: "Quy trình dùng chung cho các công thức BOM Thành phẩm nhóm Kit Real-time PCR / RT-qPCR",
+      },
+      {
+        code: "RTG-PCR-LYO",
+        name: "Quy trình Chuẩn 6 bước Sản xuất Kit PCR Đông khô — Lyophilized (Dùng chung)",
+        routing_category: "Kit PCR Đông khô",
+        template_key: "LYO_6_STEPS",
+        notes: "Quy trình dùng chung cho các công thức BOM Kit PCR Đông khô chân không",
+      },
+      {
+        code: "RTG-EXT-BUF",
+        name: "Quy trình Chuẩn 5 bước Sản xuất Kit Tách chiết DNA/RNA & Hệ đệm Buffer (Dùng chung)",
+        routing_category: "Tách chiết / Khác",
+        template_key: "EXTRACTION_5_STEPS",
+        notes: "Quy trình dùng chung cho các công thức BOM Thành phẩm Kit Tách chiết, Dung dịch Đệm và Điện di",
+      },
+      {
+        code: "RTG-BTP-MIX",
+        name: "Quy trình Chuẩn 4 bước Pha chế Bán thành phẩm MasterMix / Primer / Đệm BTP (Dùng chung)",
+        routing_category: "Bán thành phẩm (BTP)",
+        template_key: "SEMI_FINISHED_4_STEPS",
+        notes: "Quy trình dùng chung cho toàn bộ công thức BOM Bán thành phẩm (MasterMix gốc, Primer/Probe Mix, Đệm BTP)",
+      },
+    ];
+
+    for (const sr of sharedMasterRoutings) {
+      await tx.query(
+        `INSERT INTO kit.routing
+           (code, org_unit_id, product_item_id, routing_category, routing_version, name, notes, status, approved_at)
+         VALUES ($1, $2, NULL, $3, 1, $4, $5, 'EFFECTIVE', now())
+         ON CONFLICT (code) DO UPDATE
+           SET routing_category = coalesce(nullif(kit.routing.routing_category, ''), EXCLUDED.routing_category)`,
+        [sr.code, defaultKitOrg, sr.routing_category, sr.name, sr.notes]
+      );
+      const rtRow = (await tx.query("SELECT id FROM kit.routing WHERE code = $1 LIMIT 1", [sr.code])).rows[0];
+      if (rtRow?.id) {
+        const sc = Number(
+          (await tx.query("SELECT count(*)::int AS c FROM kit.routing_step WHERE routing_id = $1", [rtRow.id])).rows[0]?.c ?? 0
+        );
+        if (sc === 0) {
+          const tplSteps = STANDARD_ROUTING_STEP_TEMPLATES[sr.template_key] ?? STANDARD_ROUTING_STEP_TEMPLATES.PCR_5_STEPS;
+          for (const s of tplSteps) {
+            await tx.query(
+              `INSERT INTO kit.routing_step
+                 (routing_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
+                  instructions, sop_doc_code, param_schema, is_qc, requires_check_signature, allow_skip, std_duration_min)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10, $11::jsonb, $12, $13, false, $14)
+               ON CONFLICT DO NOTHING`,
+              [
+                rtRow.id,
+                s.seq,
+                s.step_code,
+                s.step_name,
+                s.category,
+                s.step_function,
+                s.work_center,
+                JSON.stringify(s.functional_flags ?? {}),
+                s.instructions,
+                s.sop_doc_code,
+                JSON.stringify(s.param_schema ?? []),
+                s.is_qc,
+                s.requires_check_signature,
+                s.std_duration_min ?? 30,
+              ]
+            );
+          }
+        }
+      }
+    }
+
+    // Auto-assign shared Routing onto any BOM where routing_id is still NULL
+    await tx.query(`
+      UPDATE kit.bom b
+         SET routing_id = CASE
+               WHEN coalesce(b.bom_type, 'finished_good') = 'semi_finished'
+                 THEN (SELECT id FROM kit.routing WHERE code = 'RTG-BTP-MIX' LIMIT 1)
+               WHEN b.name ~* 'đông khô|lyo'
+                 THEN (SELECT id FROM kit.routing WHERE code = 'RTG-PCR-LYO' LIMIT 1)
+               WHEN coalesce(b.bom_category, 'PCR Kit') = 'PCR Kit'
+                 THEN (SELECT id FROM kit.routing WHERE code = 'RTG-PCR-STD' LIMIT 1)
+               ELSE (SELECT id FROM kit.routing WHERE code = 'RTG-EXT-BUF' LIMIT 1)
+             END
+       WHERE b.routing_id IS NULL
+    `);
+  }
+
   kitBomRoutingIfuSchemaEnsured = true;
 }
 
@@ -2127,22 +2322,34 @@ export async function cloneRouting(tx: Tx, actor: AuthzActor, routingId: string)
   const src = (await tx.query("SELECT * FROM kit.routing WHERE id = $1", [routingId])).rows[0] as KitRoutingRow | undefined;
   if (!src) throw notFound("quy trình Routing");
   await authorize(tx, actor, "kit.bom.manage", src.org_unit_id);
-  const nextVer = Number(
-    (
-      await tx.query("SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id = $1", [
-        src.product_item_id,
-      ])
-    ).rows[0].v
-  );
+  const nextVer = src.product_item_id
+    ? Number(
+        (
+          await tx.query("SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id = $1", [
+            src.product_item_id,
+          ])
+        ).rows[0].v
+      )
+    : Number(
+        (
+          await tx.query(
+            "SELECT coalesce(max(routing_version), 0) + 1 AS v FROM kit.routing WHERE product_item_id IS NULL AND routing_category IS NOT DISTINCT FROM $1",
+            [src.routing_category ?? null]
+          )
+        ).rows[0].v
+      );
   const code = await nextNumber(tx, "KIT_ROUTING");
   const created = await insertRecord<KitRoutingRow>(tx, actor, "kit.routing", "kit_routing", {
     code,
     org_unit_id: src.org_unit_id,
-    product_item_id: src.product_item_id,
+    product_item_id: src.product_item_id ?? null,
     routing_version: nextVer,
-    name: `${src.name} (Bản sao v${nextVer})`,
+    name: `${src.name.replace(/\s*\(Bản sao v\d+\)$/i, "")} (Bản sao v${nextVer})`,
     notes: src.notes ?? null,
   });
+  if (src.routing_category) {
+    await tx.query("UPDATE kit.routing SET routing_category = $2 WHERE id = $1", [created.id, src.routing_category]);
+  }
   await tx.query(
     `INSERT INTO kit.routing_step
        (routing_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
@@ -2157,25 +2364,7 @@ export async function cloneRouting(tx: Tx, actor: AuthzActor, routingId: string)
   return created;
 }
 
-export async function loadStandardKitRoutingSteps(
-  tx: Tx,
-  actor: AuthzActor,
-  routingId: string,
-  templateKey = "PCR_5_STEPS",
-  opts: { trusted?: boolean } = {}
-) {
-  await ensureKitBomRoutingAndIfuSchema(tx);
-  const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as KitRoutingRow | undefined;
-  if (!rtg) throw notFound("quy trình Routing");
-  if (!opts.trusted) {
-    await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
-  }
-  if (rtg.status !== "DRAFT") {
-    throw invalid("Chỉ được nạp mẫu bước công đoạn khi quy trình (Routing) đang ở trạng thái Bản nháp (DRAFT). Hãy bấm 'Nhân bản phiên bản mới' trước.");
-  }
-  await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routingId]);
-
-  const templates: Record<string, Array<Record<string, any>>> = {
+export const STANDARD_ROUTING_STEP_TEMPLATES: Record<string, Array<Record<string, any>>> = {
     PCR_5_STEPS: [
       {
         seq: 10,
@@ -2582,7 +2771,25 @@ export async function loadStandardKitRoutingSteps(
     ],
   };
 
-  const stdSteps = templates[templateKey] ?? templates.PCR_5_STEPS;
+export async function loadStandardKitRoutingSteps(
+  tx: Tx,
+  actor: AuthzActor,
+  routingId: string,
+  templateKey = "PCR_5_STEPS",
+  opts: { trusted?: boolean } = {}
+) {
+  await ensureKitBomRoutingAndIfuSchema(tx);
+  const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as KitRoutingRow | undefined;
+  if (!rtg) throw notFound("quy trình Routing");
+  if (!opts.trusted) {
+    await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
+  }
+  if (rtg.status !== "DRAFT") {
+    throw invalid("Chỉ được nạp mẫu bước công đoạn khi quy trình (Routing) đang ở trạng thái Bản nháp (DRAFT). Hãy bấm 'Nhân bản phiên bản mới' trước.");
+  }
+  await tx.query("DELETE FROM kit.routing_step WHERE routing_id = $1", [routingId]);
+
+  const stdSteps = STANDARD_ROUTING_STEP_TEMPLATES[templateKey] ?? STANDARD_ROUTING_STEP_TEMPLATES.PCR_5_STEPS;
 
   for (const s of stdSteps) {
     await tx.query(
@@ -2629,10 +2836,12 @@ export async function fastActivateRouting(tx: Tx, actor: AuthzActor, routingId: 
       throw invalid("Quy trình Routing phải có ít nhất 1 bước công đoạn trước khi kích hoạt hiệu lực.");
     }
   }
-  await tx.query(
-    "UPDATE kit.routing SET status = 'OBSOLETE', updated_at = now() WHERE product_item_id = $1 AND status = 'EFFECTIVE' AND id <> $2",
-    [rtg.product_item_id, routingId]
-  );
+  if (rtg.product_item_id) {
+    await tx.query(
+      "UPDATE kit.routing SET status = 'OBSOLETE', updated_at = now() WHERE product_item_id = $1 AND status = 'EFFECTIVE' AND id <> $2",
+      [rtg.product_item_id, routingId]
+    );
+  }
   const updated = (
     await tx.query(
       "UPDATE kit.routing SET status = 'EFFECTIVE', approved_by = $2, approved_at = now(), version = version + 1, updated_at = now() WHERE id = $1 RETURNING *",
@@ -2667,16 +2876,19 @@ export async function listBoms(tx: Tx, actor: AuthzActor, filter: ListFormulaFil
       `SELECT b.*, b.base_qty::float AS base_qty, u.name AS org_unit_name,
               it.code AS product_code, it.name AS product_name, it.item_type AS product_type,
               qs.code AS qc_spec_code, qs.name AS qc_spec_name,
+              rt.code AS routing_code, rt.name AS routing_name, rt.status AS routing_status, rt.routing_category AS routing_category,
+              (SELECT count(*)::int FROM kit.routing_step rs WHERE rs.routing_id = b.routing_id) AS routing_step_count,
               (SELECT count(*)::int FROM kit.bom_line bl WHERE bl.bom_id = b.id) AS line_count,
               (SELECT count(*)::int FROM kit.kit_packaging kp WHERE kp.bom_id = b.id) AS packaging_count
          FROM kit.bom b
          JOIN core.org_unit u ON u.id = b.org_unit_id
          JOIN master.item it ON it.id = b.product_item_id
          LEFT JOIN qms.qc_spec qs ON qs.id = b.qc_spec_id
+         LEFT JOIN kit.routing rt ON rt.id = b.routing_id
         WHERE ($1::uuid[] IS NULL OR b.org_unit_id = ANY($1::uuid[]))
           AND ($2::text IS NULL OR b.status = $2)
           AND ($3::uuid IS NULL OR b.product_item_id = $3)
-          AND ($4::text IS NULL OR lower(b.code) LIKE $4 OR lower(b.name) LIKE $4 OR lower(it.code) LIKE $4 OR lower(it.name) LIKE $4 OR lower(coalesce(b.tccs_code, '')) LIKE $4 OR lower(coalesce(b.responsible_person_name, '')) LIKE $4)
+          AND ($4::text IS NULL OR lower(b.code) LIKE $4 OR lower(b.name) LIKE $4 OR lower(it.code) LIKE $4 OR lower(it.name) LIKE $4 OR lower(coalesce(b.tccs_code, '')) LIKE $4 OR lower(coalesce(b.responsible_person_name, '')) LIKE $4 OR lower(coalesce(rt.code, '')) LIKE $4)
           AND ($5::text IS NULL OR coalesce(b.bom_type, 'finished_good') = $5)
           AND ($6::text IS NULL OR coalesce(b.bom_category, 'PCR Kit') = $6)
         ORDER BY CASE WHEN coalesce(b.bom_type, 'finished_good') = 'finished_good' THEN 0 ELSE 1 END ASC, it.code ASC, b.bom_version DESC
@@ -2698,12 +2910,15 @@ export async function getBomDetail(
       `SELECT b.*, b.base_qty::float AS base_qty, u.name AS org_unit_name,
               it.code AS product_code, it.name AS product_name,
               qs.code AS qc_spec_code, qs.name AS qc_spec_name,
-              ap.display_name AS approved_by_name
+              ap.display_name AS approved_by_name,
+              rt.code AS routing_code, rt.name AS routing_name, rt.status AS routing_status, rt.routing_category AS routing_category,
+              (SELECT count(*)::int FROM kit.routing_step rs WHERE rs.routing_id = b.routing_id) AS routing_step_count
          FROM kit.bom b
          JOIN core.org_unit u ON u.id = b.org_unit_id
          JOIN master.item it ON it.id = b.product_item_id
          LEFT JOIN qms.qc_spec qs ON qs.id = b.qc_spec_id
          LEFT JOIN core.user_profile ap ON ap.user_id = b.approved_by
+         LEFT JOIN kit.routing rt ON rt.id = b.routing_id
         WHERE b.id = $1`,
       [id]
     )
@@ -2784,10 +2999,11 @@ export async function listRoutings(tx: Tx, actor: AuthzActor, filter: ListFormul
   return (
     await tx.query(
       `SELECT r.*, u.name AS org_unit_name, it.code AS product_code, it.name AS product_name,
-              (SELECT count(*)::int FROM kit.routing_step rs WHERE rs.routing_id = r.id) AS step_count
+              (SELECT count(*)::int FROM kit.routing_step rs WHERE rs.routing_id = r.id) AS step_count,
+              (SELECT count(*)::int FROM kit.bom b WHERE b.routing_id = r.id) AS linked_bom_count
          FROM kit.routing r
          JOIN core.org_unit u ON u.id = r.org_unit_id
-         JOIN master.item it ON it.id = r.product_item_id
+         LEFT JOIN master.item it ON it.id = r.product_item_id
         WHERE ($1::uuid[] IS NULL OR r.org_unit_id = ANY($1::uuid[]))
           AND ($2::text IS NULL OR r.status = $2)
           AND ($3::uuid IS NULL OR r.product_item_id = $3)
@@ -2795,10 +3011,11 @@ export async function listRoutings(tx: Tx, actor: AuthzActor, filter: ListFormul
             $4::text IS NULL
             OR lower(r.code) LIKE $4
             OR lower(r.name) LIKE $4
-            OR lower(it.code) LIKE $4
-            OR lower(it.name) LIKE $4
+            OR lower(coalesce(r.routing_category, '')) LIKE $4
+            OR lower(coalesce(it.code, '')) LIKE $4
+            OR lower(coalesce(it.name, '')) LIKE $4
           )
-        ORDER BY it.code ASC, r.routing_version DESC
+        ORDER BY CASE WHEN r.product_item_id IS NULL THEN 0 ELSE 1 END ASC, r.code ASC, r.routing_version DESC
         LIMIT $5 OFFSET $6`,
       [units === "ALL" ? null : units, status, productItemId, q, limit, offset]
     )
@@ -2810,10 +3027,11 @@ export async function getRoutingDetail(tx: Tx, actor: AuthzActor, id: string) {
   const rtg = (
     await tx.query(
       `SELECT r.*, u.name AS org_unit_name, it.code AS product_code, it.name AS product_name,
-              ap.display_name AS approved_by_name
+              ap.display_name AS approved_by_name,
+              (SELECT count(*)::int FROM kit.bom b WHERE b.routing_id = r.id) AS linked_bom_count
          FROM kit.routing r
          JOIN core.org_unit u ON u.id = r.org_unit_id
-         JOIN master.item it ON it.id = r.product_item_id
+         LEFT JOIN master.item it ON it.id = r.product_item_id
          LEFT JOIN core.user_profile ap ON ap.user_id = r.approved_by
         WHERE r.id = $1`,
       [id]
@@ -2832,6 +3050,19 @@ export async function getRoutingDetail(tx: Tx, actor: AuthzActor, id: string) {
     )
   ).rows;
 
+  const linked_boms = (
+    await tx.query(
+      `SELECT b.id, b.code, b.name, b.bom_version, b.status, b.bom_type, b.bom_category, b.variant_code,
+              it.code AS product_code, it.name AS product_name
+         FROM kit.bom b
+         JOIN master.item it ON it.id = b.product_item_id
+        WHERE b.routing_id = $1
+        ORDER BY it.code ASC, b.bom_version DESC
+        LIMIT 60`,
+      [id]
+    )
+  ).rows;
+
   const actions = await listAllowedActions(tx, routingMachine, actor, rtg);
-  return { ...rtg, routing: rtg, steps, actions, allowed_actions: actions };
+  return { ...rtg, routing: rtg, steps, linked_boms, actions, allowed_actions: actions };
 }

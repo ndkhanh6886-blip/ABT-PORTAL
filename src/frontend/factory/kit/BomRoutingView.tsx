@@ -180,6 +180,7 @@ export function BomRoutingView({
   const [bomForm, setBomForm] = useState({
     org_unit_id: options.units[0]?.id ?? "",
     product_item_id: "",
+    routing_id: "",
     name: "",
     bom_type: "finished_good" as "finished_good" | "semi_finished",
     bom_category: "PCR Kit",
@@ -205,6 +206,7 @@ export function BomRoutingView({
 
   const [editHeaderForm, setEditHeaderForm] = useState({
     name: "",
+    routing_id: "",
     bom_type: "finished_good" as "finished_good" | "semi_finished",
     bom_category: "PCR Kit",
     variant_code: "BASE",
@@ -279,7 +281,8 @@ export function BomRoutingView({
   const [rtForm, setRtForm] = useState({
     org_unit_id: options.units[0]?.id ?? "",
     product_item_id: "",
-    name: "",
+    routing_category: "PCR Kit",
+    name: "Quy trình pha chế, chiết rót & đóng gói Kit PCR (5 bước)",
     notes: "",
   });
 
@@ -326,7 +329,7 @@ export function BomRoutingView({
       qs.set("limit", "2000");
       const [bRes, rRes] = await Promise.all([
         api<{ boms: any[] }>(`/api/factory/kit/boms?${qs.toString()}`),
-        api<{ routings: any[] }>(`/api/factory/kit/routings?${qs.toString()}`),
+        api<{ routings: any[] }>(`/api/factory/kit/routings?limit=500`),
       ]);
       setBoms(bRes.boms);
       setRoutings(rRes.routings);
@@ -349,6 +352,7 @@ export function BomRoutingView({
         const baseCode = String(d.bom.product_code || "").replace(/\.D\.IC$/i, "");
         setEditHeaderForm({
           name: d.bom.name ?? "",
+          routing_id: d.bom.routing_id ?? "",
           bom_type: isSemi ? "semi_finished" : "finished_good",
           bom_category: d.bom.bom_category ?? "PCR Kit",
           variant_code: d.bom.variant_code ?? "BASE",
@@ -495,6 +499,7 @@ export function BomRoutingView({
         json: {
           org_unit_id: bomForm.org_unit_id || options.units[0]?.id,
           product_item_id: bomForm.product_item_id,
+          routing_id: bomForm.routing_id || null,
           name: bomForm.name,
           bom_type: bomForm.bom_type,
           bom_category: bomForm.bom_category,
@@ -548,6 +553,24 @@ export function BomRoutingView({
       });
       setShowEditHeader(false);
       await loadBomDetail(selectedBomId);
+      await loadList();
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleQuickAssignRouting = async (routingId: string) => {
+    if (!selectedBomId) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+        method: "POST",
+        json: {
+          kind: "assign_routing",
+          routing_id: routingId || null,
+        },
+      });
+      await loadBomDetail(selectedBomId, lineSearch, lineBoxFilter);
       await loadList();
     } catch (err) {
       setError(err);
@@ -1143,7 +1166,8 @@ export function BomRoutingView({
         idempotent: true,
         json: {
           org_unit_id: rtForm.org_unit_id || options.units[0]?.id,
-          product_item_id: rtForm.product_item_id,
+          product_item_id: rtForm.product_item_id || null,
+          routing_category: rtForm.routing_category || "PCR Kit",
           name: rtForm.name,
           notes: rtForm.notes || null,
           steps: rtDraftSteps,
@@ -1783,6 +1807,24 @@ export function BomRoutingView({
                           onChange={(e) => setBomForm({ ...bomForm, storage_condition: e.target.value })}
                         />
                       </Field>
+                      <div className="sm:col-span-2">
+                        <Field label="⚙️ Quy trình công đoạn sản xuất áp dụng (Routing dùng chung cho nhiều BOM)">
+                          <select
+                            className={inputClass}
+                            value={bomForm.routing_id}
+                            onChange={(e) => setBomForm({ ...bomForm, routing_id: e.target.value })}
+                          >
+                            <option value="">-- Tự động gán theo phân loại BOM (Chuẩn ABT) --</option>
+                            {routings
+                              .filter((r) => r.status !== "OBSOLETE")
+                              .map((r) => (
+                                <option key={r.id} value={r.id}>
+                                  {r.code} — {r.name} ({r.step_count ?? 0} bước · {r.routing_category || "Dùng chung"})
+                                </option>
+                              ))}
+                          </select>
+                        </Field>
+                      </div>
                     </div>
 
                     {bomForm.bom_type === "semi_finished" ? (
@@ -2043,6 +2085,14 @@ export function BomRoutingView({
                                 <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
                                   · {b.line_count ?? 0} NVL
                                 </span>
+                                {b.routing_code && (
+                                  <span
+                                    title={`Quy trình sản xuất: ${b.routing_code} — ${b.routing_name || ""}`}
+                                    className="inline-block whitespace-nowrap px-1.5 py-0.2 rounded bg-sky-500/15 border border-sky-500/30 font-mono font-bold text-sky-700 dark:text-sky-300"
+                                  >
+                                    ⚙️ {b.routing_code}
+                                  </span>
+                                )}
                               </div>
                             </td>
                             <td className="px-2 py-2 whitespace-nowrap">
@@ -2145,7 +2195,7 @@ export function BomRoutingView({
                 }
               >
                 {/* Bảng thông tin truy xuất tự động & giao việc tự động */}
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3 rounded-xl bg-slate-900/70 border border-slate-800 text-xs mb-3">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5 p-3 rounded-xl bg-slate-900/70 border border-slate-800 text-xs mb-2.5">
                   <div>
                     <div className="text-[11px] text-slate-400">Số Tiêu chuẩn cơ sở (TCCS):</div>
                     <div className="font-mono font-bold text-sky-300">{bomDetail.bom.tccs_code || "TCCS 01:2026/ABT"}</div>
@@ -2185,6 +2235,54 @@ export function BomRoutingView({
                         📦 Mẫu lưu QC mặc định: +{bomDetail.bom.qc_retention_qty ?? 1} bộ/lô
                       </div>
                     )}
+                  </div>
+                </div>
+
+                {/* Khối chọn Quy trình công đoạn sản xuất (Routing dùng chung) ngay trong từng công thức BOM */}
+                <div className="p-2.5 rounded-xl bg-sky-950/35 border border-sky-800/50 flex flex-wrap items-center justify-between gap-2 text-xs mb-3">
+                  <div className="flex flex-wrap items-center gap-2 flex-1 min-w-[260px]">
+                    <span className="font-bold text-sky-300 whitespace-nowrap">
+                      ⚙️ Quy trình sản xuất áp dụng (Routing):
+                    </span>
+                    <select
+                      className={`${inputClass} py-1 text-xs flex-1 min-w-[240px] font-semibold`}
+                      value={bomDetail.bom.routing_id || ""}
+                      onChange={(e) => handleQuickAssignRouting(e.target.value)}
+                    >
+                      <option value="">-- Chọn quy trình công đoạn sản xuất dùng chung --</option>
+                      {routings
+                        .filter((r) => r.status !== "OBSOLETE" || r.id === bomDetail.bom.routing_id)
+                        .map((r) => (
+                          <option key={r.id} value={r.id}>
+                            {r.code} — {r.name} ({r.step_count ?? 0} bước · Đang dùng cho {r.linked_bom_count ?? 0} BOM)
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    {bomDetail.bom.routing_id && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedRoutingId(bomDetail.bom.routing_id);
+                          setShowCreateRouting(false);
+                          setSubTab("routing");
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-sky-600/25 hover:bg-sky-600/40 border border-sky-500/40 text-sky-200 font-bold text-[11px] cursor-pointer transition"
+                      >
+                        🔗 Xem {bomDetail.bom.routing_step_count ?? ""} bước công đoạn ({bomDetail.bom.routing_code})
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowCreateRouting(true);
+                        setSubTab("routing");
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold text-[11px] cursor-pointer transition"
+                    >
+                      + Tạo quy trình mới
+                    </button>
                   </div>
                 </div>
 
@@ -2649,6 +2747,24 @@ export function BomRoutingView({
                           />
                         </div>
                       </Field>
+                      <div className="md:col-span-2">
+                        <Field label="⚙️ Quy trình công đoạn sản xuất áp dụng (Routing dùng chung)">
+                          <select
+                            className={inputClass}
+                            value={editHeaderForm.routing_id}
+                            onChange={(e) => setEditHeaderForm({ ...editHeaderForm, routing_id: e.target.value })}
+                          >
+                            <option value="">-- Chọn quy trình công đoạn sản xuất --</option>
+                            {routings
+                              .filter((r) => r.status !== "OBSOLETE" || r.id === editHeaderForm.routing_id)
+                              .map((r) => (
+                                <option key={r.id} value={r.id}>
+                                  {r.code} — {r.name} ({r.step_count ?? 0} bước)
+                                </option>
+                              ))}
+                          </select>
+                        </Field>
+                      </div>
                     </div>
                     <div className="flex justify-end gap-2 pt-1">
                       <Button type="button" variant="ghost" onClick={() => setShowEditHeader(false)}>
@@ -3941,7 +4057,7 @@ export function BomRoutingView({
                     </Button>
                   </div>
 
-                  {/* Thông tin chung của Routing */}
+                  {/* Thông tin chung của Routing (Quy trình dùng chung cho nhiều công thức BOM) */}
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <Field label="Phòng Sản xuất Kit *">
                       <select
@@ -3958,33 +4074,40 @@ export function BomRoutingView({
                         ))}
                       </select>
                     </Field>
-                    <Field label="Sản phẩm Kit / Bán TP áp dụng *">
+                    <Field label="Nhóm quy trình dùng chung (Áp dụng cho nhiều BOM) *">
                       <select
                         className={inputClass}
-                        value={rtForm.product_item_id}
+                        value={rtForm.routing_category}
                         onChange={(e) => {
-                          const prod = kitProducts.find((i) => i.id === e.target.value);
+                          const cat = e.target.value;
+                          const suggestedTpl =
+                            cat === "Bán thành phẩm (BTP)"
+                              ? "SEMI_FINISHED_4_STEPS"
+                              : cat === "Kit PCR Đông khô"
+                                ? "LYO_6_STEPS"
+                                : cat === "Tách chiết / Khác"
+                                  ? "EXTRACTION_5_STEPS"
+                                  : "PCR_5_STEPS";
+                          const foundTpl = ROUTING_STANDARD_TEMPLATES.find((t) => t.key === suggestedTpl);
+                          setRtTemplateKey(suggestedTpl);
+                          if (foundTpl) {
+                            setRtDraftSteps(JSON.parse(JSON.stringify(foundTpl.steps)));
+                          }
                           setRtForm((p) => ({
                             ...p,
-                            product_item_id: e.target.value,
-                            name:
-                              p.name ||
-                              (prod
-                                ? `Quy trình công đoạn chuẩn — ${prod.code} (${prod.name})`
-                                : "Quy trình pha chế, chiết rót & đóng gói Kit PCR"),
+                            routing_category: cat,
+                            name: foundTpl ? `${foundTpl.label.replace(/^[^\s]+\s+/, "")} (Dùng chung)` : p.name,
                           }));
                         }}
-                        required
                       >
-                        <option value="">-- Chọn sản phẩm --</option>
-                        {kitProducts.map((i) => (
-                          <option key={i.id} value={i.id}>
-                            {i.code} — {i.name}
-                          </option>
-                        ))}
+                        <option value="PCR Kit">🧬 Nhóm Kit Real-time PCR / RT-qPCR (Dùng chung)</option>
+                        <option value="Kit PCR Đông khô">❄️ Nhóm Kit PCR Đông khô — Lyophilized (Dùng chung)</option>
+                        <option value="Tách chiết / Khác">🧪 Nhóm Kit Tách chiết / Hệ đệm Buffer / Điện di (Dùng chung)</option>
+                        <option value="Bán thành phẩm (BTP)">🫙 Nhóm Bán thành phẩm MasterMix / Primer / Đệm BTP (Dùng chung)</option>
+                        <option value="Dùng chung mọi sản phẩm">⚙️ Quy trình tùy chỉnh dùng chung cho nhiều sản phẩm</option>
                       </select>
                     </Field>
-                    <Field label="Tên quy trình công đoạn (Routing) *">
+                    <Field label="Tên quy trình công đoạn (Routing dùng chung) *">
                       <input
                         className={inputClass}
                         placeholder="VD: Quy trình pha chế, chiết rót & đóng gói Kit PCR (5 bước)"
@@ -4463,7 +4586,7 @@ export function BomRoutingView({
                       </div>
                     </div>
 
-                    <Table head={["Mã SP / Routing", "Tên quy trình", "Số bước", "Trạng thái", ""]}>
+                    <Table head={["Mã Quy trình", "Tên quy trình & Nhóm dùng chung", "Số BOM áp dụng", "Số bước", "Trạng thái", ""]}>
                       {pagedRoutings.map((r) => {
                         const isSelected = selectedRoutingId === r.id;
                         return (
@@ -4480,15 +4603,22 @@ export function BomRoutingView({
                             }`}
                           >
                             <td className="px-2.5 py-2 text-xs whitespace-nowrap">
-                              <div className="font-mono font-bold text-slate-900 dark:text-slate-100">{r.product_code}</div>
-                              <div className="font-mono text-[10px] text-sky-600 dark:text-sky-400">
+                              <div className="font-mono font-bold text-sky-600 dark:text-sky-400">
                                 {r.code} · v{r.routing_version}
+                              </div>
+                              <div className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                {r.routing_category || (r.product_code ? `SP: ${r.product_code}` : "Dùng chung")}
                               </div>
                             </td>
                             <td className="px-2.5 py-2 text-xs max-w-[260px]">
                               <div className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={r.name}>
                                 {r.name}
                               </div>
+                            </td>
+                            <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-500/15 border border-indigo-400/40 text-indigo-700 dark:text-indigo-200 font-bold text-[11px]">
+                                🔗 {r.linked_bom_count ?? 0} BOM
+                              </span>
                             </td>
                             <td className="px-2.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap">
                               {r.step_count} bước
@@ -4585,6 +4715,44 @@ export function BomRoutingView({
                         📋 Nhân bản phiên bản mới (Clone v{Number(routingDetail.routing.routing_version || 1) + 1})
                       </Button>
                     </div>
+                  </div>
+
+                  {/* Thông tin nhóm dùng chung & danh sách công thức BOM đang áp dụng quy trình này */}
+                  <div className="p-2.5 rounded-xl border border-indigo-500/30 bg-indigo-950/25 flex flex-wrap items-center justify-between gap-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="px-2 py-0.5 rounded-full bg-indigo-500/20 border border-indigo-400/40 text-indigo-200 font-bold text-[11px]">
+                        ⚙️ Nhóm quy trình: {routingDetail.routing.routing_category || "Dùng chung nhiều BOM"}
+                      </span>
+                      <span className="text-slate-300">
+                        Đang được chọn áp dụng trong{" "}
+                        <b className="text-sky-300">{routingDetail.routing.linked_bom_count ?? (routingDetail.linked_boms?.length || 0)} công thức BOM</b>
+                        {" "}(Thay đổi quy trình tại từng BOM ở Tab 1)
+                      </span>
+                    </div>
+                    {Array.isArray(routingDetail.linked_boms) && routingDetail.linked_boms.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1 w-full pt-1 border-t border-indigo-500/20">
+                        <span className="text-[11px] text-slate-400 mr-1">Các BOM tiêu biểu đang dùng:</span>
+                        {routingDetail.linked_boms.slice(0, 12).map((lb: any) => (
+                          <button
+                            key={lb.id}
+                            type="button"
+                            onClick={() => {
+                              setSelectedBomId(lb.id);
+                              setSubTab("bom");
+                            }}
+                            title={`${lb.code} — ${lb.product_name || lb.name}`}
+                            className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-sky-900/60 border border-slate-700 text-[10px] font-mono font-semibold text-sky-300 cursor-pointer transition"
+                          >
+                            {lb.product_code} ({lb.code})
+                          </button>
+                        ))}
+                        {(routingDetail.routing.linked_bom_count ?? 0) > 12 && (
+                          <span className="text-[10px] text-slate-400">
+                            +{(routingDetail.routing.linked_bom_count ?? 0) - 12} BOM khác...
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
 
                   {/* Sơ đồ luồng công đoạn trực quan (Visual Process Flow) */}

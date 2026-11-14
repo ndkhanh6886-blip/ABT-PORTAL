@@ -3,6 +3,7 @@ import {
   addBomLine,
   addBomLineSubstitute,
   addKitPackaging,
+  assignBomRouting,
   bulkAddBomLines,
   deleteBomLine,
   deleteKitPackaging,
@@ -27,6 +28,10 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   const b = body as Record<string, unknown>;
   if (b.kind === "update_header") {
     const bom = await updateBomHeader(tx, actor, params.id, b);
+    return { bom };
+  }
+  if (b.kind === "assign_routing") {
+    const bom = await assignBomRouting(tx, actor, params.id, b.routing_id ? String(b.routing_id) : null);
     return { bom };
   }
   if (b.kind === "label_ifu") {

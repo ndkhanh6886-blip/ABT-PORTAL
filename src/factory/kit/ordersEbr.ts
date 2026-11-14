@@ -1757,30 +1757,67 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     bom.status = "EFFECTIVE";
   }
 
-  let routingId = d.routing_id ?? null;
+  let routingId = d.routing_id ?? (bom.routing_id ? String(bom.routing_id) : null);
+  if (routingId) {
+    const chosenRt = (await tx.query("SELECT id, status FROM kit.routing WHERE id = $1", [routingId])).rows[0];
+    if (!chosenRt || chosenRt.status === "OBSOLETE") {
+      routingId = null;
+    } else if (chosenRt.status !== "EFFECTIVE") {
+      const stepCnt = Number(
+        (await tx.query("SELECT count(*)::int AS c FROM kit.routing_step WHERE routing_id = $1", [routingId])).rows[0]?.c ?? 0
+      );
+      if (stepCnt === 0 && chosenRt.status === "DRAFT") {
+        await loadStandardKitRoutingSteps(tx, actor, routingId, "PCR_5_STEPS", { trusted: true });
+      }
+      await tx.query(
+        "UPDATE kit.routing SET status = 'EFFECTIVE', approved_by = coalesce(approved_by, $2), approved_at = coalesce(approved_at, now()), updated_at = now() WHERE id = $1",
+        [routingId, actor.userId]
+      );
+    }
+  }
   if (!routingId) {
-    const effRt = (
-      await tx.query("SELECT id FROM kit.routing WHERE product_item_id = $1 AND status = 'EFFECTIVE' LIMIT 1", [
-        d.product_item_id,
-      ])
-    ).rows[0];
-    if (effRt) {
-      routingId = effRt.id;
-    } else {
-      // Tự động khởi tạo và kích hoạt Quy trình công đoạn chuẩn (Routing) theo phân loại BOM nếu sản phẩm vừa nạp từ Excel chưa có Routing
-      const isSemiBom =
-        product.item_type === "SEMI_FINISHED" || String(bom.bom_type || "finished_good") === "semi_finished";
-      const isExtractionBom = !isSemiBom && String(bom.bom_category || "PCR Kit") !== "PCR Kit";
-      const autoTemplateKey = isSemiBom
-        ? "SEMI_FINISHED_4_STEPS"
+    const isSemiBom =
+      product.item_type === "SEMI_FINISHED" || String(bom.bom_type || "finished_good") === "semi_finished";
+    const isLyoBom = !isSemiBom && /đông khô|lyo/i.test(`${product.code} ${product.name} ${bom.name || ""}`);
+    const isExtractionBom = !isSemiBom && !isLyoBom && String(bom.bom_category || "PCR Kit") !== "PCR Kit";
+    const preferredSharedCode = isSemiBom
+      ? "RTG-BTP-MIX"
+      : isLyoBom
+        ? "RTG-PCR-LYO"
+        : isExtractionBom
+          ? "RTG-EXT-BUF"
+          : "RTG-PCR-STD";
+    const autoTemplateKey = isSemiBom
+      ? "SEMI_FINISHED_4_STEPS"
+      : isLyoBom
+        ? "LYO_6_STEPS"
         : isExtractionBom
           ? "EXTRACTION_5_STEPS"
           : "PCR_5_STEPS";
 
+    const effRt = (
+      await tx.query(
+        `SELECT id FROM kit.routing
+          WHERE status = 'EFFECTIVE'
+            AND (product_item_id = $1 OR code = $2 OR product_item_id IS NULL)
+          ORDER BY
+            CASE
+              WHEN product_item_id = $1 THEN 0
+              WHEN code = $2 THEN 1
+              ELSE 2
+            END ASC,
+            routing_version DESC
+          LIMIT 1`,
+        [d.product_item_id, preferredSharedCode]
+      )
+    ).rows[0];
+    if (effRt) {
+      routingId = effRt.id;
+    } else {
       const draftRt = (
         await tx.query(
-          "SELECT id, status FROM kit.routing WHERE product_item_id = $1 AND status <> 'OBSOLETE' ORDER BY routing_version DESC LIMIT 1",
-          [d.product_item_id]
+          "SELECT id, status FROM kit.routing WHERE (product_item_id = $1 OR code = $2) AND status <> 'OBSOLETE' ORDER BY routing_version DESC LIMIT 1",
+          [d.product_item_id, preferredSharedCode]
         )
       ).rows[0];
 
@@ -1796,14 +1833,14 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
       } else {
         const rtCode = await nextNumber(tx, "KIT_ROUTING");
         const rtName = isSemiBom
-          ? `Quy trình Pha chế Bán thành phẩm ${product.code} — ${product.name}`
-          : `Quy trình Sản xuất & Đóng gói ${product.code} — ${product.name}`;
+          ? `Quy trình Pha chế Bán thành phẩm (Dùng chung)`
+          : `Quy trình Sản xuất & Đóng gói Kit (Dùng chung)`;
         const createdRt = (
           await tx.query(
             `INSERT INTO kit.routing (code, org_unit_id, product_item_id, routing_version, name, status, created_by, updated_by)
-             VALUES ($1, $2, $3, 1, $4, 'DRAFT', $5, $5)
+             VALUES ($1, $2, NULL, 1, $3, 'DRAFT', $4, $4)
              RETURNING id`,
-            [rtCode, d.org_unit_id, d.product_item_id, rtName.slice(0, 240), actor.userId]
+            [rtCode, d.org_unit_id, rtName.slice(0, 240), actor.userId]
           )
         ).rows[0];
         targetRtId = createdRt.id;
@@ -1816,6 +1853,9 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
       );
       routingId = targetRtId;
     }
+  }
+  if (routingId && bom.routing_id !== routingId) {
+    await tx.query("UPDATE kit.bom SET routing_id = $2 WHERE id = $1", [bom.id, routingId]);
   }
 
   const mfgDate = d.mfg_date ?? vnToday();
