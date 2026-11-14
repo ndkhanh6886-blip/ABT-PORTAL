@@ -64,8 +64,8 @@ export function ColumnsView({ canManage }: { canManage: boolean }) {
     queryFn: () => api<Col[]>("/api/factory/assets/columns"),
   });
   const assets = useQuery({
-    queryKey: ["factory", "assets", "all"],
-    queryFn: () => api<{ id: string; code: string; name: string; asset_type: string }[]>("/api/factory/assets"),
+    queryKey: ["factory", "assets", "P-OLIGO"],
+    queryFn: () => api<{ id: string; code: string; name: string; asset_type: string }[]>("/api/factory/assets?dept=P-OLIGO"),
   });
   const [f, setF] = useState({
     code: "",

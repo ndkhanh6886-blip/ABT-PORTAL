@@ -604,6 +604,14 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         let rowDeptCode = normStr(r.dept_code || r["Mã phòng"]);
         if (!rowDeptCode) {
           if (code.startsWith("QC") || (location && location.toUpperCase().includes("QC"))) rowDeptCode = "P-QA";
+          else if (
+            code.startsWith("OLI") ||
+            code.startsWith("OLG") ||
+            code.startsWith("HPLC") ||
+            assetType === "SYNTHESIZER" ||
+            (location && location.toUpperCase().includes("OLIGO"))
+          )
+            rowDeptCode = "P-OLIGO";
           else if (code.startsWith("SX")) rowDeptCode = "P-KIT";
           else rowDeptCode = targetDeptCode || "P-KIT";
         }

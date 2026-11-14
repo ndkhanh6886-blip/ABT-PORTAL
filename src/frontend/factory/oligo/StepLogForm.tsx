@@ -37,7 +37,7 @@ function CorrectStep({ seqId, step, log, onDone }: { seqId: string; step: Frozen
 
 export function StepTable({ steps, logs, seqId, canCorrect, onCorrected }: { steps: FrozenStep[]; logs: StepLog[]; seqId?: string; canCorrect?: boolean; onCorrected?: () => void }) {
   const [editing, setEditing] = useState<number | null>(null);
-  const assets = useQuery({ queryKey: ["factory", "assets", "all"], queryFn: () => api<AssetOpt[]>("/api/factory/assets") });
+  const assets = useQuery({ queryKey: ["factory", "assets", "P-OLIGO"], queryFn: () => api<AssetOpt[]>("/api/factory/assets?dept=P-OLIGO") });
   const columns = useColumns();
   const show = (f: StepField, v: unknown) => {
     if (v == null || v === "") return null;
@@ -77,7 +77,7 @@ export function StepTable({ steps, logs, seqId, canCorrect, onCorrected }: { ste
 
 /** Form for the next step; `sequenceIds` may hold several sequences at the same step (logged together). */
 export function StepLogForm({ step, sequenceIds, odReady, onDone }: { step: FrozenStep; sequenceIds: string[]; odReady: boolean; onDone: () => void }) {
-  const assets = useQuery({ queryKey: ["factory", "assets", "all"], queryFn: () => api<AssetOpt[]>("/api/factory/assets") });
+  const assets = useQuery({ queryKey: ["factory", "assets", "P-OLIGO"], queryFn: () => api<AssetOpt[]>("/api/factory/assets?dept=P-OLIGO") });
   const columns = useColumns();
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(step.fields.map((f) => [f.key, f.type === "REAGENT" && f.default_qty != null ? String(f.default_qty) : ""]))

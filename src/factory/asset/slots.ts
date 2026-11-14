@@ -30,70 +30,74 @@ export async function ensureHplcReagentSlotsAndColumnsSeed(tx: Tx) {
         ADD COLUMN IF NOT EXISTS design_runs integer NOT NULL DEFAULT 140
     `);
 
-    if (process.env.FACTORY_ALLOW_DEMO_SEED !== "1") {
+    const oligoUnit = (
+      await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-OLIGO' OR module_key = 'OLIGO' ORDER BY code LIMIT 1")
+    ).rows[0];
+    if (!oligoUnit) {
       await tx.query("RELEASE SAVEPOINT hplc_seed_sp");
       hplcSlotSchemaEnsured = true;
       return;
     }
 
-    const oligoUnit = (
-      await tx.query("SELECT id FROM core.org_unit WHERE code = 'P-OLIGO' OR module_key = 'OLIGO' ORDER BY code LIMIT 1")
-    ).rows[0];
-    if (!oligoUnit) {
-      hplcSlotSchemaEnsured = true;
-      return;
-    }
+    const allowDemoSeed = process.env.FACTORY_ALLOW_DEMO_SEED === "1";
 
-    // 1. Khởi tạo Hệ thống HPLC Tinh sạch Oligo & Máy đo quang phổ của phòng Oligo nếu chưa có
-    let hplcAsset = (await tx.query("SELECT id FROM asset.asset WHERE code = 'HPLC-OLG-01' LIMIT 1")).rows[0];
-    if (!hplcAsset) {
+    // 1. Khởi tạo Hệ thống HPLC Tinh sạch Oligo & Máy đo quang phổ của phòng Oligo nếu bật demo seed
+    let hplcAsset = (
+      await tx.query(
+        "SELECT id, code FROM asset.asset WHERE owner_org_unit_id = $1 AND asset_type = 'HPLC' ORDER BY (code = 'HPLC-01') DESC, code LIMIT 1",
+        [oligoUnit.id]
+      )
+    ).rows[0];
+    if (!hplcAsset && allowDemoSeed) {
       hplcAsset = (
         await tx.query(
           `INSERT INTO asset.asset
              (code, name, asset_type, owner_org_unit_id, manufacturer, model, serial_no, status, calibration_interval_days, next_calibration_due)
            VALUES ('HPLC-OLG-01', 'Hệ thống Sắc ký Lỏng Tinh sạch Oligo Prep-HPLC (Agilent 1260 Infinity II)', 'HPLC', $1, 'Agilent Technologies', '1260 Infinity II Prep-LC', 'AG-1260P-OLG01', 'IN_SERVICE', 180, '2027-04-30')
-           RETURNING id`,
+           RETURNING id, code`,
           [oligoUnit.id]
         )
       ).rows[0];
     }
 
-    const specExists = (await tx.query("SELECT id FROM asset.asset WHERE code = 'SPEC-OLG-01' LIMIT 1")).rows[0];
-    if (!specExists) {
-      await tx.query(
-        `INSERT INTO asset.asset
-           (code, name, asset_type, owner_org_unit_id, manufacturer, model, serial_no, status, calibration_interval_days, next_calibration_due)
-         VALUES ('SPEC-OLG-01', 'Máy Đo Quang Phổ OD260/280 Định lượng Oligo (Implen NanoPhotometer N60)', 'SPECTROPHOTOMETER', $1, 'Implen', 'NanoPhotometer N60', 'IMP-N60-OLG02', 'IN_SERVICE', 365, '2027-05-15')`,
-        [oligoUnit.id]
-      );
-    }
+    if (allowDemoSeed) {
+      const specExists = (await tx.query("SELECT id FROM asset.asset WHERE code = 'SPEC-OLG-01' LIMIT 1")).rows[0];
+      if (!specExists) {
+        await tx.query(
+          `INSERT INTO asset.asset
+             (code, name, asset_type, owner_org_unit_id, manufacturer, model, serial_no, status, calibration_interval_days, next_calibration_due)
+           VALUES ('SPEC-OLG-01', 'Máy Đo Quang Phổ OD260/280 Định lượng Oligo (Implen NanoPhotometer N60)', 'SPECTROPHOTOMETER', $1, 'Implen', 'NanoPhotometer N60', 'IMP-N60-OLG02', 'IN_SERVICE', 365, '2027-05-15')`,
+          [oligoUnit.id]
+        );
+      }
 
-    // 2. Khởi tạo Cột sắc ký mẫu gắn trên máy HPLC-OLG-01 nếu bảng lc_column đang trống
-    const colCount = Number((await tx.query("SELECT count(*)::int AS c FROM asset.lc_column")).rows[0]?.c || 0);
-    if (colCount === 0 && hplcAsset) {
-      const col1 = (
+      // 2. Khởi tạo Cột sắc ký mẫu gắn trên máy HPLC nếu bảng lc_column đang trống
+      const colCount = Number((await tx.query("SELECT count(*)::int AS c FROM asset.lc_column")).rows[0]?.c || 0);
+      if (colCount === 0 && hplcAsset) {
+        const col1 = (
+          await tx.query(
+            `INSERT INTO asset.lc_column (code, name, asset_id, price_vnd, design_runs, status)
+             VALUES ('COL-C18-PREP-01', 'Cột Tinh sạch Oligo Reverse-Phase C18 Prep (250×10mm, 5µm, 100Å)', $1, 18500000, 250, 'ACTIVE')
+             RETURNING id`,
+            [hplcAsset.id]
+          )
+        ).rows[0];
         await tx.query(
           `INSERT INTO asset.lc_column (code, name, asset_id, price_vnd, design_runs, status)
-           VALUES ('COL-C18-PREP-01', 'Cột Tinh sạch Oligo Reverse-Phase C18 Prep (250×10mm, 5µm, 100Å)', $1, 18500000, 250, 'ACTIVE')
-           RETURNING id`,
+           VALUES ('COL-DNAPAC-PA200', 'Cột Trao đổi Ion Tinh sạch Amplicon & Probe DNAPac PA200 (250×9mm)', $1, 24000000, 200, 'ACTIVE')`,
           [hplcAsset.id]
-        )
-      ).rows[0];
-      await tx.query(
-        `INSERT INTO asset.lc_column (code, name, asset_id, price_vnd, design_runs, status)
-         VALUES ('COL-DNAPAC-PA200', 'Cột Trao đổi Ion Tinh sạch Amplicon & Probe DNAPac PA200 (250×9mm)', $1, 24000000, 200, 'ACTIVE')`,
-        [hplcAsset.id]
-      );
-      if (col1) {
-        await tx.query(
-          `INSERT INTO asset.lc_column_run (column_id, sequence_code, step_name, cost_vnd)
-           VALUES ($1, 'O261000003 (HBV-TaqMan-Probe)', 'Tinh sạch HPLC Reverse-Phase', 74000)`,
-          [col1.id]
         );
+        if (col1) {
+          await tx.query(
+            `INSERT INTO asset.lc_column_run (column_id, sequence_code, step_name, cost_vnd)
+             VALUES ($1, 'O261000003 (HBV-TaqMan-Probe)', 'Tinh sạch HPLC Reverse-Phase', 74000)`,
+            [col1.id]
+          );
+        }
       }
     }
 
-    // 3. Khởi tạo 5 mã Hóa chất chạy máy HPLC trong Kho Nhánh Oligo & gắn vào 5 Kênh hóa chất trên máy HPLC-OLG-01
+    // 3. Khởi tạo 5 mã Hóa chất chạy máy HPLC & gắn cấu hình 5 Kênh hóa chất chuẩn cho các máy HPLC của phòng Oligo
     const wh = (
       await tx.query(
         "SELECT w.id AS warehouse_id, l.id AS location_id FROM master.warehouse w JOIN master.location l ON l.warehouse_id = w.id WHERE (w.owner_org_unit_id = $1 OR w.code = 'KHO-OLIGO') AND NOT l.is_quarantine ORDER BY w.code, l.code LIMIT 1",
@@ -179,9 +183,9 @@ export async function ensureHplcReagentSlotsAndColumnsSeed(tx: Tx) {
       },
     ];
 
-    const slotCount = hplcAsset
-      ? Number((await tx.query("SELECT count(*)::int AS c FROM asset.reagent_slot WHERE asset_id = $1", [hplcAsset.id])).rows[0]?.c || 0)
-      : 0;
+    const hplcAssets = (
+      await tx.query("SELECT id, code FROM asset.asset WHERE owner_org_unit_id = $1 AND asset_type = 'HPLC' ORDER BY code", [oligoUnit.id])
+    ).rows;
 
     for (const r of hplcReagentSeeds) {
       let item = (await tx.query("SELECT id FROM master.item WHERE code = $1 LIMIT 1", [r.item_code])).rows[0];
@@ -196,47 +200,50 @@ export async function ensureHplcReagentSlotsAndColumnsSeed(tx: Tx) {
         ).rows[0];
       }
 
-      let lot = (await tx.query("SELECT id FROM inv.lot WHERE item_id = $1 AND code = $2 LIMIT 1", [item.id, r.lot_code])).rows[0];
-      if (!lot) {
-        lot = (
-          await tx.query(
-            `INSERT INTO inv.lot (code, item_id, origin, status, received_date, expiry_date)
-             VALUES ($1, $2, 'PURCHASE', 'RELEASED', '2026-10-01', $3)
-             RETURNING id`,
-            [r.lot_code, item.id, r.expiry_date]
-          )
-        ).rows[0];
-      }
+      let lot: { id: string } | undefined;
+      if (allowDemoSeed) {
+        lot = (await tx.query("SELECT id FROM inv.lot WHERE item_id = $1 AND code = $2 LIMIT 1", [item.id, r.lot_code])).rows[0];
+        if (!lot) {
+          lot = (
+            await tx.query(
+              `INSERT INTO inv.lot (code, item_id, origin, status, received_date, expiry_date)
+               VALUES ($1, $2, 'PURCHASE', 'RELEASED', '2026-10-01', $3)
+               RETURNING id`,
+              [r.lot_code, item.id, r.expiry_date]
+            )
+          ).rows[0];
+        }
 
-      if (wh && lot) {
-        const bal = (
-          await tx.query(
-            "SELECT id FROM inv.stock_balance WHERE item_id = $1 AND location_id = $2 AND lot_id = $3 LIMIT 1",
-            [item.id, wh.location_id, lot.id]
-          )
-        ).rows[0];
-        if (!bal) {
-          const onHand = r.bottle_volume_base * 2 - (r.initial_used_run_qty + r.initial_used_purge_qty);
-          await tx.query(
-            `INSERT INTO inv.stock_balance (item_id, location_id, lot_id, qty_on_hand, qty_reserved)
-             VALUES ($1, $2, $3, $4, 0)`,
-            [item.id, wh.location_id, lot.id, onHand]
-          );
+        if (wh && lot) {
+          const bal = (
+            await tx.query(
+              "SELECT id FROM inv.stock_balance WHERE item_id = $1 AND location_id = $2 AND lot_id = $3 LIMIT 1",
+              [item.id, wh.location_id, lot.id]
+            )
+          ).rows[0];
+          if (!bal) {
+            const onHand = r.bottle_volume_base * 2 - (r.initial_used_run_qty + r.initial_used_purge_qty);
+            await tx.query(
+              `INSERT INTO inv.stock_balance (item_id, location_id, lot_id, qty_on_hand, qty_reserved)
+               VALUES ($1, $2, $3, $4, 0)`,
+              [item.id, wh.location_id, lot.id, onHand]
+            );
+          }
         }
       }
 
-      if (hplcAsset && slotCount === 0) {
+      for (const ha of hplcAssets) {
         await tx.query(
           `INSERT INTO asset.reagent_slot
              (asset_id, slot_no, label, item_id, current_lot_id, installed_at, bottle_volume_base, std_qty_per_run, std_qty_per_purge, bottle_price_vnd, design_runs)
-           VALUES ($1, $2, $3, $4, $5, now() - interval '5 days', $6, $7, $8, $9, $10)
+           VALUES ($1, $2, $3, $4, $5, CASE WHEN $5::uuid IS NOT NULL THEN now() - interval '5 days' ELSE NULL END, $6, $7, $8, $9, $10)
            ON CONFLICT (asset_id, slot_no) DO NOTHING`,
           [
-            hplcAsset.id,
+            ha.id,
             r.slot_no,
             r.label,
             item.id,
-            lot.id,
+            lot?.id ?? null,
             r.bottle_volume_base,
             r.std_qty_per_run,
             r.std_qty_per_purge,
@@ -244,24 +251,29 @@ export async function ensureHplcReagentSlotsAndColumnsSeed(tx: Tx) {
             r.design_runs,
           ]
         );
-        await tx.query(
-          `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, notes, created_at)
-           VALUES ($1, $2, 'INSTALL', $3, 'Lắp chai hóa chất HPLC mới lên kênh', now() - interval '5 days')`,
-          [hplcAsset.id, r.slot_no, lot.id]
-        );
-        if (r.initial_used_run_qty > 0) {
-          await tx.query(
-            `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, usage_kind, qty_base, source_ref, notes, created_at)
-             VALUES ($1, $2, 'USAGE', $3, 'RUN', $4, 'Mẻ tinh sạch Probe/Amplicon', 'Chạy 10 mẫu tinh sạch Oligo theo định mức kênh', now() - interval '2 days')`,
-            [hplcAsset.id, r.slot_no, lot.id, r.initial_used_run_qty]
-          );
-        }
-        if (r.initial_used_purge_qty > 0) {
-          await tx.query(
-            `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, usage_kind, qty_base, source_ref, notes, created_at)
-             VALUES ($1, $2, 'USAGE', $3, 'PURGE', $4, 'Cân bằng đầu ngày', 'Purge đuổi bọt khí & cân bằng đường ống HPLC', now() - interval '1 day')`,
-            [hplcAsset.id, r.slot_no, lot.id, r.initial_used_purge_qty]
-          );
+        if (allowDemoSeed && lot && ha.id === hplcAsset?.id) {
+          const evCount = Number((await tx.query("SELECT count(*)::int AS c FROM asset.slot_event WHERE asset_id = $1 AND slot_no = $2", [ha.id, r.slot_no])).rows[0]?.c || 0);
+          if (evCount === 0) {
+            await tx.query(
+              `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, notes, created_at)
+               VALUES ($1, $2, 'INSTALL', $3, 'Lắp chai hóa chất HPLC mới lên kênh', now() - interval '5 days')`,
+              [ha.id, r.slot_no, lot.id]
+            );
+            if (r.initial_used_run_qty > 0) {
+              await tx.query(
+                `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, usage_kind, qty_base, source_ref, notes, created_at)
+                 VALUES ($1, $2, 'USAGE', $3, 'RUN', $4, 'Mẻ tinh sạch Probe/Amplicon', 'Chạy 10 mẫu tinh sạch Oligo theo định mức kênh', now() - interval '2 days')`,
+                [ha.id, r.slot_no, lot.id, r.initial_used_run_qty]
+              );
+            }
+            if (r.initial_used_purge_qty > 0) {
+              await tx.query(
+                `INSERT INTO asset.slot_event (asset_id, slot_no, event, lot_id, usage_kind, qty_base, source_ref, notes, created_at)
+                 VALUES ($1, $2, 'USAGE', $3, 'PURGE', $4, 'Cân bằng đầu ngày', 'Purge đuổi bọt khí & cân bằng đường ống HPLC', now() - interval '1 day')`,
+                [ha.id, r.slot_no, lot.id, r.initial_used_purge_qty]
+              );
+            }
+          }
         }
       }
     }

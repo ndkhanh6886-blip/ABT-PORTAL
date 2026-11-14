@@ -107,7 +107,7 @@ function ExperimentPanel({
   const qc = useQueryClient();
   const ctx = useRdContext("rd.view");
   const detail = useQuery({ queryKey: ["factory", "rd", "experiment", id], queryFn: () => api<ExperimentDetail>(`/api/factory/rd/experiments/${id}`) });
-  const assetsList = useQuery({ queryKey: ["factory", "assets"], queryFn: () => api<any[]>("/api/factory/assets") });
+  const assetsList = useQuery({ queryKey: ["factory", "assets", "P-RD"], queryFn: () => api<any[]>("/api/factory/assets?dept=P-RD") });
 
   const [conclusion, setConclusion] = useState("");
   const [entryType, setEntryType] = useState("OBSERVATION");

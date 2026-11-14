@@ -97,8 +97,8 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
 
     const allowDemoSeed = process.env.FACTORY_ALLOW_DEMO_SEED === "1" || force;
 
-    // 2. Máy tổng hợp Oligo từ OligoFlow cũ (OligoMaker 96-I, Dr. Oligo 48, K&A H-16)
-    const legacySynthesizers = allowDemoSeed ? [
+    // 2. Máy tổng hợp Oligo từ OligoFlow cũ (OligoMaker 96-I, Dr. Oligo 48, K&A H-16) — Thiết bị riêng của Phòng Sản xuất Oligo (P-OLIGO)
+    const legacySynthesizers = [
       {
         code: "OM-96",
         name: "OligoMaker 96-I",
@@ -126,7 +126,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
         positions: 16,
         scales: ["50NMOL", "100NMOL", "200NMOL", "250NMOL", "500NMOL", "1000NMOL"],
       },
-    ] : [];
+    ];
     for (const syn of legacySynthesizers) {
       let a = (await tx.query("SELECT id FROM asset.asset WHERE code = $1 LIMIT 1", [syn.code])).rows[0];
       if (!a) {
@@ -140,6 +140,8 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
           )
         ).rows[0];
         counts.synthesizers += 1;
+      } else {
+        await tx.query("UPDATE asset.asset SET owner_org_unit_id = $2 WHERE id = $1 AND owner_org_unit_id <> $2", [a.id, oligoUnit.id]);
       }
       await tx.query(
         `INSERT INTO oligo.synthesizer (asset_id, column_positions, supported_scales)
@@ -149,8 +151,8 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
       );
     }
 
-    // 3. Thiết bị Lab / Sau tổng hợp từ OligoFlow cũ (HPLC-01, HPLC-02, CENT-01, SPEC-01, DRY-01)
-    const legacyEquipments = allowDemoSeed ? [
+    // 3. Thiết bị Lab / Sau tổng hợp riêng của Phòng Oligo từ OligoFlow cũ (HPLC-01, HPLC-02, CENT-01, SPEC-01, DRY-01)
+    const legacyEquipments = [
       {
         code: "HPLC-01",
         name: "Hệ thống HPLC Shimadzu LC-20",
@@ -191,7 +193,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
         model: "LyoBeta 15",
         serial_no: "TS-LYO-001",
       },
-    ] : [];
+    ];
     let hplc01Id: string | null = null;
     for (const eq of legacyEquipments) {
       let a = (await tx.query("SELECT id FROM asset.asset WHERE code = $1 LIMIT 1", [eq.code])).rows[0];
@@ -206,12 +208,14 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
           )
         ).rows[0];
         counts.equipments += 1;
+      } else {
+        await tx.query("UPDATE asset.asset SET owner_org_unit_id = $2 WHERE id = $1 AND owner_org_unit_id <> $2", [a.id, oligoUnit.id]);
       }
       if (eq.code === "HPLC-01") hplc01Id = a.id;
     }
 
     // 4. 7 Cột sắc ký HPLC Waters XBridge Oligonucleotide BEH C18 từ trang abt-portal.online (BTL-00838 .. BTL-00844)
-    const legacyHplcColumns = allowDemoSeed ? [
+    const legacyHplcColumns = [
       {
         code: "BTL-00838",
         lot_code: "240201.0",
@@ -289,7 +293,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
         used_runs: 0,
         remaining_runs: 1000,
       },
-    ] : [];
+    ];
 
     for (const col of legacyHplcColumns) {
       let existing = (await tx.query("SELECT id FROM asset.lc_column WHERE upper(code) = upper($1) LIMIT 1", [col.code])).rows[0];
@@ -458,7 +462,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
     ];
 
     const itemByCode = new Map<string, string>();
-    for (const mat of allowDemoSeed ? legacyMaterials : []) {
+    for (const mat of legacyMaterials) {
       let item = (await tx.query("SELECT id FROM master.item WHERE upper(code) = upper($1) LIMIT 1", [mat.code])).rows[0];
       if (!item) {
         item = (
@@ -473,30 +477,32 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
       }
       itemByCode.set(mat.code, item.id);
 
-      let lot = (await tx.query("SELECT id FROM inv.lot WHERE item_id = $1 AND code = $2 LIMIT 1", [item.id, mat.lot_code])).rows[0];
-      if (!lot) {
-        lot = (
-          await tx.query(
-            `INSERT INTO inv.lot (code, item_id, origin, status, received_date, expiry_date)
-             VALUES ($1, $2, 'PURCHASE', 'RELEASED', '2026-10-01', '2027-12-31')
-             RETURNING id`,
-            [mat.lot_code, item.id]
-          )
-        ).rows[0];
-      }
-      if (wh && lot) {
-        const bal = (
-          await tx.query(
-            "SELECT id FROM inv.stock_balance WHERE item_id = $1 AND location_id = $2 AND lot_id = $3 LIMIT 1",
-            [item.id, wh.location_id, lot.id]
-          )
-        ).rows[0];
-        if (!bal) {
-          await tx.query(
-            `INSERT INTO inv.stock_balance (item_id, location_id, lot_id, qty_on_hand, qty_reserved)
-             VALUES ($1, $2, $3, $4, 0)`,
-            [item.id, wh.location_id, lot.id, mat.qty_on_hand]
-          );
+      if (allowDemoSeed) {
+        let lot = (await tx.query("SELECT id FROM inv.lot WHERE item_id = $1 AND code = $2 LIMIT 1", [item.id, mat.lot_code])).rows[0];
+        if (!lot) {
+          lot = (
+            await tx.query(
+              `INSERT INTO inv.lot (code, item_id, origin, status, received_date, expiry_date)
+               VALUES ($1, $2, 'PURCHASE', 'RELEASED', '2026-10-01', '2027-12-31')
+               RETURNING id`,
+              [mat.lot_code, item.id]
+            )
+          ).rows[0];
+        }
+        if (wh && lot) {
+          const bal = (
+            await tx.query(
+              "SELECT id FROM inv.stock_balance WHERE item_id = $1 AND location_id = $2 AND lot_id = $3 LIMIT 1",
+              [item.id, wh.location_id, lot.id]
+            )
+          ).rows[0];
+          if (!bal) {
+            await tx.query(
+              `INSERT INTO inv.stock_balance (item_id, location_id, lot_id, qty_on_hand, qty_reserved)
+               VALUES ($1, $2, $3, $4, 0)`,
+              [item.id, wh.location_id, lot.id, mat.qty_on_hand]
+            );
+          }
         }
       }
 
@@ -801,7 +807,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
       { name: "pBR322", length_bp: 4361, notes: "Vector plasmid chuẩn E. coli (AmpR, TetR)" },
       { name: "pET-28a", length_bp: 5369, notes: "Vector biểu현 protein T7 His-Tag (KanR)" },
     ];
-    for (const pl of allowDemoSeed ? legacyPlasmids : []) {
+    for (const pl of legacyPlasmids) {
       const ex = (await tx.query("SELECT id FROM oligo.plasmid WHERE lower(name) = lower($1) LIMIT 1", [pl.name])).rows[0];
       if (!ex) {
         await tx.query(

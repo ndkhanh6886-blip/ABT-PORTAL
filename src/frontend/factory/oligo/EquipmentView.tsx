@@ -305,7 +305,10 @@ export function EquipmentView({
     const i = id ? modItems.data?.rows.find((x) => x.id === id) : undefined;
     return i ? `${i.code} · ${i.name}` : undefined;
   };
-  const assets = useQuery({ queryKey: ["factory", "assets", "SYNTHESIZER"], queryFn: () => api<Asset[]>("/api/factory/assets?type=SYNTHESIZER") });
+  const assets = useQuery({
+    queryKey: ["factory", "assets", "SYNTHESIZER", "P-OLIGO"],
+    queryFn: () => api<Asset[]>("/api/factory/assets?type=SYNTHESIZER&dept=P-OLIGO"),
+  });
   const rules = useQuery({ queryKey: ["factory", "oligo-reagent-rules"], queryFn: () => api<Rule[]>("/api/factory/oligo/reagent-rules") });
   return (
     <div className="flex flex-col gap-3">

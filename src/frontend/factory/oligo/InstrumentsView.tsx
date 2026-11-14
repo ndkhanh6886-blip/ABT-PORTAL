@@ -85,27 +85,32 @@ const vnd = (v: number | null | undefined) => `${Math.round(Number(v || 0)).toLo
 function NewInstrument() {
   const qc = useQueryClient();
   const units = useOligoUnits("asset.manage");
+  const oligoUnits = useMemo(() => {
+    const list = units.data ?? [];
+    const oligoOnly = list.filter((u: any) => u.module_key === "OLIGO" || u.code === "P-OLIGO");
+    return oligoOnly.length > 0 ? oligoOnly : list;
+  }, [units.data]);
   const [f, setF] = useState({ owner_org_unit_id: "", asset_type: "HPLC", name: "", model: "", serial_no: "", next_calibration_due: "" });
   const create = useMutation({
     mutationFn: () =>
       api("/api/factory/assets", {
         method: "POST",
         idempotent: true,
-        json: { ...f, owner_org_unit_id: f.owner_org_unit_id || units.data?.[0]?.id, model: f.model || null, serial_no: f.serial_no || null, next_calibration_due: f.next_calibration_due || null },
+        json: { ...f, owner_org_unit_id: f.owner_org_unit_id || oligoUnits[0]?.id, model: f.model || null, serial_no: f.serial_no || null, next_calibration_due: f.next_calibration_due || null },
       }),
     onSuccess: () => {
       setF({ ...f, name: "", model: "", serial_no: "" });
       qc.invalidateQueries({ queryKey: ["factory", "assets"] });
     },
   });
-  if (!units.data?.length) return null;
+  if (!oligoUnits.length) return null;
   return (
     <form className="grid gap-3 sm:grid-cols-3 lg:grid-cols-7 items-end mb-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800" onSubmit={(e) => { e.preventDefault(); create.mutate(); }}>
-      {units.data.length > 1 && (
+      {oligoUnits.length > 1 && (
         <Field label="Phòng">
           <select className={inputClass} value={f.owner_org_unit_id} onChange={(e) => setF({ ...f, owner_org_unit_id: e.target.value })} required>
             <option value="">Chọn</option>
-            {units.data.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            {oligoUnits.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
         </Field>
       )}
@@ -648,12 +653,17 @@ export function SlotsPanel({ assetId, canConfigure, canOperate, onClose }: { ass
 
 /** Lab instruments other than synthesizers (HPLC, spectrophotometer …) with their reagent / solvent positions. */
 export function InstrumentsView({ canManage, canOperate }: { canManage: boolean; canOperate: boolean }) {
-  const assets = useQuery({ queryKey: ["factory", "assets", "all"], queryFn: () => api<Asset[]>("/api/factory/assets") });
+  const assets = useQuery({
+    queryKey: ["factory", "assets", "P-OLIGO"],
+    queryFn: () => api<Asset[]>("/api/factory/assets?dept=P-OLIGO"),
+  });
   const [open, setOpen] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const list = useMemo(() => {
-    const nonSynth = (assets.data ?? []).filter((a) => a.asset_type !== "SYNTHESIZER");
-    // Ưu tiên đưa hệ thống HPLC và thiết bị của phòng Oligo lên đầu
+    const nonSynth = (assets.data ?? []).filter(
+      (a) => a.asset_type !== "SYNTHESIZER" && (!a.owner_code || a.owner_code === "P-OLIGO")
+    );
+    // Ưu tiên đưa hệ thống HPLC của phòng Oligo lên đầu
     return [...nonSynth].sort((a, b) => {
       const aHplc = a.asset_type === "HPLC" ? 0 : 1;
       const bHplc = b.asset_type === "HPLC" ? 0 : 1;
@@ -665,7 +675,7 @@ export function InstrumentsView({ canManage, canOperate }: { canManage: boolean;
   // Tự động mở bảng Quản lý Sử dụng & Khấu hao Hóa chất của máy HPLC ngay khi tải trang
   useEffect(() => {
     if (!open && list.length > 0) {
-      const hplc = list.find((a) => a.asset_type === "HPLC") ?? list[0];
+      const hplc = list.find((a) => a.asset_type === "HPLC");
       if (hplc) setOpen(hplc.id);
     }
   }, [list, open]);

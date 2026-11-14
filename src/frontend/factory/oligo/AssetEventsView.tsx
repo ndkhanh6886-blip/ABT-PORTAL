@@ -132,8 +132,17 @@ export function AssetEventsView({ canPlan }: { canPlan: boolean }) {
   const [open, setOpen] = useState<string | null>(null);
   const [showPlan, setShowPlan] = useState(false);
   const [preset, setPreset] = useState<{ asset_id: string; kind: string } | undefined>();
-  const data = useQuery({ queryKey: ["factory", "asset-events", status], queryFn: () => api<{ events: Ev[]; calibration_due: Due[] }>(`/api/factory/assets/events${status ? `?status=${status}` : ""}`) });
-  const assets = useQuery({ queryKey: ["factory", "assets", "all"], queryFn: () => api<AssetOpt[]>("/api/factory/assets") });
+  const data = useQuery({
+    queryKey: ["factory", "asset-events", "P-OLIGO", status],
+    queryFn: () =>
+      api<{ events: Ev[]; calibration_due: Due[] }>(
+        `/api/factory/assets/events?dept=P-OLIGO${status ? `&status=${status}` : ""}`
+      ),
+  });
+  const assets = useQuery({
+    queryKey: ["factory", "assets", "P-OLIGO"],
+    queryFn: () => api<AssetOpt[]>("/api/factory/assets?dept=P-OLIGO"),
+  });
   const refresh = () => {
     setOpen(null);
     setShowPlan(false);

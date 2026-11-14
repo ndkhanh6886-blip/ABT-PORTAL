@@ -365,8 +365,8 @@ export async function ensureDepartmentEquipmentSeed(tx: Tx) {
 export async function listAssets(tx: Tx, actor: AuthzActor, type?: string, deptCode?: string) {
   await ensureAssetExtraColumnsSchema(tx);
   await ensureDepartmentEquipmentSeed(tx);
-  await ensureHplcReagentSlotsAndColumnsSeed(tx);
   await ensureLegacyOligoDataSeeded(tx);
+  await ensureHplcReagentSlotsAndColumnsSeed(tx);
   await syncOverdueCalibrationAssets(tx);
   const rows = (
     await tx.query(
