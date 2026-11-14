@@ -12,6 +12,13 @@ export interface QcStaffSignatureEntry {
   active?: boolean;
 }
 
+export interface HrQcPersonnelInput {
+  employee_code: string;
+  full_name: string;
+  position?: string | null;
+  email?: string | null;
+}
+
 export interface CoaDefaultRow {
   seq: number;
   parameter_name: string;
@@ -88,80 +95,91 @@ export interface QcFormsConfig {
 
 export const DEFAULT_QC_STAFF_SIGNATURES: QcStaffSignatureEntry[] = [
   {
-    id: "nv-qc01",
-    emp_code: "NV.QC01",
+    id: "nv-abt-059",
+    emp_code: "NV-ABT-059",
     full_name: "Phan Thị Thảo Trinh",
-    title_vi: "TRƯỞNG PHÒNG QC/QA",
-    title_en: "QC/QA Manager",
+    title_vi: "Phó Trưởng phòng QC-QA",
+    title_en: "Deputy QC/QA Manager",
     role: "MANAGER",
     signature_url: "/signatures/qc/chukythaotrinh.png",
-    aliases: ["thaotrinh", "thao trinh", "phan thi thao trinh", "nv.qc01", "qaqc@abt-vn.net"],
+    aliases: ["nv-abt-059", "abt059", "nv.qc01", "nv-qc01", "thaotrinh", "thao trinh", "phan thi thao trinh", "qaqc@abt-vn.net", "thaotrinh070799@gmail.com"],
     active: true,
   },
   {
-    id: "nv-qc09",
-    emp_code: "NV.QC09",
-    full_name: "Lâm Kiều Mi",
-    title_vi: "NGƯỜI KIỂM NGHIỆM",
-    title_en: "Tested by (QC Analyst)",
-    role: "ANALYST",
-    signature_url: "/signatures/qc/chukykieumi.png",
-    aliases: ["kieumi", "kieu mi", "lam kieu mi", "nv.qc09"],
-    active: true,
-  },
-  {
-    id: "nv-qc03",
-    emp_code: "NV.QC03",
+    id: "nv-abt-060",
+    emp_code: "NV-ABT-060",
     full_name: "Nguyễn Thị Thông",
-    title_vi: "NGƯỜI KIỂM NGHIỆM",
-    title_en: "Tested by (QC Analyst)",
+    title_vi: "Nhân viên QC",
+    title_en: "QC Analyst",
     role: "ANALYST",
     signature_url: "/signatures/qc/chukythithong.png",
-    aliases: ["thithong", "thi thong", "nguyen thi thong", "nv.qc03"],
+    aliases: ["nv-abt-060", "abt060", "nv.qc03", "nv-qc03", "thithong", "thi thong", "nguyen thi thong", "nguyenthithongactapy@gmail.com"],
     active: true,
   },
   {
-    id: "nv-qc04",
-    emp_code: "NV.QC04",
+    id: "nv-abt-061",
+    emp_code: "NV-ABT-061",
     full_name: "Bạch Ngọc Mai",
-    title_vi: "NGƯỜI KIỂM NGHIỆM",
-    title_en: "Tested by (QC Analyst)",
+    title_vi: "Nhân viên QC",
+    title_en: "QC Analyst",
     role: "ANALYST",
     signature_url: "/signatures/qc/chukyngocmai.png",
-    aliases: ["ngocmai", "ngoc mai", "bach ngoc mai", "nv.qc04"],
+    aliases: ["nv-abt-061", "abt061", "nv.qc04", "nv-qc04", "ngocmai", "ngoc mai", "bach ngoc mai", "maibach172@gmail.com"],
     active: true,
   },
   {
-    id: "nv-qc05",
-    emp_code: "NV.QC05",
+    id: "nv-abt-062",
+    emp_code: "NV-ABT-062",
     full_name: "Nguyễn Ngọc Yến Nhi",
-    title_vi: "NGƯỜI KIỂM NGHIỆM",
-    title_en: "Tested by (QC Analyst)",
+    title_vi: "Nhân viên QC",
+    title_en: "QC Analyst",
     role: "ANALYST",
     signature_url: "/signatures/qc/chukyyennhi1.png",
-    aliases: ["yennhi", "yennhi1", "yen nhi", "nguyen ngoc yen nhi", "nv.qc05"],
+    aliases: ["nv-abt-062", "abt062", "nv.qc05", "nv-qc05", "yennhi", "yennhi1", "yen nhi", "nguyen ngoc yen nhi", "yennhi782001@gmail.com"],
     active: true,
   },
   {
-    id: "nv-qc06",
-    emp_code: "NV.QC06",
+    id: "nv-abt-063",
+    emp_code: "NV-ABT-063",
     full_name: "Phan Yến Ngọc",
-    title_vi: "NGƯỜI KIỂM NGHIỆM",
-    title_en: "Tested by (QC Analyst)",
+    title_vi: "Nhân viên QC",
+    title_en: "QC Analyst",
     role: "ANALYST",
     signature_url: "/signatures/qc/chukyyenngoc.png",
-    aliases: ["yenngoc", "yen ngoc", "phan yen ngoc", "nv.qc06"],
+    aliases: ["nv-abt-063", "abt063", "nv.qc06", "nv-qc06", "yenngoc", "yen ngoc", "phan yen ngoc", "latd2777@gmail.com"],
     active: true,
   },
   {
-    id: "nv-qc08",
-    emp_code: "NV.QC08",
+    id: "nv-abt-064",
+    emp_code: "NV-ABT-064",
     full_name: "Huỳnh Thị Kim Anh",
-    title_vi: "NGƯỜI KIỂM NGHIỆM",
-    title_en: "Tested by (QC Analyst)",
+    title_vi: "Nhân viên QC",
+    title_en: "QC Analyst",
     role: "ANALYST",
     signature_url: "/signatures/qc/chukykimanh.png",
-    aliases: ["kimanh", "kim anh", "huynh thi kim anh", "nv.qc08"],
+    aliases: ["nv-abt-064", "abt064", "nv.qc08", "nv-qc08", "kimanh", "kim anh", "huynh thi kim anh", "anh.huynhkthh@gmail.com"],
+    active: true,
+  },
+  {
+    id: "nv-abt-065",
+    emp_code: "NV-ABT-065",
+    full_name: "Lâm Kiều Mi",
+    title_vi: "Nhân viên QC",
+    title_en: "QC Analyst",
+    role: "ANALYST",
+    signature_url: "/signatures/qc/chukykieumi.png",
+    aliases: ["nv-abt-065", "abt065", "nv.qc09", "nv-qc09", "kieumi", "kieu mi", "lam kieu mi", "lamkieumi210803@gmail.com"],
+    active: true,
+  },
+  {
+    id: "nv-abt-066",
+    emp_code: "NV-ABT-066",
+    full_name: "Ngụy Thảo Ngân",
+    title_vi: "Nhân viên ISO",
+    title_en: "ISO Specialist",
+    role: "ANALYST",
+    signature_url: "",
+    aliases: ["nv-abt-066", "abt066", "thaongan", "thao ngan", "nguy thao ngan", "nguythaongan317@gmail.com"],
     active: true,
   },
 ];
@@ -264,23 +282,72 @@ const GENERIC_NAMES = new Set([
   "he thong",
 ]);
 
-function matchesStaff(queryNorm: string, queryCompact: string, staff: QcStaffSignatureEntry): boolean {
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function isManagerPositionText(pos?: string | null): boolean {
+  return /trưởng phòng|phó trưởng phòng|quản lý|giám đốc|manager|head|lead/i.test(String(pos ?? ""));
+}
+
+function inferTitleEnFromPosition(pos?: string | null): string {
+  const p = stripVnAccents(pos ?? "");
+  if (p.includes("pho truong phong")) return "Deputy QC/QA Manager";
+  if (p.includes("truong phong") || p.includes("manager")) return "QC/QA Manager";
+  if (p.includes("iso")) return "ISO Specialist";
+  if (p.includes("qa")) return "QA Specialist";
+  return "QC Analyst";
+}
+
+function buildHrAliases(hr: HrQcPersonnelInput): string[] {
+  const code = String(hr.employee_code ?? "").trim().toLowerCase();
+  const shortCode = code.replace(/^nv-/, "").replace(/-/g, "");
+  const nameNorm = stripVnAccents(hr.full_name);
+  const email = String(hr.email ?? "").trim().toLowerCase();
+  return Array.from(new Set([code, shortCode, nameNorm, email].filter(Boolean)));
+}
+
+function matchesSingleCandidate(candNorm: string, candCompact: string, staff: QcStaffSignatureEntry): boolean {
+  if (!candNorm) return false;
   const fullNorm = stripVnAccents(staff.full_name);
   const fullCompact = fullNorm.replace(/\s+/g, "");
   const codeNorm = stripVnAccents(staff.emp_code);
-  if (!queryNorm) return false;
-  if (queryNorm === fullNorm || queryCompact === fullCompact || queryNorm === codeNorm) return true;
-  if (staff.aliases?.some((a) => {
-    const an = stripVnAccents(a);
-    return an === queryNorm || an.replace(/\s+/g, "") === queryCompact;
-  })) {
+  if (candNorm === fullNorm || candCompact === fullCompact || (codeNorm && candNorm === codeNorm)) return true;
+  if (
+    staff.aliases?.some((a) => {
+      const an = stripVnAccents(a);
+      return an && (an === candNorm || an.replace(/\s+/g, "") === candCompact);
+    })
+  ) {
     return true;
   }
   const tokens = fullNorm.split(" ").filter(Boolean);
   if (tokens.length >= 2) {
     const lastTwo = tokens.slice(-2).join(" ");
     const lastTwoCompact = tokens.slice(-2).join("");
-    if (queryNorm === lastTwo || queryCompact === lastTwoCompact || queryNorm.endsWith(` ${lastTwo}`)) return true;
+    if (candNorm === lastTwo || candCompact === lastTwoCompact || candNorm.endsWith(` ${lastTwo}`)) return true;
+  }
+  return false;
+}
+
+function matchesStaff(queryNorm: string, queryCompact: string, staff: QcStaffSignatureEntry): boolean {
+  if (!queryNorm) return false;
+  if (matchesSingleCandidate(queryNorm, queryCompact, staff)) return true;
+
+  const codeNorm = stripVnAccents(staff.emp_code);
+  if (codeNorm.length >= 3) {
+    const codeBoundary = new RegExp(`(^|[\\s(\\[—–\\-:,·/])${escapeRegExp(codeNorm)}($|[\\s)\\]—–\\-:,·/])`);
+    if (codeBoundary.test(queryNorm)) return true;
+  }
+
+  // Strip parenthetical info like "(NV-ABT-060 · Nhân viên QC)" and split "NV-ABT-060 — Nguyễn Thị Thông"
+  const withoutParens = queryNorm.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+  if (withoutParens && withoutParens !== queryNorm) {
+    if (matchesSingleCandidate(withoutParens, withoutParens.replace(/\s+/g, ""), staff)) return true;
+  }
+  const splitParts = queryNorm.split(/[—–·|()]+/).map((p) => p.replace(/^[\s\-:,]+|[\s\-:,]+$/g, "").trim()).filter(Boolean);
+  for (const part of splitParts) {
+    if (part !== queryNorm && matchesSingleCandidate(part, part.replace(/\s+/g, ""), staff)) return true;
   }
   return false;
 }
@@ -348,24 +415,160 @@ export function resolveQcSignature(
  * Merges database `qms.coa_template_config` and `core.setting['qms.qc_forms_config']`
  * with `DEFAULT_QC_FORMS_CONFIG` so partial or legacy records always yield a complete config.
  */
+function findMatchingSignatureIndex(
+  list: QcStaffSignatureEntry[],
+  candidate: { id?: string; emp_code?: string; full_name?: string }
+): number {
+  const cid = String(candidate.id ?? "").trim().toLowerCase();
+  const ccode = stripVnAccents(candidate.emp_code ?? "");
+  const cname = stripVnAccents(candidate.full_name ?? "");
+  if (cid) {
+    const idx = list.findIndex((s) => s.id.toLowerCase() === cid);
+    if (idx >= 0) return idx;
+  }
+  if (ccode) {
+    const idx = list.findIndex(
+      (s) =>
+        stripVnAccents(s.emp_code) === ccode ||
+        s.aliases?.some((a) => stripVnAccents(a) === ccode)
+    );
+    if (idx >= 0) return idx;
+  }
+  if (cid) {
+    const idx = list.findIndex((s) => s.aliases?.some((a) => stripVnAccents(a) === cid));
+    if (idx >= 0) return idx;
+  }
+  if (cname) {
+    const idx = list.findIndex((s) => stripVnAccents(s.full_name) === cname);
+    if (idx >= 0) return idx;
+  }
+  return -1;
+}
+
+/**
+ * Synchronizes a QC staff signature list with active HR personnel (`NV-ABT-xxx`),
+ * preserving uploaded handwritten signature URLs and upgrading legacy `NV.QC*` codes.
+ */
+export function syncSignaturesWithHrPersonnel(
+  signatures: QcStaffSignatureEntry[],
+  hrQaPersonnel?: HrQcPersonnelInput[] | null
+): QcStaffSignatureEntry[] {
+  const list: QcStaffSignatureEntry[] = signatures.map((s) => ({
+    ...s,
+    aliases: Array.isArray(s.aliases) ? [...s.aliases] : [],
+  }));
+
+  if (!Array.isArray(hrQaPersonnel) || hrQaPersonnel.length === 0) return list;
+
+  for (const hr of hrQaPersonnel) {
+    const code = String(hr.employee_code ?? "").trim();
+    const fullName = String(hr.full_name ?? "").trim();
+    if (!code || !fullName) continue;
+
+    const hrAliases = buildHrAliases(hr);
+    const idx = findMatchingSignatureIndex(list, { id: code.toLowerCase(), emp_code: code, full_name: fullName });
+    if (idx >= 0) {
+      const cur = list[idx];
+      list[idx] = {
+        ...cur,
+        emp_code: code,
+        full_name: fullName,
+        title_vi: hr.position?.trim() || cur.title_vi,
+        aliases: Array.from(new Set([...cur.aliases, ...hrAliases])),
+      };
+    } else {
+      list.push({
+        id: code.toLowerCase(),
+        emp_code: code,
+        full_name: fullName,
+        title_vi: hr.position?.trim() || "Nhân viên QC",
+        title_en: inferTitleEnFromPosition(hr.position),
+        role: isManagerPositionText(hr.position) ? "MANAGER" : "ANALYST",
+        signature_url: "",
+        aliases: hrAliases,
+        active: true,
+      });
+    }
+  }
+
+  return list;
+}
+
+/**
+ * Merges database `qms.coa_template_config` and `core.setting['qms.qc_forms_config']`
+ * with `DEFAULT_QC_STAFF_SIGNATURES` and live HR QA/QC personnel so partial or legacy records
+ * automatically upgrade `NV.QC*` codes to authoritative `NV-ABT-xxx` employee codes.
+ */
 export function normalizeQcFormsConfig(
   rawCoaTemplate?: Record<string, any> | null,
-  rawFormsJson?: Partial<QcFormsConfig> | null
+  rawFormsJson?: Partial<QcFormsConfig> | null,
+  hrQaPersonnel?: HrQcPersonnelInput[] | null
 ): QcFormsConfig {
   const base = DEFAULT_QC_FORMS_CONFIG;
   const f = rawFormsJson && typeof rawFormsJson === "object" ? rawFormsJson : {};
 
-  // Ensure default 7 QC staff signatures are preserved and merged with any custom uploads/edits
+  // Build authoritative baseline (defaults + live HR QA/QC personnel)
+  const baseline = syncSignaturesWithHrPersonnel(base.staff_signatures, hrQaPersonnel);
+  const mergedStaff = baseline.map((s) => ({ ...s, aliases: [...s.aliases] }));
+  const hrEmpCodes = new Set(
+    (hrQaPersonnel ?? []).map((h) => stripVnAccents(h.employee_code)).filter(Boolean)
+  );
+  const hrFullNames = new Set(
+    (hrQaPersonnel ?? []).map((h) => stripVnAccents(h.full_name)).filter(Boolean)
+  );
+
+  // Merge saved uploads/customizations on top of baseline, upgrading any legacy NV.QC01..09 codes
   const incomingStaff = Array.isArray(f.staff_signatures) ? f.staff_signatures : [];
-  const mergedStaffMap = new Map<string, QcStaffSignatureEntry>();
-  for (const s of base.staff_signatures) mergedStaffMap.set(s.id, s);
   for (const s of incomingStaff) {
-    if (s && typeof s === "object" && s.full_name && s.signature_url) {
-      const id = s.id || stripVnAccents(s.full_name).replace(/\s+/g, "-");
-      mergedStaffMap.set(id, {
-        ...s,
+    if (!s || typeof s !== "object" || !String(s.full_name ?? "").trim()) continue;
+    const matchIdx = findMatchingSignatureIndex(mergedStaff, s);
+    const sigUrl = String(s.signature_url ?? "").trim();
+    const sAliases = Array.isArray(s.aliases) ? s.aliases : [];
+    const oldCodeNorm = String(s.emp_code ?? "").trim();
+    const isLegacyFakeCode = !oldCodeNorm || /^nv\.?qc\d+$/i.test(oldCodeNorm);
+
+    if (matchIdx >= 0) {
+      const target = mergedStaff[matchIdx];
+      const hasAuthoritativeHrCode =
+        hrEmpCodes.has(stripVnAccents(target.emp_code)) ||
+        hrFullNames.has(stripVnAccents(target.full_name));
+      mergedStaff[matchIdx] = {
+        ...target,
+        emp_code: isLegacyFakeCode || hasAuthoritativeHrCode ? target.emp_code : oldCodeNorm,
+        full_name: String(s.full_name).trim() || target.full_name,
+        title_vi: String(s.title_vi ?? "").trim() || target.title_vi,
+        title_en: String(s.title_en ?? "").trim() || target.title_en,
+        role: s.role === "MANAGER" || s.role === "ANALYST" ? s.role : target.role,
+        signature_url: sigUrl || target.signature_url,
+        aliases: Array.from(
+          new Set([
+            ...target.aliases,
+            ...sAliases,
+            target.emp_code.toLowerCase(),
+            ...(oldCodeNorm ? [oldCodeNorm.toLowerCase()] : []),
+            stripVnAccents(target.full_name),
+          ])
+        ),
+        active: s.active ?? target.active ?? true,
+      };
+    } else {
+      const id = String(s.id ?? "").trim() || stripVnAccents(s.full_name).replace(/\s+/g, "-");
+      mergedStaff.push({
         id,
-        aliases: Array.isArray(s.aliases) ? s.aliases : [stripVnAccents(s.full_name)],
+        emp_code: oldCodeNorm,
+        full_name: String(s.full_name).trim(),
+        title_vi: String(s.title_vi ?? "").trim() || "Nhân viên QC",
+        title_en: String(s.title_en ?? "").trim() || "QC Analyst",
+        role: s.role === "MANAGER" ? "MANAGER" : "ANALYST",
+        signature_url: sigUrl,
+        aliases: Array.from(
+          new Set([
+            ...sAliases,
+            ...(oldCodeNorm ? [oldCodeNorm.toLowerCase()] : []),
+            stripVnAccents(s.full_name),
+          ])
+        ),
+        active: s.active ?? true,
       });
     }
   }
@@ -414,6 +617,6 @@ export function normalizeQcFormsConfig(
       results_mode: mappedMode,
       custom_summary_rows: customRows,
     },
-    staff_signatures: Array.from(mergedStaffMap.values()),
+    staff_signatures: mergedStaff,
   };
 }

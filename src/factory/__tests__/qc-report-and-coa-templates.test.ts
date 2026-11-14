@@ -47,9 +47,19 @@ beforeAll(() => withTransaction((tx) => syncPermissions(tx)));
 afterAll(closeFactoryPool);
 
 describe("QC Test Report (BM-QC-TR-01), COA (BM-QC-COA-01), Multilingual Export & Staff Signatures", () => {
-  it("1. Ships all 7 valid handwritten QC employee signature PNG files in public/signatures/qc/", () => {
+  it("1. Ships all 8 HR QA/QC staff (NV-ABT-059..066) and 7 valid handwritten signature PNG files in public/signatures/qc/", () => {
     const sigDir = path.resolve(process.cwd(), "public", "signatures", "qc");
-    expect(DEFAULT_QC_STAFF_SIGNATURES).toHaveLength(7);
+    expect(DEFAULT_QC_STAFF_SIGNATURES).toHaveLength(8);
+    expect(DEFAULT_QC_STAFF_SIGNATURES.map((s) => s.emp_code)).toEqual([
+      "NV-ABT-059",
+      "NV-ABT-060",
+      "NV-ABT-061",
+      "NV-ABT-062",
+      "NV-ABT-063",
+      "NV-ABT-064",
+      "NV-ABT-065",
+      "NV-ABT-066",
+    ]);
 
     const expectedFiles = [
       "chukythaotrinh.png",
@@ -71,7 +81,7 @@ describe("QC Test Report (BM-QC-TR-01), COA (BM-QC-COA-01), Multilingual Export 
     }
   });
 
-  it("2. Resolves all 7 QC staff signatures by full name, emp_code, and accent-stripped alias with Phan Thị Thảo Trinh manager fallback", () => {
+  it("2. Resolves QC staff signatures by full name, HR NV-ABT-xxx code, formatted label, and upgrades legacy NV.QC* codes", () => {
     const cfg = normalizeQcFormsConfig(null, null);
 
     expect(resolveQcSignature("Phan Thị Thảo Trinh", "MANAGER", cfg).signatureUrl).toBe("/signatures/qc/chukythaotrinh.png");
@@ -81,11 +91,43 @@ describe("QC Test Report (BM-QC-TR-01), COA (BM-QC-COA-01), Multilingual Export 
     expect(resolveQcSignature("Phan Yến Ngọc", "ANALYST", cfg).signatureUrl).toBe("/signatures/qc/chukyyenngoc.png");
     expect(resolveQcSignature("Huỳnh Thị Kim Anh", "ANALYST", cfg).signatureUrl).toBe("/signatures/qc/chukykimanh.png");
     expect(resolveQcSignature("Lâm Kiều Mi", "ANALYST", cfg).signatureUrl).toBe("/signatures/qc/chukykieumi.png");
+    expect(resolveQcSignature("Ngụy Thảo Ngân", "ANALYST", cfg).entry?.emp_code).toBe("NV-ABT-066");
 
-    // Lookup by emp_code and accent-stripped name
+    // Lookup by official HR employee_code, formatted label, backward-compatible NV.QC* alias, and accent-stripped name
+    expect(resolveQcSignature("NV-ABT-065", "ANALYST", cfg).displayName).toBe("Lâm Kiều Mi");
+    expect(resolveQcSignature("NV-ABT-060", "ANALYST", cfg).signatureUrl).toBe("/signatures/qc/chukythithong.png");
+    expect(resolveQcSignature("Nguyễn Thị Thông (NV-ABT-060 · Nhân viên QC)", "ANALYST", cfg).signatureUrl).toBe("/signatures/qc/chukythithong.png");
     expect(resolveQcSignature("NV.QC09", "ANALYST", cfg).displayName).toBe("Lâm Kiều Mi");
     expect(resolveQcSignature("nguyen thi thong", "ANALYST", cfg).signatureUrl).toBe("/signatures/qc/chukythithong.png");
     expect(resolveQcSignature("Thao Trinh", "MANAGER", cfg).signatureUrl).toBe("/signatures/qc/chukythaotrinh.png");
+
+    // Automatic upgrade of legacy saved NV.QC01..09 codes + dynamic HR hire sync while keeping custom uploaded image
+    const upgraded = normalizeQcFormsConfig(
+      null,
+      {
+        staff_signatures: [
+          {
+            id: "nv-qc01",
+            emp_code: "NV.QC01",
+            full_name: "Phan Thị Thảo Trinh",
+            title_vi: "Phó Trưởng phòng QC-QA",
+            title_en: "Deputy QC/QA Manager",
+            role: "MANAGER",
+            signature_url: "data:image/png;base64,iVBORw0KGgo=",
+            aliases: [],
+          },
+        ],
+      },
+      [
+        { employee_code: "NV-ABT-059", full_name: "Phan Thị Thảo Trinh", position: "Phó Trưởng phòng QC-QA" },
+        { employee_code: "NV-ABT-099", full_name: "Trần Thị Kiểm Nghiệm Mới", position: "Nhân viên QC" },
+      ]
+    );
+    const mgr = upgraded.staff_signatures.find((s) => s.full_name === "Phan Thị Thảo Trinh");
+    expect(mgr?.emp_code).toBe("NV-ABT-059");
+    expect(mgr?.signature_url).toBe("data:image/png;base64,iVBORw0KGgo=");
+    expect(upgraded.staff_signatures.some((s) => s.emp_code === "NV-ABT-066" && s.full_name === "Ngụy Thảo Ngân")).toBe(true);
+    expect(upgraded.staff_signatures.some((s) => s.emp_code === "NV-ABT-099" && s.full_name === "Trần Thị Kiểm Nghiệm Mới")).toBe(true);
 
     // Generic manager label or empty name falls back to default QC/QA Manager (Phan Thị Thảo Trinh),
     // while an unrecognized custom person name never forges another employee's handwritten signature.
@@ -299,6 +341,7 @@ describe("QC Test Report (BM-QC-TR-01), COA (BM-QC-COA-01), Multilingual Export 
     const loadedCfg = await withTransaction((tx) => loadQcFormsConfig(tx));
     expect(loadedCfg.qcFormsConfig.coa.results_mode).toBe("TCCS_CONFORMANCE");
     expect(loadedCfg.qcFormsConfig.coa.default_lang).toBe("EN");
+    expect(loadedCfg.qcFormsConfig.staff_signatures.some((s) => s.emp_code === "NV-ABT-066")).toBe(true);
     expect(loadedCfg.qcFormsConfig.staff_signatures.some((s) => s.emp_code === "NV.QC99")).toBe(true);
     expect(loadedCfg.qcFormsConfig.staff_signatures.some((s) => s.emp_code === "NV.XSS")).toBe(false);
 

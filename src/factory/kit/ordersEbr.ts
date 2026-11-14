@@ -6,6 +6,7 @@ import { addDays, vnToday } from "../core/dates";
 import { invalid, notFound } from "../core/errors";
 import { notifyUsers, usersWithPermission } from "../core/notifications";
 import { nextNumber } from "../core/numbering";
+import { listPortalActivePersonnel, type PortalPersonnelEntry } from "../core/hrDirectory";
 import { enqueueEvent } from "../core/outbox";
 import { insertRecord, parseInput } from "../core/records";
 import { defineMachine, listAllowedActions, runTransition } from "../core/stateMachine";
@@ -20,6 +21,7 @@ import { raiseDeviation } from "../qms/incidents";
 import { issueCoaFromQcTest } from "../qms/qaOps";
 import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { findEffectiveSpec } from "../qms/specs";
+import { stripVnAccents } from "../../frontend/factory/qcSignatures";
 import {
   ensureKitBomRoutingAndIfuSchema,
   loadStandardKitRoutingSteps,
@@ -2810,8 +2812,8 @@ export async function listDailyProductionSteps(tx: Tx, actor: AuthzActor) {
  * cho Phòng Sản xuất Kit (`P-KIT`) và Phòng QA/QC (`P-QA`).
  */
 export async function listDepartmentStaffForKitAndQa(tx: Tx) {
-  const rows = (
-    await tx.query(
+  const [rowsRes, hrList] = await Promise.all([
+    tx.query(
       `SELECT DISTINCT ON (up.user_id)
               up.user_id,
               up.display_name AS full_name,
@@ -2827,20 +2829,72 @@ export async function listDepartmentStaffForKitAndQa(tx: Tx) {
          LEFT JOIN core.org_unit scope_ou ON scope_ou.id = ur.scope_org_unit_id
         WHERE up.status = 'ACTIVE'
         ORDER BY up.user_id, CASE WHEN r.code LIKE '%_HEAD' THEN 0 ELSE 1 END, r.code ASC NULLS LAST`
-    )
-  ).rows;
+    ),
+    listPortalActivePersonnel(),
+  ]);
+  const rows = rowsRes.rows;
 
-  const kit_staff: { user_id: number; full_name: string; position: string; label: string; is_lead: boolean }[] = [];
-  const qa_staff: { user_id: number; full_name: string; position: string; label: string; is_lead: boolean }[] = [];
+  const hrByUserId = new Map<number, PortalPersonnelEntry>();
+  const hrByNormName = new Map<string, PortalPersonnelEntry>();
+  for (const h of hrList ?? []) {
+    if (h.user_id != null) hrByUserId.set(h.user_id, h);
+    const n = stripVnAccents(h.full_name);
+    if (n) hrByNormName.set(n, h);
+  }
+
+  type DeptStaffMember = {
+    user_id: number;
+    employee_code: string;
+    full_name: string;
+    display_name: string;
+    position: string;
+    label: string;
+    is_lead: boolean;
+  };
+  const kit_staff: DeptStaffMember[] = [];
+  const qa_staff: DeptStaffMember[] = [];
+  const seenKitUserIds = new Set<number>();
+  const seenQaUserIds = new Set<number>();
+
+  const buildMember = (
+    userId: number,
+    fullName: string,
+    empCode: string,
+    pos: string,
+    isLead: boolean
+  ): DeptStaffMember => {
+    const displayName = empCode ? `${fullName} (${empCode})` : fullName;
+    const label =
+      empCode && pos
+        ? `${fullName} (${empCode} · ${pos})`
+        : empCode
+          ? `${fullName} (${empCode})`
+          : pos
+            ? `${fullName} (${pos})`
+            : fullName;
+    return {
+      user_id: userId,
+      employee_code: empCode,
+      full_name: fullName,
+      display_name: displayName,
+      position: pos,
+      label,
+      is_lead: isLead,
+    };
+  };
 
   for (const r of rows) {
-    const deptLower = `${r.org_code} ${r.module_key} ${r.department} ${r.position} ${r.role_code}`.toLowerCase();
-    const pos = String(r.position || r.department || "").trim();
-    const isLead = /trưởng|quản đốc|phó phòng|lead|head|giám đốc/i.test(`${pos} ${r.role_code}`);
-    const label = pos ? `${r.full_name} (${pos})` : String(r.full_name);
+    const userId = Number(r.user_id);
+    const hr = hrByUserId.get(userId) ?? hrByNormName.get(stripVnAccents(r.full_name));
+    const empCode = hr?.employee_code?.trim() || "";
+    const pos = String(hr?.position || r.position || r.department || "").trim();
+    const deptLower = `${r.org_code} ${r.module_key} ${r.department} ${pos} ${r.role_code}`.toLowerCase();
+    const isLead = /trưởng|quản đốc|phó phòng|phó trưởng phòng|lead|head|giám đốc/i.test(`${pos} ${r.role_code}`);
+    const member = buildMember(userId, String(r.full_name), empCode, pos, isLead);
 
     if (r.org_code === "P-KIT" || r.module_key === "KIT" || r.role_code.startsWith("KIT_") || deptLower.includes("kit")) {
-      kit_staff.push({ user_id: Number(r.user_id), full_name: r.full_name, position: pos, label, is_lead: isLead });
+      kit_staff.push(member);
+      seenKitUserIds.add(userId);
     }
     if (
       r.org_code === "P-QA" ||
@@ -2850,12 +2904,34 @@ export async function listDepartmentStaffForKitAndQa(tx: Tx) {
       deptLower.includes("qc") ||
       deptLower.includes("chất lượng")
     ) {
-      qa_staff.push({ user_id: Number(r.user_id), full_name: r.full_name, position: pos, label, is_lead: isLead });
+      qa_staff.push(member);
+      seenQaUserIds.add(userId);
     }
   }
 
-  kit_staff.sort((a, b) => Number(b.is_lead) - Number(a.is_lead) || a.full_name.localeCompare(b.full_name, "vi"));
-  qa_staff.sort((a, b) => Number(b.is_lead) - Number(a.is_lead) || a.full_name.localeCompare(b.full_name, "vi"));
+  for (const h of hrList ?? []) {
+    if (h.user_id == null) continue;
+    const isLead = /trưởng|quản đốc|phó phòng|phó trưởng phòng|lead|head|giám đốc/i.test(h.position);
+    if (h.canonical_dept === "KIT" && !seenKitUserIds.has(h.user_id)) {
+      kit_staff.push(buildMember(h.user_id, h.full_name, h.employee_code, h.position, isLead));
+      seenKitUserIds.add(h.user_id);
+    }
+    if (
+      (h.canonical_dept === "QA" || /qc|qa|chất lượng/i.test(`${h.department} ${h.position}`)) &&
+      !seenQaUserIds.has(h.user_id)
+    ) {
+      qa_staff.push(buildMember(h.user_id, h.full_name, h.employee_code, h.position, isLead));
+      seenQaUserIds.add(h.user_id);
+    }
+  }
+
+  const sortStaff = (a: DeptStaffMember, b: DeptStaffMember) =>
+    Number(b.is_lead) - Number(a.is_lead) ||
+    (a.employee_code || "~").localeCompare(b.employee_code || "~") ||
+    a.full_name.localeCompare(b.full_name, "vi");
+
+  kit_staff.sort(sortStaff);
+  qa_staff.sort(sortStaff);
 
   return { kit_staff, qa_staff };
 }

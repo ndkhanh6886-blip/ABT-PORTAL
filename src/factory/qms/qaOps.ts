@@ -7,15 +7,39 @@ import { FactoryError, invalid, notFound } from "../core/errors";
 import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
 import { insertSignature, recordHash, type SignatureCredential } from "../core/signature";
+import { listPortalActivePersonnel } from "../core/hrDirectory";
 import { raiseDeviation } from "./incidents";
 import { createQcTest, registerQcSubject, runTransition } from "./qcTests";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
-import { normalizeQcFormsConfig, type QcFormsConfig } from "../../frontend/factory/qcSignatures";
+import {
+  normalizeQcFormsConfig,
+  type HrQcPersonnelInput,
+  type QcFormsConfig,
+} from "../../frontend/factory/qcSignatures";
 import "./permissions";
 
 const QC_FORMS_SETTING_KEY = "qms.qc_forms_config";
 
-export async function loadQcFormsConfig(tx: Tx): Promise<{ coaTemplate: any; qcFormsConfig: QcFormsConfig }> {
+export async function listHrQaPersonnel(): Promise<HrQcPersonnelInput[]> {
+  const all = await listPortalActivePersonnel();
+  if (!all) return [];
+  return all
+    .filter(
+      (p) =>
+        p.canonical_dept === "QA" ||
+        /qc|qa|chất lượng/i.test(`${p.department} ${p.position}`)
+    )
+    .map((p) => ({
+      employee_code: p.employee_code,
+      full_name: p.full_name,
+      position: p.position,
+      email: p.email,
+    }));
+}
+
+export async function loadQcFormsConfig(
+  tx: Tx
+): Promise<{ coaTemplate: any; qcFormsConfig: QcFormsConfig; qaPersonnel: HrQcPersonnelInput[] }> {
   const coaTplRow = (await tx.query("SELECT * FROM qms.coa_template_config WHERE id = 1")).rows[0] ?? null;
   let formsSettingVal: Partial<QcFormsConfig> | null = null;
   try {
@@ -26,7 +50,8 @@ export async function loadQcFormsConfig(tx: Tx): Promise<{ coaTemplate: any; qcF
   } catch {
     // core.setting may be minimal in stripped unit test DBs
   }
-  const qcFormsConfig = normalizeQcFormsConfig(coaTplRow, formsSettingVal);
+  const qaPersonnel = await listHrQaPersonnel();
+  const qcFormsConfig = normalizeQcFormsConfig(coaTplRow, formsSettingVal, qaPersonnel);
   const coaTemplate = coaTplRow ?? {
     company_name: `${qcFormsConfig.company_name_vi} — ${qcFormsConfig.company_name_en}`,
     document_title: `${qcFormsConfig.coa.title_bi_main} / ${qcFormsConfig.coa.title_bi_sub}`,
@@ -37,7 +62,7 @@ export async function loadQcFormsConfig(tx: Tx): Promise<{ coaTemplate: any; qcF
     results_display_mode: qcFormsConfig.coa.results_mode,
     default_coa_parameters: qcFormsConfig.coa.custom_summary_rows,
   };
-  return { coaTemplate, qcFormsConfig };
+  return { coaTemplate, qcFormsConfig, qaPersonnel };
 }
 
 registerQcSubject("LOT", {
@@ -291,7 +316,7 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
   ).rows;
 
   // 8. Global COA & QC Report Template Configuration
-  const { coaTemplate, qcFormsConfig } = await loadQcFormsConfig(tx);
+  const { coaTemplate, qcFormsConfig, qaPersonnel } = await loadQcFormsConfig(tx);
 
   return {
     reception_queue: queueLots,
@@ -303,6 +328,7 @@ export async function getQaOpsDashboard(tx: Tx, actor: AuthzActor) {
     issued_coas: issuedCoas,
     coa_template: coaTemplate,
     qc_forms_config: qcFormsConfig,
+    qa_personnel: qaPersonnel,
   };
 }
 
@@ -1520,7 +1546,7 @@ const coaResultLineSchema = z.object({
 
 function isSafeSignatureUrl(url: string): boolean {
   const s = url.trim();
-  if (!s) return false;
+  if (!s) return true;
   if (s.startsWith("/signatures/")) return true;
   if (s.startsWith("https://")) return true;
   if (/^data:image\/(png|jpeg|jpg|webp|svg\+xml);base64,[A-Za-z0-9+/=]+$/i.test(s)) return true;
@@ -1552,12 +1578,14 @@ export async function saveCoaTemplateConfig(tx: Tx, actor: AuthzActor, input: un
   await authorize(tx, actor, "qms.qc.review");
   const d = parseInput(coaTemplateSchema, input);
 
+  const hrQaStaff = await listHrQaPersonnel();
   const normalizedForms = normalizeQcFormsConfig(
     {
       results_display_mode: d.results_display_mode,
       default_coa_parameters: d.default_coa_parameters,
     },
-    d.qc_forms_config as Partial<QcFormsConfig> | undefined
+    d.qc_forms_config as Partial<QcFormsConfig> | undefined,
+    hrQaStaff
   );
 
   // Sanitize any custom staff signature URLs to prevent unsafe schemes

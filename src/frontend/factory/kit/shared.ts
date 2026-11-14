@@ -47,14 +47,18 @@ export interface KitOptions {
   }[];
   kit_staff?: {
     user_id: number;
+    employee_code?: string;
     full_name: string;
+    display_name?: string;
     position: string;
     label: string;
     is_lead: boolean;
   }[];
   qa_staff?: {
     user_id: number;
+    employee_code?: string;
     full_name: string;
+    display_name?: string;
     position: string;
     label: string;
     is_lead: boolean;

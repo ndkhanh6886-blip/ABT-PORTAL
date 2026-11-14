@@ -5,16 +5,20 @@ import { api, fmtDate, fmtQty, vnToday } from "../api";
 import { Button, Card, Empty, ErrorNote, inputClass, StatusBadge, Table } from "../ui";
 
 export const TEAM_LEAD_PRESETS = [
-  "Vũ Quốc Tuấn (Trưởng ca Sản xuất Kit)",
-  "Nguyễn Thị Lan (Tổ trưởng Pha chế MasterMix)",
-  "Trần Minh Đức (Tổ trưởng Chia lẻ & Đóng gói)",
+  "Nguyễn Cao Mỹ Anh (NV-ABT-039 · Trưởng nhóm Sản xuất tách chiết)",
+  "Nguyễn Thị Tuyết Nhi (NV-ABT-042 · Trưởng nhóm Sản xuất mix)",
+  "Đặng Thị Thanh Mai (NV-ABT-044 · Nhân viên sản xuất)",
 ];
 
 export const QA_STAFF_PRESETS = [
-  "Phạm Thanh Hà (QC viên kiểm soát trung gian IPQC)",
-  "Đỗ Minh Châu (QA giám sát GMP dây chuyền)",
-  "Hoàng Thu Trang (QC viên kiểm nghiệm thành phẩm FQC)",
-  "Lý Gia Bảo (QA thẩm định hồ sơ lô)",
+  "Phan Thị Thảo Trinh (NV-ABT-059 · Phó Trưởng phòng QC-QA)",
+  "Nguyễn Thị Thông (NV-ABT-060 · Nhân viên QC)",
+  "Bạch Ngọc Mai (NV-ABT-061 · Nhân viên QC)",
+  "Nguyễn Ngọc Yến Nhi (NV-ABT-062 · Nhân viên QC)",
+  "Phan Yến Ngọc (NV-ABT-063 · Nhân viên QC)",
+  "Huỳnh Thị Kim Anh (NV-ABT-064 · Nhân viên QC)",
+  "Lâm Kiều Mi (NV-ABT-065 · Nhân viên QC)",
+  "Ngụy Thảo Ngân (NV-ABT-066 · Nhân viên ISO)",
 ];
 
 type PlanStep = {
@@ -54,7 +58,9 @@ type PlanOrder = {
 
 type DeptStaffItem = {
   user_id: number;
+  employee_code?: string;
   full_name: string;
+  display_name?: string;
   position: string;
   label: string;
   is_lead: boolean;

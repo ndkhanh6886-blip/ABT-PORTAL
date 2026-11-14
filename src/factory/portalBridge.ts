@@ -1,7 +1,9 @@
 import { query } from "@/backend/db/db";
 import { verifyPassword } from "@/backend/services/passwords";
+import { canonicalDepartment } from "@/backend/services/permissions";
 import type { PasswordVerifier } from "./core/signature";
 import type { UserDirectory } from "./core/roles";
+import { setHrPersonnelProvider } from "./core/hrDirectory";
 import { setKdGateway } from "./intake/gateway";
 import { applyFactoryEvent } from "@/backend/services/factoryBridge";
 import { setNoticePolicy } from "./core/notifications";
@@ -31,6 +33,27 @@ export const verifyPortalPassword: PasswordVerifier = async (userId, password) =
   const r = (await query("SELECT password_hash, is_active FROM users WHERE id = $1", [userId])).rows[0];
   return Boolean(r && r.is_active !== false && verifyPassword(password, r.password_hash));
 };
+
+setHrPersonnelProvider(async () => {
+  const res = await query(
+    `SELECT p.employee_code, p.full_name, p.department, p.position, p.email, u.id AS user_id
+       FROM personnel p
+       LEFT JOIN users u ON LOWER(u.username) = LOWER(p.employee_code)
+                         OR LOWER(u.username) = LOWER(REPLACE(REPLACE(p.employee_code, 'NV-ABT-', 'ABT'), 'NV-VIA-', 'VIA'))
+      WHERE p.employee_code IS NOT NULL AND p.employee_code <> ''
+        AND (p.status IS NULL OR p.status <> 'INACTIVE')
+      ORDER BY p.employee_code ASC`
+  );
+  return res.rows.map((r: any) => ({
+    user_id: r.user_id != null ? Number(r.user_id) : null,
+    employee_code: String(r.employee_code || "").trim(),
+    full_name: String(r.full_name || "").trim(),
+    department: String(r.department || "").trim(),
+    canonical_dept: canonicalDepartment(r.department) ?? null,
+    position: String(r.position || "").trim(),
+    email: String(r.email || "").trim().toLowerCase(),
+  }));
+});
 
 // Factory → Kinh doanh events are applied by the Kinh doanh bridge (its own transaction and inbox).
 setKdGateway({ deliver: (event) => applyFactoryEvent(event) });

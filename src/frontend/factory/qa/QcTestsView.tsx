@@ -8,6 +8,7 @@ import { printKitCoaCertificate, printTestCoa } from "../coa";
 import {
   DEFAULT_QC_FORMS_CONFIG,
   normalizeQcFormsConfig,
+  stripVnAccents,
   type QcFormsConfig,
   type QcStaffSignatureEntry,
 } from "../qcSignatures";
@@ -564,10 +565,16 @@ export function QcTestsView() {
   });
 
   useEffect(() => {
-    if (qaOps.data?.coa_template || qaOps.data?.qc_forms_config) {
-      setFormsConfig(normalizeQcFormsConfig(qaOps.data?.coa_template, qaOps.data?.qc_forms_config));
+    if (qaOps.data?.coa_template || qaOps.data?.qc_forms_config || qaOps.data?.qa_personnel) {
+      setFormsConfig(
+        normalizeQcFormsConfig(
+          qaOps.data?.coa_template,
+          qaOps.data?.qc_forms_config,
+          qaOps.data?.qa_personnel
+        )
+      );
     }
-  }, [qaOps.data?.coa_template, qaOps.data?.qc_forms_config]);
+  }, [qaOps.data?.coa_template, qaOps.data?.qc_forms_config, qaOps.data?.qa_personnel]);
 
   const saveTplMut = useMutation({
     mutationFn: (cfg: QcFormsConfig) =>
@@ -902,8 +909,11 @@ export function QcTestsView() {
                   type="button"
                   variant="secondary"
                   onClick={() => {
-                    setFormsConfig(structuredClone(DEFAULT_QC_FORMS_CONFIG));
-                    setSigUploadNotice("Đã nạp lại chuẩn 2 Mẫu ABT Long Hậu & 7 chữ ký NVQC. Bấm 'Lưu Cấu hình' để áp dụng.");
+                    const synced = normalizeQcFormsConfig(null, null, qaOps.data?.qa_personnel);
+                    setFormsConfig(synced);
+                    setSigUploadNotice(
+                      `Đã nạp lại chuẩn 2 Mẫu ABT Long Hậu & ${synced.staff_signatures.length} nhân sự QC/QA theo mã nhân sự (NV-ABT-xxx). Bấm 'Lưu Cấu hình' để áp dụng.`
+                    );
                   }}
                 >
                   ⚡ Khôi phục chuẩn 2 Mẫu ABT Long Hậu
@@ -1379,34 +1389,98 @@ export function QcTestsView() {
                     IV. Quản lý Chữ ký Tay Nhân viên Phòng QC/QA ({formsConfig.staff_signatures.length} nhân sự)
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    Hệ thống tự động ghép ảnh chữ ký tương ứng theo tên Người kiểm nghiệm &amp; Trưởng phòng QC/QA khi in Phiếu trả KQ QC và COA.
+                    Mã nhân viên (NV-ABT-xxx) tự động đồng bộ theo Trang Nhân sự. Hệ thống ghép ảnh chữ ký tương ứng theo Người kiểm nghiệm &amp; Trưởng phòng QC/QA khi in Phiếu trả KQ QC và COA.
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => {
-                    const nextIdx = formsConfig.staff_signatures.length + 1;
-                    const newEntry: QcStaffSignatureEntry = {
-                      id: `nv-custom-${Date.now()}`,
-                      emp_code: `NV.QC${String(nextIdx).padStart(2, "0")}`,
-                      full_name: `Nhân viên QC ${nextIdx}`,
-                      title_vi: "NHÂN VIÊN KIỂM TRA CHẤT LƯỢNG",
-                      title_en: "QC Analyst",
-                      role: "ANALYST",
-                      signature_url: "/signatures/qc/chukythithong.png",
-                      aliases: [],
-                      active: true,
-                    };
-                    setFormsConfig({
-                      ...formsConfig,
-                      staff_signatures: [...formsConfig.staff_signatures, newEntry],
-                    });
-                  }}
-                >
-                  + Thêm nhân viên ký tên
-                </Button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => {
+                      const hrList = Array.isArray(qaOps.data?.qa_personnel) && qaOps.data.qa_personnel.length > 0
+                        ? qaOps.data.qa_personnel
+                        : DEFAULT_QC_FORMS_CONFIG.staff_signatures.map((s) => ({
+                            employee_code: s.emp_code,
+                            full_name: s.full_name,
+                            position: s.title_vi,
+                          }));
+                      const synced = normalizeQcFormsConfig(null, formsConfig, hrList);
+                      setFormsConfig(synced);
+                      setSigUploadNotice(
+                        `✅ Đã đồng bộ ${synced.staff_signatures.length} nhân sự QC/QA theo đúng mã nhân viên từ Trang Nhân sự (NV-ABT-xxx). Bấm 'Lưu Cấu hình' để lưu.`
+                      );
+                    }}
+                  >
+                    🔄 Đồng bộ Mã NV từ Nhân sự
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      const hrList: Array<{ employee_code: string; full_name: string; position?: string }> =
+                        Array.isArray(qaOps.data?.qa_personnel) ? qaOps.data.qa_personnel : [];
+                      const missingHr = hrList.find(
+                        (h) =>
+                          !formsConfig.staff_signatures.some(
+                            (s) =>
+                              stripVnAccents(s.emp_code) === stripVnAccents(h.employee_code) ||
+                              stripVnAccents(s.full_name) === stripVnAccents(h.full_name)
+                          )
+                      );
+                      const newEntry: QcStaffSignatureEntry = missingHr
+                        ? {
+                            id: missingHr.employee_code.trim().toLowerCase(),
+                            emp_code: missingHr.employee_code.trim(),
+                            full_name: missingHr.full_name.trim(),
+                            title_vi: missingHr.position?.trim() || "Nhân viên QC",
+                            title_en: "QC Analyst",
+                            role: /trưởng phòng|phó trưởng phòng|manager|head/i.test(missingHr.position || "")
+                              ? "MANAGER"
+                              : "ANALYST",
+                            signature_url: "",
+                            aliases: [missingHr.employee_code.trim().toLowerCase(), stripVnAccents(missingHr.full_name)],
+                            active: true,
+                          }
+                        : {
+                            id: `nv-custom-${Date.now()}`,
+                            emp_code: "NV-ABT-",
+                            full_name: "Nhân viên QC mới",
+                            title_vi: "Nhân viên QC",
+                            title_en: "QC Analyst",
+                            role: "ANALYST",
+                            signature_url: "",
+                            aliases: [],
+                            active: true,
+                          };
+                      setFormsConfig({
+                        ...formsConfig,
+                        staff_signatures: [...formsConfig.staff_signatures, newEntry],
+                      });
+                    }}
+                  >
+                    + Thêm nhân viên ký tên
+                  </Button>
+                </div>
               </div>
+
+              <datalist id="qc-hr-emp-codes">
+                {(qaOps.data?.qa_personnel ?? DEFAULT_QC_FORMS_CONFIG.staff_signatures.map((s) => ({
+                  employee_code: s.emp_code,
+                  full_name: s.full_name,
+                  position: s.title_vi,
+                }))).map((p: any) => (
+                  <option key={p.employee_code} value={p.employee_code}>
+                    {p.full_name} — {p.position || "Nhân viên QC"}
+                  </option>
+                ))}
+              </datalist>
+              <datalist id="qc-hr-emp-names">
+                {formsConfig.staff_signatures.map((s) => (
+                  <option key={s.id} value={s.full_name}>
+                    {s.emp_code ? `${s.emp_code} · ` : ""}{s.title_vi}
+                  </option>
+                ))}
+              </datalist>
 
               {sigUploadNotice && (
                 <div className="p-2 rounded-lg bg-sky-100/70 dark:bg-sky-900/40 text-xs text-sky-900 dark:text-sky-200">
@@ -1421,9 +1495,10 @@ export function QcTestsView() {
                     value={formsConfig.default_analyst_name}
                     onChange={(e) => setFormsConfig({ ...formsConfig, default_analyst_name: e.target.value })}
                   >
+                    <option value="">-- Tự động theo Người kiểm nghiệm trên phiếu QC --</option>
                     {formsConfig.staff_signatures.map((s) => (
                       <option key={s.id} value={s.full_name}>
-                        {s.emp_code ? `${s.emp_code} — ` : ""}{s.full_name}
+                        {s.emp_code ? `${s.emp_code} — ` : ""}{s.full_name} ({s.title_vi})
                       </option>
                     ))}
                   </select>
@@ -1451,7 +1526,7 @@ export function QcTestsView() {
                   >
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-50 text-indigo-800">
-                        {sig.emp_code || "NV.QC"}
+                        {sig.emp_code || "Chưa gán mã"}
                       </span>
                       <select
                         className="text-[11px] rounded border border-slate-300 dark:border-slate-700 bg-transparent px-1.5 py-0.5"
@@ -1482,25 +1557,60 @@ export function QcTestsView() {
 
                     <div className="grid gap-1.5">
                       <input
-                        className={`${inputClass} !text-xs`}
-                        placeholder="Mã NV"
+                        list="qc-hr-emp-codes"
+                        className={`${inputClass} !text-xs font-mono`}
+                        placeholder="Mã NV (VD: NV-ABT-060)"
                         value={sig.emp_code}
                         onChange={(e) => {
+                          const val = e.target.value;
+                          const hrList: any[] = qaOps.data?.qa_personnel ?? [];
+                          const matchedHr = hrList.find(
+                            (h) => stripVnAccents(h.employee_code) === stripVnAccents(val)
+                          );
                           const next = [...formsConfig.staff_signatures];
-                          next[idx] = { ...next[idx], emp_code: e.target.value };
+                          next[idx] = {
+                            ...next[idx],
+                            emp_code: val,
+                            ...(matchedHr
+                              ? {
+                                  full_name: matchedHr.full_name,
+                                  title_vi: matchedHr.position || next[idx].title_vi,
+                                }
+                              : {}),
+                          };
                           setFormsConfig({ ...formsConfig, staff_signatures: next });
                         }}
                       />
                       <input
+                        list="qc-hr-emp-names"
                         className={`${inputClass} !text-xs font-semibold`}
                         placeholder="Họ và tên nhân viên"
                         value={sig.full_name}
                         onChange={(e) => {
+                          const val = e.target.value;
+                          const hrList: any[] = qaOps.data?.qa_personnel ?? [];
+                          const matchedHr = hrList.find(
+                            (h) => stripVnAccents(h.full_name) === stripVnAccents(val)
+                          );
                           const next = [...formsConfig.staff_signatures];
-                          next[idx] = { ...next[idx], full_name: e.target.value };
+                          next[idx] = {
+                            ...next[idx],
+                            full_name: val,
+                            ...(matchedHr && (!next[idx].emp_code || next[idx].emp_code === "NV-ABT-")
+                              ? {
+                                  emp_code: matchedHr.employee_code,
+                                  title_vi: matchedHr.position || next[idx].title_vi,
+                                }
+                              : {}),
+                          };
                           setFormsConfig({ ...formsConfig, staff_signatures: next });
                         }}
                       />
+                      {sig.title_vi && (
+                        <div className="text-[11px] text-slate-500 px-0.5 truncate" title={sig.title_vi}>
+                          Chức vụ: <span className="font-medium text-slate-700 dark:text-slate-300">{sig.title_vi}</span>
+                        </div>
+                      )}
                     </div>
 
                     <div className="h-16 rounded-lg border border-dashed border-slate-300 bg-slate-50 flex items-center justify-center p-1">
@@ -1824,6 +1934,7 @@ export function QcTestsView() {
                 </Field>
                 <Field label="Chuyên viên Kiểm nghiệm (KN)">
                   <input
+                    list="qc-hr-emp-names"
                     className={inputClass}
                     value={editingCoa.analyst_name}
                     onChange={(e) => setEditingCoa({ ...editingCoa, analyst_name: e.target.value })}
@@ -1831,6 +1942,7 @@ export function QcTestsView() {
                 </Field>
                 <Field label="Người ký duyệt COA (QA/QC) *">
                   <input
+                    list="qc-hr-emp-names"
                     className={inputClass}
                     value={editingCoa.issued_by_name}
                     onChange={(e) => setEditingCoa({ ...editingCoa, issued_by_name: e.target.value })}

@@ -6,6 +6,7 @@ import { getAuthorizedUser, isAdminUser, unauthorizedResponse, forbiddenResponse
 import { inferSystemRoleFromPosition } from "@/backend/services/permissions";
 import { setImportedLoginName } from "@/backend/services/accountImport";
 import { ensureFactoryRolesAndSyncAllUsers, syncSinglePortalUserToFactory } from "@/factory/orgSync";
+import { invalidateHrPersonnelCache } from "@/factory/core/hrDirectory";
 import { getFactoryPool } from "@/factory/core/db";
 
 // Mật khẩu khởi tạo cho tài khoản mới (được băm scrypt khi lưu; người dùng nên đổi ngay sau lần đăng nhập đầu)
@@ -236,6 +237,7 @@ export async function POST(req: NextRequest) {
           [cleanName, department, cleanEmail, role, (status !== "INACTIVE"), employee_code || ""]
         );
         await syncSinglePortalUserToFactory({ username: employee_code || "", department, position, role }).catch(() => {});
+        invalidateHrPersonnelCache();
         await logAudit("UPDATE", "PERSONNEL", `Cập nhật nhân sự & tài khoản chat ${cleanName} (${employee_code})`);
       } else {
         const requestedCode = String(employee_code || "").trim();
@@ -261,6 +263,7 @@ export async function POST(req: NextRequest) {
         );
         const credential = ins.rows.length > 0 ? await assignTemporaryPassword(code, cleanName) : null;
         await syncSinglePortalUserToFactory({ username: code, department, position, role }).catch(() => {});
+        invalidateHrPersonnelCache();
         await logAudit("CREATE", "PERSONNEL", `Thêm mới nhân sự & tài khoản chat ${cleanName} (${code})`);
         return NextResponse.json({ success: true, initial_credentials: credential ? [credential] : [] });
       }
@@ -289,6 +292,7 @@ export async function POST(req: NextRequest) {
         `, [unusablePasswordHash()]); // tài khoản admin đã có giữ nguyên mật khẩu (ON CONFLICT không đổi mật khẩu)
       });
       await ensureFactoryRolesAndSyncAllUsers().catch((e) => console.warn("Factory sync on reset warning:", e?.message));
+      invalidateHrPersonnelCache();
       await logAudit("RESET", "SETTINGS", "Quản trị viên đã thực hiện Reset toàn bộ danh bạ nhân sự, tài khoản và danh mục Zalo");
       return NextResponse.json({ success: true, message: "Đã làm sạch toàn bộ dữ liệu Nhân sự, Tài khoản và Danh mục Zalo." });
     }
@@ -392,6 +396,7 @@ export async function POST(req: NextRequest) {
 
       // 3. Automatically sync to Zalo bindings from personnel
       await syncPersonnelToZaloBindings();
+      invalidateHrPersonnelCache();
 
       await logAudit("IMPORT_EXCEL", "PERSONNEL", `Nạp thành công ${count} hồ sơ nhân sự, tự động đồng bộ tài khoản người dùng và Zalo`);
 
@@ -407,6 +412,7 @@ export async function POST(req: NextRequest) {
     if (action === "delete_personnel") {
       const { id, full_name, employee_code } = body;
       await query(`DELETE FROM personnel WHERE id=$1`, [id]);
+      invalidateHrPersonnelCache();
       if (employee_code && employee_code !== "admin") {
         await query(`
           DELETE FROM users 
