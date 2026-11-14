@@ -1470,8 +1470,8 @@ export function BomRoutingView({
       <ErrorNote error={error} />
 
       {subTab === "bom" ? (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className={`${bomDetail ? "lg:col-span-5" : "lg:col-span-12"} space-y-4`}>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+          <div className={`${bomDetail ? "lg:col-span-4" : "lg:col-span-12"} space-y-4`}>
             <Card
               title="Danh sách Định mức BOM (Thành phẩm & Bán thành phẩm)"
               actions={
@@ -2029,10 +2029,9 @@ export function BomRoutingView({
                       </div>
                     </div>
 
-                    <Table head={["Mã SP / BOM", "Tên sản phẩm & Phân loại", "Trạng thái", "Thao tác"]}>
+                    <Table head={["Mã SP / BOM", "Tên sản phẩm & Quy cách", "Thao tác"]}>
                       {pagedBoms.map((b) => {
                         const isSemi = (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
-                        const isPcr = !isSemi && (b.bom_category || "PCR Kit") === "PCR Kit";
                         const isSelected = selectedBomId === b.id;
                         const variantLabel = b.variant_code && b.variant_code !== "BASE" ? b.variant_code : null;
                         return (
@@ -2052,7 +2051,7 @@ export function BomRoutingView({
                               <div className="flex items-center gap-1">
                                 <span className="font-mono font-bold text-slate-900 dark:text-slate-100">{b.product_code}</span>
                                 {variantLabel && (
-                                  <span className="px-1.5 py-0.2 rounded bg-indigo-500/20 border border-indigo-400/40 text-indigo-300 font-mono text-[10px] font-bold">
+                                  <span className="px-1 py-0.2 rounded bg-indigo-500/20 border border-indigo-400/40 text-indigo-300 font-mono text-[10px] font-bold">
                                     .{variantLabel}
                                   </span>
                                 )}
@@ -2061,42 +2060,13 @@ export function BomRoutingView({
                                 {b.code} · v{b.bom_version}
                               </div>
                             </td>
-                            <td className="px-2 py-2 text-xs min-w-[140px] max-w-[210px]">
+                            <td className="px-2 py-2 text-xs max-w-[165px]">
                               <div className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={b.name}>
                                 {b.product_name || b.name}
                               </div>
-                              <div className="flex flex-wrap items-center gap-1 mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">
-                                {isSemi ? (
-                                  <span className="inline-block whitespace-nowrap px-1.5 py-0.2 rounded-full font-bold bg-amber-500/15 border border-amber-500/40 text-amber-700 dark:text-amber-300">
-                                    🧪 Bán TP
-                                  </span>
-                                ) : isPcr ? (
-                                  <span className="inline-block whitespace-nowrap px-1.5 py-0.2 rounded-full font-bold bg-indigo-500/20 border border-indigo-400/50 text-indigo-700 dark:text-indigo-200">
-                                    🧬 Kit PCR
-                                  </span>
-                                ) : (
-                                  <span className="inline-block whitespace-nowrap px-1.5 py-0.2 rounded-full font-bold bg-teal-500/15 border border-teal-400/40 text-teal-700 dark:text-teal-200">
-                                    🧪 Tách chiết
-                                  </span>
-                                )}
-                                <span className="truncate">
-                                  · {b.specification || (isSemi ? `Lô ${b.base_qty ?? 1} ${b.base_uom ?? "mL"}` : `${b.tests_per_kit || 50} test`)}
-                                </span>
-                                <span className="font-mono font-semibold text-slate-700 dark:text-slate-300">
-                                  · {b.line_count ?? 0} NVL
-                                </span>
-                                {b.routing_code && (
-                                  <span
-                                    title={`Quy trình sản xuất: ${b.routing_code} — ${b.routing_name || ""}`}
-                                    className="inline-block whitespace-nowrap px-1.5 py-0.2 rounded bg-sky-500/15 border border-sky-500/30 font-mono font-bold text-sky-700 dark:text-sky-300"
-                                  >
-                                    ⚙️ {b.routing_code}
-                                  </span>
-                                )}
+                              <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate mt-0.5">
+                                {b.specification || (isSemi ? `Lô ${b.base_qty ?? 1} ${b.base_uom ?? "mL"}` : `${b.tests_per_kit || 50} test`)}
                               </div>
-                            </td>
-                            <td className="px-2 py-2 whitespace-nowrap">
-                              <StatusBadge status={b.status} />
                             </td>
                             <td className="px-2 py-2 text-right whitespace-nowrap">
                               <div className="inline-flex items-center gap-1">
@@ -2117,7 +2087,7 @@ export function BomRoutingView({
                                   🚀 Phát lệnh
                                 </button>
                                 <span
-                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border transition ${
+                                  className={`inline-flex items-center gap-1 px-1.5 py-1 rounded-lg text-[11px] font-bold border transition ${
                                     isSelected
                                       ? "bg-sky-600 text-white border-sky-500"
                                       : "bg-sky-500/10 text-sky-600 dark:text-sky-300 border-sky-500/30 hover:bg-sky-500/20"
@@ -2154,7 +2124,7 @@ export function BomRoutingView({
           </div>
 
           {bomDetail && (
-            <div ref={bomDetailRef} className="lg:col-span-7 space-y-4">
+            <div ref={bomDetailRef} className="lg:col-span-8 space-y-4">
               <Card
                 title={`${bomDetail.bom.code} (v${bomDetail.bom.bom_version}) — ${bomDetail.bom.product_code} ${bomDetail.bom.product_name}`}
                 actions={
@@ -4028,8 +3998,8 @@ export function BomRoutingView({
           )}
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-          <div className={`${routingDetail && !showCreateRouting ? "lg:col-span-5" : "lg:col-span-12"} space-y-4`}>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+          <div className={`${routingDetail && !showCreateRouting ? "lg:col-span-4" : "lg:col-span-12"} space-y-4`}>
             <Card
               title="Danh sách phiên bản Quy trình Công đoạn (Routing)"
               actions={
@@ -4648,7 +4618,7 @@ export function BomRoutingView({
           </div>
 
           {routingDetail && !showCreateRouting && (
-            <div ref={rtDetailRef} className="lg:col-span-7 space-y-4">
+            <div ref={rtDetailRef} className="lg:col-span-8 space-y-4">
               <Card
                 title={`${routingDetail.routing.code} (v${routingDetail.routing.routing_version}) — ${routingDetail.routing.name}`}
                 actions={
