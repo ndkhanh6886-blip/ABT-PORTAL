@@ -3,6 +3,7 @@ import { AuthorizedUser, isAdminUser } from "@/backend/services/authz";
 import { hasPermission } from "@/backend/services/permissions";
 import { handleKdEvent, getFactoryInternalOrderSummary } from "@/factory/intake/kdEvents";
 import type { BridgeEvent } from "@/factory/intake/gateway";
+import { kitSpecOf, kitSpecToFactorySupplyAndTube } from "@/frontend/utils/packagingForm";
 
 /**
  * Kinh doanh side of the bridge to the factory (docs/nha-may/00 §4, §7). The factory is an internal
@@ -502,14 +503,22 @@ export async function syncPoWithFactoryIfInternal(
     }
     const rawItems = Array.isArray(items) ? items : [];
     const lines = rawItems
-      .map((it: any, i: number) => ({
-        line_index: i,
-        product_code: String(it.product_code || it.sku || it.code || `ITEM-${i + 1}`).trim(),
-        product_name: it.product_name || it.name || null,
-        unit: it.unit || (factoryUnit === "OLIGO" ? "tube" : factoryUnit === "DEVICE" ? "Cái" : "Hộp"),
-        quantity: Number(it.quantity) || 0,
-        unit_price: Number(it.unit_price) || 0,
-      }))
+      .map((it: any, i: number) => {
+        const ks = kitSpecOf(it);
+        const mapped = kitSpecToFactorySupplyAndTube(ks);
+        return {
+          line_index: i,
+          product_code: String(it.product_code || it.sku || it.code || `ITEM-${i + 1}`).trim(),
+          product_name: it.product_name || it.name || null,
+          unit: it.unit || (factoryUnit === "OLIGO" ? "tube" : factoryUnit === "DEVICE" ? "Cái" : "Hộp"),
+          quantity: Number(it.quantity) || 0,
+          unit_price: Number(it.unit_price) || 0,
+          supply_form: mapped.supply_form || null,
+          tube_code: mapped.tube_code || null,
+          specification: it.specification || null,
+          notes: it.notes || null,
+        };
+      })
       .filter((l) => l.product_code && l.quantity > 0);
 
     if (!lines.length) {
@@ -624,14 +633,22 @@ export async function sendPoToFactory(me: AuthorizedUser, poId: number, input: S
     if ((await c.query("SELECT 1 FROM factory_bridge_po WHERE po_id = $1", [poId])).rowCount) throw new HttpError(409, `PO ${po.po_code} đã được gửi cho nhà máy.`);
     let items = po.items;
     if (typeof items === "string") items = JSON.parse(items);
-    const lines = (Array.isArray(items) ? items : []).map((it: any, i: number) => ({
-      line_index: i,
-      product_code: String(it.product_code || "").trim(),
-      product_name: it.product_name || null,
-      unit: it.unit || null,
-      quantity: Number(it.quantity) || 0,
-      unit_price: Number(it.unit_price) || 0,
-    }));
+    const lines = (Array.isArray(items) ? items : []).map((it: any, i: number) => {
+      const ks = kitSpecOf(it);
+      const mapped = kitSpecToFactorySupplyAndTube(ks);
+      return {
+        line_index: i,
+        product_code: String(it.product_code || "").trim(),
+        product_name: it.product_name || null,
+        unit: it.unit || null,
+        quantity: Number(it.quantity) || 0,
+        unit_price: Number(it.unit_price) || 0,
+        supply_form: mapped.supply_form || null,
+        tube_code: mapped.tube_code || null,
+        specification: it.specification || null,
+        notes: it.notes || null,
+      };
+    });
     if (!lines.length || lines.some((l) => !l.product_code || !(l.quantity > 0))) throw new HttpError(400, "Mỗi dòng PO cần mã hàng và số lượng > 0.");
     const shipTo = input.ship_mode === "DROP_SHIP" ? input.ship_to : null;
     await c.query(

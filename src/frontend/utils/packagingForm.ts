@@ -41,10 +41,79 @@ const PCR_KIT_CODE = /^(SQ|MQ|SP|MP)[A-Z]?-/;
  * không phân quy cách dù có khai báo phụ kiện.
  */
 export function isPcrKitProduct(p: { code?: any; [k: string]: any } | null | undefined): boolean {
-  if (!PCR_KIT_CODE.test(String(p?.code ?? "").trim().toUpperCase())) return false;
-  // Chỉ kit PCR của nhà cung cấp / hãng ABT mới có các quy cách này
-  const maker = [p?.manufacturer, p?.brand, p?.supplier, p?.supplier_name].map(v => String(v ?? "")).join(" ");
-  return /(^|[^A-Z0-9])ABT([^A-Z0-9]|$)/i.test(maker);
+  const code = String(p?.code ?? p?.product_code ?? "").trim().toUpperCase();
+  const cat = String(p?.bom_category ?? p?.category ?? "").trim().toLowerCase();
+  if (!PCR_KIT_CODE.test(code) && cat !== "pcr kit") return false;
+  // Chỉ kit PCR của ABT / Phòng Sản xuất Kit (hoặc chưa điền hãng nhưng đúng mã chuẩn SQ-/MQ-/SP-/MP-) mới phân quy cách
+  const maker = [p?.manufacturer, p?.brand, p?.supplier, p?.supplier_name].map(v => String(v ?? "").trim()).filter(Boolean).join(" ");
+  if (!maker) return PCR_KIT_CODE.test(code);
+  return /(^|[^A-Z0-9])(ABT|TOPSENSI|P-KIT)([^A-Z0-9]|$)|sản xuất kit/i.test(maker);
+}
+
+/** Đọc quy cách Kit PCR từ chuỗi ghi chú hoặc quy cách (vd "[Dạng: Chia sẵn · Sẵn IC · chia vào tube T02]" hoặc "B2611001.C.IC.T02"). */
+export function parseKitSpecFromText(rawText: any): KitSpec {
+  const text = String(rawText ?? "").trim();
+  if (!text) return {};
+  const spec: KitSpec = {};
+  const tagMatch = text.match(/\[Dạng:\s*([^\]]+)\]/i);
+  const target = tagMatch ? tagMatch[1] : text;
+
+  if (/không\s*chia\s*sẵn/i.test(target)) spec.packagingForm = "WITH_ACCESSORIES";
+  else if (/chia\s*sẵn/i.test(target)) spec.packagingForm = "PREALIQUOT";
+
+  if (/không\s*sẵn\s*ic/i.test(target)) spec.icForm = "NO_IC";
+  else if (/sẵn\s*ic|có\s*ic/i.test(target)) spec.icForm = "IC";
+
+  const tubeMatch = target.match(/\b(T02|T01|S02|S01|LQ02|MIC|R01|LP02)\b/i);
+  if (tubeMatch) {
+    spec.tubeType = tubeMatch[1].toUpperCase() as TubeType;
+  }
+  return spec;
+}
+
+export type FactorySupplyFormKey = "NO_SPLIT_NO_IC" | "NO_SPLIT_WITH_IC" | "SPLIT_NO_IC" | "SPLIT_WITH_IC";
+
+/** Chuyển đổi KitSpec (Kinh doanh/Cung ứng) sang supply_form + tube_code của Nhà máy Sản xuất Kit. */
+export function kitSpecToFactorySupplyAndTube(spec: KitSpec): {
+  supply_form: FactorySupplyFormKey | null;
+  tube_code: TubeType | null;
+  variant_code: "BASE" | "IC" | "C" | "C.IC" | null;
+} {
+  const tube_code = spec.tubeType ?? null;
+  if (!spec.packagingForm && !spec.icForm) {
+    return { supply_form: null, tube_code, variant_code: null };
+  }
+  const isSplit = spec.packagingForm === "PREALIQUOT";
+  const hasIc = spec.icForm === "IC";
+  if (isSplit && hasIc) return { supply_form: "SPLIT_WITH_IC", tube_code, variant_code: "C.IC" };
+  if (isSplit && !hasIc) return { supply_form: "SPLIT_NO_IC", tube_code, variant_code: "C" };
+  if (!isSplit && hasIc) return { supply_form: "NO_SPLIT_WITH_IC", tube_code, variant_code: "IC" };
+  return { supply_form: "NO_SPLIT_NO_IC", tube_code, variant_code: "BASE" };
+}
+
+/** Chuyển ngược từ supply_form + tube_code của Nhà máy sang KitSpec của Kinh doanh/Cung ứng. */
+export function factorySupplyAndTubeToKitSpec(
+  supplyForm?: string | null,
+  tubeCode?: string | null
+): KitSpec {
+  const sf = String(supplyForm ?? "").trim().toUpperCase();
+  const spec: KitSpec = {};
+  if (sf === "SPLIT_WITH_IC") {
+    spec.packagingForm = "PREALIQUOT";
+    spec.icForm = "IC";
+  } else if (sf === "SPLIT_NO_IC") {
+    spec.packagingForm = "PREALIQUOT";
+    spec.icForm = "NO_IC";
+  } else if (sf === "NO_SPLIT_WITH_IC") {
+    spec.packagingForm = "WITH_ACCESSORIES";
+    spec.icForm = "IC";
+  } else if (sf === "NO_SPLIT_NO_IC") {
+    spec.packagingForm = "WITH_ACCESSORIES";
+    spec.icForm = "NO_IC";
+  }
+  const t = normalizeTubeType(tubeCode);
+  if (t) spec.tubeType = t;
+  return spec;
 }
 
 const lotSegments = (lot: any): string[] =>
@@ -85,12 +154,14 @@ export function normalizeTubeType(v: any): TubeType | null {
   return (PCR_TUBE_CODES as readonly string[]).includes(s) ? (s as TubeType) : null;
 }
 
-/** Quy cách đã chuẩn hóa của một dòng SO / phiếu giao (bỏ các giá trị không hợp lệ). */
+/** Quy cách đã chuẩn hóa của một dòng SO / PR / PO / phiếu giao (tự động đọc cả từ thẻ [Dạng: ...] nếu lưu ở ghi chú/quy cách). */
 export function kitSpecOf(it: any): KitSpec {
+  const fromFactory = factorySupplyAndTubeToKitSpec(it?.supply_form ?? it?.supplyForm, it?.tube_code ?? it?.tubeCode);
+  const fromText = parseKitSpecFromText(`${it?.notes ?? ""} ${it?.specification ?? ""}`);
   const spec: KitSpec = {};
-  const f = normalizePackagingForm(it?.packagingForm);
-  const ic = normalizeIcForm(it?.icForm);
-  const tube = normalizeTubeType(it?.tubeType);
+  const f = normalizePackagingForm(it?.packagingForm) || fromFactory.packagingForm || fromText.packagingForm;
+  const ic = normalizeIcForm(it?.icForm) || fromFactory.icForm || fromText.icForm;
+  const tube = normalizeTubeType(it?.tubeType) || fromFactory.tubeType || fromText.tubeType;
   if (f) spec.packagingForm = f;
   if (ic) spec.icForm = ic;
   if (tube) spec.tubeType = tube;

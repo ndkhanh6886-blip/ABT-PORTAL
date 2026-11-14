@@ -3,11 +3,13 @@ import { factoryRoute } from "@/factory/http";
 import { ensureKitBomRoutingAndIfuSchema } from "@/factory/kit/bomRouting";
 import { listDepartmentStaffForKitAndQa } from "@/factory/kit/ordersEbr";
 import { ensureDepartmentEquipmentSeed } from "@/factory/asset/service";
+import { ensureInternalOrderLineKitSpecColumns } from "@/factory/intake/kdEvents";
 import "@/factory/kit/permissions";
 
 export const GET = factoryRoute(async (tx, { actor }) => {
   await authorizeAnywhere(tx, actor, "kit.view");
   await ensureKitBomRoutingAndIfuSchema(tx);
+  await ensureInternalOrderLineKitSpecColumns(tx);
   await ensureDepartmentEquipmentSeed(tx);
 
   const allUnits = (
@@ -49,6 +51,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
               COALESCE(i.name, l.kd_item_name) AS description,
               l.qty::float AS qty_ordered, l.qty_delivered::float AS qty_delivered,
               COALESCE(i.base_uom, l.kd_unit, 'kit') AS uom,
+              l.supply_form, l.tube_code, l.specification, l.line_notes,
               io.code AS internal_order_code, io.kd_po_code, io.requested_date::text AS requested_date, io.status AS order_status
          FROM intake.internal_order_line l
          JOIN intake.internal_order io ON io.id = l.order_id

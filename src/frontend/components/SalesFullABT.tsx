@@ -4039,7 +4039,7 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
     /** Kit PCR có phụ kiện: phân quy cách theo số lô (chia sẵn ".C", IC ".IC", loại tube ".T01"...). Kit tách chiết thì không. */
     const isTwoFormKit = (code: any) => {
         const c = String(code || "").trim();
-        if (!c || getKitComponentsForCode(c).length === 0) return false;
+        if (!c) return false;
         const prod: any = (allSalesProducts || []).find((x: any) => String(x.code || "").trim() === c) || { code: c };
         return isPcrKitProduct(prod);
     };
@@ -13935,18 +13935,24 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
         }));
 
         // 2. Automatically create Purchase Request (PR) in workflow_requests (Cung Ứng)
-        const prItems = includedMfgList.map((it: any) => ({
-            is_custom: false,
-            product_code: it.productCode || it.code || "",
-            product_name: it.productName || it.name || it.productCode || "Hàng đặt Hãng / NCC",
-            specification: specWithSequence(it.specification || it.brand || "Theo đơn hàng", itemSequence(it)),
-            sequence: itemSequence(it) || undefined,
-            unit: it.unit || "Hộp",
-            quantity: Number(it.quantity) || 1,
-            estimated_price: Number(it.unitPrice) || 0,
-            unit_price: Number(it.unitPrice) || 0,
-            notes: (singleMfgItemNotes[it.productCode] !== undefined ? singleMfgItemNotes[it.productCode] : it.notes) || newNotes
-        }));
+        const prItems = includedMfgList.map((it: any) => {
+            const ks = kitSpecOf(it);
+            const rawNotes = (singleMfgItemNotes[it.productCode] !== undefined ? singleMfgItemNotes[it.productCode] : it.notes) || newNotes;
+            const baseSpec = specWithSequence(it.specification || it.brand || "Theo đơn hàng", itemSequence(it));
+            return {
+                is_custom: false,
+                product_code: it.productCode || it.code || "",
+                product_name: it.productName || it.name || it.productCode || "Hàng đặt Hãng / NCC",
+                specification: hasKitSpec(ks) ? withPackagingNote(baseSpec, ks) : baseSpec,
+                sequence: itemSequence(it) || undefined,
+                ...kitSpecFields(it),
+                unit: it.unit || "Hộp",
+                quantity: Number(it.quantity) || 1,
+                estimated_price: Number(it.unitPrice) || 0,
+                unit_price: Number(it.unitPrice) || 0,
+                notes: hasKitSpec(ks) ? withPackagingNote(rawNotes, ks) : rawNotes
+            };
+        });
 
         const isStockTargetReq = (targetReq.isStockOrder === true || targetReq.orderCategory === "STOCK" || String(targetReq.id || "").includes("STOCK") || String(targetReq.customerName || "").includes("KHO LƯU TRỮ") || targetReq.customerName === defaultStockCustomer);
         const loggedInCreatorName = loggedInStaff?.full_name || user?.name || "";
@@ -14979,18 +14985,21 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
             const lineNotes = singleProcureItemNotes[lineKey] !== undefined
                 ? singleProcureItemNotes[lineKey]
                 : (singleProcureItemNotes[it.productCode] !== undefined ? singleProcureItemNotes[it.productCode] : (it.notes || ""));
+            const ks = kitSpecOf(it);
+            const baseSpec = specWithSequence(it.specification || it.brand || "Theo đơn hàng", lineSeq);
             return {
                 is_custom: false,
                 product_code: it.productCode || it.code || "",
                 product_name: it.productName || it.name || it.productCode || "Mặt hàng mua ngoài",
-                specification: specWithSequence(it.specification || it.brand || "Theo đơn hàng", lineSeq),
+                specification: hasKitSpec(ks) ? withPackagingNote(baseSpec, ks) : baseSpec,
                 sequence: lineSeq || undefined,
                 needs_sequence: isOligoLikeItem(it) || undefined,
+                ...kitSpecFields(it),
                 unit: it.unit || "Hộp",
                 quantity: qty > 0 ? qty : 1,
                 estimated_price: price,
                 unit_price: price,
-                notes: lineNotes,
+                notes: hasKitSpec(ks) ? withPackagingNote(lineNotes, ks) : lineNotes,
                 original_order_qty: it.quantity || 1,
                 // Ảnh chụp tồn kho lúc lập PR để Cung ứng biết hàng trong kho đang dành cho đơn nào
                 stock_on_hand: Number(ib?.onHandQty) || 0,
@@ -15496,18 +15505,23 @@ const VIETNAM_PROVINCES: { province: string; region: string }[] = [
                     customer_name: selectedReqs.length === 1 ? firstReq.customerName : "",
                     due_date: combineProcureEstDelivery || combineMfgEstDelivery || toVNDateString(new Date(Date.now() + 7 * 86400000)),
                     description: combinedNotes,
-                    items: combinedItems.map((it: any) => ({
-                        is_custom: false,
-                        product_code: it.productCode,
-                        product_name: it.productName || it.productCode,
-                        specification: specWithSequence(it.specification || it.brand || "", itemSequence(it)),
-                        sequence: itemSequence(it) || undefined,
-                        unit: it.unit || "Hộp",
-                        quantity: Number(it.quantity) || 1,
-                        estimated_price: Number(it.costPrice) || 0,
-                        unit_price: Number(it.costPrice) || 0,
-                        notes: it.notes || ""
-                    }))
+                    items: combinedItems.map((it: any) => {
+                        const ks = kitSpecOf(it);
+                        const baseSpec = specWithSequence(it.specification || it.brand || "", itemSequence(it));
+                        return {
+                            is_custom: false,
+                            product_code: it.productCode,
+                            product_name: it.productName || it.productCode,
+                            specification: hasKitSpec(ks) ? withPackagingNote(baseSpec, ks) : baseSpec,
+                            sequence: itemSequence(it) || undefined,
+                            ...kitSpecFields(it),
+                            unit: it.unit || "Hộp",
+                            quantity: Number(it.quantity) || 1,
+                            estimated_price: Number(it.costPrice) || 0,
+                            unit_price: Number(it.costPrice) || 0,
+                            notes: hasKitSpec(ks) ? withPackagingNote(it.notes || "", ks) : (it.notes || "")
+                        };
+                    })
                 })
             });
             const prData = await prRes.json().catch(() => ({}));

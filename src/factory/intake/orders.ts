@@ -9,6 +9,7 @@ import { enqueueEvent } from "../core/outbox";
 import { parseInput } from "../core/records";
 import { defineMachine, type GuardContext } from "../core/stateMachine";
 import { z } from "zod";
+import { ensureInternalOrderLineKitSpecColumns } from "./kdEvents";
 import "./gateway";
 
 export type OrderStatus = "RECEIVED" | "ACCEPTED" | "IN_PRODUCTION" | "READY" | "PARTIALLY_DELIVERED" | "DELIVERED" | "CLOSED" | "REJECTED" | "CANCELLED";
@@ -197,6 +198,7 @@ export async function listOrders(tx: Tx, actor: AuthzActor, status?: string) {
 }
 
 export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
+  await ensureInternalOrderLineKitSpecColumns(tx);
   const order = (
     await tx.query(
       "SELECT o.*, u.code AS org_unit_code, u.name AS org_unit_name, u.module_key FROM intake.internal_order o JOIN core.org_unit u ON u.id = o.org_unit_id WHERE o.id = $1",
@@ -210,6 +212,7 @@ export async function getOrder(tx: Tx, actor: AuthzActor, id: string) {
     await tx.query(
       `SELECT l.id, l.line_no, l.kd_item_code, l.kd_item_name, l.kd_unit, l.item_id, i.code AS item_code, i.name AS item_name, i.base_uom, i.kd_unit_factor::text AS kd_unit_factor,
               l.qty::text AS qty, l.qty_delivered::text AS qty_delivered, l.transfer_price::text AS transfer_price,
+              l.supply_form, l.tube_code, l.specification, l.line_notes,
               COALESCE((
                 SELECT sum(b.qty_on_hand - b.qty_reserved)::float
                   FROM inv.stock_balance b

@@ -12,6 +12,20 @@ import { notifyNewOrder, orderMachine } from "./orders";
 import { syncOrderStatus } from "./shipments";
 import { ensureDeviceModelForPoLine } from "./orderDispatchOps";
 import { addSequences, createOligoOrder } from "../oligo/orders";
+import { kitSpecOf, kitSpecToFactorySupplyAndTube } from "@/frontend/utils/packagingForm";
+
+let internalOrderLineColumnsEnsured = false;
+export async function ensureInternalOrderLineKitSpecColumns(tx: Tx) {
+  if (internalOrderLineColumnsEnsured) return;
+  await tx.query(`
+    ALTER TABLE intake.internal_order_line
+      ADD COLUMN IF NOT EXISTS supply_form text,
+      ADD COLUMN IF NOT EXISTS tube_code text,
+      ADD COLUMN IF NOT EXISTS specification text,
+      ADD COLUMN IF NOT EXISTS line_notes text
+  `);
+  internalOrderLineColumnsEnsured = true;
+}
 
 const FACTORY_UNITS = ["KIT", "OLIGO", "DEVICE"] as const;
 
@@ -39,6 +53,10 @@ const poIssued = z.object({
         unit: z.string().nullable().optional(),
         quantity: z.number().positive(),
         unit_price: z.number().min(0),
+        supply_form: z.string().nullable().optional(),
+        tube_code: z.string().nullable().optional(),
+        specification: z.string().nullable().optional(),
+        notes: z.string().nullable().optional(),
       })
     )
     .min(1),
@@ -206,6 +224,7 @@ async function ensureDownstreamDepartmentOrder(
 }
 
 async function receivePo(tx: Tx, payload: unknown): Promise<void> {
+  await ensureInternalOrderLineKitSpecColumns(tx);
   const p = poIssued.parse(payload);
   const unit = await ensureFactoryDepartmentUnit(tx, p.factory_unit);
 
@@ -246,10 +265,31 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
       let n = 0;
       for (const l of p.lines) {
         const item = await resolveOrCreateMasterItemForPoLine(tx, p.factory_unit, l);
+        const ks = kitSpecOf({
+          supply_form: l.supply_form,
+          tube_code: l.tube_code,
+          specification: `${l.specification ?? ""} ${l.product_name ?? ""}`,
+          notes: l.notes,
+        });
+        const mapped = kitSpecToFactorySupplyAndTube(ks);
         await tx.query(
-          `INSERT INTO intake.internal_order_line (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-          [existing.id, ++n, l.line_index, l.product_code, l.product_name ?? item.name ?? null, l.unit ?? item.base_uom ?? null, item?.id ?? null, l.quantity, l.unit_price]
+          `INSERT INTO intake.internal_order_line (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price, supply_form, tube_code, specification, line_notes)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+          [
+            existing.id,
+            ++n,
+            l.line_index,
+            l.product_code,
+            l.product_name ?? item.name ?? null,
+            l.unit ?? item.base_uom ?? null,
+            item?.id ?? null,
+            l.quantity,
+            l.unit_price,
+            mapped.supply_form ?? l.supply_form ?? null,
+            mapped.tube_code ?? l.tube_code ?? null,
+            l.specification ?? null,
+            l.notes ?? null,
+          ]
         );
       }
     }
@@ -276,10 +316,31 @@ async function receivePo(tx: Tx, payload: unknown): Promise<void> {
   let n = 0;
   for (const l of p.lines) {
     const item = await resolveOrCreateMasterItemForPoLine(tx, p.factory_unit, l);
+    const ks = kitSpecOf({
+      supply_form: l.supply_form,
+      tube_code: l.tube_code,
+      specification: `${l.specification ?? ""} ${l.product_name ?? ""}`,
+      notes: l.notes,
+    });
+    const mapped = kitSpecToFactorySupplyAndTube(ks);
     await tx.query(
-      `INSERT INTO intake.internal_order_line (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-      [order.id, ++n, l.line_index, l.product_code, l.product_name ?? item.name ?? null, l.unit ?? item.base_uom ?? null, item?.id ?? null, l.quantity, l.unit_price]
+      `INSERT INTO intake.internal_order_line (order_id, line_no, kd_line_index, kd_item_code, kd_item_name, kd_unit, item_id, qty, transfer_price, supply_form, tube_code, specification, line_notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+      [
+        order.id,
+        ++n,
+        l.line_index,
+        l.product_code,
+        l.product_name ?? item.name ?? null,
+        l.unit ?? item.base_uom ?? null,
+        item?.id ?? null,
+        l.quantity,
+        l.unit_price,
+        mapped.supply_form ?? l.supply_form ?? null,
+        mapped.tube_code ?? l.tube_code ?? null,
+        l.specification ?? null,
+        l.notes ?? null,
+      ]
     );
   }
   await ensureDownstreamDepartmentOrder(tx, p.factory_unit, unit, order);

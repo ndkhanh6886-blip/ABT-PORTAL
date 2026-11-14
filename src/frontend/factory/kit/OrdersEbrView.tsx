@@ -16,6 +16,7 @@ import {
   ROLE_LABELS,
   STEP_CATEGORY_LABELS,
 } from "./shared";
+import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec } from "@/frontend/utils/packagingForm";
 import { ProductionPlanView } from "./ProductionPlanView";
 
 const SHIFT_LABELS: Record<string, string> = {
@@ -188,15 +189,46 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
       if (!poLine) return { ...prev, internal_order_line_id: "" };
       const matchedItem =
         kitProducts.find((x) => x.id === poLine.item_id) ?? kitProducts.find((x) => x.code === poLine.item_code);
-      const autoAliq = Boolean(poLine.item_code?.toUpperCase().includes(".D.IC"));
+      const ks = kitSpecOf({
+        supply_form: poLine.supply_form,
+        tube_code: poLine.tube_code,
+        specification: `${poLine.specification ?? ""} ${poLine.description ?? ""}`,
+        notes: poLine.line_notes,
+      });
+      const mapped = kitSpecToFactorySupplyAndTube(ks);
+      const nextSupplyForm =
+        mapped.supply_form ||
+        poLine.supply_form ||
+        (poLine.item_code?.toUpperCase().includes(".D.IC") ? "SPLIT_WITH_IC" : prev.supply_form || "NO_SPLIT_NO_IC");
+      const nextTubeCode = mapped.tube_code || poLine.tube_code || prev.tube_code || "T02";
+      const sfSpec = ABT_KIT_SUPPLY_FORMS[nextSupplyForm] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+      const targetProdId = matchedItem?.id ?? prev.product_item_id;
+      const candidateBoms = (options.effective_boms ?? []).filter((b) => b.product_item_id === targetProdId);
+      const bestBom =
+        candidateBoms.find((b) => (b.variant_code || "BASE") === sfSpec.variant_code) ||
+        candidateBoms.find((b) => b.supply_form === nextSupplyForm) ||
+        candidateBoms.find((b) => (b.variant_code || "BASE") === "BASE") ||
+        candidateBoms[0];
       const remQty = Math.max(1, Number(poLine.qty_ordered || 100) - Number(poLine.qty_delivered || 0));
+      const nextLotCode = buildAbtKitLotCode({
+        baseLot: prev.lot_code,
+        mfgDate: prev.mfg_date || vnToday(),
+        seqNo: orders.length + 1,
+        supplyForm: nextSupplyForm,
+        tubeCode: nextTubeCode,
+      });
+      const specNote = hasKitSpec(ks) ? ` [Dạng: ${kitSpecLabel(ks)}]` : "";
       return {
         ...prev,
         internal_order_line_id: lineId,
-        product_item_id: matchedItem?.id ?? prev.product_item_id,
+        product_item_id: targetProdId,
+        bom_id: bestBom?.id ?? prev.bom_id,
         planned_qty: String(remQty),
-        order_mode: autoAliq ? "ALIQUOTED" : "STANDARD",
-        notes: `Sản xuất theo PO ${poLine.kd_po_code} (Đơn nội bộ ${poLine.internal_order_code})`,
+        supply_form: nextSupplyForm,
+        tube_code: nextTubeCode,
+        order_mode: sfSpec.is_aliquoted ? "ALIQUOTED" : "STANDARD",
+        lot_code: nextLotCode,
+        notes: `Sản xuất theo PO ${poLine.kd_po_code} (Đơn nội bộ ${poLine.internal_order_code})${specNote}`,
       };
     });
   };
@@ -941,18 +973,27 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
                     </select>
                   </Field>
                 </div>
-                <Field label="Liên kết Đơn nội bộ (PO Kinh doanh) — Tự động nạp Mã Kit & Số lượng PO">
+                <Field label="Liên kết Đơn nội bộ (PO Kinh doanh) — Tự động nạp Mã Kit, Dạng cung cấp, Tube PCR & Số Lô">
                   <select
                     className={inputClass}
                     value={orderForm.internal_order_line_id}
                     onChange={(e) => prefillFromPoLine(e.target.value)}
                   >
                     <option value="">-- Lệnh sản xuất độc lập (Hoặc chọn PO Kinh doanh bên dưới) --</option>
-                    {(options.po_lines ?? []).map((p) => (
-                      <option key={p.line_id} value={p.line_id}>
-                        {p.kd_po_code} ({p.internal_order_code}) — {p.item_code}: Cần {p.qty_ordered} {p.uom}
-                      </option>
-                    ))}
+                    {(options.po_lines ?? []).map((p) => {
+                      const ks = kitSpecOf({
+                        supply_form: p.supply_form,
+                        tube_code: p.tube_code,
+                        specification: `${p.specification ?? ""} ${p.description ?? ""}`,
+                        notes: p.line_notes,
+                      });
+                      const specStr = hasKitSpec(ks) ? ` [${kitSpecLabel(ks)}]` : "";
+                      return (
+                        <option key={p.line_id} value={p.line_id}>
+                          {p.kd_po_code} ({p.internal_order_code}) — {p.item_code}: Cần {p.qty_ordered} {p.uom}{specStr}
+                        </option>
+                      );
+                    })}
                   </select>
                 </Field>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">

@@ -3,6 +3,16 @@
 import React, { useState, useEffect, useMemo, useRef } from "react";
 import { writeSafePrintDocument } from "@/frontend/utils/safePrint";
 import {
+  isPcrKitProduct,
+  kitSpecOf,
+  hasKitSpec,
+  withPackagingNote,
+  PCR_TUBE_CODES,
+  type PackagingForm,
+  type IcForm,
+  type TubeType,
+} from "@/frontend/utils/packagingForm";
+import {
   ShoppingCart,
   Building2,
   Plus,
@@ -3204,6 +3214,11 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
         combined.includes("abt") ||
         combined.includes("toppure") ||
         combined.includes("topspec") ||
+        combined.includes("topsensi") ||
+        pCode.startsWith("sq") ||
+        pCode.startsWith("mq") ||
+        pCode.startsWith("sp") ||
+        pCode.startsWith("mp") ||
         pCode.startsWith("dd-") ||
         pCode.startsWith("hi-") ||
         pCode.startsWith("eh-") ||
@@ -3313,14 +3328,20 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
       const resolved = resolveItemSupplierAndPrice(it);
       const price = roundPrice3(resolved.unitPrice > 0 ? resolved.unitPrice : Number(it.estimated_price || it.unit_price || it.price || 0));
       const qty = Number(it.quantity) || 1;
-      const nameWithSpec = it.specification && !it.product_name?.includes(it.specification) 
-        ? `${it.product_name} (${it.specification})` 
+      const ks = kitSpecOf(it);
+      const specText = hasKitSpec(ks) ? withPackagingNote(it.specification || "", ks) : (it.specification || "");
+      const noteText = hasKitSpec(ks) ? withPackagingNote(it.notes || "", ks) : (it.notes || "");
+      const nameWithSpec = specText && !it.product_name?.includes(specText) 
+        ? `${it.product_name} (${specText})` 
         : (it.product_name || it.product_code);
       poItems.push({
         product_code: it.product_code,
         product_name: nameWithSpec,
-        specification: it.specification || "",
-        notes: it.notes || "",
+        specification: specText,
+        notes: noteText,
+        packagingForm: ks.packagingForm,
+        icForm: ks.icForm,
+        tubeType: ks.tubeType,
         source_pr_code: pr.workflow_code || undefined,
         is_stock: !forCustomer,
         target_customer_name: forCustomer ? pr.customer_name : undefined,
@@ -3479,12 +3500,18 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
             const forCustomer = isCustomerPR(pr);
             const prOrderCode = soCodeIn(pr.title) || soCodeIn(pr.description);
             const qty = it.quantity || 1;
-            const nameWithSpec = it.specification ? `${it.product_name} (${it.specification})` : it.product_name;
+            const ks = kitSpecOf(it);
+            const specText = hasKitSpec(ks) ? withPackagingNote(it.specification || "", ks) : (it.specification || "");
+            const noteText = hasKitSpec(ks) ? withPackagingNote(it.notes || "", ks) : (it.notes || "");
+            const nameWithSpec = specText ? `${it.product_name} (${specText})` : it.product_name;
             combinedItems.push({
               product_code: it.product_code,
               product_name: nameWithSpec,
-              specification: it.specification || "",
-              notes: it.notes || "",
+              specification: specText,
+              notes: noteText,
+              packagingForm: ks.packagingForm,
+              icForm: ks.icForm,
+              tubeType: ks.tubeType,
               source_pr_code: pr.workflow_code || undefined,
               is_stock: !forCustomer,
               target_customer_name: forCustomer ? pr.customer_name : undefined,
@@ -6735,6 +6762,74 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                                 </span>
                               )}
                             </div>
+                            {(() => {
+                              const matchedProd = mergedCatalogProducts.find((pp: any) => pp.code === item.product_code) || products.find((pp: any) => pp.code === item.product_code) || { code: item.product_code };
+                              if (!isPcrKitProduct(matchedProd)) return null;
+                              const ks = kitSpecOf(item);
+                              const setPoKitSpec = (patch: Partial<{ packagingForm?: PackagingForm; icForm?: IcForm; tubeType?: TubeType }>) => {
+                                const next = { ...ks, ...patch };
+                                updatePOLine(idx, {
+                                  packagingForm: next.packagingForm,
+                                  icForm: next.icForm,
+                                  tubeType: next.tubeType,
+                                  specification: withPackagingNote(item.specification || "", next),
+                                  notes: withPackagingNote(item.notes || "", next),
+                                });
+                              };
+                              return (
+                                <div className="mt-1 p-1.5 rounded-lg bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/80 space-y-1">
+                                  <div className="text-[10px] font-bold text-sky-800 dark:text-sky-300 flex items-center gap-1">
+                                    <span>🧬 Quy cách Kit PCR (đồng bộ sang Lệnh SX):</span>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-1">
+                                    <select
+                                      value={ks.packagingForm || ""}
+                                      onChange={(e) => setPoKitSpec({ packagingForm: (e.target.value as PackagingForm) || undefined })}
+                                      className={`px-1.5 py-0.5 text-[10px] font-bold rounded border cursor-pointer ${
+                                        ks.packagingForm === "PREALIQUOT"
+                                          ? "bg-amber-50 text-amber-800 border-amber-300"
+                                          : ks.packagingForm === "WITH_ACCESSORIES"
+                                            ? "bg-emerald-50 text-emerald-800 border-emerald-300"
+                                            : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300"
+                                      }`}
+                                    >
+                                      <option value="">-- Chia sẵn? --</option>
+                                      <option value="PREALIQUOT">Chia sẵn (.C)</option>
+                                      <option value="WITH_ACCESSORIES">Không chia sẵn</option>
+                                    </select>
+                                    <select
+                                      value={ks.icForm || ""}
+                                      onChange={(e) => setPoKitSpec({ icForm: (e.target.value as IcForm) || undefined })}
+                                      className={`px-1.5 py-0.5 text-[10px] font-bold rounded border cursor-pointer ${
+                                        ks.icForm === "IC"
+                                          ? "bg-indigo-50 text-indigo-800 border-indigo-300"
+                                          : ks.icForm === "NO_IC"
+                                            ? "bg-slate-100 text-slate-700 border-slate-300"
+                                            : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300"
+                                      }`}
+                                    >
+                                      <option value="">-- IC? --</option>
+                                      <option value="IC">Sẵn IC (.IC)</option>
+                                      <option value="NO_IC">Không sẵn IC</option>
+                                    </select>
+                                    <select
+                                      value={ks.tubeType || ""}
+                                      onChange={(e) => setPoKitSpec({ tubeType: (e.target.value as TubeType) || undefined })}
+                                      className={`px-1.5 py-0.5 text-[10px] font-bold rounded border cursor-pointer ${
+                                        ks.tubeType
+                                          ? "bg-sky-100 text-sky-800 border-sky-300"
+                                          : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border-slate-300"
+                                      }`}
+                                    >
+                                      <option value="">-- Loại tube --</option>
+                                      {PCR_TUBE_CODES.map((tc) => (
+                                        <option key={tc} value={tc}>Tube {tc}</option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="p-2 text-center pt-3 text-slate-600 dark:text-slate-300">{item.unit || "Hộp"}</td>
                           <td className="p-2 text-center pt-3 font-mono cursor-help" title={stockTitle}>
@@ -9281,6 +9376,60 @@ Danh sách sẽ được tải lại, vui lòng mở đơn và sửa lại.`);
                               />
                             </div>
                           </div>
+                          {(() => {
+                            const matchedProd = mergedCatalogProducts.find((pp: any) => pp.code === it.product_code) || products.find((pp: any) => pp.code === it.product_code) || { code: it.product_code };
+                            if (!isPcrKitProduct(matchedProd)) return null;
+                            const ks = kitSpecOf(it);
+                            const setPrKitSpec = (patch: Partial<{ packagingForm?: PackagingForm; icForm?: IcForm; tubeType?: TubeType }>) => {
+                              const next = { ...ks, ...patch };
+                              setPRForm((prev: any) => {
+                                const nextItems = [...(prev.items || [])];
+                                const cur = nextItems[idx] || {};
+                                nextItems[idx] = {
+                                  ...cur,
+                                  packagingForm: next.packagingForm,
+                                  icForm: next.icForm,
+                                  tubeType: next.tubeType,
+                                  specification: withPackagingNote(cur.specification || "", next),
+                                  notes: withPackagingNote(cur.notes || "", next),
+                                };
+                                return { ...prev, items: nextItems };
+                              });
+                            };
+                            return (
+                              <div className="p-2 rounded-lg bg-sky-50/70 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800/80 flex flex-wrap items-center gap-2">
+                                <span className="text-[11px] font-bold text-sky-800 dark:text-sky-300">🧬 Quy cách Kit PCR:</span>
+                                <select
+                                  value={ks.packagingForm || ""}
+                                  onChange={(e) => setPrKitSpec({ packagingForm: (e.target.value as PackagingForm) || undefined })}
+                                  className="px-2 py-1 text-xs font-bold rounded border border-sky-300 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
+                                >
+                                  <option value="">-- Chia sẵn / Không chia sẵn --</option>
+                                  <option value="PREALIQUOT">Chia sẵn (.C — 64 test)</option>
+                                  <option value="WITH_ACCESSORIES">Không chia sẵn (75 test Mix + 80 tube)</option>
+                                </select>
+                                <select
+                                  value={ks.icForm || ""}
+                                  onChange={(e) => setPrKitSpec({ icForm: (e.target.value as IcForm) || undefined })}
+                                  className="px-2 py-1 text-xs font-bold rounded border border-sky-300 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
+                                >
+                                  <option value="">-- Sẵn IC / Không sẵn IC --</option>
+                                  <option value="IC">Sẵn IC (.IC — pha sẵn trong Mix)</option>
+                                  <option value="NO_IC">Không sẵn IC (cấp kèm ống IC rời)</option>
+                                </select>
+                                <select
+                                  value={ks.tubeType || ""}
+                                  onChange={(e) => setPrKitSpec({ tubeType: (e.target.value as TubeType) || undefined })}
+                                  className="px-2 py-1 text-xs font-bold rounded border border-sky-300 bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 cursor-pointer"
+                                >
+                                  <option value="">-- Loại tube PCR --</option>
+                                  {PCR_TUBE_CODES.map((tc) => (
+                                    <option key={tc} value={tc}>Tube {tc}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            );
+                          })()}
                         </div>
                       ) : (
                         /* Mode 2: First-time New Custom Item */

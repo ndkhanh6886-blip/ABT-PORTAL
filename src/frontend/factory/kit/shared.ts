@@ -36,6 +36,10 @@ export interface KitOptions {
     qty_ordered: number;
     qty_delivered: number;
     uom: string;
+    supply_form?: string | null;
+    tube_code?: string | null;
+    specification?: string | null;
+    line_notes?: string | null;
     internal_order_code: string;
     kd_po_code: string;
     requested_date: string | null;

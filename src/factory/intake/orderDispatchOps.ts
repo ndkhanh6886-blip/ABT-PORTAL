@@ -8,9 +8,11 @@ import { nextNumber } from "../core/numbering";
 import { parseInput } from "../core/records";
 import { runTransition } from "../core/stateMachine";
 import { orderMachine } from "./orders";
+import { ensureInternalOrderLineKitSpecColumns } from "./kdEvents";
 import { createProductionOrder } from "../kit/ordersEbr";
 import { addSequences, createOligoOrder } from "../oligo/orders";
 import { convertPoToWorkOrder } from "../device/workflow";
+import { kitSpecOf, kitSpecToFactorySupplyAndTube, kitSpecLabel, hasKitSpec } from "@/frontend/utils/packagingForm";
 import "./permissions";
 import "../kit/permissions";
 import "../oligo/orders";
@@ -318,6 +320,7 @@ const dispatchLineSchema = z.object({
  */
 export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: AuthzActor, input: unknown) {
   await authorizeAnywhere(tx, actor, "intake.order.view");
+  await ensureInternalOrderLineKitSpecColumns(tx);
   const d = parseInput(dispatchLineSchema, input);
   const dispatchActor: AuthzActor = actor;
 
@@ -392,9 +395,35 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
     ).rows[0];
     if (!kitWh) throw invalid("Phòng Sản xuất Kit chưa có kho nhánh KHO-KIT.");
 
-    // Check if product has an EFFECTIVE BOM & Routing; if not, clone from existing EFFECTIVE BOM/Routing
+    // Giải mã quy cách Kit PCR (Chia sẵn/Không chia sẵn, Sẵn IC/Không sẵn IC, Loại Tube PCR) từ dòng Đơn nội bộ / PO
+    const ks = kitSpecOf({
+      supply_form: line.supply_form,
+      tube_code: line.tube_code,
+      specification: `${line.specification ?? ""} ${line.kd_item_name ?? ""}`,
+      notes: `${line.line_notes ?? ""} ${order.notes ?? ""}`,
+    });
+    const mappedSpec = kitSpecToFactorySupplyAndTube(ks);
+    const resolvedSupplyForm = mappedSpec.supply_form ?? line.supply_form ?? "NO_SPLIT_NO_IC";
+    const resolvedTubeCode = mappedSpec.tube_code ?? line.tube_code ?? null;
+    const resolvedVariantCode = mappedSpec.variant_code ?? "BASE";
+    const isAliquoted = resolvedSupplyForm === "SPLIT_NO_IC" || resolvedSupplyForm === "SPLIT_WITH_IC";
+
+    // Check if product has an EFFECTIVE BOM (prefer matching variant_code or supply_form, fallback to BASE) & Routing
     let effBom = (
-      await tx.query("SELECT id FROM kit.bom WHERE product_item_id = $1 AND status = 'EFFECTIVE' LIMIT 1", [line.item_id])
+      await tx.query(
+        `SELECT id FROM kit.bom
+          WHERE product_item_id = $1 AND status = 'EFFECTIVE'
+          ORDER BY
+            CASE
+              WHEN coalesce(variant_code, 'BASE') = $2 THEN 0
+              WHEN supply_form = $3 THEN 1
+              WHEN coalesce(variant_code, 'BASE') = 'BASE' THEN 2
+              ELSE 3
+            END,
+            bom_version DESC
+          LIMIT 1`,
+        [line.item_id, resolvedVariantCode, resolvedSupplyForm]
+      )
     ).rows[0];
     let effRt = (
       await tx.query("SELECT id FROM kit.routing WHERE product_item_id = $1 AND status = 'EFFECTIVE' LIMIT 1", [line.item_id])
@@ -437,6 +466,7 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
       }
     }
 
+    const specSummaryNote = hasKitSpec(ks) ? ` [Dạng: ${kitSpecLabel(ks)}]` : "";
     const kitOrder = await createProductionOrder(tx, dispatchActor, {
       org_unit_id: order.org_unit_id,
       product_item_id: line.item_id,
@@ -444,9 +474,13 @@ export async function dispatchInternalOrderLineToProduction(tx: Tx, actor: Authz
       routing_id: effRt?.id ?? null,
       warehouse_id: kitWh.id,
       planned_qty: qtyToProduce,
+      supply_form: resolvedSupplyForm,
+      tube_code: resolvedTubeCode,
+      order_mode: isAliquoted ? "ALIQUOTED" : "STANDARD",
+      is_aliquoted: isAliquoted,
       priority: "HIGH",
       internal_order_line_id: line.id,
-      notes: `Sản xuất theo Đơn nội bộ ${order.code} (PO ${order.kd_po_code})`,
+      notes: `Sản xuất theo Đơn nội bộ ${order.code} (PO ${order.kd_po_code})${specSummaryNote}`,
     });
 
     if (order.status === "ACCEPTED") {
