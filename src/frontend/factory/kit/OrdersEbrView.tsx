@@ -64,11 +64,21 @@ function buildScannableCode128Svg(payload: string): string {
   }
 }
 
-export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptions; onRefreshOptions: () => void }) {
-  const [viewMode, setViewMode] = useState<"EBR" | "DAILY_TRACKER" | "PLAN">("PLAN");
+export function OrdersEbrView({
+  options,
+  onRefreshOptions,
+  focusOrderId,
+  onClearFocusOrder,
+}: {
+  options: KitOptions;
+  onRefreshOptions: () => void;
+  focusOrderId?: string;
+  onClearFocusOrder?: () => void;
+}) {
+  const [viewMode, setViewMode] = useState<"EBR" | "DAILY_TRACKER" | "PLAN">(focusOrderId ? "EBR" : "PLAN");
   const [orders, setOrders] = useState<any[]>([]);
   const [dailySteps, setDailySteps] = useState<any[]>([]);
-  const [selectedOrderId, setSelectedOrderId] = useState<string>("");
+  const [selectedOrderId, setSelectedOrderId] = useState<string>(focusOrderId || "");
   const [detail, setDetail] = useState<any | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [showCreateOrder, setShowCreateOrder] = useState(false);
@@ -169,6 +179,15 @@ export function OrdersEbrView({ options, onRefreshOptions }: { options: KitOptio
   useEffect(() => {
     loadOrders();
   }, [loadOrders]);
+
+  useEffect(() => {
+    if (focusOrderId) {
+      didAutoSelectRef.current = true;
+      setViewMode("EBR");
+      setSelectedOrderId(focusOrderId);
+      onClearFocusOrder?.();
+    }
+  }, [focusOrderId, onClearFocusOrder]);
 
   useEffect(() => {
     if (selectedOrderId) loadDetail(selectedOrderId);

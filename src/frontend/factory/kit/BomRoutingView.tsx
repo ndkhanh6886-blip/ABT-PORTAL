@@ -2,15 +2,17 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { ActionBar } from "../actions";
-import { api, fmtQty } from "../api";
+import { api, fmtQty, vnToday } from "../api";
 import { printElementHtml } from "../coa";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
 import {
   ABT_KIT_SUPPLY_FORMS,
   ABT_TUBE_STRIP_CATALOG,
   ACTION_LABELS,
+  buildAbtKitLotCode,
   CONTAINER_LABELS,
   type KitOptions,
+  parseAbtKitLotCode,
   ROLE_LABELS,
   ROUTING_STANDARD_TEMPLATES,
   type RoutingStepDraft,
@@ -27,7 +29,15 @@ import {
   type LabelSampleData,
 } from "./KitLabelStudio";
 
-export function BomRoutingView({ options, onRefreshOptions }: { options: KitOptions; onRefreshOptions: () => void }) {
+export function BomRoutingView({
+  options,
+  onRefreshOptions,
+  onJumpToOrder,
+}: {
+  options: KitOptions;
+  onRefreshOptions: () => void;
+  onJumpToOrder?: (orderId: string) => void;
+}) {
   const [subTab, setSubTab] = useState<"bom" | "routing">("bom");
   const [boms, setBoms] = useState<any[]>([]);
   const [routings, setRoutings] = useState<any[]>([]);
@@ -63,6 +73,25 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
   const [showPreviewLabelIfu, setShowPreviewLabelIfu] = useState(false);
   const [showCreateRouting, setShowCreateRouting] = useState(false);
   const [showAddStep, setShowAddStep] = useState(false);
+  const [showIssueOrder, setShowIssueOrder] = useState(false);
+  const [issueOrderBusy, setIssueOrderBusy] = useState(false);
+  const [createdOrderResult, setCreatedOrderResult] = useState<any | null>(null);
+  const [issueOrderForm, setIssueOrderForm] = useState({
+    org_unit_id: options.units[0]?.id ?? "",
+    warehouse_id: options.warehouses[0]?.id ?? "",
+    internal_order_line_id: "",
+    planned_qty: "10",
+    supply_form: "NO_SPLIT_NO_IC",
+    tube_code: "T02",
+    is_demo: false,
+    demo_specification: "25 test",
+    qc_retention_qty: "1",
+    no_retention: false,
+    lot_code: "",
+    mfg_date: vnToday(),
+    priority: "NORMAL" as "LOW" | "NORMAL" | "HIGH" | "URGENT",
+    notes: "",
+  });
 
   const [labelIfuForm, setLabelIfuForm] = useState({
     label_template_code: "",
@@ -331,6 +360,34 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
             d.packaging || []
           )
         );
+
+        const defaultSf = d.bom.supply_form || "NO_SPLIT_NO_IC";
+        const defaultMfg = vnToday();
+        const autoLot =
+          !isSemi && isPcrCat
+            ? buildAbtKitLotCode({
+                mfgDate: defaultMfg,
+                seqNo: 1,
+                supplyForm: defaultSf,
+                tubeCode: "T02",
+              })
+            : "";
+        setIssueOrderForm((prev) => ({
+          ...prev,
+          org_unit_id: d.bom.org_unit_id || options.units[0]?.id || prev.org_unit_id,
+          warehouse_id: options.warehouses[0]?.id || prev.warehouse_id,
+          internal_order_line_id: "",
+          planned_qty: isSemi ? String(d.bom.base_qty || 1) : "10",
+          supply_form: defaultSf,
+          tube_code: "T02",
+          is_demo: false,
+          qc_retention_qty: String(d.bom.qc_retention_qty ?? (isSemi ? 0 : 1)),
+          no_retention: isSemi,
+          lot_code: autoLot,
+          mfg_date: defaultMfg,
+          priority: "NORMAL",
+          notes: `Phát hành trực tiếp từ ${d.bom.code} (v${d.bom.bom_version}) — ${d.bom.product_code}`,
+        }));
       }
     } catch (e) {
       setError(e);
@@ -430,6 +487,57 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
       await loadList();
     } catch (err) {
       setError(err);
+    }
+  };
+
+  const handleIssueOrderFromBom = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bomDetail?.bom) return;
+    setError(null);
+    setIssueOrderBusy(true);
+    try {
+      const b = bomDetail.bom;
+      const isSemi = b.bom_type === "semi_finished" || b.product_type === "SEMI_FINISHED";
+      const isPcrCat = !isSemi && (b.bom_category ?? "PCR Kit") === "PCR Kit";
+      const sfSpec = ABT_KIT_SUPPLY_FORMS[issueOrderForm.supply_form] || ABT_KIT_SUPPLY_FORMS.NO_SPLIT_NO_IC;
+      const effectiveMode = issueOrderForm.is_demo
+        ? "DEMO"
+        : isPcrCat && sfSpec.is_aliquoted
+          ? "ALIQUOTED"
+          : "STANDARD";
+      const res = await api<{ order: any }>("/api/factory/kit/orders", {
+        method: "POST",
+        idempotent: true,
+        json: {
+          org_unit_id: issueOrderForm.org_unit_id || b.org_unit_id || options.units[0]?.id,
+          product_item_id: b.product_item_id,
+          bom_id: b.id,
+          warehouse_id: issueOrderForm.warehouse_id || options.warehouses[0]?.id,
+          planned_qty: Number(issueOrderForm.planned_qty || 1),
+          supply_form: isPcrCat ? issueOrderForm.supply_form : null,
+          tube_code: isPcrCat ? issueOrderForm.tube_code || "T02" : null,
+          order_mode: effectiveMode,
+          is_aliquoted: isPcrCat ? sfSpec.is_aliquoted : false,
+          is_demo: !isSemi && issueOrderForm.is_demo,
+          demo_specification: !isSemi && issueOrderForm.is_demo ? issueOrderForm.demo_specification : null,
+          qc_retention_qty: issueOrderForm.no_retention ? 0 : Number(issueOrderForm.qc_retention_qty || 0),
+          no_retention: issueOrderForm.no_retention,
+          lot_code: issueOrderForm.lot_code.trim() || null,
+          mfg_date: issueOrderForm.mfg_date || vnToday(),
+          priority: issueOrderForm.priority || "NORMAL",
+          internal_order_line_id: issueOrderForm.internal_order_line_id || null,
+          notes: issueOrderForm.notes || `Phát hành từ ${b.code} (v${b.bom_version})`,
+        },
+      });
+      setCreatedOrderResult(res.order);
+      setShowIssueOrder(false);
+      await loadList();
+      await loadBomDetail(b.id);
+      onRefreshOptions();
+    } catch (err) {
+      setError(err);
+    } finally {
+      setIssueOrderBusy(false);
     }
   };
 
@@ -1840,15 +1948,33 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                               <StatusBadge status={b.status} />
                             </td>
                             <td className="px-2.5 py-2 text-right whitespace-nowrap">
-                              <span
-                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border transition ${
-                                  isSelected
-                                    ? "bg-sky-600 text-white border-sky-500"
-                                    : "bg-sky-500/10 text-sky-600 dark:text-sky-300 border-sky-500/30 hover:bg-sky-500/20"
-                                }`}
-                              >
-                                {isSelected ? "Đang xem" : "Chi tiết →"}
-                              </span>
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={(ev) => {
+                                    ev.stopPropagation();
+                                    setSelectedBomId(b.id);
+                                    setCreatedOrderResult(null);
+                                    setShowIssueOrder(true);
+                                    setTimeout(() => {
+                                      bomDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                                    }, 80);
+                                  }}
+                                  title="Phát hành Lệnh sản xuất trực tiếp từ BOM này"
+                                  className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold bg-emerald-600 text-white hover:bg-emerald-500 transition shadow-sm cursor-pointer"
+                                >
+                                  🚀 Phát lệnh
+                                </button>
+                                <span
+                                  className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border transition ${
+                                    isSelected
+                                      ? "bg-sky-600 text-white border-sky-500"
+                                      : "bg-sky-500/10 text-sky-600 dark:text-sky-300 border-sky-500/30 hover:bg-sky-500/20"
+                                  }`}
+                                >
+                                  {isSelected ? "Đang xem" : "Chi tiết →"}
+                                </span>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1894,6 +2020,14 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                         : "📦 BOM Thành phẩm"}
                     </span>
                     <StatusBadge status={bomDetail.bom.status} />
+                    <Button
+                      onClick={() => {
+                        setCreatedOrderResult(null);
+                        setShowIssueOrder((v) => !v);
+                      }}
+                    >
+                      {showIssueOrder ? "Đóng form Phát lệnh SX" : "🚀 Phát lệnh sản xuất từ BOM này"}
+                    </Button>
                     <Button variant="ghost" onClick={() => setShowEditHeader((v) => !v)}>
                       {showEditHeader ? "Đóng sửa TT truy xuất" : "✏️ Sửa TT Truy xuất & Giao việc"}
                     </Button>
@@ -1952,6 +2086,305 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                     )}
                   </div>
                 </div>
+
+                {createdOrderResult && (
+                  <div className="mb-3 p-3.5 rounded-xl border border-emerald-500/50 bg-emerald-950/40 flex flex-wrap items-center justify-between gap-3">
+                    <div className="text-xs text-emerald-100 space-y-0.5">
+                      <div className="font-bold text-emerald-300 text-sm">
+                        ✅ Đã phát hành Lệnh sản xuất <span className="font-mono underline">{createdOrderResult.code}</span> thành công!
+                      </div>
+                      <div>
+                        Sản phẩm: <b>{bomDetail.bom.product_code}</b> · Số Lô (Lot):{" "}
+                        <span className="font-mono font-bold text-amber-300">{createdOrderResult.lot_code || "Đã cấp"}</span> · Số lượng:{" "}
+                        <b>{createdOrderResult.planned_qty} {createdOrderResult.uom || bomDetail.bom.base_uom}</b>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {onJumpToOrder && (
+                        <Button onClick={() => onJumpToOrder(createdOrderResult.id)}>
+                          📋 Mở thực thi Lệnh SX &amp; Hồ sơ lô EBR ({createdOrderResult.code}) →
+                        </Button>
+                      )}
+                      <Button variant="ghost" onClick={() => setCreatedOrderResult(null)}>
+                        Đóng thông báo
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {showIssueOrder && (() => {
+                  const isSemi =
+                    (bomDetail.bom.bom_type || (bomDetail.bom.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) ===
+                    "semi_finished";
+                  const isPcrCat = !isSemi && (bomDetail.bom.bom_category ?? "PCR Kit") === "PCR Kit";
+                  const matchingPoLines = (options.po_lines ?? []).filter(
+                    (p) => p.item_id === bomDetail.bom.product_item_id || p.item_code === bomDetail.bom.product_code
+                  );
+                  return (
+                    <form
+                      onSubmit={handleIssueOrderFromBom}
+                      className="mb-3 p-4 rounded-xl border-2 border-emerald-500/60 bg-slate-900/95 space-y-3 shadow-lg"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                        <div>
+                          <div className="text-xs font-bold text-emerald-300 uppercase">
+                            🚀 Phát hành Lệnh Sản Xuất &amp; Khởi tạo Hồ sơ lô Điện tử (EBR) trực tiếp từ BOM
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            Áp dụng công thức <b className="text-white font-mono">{bomDetail.bom.code} (v{bomDetail.bom.bom_version})</b> cho{" "}
+                            <b className="text-sky-300">{bomDetail.bom.product_code} — {bomDetail.bom.product_name}</b> ({bomDetail.lines.length} thành phần BOM).
+                            Hệ thống tự động nổ định mức nguyên liệu và sinh các bước công đoạn EBR.
+                          </div>
+                        </div>
+                        <Button type="button" variant="ghost" onClick={() => setShowIssueOrder(false)}>
+                          Đóng
+                        </Button>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-2.5">
+                        <div className="md:col-span-2">
+                          <Field label="Đơn hàng PO / Yêu cầu SX Nội bộ (Tùy chọn)">
+                            <select
+                              className={inputClass}
+                              value={issueOrderForm.internal_order_line_id}
+                              onChange={(e) => {
+                                const lineId = e.target.value;
+                                const po = (options.po_lines ?? []).find((x) => x.line_id === lineId);
+                                if (!po) {
+                                  setIssueOrderForm((prev) => ({ ...prev, internal_order_line_id: "" }));
+                                  return;
+                                }
+                                const remQty = Math.max(1, Number(po.qty_ordered || 10) - Number(po.qty_delivered || 0));
+                                const nextSf = po.supply_form || issueOrderForm.supply_form;
+                                const nextTube = po.tube_code || issueOrderForm.tube_code || "T02";
+                                const nextLot = isPcrCat
+                                  ? buildAbtKitLotCode({
+                                      mfgDate: issueOrderForm.mfg_date || vnToday(),
+                                      seqNo: 1,
+                                      supplyForm: nextSf,
+                                      tubeCode: nextTube,
+                                    })
+                                  : issueOrderForm.lot_code;
+                                setIssueOrderForm((prev) => ({
+                                  ...prev,
+                                  internal_order_line_id: lineId,
+                                  planned_qty: String(remQty),
+                                  supply_form: nextSf,
+                                  tube_code: nextTube,
+                                  lot_code: nextLot,
+                                  notes: `Sản xuất theo PO ${po.kd_po_code} (Đơn nội bộ ${po.internal_order_code}) từ ${bomDetail.bom.code}`,
+                                }));
+                              }}
+                            >
+                              <option value="">
+                                -- Sản xuất Chủ động / Bù tồn kho / Pha Bán thành phẩm (Không gắn PO) --
+                              </option>
+                              {matchingPoLines.map((p) => (
+                                <option key={p.line_id} value={p.line_id}>
+                                  [Khớp SP] PO: {p.kd_po_code} ({p.internal_order_code}) — SL: {p.qty_ordered} {p.uom}
+                                </option>
+                              ))}
+                              {(options.po_lines ?? [])
+                                .filter((p) => !matchingPoLines.some((m) => m.line_id === p.line_id))
+                                .map((p) => (
+                                  <option key={p.line_id} value={p.line_id}>
+                                    PO: {p.kd_po_code} — {p.item_code} ({p.qty_ordered} {p.uom})
+                                  </option>
+                                ))}
+                            </select>
+                          </Field>
+                        </div>
+
+                        <Field label={`Số lượng sản xuất (${bomDetail.bom.base_uom || (isSemi ? "lô/mL" : "bộ/hộp")}) *`}>
+                          <input
+                            type="number"
+                            min={0.01}
+                            step="any"
+                            className={`${inputClass} font-mono font-bold`}
+                            value={issueOrderForm.planned_qty}
+                            onChange={(e) => setIssueOrderForm({ ...issueOrderForm, planned_qty: e.target.value })}
+                            required
+                          />
+                        </Field>
+
+                        <Field label="Kho xuất NVL &amp; Nhập thành phẩm *">
+                          <select
+                            className={inputClass}
+                            value={issueOrderForm.warehouse_id}
+                            onChange={(e) => setIssueOrderForm({ ...issueOrderForm, warehouse_id: e.target.value })}
+                            required
+                          >
+                            {options.warehouses.map((w) => (
+                              <option key={w.id} value={w.id}>
+                                {w.code} — {w.name}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+
+                        {isPcrCat && (
+                          <>
+                            <div className="md:col-span-2">
+                              <Field label="Dạng cung cấp Kit PCR (4 dạng chuẩn ABT)">
+                                <select
+                                  className={inputClass}
+                                  value={issueOrderForm.supply_form}
+                                  onChange={(e) => {
+                                    const nextSf = e.target.value;
+                                    const nextLot = buildAbtKitLotCode({
+                                      baseLot: issueOrderForm.lot_code,
+                                      mfgDate: issueOrderForm.mfg_date || vnToday(),
+                                      seqNo: 1,
+                                      supplyForm: nextSf,
+                                      tubeCode: issueOrderForm.tube_code,
+                                    });
+                                    setIssueOrderForm({ ...issueOrderForm, supply_form: nextSf, lot_code: nextLot });
+                                  }}
+                                >
+                                  {Object.values(ABT_KIT_SUPPLY_FORMS).map((sf) => (
+                                    <option key={sf.key} value={sf.key}>
+                                      {sf.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </Field>
+                            </div>
+
+                            <div className="md:col-span-2">
+                              <Field label="Loại Tube / Strip PCR đi kèm (8 mã chuẩn)">
+                                <select
+                                  className={inputClass}
+                                  value={issueOrderForm.tube_code}
+                                  onChange={(e) => {
+                                    const nextTube = e.target.value;
+                                    const nextLot = buildAbtKitLotCode({
+                                      baseLot: issueOrderForm.lot_code,
+                                      mfgDate: issueOrderForm.mfg_date || vnToday(),
+                                      seqNo: 1,
+                                      supplyForm: issueOrderForm.supply_form,
+                                      tubeCode: nextTube,
+                                    });
+                                    setIssueOrderForm({ ...issueOrderForm, tube_code: nextTube, lot_code: nextLot });
+                                  }}
+                                >
+                                  {ABT_TUBE_STRIP_CATALOG.map((t) => (
+                                    <option key={t.code} value={t.code}>
+                                      {t.code} — {t.name}
+                                    </option>
+                                  ))}
+                                </select>
+                              </Field>
+                            </div>
+                          </>
+                        )}
+
+                        <Field label="Mã số Lô (Lot Code — Tự sinh hoặc nhập tay)">
+                          <input
+                            className={`${inputClass} font-mono font-bold`}
+                            value={issueOrderForm.lot_code}
+                            onChange={(e) => {
+                              const typed = e.target.value;
+                              const parsed = parseAbtKitLotCode(typed);
+                              setIssueOrderForm((prev) => ({
+                                ...prev,
+                                lot_code: typed,
+                                supply_form: isPcrCat && parsed.supplyForm ? parsed.supplyForm.key : prev.supply_form,
+                                tube_code: isPcrCat && parsed.tubeSpec ? parsed.tubeSpec.code : prev.tube_code,
+                              }));
+                            }}
+                            placeholder={isPcrCat ? "VD: 011126-1.IC.T02" : `VD: LOT-${bomDetail.bom.product_code}-01`}
+                          />
+                        </Field>
+
+                        <Field label="Ngày sản xuất (NSX)">
+                          <input
+                            type="date"
+                            className={inputClass}
+                            value={issueOrderForm.mfg_date}
+                            onChange={(e) => {
+                              const nextDate = e.target.value;
+                              const nextLot = isPcrCat
+                                ? buildAbtKitLotCode({
+                                    mfgDate: nextDate || vnToday(),
+                                    seqNo: 1,
+                                    supplyForm: issueOrderForm.supply_form,
+                                    tubeCode: issueOrderForm.tube_code,
+                                  })
+                                : issueOrderForm.lot_code;
+                              setIssueOrderForm({ ...issueOrderForm, mfg_date: nextDate, lot_code: nextLot });
+                            }}
+                          />
+                        </Field>
+
+                        <Field label="Mẫu lưu QC bổ sung (Bộ/Lô)">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="number"
+                              min={0}
+                              step="any"
+                              disabled={issueOrderForm.no_retention}
+                              className={`${inputClass} w-20 font-mono`}
+                              value={issueOrderForm.no_retention ? "0" : issueOrderForm.qc_retention_qty}
+                              onChange={(e) => setIssueOrderForm({ ...issueOrderForm, qc_retention_qty: e.target.value })}
+                            />
+                            <label className="flex items-center gap-1 text-[11px] text-slate-300 whitespace-nowrap cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={issueOrderForm.no_retention}
+                                onChange={(e) => setIssueOrderForm({ ...issueOrderForm, no_retention: e.target.checked })}
+                              />
+                              Không lưu mẫu
+                            </label>
+                          </div>
+                        </Field>
+
+                        <Field label="Mức độ ưu tiên">
+                          <select
+                            className={inputClass}
+                            value={issueOrderForm.priority}
+                            onChange={(e) =>
+                              setIssueOrderForm({
+                                ...issueOrderForm,
+                                priority: e.target.value as "LOW" | "NORMAL" | "HIGH" | "URGENT",
+                              })
+                            }
+                          >
+                            <option value="NORMAL">Bình thường (NORMAL)</option>
+                            <option value="HIGH">Ưu tiên cao (HIGH)</option>
+                            <option value="URGENT">Khẩn cấp (URGENT)</option>
+                            <option value="LOW">Thấp (LOW)</option>
+                          </select>
+                        </Field>
+
+                        <div className="md:col-span-4">
+                          <Field label="Ghi chú Lệnh sản xuất">
+                            <input
+                              className={inputClass}
+                              value={issueOrderForm.notes}
+                              onChange={(e) => setIssueOrderForm({ ...issueOrderForm, notes: e.target.value })}
+                              placeholder="Ghi chú cho tổ sản xuất Kit / Pha chế Bán thành phẩm..."
+                            />
+                          </Field>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800">
+                        <div className="text-[11px] text-slate-400">
+                          💡 Người phụ trách SX: <b className="text-emerald-300">{bomDetail.bom.responsible_person_name || "Tự động phân công"}</b> ·
+                          QC: <b className="text-amber-300">{bomDetail.bom.qc_assignee_name || "Tự động phân công"}</b>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Button type="button" variant="ghost" onClick={() => setShowIssueOrder(false)}>
+                            Hủy
+                          </Button>
+                          <Button type="submit" disabled={issueOrderBusy}>
+                            {issueOrderBusy ? "⏳ Đang phát hành Lệnh SX..." : "🚀 Xác nhận Phát hành Lệnh Sản Xuất & Khởi tạo EBR"}
+                          </Button>
+                        </div>
+                      </div>
+                    </form>
+                  );
+                })()}
 
                 {showEditHeader && (
                   <form

@@ -25,6 +25,7 @@ export default function FactoryKitModule() {
   const me = useFactoryMe();
   const perms = new Set(me.data?.permissions ?? []);
   const [tab, setTab] = useState<TabKey>("orders");
+  const [focusOrderId, setFocusOrderId] = useState<string>("");
   const [options, setOptions] = useState<KitOptions>(EMPTY_OPTIONS);
   const [error, setError] = useState<unknown>(null);
 
@@ -79,8 +80,24 @@ export default function FactoryKitModule() {
       </div>
 
       <ErrorNote error={error} />
-      {tab === "orders" && <OrdersEbrView options={options} onRefreshOptions={loadOptions} />}
-      {tab === "bom" && <BomRoutingView options={options} onRefreshOptions={loadOptions} />}
+      {tab === "orders" && (
+        <OrdersEbrView
+          options={options}
+          onRefreshOptions={loadOptions}
+          focusOrderId={focusOrderId}
+          onClearFocusOrder={() => setFocusOrderId("")}
+        />
+      )}
+      {tab === "bom" && (
+        <BomRoutingView
+          options={options}
+          onRefreshOptions={loadOptions}
+          onJumpToOrder={(orderId: string) => {
+            setFocusOrderId(orderId);
+            setTab("orders");
+          }}
+        />
+      )}
       {tab === "quality" && <QualityTraceView options={options} />}
       {tab === "equipment" && <DepartmentEquipmentView deptCode="P-KIT" deptLabel="Phòng Sản xuất Kit Chẩn đoán" />}
     </div>

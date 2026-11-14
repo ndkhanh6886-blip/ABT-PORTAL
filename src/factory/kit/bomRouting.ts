@@ -1952,12 +1952,15 @@ export async function loadStandardKitRoutingSteps(
   tx: Tx,
   actor: AuthzActor,
   routingId: string,
-  templateKey = "PCR_5_STEPS"
+  templateKey = "PCR_5_STEPS",
+  opts: { trusted?: boolean } = {}
 ) {
   await ensureKitBomRoutingAndIfuSchema(tx);
   const rtg = (await tx.query("SELECT * FROM kit.routing WHERE id = $1 FOR UPDATE", [routingId])).rows[0] as KitRoutingRow | undefined;
   if (!rtg) throw notFound("quy trình Routing");
-  await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
+  if (!opts.trusted) {
+    await authorize(tx, actor, "kit.bom.manage", rtg.org_unit_id);
+  }
   if (rtg.status !== "DRAFT") {
     throw invalid("Chỉ được nạp mẫu bước công đoạn khi quy trình (Routing) đang ở trạng thái Bản nháp (DRAFT). Hãy bấm 'Nhân bản phiên bản mới' trước.");
   }

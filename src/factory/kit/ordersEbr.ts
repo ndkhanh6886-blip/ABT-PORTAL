@@ -22,6 +22,7 @@ import { createQcTest, registerQcSubject } from "../qms/qcTests";
 import { findEffectiveSpec } from "../qms/specs";
 import {
   ensureKitBomRoutingAndIfuSchema,
+  loadStandardKitRoutingSteps,
   visibleKitOrgUnits,
   type KitBomRow,
   type RoutingStepParamDef,
@@ -645,24 +646,29 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
         // 2. Reserve FEFO/FIFO materials for all non-bundled BOM lines via ABT Smart BOM Explosion Engine (`explodeKitBom`)
         await ensureOrderMaterialConsumptions(tx, actor, row);
 
-        // 3. Copy EBR steps from Routing (including functional step tags & operational flags)
+        // 3. Copy EBR steps from Routing (including functional step tags & operational flags) if not already initialized at order creation
         await ensureKitBomRoutingAndIfuSchema(tx);
         await ensureKitDailyTrackerAndQcGateSchema(tx);
-        await tx.query(
-          `INSERT INTO kit.production_step
-             (order_id, routing_step_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
-              instructions, sop_doc_code, required_training_doc_code, required_asset_id, asset_id, param_schema,
-              is_qc, requires_check_signature, allow_skip, qc_gate_status)
-           SELECT $1, id, seq, step_code, step_name, category,
-                  coalesce(step_function, 'FORMULATION_MIXING'),
-                  coalesce(work_center, 'Phòng sạch Class 10.000 (ISO 7)'),
-                  coalesce(functional_flags, '{}'::jsonb),
-                  instructions, sop_doc_code, required_training_doc_code, required_asset_id, required_asset_id, param_schema,
-                  is_qc, requires_check_signature, allow_skip,
-                  CASE WHEN is_qc THEN 'WAITING_QC' ELSE 'NONE' END
-             FROM kit.routing_step WHERE routing_id = $2 ORDER BY seq`,
-          [row.id, row.routing_id]
+        const existingStepCnt = Number(
+          (await tx.query("SELECT count(*)::int AS c FROM kit.production_step WHERE order_id = $1", [row.id])).rows[0]?.c ?? 0
         );
+        if (existingStepCnt === 0) {
+          await tx.query(
+            `INSERT INTO kit.production_step
+               (order_id, routing_step_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
+                instructions, sop_doc_code, required_training_doc_code, required_asset_id, asset_id, param_schema,
+                is_qc, requires_check_signature, allow_skip, qc_gate_status)
+             SELECT $1, id, seq, step_code, step_name, category,
+                    coalesce(step_function, 'FORMULATION_MIXING'),
+                    coalesce(work_center, 'Phòng sạch Class 10.000 (ISO 7)'),
+                    coalesce(functional_flags, '{}'::jsonb),
+                    instructions, sop_doc_code, required_training_doc_code, required_asset_id, required_asset_id, param_schema,
+                    is_qc, requires_check_signature, allow_skip,
+                    CASE WHEN is_qc THEN 'WAITING_QC' ELSE 'NONE' END
+               FROM kit.routing_step WHERE routing_id = $2 ORDER BY seq`,
+            [row.id, row.routing_id]
+          );
+        }
       },
     },
     {
@@ -1729,6 +1735,28 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
     bomId = effBom.id;
   }
 
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [bomId])).rows[0] as (KitBomRow & Record<string, unknown>) | undefined;
+  if (!bom || bom.product_item_id !== d.product_item_id) throw invalid("BOM không thuộc sản phẩm đã chọn.");
+
+  // Nếu người dùng phát lệnh trực tiếp từ BOM đang ở DRAFT/APPROVED, tự động kích hoạt EFFECTIVE cho BOM này
+  if (bom.status !== "EFFECTIVE" && bom.status !== "OBSOLETE") {
+    const vCode = String(bom.variant_code || "BASE").trim().toUpperCase() || "BASE";
+    await tx.query(
+      `UPDATE kit.bom
+          SET status = 'OBSOLETE', updated_at = now()
+        WHERE product_item_id = $1
+          AND status = 'EFFECTIVE'
+          AND upper(coalesce(nullif(trim(variant_code), ''), 'BASE')) = $2
+          AND id <> $3`,
+      [d.product_item_id, vCode, bom.id]
+    );
+    await tx.query(
+      "UPDATE kit.bom SET status = 'EFFECTIVE', approved_by = coalesce(approved_by, $2), approved_at = coalesce(approved_at, now()), updated_at = now() WHERE id = $1",
+      [bom.id, actor.userId]
+    );
+    bom.status = "EFFECTIVE";
+  }
+
   let routingId = d.routing_id ?? null;
   if (!routingId) {
     const effRt = (
@@ -1736,12 +1764,59 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
         d.product_item_id,
       ])
     ).rows[0];
-    if (!effRt) throw invalid("Sản phẩm chưa có quy trình công đoạn (Routing) đang có hiệu lực (EFFECTIVE).");
-    routingId = effRt.id;
-  }
+    if (effRt) {
+      routingId = effRt.id;
+    } else {
+      // Tự động khởi tạo và kích hoạt Quy trình công đoạn chuẩn (Routing) theo phân loại BOM nếu sản phẩm vừa nạp từ Excel chưa có Routing
+      const isSemiBom =
+        product.item_type === "SEMI_FINISHED" || String(bom.bom_type || "finished_good") === "semi_finished";
+      const isExtractionBom = !isSemiBom && String(bom.bom_category || "PCR Kit") !== "PCR Kit";
+      const autoTemplateKey = isSemiBom
+        ? "SEMI_FINISHED_4_STEPS"
+        : isExtractionBom
+          ? "EXTRACTION_5_STEPS"
+          : "PCR_5_STEPS";
 
-  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [bomId])).rows[0] as (KitBomRow & Record<string, unknown>) | undefined;
-  if (!bom || bom.product_item_id !== d.product_item_id) throw invalid("BOM không thuộc sản phẩm đã chọn.");
+      const draftRt = (
+        await tx.query(
+          "SELECT id, status FROM kit.routing WHERE product_item_id = $1 AND status <> 'OBSOLETE' ORDER BY routing_version DESC LIMIT 1",
+          [d.product_item_id]
+        )
+      ).rows[0];
+
+      let targetRtId: string;
+      if (draftRt) {
+        targetRtId = draftRt.id;
+        const stepCnt = Number(
+          (await tx.query("SELECT count(*)::int AS c FROM kit.routing_step WHERE routing_id = $1", [targetRtId])).rows[0]?.c ?? 0
+        );
+        if (stepCnt === 0 && draftRt.status === "DRAFT") {
+          await loadStandardKitRoutingSteps(tx, actor, targetRtId, autoTemplateKey, { trusted: true });
+        }
+      } else {
+        const rtCode = await nextNumber(tx, "KIT_ROUTING");
+        const rtName = isSemiBom
+          ? `Quy trình Pha chế Bán thành phẩm ${product.code} — ${product.name}`
+          : `Quy trình Sản xuất & Đóng gói ${product.code} — ${product.name}`;
+        const createdRt = (
+          await tx.query(
+            `INSERT INTO kit.routing (code, org_unit_id, product_item_id, routing_version, name, status, created_by, updated_by)
+             VALUES ($1, $2, $3, 1, $4, 'DRAFT', $5, $5)
+             RETURNING id`,
+            [rtCode, d.org_unit_id, d.product_item_id, rtName.slice(0, 240), actor.userId]
+          )
+        ).rows[0];
+        targetRtId = createdRt.id;
+        await loadStandardKitRoutingSteps(tx, actor, targetRtId, autoTemplateKey, { trusted: true });
+      }
+
+      await tx.query(
+        "UPDATE kit.routing SET status = 'EFFECTIVE', approved_by = $2, approved_at = now(), updated_at = now() WHERE id = $1",
+        [targetRtId, actor.userId]
+      );
+      routingId = targetRtId;
+    }
+  }
 
   const mfgDate = d.mfg_date ?? vnToday();
   const expiryDate = addDays(mfgDate, bom.shelf_life_days || product.shelf_life_days || 365);
@@ -1861,6 +1936,24 @@ export async function createProductionOrder(tx: Tx, actor: AuthzActor, input: un
   });
 
   await tx.query("UPDATE kit.production_order SET lot_id = $2 WHERE id = $1", [created.id, lot.id]);
+
+  // Copy EBR steps from Routing immediately so the operator can inspect and print the Batch Manufacturing Worksheet right away
+  await tx.query(
+    `INSERT INTO kit.production_step
+       (order_id, routing_step_id, seq, step_code, step_name, category, step_function, work_center, functional_flags,
+        instructions, sop_doc_code, required_training_doc_code, required_asset_id, asset_id, param_schema,
+        is_qc, requires_check_signature, allow_skip, qc_gate_status)
+     SELECT $1, id, seq, step_code, step_name, category,
+            coalesce(step_function, 'FORMULATION_MIXING'),
+            coalesce(work_center, 'Phòng sạch Class 10.000 (ISO 7)'),
+            coalesce(functional_flags, '{}'::jsonb),
+            instructions, sop_doc_code, required_training_doc_code, required_asset_id, required_asset_id, param_schema,
+            is_qc, requires_check_signature, allow_skip,
+            CASE WHEN is_qc THEN 'WAITING_QC' ELSE 'NONE' END
+       FROM kit.routing_step WHERE routing_id = $2 ORDER BY seq`,
+    [created.id, routingId]
+  );
+
   return {
     ...created,
     lot_id: lot.id,
