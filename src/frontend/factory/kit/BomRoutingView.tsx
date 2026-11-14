@@ -278,28 +278,39 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           notes: d.bom.notes ?? "",
         });
 
+        const isPcrCat = (d.bom.bom_category ?? "PCR Kit") === "PCR Kit";
         setLabelIfuForm({
           label_template_code: d.bom.label_template_code ?? `LBL-${d.bom.product_code}-V1`,
           label_dimensions:
             d.bom.label_dimensions ??
             (isSemi
               ? "Nhãn Chai/Can BTP: 70×40 mm · Nhãn Ống lưu mẫu: 35×15 mm"
-              : "Nhãn Hộp ngoài: 100×50 mm · Nhãn Hộp phụ: 80×40 mm · Nhãn Ống 1.5mL: 35×15 mm (3 tem/hàng)"),
+              : isPcrCat
+                ? "Nhãn Hộp ngoài: 100×50 mm · Nhãn Hộp phụ: 80×40 mm · Nhãn Ống 1.5mL: 35×15 mm (3 tem/hàng)"
+                : "Nhãn Hộp ngoài: 100×50 mm · Nhãn Chai/Lọ thành phần: 50×25 mm (2 tem/hàng)"),
           udi_di: d.bom.udi_di ?? "(01)08936192830117",
           ifu_code: d.bom.ifu_code ?? `IFU-${baseCode}`,
           ifu_version: d.bom.ifu_version ?? `Rev 0${d.bom.bom_version || 1} (Hiệu lực ISO 13485)`,
           ifu_intended_use:
             d.bom.ifu_intended_use ??
-            "Bộ Kit xét nghiệm chẩn đoán in vitro (IVD) phát hiện và định lượng acid nucleic đặc hiệu bằng kỹ thuật Real-time PCR / RT-qPCR trên mẫu bệnh phẩm lâm sàng.",
+            (isPcrCat
+              ? "Bộ Kit xét nghiệm chẩn đoán in vitro (IVD) phát hiện và định lượng acid nucleic đặc hiệu bằng kỹ thuật Real-time PCR / RT-qPCR trên mẫu bệnh phẩm lâm sàng."
+              : "Bộ Kit / Hóa chất xét nghiệm sinh học phân tử dùng cho quy trình tách chiết acid nucleic hoặc điện di kiểm tra sản phẩm khuếch đại trong phòng xét nghiệm."),
           ifu_thermal_profile:
             d.bom.ifu_thermal_profile ??
-            "Bước 1 (UNG/RT): 50°C × 10 phút (1 chu kỳ) ➔ Bước 2 (Biến tính đầu): 95°C × 3 phút (1 chu kỳ) ➔ Bước 3 (Khuếch đại 45 chu kỳ): 95°C × 15 giây + 60°C × 45 giây (Thu tín hiệu huỳnh quang tại 60°C).",
+            (isPcrCat
+              ? "Bước 1 (UNG/RT): 50°C × 10 phút (1 chu kỳ) ➔ Bước 2 (Biến tính đầu): 95°C × 3 phút (1 chu kỳ) ➔ Bước 3 (Khuếch đại 45 chu kỳ): 95°C × 15 giây + 60°C × 45 giây (Thu tín hiệu huỳnh quang tại 60°C)."
+              : "Thực hiện theo quy trình chuẩn bị mẫu / tách chiết / điện di quy định trong Tiêu chuẩn cơ sở (TCCS) của sản phẩm."),
           ifu_channels:
             d.bom.ifu_channels ??
-            "FAM: Đích tác nhân chính (Target) · HEX/VIC: Chứng nội (Internal Control - IC) · ROX: Tham chiếu thụ động",
+            (isPcrCat
+              ? "FAM: Đích tác nhân chính (Target) · HEX/VIC: Chứng nội (Internal Control - IC) · ROX: Tham chiếu thụ động"
+              : "Không áp dụng (Sản phẩm Tách chiết / Đệm / Điện di)"),
           ifu_interpretation:
             d.bom.ifu_interpretation ??
-            "Dương tính: Ct (FAM) ≤ 38.0 có đường cong khuếch đại dạng chữ S · Âm tính: Không lên FAM và Ct (HEX/IC) ≤ 35.0 · Không hợp lệ: Không lên cả FAM và HEX/IC.",
+            (isPcrCat
+              ? "Dương tính: Ct (FAM) ≤ 38.0 có đường cong khuếch đại dạng chữ S · Âm tính: Không lên FAM và Ct (HEX/IC) ≤ 35.0 · Không hợp lệ: Không lên cả FAM và HEX/IC."
+              : "Đánh giá độ tinh sạch / hiệu suất thu hồi hoặc vạch băng điện di theo tiêu chuẩn chất lượng trong TCCS."),
           ifu_file_name: d.bom.ifu_file_name ?? `HDSD_${baseCode}_Rev0${d.bom.bom_version || 1}.pdf`,
           ifu_file_url: d.bom.ifu_file_url ?? "",
           ifu_file_size: d.bom.ifu_file_size ?? "428 KB (PDF chuẩn ISO 13485)",
@@ -312,10 +323,12 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
           normalizeLabelBundle(
             d.bom.label_design_json,
             {
-              storage: d.bom.storage_condition || "-20°C ± 2°C",
+              storage: d.bom.storage_condition || (isPcrCat ? "-20°C ± 2°C" : "15-25°C"),
               tccsCode: d.bom.tccs_code || "TCCS 01:2026/ABT",
             },
-            isSemi
+            isSemi,
+            d.bom.bom_category ?? "PCR Kit",
+            d.packaging || []
           )
         );
       }
@@ -2769,12 +2782,19 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                 {/* Thẻ 3: Thiết kế Mẫu Nhãn sản phẩm (Label Artwork) & Hướng dẫn sử dụng đính kèm (IFU) */}
                 {(() => {
                   const isSemi = (bomDetail.bom.bom_type || (bomDetail.bom.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
+                  const isPcrKit = !isSemi && (bomDetail.bom.bom_category || "PCR Kit") === "PCR Kit";
+                  const hasPackaging = (bomDetail.packaging || []).length > 0;
+                  const hasSavedCustomLabel = Boolean(
+                    bomDetail.bom.label_design_json &&
+                      typeof bomDetail.bom.label_design_json === "object" &&
+                      Object.keys(bomDetail.bom.label_design_json).length > 0
+                  );
                   const sampleData: LabelSampleData = {
                     productName: bomDetail.bom.product_name,
                     productCode: bomDetail.bom.product_code,
                     specification: bomDetail.bom.specification || (isSemi ? `Lô chuẩn ${bomDetail.bom.base_qty} ${bomDetail.bom.base_uom}` : `Hộp ${bomDetail.bom.tests_per_kit || 50} test`),
                     quantity: isSemi ? `${bomDetail.bom.base_qty} ${bomDetail.bom.base_uom}` : `${bomDetail.bom.tests_per_kit || 50} Tests`,
-                    storage: bomDetail.bom.storage_condition || "-20°C ± 2°C",
+                    storage: bomDetail.bom.storage_condition || (isPcrKit ? "-20°C ± 2°C" : "15-25°C"),
                     mfgDate: "01/11/2026",
                     expDate: "01/11/2027",
                     lotNumber: `LOT-${String(bomDetail.bom.product_code || "KIT").replace(/[^A-Z0-9]/gi, "").slice(0, 6)}-2611`,
@@ -2823,109 +2843,121 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
 
                   return (
                     <Card
-                      title={`3. Thiết kế Mẫu Nhãn Trực Quan (Visual Label Artwork) & Tài liệu HDSD Đính Kèm (IFU — ${bomDetail.bom.ifu_code ?? "IFU"})`}
+                      title={
+                        isSemi
+                          ? `3. Thiết kế Mẫu Nhãn Bán Thành Phẩm (${labelIfuForm.label_template_code})`
+                          : `3. Thiết kế Mẫu Nhãn Trực Quan (Visual Label Artwork) & Tài liệu HDSD Đính Kèm (IFU — ${bomDetail.bom.ifu_code ?? "IFU"})`
+                      }
                       actions={
                         <div className="flex flex-wrap gap-1.5">
                           <Button variant="secondary" onClick={() => setShowLabelStudio((v) => !v)}>
                             {showLabelStudio ? "Đóng Studio Thiết kế Nhãn" : "🎨 Mở Studio Thiết Kế Nhãn Hiện Đại (Kéo thả & ISO/IVD)"}
                           </Button>
-                          <Button variant="ghost" onClick={() => setShowEditLabelIfu((v) => !v)}>
-                            {showEditLabelIfu ? "Đóng cấu hình IFU" : "⚙️ Sửa thông số UDI / Chu kỳ nhiệt IFU"}
-                          </Button>
+                          {!isSemi && (
+                            <Button variant="ghost" onClick={() => setShowEditLabelIfu((v) => !v)}>
+                              {showEditLabelIfu ? "Đóng cấu hình IFU" : "⚙️ Sửa thông số UDI / HDSD (IFU)"}
+                            </Button>
+                          )}
                         </div>
                       }
                     >
-                      {/* PHẦN A: FILE ĐÍNH KÈM HƯỚNG DẪN SỬ DỤNG (IFU) ĐỂ TRUY XUẤT & IN KHI SẢN XUẤT */}
-                      <div className="mb-4 p-3.5 rounded-xl border border-emerald-500/35 bg-emerald-950/15 space-y-2.5">
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <div className="text-xs font-extrabold text-emerald-300 uppercase">
-                              📎 Tài Liệu Hướng Dẫn Sử Dụng Đính Kèm Theo BOM (Truy xuất tự động &amp; In ngay tại xưởng sản xuất)
-                            </div>
-                            <div className="text-[11px] text-slate-400">
-                              Khi tạo Lệnh sản xuất (Thường hoặc Chia sẵn .D.IC), hệ thống tự động lấy đúng file HDSD đính kèm dưới đây để nhân viên sản xuất xem và in đóng vào hộp Kit.
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {/* File 1: HDSD Mặc định */}
-                          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
-                                  📄 1. FILE HDSD TIÊU CHUẨN (MẶC ĐỊNH)
-                                </span>
-                                <div className="font-mono font-bold text-xs text-slate-100 mt-1">
-                                  {labelIfuForm.ifu_file_name || `HDSD_${bomDetail.bom.product_code}_Rev01.pdf`}
-                                </div>
-                                <div className="text-[11px] text-slate-400">
-                                  Mã: {labelIfuForm.ifu_code} · {labelIfuForm.ifu_version} · {labelIfuForm.ifu_file_size || "428 KB"}
-                                </div>
+                      {/* PHẦN A: FILE ĐÍNH KÈM HƯỚNG DẪN SỬ DỤNG (IFU) — CHỈ HIỂN THỊ CHO THÀNH PHẨM KIT */}
+                      {!isSemi && (
+                        <div className="mb-4 p-3.5 rounded-xl border border-emerald-500/35 bg-emerald-950/15 space-y-2.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="text-xs font-extrabold text-emerald-300 uppercase">
+                                📎 Tài Liệu Hướng Dẫn Sử Dụng Đính Kèm Theo BOM (Truy xuất tự động &amp; In ngay tại xưởng sản xuất)
+                              </div>
+                              <div className="text-[11px] text-slate-400">
+                                {isPcrKit
+                                  ? "Khi tạo Lệnh sản xuất (Thường hoặc Chia sẵn .D.IC), hệ thống tự động lấy đúng file HDSD đính kèm dưới đây để nhân viên sản xuất xem và in đóng vào hộp Kit."
+                                  : "Khi tạo Lệnh sản xuất, hệ thống tự động lấy file HDSD tiêu chuẩn đính kèm dưới đây để nhân viên sản xuất xem và in đóng vào hộp Kit."}
                               </div>
                             </div>
-                            <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
-                              <Button variant="ghost" onClick={() => openAndPrintIfuFile("STANDARD", false)}>
-                                👁️ Xem file HDSD
-                              </Button>
-                              <Button variant="secondary" onClick={() => openAndPrintIfuFile("STANDARD", true)}>
-                                🖨️ In ngay HDSD
-                              </Button>
-                              <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 hover:border-sky-500 text-sky-300 cursor-pointer inline-flex items-center gap-1">
-                                📤 Đính kèm / Thay file (PDF/DOCX/Ảnh)
-                                <input
-                                  type="file"
-                                  accept=".pdf,.doc,.docx,image/*"
-                                  style={{ display: "none" }}
-                                  onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    if (f) handleUploadIfuAttachment("STANDARD", f);
-                                  }}
-                                />
-                              </label>
-                            </div>
                           </div>
 
-                          {/* File 2: HDSD Dạng chia sẵn (.D.IC) */}
-                          <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
-                            <div className="flex items-start justify-between gap-2">
-                              <div>
-                                <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold">
-                                  🧪 2. FILE HDSD DẠNG CHIA SẴN (.D.IC — ALIQUOTED)
-                                </span>
-                                <div className="font-mono font-bold text-xs text-slate-100 mt-1">
-                                  {labelIfuForm.ifu_aliquoted_file_name || `HDSD_${bomDetail.bom.product_code}.D.IC_ChiaSan_Rev01.pdf`}
-                                </div>
-                                <div className="text-[11px] text-slate-400">
-                                  Tự động kích hoạt khi PO đặt hàng dạng chia sẵn (.D.IC) · {labelIfuForm.ifu_aliquoted_file_size || "452 KB"}
+                          <div className={`grid grid-cols-1 ${isPcrKit ? "md:grid-cols-2" : ""} gap-3`}>
+                            {/* File 1: HDSD Mặc định */}
+                            <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                                    📄 {isPcrKit ? "1. FILE HDSD TIÊU CHUẨN (MẶC ĐỊNH)" : "FILE HDSD TIÊU CHUẨN CỦA BỘ KIT"}
+                                  </span>
+                                  <div className="font-mono font-bold text-xs text-slate-100 mt-1">
+                                    {labelIfuForm.ifu_file_name || `HDSD_${bomDetail.bom.product_code}_Rev01.pdf`}
+                                  </div>
+                                  <div className="text-[11px] text-slate-400">
+                                    Mã: {labelIfuForm.ifu_code} · {labelIfuForm.ifu_version} · {labelIfuForm.ifu_file_size || "428 KB"}
+                                  </div>
                                 </div>
                               </div>
+                              <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
+                                <Button variant="ghost" onClick={() => openAndPrintIfuFile("STANDARD", false)}>
+                                  👁️ Xem file HDSD
+                                </Button>
+                                <Button variant="secondary" onClick={() => openAndPrintIfuFile("STANDARD", true)}>
+                                  🖨️ In ngay HDSD
+                                </Button>
+                                <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 hover:border-sky-500 text-sky-300 cursor-pointer inline-flex items-center gap-1">
+                                  📤 Đính kèm / Thay file (PDF/DOCX/Ảnh)
+                                  <input
+                                    type="file"
+                                    accept=".pdf,.doc,.docx,image/*"
+                                    style={{ display: "none" }}
+                                    onChange={(e) => {
+                                      const f = e.target.files?.[0];
+                                      if (f) handleUploadIfuAttachment("STANDARD", f);
+                                    }}
+                                  />
+                                </label>
+                              </div>
                             </div>
-                            <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
-                              <Button variant="ghost" onClick={() => openAndPrintIfuFile("ALIQUOTED", false)}>
-                                👁️ Xem file .D.IC
-                              </Button>
-                              <Button variant="secondary" onClick={() => openAndPrintIfuFile("ALIQUOTED", true)}>
-                                🖨️ In ngay .D.IC
-                              </Button>
-                              <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 hover:border-sky-500 text-sky-300 cursor-pointer inline-flex items-center gap-1">
-                                📤 Đính kèm file .D.IC
-                                <input
-                                  type="file"
-                                  accept=".pdf,.doc,.docx,image/*"
-                                  style={{ display: "none" }}
-                                  onChange={(e) => {
-                                    const f = e.target.files?.[0];
-                                    if (f) handleUploadIfuAttachment("ALIQUOTED", f);
-                                  }}
-                                />
-                              </label>
-                            </div>
+
+                            {/* File 2: HDSD Dạng chia sẵn (.D.IC) — Chỉ áp dụng cho Kit PCR */}
+                            {isPcrKit && (
+                              <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800 flex flex-col justify-between gap-2">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold">
+                                      🧪 2. FILE HDSD DẠNG CHIA SẴN (.D.IC — ALIQUOTED)
+                                    </span>
+                                    <div className="font-mono font-bold text-xs text-slate-100 mt-1">
+                                      {labelIfuForm.ifu_aliquoted_file_name || `HDSD_${bomDetail.bom.product_code}.D.IC_ChiaSan_Rev01.pdf`}
+                                    </div>
+                                    <div className="text-[11px] text-slate-400">
+                                      Tự động kích hoạt khi PO đặt hàng Kit PCR dạng chia sẵn (.C / .C.IC) · {labelIfuForm.ifu_aliquoted_file_size || "452 KB"}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 pt-1 border-t border-slate-800/80">
+                                  <Button variant="ghost" onClick={() => openAndPrintIfuFile("ALIQUOTED", false)}>
+                                    👁️ Xem file .D.IC
+                                  </Button>
+                                  <Button variant="secondary" onClick={() => openAndPrintIfuFile("ALIQUOTED", true)}>
+                                    🖨️ In ngay .D.IC
+                                  </Button>
+                                  <label className="px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-700 hover:border-sky-500 text-sky-300 cursor-pointer inline-flex items-center gap-1">
+                                    📤 Đính kèm file .D.IC
+                                    <input
+                                      type="file"
+                                      accept=".pdf,.doc,.docx,image/*"
+                                      style={{ display: "none" }}
+                                      onChange={(e) => {
+                                        const f = e.target.files?.[0];
+                                        if (f) handleUploadIfuAttachment("ALIQUOTED", f);
+                                      }}
+                                    />
+                                  </label>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
-                      </div>
+                      )}
 
-                      {/* PHẦN B: HÌNH ẢNH MẪU NHÃN TRỰC QUAN LUÔN HIỂN THỊ (LIVE VISUAL ARTWORK PREVIEW) */}
+                      {/* PHẦN B: HÌNH ẢNH MẪU NHÃN TRỰC QUAN (LIVE VISUAL ARTWORK PREVIEW) */}
                       <div className="p-3.5 rounded-xl border border-sky-500/35 bg-slate-900/80 space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <div>
@@ -2937,79 +2969,117 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                             </div>
                           </div>
                           <div className="flex gap-1.5">
-                            <Button
-                              variant="ghost"
-                              onClick={() =>
-                                printElementHtml(
-                                  labelPreviewRef.current,
-                                  `Bộ Nhãn Sản Phẩm ${labelIfuForm.label_template_code || ""}`
-                                )
-                              }
-                            >
-                              🖨️ In thử bộ nhãn
-                            </Button>
+                            {(isSemi || hasPackaging || hasSavedCustomLabel) && (
+                              <Button
+                                variant="ghost"
+                                onClick={() =>
+                                  printElementHtml(
+                                    labelPreviewRef.current,
+                                    `Bộ Nhãn Sản Phẩm ${labelIfuForm.label_template_code || ""}`
+                                  )
+                                }
+                              >
+                                🖨️ In thử bộ nhãn
+                              </Button>
+                            )}
                             <Button variant="primary" onClick={() => setShowLabelStudio((v) => !v)}>
                               {showLabelStudio ? "Thu gọn Trình thiết kế" : "🎨 Tùy chỉnh / Kéo thả Thiết kế Nhãn"}
                             </Button>
                           </div>
                         </div>
 
-                        <div
-                          ref={labelPreviewRef}
-                          className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center p-3 rounded-lg bg-slate-950/80 border border-slate-800 overflow-x-auto"
-                        >
-                          {/* Nhãn Hộp Ngoài / Chai BTP */}
-                          <div className="xl:col-span-7 flex flex-col items-center gap-2">
-                            <div className="text-[11px] font-bold text-sky-300">
-                              📦 {labelBundle.outer_box.name} ({labelBundle.outer_box.width_mm}×{labelBundle.outer_box.height_mm} mm)
+                        {!isSemi && !hasPackaging && !hasSavedCustomLabel ? (
+                          <div className="p-5 rounded-xl bg-slate-950/80 border border-dashed border-amber-500/40 text-center space-y-2.5">
+                            <div className="text-xs font-bold text-amber-300">
+                              📦 Chưa khởi tạo Cấu trúc đóng gói Bộ Kit (Hộp ➔ Ống/Chai thành phần) tại Mục 2
+                            </div>
+                            <div className="text-[11px] text-slate-400 max-w-2xl mx-auto">
+                              Để tránh hiển thị nhãn mẫu không khớp với thực tế của bộ Kit, hệ thống chỉ sinh <b>Nhãn Hộp Ngoài</b> và <b>Nhãn từng Ống/Chai thành phần</b> sau khi bộ Kit đã có quy cách đóng gói tại Mục 2 (hoặc khi bạn thiết kế và lưu mẫu nhãn riêng).
+                            </div>
+                            <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                              {bomDetail.lines.length > 0 && (
+                                <Button onClick={handleSyncPackaging}>
+                                  ⚡ Tự nạp Cấu trúc Bộ Kit từ BOM &amp; Sinh Bộ Nhãn Thực Tế
+                                </Button>
+                              )}
+                              <Button variant="ghost" onClick={() => setShowLabelStudio(true)}>
+                                🎨 Mở Trình Thiết Kế Nhãn Thủ Công
+                              </Button>
+                            </div>
+                          </div>
+                        ) : isSemi ? (
+                          <div
+                            ref={labelPreviewRef}
+                            className="flex flex-col items-center justify-center gap-2 p-4 rounded-lg bg-slate-950/80 border border-slate-800 overflow-x-auto"
+                          >
+                            <div className="text-[11px] font-bold text-amber-300">
+                              🧪 {labelBundle.outer_box.name} ({labelBundle.outer_box.width_mm}×{labelBundle.outer_box.height_mm} mm)
                             </div>
                             <VisualLabelCanvas
                               config={labelBundle.outer_box}
                               sample={sampleData}
-                              scale={labelBundle.outer_box.width_mm >= 90 ? 3.5 : 4.2}
+                              scale={4.2}
                               interactive={false}
                             />
                           </div>
-
-                          {/* Nhãn Ống Thành Phần (3 tem/hàng) & Các Nhãn Thành Phần Bổ Sung */}
-                          <div className="xl:col-span-5 flex flex-col items-center gap-2">
-                            <div className="text-[11px] font-bold text-emerald-300">
-                              🧪 Ống 1: {labelBundle.tube.extra_text || labelBundle.tube.name} ({labelBundle.tube.width_mm}×{labelBundle.tube.height_mm} mm)
-                            </div>
-                            <div className="flex flex-wrap justify-center gap-2">
-                              {Array.from({ length: Math.min(2, labelBundle.tube.labels_per_row || 2) }).map((_, idx) => (
-                                <VisualLabelCanvas
-                                  key={idx}
-                                  config={labelBundle.tube}
-                                  sample={sampleData}
-                                  scale={4.0}
-                                  interactive={false}
-                                />
-                              ))}
-                            </div>
-                            {(labelBundle.extra_components || []).map((ext, extIdx) => (
-                              <div key={`ext-prev-${extIdx}`} className="flex flex-col items-center gap-1 pt-2 border-t border-slate-800 w-full">
-                                <div className="text-[11px] font-bold text-teal-300">
-                                  🧪 Thành phần #{extIdx + 2}: {ext.extra_text || ext.name} ({ext.width_mm}×{ext.height_mm} mm)
-                                </div>
-                                <div className="flex flex-wrap justify-center gap-2">
-                                  {Array.from({ length: Math.min(2, ext.labels_per_row || 1) }).map((_, idx) => (
-                                    <VisualLabelCanvas
-                                      key={idx}
-                                      config={ext}
-                                      sample={sampleData}
-                                      scale={ext.width_mm <= 45 ? 4.0 : 3.2}
-                                      interactive={false}
-                                    />
-                                  ))}
-                                </div>
+                        ) : (
+                          <div
+                            ref={labelPreviewRef}
+                            className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center p-3 rounded-lg bg-slate-950/80 border border-slate-800 overflow-x-auto"
+                          >
+                            {/* Nhãn Hộp Ngoài */}
+                            <div className="xl:col-span-7 flex flex-col items-center gap-2">
+                              <div className="text-[11px] font-bold text-sky-300">
+                                📦 {labelBundle.outer_box.name} ({labelBundle.outer_box.width_mm}×{labelBundle.outer_box.height_mm} mm)
                               </div>
-                            ))}
-                            <div className="text-[10px] text-slate-400">
-                              Khổ cuộn in nhiệt: {labelBundle.tube.labels_per_row} tem/hàng (Khoảng cách ngang {labelBundle.tube.label_gap_mm}mm)
+                              <VisualLabelCanvas
+                                config={labelBundle.outer_box}
+                                sample={sampleData}
+                                scale={labelBundle.outer_box.width_mm >= 90 ? 3.5 : 4.2}
+                                interactive={false}
+                              />
+                            </div>
+
+                            {/* Nhãn Ống / Chai Thành Phần Thực Tế */}
+                            <div className="xl:col-span-5 flex flex-col items-center gap-2">
+                              <div className="text-[11px] font-bold text-emerald-300">
+                                🧪 Thành phần #1: {labelBundle.tube.extra_text || labelBundle.tube.name} ({labelBundle.tube.width_mm}×{labelBundle.tube.height_mm} mm)
+                              </div>
+                              <div className="flex flex-wrap justify-center gap-2">
+                                {Array.from({ length: Math.min(2, labelBundle.tube.labels_per_row || 2) }).map((_, idx) => (
+                                  <VisualLabelCanvas
+                                    key={idx}
+                                    config={labelBundle.tube}
+                                    sample={sampleData}
+                                    scale={labelBundle.tube.width_mm <= 45 ? 4.0 : 3.2}
+                                    interactive={false}
+                                  />
+                                ))}
+                              </div>
+                              {(labelBundle.extra_components || []).map((ext, extIdx) => (
+                                <div key={`ext-prev-${extIdx}`} className="flex flex-col items-center gap-1 pt-2 border-t border-slate-800 w-full">
+                                  <div className="text-[11px] font-bold text-teal-300">
+                                    🧪 Thành phần #{extIdx + 2}: {ext.extra_text || ext.name} ({ext.width_mm}×{ext.height_mm} mm)
+                                  </div>
+                                  <div className="flex flex-wrap justify-center gap-2">
+                                    {Array.from({ length: Math.min(2, ext.labels_per_row || 1) }).map((_, idx) => (
+                                      <VisualLabelCanvas
+                                        key={idx}
+                                        config={ext}
+                                        sample={sampleData}
+                                        scale={ext.width_mm <= 45 ? 4.0 : 3.2}
+                                        interactive={false}
+                                      />
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                              <div className="text-[10px] text-slate-400">
+                                Khổ cuộn in nhiệt: {labelBundle.tube.labels_per_row} tem/hàng (Khoảng cách ngang {labelBundle.tube.label_gap_mm}mm)
+                              </div>
                             </div>
                           </div>
-                        </div>
+                        )}
                       </div>
 
                       {/* PHẦN C: STUDIO THIẾT KẾ NHÃN HIỆN ĐẠI (KÉO THẢ & 18 BIỂU TƯỢNG ISO/GHS) */}

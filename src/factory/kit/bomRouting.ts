@@ -941,9 +941,10 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
 
   const lines = (
     await tx.query(
-      `SELECT bl.*, it.sku AS component_sku, it.name AS component_name, it.storage_condition
+      `SELECT bl.*, bl.qty_per_base::float AS qty_per_base,
+              it.code AS component_code, it.name AS component_name, it.item_type, it.storage_condition
          FROM kit.bom_line bl
-         JOIN inv.item it ON it.id = bl.component_item_id
+         JOIN master.item it ON it.id = bl.component_item_id
         WHERE bl.bom_id = $1
         ORDER BY bl.box_no ASC, bl.line_no ASC`,
       [bomId]
@@ -955,27 +956,47 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
   }>;
   const existingSet = new Set(existingRows.map((r) => r.component_name.trim().toLowerCase()));
 
+  const isPcrKit = String((bom as any).bom_category || "PCR Kit") === "PCR Kit";
+  const defaultStorage = String((bom as any).storage_condition || (isPcrKit ? "-20°C" : "15-25°C")).slice(0, 60);
+
+  // Filter to chemical/reagent/buffer/control components first; if none exist, fall back to all non-box lines
+  const chemicalLines = lines.filter((l) => {
+    const role = String(l.component_role || "REAGENT").toUpperCase();
+    const code = String(l.component_code || "").toUpperCase();
+    if (role === "PACKAGING" || role === "PCR_TUBE_STRIP") return false;
+    if (/^(HGM|DGM|HGPK|HGU|DGU|CTT|CNM|CNN|CNV|FAL|TIP|VT-TUBE-|TEM|NHAN|HDSD)/i.test(code)) return false;
+    return true;
+  });
+  const targetLines = chemicalLines.length > 0 ? chemicalLines : lines;
+
   let added = 0;
-  for (const l of lines) {
-    const role = String(l.role || "");
-    if (role === "BOX" || role === "IFU") continue;
-    const compTitle = `${l.component_sku} — ${l.component_name}`;
-    if (existingSet.has(compTitle.trim().toLowerCase()) || existingSet.has(String(l.component_name).trim().toLowerCase())) {
+  for (const l of targetLines) {
+    const role = String(l.component_role || "REAGENT").toUpperCase();
+    const code = String(l.component_code || "");
+    const name = String(l.component_name || code);
+    const compTitle = `${code} — ${name}`;
+    if (existingSet.has(compTitle.trim().toLowerCase()) || existingSet.has(name.trim().toLowerCase())) {
       continue;
     }
-    const qty = Number(l.qty_per_batch || 1);
-    const uom = String(l.uom || "µL");
+    const qty = Number(l.qty_per_base || 1);
+    const uom = String(l.uom || (isPcrKit ? "µL" : "mL"));
     const uomLower = uom.toLowerCase();
-    let containerType = "TUBE_1_5ML";
-    if (role === "PLATE_STRIP") containerType = "STRIP_8";
+    let containerType = isPcrKit ? "TUBE_1_5ML" : "BOTTLE_10ML";
+    if (role === "PCR_TUBE_STRIP") containerType = "STRIP_8";
     else if (uomLower === "ml" && qty >= 25) containerType = "BOTTLE_50ML";
-    else if (uomLower === "ml" && qty >= 5) containerType = "BOTTLE_10ML";
+    else if (uomLower === "ml" && qty >= 3) containerType = "BOTTLE_10ML";
+    else if (uomLower === "ml" && qty < 3) containerType = "TUBE_2_0ML";
     else if ((uomLower === "µl" || uomLower === "ul") && qty <= 500) containerType = "TUBE_0_5ML";
     else if ((uomLower === "µl" || uomLower === "ul") && qty > 1500) containerType = "TUBE_2_0ML";
 
     const boxNo = Number(l.box_no || 1);
-    const boxName = boxNo === 1 ? "Hộp 1: Hóa chất / Bán thành phẩm chính" : `Hộp ${boxNo}: Thành phần phụ trợ`;
-    const storageTemp = String(l.storage_condition || "-20°C").slice(0, 60);
+    const boxName =
+      boxNo === 1
+        ? isPcrKit
+          ? "Hộp 1: Hóa chất Khuếch đại PCR"
+          : "Hộp 1: Hóa chất & Đệm Tách chiết"
+        : `Hộp ${boxNo}: Thành phần phụ trợ`;
+    const storageTemp = String(l.storage_condition || defaultStorage).slice(0, 60);
 
     await tx.query(
       `INSERT INTO kit.kit_packaging
@@ -991,7 +1012,7 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
         uom,
         1,
         storageTemp,
-        `Tem ống/chai ${l.component_sku} (${qty} ${uom})`,
+        `Tem ống/chai ${code} (${qty} ${uom})`,
       ]
     );
     existingSet.add(compTitle.trim().toLowerCase());

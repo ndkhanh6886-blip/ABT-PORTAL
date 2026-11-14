@@ -114,9 +114,32 @@ export const LABEL_SIZE_PRESETS: Array<{
   { label: "Nhãn 22×15 mm (Ống 0.5mL — 3 tem/hàng)", width_mm: 22, height_mm: 15, font_size_pt: 4.5, qr_size_mm: 6, labels_per_row: 3, label_gap_mm: 2, vertical_gap_mm: 3 },
 ];
 
-export function buildDefaultLabelBundle(sample?: Partial<LabelSampleData>, isSemiFinished?: boolean): KitLabelDesignBundle {
-  const isCold = (sample?.storage || "-20°C").includes("-20");
+export interface LabelPackagingHint {
+  box_no?: number;
+  box_name?: string;
+  component_name?: string;
+  container_type?: string;
+  fill_qty?: number;
+  fill_uom?: string;
+  units_per_kit?: number;
+  storage_temp?: string;
+}
+
+export function buildDefaultLabelBundle(
+  sample?: Partial<LabelSampleData>,
+  isSemiFinished?: boolean,
+  bomCategory?: string,
+  packagingItems?: LabelPackagingHint[]
+): KitLabelDesignBundle {
+  const isPcr = !bomCategory || bomCategory === "PCR Kit";
+  const isCold = (sample?.storage || (isPcr ? "-20°C" : "15-25°C")).includes("-20");
   const tempSymbol = isCold ? "symbol_temp_minus_20" : "symbol_temp";
+  const firstPkg = packagingItems && packagingItems.length > 0 ? packagingItems[0] : undefined;
+  const firstCompLabel = firstPkg?.component_name
+    ? `${firstPkg.component_name} (${firstPkg.fill_qty ?? 1} ${firstPkg.fill_uom || (isPcr ? "µL" : "mL")})`
+    : isPcr
+      ? "Ống hóa chất PCR"
+      : "Chai / Lọ dung dịch đệm";
 
   const outerBox: LabelTargetConfig = {
     name: isSemiFinished ? "Nhãn Chai / Can Bán Thành Phẩm (70×40mm)" : "Nhãn Hộp Ngoài Thành Phẩm (100×50mm)",
@@ -194,7 +217,9 @@ export function buildDefaultLabelBundle(sample?: Partial<LabelSampleData>, isSem
     label_gap_mm: 2,
     vertical_gap_mm: 2,
     barcode_type: "QR_2D",
-    extra_text: "Hộp 1: Hóa chất Khuếch đại qPCR MasterMix",
+    extra_text:
+      firstPkg?.box_name ||
+      (isPcr ? "Hộp 1: Hóa chất Khuếch đại PCR" : "Hộp 1: Hóa chất & Đệm Tách chiết"),
     display_fields: ["logo", "product_name", "extra_text", "lot_number", "exp_date", "storage", "qr_code", "symbol_ivd", tempSymbol],
     positions_json: {
       logo: { x: 3, y: 2.5, width_mm: 13, height_mm: 5.5 },
@@ -209,46 +234,93 @@ export function buildDefaultLabelBundle(sample?: Partial<LabelSampleData>, isSem
     },
   };
 
+  const isBottle = firstPkg?.container_type?.startsWith("BOTTLE");
   const tube: LabelTargetConfig = {
-    name: "Nhãn Ống Thành Phần 1.5mL (35×15mm · 3 tem/hàng)",
-    width_mm: 35,
-    height_mm: 15,
-    font_size_pt: 5,
-    qr_size_mm: 6.5,
-    labels_per_row: 3,
+    name: isBottle
+      ? "Nhãn Chai / Lọ Thành Phần (50×25mm · 2 tem/hàng)"
+      : "Nhãn Ống Thành Phần (35×15mm · 3 tem/hàng)",
+    width_mm: isBottle ? 50 : 35,
+    height_mm: isBottle ? 25 : 15,
+    font_size_pt: isBottle ? 6 : 5,
+    qr_size_mm: isBottle ? 9 : 6.5,
+    labels_per_row: isBottle ? 2 : 3,
     label_gap_mm: 2,
     vertical_gap_mm: 3,
     barcode_type: "QR_2D",
-    extra_text: "qPCR MasterMix 2X (550 µL)",
+    extra_text: firstCompLabel,
     display_fields: ["product_code", "extra_text", "lot_number", "exp_date", "qr_code"],
-    positions_json: {
-      product_code: { x: 1.5, y: 1.2, fontSize: 5.5, bold: true, hidePrefix: true },
-      extra_text: { x: 1.5, y: 4.3, fontSize: 5, bold: true, hidePrefix: true },
-      lot_number: { x: 1.5, y: 7.8, fontSize: 4.8, prefix: "LOT:" },
-      exp_date: { x: 1.5, y: 11, fontSize: 4.8, prefix: "HSD:" },
-      qr_code: { x: 26.5, y: 4, size_mm: 6.8 },
-    },
+    positions_json: isBottle
+      ? {
+          product_code: { x: 2, y: 2, fontSize: 6.5, bold: true, hidePrefix: true },
+          extra_text: { x: 2, y: 6.5, fontSize: 6, bold: true, hidePrefix: true },
+          lot_number: { x: 2, y: 12, fontSize: 5.5, prefix: "LOT:" },
+          exp_date: { x: 2, y: 17, fontSize: 5.5, prefix: "HSD:" },
+          qr_code: { x: 38, y: 6, size_mm: 9.5 },
+        }
+      : {
+          product_code: { x: 1.5, y: 1.2, fontSize: 5.5, bold: true, hidePrefix: true },
+          extra_text: { x: 1.5, y: 4.3, fontSize: 5, bold: true, hidePrefix: true },
+          lot_number: { x: 1.5, y: 7.8, fontSize: 4.8, prefix: "LOT:" },
+          exp_date: { x: 1.5, y: 11, fontSize: 4.8, prefix: "HSD:" },
+          qr_code: { x: 26.5, y: 4, size_mm: 6.8 },
+        },
   };
 
-  return { outer_box: outerBox, sub_box: subBox, tube };
+  const extraComponents: LabelTargetConfig[] =
+    packagingItems && packagingItems.length > 1
+      ? packagingItems.slice(1).map((pk, idx) => {
+          const pkBottle = pk.container_type?.startsWith("BOTTLE");
+          const pkText = `${pk.component_name || `Thành phần #${idx + 2}`} (${pk.fill_qty ?? 1} ${pk.fill_uom || (isPcr ? "µL" : "mL")})`;
+          return {
+            ...tube,
+            name: pk.component_name || `Nhãn Thành Phần #${idx + 2}`,
+            width_mm: pkBottle ? 50 : 35,
+            height_mm: pkBottle ? 25 : 15,
+            font_size_pt: pkBottle ? 6 : 5,
+            qr_size_mm: pkBottle ? 9 : 6.5,
+            labels_per_row: pkBottle ? 2 : 3,
+            extra_text: pkText,
+            positions_json: pkBottle
+              ? {
+                  product_code: { x: 2, y: 2, fontSize: 6.5, bold: true, hidePrefix: true },
+                  extra_text: { x: 2, y: 6.5, fontSize: 6, bold: true, hidePrefix: true },
+                  lot_number: { x: 2, y: 12, fontSize: 5.5, prefix: "LOT:" },
+                  exp_date: { x: 2, y: 17, fontSize: 5.5, prefix: "HSD:" },
+                  qr_code: { x: 38, y: 6, size_mm: 9.5 },
+                }
+              : { ...tube.positions_json },
+          };
+        })
+      : [];
+
+  return { outer_box: outerBox, sub_box: subBox, tube, extra_components: extraComponents };
 }
 
-export function normalizeLabelBundle(raw: unknown, sample?: Partial<LabelSampleData>, isSemiFinished?: boolean): KitLabelDesignBundle {
-  const defaults = buildDefaultLabelBundle(sample, isSemiFinished);
-  if (!raw || typeof raw !== "object") return { ...defaults, extra_components: [] };
+export function normalizeLabelBundle(
+  raw: unknown,
+  sample?: Partial<LabelSampleData>,
+  isSemiFinished?: boolean,
+  bomCategory?: string,
+  packagingItems?: LabelPackagingHint[]
+): KitLabelDesignBundle {
+  const defaults = buildDefaultLabelBundle(sample, isSemiFinished, bomCategory, packagingItems);
+  if (!raw || typeof raw !== "object" || Object.keys(raw as Record<string, unknown>).length === 0) {
+    return { ...defaults, extra_components: defaults.extra_components || [] };
+  }
   const obj = raw as Partial<KitLabelDesignBundle>;
+  const hasSavedExtras = Array.isArray(obj.extra_components) && obj.extra_components.length > 0;
   return {
     outer_box: obj.outer_box && typeof obj.outer_box === "object" ? { ...defaults.outer_box, ...obj.outer_box } : defaults.outer_box,
     sub_box: obj.sub_box && typeof obj.sub_box === "object" ? { ...defaults.sub_box, ...obj.sub_box } : defaults.sub_box,
     tube: obj.tube && typeof obj.tube === "object" ? { ...defaults.tube, ...obj.tube } : defaults.tube,
-    extra_components: Array.isArray(obj.extra_components)
-      ? obj.extra_components.map((c, idx) => ({
+    extra_components: hasSavedExtras
+      ? obj.extra_components!.map((c, idx) => ({
           ...defaults.tube,
           ...c,
           name: c?.name || `Nhãn Thành Phần #${idx + 2}`,
           positions_json: { ...defaults.tube.positions_json, ...(c?.positions_json || {}) },
         }))
-      : [],
+      : defaults.extra_components || [],
   };
 }
 
