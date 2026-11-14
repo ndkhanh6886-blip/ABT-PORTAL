@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ActionBar, type AllowedAction } from "../actions";
 import { api, fmtDate } from "../api";
@@ -131,6 +132,7 @@ export function AssetEventsView({ canPlan }: { canPlan: boolean }) {
   const [status, setStatus] = useState("PLANNED");
   const [open, setOpen] = useState<string | null>(null);
   const [showPlan, setShowPlan] = useState(false);
+  const [showDueList, setShowDueList] = useState(false);
   const [preset, setPreset] = useState<{ asset_id: string; kind: string } | undefined>();
   const data = useQuery({
     queryKey: ["factory", "asset-events", "P-OLIGO", status],
@@ -149,6 +151,8 @@ export function AssetEventsView({ canPlan }: { canPlan: boolean }) {
     setPreset(undefined);
     ["asset-events", "assets", "asset-slots", "oligo-batch-candidates"].forEach((k) => qc.invalidateQueries({ queryKey: ["factory", k] }));
   };
+  const dueList = data.data?.calibration_due ?? [];
+  const overdueOligoCount = dueList.filter((a) => a.next_calibration_due < today()).length;
   return (
     <Card
       title="Kế hoạch bảo trì, hiệu chuẩn & sửa chữa"
@@ -170,15 +174,56 @@ export function AssetEventsView({ canPlan }: { canPlan: boolean }) {
     >
       {canPlan && assets.data && (showPlan || preset) && <PlanForm key={preset ? `${preset.asset_id}-${preset.kind}` : "new"} assets={assets.data} preset={preset} onDone={refresh} />}
       <ErrorNote error={data.error} />
-      {data.data && data.data.calibration_due.length > 0 && (
-        <div className="mb-3 p-3 rounded-xl border border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20 text-xs flex flex-col gap-1">
-          <b>Sắp đến / quá hạn hiệu chuẩn (30 ngày)</b>
-          {data.data.calibration_due.map((a) => (
-            <div key={a.id} className="flex flex-wrap gap-2 items-center">
-              <span className="font-mono">{a.code}</span> {a.name} — hạn {fmtDate(a.next_calibration_due)}{a.next_calibration_due < today() && <b className="text-rose-600"> (quá hạn)</b>}
-              {a.planned ? <span className="text-slate-500">đã lập phiếu</span> : canPlan && <button className="text-sky-700 dark:text-sky-400 underline cursor-pointer" onClick={() => setPreset({ asset_id: a.id, kind: "CALIBRATION" })}>Lập phiếu hiệu chuẩn</button>}
+      {dueList.length > 0 && (
+        <div
+          className={`mb-3 px-3 py-2 rounded-xl border text-xs ${
+            overdueOligoCount > 0
+              ? "border-rose-300 dark:border-rose-800/80 bg-rose-50/70 dark:bg-rose-950/20"
+              : "border-amber-200 dark:border-amber-900 bg-amber-50/60 dark:bg-amber-950/20"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <b className={overdueOligoCount > 0 ? "text-rose-900 dark:text-rose-200" : "text-amber-900 dark:text-amber-200"}>
+                ⏰ Cảnh báo: Có {dueList.length} thiết bị đến hạn / sắp đến hạn hiệu chuẩn (trong 30 ngày tới)
+              </b>
+              {overdueOligoCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200">
+                  Quá hạn: {overdueOligoCount} máy
+                </span>
+              )}
             </div>
-          ))}
+            <button
+              type="button"
+              onClick={() => setShowDueList((v) => !v)}
+              aria-expanded={showDueList}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-400/80 dark:border-amber-700 bg-white dark:bg-slate-900 hover:bg-amber-100/60 dark:hover:bg-slate-800 text-xs font-bold text-amber-900 dark:text-amber-200 cursor-pointer transition-colors"
+            >
+              {showDueList ? (
+                <>
+                  <span>Thu gọn</span>
+                  <ChevronUp className="w-3.5 h-3.5" />
+                </>
+              ) : (
+                <>
+                  <span>Xem danh sách ({dueList.length} máy)</span>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </>
+              )}
+            </button>
+          </div>
+          {showDueList && (
+            <div className="mt-2 pt-2 border-t border-amber-200/80 dark:border-amber-800/60 flex flex-col gap-1.5 max-h-64 overflow-y-auto">
+              {dueList.map((a) => (
+                <div key={a.id} className="flex flex-wrap gap-2 items-center px-2 py-1 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-amber-200/70 dark:border-amber-800/60">
+                  <span className="font-mono font-semibold text-sky-700 dark:text-sky-400">{a.code}</span>
+                  <span>{a.name} — hạn {fmtDate(a.next_calibration_due)}</span>
+                  {a.next_calibration_due < today() && <b className="text-rose-600"> (quá hạn)</b>}
+                  {a.planned ? <span className="text-emerald-700 dark:text-emerald-400 font-semibold">✓ Đã lập phiếu</span> : canPlan && <button type="button" className="text-sky-700 dark:text-sky-400 underline cursor-pointer" onClick={() => setPreset({ asset_id: a.id, kind: "CALIBRATION" })}>Lập phiếu hiệu chuẩn</button>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
       {data.data?.events.length === 0 && <Empty>Không có phiếu.</Empty>}

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
@@ -63,6 +64,7 @@ export function DepartmentEquipmentView({
   const qc = useQueryClient();
   const [filterDept, setFilterDept] = useState<string>(deptCode ?? "");
   const [showAddAsset, setShowAddAsset] = useState(false);
+  const [showDueList, setShowDueList] = useState(false);
   const [requestAsset, setRequestAsset] = useState<any | null>(null);
   const [completeEvent, setCompleteEvent] = useState<any | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("PLANNED");
@@ -195,6 +197,12 @@ export function DepartmentEquipmentView({
   const assets = assetsQuery.data ?? [];
   const events = eventsQuery.data?.events ?? [];
   const dueList = eventsQuery.data?.calibration_due ?? [];
+  const overdueCount = dueList.filter((d: any) => {
+    const days = daysUntil(d.next_calibration_due);
+    return days !== null && days < 0;
+  }).length;
+  const upcomingCount = dueList.length - overdueCount;
+  const unplannedDueCount = dueList.filter((d: any) => !d.planned).length;
 
   const inServiceCount = assets.filter((a) => a.status === "IN_SERVICE").length;
   const maintCount = assets.filter((a) => a.status !== "IN_SERVICE").length;
@@ -230,58 +238,125 @@ export function DepartmentEquipmentView({
               Đang bảo trì/Quá hạn: <b>{maintCount}</b>
             </span>
           )}
-          <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold">
-            Sắp đến hạn HC (&le;30d): <b>{dueList.length}</b>
-          </span>
+          {dueList.length > 0 ? (
+            <button
+              type="button"
+              onClick={() => setShowDueList((v) => !v)}
+              aria-expanded={showDueList}
+              className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/50 transition-colors"
+            >
+              Sắp đến hạn HC (&le;30d): <b>{dueList.length}</b>
+            </button>
+          ) : (
+            <span className="px-2.5 py-1 rounded-lg bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300 font-semibold">
+              Sắp đến hạn HC (&le;30d): <b>0</b>
+            </span>
+          )}
         </div>
       </div>
 
-      {/* Radar cảnh báo thiết bị sắp đến hạn hiệu chuẩn (<= 30 ngày) */}
+      {/* Radar cảnh báo thiết bị sắp đến hạn hiệu chuẩn (<= 30 ngày) — mặc định gọn 1 dòng, bấm để xổ danh sách */}
       {dueList.length > 0 && (
-        <div className="rounded-xl border border-amber-300 dark:border-amber-800/80 bg-amber-50/70 dark:bg-amber-950/20 p-3 space-y-2">
-          <div className="text-xs font-bold text-amber-900 dark:text-amber-200 flex items-center justify-between">
-            <span>⏰ Radar Cảnh báo Thiết bị Sắp đến hạn / Quá hạn Hiệu chuẩn trong 30 ngày tới ({dueList.length} máy)</span>
-            <span className="text-[11px] font-normal">Tự động báo cho cả Phòng sử dụng &amp; Phòng Kỹ thuật – Thiết bị</span>
+        <div
+          className={`rounded-xl border px-3 py-2 ${
+            overdueCount > 0
+              ? "border-rose-300 dark:border-rose-800/80 bg-rose-50/70 dark:bg-rose-950/20"
+              : "border-amber-300 dark:border-amber-800/80 bg-amber-50/70 dark:bg-amber-950/20"
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className={overdueCount > 0 ? "font-bold text-rose-900 dark:text-rose-200" : "font-bold text-amber-900 dark:text-amber-200"}>
+                ⏰ Cảnh báo: Có {dueList.length} thiết bị đến hạn / sắp đến hạn hiệu chuẩn (trong 30 ngày tới)
+              </span>
+              {overdueCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-200">
+                  Quá hạn: {overdueCount} máy
+                </span>
+              )}
+              {upcomingCount > 0 && (
+                <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-200/70 text-amber-900 dark:bg-amber-900/50 dark:text-amber-200">
+                  Sắp đến hạn: {upcomingCount} máy
+                </span>
+              )}
+              {unplannedDueCount > 0 && (
+                <span className="text-[11px] text-amber-800/90 dark:text-amber-300/90">
+                  ({unplannedDueCount} máy chưa gửi đề xuất)
+                </span>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowDueList((v) => !v)}
+              aria-expanded={showDueList}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-amber-400/80 dark:border-amber-700 bg-white dark:bg-slate-900 hover:bg-amber-100/60 dark:hover:bg-slate-800 text-xs font-bold text-amber-900 dark:text-amber-200 cursor-pointer transition-colors"
+            >
+              {showDueList ? (
+                <>
+                  <span>Thu gọn</span>
+                  <ChevronUp className="w-3.5 h-3.5" />
+                </>
+              ) : (
+                <>
+                  <span>Xem danh sách ({dueList.length} máy)</span>
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </>
+              )}
+            </button>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {dueList.map((d: any) => {
-              const days = daysUntil(d.next_calibration_due);
-              return (
-                <div
-                  key={d.id}
-                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 text-xs"
-                >
-                  <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{d.code}</span>
-                  <span className="font-medium text-slate-800 dark:text-slate-200">{d.name}</span>
-                  <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-                    {d.owner_name}
-                  </span>
-                  <span className={`font-mono font-bold ${days !== null && days < 0 ? "text-rose-600" : "text-amber-700"}`}>
-                    Hạn: {fmtDate(d.next_calibration_due)} ({days !== null ? (days < 0 ? `Quá hạn ${Math.abs(days)} ngày` : `Còn ${days} ngày`) : ""})
-                  </span>
-                  {d.planned ? (
-                    <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">✓ Đã có phiếu chờ Kỹ thuật</span>
-                  ) : (
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setRequestAsset(d);
-                        setReqForm({
-                          kind: "CALIBRATION",
-                          planned_date: today(),
-                          assignee: "Phòng Kỹ thuật – Thiết bị",
-                          description: `[Lịch tự động] Đề nghị Phòng Kỹ thuật – Thiết bị hiệu chuẩn định kỳ máy ${d.code} (${d.name}) trước hạn ${fmtDate(d.next_calibration_due)}`,
-                          out_of_service: false,
-                        });
-                      }}
+
+          {showDueList && (
+            <div className="mt-2 pt-2 border-t border-amber-200/80 dark:border-amber-800/60 space-y-2">
+              <div className="text-[11px] text-amber-800 dark:text-amber-300">
+                Tự động báo cho cả Phòng sử dụng &amp; Phòng Kỹ thuật – Thiết bị
+              </div>
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-1.5 max-h-72 overflow-y-auto pr-1">
+                {dueList.map((d: any) => {
+                  const days = daysUntil(d.next_calibration_due);
+                  return (
+                    <div
+                      key={d.id}
+                      className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-amber-300 dark:border-amber-800 bg-white dark:bg-slate-900 text-xs"
                     >
-                      + Gửi đề xuất Hiệu chuẩn ngay
-                    </Button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                      <div className="flex flex-wrap items-center gap-1.5 min-w-0">
+                        <span className="font-mono font-bold text-sky-700 dark:text-sky-400">{d.code}</span>
+                        <span className="font-medium text-slate-800 dark:text-slate-200">{d.name}</span>
+                        {isEngineeringHub && d.owner_name && (
+                          <span className="text-[11px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                            {d.owner_name}
+                          </span>
+                        )}
+                        <span className={`font-mono font-bold ${days !== null && days < 0 ? "text-rose-600" : "text-amber-700"}`}>
+                          Hạn: {fmtDate(d.next_calibration_due)} ({days !== null ? (days < 0 ? `Quá hạn ${Math.abs(days)} ngày` : `Còn ${days} ngày`) : ""})
+                        </span>
+                      </div>
+                      <div className="shrink-0">
+                        {d.planned ? (
+                          <span className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">✓ Đã có phiếu chờ Kỹ thuật</span>
+                        ) : (
+                          <Button
+                            variant="secondary"
+                            onClick={() => {
+                              setRequestAsset(d);
+                              setReqForm({
+                                kind: "CALIBRATION",
+                                planned_date: today(),
+                                assignee: "Phòng Kỹ thuật – Thiết bị",
+                                description: `[Lịch tự động] Đề nghị Phòng Kỹ thuật – Thiết bị hiệu chuẩn định kỳ máy ${d.code} (${d.name}) trước hạn ${fmtDate(d.next_calibration_due)}`,
+                                out_of_service: false,
+                              });
+                            }}
+                          >
+                            + Gửi đề xuất Hiệu chuẩn ngay
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
