@@ -7,6 +7,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   # ============================================================================
   # STAGE 1: Continuous Integration (CI) - Type Check & Next.js Production Build
@@ -77,6 +80,7 @@ jobs:
           envs: GH_TOKEN,GITHUB_REPOSITORY,GITHUB_SHA
           script: |
             set -euo pipefail
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
             TARGET_DIR="/var/www/abt-portal"
             if [ ! -d "$TARGET_DIR" ] && [ -d "/var/www/ABT-portal" ]; then
               TARGET_DIR="/var/www/ABT-portal"
@@ -88,12 +92,20 @@ jobs:
             git -c http.extraheader="AUTHORIZATION: basic ${AUTH_B64}" fetch "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
             git reset --hard FETCH_HEAD
 
-            if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^abt_portal_app$'; then
-              echo "Deploying via Docker Compose..."
+            if command -v docker >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
+              echo "Building & restarting Docker services..."
               docker compose up -d --build app worker
+              for i in $(seq 1 30); do
+                if curl -fsS -o /dev/null http://127.0.0.1:3008/api/health; then
+                  break
+                fi
+                sleep 2
+              done
               docker exec abt_portal_app npm run factory:migrate || true
             else
               echo "Deploying via Node.js & PM2..."
+              export NVM_DIR="${NVM_DIR:-/root/.nvm}"
+              [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true
               touch .env.local
               if ! grep -q "^SESSION_SECRET=.\+" .env.local; then
                 echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
@@ -130,6 +142,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH"
           TARGET_DIR="/var/www/abt-portal"
           if [ ! -d "$TARGET_DIR" ] && [ -d "/var/www/ABT-portal" ]; then
             TARGET_DIR="/var/www/ABT-portal"
@@ -141,12 +154,20 @@ jobs:
           git -c http.extraheader="AUTHORIZATION: basic ${AUTH_B64}" fetch "https://github.com/${GITHUB_REPOSITORY}.git" "$GITHUB_SHA"
           git reset --hard FETCH_HEAD
 
-          if command -v docker >/dev/null 2>&1 && (docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^abt_portal_app$' || [ -f docker-compose.yml ] && grep -q 'PGHOST=db' .env 2>/dev/null); then
+          if command -v docker >/dev/null 2>&1 && [ -f docker-compose.yml ]; then
             echo "Building & restarting Docker services..."
             docker compose up -d --build app worker
+            for i in $(seq 1 30); do
+              if curl -fsS -o /dev/null http://127.0.0.1:3008/api/health; then
+                break
+              fi
+              sleep 2
+            done
             docker exec abt_portal_app npm run factory:migrate || true
           else
             echo "Building & restarting via Node.js & PM2..."
+            export NVM_DIR="${NVM_DIR:-/root/.nvm}"
+            [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" || true
             touch .env.local
             if ! grep -q "^SESSION_SECRET=.\+" .env.local; then
               echo "SESSION_SECRET=$(node -e "console.log(require('crypto').randomBytes(32).toString('hex'))")" >> .env.local
