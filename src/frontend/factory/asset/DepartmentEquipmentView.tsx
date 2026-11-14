@@ -66,6 +66,11 @@ export function DepartmentEquipmentView({
   const [requestAsset, setRequestAsset] = useState<any | null>(null);
   const [completeEvent, setCompleteEvent] = useState<any | null>(null);
   const [statusFilter, setStatusFilter] = useState<string>("PLANNED");
+  const [assetSearch, setAssetSearch] = useState<string>("");
+  const [locationFilter, setLocationFilter] = useState<string>("ALL");
+  const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
+  const [assetPage, setAssetPage] = useState<number>(1);
+  const [assetPageSize, setAssetPageSize] = useState<number>(15);
 
   const activeDeptParam = isEngineeringHub ? filterDept : deptCode ?? "";
 
@@ -614,94 +619,227 @@ export function DepartmentEquipmentView({
         {assets.length === 0 ? (
           <Empty>Chưa có thiết bị nào trong danh mục.</Empty>
         ) : (
-          <Table
-            head={[
-              "Mã máy",
-              "Tên thiết bị & Model",
-              "Phòng quản lý",
-              "Số Serial",
-              "Hạn hiệu chuẩn kế tiếp",
-              "Trạng thái",
-              "Đề xuất Bảo trì / Hiệu chuẩn / Báo hỏng",
-            ]}
-          >
-            {assets.map((a: any) => {
-              const st = ASSET_STATUS_BADGE[a.status] ?? ["QUARANTINE", a.status];
-              const days = daysUntil(a.next_calibration_due);
-              return (
-                <tr key={a.id}>
-                  <td className="py-2 pr-3 font-mono text-xs font-bold text-sky-700 dark:text-sky-400">{a.code}</td>
-                  <td className="py-2 pr-3 text-xs">
-                    <div className="font-semibold text-slate-800 dark:text-slate-100">{a.name}</div>
-                    <div className="text-slate-500">
-                      {ASSET_TYPE_LABELS[a.asset_type] ?? a.asset_type} {a.model ? `· Model: ${a.model}` : ""}
-                    </div>
-                  </td>
-                  <td className="py-2 pr-3 text-xs font-medium">{a.owner_name}</td>
-                  <td className="py-2 pr-3 font-mono text-xs">{a.serial_no ?? "—"}</td>
-                  <td className="py-2 pr-3 text-xs font-mono">
-                    {a.next_calibration_due ? (
-                      <div>
-                        <span className="font-semibold">{fmtDate(a.next_calibration_due)}</span>
-                        {days !== null && (
-                          <span
-                            className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                              days < 0
-                                ? "bg-rose-100 text-rose-800"
-                                : days <= 30
-                                  ? "bg-amber-100 text-amber-800"
-                                  : "bg-emerald-50 text-emerald-700"
-                            }`}
-                          >
-                            {days < 0 ? `Quá hạn ${Math.abs(days)}d` : `Còn ${days}d`}
-                          </span>
-                        )}
-                      </div>
-                    ) : (
-                      "—"
+          (() => {
+            const uniqueLocations = Array.from(
+              new Set(assets.map((a: any) => String(a.location || "").trim()).filter(Boolean))
+            );
+            const uniqueCategories = Array.from(
+              new Set(assets.map((a: any) => String(a.equipment_category || "").trim()).filter(Boolean))
+            );
+            const q = assetSearch.trim().toLowerCase();
+            const filteredAssets = assets.filter((a: any) => {
+              if (locationFilter !== "ALL" && String(a.location || "") !== locationFilter) return false;
+              if (categoryFilter !== "ALL" && String(a.equipment_category || "") !== categoryFilter) return false;
+              if (q) {
+                const hay = `${a.code ?? ""} ${a.name ?? ""} ${a.model ?? ""} ${a.serial_no ?? ""} ${a.location ?? ""} ${a.manufacturer ?? ""}`.toLowerCase();
+                if (!hay.includes(q)) return false;
+              }
+              return true;
+            });
+            const totalPages = Math.max(1, Math.ceil(filteredAssets.length / assetPageSize));
+            const safePage = Math.min(assetPage, totalPages);
+            const pagedAssets = filteredAssets.slice((safePage - 1) * assetPageSize, safePage * assetPageSize);
+
+            return (
+              <div className="space-y-2.5">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      className={`${inputClass} w-64`}
+                      placeholder="🔍 Tìm mã máy, tên, model, serial, vị trí..."
+                      value={assetSearch}
+                      onChange={(e) => {
+                        setAssetSearch(e.target.value);
+                        setAssetPage(1);
+                      }}
+                    />
+                    {uniqueLocations.length > 0 && (
+                      <select
+                        className={`${inputClass} w-44`}
+                        value={locationFilter}
+                        onChange={(e) => {
+                          setLocationFilter(e.target.value);
+                          setAssetPage(1);
+                        }}
+                      >
+                        <option value="ALL">📍 Mọi vị trí phòng ({assets.length})</option>
+                        {uniqueLocations.map((loc) => (
+                          <option key={loc} value={loc}>
+                            📍 {loc} ({assets.filter((x: any) => x.location === loc).length})
+                          </option>
+                        ))}
+                      </select>
                     )}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <StatusBadge status={st[0]} label={st[1]} />
-                  </td>
-                  <td className="py-2 text-right">
-                    <div className="flex flex-wrap justify-end gap-1.5">
-                      <Button
-                        variant="ghost"
-                        onClick={() => {
-                          setRequestAsset(a);
-                          setReqForm({
-                            kind: "MAINTENANCE",
-                            planned_date: today(),
-                            assignee: "Phòng Kỹ thuật – Thiết bị",
-                            description: `Đề xuất từ ${a.owner_name}: Bảo trì / Hiệu chuẩn định kỳ thiết bị ${a.code} (${a.name})`,
-                            out_of_service: false,
-                          });
+                    {uniqueCategories.length > 0 && (
+                      <select
+                        className={`${inputClass} w-40`}
+                        value={categoryFilter}
+                        onChange={(e) => {
+                          setCategoryFilter(e.target.value);
+                          setAssetPage(1);
                         }}
                       >
-                        🔧 Đề xuất Bảo trì / HC
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        onClick={() => {
-                          setRequestAsset(a);
-                          setReqForm({
-                            kind: "REPAIR",
-                            planned_date: today(),
-                            assignee: "Phòng Kỹ thuật – Thiết bị",
-                            description: `🚨 Báo hỏng khẩn từ ${a.owner_name}: Đề nghị Kỹ thuật kiểm tra sửa chữa máy ${a.code} (${a.name})`,
-                            out_of_service: true,
-                          });
-                        }}
-                      >
-                        🚨 Báo hỏng khẩn
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </Table>
+                        <option value="ALL">🔧 Mọi phân nhóm</option>
+                        {uniqueCategories.map((cat) => (
+                          <option key={cat} value={cat}>
+                            {cat} ({assets.filter((x: any) => x.equipment_category === cat).length})
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                    <select
+                      className={`${inputClass} w-32 py-1 text-xs`}
+                      value={assetPageSize}
+                      onChange={(e) => {
+                        setAssetPageSize(Number(e.target.value));
+                        setAssetPage(1);
+                      }}
+                    >
+                      <option value={15}>15 máy/trang</option>
+                      <option value={30}>30 máy/trang</option>
+                      <option value={50}>50 máy/trang</option>
+                      <option value={100}>100 máy/trang</option>
+                    </select>
+                    <span>
+                      Hiển thị <b>{filteredAssets.length === 0 ? 0 : (safePage - 1) * assetPageSize + 1}</b>–
+                      <b>{Math.min(safePage * assetPageSize, filteredAssets.length)}</b> / <b>{filteredAssets.length}</b> máy
+                    </span>
+                    {totalPages > 1 && (
+                      <div className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          disabled={safePage <= 1}
+                          onClick={() => setAssetPage((p) => Math.max(1, p - 1))}
+                        >
+                          ‹ Trước
+                        </Button>
+                        <span className="font-semibold px-1">
+                          {safePage}/{totalPages}
+                        </span>
+                        <Button
+                          variant="ghost"
+                          disabled={safePage >= totalPages}
+                          onClick={() => setAssetPage((p) => Math.min(totalPages, p + 1))}
+                        >
+                          Sau ›
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <Table
+                  head={[
+                    "Mã máy",
+                    "Tên thiết bị & Model",
+                    "Phòng quản lý & Vị trí",
+                    "Số Serial",
+                    "Bảo trì gần nhất & Hạn HC kế tiếp",
+                    "Trạng thái",
+                    "Đề xuất Bảo trì / Hiệu chuẩn / Báo hỏng",
+                  ]}
+                >
+                  {pagedAssets.map((a: any) => {
+                    const st = ASSET_STATUS_BADGE[a.status] ?? ["QUARANTINE", a.status];
+                    const days = daysUntil(a.next_calibration_due);
+                    return (
+                      <tr key={a.id}>
+                        <td className="py-2 pr-3 font-mono text-xs font-bold text-sky-700 dark:text-sky-400">
+                          <div>{a.code}</div>
+                          {a.equipment_category && (
+                            <span className="inline-block mt-0.5 px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-semibold text-slate-600 dark:text-slate-300">
+                              {a.equipment_category}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 text-xs">
+                          <div className="font-semibold text-slate-800 dark:text-slate-100">{a.name}</div>
+                          <div className="text-slate-500">
+                            {ASSET_TYPE_LABELS[a.asset_type] ?? a.asset_type} {a.model ? `· Model: ${a.model}` : ""}
+                          </div>
+                        </td>
+                        <td className="py-2 pr-3 text-xs">
+                          <div className="font-medium text-slate-800 dark:text-slate-200">{a.owner_name}</div>
+                          {a.location && (
+                            <div className="text-[11px] font-semibold text-indigo-700 dark:text-indigo-400 mt-0.5">
+                              📍 {a.location}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-2 pr-3 font-mono text-xs">{a.serial_no ?? "—"}</td>
+                        <td className="py-2 pr-3 text-xs font-mono">
+                          {a.last_calibration_date && (
+                            <div className="text-[11px] text-slate-500">
+                              BT gần nhất: {fmtDate(a.last_calibration_date)}
+                            </div>
+                          )}
+                          {a.next_calibration_due ? (
+                            <div>
+                              <span className="font-semibold">Hạn: {fmtDate(a.next_calibration_due)}</span>
+                              {days !== null && (
+                                <span
+                                  className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                    days < 0
+                                      ? "bg-rose-100 text-rose-800"
+                                      : days <= 30
+                                        ? "bg-amber-100 text-amber-800"
+                                        : "bg-emerald-50 text-emerald-700"
+                                  }`}
+                                >
+                                  {days < 0 ? `Quá hạn ${Math.abs(days)}d` : `Còn ${days}d`}
+                                </span>
+                              )}
+                            </div>
+                          ) : (
+                            "—"
+                          )}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <StatusBadge status={st[0]} label={st[1]} />
+                        </td>
+                        <td className="py-2 text-right">
+                          <div className="flex flex-wrap justify-end gap-1.5">
+                            <Button
+                              variant="ghost"
+                              onClick={() => {
+                                setRequestAsset(a);
+                                setReqForm({
+                                  kind: "MAINTENANCE",
+                                  planned_date: today(),
+                                  assignee: "Phòng Kỹ thuật – Thiết bị",
+                                  description: `Đề xuất từ ${a.owner_name}${a.location ? ` (${a.location})` : ""}: Bảo trì / Hiệu chuẩn định kỳ thiết bị ${a.code} (${a.name})`,
+                                  out_of_service: false,
+                                });
+                              }}
+                            >
+                              🔧 Đề xuất Bảo trì / HC
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              onClick={() => {
+                                setRequestAsset(a);
+                                setReqForm({
+                                  kind: "REPAIR",
+                                  planned_date: today(),
+                                  assignee: "Phòng Kỹ thuật – Thiết bị",
+                                  description: `🚨 Báo hỏng khẩn từ ${a.owner_name}${a.location ? ` (${a.location})` : ""}: Đề nghị Kỹ thuật kiểm tra sửa chữa máy ${a.code} (${a.name})`,
+                                  out_of_service: true,
+                                });
+                              }}
+                            >
+                              🚨 Báo hỏng khẩn
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </Table>
+              </div>
+            );
+          })()
         )}
       </Card>
     </div>

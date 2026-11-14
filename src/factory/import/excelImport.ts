@@ -41,6 +41,11 @@ export async function ensureExcelImportSchema(tx: Tx): Promise<void> {
     );
     ALTER TABLE master.uom DROP CONSTRAINT IF EXISTS uom_code_check;
     ALTER TABLE master.uom ALTER COLUMN dimension SET DEFAULT 'COUNT';
+    ALTER TABLE asset.asset DROP CONSTRAINT IF EXISTS asset_code_check;
+    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS location text;
+    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS equipment_category text;
+    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS last_calibration_date date;
+    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS notes text;
   `);
   importSchemaEnsured = true;
 }
@@ -72,6 +77,12 @@ function normDate(v: unknown): string | null {
   const s = normStr(v);
   if (!s) return null;
   if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const serial = Number(s);
+  if (Number.isFinite(serial) && serial > 30000 && serial < 70000) {
+    const utcDays = Math.floor(serial - 25569);
+    const dt = new Date(utcDays * 86400 * 1000);
+    if (!Number.isNaN(dt.getTime())) return dt.toISOString().slice(0, 10);
+  }
   const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmy) {
     const [, d, m, y] = dmy;
@@ -534,16 +545,32 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
     }
   } else if (templateKey === "LAB_EQUIPMENT") {
     await authorize(tx, actor, "asset.manage");
+    const seenInBatch = new Map<string, number>();
     for (let i = 0; i < rawRows.length; i++) {
       const r = rawRows[i];
       const sp = `sp_eq_${i}`;
       await tx.query(`SAVEPOINT ${sp}`);
       try {
-        const code = normCode(r.asset_code || r.code || r["Mã thiết bị"]);
+        let code = normStr(r.asset_code || r.code || r["Mã thiết bị"])
+          .replace(/\s+/g, "")
+          .toUpperCase()
+          .slice(0, 40);
+        if (!code) {
+          code = normCode(r.asset_code || r.code || r["Mã thiết bị"]);
+        }
+        if (seenInBatch.has(code)) {
+          const cnt = (seenInBatch.get(code) ?? 1) + 1;
+          seenInBatch.set(code, cnt);
+          code = code === "SX4-MIN.01" ? `SX4-MIN.0${cnt}` : `${code}-${cnt}`;
+        } else {
+          seenInBatch.set(code, 1);
+        }
+
         const name = normStr(r.asset_name || r.name || r["Tên thiết bị"]);
         if (!code || !name) throw new Error("Thiếu Mã thiết bị (asset_code) hoặc Tên thiết bị (asset_name)");
 
-        const rawType = normStr(r.asset_type || r["Loại thiết bị"], "OTHER").toUpperCase();
+        const rawTypeOrCat = normStr(r.asset_type || r["Loại thiết bị"], "OTHER");
+        const rawTypeUpper = rawTypeOrCat.toUpperCase();
         const validTypes = [
           "SYNTHESIZER",
           "HPLC",
@@ -555,17 +582,72 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           "MASS_SPEC",
           "OTHER",
         ];
-        const assetType = validTypes.includes(rawType) ? rawType : "OTHER";
-        const orgUnitId = await resolveOrgUnitId(tx, normStr(r.dept_code || r["Mã phòng"]) || targetDeptCode || "P-RD");
-        const manufacturer = normStr(r.manufacturer || r["Hãng sản xuất"]) || null;
-        const model = normStr(r.model || r["Model"]) || null;
-        const serialNo = normStr(r.serial_no || r["Số Serial"]) || null;
-        const calDays = normNum(r.calibration_interval_days || r["Chu kỳ hiệu chuẩn (ngày)"], 365);
-        const nextCal = normDate(r.next_calibration_due || r["Hạn hiệu chuẩn"]) || "2027-06-30";
+        let assetType = validTypes.includes(rawTypeUpper) ? rawTypeUpper : "";
+        if (!assetType) {
+          const u = `${name} ${code} ${rawTypeOrCat}`.toUpperCase();
+          if (u.includes("PCR") || u.includes("LUÂN NHIỆT") || u.includes("TCM")) assetType = "PCR";
+          else if (u.includes("TỦ ÂM") || u.includes("TỦ ĐÔNG") || u.includes("TỦ LẠNH") || u.includes("TÂ") || u.includes("TĐ")) assetType = "FREEZER";
+          else if (u.includes("CÂN") || u.includes("ĐO PH") || u.includes("MPH") || u.includes("CA.")) assetType = "BALANCE";
+          else if (u.includes("LY TÂM") || u.includes("SPINDOWN") || u.includes("CEN") || u.includes("SD.")) assetType = "CENTRIFUGE";
+          else if (u.includes("ĐỌC GEL") || u.includes("QUANG PHỔ") || u.includes("MGR") || u.includes("MGG")) assetType = "SPECTROPHOTOMETER";
+          else assetType = "OTHER";
+        }
+
+        const equipmentCategory =
+          normStr(r.equipment_category || r["Phân nhóm gốc"]) ||
+          (!validTypes.includes(rawTypeUpper) && rawTypeOrCat ? rawTypeOrCat : "Thiết bị");
+        const location = normStr(r.location || r["Vị trí phòng"] || r["Vị trí"]) || null;
+
+        // Auto-detect department from code/location if not explicitly provided
+        let rowDeptCode = normStr(r.dept_code || r["Mã phòng"]);
+        if (!rowDeptCode) {
+          if (code.startsWith("QC") || (location && location.toUpperCase().includes("QC"))) rowDeptCode = "P-QA";
+          else if (code.startsWith("SX")) rowDeptCode = "P-KIT";
+          else rowDeptCode = targetDeptCode || "P-KIT";
+        }
+        const orgUnitId = await resolveOrgUnitId(tx, rowDeptCode, orgCache);
+
+        const rawDesc = normStr(r["Mô tả"]);
+        let manufacturer = normStr(r.manufacturer || r["Hãng sản xuất"]) || null;
+        let model = normStr(r.model || r["Model"]) || null;
+        let serialNo = normStr(r.serial_no || r["Số Serial"]) || null;
+        if (!model && !serialNo && rawDesc) {
+          const parts = rawDesc.split("/").map((p) => p.trim()).filter(Boolean);
+          if (parts.length >= 2) {
+            model = parts[0];
+            serialNo = parts.slice(1).join("/");
+          } else {
+            serialNo = parts[0] || null;
+          }
+        }
+
+        const calDays = normNum(
+          r.calibration_interval_days || r["Chu kỳ hiệu chuẩn (ngày)"] || r["Chu kỳ bảo trì (ngày)"],
+          180
+        );
+        const lastCal = normDate(
+          r.last_calibration_date || r["Ngày bảo trì gần nhất"] || r["Ngày bảo trì gần nhất (YYYY-MM-DD)"]
+        );
+        let nextCal = normDate(r.next_calibration_due || r["Hạn hiệu chuẩn"]);
+        if (!nextCal && lastCal) {
+          const step = calDays > 0 ? calDays : 180;
+          const dt = new Date(`${lastCal}T00:00:00Z`);
+          dt.setUTCDate(dt.getUTCDate() + step);
+          while (dt.toISOString().slice(0, 10) < "2026-12-01") {
+            dt.setUTCDate(dt.getUTCDate() + step);
+          }
+          nextCal = dt.toISOString().slice(0, 10);
+        }
+        if (!nextCal) nextCal = "2027-06-30";
+
         const rawStatus = normStr(r.status || r["Trạng thái"], "IN_SERVICE").toUpperCase();
-        const status = ["IN_SERVICE", "UNDER_MAINTENANCE", "OUT_OF_CALIBRATION", "RETIRED"].includes(rawStatus)
-          ? rawStatus
-          : "IN_SERVICE";
+        const status =
+          rawStatus === "ACTIVE" || rawStatus === "IN_SERVICE"
+            ? "IN_SERVICE"
+            : ["UNDER_MAINTENANCE", "OUT_OF_CALIBRATION", "RETIRED"].includes(rawStatus)
+              ? rawStatus
+              : "IN_SERVICE";
+        const notes = normStr(r.notes || r["Ghi chú"] || rawDesc) || null;
 
         const existing = (await tx.query("SELECT id FROM asset.asset WHERE upper(code) = upper($1) LIMIT 1", [code])).rows[0];
         if (existing) {
@@ -573,9 +655,27 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             `UPDATE asset.asset
                 SET name = $2, asset_type = $3, owner_org_unit_id = $4, manufacturer = $5,
                     model = $6, serial_no = $7, calibration_interval_days = $8,
-                    next_calibration_due = $9, status = $10, updated_at = now(), updated_by = $11
+                    next_calibration_due = $9, status = $10, location = $11,
+                    equipment_category = $12, last_calibration_date = $13, notes = $14,
+                    updated_at = now(), updated_by = $15
               WHERE id = $1`,
-            [existing.id, name, assetType, orgUnitId, manufacturer, model, serialNo, calDays, nextCal, status, actor.userId]
+            [
+              existing.id,
+              name,
+              assetType,
+              orgUnitId,
+              manufacturer,
+              model,
+              serialNo,
+              calDays,
+              nextCal,
+              status,
+              location,
+              equipmentCategory,
+              lastCal,
+              notes,
+              actor.userId,
+            ]
           );
           updatedCount++;
         } else {
@@ -583,10 +683,28 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             await tx.query(
               `INSERT INTO asset.asset (
                  code, name, asset_type, owner_org_unit_id, manufacturer, model,
-                 serial_no, calibration_interval_days, next_calibration_due, status, created_by, updated_by
-               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+                 serial_no, calibration_interval_days, next_calibration_due, status,
+                 location, equipment_category, last_calibration_date, notes,
+                 created_by, updated_by
+               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
                RETURNING id`,
-              [code, name, assetType, orgUnitId, manufacturer, model, serialNo, calDays, nextCal, status, actor.userId]
+              [
+                code,
+                name,
+                assetType,
+                orgUnitId,
+                manufacturer,
+                model,
+                serialNo,
+                calDays,
+                nextCal,
+                status,
+                location,
+                equipmentCategory,
+                lastCal,
+                notes,
+                actor.userId,
+              ]
             )
           ).rows[0];
           if (assetType === "SYNTHESIZER") {
@@ -603,7 +721,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
         await tx.query(`RELEASE SAVEPOINT ${sp}`);
       } catch (e: any) {
         await tx.query(`ROLLBACK TO SAVEPOINT ${sp}`);
-        errors.push({ row_no: i + 1, code: normStr(r.asset_code), message: e?.message || String(e) });
+        errors.push({ row_no: i + 1, code: normStr(r.asset_code || r["Mã thiết bị"]), message: e?.message || String(e) });
       }
     }
   } else if (templateKey === "KIT_BOM_FORMULA") {

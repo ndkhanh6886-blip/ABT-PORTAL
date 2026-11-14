@@ -19,16 +19,33 @@ const assetSchema = z.object({
   asset_type: z.enum(["SYNTHESIZER", "HPLC", "PCR", "CENTRIFUGE", "FREEZER", "BALANCE", "SPECTROPHOTOMETER", "MASS_SPEC", "OTHER"]),
   owner_org_unit_id: z.string().uuid("chọn phòng quản lý").optional().nullable(),
   dept_code: z.string().trim().max(40).optional().nullable(),
+  location: z.string().trim().max(150).optional().nullable(),
+  equipment_category: z.string().trim().max(80).optional().nullable(),
   manufacturer: z.string().trim().max(100).optional().nullable(),
   model: z.string().trim().max(100).optional().nullable(),
   serial_no: z.string().trim().max(100).optional().nullable(),
   calibration_interval_days: z.coerce.number().int().positive().optional().nullable(),
+  last_calibration_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
   next_calibration_due: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().nullable(),
+  notes: z.string().trim().max(500).optional().nullable(),
   synthesizer: z
     .object({ column_positions: z.coerce.number().int().min(1).max(384), supported_scales: z.array(z.string()).max(30).default([]) })
     .optional()
     .nullable(),
 });
+
+let assetExtraColsEnsured = false;
+export async function ensureAssetExtraColumnsSchema(tx: Tx): Promise<void> {
+  if (assetExtraColsEnsured) return;
+  await tx.query(`
+    ALTER TABLE asset.asset DROP CONSTRAINT IF EXISTS asset_code_check;
+    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS location text;
+    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS equipment_category text;
+    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS last_calibration_date date;
+    ALTER TABLE asset.asset ADD COLUMN IF NOT EXISTS notes text;
+  `);
+  assetExtraColsEnsured = true;
+}
 
 const updateAssetSchema = z.object({
   name: z.string().trim().min(1, "bắt buộc").max(200).optional(),
@@ -44,6 +61,7 @@ const updateAssetSchema = z.object({
 });
 
 export async function createAsset(tx: Tx, actor: AuthzActor, input: unknown) {
+  await ensureAssetExtraColumnsSchema(tx);
   const data = parseInput(assetSchema, input);
   let ownerOrgUnitId = data.owner_org_unit_id ?? null;
   if (!ownerOrgUnitId && data.dept_code) {
@@ -343,6 +361,7 @@ export async function ensureDepartmentEquipmentSeed(tx: Tx) {
 }
 
 export async function listAssets(tx: Tx, actor: AuthzActor, type?: string, deptCode?: string) {
+  await ensureAssetExtraColumnsSchema(tx);
   await ensureDepartmentEquipmentSeed(tx);
   await ensureHplcReagentSlotsAndColumnsSeed(tx);
   await ensureLegacyOligoDataSeeded(tx);
