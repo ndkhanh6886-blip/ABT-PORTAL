@@ -78,16 +78,47 @@ function daysBetween(a: string, b: string) {
 
 /** Phân loại trạng thái hiển thị của một công đoạn (có xét khóa bởi bước QC xen kẽ phía trước). */
 function stepVisual(step: PlanStep, steps: PlanStep[]) {
-  if (isDoneStatus(step.status)) return { key: "DONE", label: "Đã hoàn tất", cls: "bg-emerald-500 text-white" };
-  if (step.status === "FAILED" || step.qc_gate_status === "REJECTED")
-    return { key: "FAILED", label: "Lỗi / QC từ chối", cls: "bg-rose-500 text-white" };
-  if (step.is_qc && step.qc_gate_status === "WAITING_QC" && step.status !== "PENDING")
-    return { key: "WAITING_QC", label: "Chờ QC xác nhận thông qua", cls: "bg-amber-400 text-amber-950" };
-  if (step.status === "IN_PROGRESS" || step.status === "AWAITING_CHECK")
-    return { key: "RUNNING", label: step.status === "AWAITING_CHECK" ? "Chờ ký kiểm tra chéo" : "Đang thực hiện", cls: "bg-sky-500 text-white" };
+  if (isDoneStatus(step.status)) {
+    return { key: "DONE", icon: "✓", label: "Đã hoàn tất", cls: "bg-emerald-500 text-white border-emerald-600" };
+  }
+  if (step.status === "FAILED" || step.qc_gate_status === "REJECTED") {
+    return { key: "FAILED", icon: "✕", label: "Lỗi / QC từ chối", cls: "bg-rose-500 text-white border-rose-600" };
+  }
+  const allPrevDone = steps.filter((p) => p.seq < step.seq).every((p) => isDoneStatus(p.status));
+  if (step.is_qc && step.qc_gate_status === "WAITING_QC" && (step.status !== "PENDING" || allPrevDone)) {
+    return { key: "WAITING_QC", icon: "🛡️", label: "Chờ QC xác nhận thông qua", cls: "bg-amber-400 text-amber-950 border-amber-500" };
+  }
+  if (step.status === "IN_PROGRESS" || step.status === "AWAITING_CHECK") {
+    return {
+      key: "RUNNING",
+      icon: step.is_qc ? "🛡️" : "",
+      label: step.status === "AWAITING_CHECK" ? "Chờ ký kiểm tra chéo" : "Đang thực hiện",
+      cls: "bg-sky-500 text-white border-sky-600",
+    };
+  }
   const locked = steps.some((p) => p.seq < step.seq && p.is_qc && p.qc_gate_status !== "PASSED");
-  if (locked) return { key: "LOCKED", label: "Đang khóa — chờ bước QC xen kẽ trước", cls: "bg-slate-300 text-slate-700 dark:bg-slate-700 dark:text-slate-300" };
-  return { key: "PENDING", label: "Chưa bắt đầu", cls: "bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-400" };
+  if (locked) {
+    return {
+      key: "LOCKED",
+      icon: "🔒",
+      label: "Đang khóa — chờ bước QC xen kẽ trước",
+      cls: "bg-slate-100 text-slate-400 border-slate-200 dark:bg-slate-800/70 dark:text-slate-500 dark:border-slate-700",
+    };
+  }
+  if (step.is_qc && step.qc_gate_status === "WAITING_QC") {
+    return {
+      key: "QC_PENDING",
+      icon: "🛡️",
+      label: "Cổng QC xen kẽ (chưa đến lượt)",
+      cls: "bg-amber-50 text-amber-800 border-amber-300 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800",
+    };
+  }
+  return {
+    key: "PENDING",
+    icon: step.is_qc ? "🛡️" : "",
+    label: "Chưa bắt đầu",
+    cls: "bg-slate-100 text-slate-700 border-slate-300 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
+  };
 }
 
 export function ProductionPlanView({
@@ -113,6 +144,8 @@ export function ProductionPlanView({
   const [showUnplanned, setShowUnplanned] = useState(false);
   const [showStageSummary, setShowStageSummary] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [expandedStepsIds, setExpandedStepsIds] = useState<Record<string, boolean>>({});
+  const [hoveredStep, setHoveredStep] = useState<{ orderId: string; stepId: string } | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -419,29 +452,83 @@ export function ProductionPlanView({
                         <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 font-bold text-[10px]">Chưa phân công QA</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-xs align-top min-w-[260px]">
+                    <td className="px-3 py-2 text-xs align-top min-w-[260px] max-w-[400px]">
                       {total === 0 ? (
                         <span className="text-slate-400">Chưa xác nhận lệnh — chưa sinh công đoạn</span>
-                      ) : (
-                        <div className="space-y-1.5">
-                          <div className="flex flex-wrap gap-1">
-                            {o.steps.map((s) => {
-                              const v = stepVisual(s, o.steps);
-                              return (
-                                <span
-                                  key={s.id}
-                                  title={`Bước #${s.seq}: ${s.step_name}\nTrạng thái: ${v.label}\nNhân viên: ${s.assigned_to_name ?? "Chưa phân công"}${s.is_qc ? `\nQA phụ trách: ${s.qa_assignee_name ?? o.qa_assignee_name ?? "Chưa phân công"}` : ""}`}
-                                  className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${v.cls} ${current?.id === s.id ? "ring-2 ring-offset-1 ring-sky-600 dark:ring-offset-slate-900" : ""}`}
-                                >
-                                  {v.key === "LOCKED" ? "🔒" : s.is_qc ? "🛡️" : ""}
-                                  {s.seq}. {s.step_name.length > 22 ? `${s.step_name.slice(0, 22)}…` : s.step_name}
+                      ) : (() => {
+                        const isStepsExpanded = Boolean(expandedStepsIds[o.id]);
+                        const hoveredStepObj =
+                          hoveredStep?.orderId === o.id
+                            ? o.steps.find((x) => x.id === hoveredStep.stepId) ?? null
+                            : null;
+                        const toggleExpandSteps = () =>
+                          setExpandedStepsIds((p) => ({ ...p, [o.id]: !p[o.id] }));
+
+                        return (
+                          <div className="space-y-1.5">
+                            <div className="flex items-start justify-between gap-2">
+                              <div
+                                className="flex flex-wrap items-center gap-y-1"
+                                onMouseLeave={() =>
+                                  setHoveredStep((prev) => (prev?.orderId === o.id ? null : prev))
+                                }
+                              >
+                                {o.steps.map((s, idx) => {
+                                  const v = stepVisual(s, o.steps);
+                                  const prevDone = idx > 0 && isDoneStatus(o.steps[idx - 1].status);
+                                  const isHovered = hoveredStep?.orderId === o.id && hoveredStep.stepId === s.id;
+                                  return (
+                                    <React.Fragment key={s.id}>
+                                      {idx > 0 && (
+                                        <span
+                                          aria-hidden="true"
+                                          className={`w-2 h-0.5 shrink-0 ${
+                                            prevDone ? "bg-emerald-500" : "bg-slate-200 dark:bg-slate-700"
+                                          }`}
+                                        />
+                                      )}
+                                      <button
+                                        type="button"
+                                        onMouseEnter={() => setHoveredStep({ orderId: o.id, stepId: s.id })}
+                                        onFocus={() => setHoveredStep({ orderId: o.id, stepId: s.id })}
+                                        onClick={toggleExpandSteps}
+                                        title={`Bước #${s.seq}: ${s.step_name}\nTrạng thái: ${v.label}\nNhân viên: ${s.assigned_to_name ?? "Chưa phân công"}${
+                                          s.is_qc
+                                            ? `\nQA phụ trách: ${s.qa_assignee_name ?? o.qa_assignee_name ?? "Chưa phân công"}`
+                                            : ""
+                                        }`}
+                                        className={`h-6 px-1.5 rounded-md border text-[10px] font-mono font-bold inline-flex items-center gap-0.5 transition-all cursor-pointer shrink-0 ${v.cls} ${
+                                          current?.id === s.id
+                                            ? "ring-2 ring-sky-600 ring-offset-1 dark:ring-offset-slate-900"
+                                            : ""
+                                        } ${isHovered ? "ring-1 ring-slate-400" : ""}`}
+                                      >
+                                        {v.icon && <span>{v.icon}</span>}
+                                        <span>{s.seq}</span>
+                                      </button>
+                                    </React.Fragment>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex items-center gap-1.5 shrink-0 pt-0.5">
+                                <span className="font-mono font-bold text-[11px] text-slate-700 dark:text-slate-200">
+                                  {done}/{total} ({pct}%)
                                 </span>
-                              );
-                            })}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="relative flex-1 h-2 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
-                              <div className="h-full bg-emerald-600" style={{ width: `${pct}%` }} />
+                                <button
+                                  type="button"
+                                  onClick={toggleExpandSteps}
+                                  title={
+                                    isStepsExpanded ? "Thu gọn danh sách công đoạn" : "Xem đầy đủ tên các bước công đoạn"
+                                  }
+                                  className="px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-[10px] font-semibold text-slate-600 dark:text-slate-300 cursor-pointer"
+                                >
+                                  {isStepsExpanded ? "Ẩn ▴" : "Chi tiết ▾"}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="relative h-1.5 rounded-full bg-slate-200 dark:bg-slate-700 overflow-hidden">
+                              <div className="h-full bg-emerald-600 transition-all" style={{ width: `${pct}%` }} />
                               {expectedPct != null && o.status !== "COMPLETED" && (
                                 <div
                                   title={`Tiến độ kỳ vọng theo thời gian kế hoạch: ${expectedPct}%`}
@@ -450,23 +537,77 @@ export function ProductionPlanView({
                                 />
                               )}
                             </div>
-                            <span className="font-mono font-semibold">
-                              {done}/{total} ({pct}%)
-                            </span>
+
+                            {hoveredStepObj ? (
+                              <div
+                                className="text-[11px] text-sky-800 dark:text-sky-300 truncate"
+                                title={`Bước #${hoveredStepObj.seq}: ${hoveredStepObj.step_name}`}
+                              >
+                                🔎 <b>Bước #{hoveredStepObj.seq}:</b> {hoveredStepObj.step_name}{" "}
+                                <span className="text-slate-500 dark:text-slate-400">
+                                  ({stepVisual(hoveredStepObj, o.steps).label})
+                                </span>
+                              </div>
+                            ) : current ? (
+                              <div
+                                className="text-[11px] text-slate-600 dark:text-slate-300 truncate"
+                                title={`Đang ở Bước #${current.seq}: ${current.step_name}${current.assigned_to_name ? ` — ${current.assigned_to_name}` : ""}`}
+                              >
+                                ▶ Đang ở <b>#{current.seq}:</b> {current.step_name}
+                                {current.assigned_to_name ? ` — ${current.assigned_to_name}` : ""}
+                              </div>
+                            ) : (
+                              <div className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                                ✅ Đã hoàn tất {total}/{total} công đoạn
+                              </div>
+                            )}
+
+                            {behind && (
+                              <div className="text-[11px] font-bold text-rose-700">
+                                ⚠️ Chậm tiến độ: thực tế {pct}% so với kỳ vọng {expectedPct}%
+                              </div>
+                            )}
+
+                            {isStepsExpanded && (
+                              <div className="mt-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/50 p-1.5 space-y-1">
+                                {o.steps.map((s) => {
+                                  const v = stepVisual(s, o.steps);
+                                  const assignee = s.is_qc
+                                    ? s.qa_assignee_name ?? o.qa_assignee_name
+                                    : s.assigned_to_name;
+                                  return (
+                                    <div
+                                      key={s.id}
+                                      className={`flex items-start justify-between gap-2 text-[11px] px-1.5 py-1 rounded ${
+                                        current?.id === s.id ? "bg-sky-50/80 dark:bg-sky-950/30" : ""
+                                      }`}
+                                    >
+                                      <div className="flex items-start gap-1.5 min-w-0">
+                                        <span
+                                          className={`px-1.5 py-0.5 rounded border font-mono text-[10px] font-bold shrink-0 ${v.cls}`}
+                                        >
+                                          {v.icon}#{s.seq}
+                                        </span>
+                                        <span className="font-medium text-slate-800 dark:text-slate-200 break-words">
+                                          {s.step_name}
+                                        </span>
+                                      </div>
+                                      <div className="text-[10px] text-right shrink-0 text-slate-500 dark:text-slate-400">
+                                        <div>{v.label}</div>
+                                        {assignee && (
+                                          <div className="text-slate-400 dark:text-slate-500 truncate max-w-[140px]">
+                                            {assignee}
+                                          </div>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
                           </div>
-                          {current && (
-                            <div className="text-[11px] text-slate-600 dark:text-slate-300">
-                              ▶ Đang ở: <b>Bước #{current.seq} {current.step_name}</b>
-                              {current.assigned_to_name && ` — ${current.assigned_to_name}`}
-                            </div>
-                          )}
-                          {behind && (
-                            <div className="text-[11px] font-bold text-rose-700">
-                              ⚠️ Chậm tiến độ: thực tế {pct}% so với kỳ vọng {expectedPct}%
-                            </div>
-                          )}
-                        </div>
-                      )}
+                        );
+                      })()}
                     </td>
                     <td className="px-3 py-2 text-xs align-top">
                       <div className="flex flex-col gap-1">
@@ -537,13 +678,17 @@ export function ProductionPlanView({
           </Table>
         )}
         <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-slate-500">
-          <Legend cls="bg-emerald-500" label="Đã hoàn tất" />
+          <Legend cls="bg-emerald-500" label="✓ Đã hoàn tất" />
           <Legend cls="bg-sky-500" label="Đang thực hiện / Chờ ký kiểm tra chéo" />
           <Legend cls="bg-amber-400" label="🛡️ Bước QC xen kẽ chờ QC xác nhận thông qua" />
-          <Legend cls="bg-rose-500" label="Lỗi / QC từ chối" />
-          <Legend cls="bg-slate-300" label="🔒 Đang khóa chờ QC / Chưa bắt đầu" />
+          <Legend cls="bg-amber-50 border border-amber-300" label="🛡️ Cổng QC (chưa đến lượt)" />
+          <Legend cls="bg-rose-500" label="✕ Lỗi / QC từ chối" />
+          <Legend cls="bg-slate-200 border border-slate-300" label="🔒 Đang khóa chờ QC / Chưa bắt đầu" />
           <span className="flex items-center gap-1">
             <span className="inline-block w-0.5 h-3 bg-rose-600" /> Vạch đỏ = tiến độ kỳ vọng theo kế hoạch
+          </span>
+          <span className="text-slate-400 dark:text-slate-500">
+            · Rê chuột lên số bước để xem nhanh, bấm &ldquo;Chi tiết ▾&rdquo; để mở đầy đủ
           </span>
         </div>
       </Card>

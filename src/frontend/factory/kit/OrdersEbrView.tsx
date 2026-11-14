@@ -29,6 +29,18 @@ const SHIFT_LABELS: Record<string, string> = {
 
 const PRESET_OPERATORS: string[] = [];
 
+function isStepActivelyWaitingQc(s: any, allSteps: any[]): boolean {
+  if (!s.is_qc || s.qc_gate_status !== "WAITING_QC" || s.status === "DONE" || s.status === "SKIPPED") {
+    return false;
+  }
+  if (s.status !== "PENDING") return true;
+  if (s.order_status === "DRAFT") return false;
+  const hasIncompletePrev = allSteps.some(
+    (p) => p.order_id === s.order_id && p.seq < s.seq && p.status !== "DONE" && p.status !== "SKIPPED"
+  );
+  return !hasIncompletePrev;
+}
+
 function buildScannableQrSvg(payload: string): string {
   try {
     const qr = QRCode.create(payload || "ABT-KIT", { errorCorrectionLevel: "M" });
@@ -861,7 +873,7 @@ export function OrdersEbrView({
     }
   };
 
-  const waitingQcCount = dailySteps.filter((s) => s.is_qc && s.qc_gate_status === "WAITING_QC" && s.status !== "DONE").length;
+  const waitingQcCount = dailySteps.filter((s) => isStepActivelyWaitingQc(s, dailySteps)).length;
   const inProgressCount = dailySteps.filter((s) => s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK").length;
 
   return (
@@ -2759,7 +2771,7 @@ function DailyOperatorTrackerSection({
   const totalSteps = dailySteps.length;
   const doneSteps = dailySteps.filter((s) => s.status === "DONE" || s.status === "SKIPPED").length;
   const inProgressSteps = dailySteps.filter((s) => s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK").length;
-  const waitingQcSteps = dailySteps.filter((s) => s.is_qc && s.qc_gate_status !== "PASSED").length;
+  const waitingQcSteps = dailySteps.filter((s) => isStepActivelyWaitingQc(s, dailySteps)).length;
 
   // Tổng hợp năng suất theo từng nhân viên
   const operatorStatsMap = new Map<
@@ -2779,14 +2791,14 @@ function DailyOperatorTrackerSection({
     cur.total += 1;
     if (s.status === "DONE" || s.status === "SKIPPED") cur.done += 1;
     else if (s.status === "IN_PROGRESS" || s.status === "AWAITING_CHECK") cur.inProgress += 1;
-    if (s.is_qc && s.qc_gate_status !== "PASSED") cur.waitingQc += 1;
+    if (isStepActivelyWaitingQc(s, dailySteps)) cur.waitingQc += 1;
     operatorStatsMap.set(name, cur);
   }
   const operatorStats = Array.from(operatorStatsMap.values());
 
   const filteredSteps = dailySteps.filter((s) => {
     if (dailyShiftFilter !== "ALL" && (s.shift_code || "CA_SANG") !== dailyShiftFilter) return false;
-    if (dailyStatusFilter === "WAITING_QC" && !(s.is_qc && s.qc_gate_status !== "PASSED")) return false;
+    if (dailyStatusFilter === "WAITING_QC" && !isStepActivelyWaitingQc(s, dailySteps)) return false;
     if (dailyStatusFilter === "IN_PROGRESS" && !["IN_PROGRESS", "AWAITING_CHECK"].includes(s.status)) return false;
     if (dailyStatusFilter === "DONE" && !["DONE", "SKIPPED"].includes(s.status)) return false;
     if (dailySearch.trim()) {
