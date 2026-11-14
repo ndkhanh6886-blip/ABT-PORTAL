@@ -42,6 +42,12 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
   const [bomStatusFilter, setBomStatusFilter] = useState("");
   const [bomTypeTab, setBomTypeTab] = useState<"ALL" | "finished_good" | "semi_finished">("ALL");
   const [bomCategoryFilter, setBomCategoryFilter] = useState<string>("");
+  const [bomPage, setBomPage] = useState<number>(1);
+  const [bomPageSize, setBomPageSize] = useState<number>(15);
+  const [rtPage, setRtPage] = useState<number>(1);
+  const [rtPageSize, setRtPageSize] = useState<number>(15);
+  const bomDetailRef = useRef<HTMLDivElement>(null);
+  const rtDetailRef = useRef<HTMLDivElement>(null);
   const labelPreviewRef = useRef<HTMLDivElement>(null);
   const [lineSearch, setLineSearch] = useState("");
   const [lineBoxFilter, setLineBoxFilter] = useState("");
@@ -224,19 +230,17 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
       const qs = new URLSearchParams();
       if (bomSearch.trim()) qs.set("q", bomSearch.trim());
       if (bomStatusFilter) qs.set("status", bomStatusFilter);
-      qs.set("limit", "200");
+      qs.set("limit", "2000");
       const [bRes, rRes] = await Promise.all([
         api<{ boms: any[] }>(`/api/factory/kit/boms?${qs.toString()}`),
         api<{ routings: any[] }>(`/api/factory/kit/routings?${qs.toString()}`),
       ]);
       setBoms(bRes.boms);
       setRoutings(rRes.routings);
-      if (!selectedBomId && bRes.boms[0]?.id) setSelectedBomId(bRes.boms[0].id);
-      if (!selectedRoutingId && rRes.routings[0]?.id) setSelectedRoutingId(rRes.routings[0].id);
     } catch (e) {
       setError(e);
     }
-  }, [selectedBomId, selectedRoutingId, bomSearch, bomStatusFilter]);
+  }, [bomSearch, bomStatusFilter]);
 
   const loadBomDetail = useCallback(async (id: string, q?: string, boxNo?: string) => {
     if (!id) return;
@@ -1235,7 +1239,10 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                 <div className="grid grid-cols-3 gap-1.5 p-1 rounded-xl bg-slate-100 dark:bg-slate-900/90 border border-slate-200 dark:border-slate-800">
                   <button
                     type="button"
-                    onClick={() => setBomTypeTab("finished_good")}
+                    onClick={() => {
+                      setBomTypeTab("finished_good");
+                      setBomPage(1);
+                    }}
                     className={`px-2.5 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
                       bomTypeTab === "finished_good"
                         ? "bg-sky-600 text-white shadow"
@@ -1249,7 +1256,10 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                   </button>
                   <button
                     type="button"
-                    onClick={() => setBomTypeTab("semi_finished")}
+                    onClick={() => {
+                      setBomTypeTab("semi_finished");
+                      setBomPage(1);
+                    }}
                     className={`px-2.5 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
                       bomTypeTab === "semi_finished"
                         ? "bg-amber-600 text-white shadow"
@@ -1263,7 +1273,10 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                   </button>
                   <button
                     type="button"
-                    onClick={() => setBomTypeTab("ALL")}
+                    onClick={() => {
+                      setBomTypeTab("ALL");
+                      setBomPage(1);
+                    }}
                     className={`px-2.5 py-2 rounded-lg text-xs font-bold transition flex items-center justify-center gap-1.5 ${
                       bomTypeTab === "ALL"
                         ? "bg-slate-700 text-white shadow"
@@ -1285,7 +1298,10 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                     <button
                       key={cat.k}
                       type="button"
-                      onClick={() => setBomCategoryFilter(cat.k)}
+                      onClick={() => {
+                        setBomCategoryFilter(cat.k);
+                        setBomPage(1);
+                      }}
                       className={`px-2.5 py-1 rounded-full font-semibold border transition ${
                         bomCategoryFilter === cat.k
                           ? "bg-sky-500/20 border-sky-500 text-sky-300"
@@ -1644,23 +1660,44 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                 </form>
               )}
 
-              <div className="flex gap-2 mb-3">
+              <div className="flex flex-wrap items-center gap-2 mb-3">
                 <input
-                  className={inputClass}
+                  className={`${inputClass} flex-1 min-w-[200px]`}
                   placeholder="Tìm mã BOM, tên công thức, mã SP, số TCCS, người phụ trách..."
                   value={bomSearch}
-                  onChange={(e) => setBomSearch(e.target.value)}
+                  onChange={(e) => {
+                    setBomSearch(e.target.value);
+                    setBomPage(1);
+                  }}
                 />
                 <select
-                  className={`${inputClass} w-36`}
+                  className={`${inputClass} w-40`}
                   value={bomStatusFilter}
-                  onChange={(e) => setBomStatusFilter(e.target.value)}
+                  onChange={(e) => {
+                    setBomStatusFilter(e.target.value);
+                    setBomPage(1);
+                  }}
                 >
                   <option value="">Mọi trạng thái</option>
                   <option value="EFFECTIVE">Đang hiệu lực (EFFECTIVE)</option>
                   <option value="DRAFT">Bản nháp (DRAFT)</option>
                   <option value="PENDING_REVIEW">Chờ thẩm định (PENDING_REVIEW)</option>
                   <option value="OBSOLETE">Ngừng hiệu lực (OBSOLETE)</option>
+                </select>
+                <select
+                  className={`${inputClass} w-28`}
+                  value={bomPageSize}
+                  onChange={(e) => {
+                    setBomPageSize(Number(e.target.value) || 15);
+                    setBomPage(1);
+                  }}
+                  title="Số dòng hiển thị trên mỗi trang"
+                >
+                  <option value={10}>10 dòng/trang</option>
+                  <option value={15}>15 dòng/trang</option>
+                  <option value={30}>30 dòng/trang</option>
+                  <option value={50}>50 dòng/trang</option>
+                  <option value={100}>100 dòng/trang</option>
                 </select>
               </div>
               {(() => {
@@ -1677,91 +1714,157 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
                     </Empty>
                   );
                 }
+                const totalPages = Math.max(1, Math.ceil(filteredBoms.length / bomPageSize));
+                const safePage = Math.min(Math.max(1, bomPage), totalPages);
+                const startIdx = (safePage - 1) * bomPageSize;
+                const pagedBoms = filteredBoms.slice(startIdx, startIdx + bomPageSize);
+
                 return (
-                  <Table head={["Mã BOM", "Phân loại Nhóm Kit", "Sản phẩm & Truy xuất tự động", "Ver", "Số dòng", "Trạng thái"]}>
-                    {filteredBoms.map((b) => {
-                      const isSemi = (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
-                      const isPcr = !isSemi && (b.bom_category || "PCR Kit") === "PCR Kit";
-                      return (
-                        <tr
-                          key={b.id}
-                          onClick={() => setSelectedBomId(b.id)}
-                          className={`cursor-pointer hover:bg-sky-500/10 ${selectedBomId === b.id ? "bg-sky-500/15" : ""}`}
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
+                      <div>
+                        Hiển thị <b>{startIdx + 1}–{Math.min(startIdx + bomPageSize, filteredBoms.length)}</b> / <b>{filteredBoms.length}</b> công thức{" "}
+                        <span className="text-slate-400">· Click vào dòng bất kỳ để xem chi tiết</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={safePage <= 1}
+                          onClick={() => setBomPage(1)}
+                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-200/60 dark:hover:bg-slate-800 font-semibold cursor-pointer"
                         >
-                          <td className="px-3 py-2 text-xs">
-                            <div className="font-mono font-bold text-sky-400">{b.code}</div>
-                            <span
-                              className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                isSemi ? "bg-amber-500/20 text-amber-300" : "bg-emerald-500/20 text-emerald-300"
-                              }`}
-                            >
-                              {isSemi ? "🧪 Bán thành phẩm" : "📦 Thành phẩm"}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-xs">
-                            {isSemi ? (
-                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 border border-amber-500/40 text-amber-300">
-                                ⚗️ Bán TP ({b.bom_category || "Mix/Buffer"})
-                              </span>
-                            ) : isPcr ? (
-                              <div className="space-y-0.5">
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/25 border border-indigo-400/50 text-indigo-200">
+                          « Đầu
+                        </button>
+                        <button
+                          type="button"
+                          disabled={safePage <= 1}
+                          onClick={() => setBomPage((p) => Math.max(1, p - 1))}
+                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-200/60 dark:hover:bg-slate-800 font-semibold cursor-pointer"
+                        >
+                          ‹ Trước
+                        </button>
+                        <span className="px-2 font-bold text-sky-700 dark:text-sky-300">
+                          Trang {safePage} / {totalPages}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={safePage >= totalPages}
+                          onClick={() => setBomPage((p) => Math.min(totalPages, p + 1))}
+                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-200/60 dark:hover:bg-slate-800 font-semibold cursor-pointer"
+                        >
+                          Sau ›
+                        </button>
+                        <button
+                          type="button"
+                          disabled={safePage >= totalPages}
+                          onClick={() => setBomPage(totalPages)}
+                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-200/60 dark:hover:bg-slate-800 font-semibold cursor-pointer"
+                        >
+                          Cuối »
+                        </button>
+                      </div>
+                    </div>
+
+                    <Table head={["Mã SP / BOM", "Tên sản phẩm & Quy cách", "Phân loại", "Số NVL", "Trạng thái", ""]}>
+                      {pagedBoms.map((b) => {
+                        const isSemi = (b.bom_type || (b.product_type === "SEMI_FINISHED" ? "semi_finished" : "finished_good")) === "semi_finished";
+                        const isPcr = !isSemi && (b.bom_category || "PCR Kit") === "PCR Kit";
+                        const isSelected = selectedBomId === b.id;
+                        const variantLabel = b.variant_code && b.variant_code !== "BASE" ? b.variant_code : null;
+                        return (
+                          <tr
+                            key={b.id}
+                            onClick={() => {
+                              setSelectedBomId(b.id);
+                              setTimeout(() => {
+                                bomDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                              }, 80);
+                            }}
+                            className={`cursor-pointer transition-colors hover:bg-sky-500/10 ${
+                              isSelected ? "bg-sky-500/15 ring-1 ring-inset ring-sky-500/40" : ""
+                            }`}
+                          >
+                            <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                              <div className="flex items-center gap-1">
+                                <span className="font-mono font-bold text-slate-900 dark:text-slate-100">{b.product_code}</span>
+                                {variantLabel && (
+                                  <span className="px-1.5 py-0.2 rounded bg-indigo-500/20 border border-indigo-400/40 text-indigo-300 font-mono text-[10px] font-bold">
+                                    .{variantLabel}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="font-mono text-[10px] text-sky-600 dark:text-sky-400">
+                                {b.code} · v{b.bom_version}
+                              </div>
+                            </td>
+                            <td className="px-2.5 py-2 text-xs max-w-[260px]">
+                              <div className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={b.name}>
+                                {b.product_name || b.name}
+                              </div>
+                              <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                                {b.specification || (isSemi ? `Lô ${b.base_qty ?? 1} ${b.base_uom ?? "mL"}` : `Hộp ${b.tests_per_kit || 50} test`)}
+                              </div>
+                            </td>
+                            <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                              {isSemi ? (
+                                <span className="inline-block whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/15 border border-amber-500/40 text-amber-700 dark:text-amber-300">
+                                  🧪 Bán TP
+                                </span>
+                              ) : isPcr ? (
+                                <span className="inline-block whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 border border-indigo-400/50 text-indigo-700 dark:text-indigo-200">
                                   🧬 Kit PCR
                                 </span>
-                                <div className="text-[10px] text-indigo-300 font-mono">
-                                  Áp dụng Lot .C/.IC/.Tube
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="space-y-0.5">
-                                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/20 border border-teal-400/40 text-teal-200">
-                                  🧪 Tách chiết / Khác
+                              ) : (
+                                <span className="inline-block whitespace-nowrap px-2 py-0.5 rounded-full text-[10px] font-bold bg-teal-500/15 border border-teal-400/40 text-teal-700 dark:text-teal-200">
+                                  🧪 Tách chiết
                                 </span>
-                                <div className="text-[10px] text-slate-400">
-                                  Định mức chuẩn
-                                </div>
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-xs">
-                            <div className="font-bold text-slate-100 flex flex-wrap items-center gap-1">
-                              <span>{b.product_code}</span>
-                              <span className="px-1.5 py-0.2 rounded bg-indigo-500/25 border border-indigo-400/40 text-indigo-200 font-mono text-[10px]">
-                                Mã con: {b.variant_code || "BASE"}
+                              )}
+                            </td>
+                            <td className="px-2.5 py-2 text-xs font-mono font-semibold text-center whitespace-nowrap">
+                              {b.line_count ?? 0}
+                            </td>
+                            <td className="px-2.5 py-2 whitespace-nowrap">
+                              <StatusBadge status={b.status} />
+                            </td>
+                            <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border transition ${
+                                  isSelected
+                                    ? "bg-sky-600 text-white border-sky-500"
+                                    : "bg-sky-500/10 text-sky-600 dark:text-sky-300 border-sky-500/30 hover:bg-sky-500/20"
+                                }`}
+                              >
+                                {isSelected ? "Đang xem" : "Chi tiết →"}
                               </span>
-                              {b.parent_item_code && (
-                                <span className="px-1.5 py-0.2 rounded bg-purple-500/20 text-purple-300 font-mono text-[10px]">
-                                  Mã chính: {b.parent_item_code}
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-slate-400 line-clamp-1">{b.name}</div>
-                            <div className="flex flex-wrap gap-2 mt-1 text-[10px] text-slate-300">
-                              {b.supply_form && ABT_KIT_SUPPLY_FORMS[b.supply_form] && (
-                                <span className="text-amber-300 font-semibold">
-                                  🧬 {ABT_KIT_SUPPLY_FORMS[b.supply_form].short_label} ({ABT_KIT_SUPPLY_FORMS[b.supply_form].mix_tests_per_kit}T/{ABT_KIT_SUPPLY_FORMS[b.supply_form].pcr_tubes_per_kit} tube)
-                                </span>
-                              )}
-                              {b.tccs_code && <span className="font-mono text-sky-300">📜 {b.tccs_code}</span>}
-                              {b.responsible_person_name && <span>👤 {b.responsible_person_name}</span>}
-                            </div>
-                          </td>
-                          <td className="px-3 py-2 text-xs font-mono">v{b.bom_version}</td>
-                          <td className="px-3 py-2 text-xs font-mono">{b.line_count ?? 0}</td>
-                          <td className="px-3 py-2">
-                            <StatusBadge status={b.status} />
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </Table>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Table>
+
+                    {totalPages > 1 && (
+                      <div className="flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-slate-500 dark:text-slate-400">
+                        <span>
+                          Trang <b>{safePage}</b> / <b>{totalPages}</b> ({filteredBoms.length} công thức)
+                        </span>
+                        <div className="flex items-center gap-1">
+                          <Button variant="ghost" disabled={safePage <= 1} onClick={() => setBomPage((p) => Math.max(1, p - 1))}>
+                            ‹ Trang trước
+                          </Button>
+                          <Button variant="ghost" disabled={safePage >= totalPages} onClick={() => setBomPage((p) => Math.min(totalPages, p + 1))}>
+                            Trang sau ›
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 );
               })()}
             </Card>
           </div>
 
           {bomDetail && (
-            <div className="lg:col-span-7 space-y-4">
+            <div ref={bomDetailRef} className="lg:col-span-7 space-y-4">
               <Card
                 title={`${bomDetail.bom.code} (v${bomDetail.bom.bom_version}) — ${bomDetail.bom.product_code} ${bomDetail.bom.product_name}`}
                 actions={
@@ -3524,35 +3627,110 @@ export function BomRoutingView({ options, onRefreshOptions }: { options: KitOpti
 
               {routings.length === 0 ? (
                 <Empty>Chưa có quy trình công đoạn nào. Nhấn &ldquo;+ Tạo quy trình Routing nhiều bước&rdquo; ở góc phải trên để khởi tạo.</Empty>
-              ) : (
-                <Table head={["Mã Routing", "Sản phẩm", "Ver", "Số bước", "Trạng thái"]}>
-                  {routings.map((r) => (
-                    <tr
-                      key={r.id}
-                      onClick={() => setSelectedRoutingId(r.id)}
-                      className={`cursor-pointer transition-colors hover:bg-sky-50/80 dark:hover:bg-sky-950/40 ${
-                        selectedRoutingId === r.id ? "bg-sky-100/80 dark:bg-sky-900/50" : ""
-                      }`}
-                    >
-                      <td className="px-3 py-2 font-mono text-xs font-bold text-sky-700 dark:text-sky-300">{r.code}</td>
-                      <td className="px-3 py-2 text-xs">
-                        <div className="font-semibold text-slate-800 dark:text-slate-100">{r.product_code}</div>
-                        <div className="text-slate-500 dark:text-slate-400">{r.name}</div>
-                      </td>
-                      <td className="px-3 py-2 text-xs font-mono text-slate-700 dark:text-slate-200">v{r.routing_version}</td>
-                      <td className="px-3 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200">{r.step_count} bước</td>
-                      <td className="px-3 py-2">
-                        <StatusBadge status={r.status} />
-                      </td>
-                    </tr>
-                  ))}
-                </Table>
-              )}
+              ) : (() => {
+                const totalRtPages = Math.max(1, Math.ceil(routings.length / rtPageSize));
+                const safeRtPage = Math.min(Math.max(1, rtPage), totalRtPages);
+                const rtStart = (safeRtPage - 1) * rtPageSize;
+                const pagedRoutings = routings.slice(rtStart, rtStart + rtPageSize);
+                return (
+                  <div className="space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 text-[11px] text-slate-600 dark:text-slate-300">
+                      <div>
+                        Hiển thị <b>{rtStart + 1}–{Math.min(rtStart + rtPageSize, routings.length)}</b> / <b>{routings.length}</b> quy trình{" "}
+                        <span className="text-slate-400">· Click dòng bất kỳ để xem chi tiết</span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <select
+                          className="rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[11px]"
+                          value={rtPageSize}
+                          onChange={(e) => {
+                            setRtPageSize(Number(e.target.value) || 15);
+                            setRtPage(1);
+                          }}
+                        >
+                          <option value={10}>10/trang</option>
+                          <option value={15}>15/trang</option>
+                          <option value={30}>30/trang</option>
+                          <option value={50}>50/trang</option>
+                        </select>
+                        <button
+                          type="button"
+                          disabled={safeRtPage <= 1}
+                          onClick={() => setRtPage((p) => Math.max(1, p - 1))}
+                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-200/60 dark:hover:bg-slate-800 font-semibold cursor-pointer"
+                        >
+                          ‹ Trước
+                        </button>
+                        <span className="px-1.5 font-bold text-sky-700 dark:text-sky-300">
+                          {safeRtPage}/{totalRtPages}
+                        </span>
+                        <button
+                          type="button"
+                          disabled={safeRtPage >= totalRtPages}
+                          onClick={() => setRtPage((p) => Math.min(totalRtPages, p + 1))}
+                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 disabled:opacity-40 hover:bg-slate-200/60 dark:hover:bg-slate-800 font-semibold cursor-pointer"
+                        >
+                          Sau ›
+                        </button>
+                      </div>
+                    </div>
+
+                    <Table head={["Mã SP / Routing", "Tên quy trình", "Số bước", "Trạng thái", ""]}>
+                      {pagedRoutings.map((r) => {
+                        const isSelected = selectedRoutingId === r.id;
+                        return (
+                          <tr
+                            key={r.id}
+                            onClick={() => {
+                              setSelectedRoutingId(r.id);
+                              setTimeout(() => {
+                                rtDetailRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                              }, 80);
+                            }}
+                            className={`cursor-pointer transition-colors hover:bg-sky-500/10 ${
+                              isSelected ? "bg-sky-500/15 ring-1 ring-inset ring-sky-500/40" : ""
+                            }`}
+                          >
+                            <td className="px-2.5 py-2 text-xs whitespace-nowrap">
+                              <div className="font-mono font-bold text-slate-900 dark:text-slate-100">{r.product_code}</div>
+                              <div className="font-mono text-[10px] text-sky-600 dark:text-sky-400">
+                                {r.code} · v{r.routing_version}
+                              </div>
+                            </td>
+                            <td className="px-2.5 py-2 text-xs max-w-[260px]">
+                              <div className="font-semibold text-slate-800 dark:text-slate-100 truncate" title={r.name}>
+                                {r.name}
+                              </div>
+                            </td>
+                            <td className="px-2.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 whitespace-nowrap">
+                              {r.step_count} bước
+                            </td>
+                            <td className="px-2.5 py-2 whitespace-nowrap">
+                              <StatusBadge status={r.status} />
+                            </td>
+                            <td className="px-2.5 py-2 text-right whitespace-nowrap">
+                              <span
+                                className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-bold border transition ${
+                                  isSelected
+                                    ? "bg-sky-600 text-white border-sky-500"
+                                    : "bg-sky-500/10 text-sky-600 dark:text-sky-300 border-sky-500/30 hover:bg-sky-500/20"
+                                }`}
+                              >
+                                {isSelected ? "Đang xem" : "Chi tiết →"}
+                              </span>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </Table>
+                  </div>
+                );
+              })()}
             </Card>
           </div>
 
           {routingDetail && !showCreateRouting && (
-            <div className="lg:col-span-7 space-y-4">
+            <div ref={rtDetailRef} className="lg:col-span-7 space-y-4">
               <Card
                 title={`${routingDetail.routing.code} (v${routingDetail.routing.routing_version}) — ${routingDetail.routing.name}`}
                 actions={

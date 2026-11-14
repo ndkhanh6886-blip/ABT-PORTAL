@@ -194,7 +194,7 @@ export function StatusBadge({ status, label }: { status: string; label?: string 
   return (
     <span
       title={`Trạng thái: ${vnLabel} (Mã gốc: ${status})`}
-      className={`inline-block px-2 py-0.5 rounded-full border text-[11px] font-bold ${STATUS_STYLE[status] ?? STATUS_STYLE.EXPIRED}`}
+      className={`inline-block whitespace-nowrap px-2 py-0.5 rounded-full border text-[11px] font-bold ${STATUS_STYLE[status] ?? STATUS_STYLE.EXPIRED}`}
     >
       {vnLabel}
     </span>
