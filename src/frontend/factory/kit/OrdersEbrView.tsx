@@ -1677,6 +1677,20 @@ export function OrdersEbrView({
                   </div>
                 )}
 
+                {(detail.uom_warnings || []).length > 0 && (
+                  <div className="mb-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs text-rose-900 dark:border-rose-800/70 dark:bg-rose-950/50 dark:text-rose-200 space-y-1">
+                    <div className="font-bold">⚠️ Phát hiện nguyên vật liệu trong BOM chưa khớp Đơn vị tính gốc trong Kho (cần xử lý trước khi Xác nhận / Phát hành lệnh):</div>
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      {(detail.uom_warnings as string[]).map((w, i) => (
+                        <li key={i}>{w}</li>
+                      ))}
+                    </ul>
+                    <div className="text-[11px] text-rose-800 dark:text-rose-300">
+                      Hướng xử lý nhanh: Vào tab <b>Kho Nhà Máy → 4. Danh mục vật tư</b> để sửa ĐVT gốc của vật tư (VD từ <code className="font-mono">-</code> sang <code className="font-mono">µL</code> / <code className="font-mono">mL</code> / <code className="font-mono">tube</code>) hoặc thêm quy tắc trong <b>⚖️ Bảng Quy đổi ĐVT</b>.
+                    </div>
+                  </div>
+                )}
+
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <ActionBar
                     endpoint={`/api/factory/kit/orders/${detail.order.id}/actions`}
@@ -1890,6 +1904,7 @@ export function OrdersEbrView({
                           <td className="px-3 py-1.5 text-xs font-mono font-bold text-sky-800">
                             {fmtQty(eb.required_qty)} {eb.uom}
                             {eb.is_bundled && " (Đi kèm)"}
+                            {eb.uom_error && <div className="text-[11px] font-sans font-normal text-rose-600">{eb.uom_error}</div>}
                           </td>
                         </tr>
                       ))}

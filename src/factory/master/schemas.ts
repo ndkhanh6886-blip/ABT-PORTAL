@@ -39,11 +39,15 @@ export const itemFields = {
 
 export const createItemSchema = z.object({ code: code.optional(), ...itemFields });
 
-// base_uom and tracking are fixed once stock exists (checked in the service)
+// base_uom and tracking are fixed once stock exists unless repaired from placeholder '-' or explicitly rebased (checked in the service)
 export const updateItemSchema = z
   .object(itemFields)
   .partial()
-  .extend({ version: z.number().int().min(0), reason: optionalText });
+  .extend({
+    version: z.number().int().min(0),
+    reason: optionalText,
+    uom_change_mode: z.enum(["STRICT", "RELABEL_1_TO_1", "RESCALE_STOCK"]).optional(),
+  });
 
 export const createCategorySchema = z.object({ code, name, parent_id: z.string().uuid().optional().nullable() });
 
@@ -89,4 +93,5 @@ export const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   page_size: z.coerce.number().int().min(1).max(200).default(50),
   status: z.enum(["ACTIVE", "INACTIVE", "ALL"]).default("ACTIVE"),
+  missing_uom: z.enum(["0", "1", "true", "false"]).optional(),
 });

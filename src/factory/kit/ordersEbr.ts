@@ -158,6 +158,7 @@ export interface ExplodedBomLine {
   is_bundled: boolean;
   bundle_parent_code: string | null;
   allow_substitute: boolean;
+  uom_error?: string | null;
 }
 
 /**
@@ -197,7 +198,12 @@ function parseLotCodeToSupplyFormAndTube(lotCode: string | null | undefined): {
   return { baseLot, supplyForm, tubeCode };
 }
 
-export async function explodeKitBom(tx: Tx, order: ProductionOrderRow, bom: KitBomRow): Promise<ExplodedBomLine[]> {
+export async function explodeKitBom(
+  tx: Tx,
+  order: ProductionOrderRow,
+  bom: KitBomRow,
+  opts?: { lenientUom?: boolean }
+): Promise<ExplodedBomLine[]> {
   const prod = await getItem(tx, order.product_item_id);
   let lotCodeStr = String((order as any).lot_code || "").trim();
   if (!lotCodeStr && order.lot_id) {
@@ -367,7 +373,18 @@ export async function explodeKitBom(tx: Tx, order: ProductionOrderRow, bom: KitB
     const requiredQty = isDiscrete ? Math.ceil(rawQty - 1e-9) : Math.round(rawQty * 1e6) / 1e6;
 
     const compItem = await getItem(tx, compItemId);
-    const qtyBase = Math.round((await toBaseQty(tx, compItem, requiredQty, compUom)) * 1e6) / 1e6;
+    let qtyBase = 0;
+    let uomError: string | null = null;
+    try {
+      qtyBase = Math.round((await toBaseQty(tx, compItem, requiredQty, compUom)) * 1e6) / 1e6;
+    } catch (err: any) {
+      if (opts?.lenientUom && err?.code === "NO_UOM_CONVERSION") {
+        qtyBase = 0;
+        uomError = String(err.message || err);
+      } else {
+        throw err;
+      }
+    }
 
     result.push({
       bom_line_id: l.id,
@@ -389,6 +406,7 @@ export async function explodeKitBom(tx: Tx, order: ProductionOrderRow, bom: KitB
       is_bundled: Boolean(l.is_bundled),
       bundle_parent_code: l.bundle_parent_code ?? null,
       allow_substitute: Boolean(l.allow_substitute),
+      uom_error: uomError,
     });
   }
 
@@ -398,7 +416,18 @@ export async function explodeKitBom(tx: Tx, order: ProductionOrderRow, bom: KitB
     const effectiveOrderQty = plannedQty;
     const scale = effectiveOrderQty / baseQty;
     const requiredQty = Math.ceil(scale * unitNorm - 1e-9);
-    const qtyBase = Math.round((await toBaseQty(tx, selectedTubeItem, requiredQty, selectedTubeItem.base_uom)) * 1e6) / 1e6;
+    let qtyBase = 0;
+    let uomError: string | null = null;
+    try {
+      qtyBase = Math.round((await toBaseQty(tx, selectedTubeItem, requiredQty, selectedTubeItem.base_uom)) * 1e6) / 1e6;
+    } catch (err: any) {
+      if (opts?.lenientUom && err?.code === "NO_UOM_CONVERSION") {
+        qtyBase = 0;
+        uomError = String(err.message || err);
+      } else {
+        throw err;
+      }
+    }
     result.push({
       bom_line_id: `auto-tube-${selectedTubeItem.code}`,
       line_no: result.length + 1,
@@ -419,6 +448,7 @@ export async function explodeKitBom(tx: Tx, order: ProductionOrderRow, bom: KitB
       is_bundled: false,
       bundle_parent_code: null,
       allow_substitute: false,
+      uom_error: uomError,
     });
   }
 
@@ -3136,7 +3166,8 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
   ).rows;
 
   const bomObj = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0] as KitBomRow;
-  const exploded_bom = bomObj ? await explodeKitBom(tx, order, bomObj) : [];
+  const exploded_bom = bomObj ? await explodeKitBom(tx, order, bomObj, { lenientUom: true }) : [];
+  const uom_warnings = exploded_bom.filter((x) => x.uom_error).map((x) => x.uom_error as string);
 
   const coaRow = (
     await tx.query(
@@ -3163,5 +3194,5 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
   ).rows;
 
   const allowed_actions = await listAllowedActions(tx, productionOrderMachine, actor, order);
-  return { order, steps, consumptions, packaging, lot_splits, exploded_bom, coa, reworks, allowed_actions };
+  return { order, steps, consumptions, packaging, lot_splits, exploded_bom, uom_warnings, coa, reworks, allowed_actions };
 }

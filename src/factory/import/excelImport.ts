@@ -4,6 +4,7 @@ import { authorize, hasFactoryPermission, registerPermissions, type AuthzActor }
 import { nextNumber } from "../core/numbering";
 import { runTransition } from "../core/stateMachine";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
+import { isPlaceholderUom, normalizeUomAlias } from "../master/service";
 import { ensureKitBomRoutingAndIfuSchema } from "../kit/bomRouting";
 import { ensureQaOpsSchema } from "../qms/qaOps";
 import { ensureRdProjectOpsSchema } from "../rd/projectOps";
@@ -72,12 +73,18 @@ function normDate(v: unknown): string | null {
   return null;
 }
 
-async function ensureUomExists(tx: Tx, rawUom: string, uomCache?: Map<string, string>): Promise<string> {
-  const code = normStr(rawUom, "pcs").slice(0, 24) || "pcs";
+async function ensureUomExists(
+  tx: Tx,
+  rawUom: string,
+  uomCache?: Map<string, string>,
+  fallback = "pcs"
+): Promise<string> {
+  const effectiveRaw = isPlaceholderUom(rawUom) ? fallback : rawUom;
+  const code = normalizeUomAlias(effectiveRaw).slice(0, 12) || fallback;
   const key = code.toLowerCase();
   if (uomCache?.has(key)) return uomCache.get(key)!;
   const found = (
-    await tx.query("SELECT code FROM master.uom WHERE lower(code) = lower($1) LIMIT 1", [code])
+    await tx.query("SELECT code FROM master.uom WHERE lower(code) = lower($1) ORDER BY (code = $1) DESC LIMIT 1", [code])
   ).rows[0];
   if (found) {
     const resolved = found.code as string;
@@ -146,7 +153,8 @@ async function ensureItemByCode(
   uomCache?: Map<string, string>
 ): Promise<{ id: string; code: string; base_uom: string; tracking: string; created: boolean }> {
   const code = normCode(params.code);
-  const uom = await ensureUomExists(tx, params.base_uom || "pcs", uomCache);
+  const hasExplicitValidUom = Boolean(params.base_uom && !isPlaceholderUom(params.base_uom));
+  const uom = await ensureUomExists(tx, params.base_uom || "pcs", uomCache, "pcs");
   const itemType = mapItemType(params.item_type || "RAW_MATERIAL");
   const storage = mapStorageCondition(params.storage_condition || "RT");
   const existing = (
@@ -154,6 +162,8 @@ async function ensureItemByCode(
   ).rows[0];
 
   if (existing) {
+    const shouldHealUom = isPlaceholderUom(existing.base_uom) && hasExplicitValidUom;
+    const healedUom = shouldHealUom ? uom : (existing.base_uom as string);
     await tx.query(
       `UPDATE master.item
           SET name = COALESCE(NULLIF($2, ''), name),
@@ -161,12 +171,30 @@ async function ensureItemByCode(
               shelf_life_days = COALESCE($4, shelf_life_days),
               min_stock = COALESCE($5, min_stock),
               notes = COALESCE(NULLIF($6, ''), notes),
+              base_uom = CASE WHEN $8 THEN $9 ELSE base_uom END,
               updated_at = now(),
               updated_by = $7
         WHERE id = $1`,
-      [existing.id, params.name, storage, params.shelf_life_days && params.shelf_life_days > 0 ? params.shelf_life_days : null, Math.max(0, params.min_stock ?? 0), params.notes ?? null, actor.userId]
+      [
+        existing.id,
+        params.name,
+        storage,
+        params.shelf_life_days && params.shelf_life_days > 0 ? params.shelf_life_days : null,
+        Math.max(0, params.min_stock ?? 0),
+        params.notes ?? null,
+        actor.userId,
+        shouldHealUom,
+        uom,
+      ]
     );
-    return { id: existing.id, code: existing.code, base_uom: existing.base_uom, tracking: existing.tracking, created: false };
+    if (shouldHealUom && existing.base_uom !== uom) {
+      await tx.query("UPDATE inv.stock_document_line SET uom = $2 WHERE item_id = $1 AND uom = $3", [
+        existing.id,
+        uom,
+        existing.base_uom,
+      ]);
+    }
+    return { id: existing.id, code: existing.code, base_uom: healedUom, tracking: existing.tracking, created: false };
   }
 
   const inserted = (
@@ -389,7 +417,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
             code: itemCode,
             name: itemName,
             item_type: normStr(r.item_type || r["Phân loại"] || r["Loại hàng"], "RAW_MATERIAL"),
-            base_uom: normStr(r.base_uom || r["Đơn vị"], "pcs"),
+            base_uom: normStr(r.base_uom || r["Đơn vị"]),
             storage_condition: normStr(r.storage_condition || r["Bảo quản"], "RT"),
             shelf_life_days: normNum(r.shelf_life_days || r["Hạn dùng (ngày)"], 365),
             min_stock: normNum(r.min_stock || r["Tồn tối thiểu"] || r["Định mức (Min)"], 0),
@@ -925,7 +953,7 @@ export async function executeExcelBatchImport(tx: Tx, actor: AuthzActor, input: 
           if (!compCode || compCode.toUpperCase() === productCode.toUpperCase()) continue;
           const compName = normStr(l.component_name || l["Tên NVL thành phần"], compCode);
           const compUom = normStr(l.uom || l["Đơn vị"] || l["Đơn vị ND (*)"], "mL");
-          const compUomVerified = await ensureUomExists(tx, compUom, uomCache);
+          const compUomVerified = await ensureUomExists(tx, compUom, uomCache, "mL");
 
           const codeU = compCode.toUpperCase();
           const rawRole = normStr(l.component_role || l["Vai trò thành phần"]).toUpperCase();
