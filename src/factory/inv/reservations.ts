@@ -157,3 +157,8 @@ export async function reserveLot(
 export function releaseDemandLotReservations(tx: Tx, actor: AuthzActor, demandType: DemandType, demandId: string, lotId: string, reason: string): Promise<number> {
   return releaseWhere(tx, actor, "r.demand_entity_type = $1 AND r.demand_entity_id = $2 AND r.lot_id = $3", [demandType, demandId, lotId], reason);
 }
+
+/** Frees a single active reservation by its ID (e.g. when swapping a material lot on a production order). */
+export function releaseReservationById(tx: Tx, actor: AuthzActor, reservationId: string, reason: string): Promise<number> {
+  return releaseWhere(tx, actor, "r.id = $1", [reservationId], reason);
+}

@@ -145,6 +145,7 @@ export function OrdersEbrView({
   const [stepExpandOverrides, setStepExpandOverrides] = useState<Record<string, boolean>>({});
   const [expandAllSteps, setExpandAllSteps] = useState(false);
   const [editingAssignStepId, setEditingAssignStepId] = useState<string | null>(null);
+  const [lotSwapNotice, setLotSwapNotice] = useState<string | null>(null);
   const [reconciliationNote, setReconciliationNote] = useState("");
   const [qcForm, setQcForm] = useState({
     good_qty: "",
@@ -210,6 +211,7 @@ export function OrdersEbrView({
   useEffect(() => {
     setStepExpandOverrides({});
     setEditingAssignStepId(null);
+    setLotSwapNotice(null);
     if (selectedOrderId) loadDetail(selectedOrderId);
   }, [selectedOrderId, loadDetail]);
 
@@ -392,17 +394,28 @@ export function OrdersEbrView({
       const matchedCons = cons.filter(
         (c: any) => c.bom_line_id === item.bom_line_id || c.item_id === (item.component_item_id ?? item.item_id)
       );
+      const cands =
+        d.available_lots_by_bom_line?.[item.bom_line_id] ??
+        d.available_lots_by_item?.[item.component_item_id ?? item.item_id] ??
+        [];
+      const pref = d.preferred_lots?.[item.bom_line_id];
+      const prefCand = pref?.lot_id ? cands.find((x: any) => x.lot_id === pref.lot_id) : null;
+      const firstCand = cands[0] ?? null;
       const lotText =
         matchedCons.length > 0
           ? matchedCons
               .map(
                 (c: any) =>
-                  `<b>${c.lot_code || "Chưa gán lô"}</b>${c.expiry_date ? ` (HSD: ${fmtDate(c.expiry_date)})` : ""}${c.location_code ? ` [${c.location_code}]` : ""}`
+                  `<b>${c.lot_code || "Chưa gán lô"}</b>${c.expiry_date ? ` (HSD: ${fmtDate(c.expiry_date)})` : ""}${c.location_code ? ` [${c.location_code}]` : ""}${c.stock_document_code ? ` · ${c.stock_document_code}` : ""}`
               )
               .join("<br/>")
-          : item.lot_code
-            ? `<b>${item.lot_code}</b> (HSD: ${fmtDate(item.expiry_date)})`
-            : "<i>Theo lô FEFO tại kho</i>";
+          : prefCand
+            ? `<b>🎯 Chọn: ${prefCand.lot_code}</b> (HSD: ${fmtDate(prefCand.expiry_date)}) [${prefCand.location_code}]`
+            : firstCand
+              ? `<i>Dự kiến FEFO:</i> <b>${firstCand.lot_code}</b> (HSD: ${fmtDate(firstCand.expiry_date)}) [${firstCand.location_code}]`
+              : item.lot_code
+                ? `<b>${item.lot_code}</b> (HSD: ${fmtDate(item.expiry_date)})`
+                : "<i>Theo lô FEFO tại kho</i>";
       const issuedSum = matchedCons.reduce((acc: number, c: any) => acc + Number(c.issued_qty || 0), 0);
       const reqQty = item.required_qty ?? item.planned_qty ?? 0;
       const uom = item.uom || "";
@@ -415,7 +428,7 @@ export function OrdersEbrView({
           <td style="text-align:right;font-family:monospace">${item.unit_norm !== undefined ? `${fmtQty(item.unit_norm)} ${uom}` : "—"}</td>
           <td style="text-align:right;font-family:monospace;font-weight:700;color:#0c4a6e">${fmtQty(reqQty)} ${uom}</td>
           <td style="font-size:11px">${lotText}</td>
-          <td style="text-align:right;font-family:monospace">${issuedSum > 0 ? `${fmtQty(issuedSum)} ${uom}` : o.materials_issued ? `${fmtQty(reqQty)} ${uom}` : "Chờ xuất"}</td>
+          <td style="text-align:right;font-family:monospace">${issuedSum > 0 ? `${fmtQty(issuedSum)} ${uom}` : o.materials_issued ? `${fmtQty(reqQty)} ${uom}` : o.status === "DRAFT" ? "Bản nháp" : "Chờ xuất"}</td>
           <td style="text-align:center">☐ Đã cân/đong</td>
           <td></td>
         </tr>`;
@@ -523,7 +536,7 @@ export function OrdersEbrView({
     <div><b>Đơn PO / Đơn nội bộ:</b> ${o.kd_po_code || o.internal_order_code || "Sản xuất kế hoạch"}</div>
     <div><b>Định mức BOM &amp; TCCS:</b> ${o.bom_code} (v${o.bom_version}) · ${o.tccs_code || "TCCS 01:2026/ABT"}</div>
     <div><b>Phụ trách SX / QA Giám sát:</b> ${o.team_lead_name || o.bom_responsible_person_name || "—"} / ${o.qa_assignee_name || o.bom_qc_assignee_name || "—"}</div>
-    <div><b>Kho xuất NVL &amp; Trạng thái:</b> ${o.warehouse_code} (${o.materials_issued ? "ĐÃ XUẤT KHO FEFO" : "ĐANG GIỮ CHỖ FEFO"})</div>
+    <div><b>Kho xuất NVL &amp; Trạng thái:</b> ${o.warehouse_code} (${o.materials_issued ? "ĐÃ XUẤT KHO" : o.status === "DRAFT" ? "BẢN NHÁP — CHƯA GIỮ CHỖ" : "ĐANG GIỮ CHỖ FEFO"})</div>
   </div>
 
   <h2>I. BẢNG CÔNG THỨC ĐỊNH MỨC (BOM) &amp; TRUY XUẤT LÔ NGUYÊN VẬT LIỆU SỬ DỤNG (FEFO)</h2>
@@ -794,6 +807,63 @@ export function OrdersEbrView({
       await loadDetail(selectedOrderId);
     } catch (err) {
       setError(err);
+    }
+  };
+
+  const handleSelectDraftLot = async (bomLineId: string, lotId: string, reason?: string) => {
+    if (!selectedOrderId) return;
+    setError(null);
+    setLotSwapNotice(null);
+    try {
+      const updated = await api<any>(`/api/factory/kit/orders/${selectedOrderId}`, {
+        method: "POST",
+        json: {
+          operation: "select_draft_lot",
+          bom_line_id: bomLineId,
+          lot_id: lotId || null,
+          reason: reason || null,
+        },
+      });
+      setDetail(updated);
+      setLotSwapNotice(
+        lotId
+          ? "Đã lưu chỉ định lô nguyên vật liệu cho bản nháp (sẽ khóa giữ chỗ đúng lô này khi Xác nhận lệnh)."
+          : "Đã chuyển dòng nguyên vật liệu về chế độ Tự động phân bổ theo FEFO."
+      );
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleSwapMaterialLot = async (consumptionId: string, newLotId: string, reason: string): Promise<boolean> => {
+    if (!selectedOrderId) return false;
+    setError(null);
+    setLotSwapNotice(null);
+    try {
+      const updated = await api<any>(`/api/factory/kit/orders/${selectedOrderId}`, {
+        method: "POST",
+        json: {
+          operation: "swap_material_lot",
+          consumption_id: consumptionId,
+          new_lot_id: newLotId,
+          reason,
+        },
+      });
+      setDetail(updated);
+      const sr = updated.swap_result;
+      if (sr?.mode === "RETURN_AND_REISSUE") {
+        setLotSwapNotice(
+          `Đã đổi lô sau xuất kho: ${sr.old_lot_code ?? "—"} → ${sr.new_lot_code}${sr.return_document_code ? ` · Phiếu hoàn kho: ${sr.return_document_code}` : ""} · Phiếu xuất mới: ${sr.issue_document_code}`
+        );
+      } else if (sr) {
+        setLotSwapNotice(`Đã đổi lô giữ chỗ: ${sr.old_lot_code ?? "—"} → ${sr.new_lot_code}`);
+      }
+      await loadOrders();
+      onRefreshOptions();
+      return true;
+    } catch (err) {
+      setError(err);
+      return false;
     }
   };
 
@@ -1803,7 +1873,13 @@ export function OrdersEbrView({
                       <div>
                         <span className="text-slate-500">Kho xuất NVL &amp; Trạng thái:</span>
                         <div className="font-bold text-emerald-700 dark:text-emerald-400">
-                          {detail.order.warehouse_code} ({detail.order.materials_issued ? "Đã xuất kho FEFO" : "Đang giữ chỗ FEFO"})
+                          {detail.order.warehouse_code} (
+                          {detail.order.materials_issued
+                            ? "Đã xuất kho"
+                            : detail.order.status === "DRAFT"
+                              ? "Chưa giữ chỗ (Bản nháp)"
+                              : "Đang giữ chỗ FEFO"}
+                          )
                         </div>
                       </div>
                     </div>
@@ -1827,6 +1903,13 @@ export function OrdersEbrView({
                         const matchedCons = (detail.consumptions || []).filter(
                           (c: any) => c.bom_line_id === eb.bom_line_id || c.item_id === (eb.component_item_id ?? eb.item_id)
                         );
+                        const cands =
+                          detail.available_lots_by_bom_line?.[eb.bom_line_id] ??
+                          detail.available_lots_by_item?.[eb.component_item_id ?? eb.item_id] ??
+                          [];
+                        const pref = detail.preferred_lots?.[eb.bom_line_id];
+                        const prefCand = pref?.lot_id ? cands.find((x: any) => x.lot_id === pref.lot_id) : null;
+                        const firstCand = cands[0] ?? null;
                         return (
                           <tr key={eb.bom_line_id ?? eb.id ?? idx}>
                             <td className="px-2.5 py-1.5 text-xs">{eb.line_no ?? idx + 1}</td>
@@ -1843,33 +1926,70 @@ export function OrdersEbrView({
                               {fmtQty(eb.required_qty ?? eb.planned_qty)} {eb.uom}
                             </td>
                             <td className="px-2.5 py-1.5 text-xs font-mono">
-                              {matchedCons.length > 0
-                                ? matchedCons.map((c: any) => (
-                                    <div key={c.id}>
-                                      <b className="text-emerald-700 dark:text-emerald-400">{c.lot_code || "Lô FEFO"}</b>{" "}
-                                      {c.expiry_date ? `(HSD: ${fmtDate(c.expiry_date)})` : ""}
-                                      {c.expiry_shorter_than_product && (
-                                        <span className="ml-1 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-sans font-semibold">
-                                          ⚠️ HSD NVL &lt; HSD Kit
-                                        </span>
-                                      )}
-                                    </div>
-                                  ))
-                                : eb.lot_code
-                                  ? `${eb.lot_code} (HSD: ${fmtDate(eb.expiry_date)})`
-                                  : "Tự động phân bổ FEFO"}
+                              {matchedCons.length > 0 ? (
+                                matchedCons.map((c: any) => (
+                                  <div key={c.id}>
+                                    <b className="text-emerald-700 dark:text-emerald-400">{c.lot_code || "Lô FEFO"}</b>{" "}
+                                    {c.expiry_date ? `(HSD: ${fmtDate(c.expiry_date)})` : ""}
+                                    {c.expiry_shorter_than_product && (
+                                      <span className="ml-1 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-sans font-semibold">
+                                        ⚠️ HSD NVL &lt; HSD Kit
+                                      </span>
+                                    )}
+                                  </div>
+                                ))
+                              ) : prefCand ? (
+                                <div>
+                                  <b className="text-sky-700 dark:text-sky-300">🎯 Đã chọn: {prefCand.lot_code}</b>{" "}
+                                  {prefCand.expiry_date ? `(HSD: ${fmtDate(prefCand.expiry_date)})` : ""}
+                                  {prefCand.expiry_shorter_than_product && (
+                                    <span className="ml-1 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-sans font-semibold">
+                                      ⚠️ HSD NVL &lt; HSD Kit
+                                    </span>
+                                  )}
+                                </div>
+                              ) : firstCand ? (
+                                <div>
+                                  <span className="text-slate-600 dark:text-slate-300 font-sans">Dự kiến FEFO: </span>
+                                  <b className="text-slate-800 dark:text-slate-100">{firstCand.lot_code}</b>{" "}
+                                  {firstCand.expiry_date ? `(HSD: ${fmtDate(firstCand.expiry_date)})` : ""}
+                                  {firstCand.expiry_shorter_than_product && (
+                                    <span className="ml-1 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-sans font-semibold">
+                                      ⚠️ HSD NVL &lt; HSD Kit
+                                    </span>
+                                  )}
+                                </div>
+                              ) : eb.lot_code ? (
+                                `${eb.lot_code} (HSD: ${fmtDate(eb.expiry_date)})`
+                              ) : (
+                                <span className="font-sans text-slate-500">Tự động phân bổ FEFO (Chưa có lô RELEASED tại kho)</span>
+                              )}
                             </td>
                             <td className="px-2.5 py-1.5 text-xs font-mono">
-                              {matchedCons.map((c: any) => c.location_code).filter(Boolean).join(", ") || detail.order.warehouse_code}
+                              {matchedCons.map((c: any) => c.location_code).filter(Boolean).join(", ") ||
+                                prefCand?.location_code ||
+                                firstCand?.location_code ||
+                                detail.order.warehouse_code}
                             </td>
                             <td className="px-2.5 py-1.5 text-xs">
                               {detail.order.materials_issued ? (
-                                <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300 font-semibold">
-                                  ✓ Đã xuất kho
+                                <div className="space-y-0.5">
+                                  <span className="inline-block px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 dark:bg-emerald-950/70 dark:text-emerald-300 font-semibold">
+                                    ✓ Đã xuất kho
+                                  </span>
+                                  {matchedCons.some((c: any) => c.stock_document_code) && (
+                                    <div className="font-mono text-[10px] text-slate-600 dark:text-slate-400">
+                                      {Array.from(new Set(matchedCons.map((c: any) => c.stock_document_code).filter(Boolean))).join(", ")}
+                                    </div>
+                                  )}
+                                </div>
+                              ) : detail.order.status === "DRAFT" ? (
+                                <span className="inline-block px-2 py-0.5 rounded bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300 font-semibold">
+                                  📝 Bản nháp (Chưa giữ chỗ)
                                 </span>
                               ) : (
-                                <span className="px-2 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-semibold">
-                                  ⏳ Đã giữ chỗ FEFO
+                                <span className="inline-block px-2 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-semibold">
+                                  ⏳ Đã giữ chỗ
                                 </span>
                               )}
                             </td>
@@ -2300,7 +2420,7 @@ export function OrdersEbrView({
                   <div className="flex flex-wrap items-center gap-2">
                     {detail.order.materials_issued ? (
                       <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 dark:bg-emerald-950/80 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
-                        ✅ Đã xuất kho NVL theo FEFO ({detail.order.warehouse_code})
+                        ✅ Đã xuất kho NVL ({detail.order.warehouse_code})
                       </span>
                     ) : (
                       ["CONFIRMED", "IN_PROGRESS"].includes(detail.order.status) && (
@@ -2315,8 +2435,123 @@ export function OrdersEbrView({
                   </div>
                 }
               >
+                {lotSwapNotice && (
+                  <div className="mb-3 rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50/90 dark:bg-emerald-950/40 px-3 py-2 text-xs text-emerald-900 dark:text-emerald-200 flex items-center justify-between gap-2">
+                    <span>✅ {lotSwapNotice}</span>
+                    <button
+                      type="button"
+                      onClick={() => setLotSwapNotice(null)}
+                      className="text-emerald-700 dark:text-emerald-300 hover:underline font-semibold shrink-0"
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                )}
                 {detail.consumptions.length === 0 ? (
-                  <Empty>Xác nhận lệnh sản xuất để hệ thống tự động phân bổ lô nguyên vật liệu theo FEFO.</Empty>
+                  detail.order.status === "DRAFT" && (detail.exploded_bom || []).some((eb: any) => !eb.is_bundled) ? (
+                    <div className="space-y-3">
+                      <div className="rounded-xl border border-sky-200 dark:border-sky-800/70 bg-sky-50/70 dark:bg-sky-950/30 px-3 py-2.5 text-xs text-sky-950 dark:text-sky-200">
+                        Mặc định khi bấm <b>Xác nhận lệnh</b>, hệ thống tự động chọn lô <b>RELEASED</b> (đã giải phóng QC) có hạn dùng gần nhất (<b>FEFO</b>). Nếu muốn chỉ định đích danh lô xuất cho từng nguyên liệu ngay từ bản nháp, chọn tại cột <b>Chọn Lô Xuất</b> bên dưới:
+                      </div>
+                      <Table
+                        head={[
+                          "Hộp / Vai trò",
+                          "Vật tư / Bán TP",
+                          "Tổng lượng cần",
+                          "Chọn Lô Xuất (Mặc định FEFO hoặc Chỉ định Lô)",
+                          "Tồn khả dụng tại kho",
+                        ]}
+                      >
+                        {(detail.exploded_bom || [])
+                          .filter((eb: any) => !eb.is_bundled)
+                          .map((eb: any) => {
+                            const cands: any[] =
+                              detail.available_lots_by_bom_line?.[eb.bom_line_id] ??
+                              detail.available_lots_by_item?.[eb.component_item_id] ??
+                              [];
+                            const firstCand = cands[0] ?? null;
+                            const prefLotId: string = detail.preferred_lots?.[eb.bom_line_id]?.lot_id ?? "";
+                            const selectedCand = prefLotId ? cands.find((x) => x.lot_id === prefLotId) : firstCand;
+                            const isRealBomLine = !String(eb.bom_line_id || "").startsWith("auto-tube-");
+                            const totalAvail = cands
+                              .filter((x) => !x.is_substitute)
+                              .reduce((sum, x) => sum + Number(x.available || 0), 0);
+                            return (
+                              <tr key={eb.bom_line_id}>
+                                <td className="px-3 py-2 text-xs">
+                                  <div className="font-medium">Hộp {eb.box_no}</div>
+                                  <div className="text-stone-500">{ROLE_LABELS[eb.component_role] ?? eb.component_role}</div>
+                                </td>
+                                <td className="px-3 py-2 text-xs">
+                                  <span className="font-mono font-semibold">{eb.component_code}</span> — {eb.component_name}
+                                </td>
+                                <td className="px-3 py-2 text-xs font-mono font-semibold">
+                                  {fmtQty(eb.required_qty)} {eb.uom}
+                                </td>
+                                <td className="px-3 py-2 text-xs">
+                                  {eb.item_tracking === "NONE" ? (
+                                    <span className="text-stone-500">Vật tư không quản lý theo lô</span>
+                                  ) : !isRealBomLine ? (
+                                    <span className="text-stone-500">Tự động phân bổ theo FEFO</span>
+                                  ) : (
+                                    <div className="space-y-1">
+                                      <select
+                                        className={`${inputClass} w-full max-w-md text-xs`}
+                                        value={prefLotId}
+                                        onChange={(e) => handleSelectDraftLot(eb.bom_line_id, e.target.value)}
+                                      >
+                                        <option value="">
+                                          ⚡ Tự động theo FEFO{" "}
+                                          {firstCand
+                                            ? `(Dự kiến: ${firstCand.lot_code} · HSD: ${fmtDate(firstCand.expiry_date)})`
+                                            : "(Chưa có lô RELEASED)"}
+                                        </option>
+                                        {cands.map((l) => (
+                                          <option key={l.lot_id} value={l.lot_id}>
+                                            🎯 {l.lot_code}
+                                            {l.is_substitute ? ` [Thay thế: ${l.item_code}]` : ""} · HSD: {fmtDate(l.expiry_date)} · Khả dụng:{" "}
+                                            {fmtQty(l.available)} {l.base_uom} [{l.location_code}]
+                                            {l.expiry_shorter_than_product ? " ⚠️ HSD < Kit" : ""}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {prefLotId ? (
+                                        <div className="text-[11px] font-semibold text-sky-700 dark:text-sky-300">
+                                          🎯 Đã chỉ định thủ công {selectedCand ? `· Kệ ${selectedCand.location_code}` : ""}
+                                        </div>
+                                      ) : firstCand ? (
+                                        <div className="text-[11px] text-slate-500">
+                                          ⚡ Mặc định FEFO (HSD gần nhất: {fmtDate(firstCand.expiry_date)} · Kệ {firstCand.location_code})
+                                          {firstCand.expiry_shorter_than_product && (
+                                            <span className="ml-1.5 text-amber-700 dark:text-amber-300 font-semibold">
+                                              ⚠️ HSD NVL &lt; HSD Kit
+                                            </span>
+                                          )}
+                                        </div>
+                                      ) : null}
+                                    </div>
+                                  )}
+                                </td>
+                                <td className="px-3 py-2 text-xs font-mono">
+                                  {cands.length > 0 ? (
+                                    <div>
+                                      <b>{fmtQty(totalAvail)}</b> {cands[0]?.base_uom ?? eb.base_uom}{" "}
+                                      <span className="text-slate-500 font-sans">({cands.filter((x) => !x.is_substitute).length} lô RELEASED)</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-rose-600 dark:text-rose-400 font-sans font-semibold">
+                                      0 lô RELEASED tại {detail.order.warehouse_code}
+                                    </span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                      </Table>
+                    </div>
+                  ) : (
+                    <Empty>Xác nhận lệnh sản xuất để hệ thống tự động phân bổ lô nguyên vật liệu theo FEFO.</Empty>
+                  )
                 ) : (
                   <div className="space-y-3">
                     <BarcodeScanVerifier
@@ -2327,7 +2562,7 @@ export function OrdersEbrView({
                       head={[
                         "Hộp / Vai trò",
                         "Vật tư / Bán TP",
-                        "Lô FEFO & Hạn dùng",
+                        "Lô xuất & Hạn dùng",
                         "Định mức",
                         "Đã xuất",
                         "Thực dùng & Giải trình",
@@ -2338,7 +2573,18 @@ export function OrdersEbrView({
                           key={c.id}
                           row={c}
                           locked={["COMPLETED", "CANCELLED"].includes(detail.order.status)}
+                          canSwapLot={
+                            ["CONFIRMED", "IN_PROGRESS", "ON_HOLD"].includes(detail.order.status) &&
+                            c.item_tracking !== "NONE"
+                          }
+                          materialsIssued={Boolean(detail.order.materials_issued)}
+                          availableLots={(
+                            detail.available_lots_by_bom_line?.[c.bom_line_id] ??
+                            detail.available_lots_by_item?.[c.item_id] ??
+                            []
+                          ).filter((l: any) => l.lot_id !== c.lot_id)}
                           onSave={handleReconcile}
+                          onSwapLot={handleSwapMaterialLot}
                         />
                       ))}
                     </Table>
@@ -3355,20 +3601,50 @@ function DailyOperatorTrackerSection({
 function ConsumptionRow({
   row,
   locked,
+  canSwapLot,
+  materialsIssued,
+  availableLots,
   onSave,
+  onSwapLot,
 }: {
   row: any;
   locked: boolean;
+  canSwapLot: boolean;
+  materialsIssued: boolean;
+  availableLots: any[];
   onSave: (row: any, actual: string, reason: string) => void;
+  onSwapLot: (consumptionId: string, newLotId: string, reason: string) => Promise<boolean>;
 }) {
   const [actual, setActual] = useState(String(row.actual_qty ?? row.planned_qty));
   const [reason, setReason] = useState(row.variance_reason ?? "");
+  const [swapping, setSwapping] = useState(false);
+  const [newLotId, setNewLotId] = useState<string>(availableLots[0]?.lot_id ?? "");
+  const [swapReason, setSwapReason] = useState("");
+  const [swapBusy, setSwapBusy] = useState(false);
+
   useEffect(() => {
     setActual(String(row.actual_qty ?? row.planned_qty));
     setReason(row.variance_reason ?? "");
   }, [row.actual_qty, row.planned_qty, row.variance_reason]);
 
+  useEffect(() => {
+    if (!availableLots.some((l) => l.lot_id === newLotId)) {
+      setNewLotId(availableLots[0]?.lot_id ?? "");
+    }
+  }, [availableLots, newLotId]);
+
   const variance = Number(row.variance_pct || 0);
+  const submitSwap = async () => {
+    if (!newLotId || swapReason.trim().length < 3 || swapBusy) return;
+    setSwapBusy(true);
+    const ok = await onSwapLot(row.id, newLotId, swapReason.trim());
+    setSwapBusy(false);
+    if (ok) {
+      setSwapping(false);
+      setSwapReason("");
+    }
+  };
+
   return (
     <tr>
       <td className="px-3 py-2 text-xs">
@@ -3379,11 +3655,79 @@ function ConsumptionRow({
         <span className="font-mono font-semibold">{row.item_code}</span> — {row.item_name}
       </td>
       <td className="px-3 py-2 text-xs font-mono">
-        {row.lot_code} (HSD: {fmtDate(row.expiry_date)})
-        {row.expiry_shorter_than_product && (
-          <span className="ml-1.5 inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-sans font-semibold">
-            ⚠️ HSD NVL &lt; HSD Kit
-          </span>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="font-semibold text-slate-900 dark:text-slate-100">{row.lot_code || "—"}</span>
+          {row.expiry_date && <span>(HSD: {fmtDate(row.expiry_date)})</span>}
+          {row.location_code && <span className="text-slate-500">[{row.location_code}]</span>}
+          {row.expiry_shorter_than_product && (
+            <span className="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-900 dark:bg-amber-950/70 dark:text-amber-300 font-sans font-semibold">
+              ⚠️ HSD NVL &lt; HSD Kit
+            </span>
+          )}
+          {canSwapLot && (
+            <Button
+              type="button"
+              variant="ghost"
+              className="!px-2 !py-0.5 text-[11px] font-sans"
+              onClick={() => setSwapping((v) => !v)}
+            >
+              {swapping ? "Đóng" : "🔄 Đổi lô"}
+            </Button>
+          )}
+        </div>
+        {row.stock_document_code && (
+          <div className="mt-0.5 text-[11px] font-sans text-emerald-700 dark:text-emerald-400">
+            Phiếu xuất: <span className="font-mono font-semibold">{row.stock_document_code}</span>
+          </div>
+        )}
+        {swapping && (
+          <div className="mt-2 p-2.5 rounded-lg border border-sky-300 dark:border-sky-800 bg-sky-50/70 dark:bg-sky-950/40 font-sans space-y-2">
+            <div className="text-[11px] text-sky-900 dark:text-sky-200 leading-snug">
+              {materialsIssued
+                ? "Lệnh đã xuất kho: Hệ thống sẽ tự động lập Phiếu nhập hoàn kho (NK) cho lô cũ và Phiếu xuất kho mới (XK) cho lô mới."
+                : "Lệnh đang giữ chỗ: Hệ thống sẽ nhả giữ chỗ lô cũ và giữ chỗ sang lô mới."}
+            </div>
+            {availableLots.length === 0 ? (
+              <div className="text-[11px] text-rose-700 dark:text-rose-300 font-medium">
+                Kho hiện không còn lô RELEASED khả dụng nào khác của vật tư này để đổi.
+              </div>
+            ) : (
+              <>
+                <select
+                  className={`${inputClass} w-full text-xs`}
+                  value={newLotId}
+                  onChange={(e) => setNewLotId(e.target.value)}
+                >
+                  {availableLots.map((l) => (
+                    <option key={l.lot_id} value={l.lot_id}>
+                      {l.lot_code}
+                      {l.is_substitute ? ` [Thay thế: ${l.item_code}]` : ""} · HSD: {fmtDate(l.expiry_date)} · Khả dụng:{" "}
+                      {fmtQty(l.available)} {l.base_uom} [{l.location_code}]
+                      {l.expiry_shorter_than_product ? " ⚠️ HSD < Kit" : ""}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className={`${inputClass} w-full text-xs`}
+                  placeholder="Lý do đổi lô (bắt buộc, VD: Tránh HSD ngắn / Đổi lọ nguyên)..."
+                  value={swapReason}
+                  onChange={(e) => setSwapReason(e.target.value)}
+                />
+                <div className="flex items-center gap-1.5">
+                  <Button
+                    type="button"
+                    disabled={swapBusy || !newLotId || swapReason.trim().length < 3}
+                    onClick={submitSwap}
+                  >
+                    {swapBusy ? "Đang xử lý..." : "Xác nhận đổi lô"}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => setSwapping(false)}>
+                    Hủy
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
         )}
       </td>
       <td className="px-3 py-2 text-xs">

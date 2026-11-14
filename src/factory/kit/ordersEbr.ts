@@ -14,7 +14,7 @@ import { assertUsable } from "../asset/service";
 import { allocate, findCandidates } from "../inv/allocation";
 import { createStockDocument, stockDocumentMachine } from "../inv/documents";
 import { createLot } from "../inv/lots";
-import { releaseDemandReservations, reserve } from "../inv/reservations";
+import { releaseDemandReservations, releaseReservationById, reserve, reserveLot } from "../inv/reservations";
 import { getItem, toBaseQty } from "../master/service";
 import { isUserTrainedForSop } from "../qms/documents";
 import { raiseDeviation } from "../qms/incidents";
@@ -96,6 +96,91 @@ export interface ProductionOrderRow {
   created_by: number | null;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function toYmd(v: unknown): string {
+  if (!v) return "";
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, "0");
+    const d = String(v.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+  return String(v).slice(0, 10);
+}
+
+/**
+ * Resolves the conversion multiplier from `primaryItemId` to `candidateItemId` for a BOM line,
+ * returning `1` for direct matches or `null` if `candidateItemId` is not an authorized substitute.
+ */
+async function getItemConversionFactor(
+  tx: Tx,
+  bomLineId: string | null | undefined,
+  primaryItemId: string,
+  candidateItemId: string,
+  allowSubstitute: boolean
+): Promise<number | null> {
+  if (candidateItemId === primaryItemId) return 1;
+  if (!allowSubstitute) return null;
+  if (bomLineId && UUID_RE.test(bomLineId)) {
+    const lineSub = (
+      await tx.query(
+        "SELECT conversion_factor FROM kit.bom_line_substitute WHERE bom_line_id = $1 AND substitute_item_id = $2 LIMIT 1",
+        [bomLineId, candidateItemId]
+      )
+    ).rows[0];
+    if (lineSub) return Number(lineSub.conversion_factor || 1);
+  }
+  const masterSub = (
+    await tx.query(
+      `SELECT ratio FROM master.item_substitute
+        WHERE item_id = $1 AND substitute_item_id = $2 AND status = 'ACTIVE'
+          AND change_request_id IS NOT NULL
+          AND (cardinality(allowed_modules) = 0 OR 'KIT' = ANY(allowed_modules))
+        LIMIT 1`,
+      [primaryItemId, candidateItemId]
+    )
+  ).rows[0];
+  return masterSub ? Number(masterSub.ratio || 1) : null;
+}
+
+/** Ensures an active quarantine location exists in the warehouse when returning a non-released lot. */
+async function ensureWarehouseQuarantineLocation(tx: Tx, warehouseId: string): Promise<string> {
+  const existing = (
+    await tx.query(
+      `SELECT id FROM master.location
+        WHERE warehouse_id = $1 AND status = 'ACTIVE' AND is_quarantine = true
+        ORDER BY code LIMIT 1`,
+      [warehouseId]
+    )
+  ).rows[0];
+  if (existing?.id) return existing.id;
+  const wh = (await tx.query("SELECT code FROM master.warehouse WHERE id = $1", [warehouseId])).rows[0];
+  const locCode = `${wh?.code ?? "KHO"}-BT`;
+  const created = (
+    await tx.query(
+      `INSERT INTO master.location (warehouse_id, code, name, is_quarantine, status)
+       VALUES ($1, $2, 'Khu Biệt Trữ', true, 'ACTIVE')
+       ON CONFLICT (warehouse_id, code) DO UPDATE SET status = 'ACTIVE', is_quarantine = true
+       RETURNING id`,
+      [warehouseId, locCode]
+    )
+  ).rows[0];
+  return created.id;
+}
+
+async function postTrustedKitStockDoc(tx: Tx, actor: AuthzActor, input: Record<string, unknown>) {
+  const doc = await createStockDocument(tx, actor, input, { trusted: true });
+  await runTransition(
+    tx,
+    stockDocumentMachine,
+    actor,
+    { id: doc.id, action: "post", expectedVersion: doc.version },
+    { trusted: true }
+  );
+  return doc;
+}
+
 const DISCRETE_UOMS = new Set([
   "CAI",
   "CÁI",
@@ -160,6 +245,7 @@ export interface ExplodedBomLine {
   is_bundled: boolean;
   bundle_parent_code: string | null;
   allow_substitute: boolean;
+  item_tracking?: string;
   uom_error?: string | null;
 }
 
@@ -408,6 +494,7 @@ export async function explodeKitBom(
       is_bundled: Boolean(l.is_bundled),
       bundle_parent_code: l.bundle_parent_code ?? null,
       allow_substitute: Boolean(l.allow_substitute),
+      item_tracking: compItem.tracking,
       uom_error: uomError,
     });
   }
@@ -450,6 +537,7 @@ export async function explodeKitBom(
       is_bundled: false,
       bundle_parent_code: null,
       allow_substitute: false,
+      item_tracking: selectedTubeItem.tracking,
       uom_error: uomError,
     });
   }
@@ -573,8 +661,8 @@ async function syncMaterialReconciliationToLedger(tx: Tx, actor: AuthzActor, ord
         doc_type: "RETURN",
         warehouse_id: order.warehouse_id,
         reason_code: "PRODUCTION_RETURN",
-        ref_entity_type: "KIT_ORDER",
-        ref_entity_id: order.id,
+        source_entity_type: "KIT_ORDER",
+        source_entity_id: order.id,
         notes: `Hoàn trả nguyên vật liệu dư sau quyết toán lệnh ${order.code}`,
         lines: returnLines,
       },
@@ -597,8 +685,8 @@ async function syncMaterialReconciliationToLedger(tx: Tx, actor: AuthzActor, ord
         doc_type: "ISSUE",
         warehouse_id: order.warehouse_id,
         reason_code: "PRODUCTION_ISSUE",
-        ref_entity_type: "KIT_ORDER",
-        ref_entity_id: order.id,
+        source_entity_type: "KIT_ORDER",
+        source_entity_id: order.id,
         notes: `Xuất bổ sung nguyên vật liệu tiêu hao vượt định mức lệnh ${order.code}`,
         lines: extraIssueLines,
       },
@@ -786,8 +874,8 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
                 doc_type: "RETURN",
                 warehouse_id: row.warehouse_id,
                 reason_code: "PRODUCTION_RETURN",
-                ref_entity_type: "KIT_ORDER",
-                ref_entity_id: row.id,
+                source_entity_type: "KIT_ORDER",
+                source_entity_id: row.id,
                 notes: `Hoàn trả nguyên vật liệu do hủy lệnh ${row.code}`,
                 lines: cons.map((c) => ({
                   item_id: c.item_id,
@@ -1068,8 +1156,8 @@ export const productionOrderMachine = defineMachine<ProductionOrderStatus, Produ
             doc_type: "RECEIPT",
             warehouse_id: updated.warehouse_id,
             reason_code: "PRODUCTION_OUTPUT",
-            ref_entity_type: "KIT_ORDER",
-            ref_entity_id: updated.id,
+            source_entity_type: "KIT_ORDER",
+            source_entity_id: updated.id,
             notes: `Nhập kho thành phẩm Kit từ lệnh ${updated.code}`,
             lines: [
               {
@@ -2024,6 +2112,12 @@ async function ensureOrderMaterialConsumptions(tx: Tx, actor: AuthzActor, order:
   const exploded = await explodeKitBom(tx, order, bom);
   if (!exploded.length) return;
 
+  const snapRow = (await tx.query("SELECT bom_snapshot_json FROM kit.production_order WHERE id = $1", [order.id])).rows[0];
+  const preferredLots = (snapRow?.bom_snapshot_json?.preferred_lots ?? {}) as Record<
+    string,
+    { lot_id?: string; reason?: string | null }
+  >;
+
   // Ensure an active non-quarantine storage location exists in order.warehouse_id
   let defaultLoc = (
     await tx.query(
@@ -2051,60 +2145,94 @@ async function ensureOrderMaterialConsumptions(tx: Tx, actor: AuthzActor, order:
   for (const l of exploded) {
     if (l.is_bundled) continue;
     if (!(l.qty_base > 0)) continue;
+    if (!UUID_RE.test(l.bom_line_id)) continue;
 
     let picks: Awaited<ReturnType<typeof reserve>> = [];
     let usedUom = l.base_uom;
-    try {
-      picks = await reserve(tx, actor, {
-        item_id: l.component_item_id,
-        qty_base: l.qty_base,
+    let initialReason: string | null = null;
+    const pref = preferredLots[l.bom_line_id];
+
+    if (pref?.lot_id) {
+      const chosenLot = (
+        await tx.query(
+          "SELECT l.id, l.code, l.item_id, i.base_uom FROM inv.lot l JOIN master.item i ON i.id = l.item_id WHERE l.id = $1",
+          [pref.lot_id]
+        )
+      ).rows[0];
+      if (!chosenLot) throw notFound("lô nguyên vật liệu đã chọn trước");
+      const factor = await getItemConversionFactor(
+        tx,
+        l.bom_line_id,
+        l.component_item_id,
+        chosenLot.item_id,
+        Boolean(l.allow_substitute)
+      );
+      if (factor === null) {
+        throw invalid(`Lô ${chosenLot.code} không thuộc vật tư ${l.component_code} hoặc vật tư thay thế hợp lệ.`);
+      }
+      const reqQtyBase = Math.round(l.qty_base * factor * 1e6) / 1e6;
+      usedUom = chosenLot.base_uom;
+      picks = await reserveLot(tx, actor, {
+        lot_id: pref.lot_id,
+        qty_base: reqQtyBase,
         warehouse_ids: [order.warehouse_id],
         demand_entity_type: "PRODUCTION_ORDER",
         demand_entity_id: order.id,
-        module: "KIT",
-        allow_substitutes: Boolean(l.allow_substitute),
       });
-    } catch (err: any) {
-      let resolved = false;
-      if (err?.code === "INSUFFICIENT_STOCK" && l.allow_substitute) {
-        const subs = (
-          await tx.query(
-            "SELECT * FROM kit.bom_line_substitute WHERE bom_line_id = $1 ORDER BY priority ASC",
-            [l.bom_line_id]
-          )
-        ).rows;
-        for (const s of subs) {
-          try {
-            const subItem = await getItem(tx, s.substitute_item_id);
-            const subQty = Math.round(l.qty_base * Number(s.conversion_factor || 1) * 1e6) / 1e6;
-            picks = await reserve(tx, actor, {
-              item_id: s.substitute_item_id,
-              qty_base: subQty,
-              warehouse_ids: [order.warehouse_id],
-              demand_entity_type: "PRODUCTION_ORDER",
-              demand_entity_id: order.id,
-              module: "KIT",
-              allow_substitutes: false,
-            });
-            usedUom = subItem.base_uom;
-            resolved = true;
-            break;
-          } catch {
-            // try next substitute
+      initialReason = pref.reason ? `[Chọn lô thủ công] ${pref.reason}` : "[Chọn lô thủ công]";
+    } else {
+      try {
+        picks = await reserve(tx, actor, {
+          item_id: l.component_item_id,
+          qty_base: l.qty_base,
+          warehouse_ids: [order.warehouse_id],
+          demand_entity_type: "PRODUCTION_ORDER",
+          demand_entity_id: order.id,
+          module: "KIT",
+          allow_substitutes: Boolean(l.allow_substitute),
+        });
+      } catch (err: any) {
+        let resolved = false;
+        if (err?.code === "INSUFFICIENT_STOCK" && l.allow_substitute) {
+          const subs = (
+            await tx.query(
+              "SELECT * FROM kit.bom_line_substitute WHERE bom_line_id = $1 ORDER BY priority ASC",
+              [l.bom_line_id]
+            )
+          ).rows;
+          for (const s of subs) {
+            try {
+              const subItem = await getItem(tx, s.substitute_item_id);
+              const subQty = Math.round(l.qty_base * Number(s.conversion_factor || 1) * 1e6) / 1e6;
+              picks = await reserve(tx, actor, {
+                item_id: s.substitute_item_id,
+                qty_base: subQty,
+                warehouse_ids: [order.warehouse_id],
+                demand_entity_type: "PRODUCTION_ORDER",
+                demand_entity_id: order.id,
+                module: "KIT",
+                allow_substitutes: false,
+              });
+              usedUom = subItem.base_uom;
+              resolved = true;
+              break;
+            } catch {
+              // try next substitute
+            }
           }
         }
-      }
 
-      if (!resolved) {
-        throw err;
+        if (!resolved) {
+          throw err;
+        }
       }
     }
 
     for (const p of picks) {
       await tx.query(
         `INSERT INTO kit.material_consumption
-           (order_id, bom_line_id, item_id, lot_id, location_id, reservation_id, planned_qty, issued_qty, actual_qty, uom)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           (order_id, bom_line_id, item_id, lot_id, location_id, reservation_id, planned_qty, issued_qty, actual_qty, uom, variance_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
         [
           order.id,
           l.bom_line_id,
@@ -2116,6 +2244,7 @@ async function ensureOrderMaterialConsumptions(tx: Tx, actor: AuthzActor, order:
           order.materials_issued ? p.qty_base : 0,
           order.materials_issued ? p.qty_base : 0,
           usedUom,
+          initialReason,
         ]
       );
     }
@@ -2124,7 +2253,7 @@ async function ensureOrderMaterialConsumptions(tx: Tx, actor: AuthzActor, order:
 
 /**
  * Issues reserved materials into the Kit Production Order by posting an `ISSUE` `inv.stock_document`
- * that consumes the FEFO reservations created during `confirm`.
+ * that consumes the reservations created during `confirm`.
  */
 export async function issueOrderMaterials(tx: Tx, actor: AuthzActor, orderId: string) {
   const order = (await tx.query("SELECT * FROM kit.production_order WHERE id = $1 FOR UPDATE", [orderId])).rows[0] as
@@ -2144,34 +2273,22 @@ export async function issueOrderMaterials(tx: Tx, actor: AuthzActor, orderId: st
   ).rows;
   if (!cons.length) throw invalid("Lệnh sản xuất không có dòng nguyên vật liệu giữ chỗ nào để xuất.");
 
-  const doc = await createStockDocument(
-    tx,
-    actor,
-    {
-      doc_type: "ISSUE",
-      warehouse_id: order.warehouse_id,
-      reason_code: "PRODUCTION_ISSUE",
-      ref_entity_type: "KIT_ORDER",
-      ref_entity_id: order.id,
-      notes: `Xuất nguyên vật liệu theo FEFO cho lệnh sản xuất Kit ${order.code}`,
-      lines: cons.map((c) => ({
-        item_id: c.item_id,
-        lot_id: c.lot_id,
-        from_location_id: c.location_id,
-        qty: Number(c.planned_qty),
-        uom: c.uom,
-        reservation_id: c.reservation_id,
-      })),
-    },
-    { trusted: true }
-  );
-  await runTransition(
-    tx,
-    stockDocumentMachine,
-    actor,
-    { id: doc.id, action: "post", expectedVersion: doc.version },
-    { trusted: true }
-  );
+  const doc = await postTrustedKitStockDoc(tx, actor, {
+    doc_type: "ISSUE",
+    warehouse_id: order.warehouse_id,
+    reason_code: "PRODUCTION_ISSUE",
+    source_entity_type: "KIT_ORDER",
+    source_entity_id: order.id,
+    notes: `Xuất nguyên vật liệu theo lệnh sản xuất Kit ${order.code}`,
+    lines: cons.map((c) => ({
+      item_id: c.item_id,
+      lot_id: c.lot_id,
+      from_location_id: c.location_id,
+      qty: Number(c.planned_qty),
+      uom: c.uom,
+      reservation_id: c.reservation_id,
+    })),
+  });
 
   for (const c of cons) {
     await tx.query(
@@ -2192,6 +2309,362 @@ export async function issueOrderMaterials(tx: Tx, actor: AuthzActor, orderId: st
     changes: { materials_issued: [false, true], stock_document_id: [null, doc.id] },
   });
   return doc;
+}
+
+const selectDraftLotSchema = z.object({
+  bom_line_id: z.string().trim().min(1),
+  lot_id: z
+    .string()
+    .trim()
+    .optional()
+    .nullable()
+    .transform((v) => (!v || v === "AUTO_FEFO" ? null : v)),
+  reason: z.string().trim().max(500).optional().nullable(),
+});
+
+/**
+ * Allows an operator to manually pre-select a specific raw material lot (or reset to AUTO_FEFO)
+ * on a DRAFT Kit Production Order before confirming (`confirm`) locks in inventory reservations.
+ */
+export async function selectDraftMaterialLot(tx: Tx, actor: AuthzActor, orderId: string, input: unknown) {
+  const d = parseInput(selectDraftLotSchema, input);
+  const order = (await tx.query("SELECT * FROM kit.production_order WHERE id = $1 FOR UPDATE", [orderId])).rows[0] as
+    | (ProductionOrderRow & { bom_snapshot_json?: any })
+    | undefined;
+  if (!order) throw notFound("lệnh sản xuất Kit");
+  await authorize(tx, actor, "kit.order.manage", order.org_unit_id);
+  if (order.status !== "DRAFT") {
+    throw invalid("Lệnh sản xuất đã xác nhận; vui lòng dùng thao tác 'Đổi lô' trên dòng nguyên vật liệu.");
+  }
+  if (!UUID_RE.test(d.bom_line_id)) {
+    throw invalid("Dòng vật tư tự động không hỗ trợ chọn lô trước.");
+  }
+
+  const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1", [order.bom_id])).rows[0] as KitBomRow | undefined;
+  if (!bom) throw notFound("định mức BOM");
+  const exploded = await explodeKitBom(tx, order, bom, { lenientUom: true });
+  const bomLine = exploded.find((x) => x.bom_line_id === d.bom_line_id);
+  if (!bomLine) throw notFound("dòng định mức BOM trong lệnh");
+
+  const snap =
+    order.bom_snapshot_json && typeof order.bom_snapshot_json === "object"
+      ? { ...order.bom_snapshot_json }
+      : {};
+  const preferred: Record<string, { lot_id: string; lot_code?: string; item_id?: string; reason?: string | null }> = {
+    ...(snap.preferred_lots ?? {}),
+  };
+  const prevLotId = preferred[d.bom_line_id]?.lot_id ?? null;
+
+  if (d.lot_id) {
+    const lotId = z.string().uuid("Mã ID lô không hợp lệ.").parse(d.lot_id);
+    const lot = (
+      await tx.query(
+        "SELECT l.*, i.code AS item_code, i.base_uom FROM inv.lot l JOIN master.item i ON i.id = l.item_id WHERE l.id = $1",
+        [lotId]
+      )
+    ).rows[0];
+    if (!lot) throw notFound("lô nguyên vật liệu");
+    if (lot.status !== "RELEASED") {
+      throw invalid(
+        `Lô ${lot.code} đang ở trạng thái ${lot.status}; chỉ lô đã giải phóng (RELEASED) mới được chọn để xuất.`,
+        undefined,
+        "LOT_NOT_RELEASED"
+      );
+    }
+    const expYmd = toYmd(lot.expiry_date);
+    if (expYmd && expYmd < vnToday()) {
+      throw invalid(`Lô ${lot.code} đã hết hạn sử dụng (${expYmd}).`, undefined, "LOT_EXPIRED");
+    }
+
+    const factor = await getItemConversionFactor(
+      tx,
+      d.bom_line_id,
+      bomLine.component_item_id,
+      lot.item_id,
+      Boolean(bomLine.allow_substitute)
+    );
+    if (factor === null) {
+      throw invalid("Lô được chọn không thuộc mã nguyên vật liệu (hoặc vật tư thay thế hợp lệ) của dòng BOM này.");
+    }
+    const reqQtyBase = Math.round(bomLine.qty_base * factor * 1e6) / 1e6;
+    const cands = (await findCandidates(tx, lot.item_id, [order.warehouse_id])).filter((c) => c.lot_id === lotId);
+    const avail = cands.reduce((acc, c) => acc + c.available, 0);
+    if (avail + 1e-9 < reqQtyBase) {
+      throw invalid(
+        `Lô ${lot.code} không đủ tồn khả dụng tại kho (${avail} / cần ${reqQtyBase} ${lot.base_uom}).`,
+        undefined,
+        "INSUFFICIENT_STOCK"
+      );
+    }
+
+    preferred[d.bom_line_id] = {
+      lot_id: lotId,
+      lot_code: lot.code,
+      item_id: lot.item_id,
+      reason: d.reason ?? null,
+    };
+  } else {
+    delete preferred[d.bom_line_id];
+  }
+
+  await tx.query(
+    "UPDATE kit.production_order SET bom_snapshot_json = $2::jsonb, updated_at = now(), updated_by = $3 WHERE id = $1",
+    [order.id, JSON.stringify({ ...snap, preferred_lots: preferred }), actor.userId]
+  );
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_production_order",
+    entityId: order.id,
+    action: "select_draft_lot",
+    changes: {
+      bom_line_id: [d.bom_line_id, d.bom_line_id],
+      preferred_lot_id: [prevLotId, d.lot_id],
+    },
+    reason: d.reason ?? undefined,
+  });
+
+  return { preferred_lots: preferred };
+}
+
+const swapMaterialLotSchema = z.object({
+  consumption_id: z.string().uuid(),
+  new_lot_id: z.string().uuid(),
+  reason: z.string().trim().min(3, "Vui lòng nhập lý do đổi lô nguyên vật liệu (tối thiểu 3 ký tự).").max(500),
+});
+
+/**
+ * Swaps the allocated or issued raw material lot on an active Kit Production Order:
+ * - Before `issue_materials` (`!order.materials_issued`): releases old reservation and reserves `new_lot_id`.
+ * - After `issue_materials` (`order.materials_issued`): posts a `RETURN` stock doc (`NK...`) for the old lot,
+ *   reserves `new_lot_id`, and posts a replacement `ISSUE` stock doc (`XK...`), preserving full ledger & audit history.
+ */
+export async function swapOrderMaterialLot(tx: Tx, actor: AuthzActor, orderId: string, input: unknown) {
+  const d = parseInput(swapMaterialLotSchema, input);
+  const order = (await tx.query("SELECT * FROM kit.production_order WHERE id = $1 FOR UPDATE", [orderId])).rows[0] as
+    | ProductionOrderRow
+    | undefined;
+  if (!order) throw notFound("lệnh sản xuất Kit");
+  await authorize(tx, actor, "kit.order.manage", order.org_unit_id);
+  if (!["CONFIRMED", "IN_PROGRESS", "ON_HOLD"].includes(order.status)) {
+    throw invalid(
+      "Chỉ được đổi lô nguyên vật liệu khi lệnh sản xuất đang ở trạng thái Đã xác nhận, Đang sản xuất hoặc Tạm giữ (ON_HOLD)."
+    );
+  }
+
+  const c = (
+    await tx.query("SELECT * FROM kit.material_consumption WHERE id = $1 AND order_id = $2 FOR UPDATE", [
+      d.consumption_id,
+      orderId,
+    ])
+  ).rows[0];
+  if (!c) throw notFound("dòng nguyên vật liệu trên lệnh sản xuất");
+  if (c.lot_id === d.new_lot_id) {
+    throw invalid("Lô mới trùng với lô hiện tại đang gán trên dòng vật tư.");
+  }
+
+  const oldLot = c.lot_id
+    ? (await tx.query("SELECT id, code, status, item_id FROM inv.lot WHERE id = $1", [c.lot_id])).rows[0]
+    : null;
+  const bomLine = (await tx.query("SELECT * FROM kit.bom_line WHERE id = $1", [c.bom_line_id])).rows[0];
+  const newLot = (
+    await tx.query(
+      "SELECT l.*, i.code AS item_code, i.base_uom FROM inv.lot l JOIN master.item i ON i.id = l.item_id WHERE l.id = $1",
+      [d.new_lot_id]
+    )
+  ).rows[0];
+  if (!newLot) throw notFound("lô nguyên vật liệu mới");
+  if (newLot.status !== "RELEASED") {
+    throw invalid(
+      `Lô ${newLot.code} đang ở trạng thái ${newLot.status}; chỉ lô đã giải phóng (RELEASED) mới được dùng.`,
+      undefined,
+      "LOT_NOT_RELEASED"
+    );
+  }
+  const newExpYmd = toYmd(newLot.expiry_date);
+  if (newExpYmd && newExpYmd < vnToday()) {
+    throw invalid(`Lô ${newLot.code} đã hết hạn sử dụng (${newExpYmd}).`, undefined, "LOT_EXPIRED");
+  }
+
+  let targetQty = Number(c.planned_qty);
+  let targetUom: string = c.uom;
+  if (newLot.item_id !== c.item_id) {
+    if (!bomLine) {
+      throw invalid("Không tìm thấy dòng định mức BOM gốc để kiểm tra vật tư thay thế.");
+    }
+    const allowSub = Boolean(bomLine.allow_substitute);
+    const oldFactor = await getItemConversionFactor(tx, bomLine.id, bomLine.component_item_id, c.item_id, allowSub);
+    const newFactor = await getItemConversionFactor(tx, bomLine.id, bomLine.component_item_id, newLot.item_id, allowSub);
+    if (oldFactor === null || newFactor === null) {
+      throw invalid("Lô được chọn không thuộc mã nguyên vật liệu (hoặc vật tư thay thế được phép) của dòng BOM này.");
+    }
+    targetQty = Math.round(((Number(c.planned_qty) / oldFactor) * newFactor) * 1e6) / 1e6;
+    targetUom = newLot.base_uom;
+  }
+
+  if (!order.materials_issued) {
+    if (c.reservation_id) {
+      await releaseReservationById(tx, actor, c.reservation_id, `Đổi lô NVL lệnh ${order.code}: ${d.reason}`);
+    }
+    const picks = await reserveLot(tx, actor, {
+      lot_id: d.new_lot_id,
+      qty_base: targetQty,
+      warehouse_ids: [order.warehouse_id],
+      demand_entity_type: "PRODUCTION_ORDER",
+      demand_entity_id: order.id,
+    });
+    const reasonNote = `[Đổi lô: ${oldLot?.code ?? "—"} → ${newLot.code}] ${d.reason}`;
+    const first = picks[0];
+    await tx.query(
+      `UPDATE kit.material_consumption
+          SET item_id = $2,
+              lot_id = $3,
+              location_id = $4,
+              reservation_id = $5,
+              planned_qty = $6,
+              issued_qty = 0,
+              actual_qty = 0,
+              returned_qty = 0,
+              uom = $7,
+              variance_pct = 0,
+              variance_reason = $8,
+              updated_at = now()
+        WHERE id = $1`,
+      [c.id, first.item_id, first.lot_id, first.location_id, first.reservation_id, first.qty_base, targetUom, reasonNote]
+    );
+    for (const extra of picks.slice(1)) {
+      await tx.query(
+        `INSERT INTO kit.material_consumption
+           (order_id, bom_line_id, item_id, lot_id, location_id, reservation_id, planned_qty, issued_qty, actual_qty, returned_qty, uom, variance_pct, variance_reason)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 0, 0, 0, $8, 0, $9)`,
+        [order.id, c.bom_line_id, extra.item_id, extra.lot_id, extra.location_id, extra.reservation_id, extra.qty_base, targetUom, reasonNote]
+      );
+    }
+
+    await writeAudit(tx, actor, {
+      entityType: "kit_production_order",
+      entityId: order.id,
+      action: "swap_material_lot",
+      changes: {
+        consumption_id: [c.id, c.id],
+        lot_code: [oldLot?.code ?? null, newLot.code],
+        mode: [null, "RESERVATION_ONLY"],
+      },
+      reason: d.reason,
+    });
+
+    return {
+      swapped: true,
+      mode: "RESERVATION_ONLY" as const,
+      old_lot_code: (oldLot?.code as string | null) ?? null,
+      new_lot_code: newLot.code as string,
+      return_document_code: null as string | null,
+      issue_document_code: null as string | null,
+    };
+  }
+
+  let returnDocCode: string | null = null;
+  if (Number(c.issued_qty) > 0 && c.lot_id && c.location_id) {
+    const needsQuarantineLoc = oldLot && ["QUARANTINE", "PENDING_QC", "REJECTED"].includes(oldLot.status);
+    const returnLocId = needsQuarantineLoc
+      ? await ensureWarehouseQuarantineLocation(tx, order.warehouse_id)
+      : c.location_id;
+
+    const retDoc = await postTrustedKitStockDoc(tx, actor, {
+      doc_type: "RETURN",
+      warehouse_id: order.warehouse_id,
+      reason_code: "LOT_SWAP_RETURN",
+      source_entity_type: "KIT_ORDER",
+      source_entity_id: order.id,
+      notes: `Nhập hoàn kho lô ${oldLot?.code ?? ""} do đổi sang lô ${newLot.code} (Lệnh ${order.code}): ${d.reason}`,
+      lines: [
+        {
+          item_id: c.item_id,
+          lot_id: c.lot_id,
+          to_location_id: returnLocId,
+          qty: Number(c.issued_qty),
+          uom: c.uom,
+        },
+      ],
+    });
+    returnDocCode = retDoc.code;
+  }
+
+  const picks = await reserveLot(tx, actor, {
+    lot_id: d.new_lot_id,
+    qty_base: targetQty,
+    warehouse_ids: [order.warehouse_id],
+    demand_entity_type: "PRODUCTION_ORDER",
+    demand_entity_id: order.id,
+  });
+
+  const issueDoc = await postTrustedKitStockDoc(tx, actor, {
+    doc_type: "ISSUE",
+    warehouse_id: order.warehouse_id,
+    reason_code: "PRODUCTION_ISSUE",
+    source_entity_type: "KIT_ORDER",
+    source_entity_id: order.id,
+    notes: `Xuất kho lô thay thế ${newLot.code} thay cho lô ${oldLot?.code ?? ""} (Lệnh ${order.code}): ${d.reason}`,
+    lines: picks.map((p) => ({
+      item_id: p.item_id,
+      lot_id: p.lot_id,
+      from_location_id: p.location_id,
+      qty: p.qty_base,
+      uom: targetUom,
+      reservation_id: p.reservation_id,
+    })),
+  });
+
+  const reasonNote = `[Đổi lô sau xuất kho: ${oldLot?.code ?? "—"} → ${newLot.code}${returnDocCode ? ` · Hoàn: ${returnDocCode}` : ""} · Xuất: ${issueDoc.code}] ${d.reason}`;
+  const first = picks[0];
+  await tx.query(
+    `UPDATE kit.material_consumption
+        SET item_id = $2,
+            lot_id = $3,
+            location_id = $4,
+            reservation_id = $5,
+            planned_qty = $6,
+            issued_qty = $6,
+            actual_qty = $6,
+            returned_qty = 0,
+            uom = $7,
+            stock_document_id = $8,
+            variance_pct = 0,
+            variance_reason = $9,
+            updated_at = now()
+      WHERE id = $1`,
+    [c.id, first.item_id, first.lot_id, first.location_id, first.reservation_id, first.qty_base, targetUom, issueDoc.id, reasonNote]
+  );
+
+  for (const extra of picks.slice(1)) {
+    await tx.query(
+      `INSERT INTO kit.material_consumption
+         (order_id, bom_line_id, item_id, lot_id, location_id, reservation_id, planned_qty, issued_qty, actual_qty, returned_qty, uom, stock_document_id, variance_pct, variance_reason)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, 0, $8, $9, 0, $10)`,
+      [order.id, c.bom_line_id, extra.item_id, extra.lot_id, extra.location_id, extra.reservation_id, extra.qty_base, targetUom, issueDoc.id, reasonNote]
+    );
+  }
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_production_order",
+    entityId: order.id,
+    action: "swap_material_lot",
+    changes: {
+      consumption_id: [c.id, c.id],
+      lot_code: [oldLot?.code ?? null, newLot.code],
+      return_document_code: [null, returnDocCode],
+      issue_document_code: [null, issueDoc.code],
+    },
+    reason: d.reason,
+  });
+
+  return {
+    swapped: true,
+    mode: "RETURN_AND_REISSUE" as const,
+    old_lot_code: (oldLot?.code as string | null) ?? null,
+    new_lot_code: newLot.code as string,
+    return_document_code: returnDocCode,
+    issue_document_code: issueDoc.code as string,
+  };
 }
 
 /**
@@ -2461,8 +2934,8 @@ export async function splitKitLot(tx: Tx, actor: AuthzActor, orderId: string, in
           doc_type: "ISSUE",
           warehouse_id: order.warehouse_id,
           reason_code: "LOT_SPLIT_OUT",
-          ref_entity_type: "KIT_ORDER",
-          ref_entity_id: order.id,
+          source_entity_type: "KIT_ORDER",
+          source_entity_id: order.id,
           notes: `Trừ tồn lô gốc ${parentLot.code} để tách sang lô con ${childLot.code}`,
           lines: [
             {
@@ -2491,8 +2964,8 @@ export async function splitKitLot(tx: Tx, actor: AuthzActor, orderId: string, in
           doc_type: "RECEIPT",
           warehouse_id: order.warehouse_id,
           reason_code: "LOT_SPLIT_IN",
-          ref_entity_type: "KIT_ORDER",
-          ref_entity_id: order.id,
+          source_entity_type: "KIT_ORDER",
+          source_entity_id: order.id,
           notes: `Nhập tồn lô con ${childLot.code} tách từ lô gốc ${parentLot.code}`,
           lines: [
             {
@@ -3184,28 +3657,21 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
     steps.push({ ...s, allowed_actions: await listAllowedActions(tx, productionStepMachine, actor, s) });
   }
 
-  const toYmd = (v: unknown) => {
-    if (!v) return "";
-    if (v instanceof Date) {
-      const y = v.getFullYear();
-      const m = String(v.getMonth() + 1).padStart(2, "0");
-      const d = String(v.getDate()).padStart(2, "0");
-      return `${y}-${m}-${d}`;
-    }
-    return String(v).slice(0, 10);
-  };
   const orderExpYmd = toYmd(order.expiry_date);
+  const todayYmd = vnToday();
 
   const consumptions = (
     await tx.query(
-      `SELECT mc.*, i.code AS item_code, i.name AS item_name,
+      `SELECT mc.*, i.code AS item_code, i.name AS item_name, i.tracking AS item_tracking,
               l.code AS lot_code, l.expiry_date, loc.code AS location_code,
-              bl.box_no, bl.component_role
+              bl.box_no, bl.component_role, bl.allow_substitute, bl.component_item_id AS bom_component_item_id,
+              sd.code AS stock_document_code
          FROM kit.material_consumption mc
          JOIN master.item i ON i.id = mc.item_id
          JOIN kit.bom_line bl ON bl.id = mc.bom_line_id
          LEFT JOIN inv.lot l ON l.id = mc.lot_id
          LEFT JOIN master.location loc ON loc.id = mc.location_id
+         LEFT JOIN inv.stock_document sd ON sd.id = mc.stock_document_id
         WHERE mc.order_id = $1
         ORDER BY bl.box_no, bl.line_no, mc.id`,
       [id]
@@ -3245,6 +3711,168 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
   const exploded_bom = bomObj ? await explodeKitBom(tx, order, bomObj, { lenientUom: true }) : [];
   const uom_warnings = exploded_bom.filter((x) => x.uom_error).map((x) => x.uom_error as string);
 
+  // Collect primary & approved substitute items so Operators can preview FEFO lots, pre-select lots in DRAFT,
+  // or swap allocated/issued lots in CONFIRMED/IN_PROGRESS/ON_HOLD.
+  const bomLineSubsRows = (
+    await tx.query(
+      `SELECT bls.bom_line_id, bls.substitute_item_id, bls.conversion_factor
+         FROM kit.bom_line_substitute bls
+         JOIN kit.bom_line bl ON bl.id = bls.bom_line_id
+        WHERE bl.bom_id = $1
+        ORDER BY bls.priority ASC`,
+      [order.bom_id]
+    )
+  ).rows;
+  const primaryItemIds = Array.from(
+    new Set([
+      ...exploded_bom.map((e) => e.component_item_id),
+      ...consumptions.map((c: any) => String(c.bom_component_item_id ?? c.item_id)),
+    ].filter(Boolean))
+  );
+  const masterSubRows = primaryItemIds.length
+    ? (
+        await tx.query(
+          `SELECT item_id, substitute_item_id, ratio
+             FROM master.item_substitute
+            WHERE item_id = ANY($1::uuid[])
+              AND status = 'ACTIVE'
+              AND change_request_id IS NOT NULL
+              AND (cardinality(allowed_modules) = 0 OR 'KIT' = ANY(allowed_modules))
+            ORDER BY priority ASC`,
+          [primaryItemIds]
+        )
+      ).rows
+    : [];
+
+  const allLookupItemIds = Array.from(
+    new Set([
+      ...primaryItemIds,
+      ...bomLineSubsRows.map((s: any) => String(s.substitute_item_id)),
+      ...masterSubRows.map((s: any) => String(s.substitute_item_id)),
+    ])
+  );
+
+  type AvailableLotOption = {
+    item_id: string;
+    item_code: string;
+    item_name: string;
+    base_uom: string;
+    lot_id: string;
+    lot_code: string;
+    mfr_lot_no: string | null;
+    mfg_date: string | null;
+    expiry_date: string | null;
+    received_date: string | null;
+    location_code: string;
+    qty_on_hand: number;
+    qty_reserved: number;
+    available: number;
+    expiry_shorter_than_product: boolean;
+    is_substitute?: boolean;
+    conversion_factor?: number;
+  };
+
+  const available_lots_by_item: Record<string, AvailableLotOption[]> = {};
+  if (allLookupItemIds.length > 0) {
+    const lotRows = (
+      await tx.query(
+        `SELECT sb.item_id, i.code AS item_code, i.name AS item_name, i.base_uom,
+                l.id AS lot_id, l.code AS lot_code, l.mfr_lot_no, l.mfg_date, l.expiry_date, l.received_date,
+                array_agg(DISTINCT loc.code ORDER BY loc.code) AS location_codes,
+                sum(sb.qty_on_hand)::float AS qty_on_hand,
+                sum(sb.qty_reserved)::float AS qty_reserved,
+                sum(sb.qty_on_hand - sb.qty_reserved)::float AS available
+           FROM inv.stock_balance sb
+           JOIN master.location loc ON loc.id = sb.location_id
+           JOIN inv.lot l ON l.id = sb.lot_id
+           JOIN master.item i ON i.id = sb.item_id
+          WHERE loc.warehouse_id = $1
+            AND loc.status = 'ACTIVE'
+            AND NOT loc.is_quarantine
+            AND sb.item_id = ANY($2::uuid[])
+            AND l.status = 'RELEASED'
+            AND (l.expiry_date IS NULL OR l.expiry_date >= $3::date)
+            AND sb.qty_on_hand - sb.qty_reserved > 0
+          GROUP BY sb.item_id, i.code, i.name, i.base_uom, l.id, l.code, l.mfr_lot_no, l.mfg_date, l.expiry_date, l.received_date
+          ORDER BY l.expiry_date ASC NULLS LAST, l.received_date ASC NULLS LAST, l.code ASC`,
+        [order.warehouse_id, allLookupItemIds, todayYmd]
+      )
+    ).rows;
+
+    for (const r of lotRows) {
+      const lotExpYmd = toYmd(r.expiry_date);
+      const itemId = String(r.item_id);
+      if (!available_lots_by_item[itemId]) available_lots_by_item[itemId] = [];
+      available_lots_by_item[itemId].push({
+        item_id: itemId,
+        item_code: r.item_code,
+        item_name: r.item_name,
+        base_uom: r.base_uom,
+        lot_id: String(r.lot_id),
+        lot_code: r.lot_code,
+        mfr_lot_no: r.mfr_lot_no ?? null,
+        mfg_date: toYmd(r.mfg_date) || null,
+        expiry_date: lotExpYmd || null,
+        received_date: toYmd(r.received_date) || null,
+        location_code: Array.isArray(r.location_codes) ? r.location_codes.filter(Boolean).join(", ") : "",
+        qty_on_hand: Number(r.qty_on_hand || 0),
+        qty_reserved: Number(r.qty_reserved || 0),
+        available: Number(r.available || 0),
+        expiry_shorter_than_product: Boolean(lotExpYmd && orderExpYmd && lotExpYmd < orderExpYmd),
+      });
+    }
+  }
+
+  const available_lots_by_bom_line: Record<string, AvailableLotOption[]> = {};
+  const bomLineMeta = new Map<string, { primaryItemId: string; allowSub: boolean }>();
+  for (const eb of exploded_bom) {
+    bomLineMeta.set(eb.bom_line_id, {
+      primaryItemId: eb.component_item_id,
+      allowSub: Boolean(eb.allow_substitute),
+    });
+  }
+  for (const c of consumptions as any[]) {
+    if (!bomLineMeta.has(c.bom_line_id)) {
+      bomLineMeta.set(c.bom_line_id, {
+        primaryItemId: String(c.bom_component_item_id ?? c.item_id),
+        allowSub: Boolean(c.allow_substitute),
+      });
+    }
+  }
+
+  for (const [bomLineId, meta] of bomLineMeta.entries()) {
+    const primaryLots = (available_lots_by_item[meta.primaryItemId] ?? []).map((x) => ({
+      ...x,
+      is_substitute: false,
+      conversion_factor: 1,
+    }));
+    const list: AvailableLotOption[] = [...primaryLots];
+    if (meta.allowSub) {
+      const seenSubItems = new Set<string>([meta.primaryItemId]);
+      for (const s of bomLineSubsRows) {
+        if (s.bom_line_id !== bomLineId) continue;
+        const subId = String(s.substitute_item_id);
+        if (seenSubItems.has(subId)) continue;
+        seenSubItems.add(subId);
+        for (const sl of available_lots_by_item[subId] ?? []) {
+          list.push({ ...sl, is_substitute: true, conversion_factor: Number(s.conversion_factor || 1) });
+        }
+      }
+      for (const s of masterSubRows) {
+        if (String(s.item_id) !== meta.primaryItemId) continue;
+        const subId = String(s.substitute_item_id);
+        if (seenSubItems.has(subId)) continue;
+        seenSubItems.add(subId);
+        for (const sl of available_lots_by_item[subId] ?? []) {
+          list.push({ ...sl, is_substitute: true, conversion_factor: Number(s.ratio || 1) });
+        }
+      }
+    }
+    available_lots_by_bom_line[bomLineId] = list;
+  }
+
+  const preferred_lots = ((order as any).bom_snapshot_json?.preferred_lots ?? {}) as Record<string, unknown>;
+
   const coaRow = (
     await tx.query(
       `SELECT c.*,
@@ -3270,5 +3898,19 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
   ).rows;
 
   const allowed_actions = await listAllowedActions(tx, productionOrderMachine, actor, order);
-  return { order, steps, consumptions, packaging, lot_splits, exploded_bom, uom_warnings, coa, reworks, allowed_actions };
+  return {
+    order,
+    steps,
+    consumptions,
+    packaging,
+    lot_splits,
+    exploded_bom,
+    uom_warnings,
+    coa,
+    reworks,
+    allowed_actions,
+    preferred_lots,
+    available_lots_by_item,
+    available_lots_by_bom_line,
+  };
 }

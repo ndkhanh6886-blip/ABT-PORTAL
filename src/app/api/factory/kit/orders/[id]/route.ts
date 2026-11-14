@@ -5,7 +5,9 @@ import {
   getProductionOrderDetail,
   issueOrderMaterials,
   printOrderLabel,
+  selectDraftMaterialLot,
   splitKitLot,
+  swapOrderMaterialLot,
   updateMaterialActuals,
   updateOrderDates,
   updateOrderPlan,
@@ -59,6 +61,15 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   if (b.operation === "reconcile_material") {
     const consumption = await updateMaterialActuals(tx, actor, params.id, b);
     return { consumption };
+  }
+  if (b.operation === "select_draft_lot") {
+    await selectDraftMaterialLot(tx, actor, params.id, b);
+    return getProductionOrderDetail(tx, actor, params.id);
+  }
+  if (b.operation === "swap_material_lot") {
+    const swap_result = await swapOrderMaterialLot(tx, actor, params.id, b);
+    const detail = await getProductionOrderDetail(tx, actor, params.id);
+    return { ...detail, swap_result };
   }
   throw invalid(`Thao tác lệnh sản xuất không hợp lệ: ${String(b.operation ?? "")}`);
 });

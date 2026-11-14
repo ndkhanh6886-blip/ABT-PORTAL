@@ -23,6 +23,8 @@ import {
   printOrderLabel,
   productionOrderMachine,
   productionStepMachine,
+  selectDraftMaterialLot,
+  swapOrderMaterialLot,
   updateMaterialActuals,
   updateOrderDates,
   verifyLineClearance,
@@ -781,5 +783,173 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
 
     const stDone = await act(stabilityStudyMachine, checker, study.id, "complete", signed);
     expect(stDone.status).toBe("COMPLETED");
+  });
+
+  it("5. Chọn lô nguyên vật liệu thủ công ở Bản nháp (select_draft_lot) và Đổi lô trước/sau xuất kho (swap_material_lot)", async () => {
+    const site = await makeSite();
+    const { operator, checker } = await setupKitTeam(site);
+
+    const suffix = Date.now().toString(36).slice(-4).toUpperCase();
+    const kitItem = await makeItem(site, {
+      code: `KIT-SWP-${suffix}`,
+      item_type: "FINISHED_KIT",
+      base_uom: "pcs",
+      shelf_life_days: 365,
+    });
+    const reagentItem = await makeItem(site, {
+      code: `REA-SWP-${suffix}`,
+      item_type: "REAGENT",
+      base_uom: "µL",
+    });
+
+    // Stock 3 RELEASED lots with staggered expiry dates: lotA (FEFO #1), lotB (#2), lotC (#3)
+    const lotA = await stockedLot(site, reagentItem.id, 100, "2028-03-01");
+    const lotB = await stockedLot(site, reagentItem.id, 100, "2028-06-01");
+    const lotC = await stockedLot(site, reagentItem.id, 100, "2028-12-01");
+
+    let bomLineId = "";
+    const bom = await withTransaction(async (tx) => {
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: "BOM Lot Swap Test",
+        tests_per_kit: 50,
+        shelf_life_days: 365,
+      });
+      const line = await addBomLine(tx, operator, {
+        bom_id: b.id,
+        component_item_id: reagentItem.id,
+        qty_per_base: 2,
+        uom: "µL",
+        box_no: 1,
+        component_role: "MASTER_MIX",
+      });
+      bomLineId = line.id;
+      return b;
+    });
+    await act(bomMachine, operator, bom.id, "submit_review");
+    await act(bomMachine, checker, bom.id, "approve", signed);
+
+    const rt = await withTransaction(async (tx) => {
+      const r = await createRouting(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: "Routing Lot Swap Test",
+      });
+      await addRoutingStep(tx, operator, {
+        routing_id: r.id,
+        seq: 10,
+        step_code: "S10",
+        step_name: "Pha chế",
+        category: "FORMULATION",
+        instructions: "Pha theo đúng lô đã chọn.",
+      });
+      return r;
+    });
+    await act(routingMachine, operator, rt.id, "submit_review");
+    await act(routingMachine, checker, rt.id, "approve", signed);
+
+    const order = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 10,
+        no_retention: true,
+      })
+    );
+
+    // 1. In DRAFT, detail must expose all 3 RELEASED candidate lots ordered by FEFO
+    const draftDetail = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+    expect(draftDetail.available_lots_by_item[reagentItem.id]?.map((x: any) => x.lot_id)).toEqual([
+      lotA.id,
+      lotB.id,
+      lotC.id,
+    ]);
+
+    // 2. Pre-select lotB in DRAFT (overriding FEFO lotA) and confirm -> lotB is reserved
+    await withTransaction((tx) =>
+      selectDraftMaterialLot(tx, operator, order.id, {
+        bom_line_id: bomLineId,
+        lot_id: lotB.id,
+        reason: "Chủ động chọn lô HSD dài hơn",
+      })
+    );
+    await act(productionOrderMachine, operator, order.id, "confirm");
+
+    const afterConfirm = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+    expect(afterConfirm.consumptions.length).toBe(1);
+    const mcId = afterConfirm.consumptions[0].id as string;
+    expect(afterConfirm.consumptions[0].lot_id).toBe(lotB.id);
+
+    const balAfterConfirm = (
+      await getFactoryPool().query(
+        "SELECT lot_id, qty_on_hand::float AS oh, qty_reserved::float AS res FROM inv.stock_balance WHERE lot_id = ANY($1::uuid[]) AND location_id = $2",
+        [[lotA.id, lotB.id, lotC.id], site.shelf]
+      )
+    ).rows;
+    const byLot1 = new Map(balAfterConfirm.map((r: any) => [r.lot_id, r]));
+    expect(byLot1.get(lotA.id).res).toBe(0);
+    expect(byLot1.get(lotB.id).res).toBe(20);
+
+    // 3. Before issue_materials, swap lotB -> lotC -> lotB reservation is released and lotC is reserved
+    const swapPre = await withTransaction((tx) =>
+      swapOrderMaterialLot(tx, operator, order.id, {
+        consumption_id: mcId,
+        new_lot_id: lotC.id,
+        reason: "Đổi sang lô C trước khi xuất kho",
+      })
+    );
+    expect(swapPre.mode).toBe("RESERVATION_ONLY");
+
+    const afterPreSwap = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+    expect(afterPreSwap.consumptions[0].lot_id).toBe(lotC.id);
+    const balAfterPreSwap = (
+      await getFactoryPool().query(
+        "SELECT lot_id, qty_on_hand::float AS oh, qty_reserved::float AS res FROM inv.stock_balance WHERE lot_id = ANY($1::uuid[]) AND location_id = $2",
+        [[lotA.id, lotB.id, lotC.id], site.shelf]
+      )
+    ).rows;
+    const byLot2 = new Map(balAfterPreSwap.map((r: any) => [r.lot_id, r]));
+    expect(byLot2.get(lotB.id).res).toBe(0);
+    expect(byLot2.get(lotC.id).res).toBe(20);
+
+    // 4. Issue materials -> consumes lotC reservation and deducts lotC on-hand (100 -> 80)
+    await withTransaction((tx) => issueOrderMaterials(tx, operator, order.id));
+    const balAfterIssue = (
+      await getFactoryPool().query(
+        "SELECT lot_id, qty_on_hand::float AS oh, qty_reserved::float AS res FROM inv.stock_balance WHERE lot_id = ANY($1::uuid[]) AND location_id = $2",
+        [[lotC.id], site.shelf]
+      )
+    ).rows[0];
+    expect(balAfterIssue.oh).toBe(80);
+    expect(balAfterIssue.res).toBe(0);
+
+    // 5. After issue_materials, swap lotC -> lotA -> posts RETURN (NK...) for lotC & ISSUE (XK...) for lotA
+    const swapPost = await withTransaction((tx) =>
+      swapOrderMaterialLot(tx, operator, order.id, {
+        consumption_id: mcId,
+        new_lot_id: lotA.id,
+        reason: "Lọ lô C bị nứt, đổi sang lô A sau xuất kho",
+      })
+    );
+    expect(swapPost.mode).toBe("RETURN_AND_REISSUE");
+    expect(swapPost.return_document_code).toMatch(/^NK/);
+    expect(swapPost.issue_document_code).toMatch(/^XK/);
+
+    const afterPostSwap = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+    expect(afterPostSwap.consumptions[0].lot_id).toBe(lotA.id);
+    expect(afterPostSwap.consumptions[0].stock_document_code).toBe(swapPost.issue_document_code);
+
+    const balAfterPostSwap = (
+      await getFactoryPool().query(
+        "SELECT lot_id, qty_on_hand::float AS oh, qty_reserved::float AS res FROM inv.stock_balance WHERE lot_id = ANY($1::uuid[]) AND location_id = $2",
+        [[lotA.id, lotB.id, lotC.id], site.shelf]
+      )
+    ).rows;
+    const byLot3 = new Map(balAfterPostSwap.map((r: any) => [r.lot_id, r]));
+    expect(byLot3.get(lotC.id).oh).toBe(100);
+    expect(byLot3.get(lotA.id).oh).toBe(80);
+    expect(byLot3.get(lotA.id).res).toBe(0);
   });
 });
