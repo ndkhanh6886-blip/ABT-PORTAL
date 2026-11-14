@@ -6,6 +6,7 @@ import {
   issueOrderMaterials,
   printOrderLabel,
   selectDraftMaterialLot,
+  selectStepEquipment,
   splitKitLot,
   swapOrderMaterialLot,
   updateMaterialActuals,
@@ -39,6 +40,10 @@ export const POST = factoryRoute(async (tx, { actor, params, body }) => {
   if (b.operation === "assign_operator") {
     const step = await assignStepOperator(tx, actor, params.id, b as any);
     return { step };
+  }
+  if (b.operation === "select_step_asset") {
+    await selectStepEquipment(tx, actor, params.id, b);
+    return getProductionOrderDetail(tx, actor, params.id);
   }
   if (b.operation === "verify_qc_gate") {
     const step = await verifyStepQcGate(tx, actor, params.id, b as any);

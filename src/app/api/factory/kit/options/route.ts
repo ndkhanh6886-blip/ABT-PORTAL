@@ -2,7 +2,7 @@ import { authorizeAnywhere, hasFactoryPermission } from "@/factory/core/authz";
 import { factoryRoute } from "@/factory/http";
 import { ensureKitBomRoutingAndIfuSchema } from "@/factory/kit/bomRouting";
 import { listDepartmentStaffForKitAndQa } from "@/factory/kit/ordersEbr";
-import { ensureDepartmentEquipmentSeed } from "@/factory/asset/service";
+import { ensureDepartmentEquipmentSeed, syncOverdueCalibrationAssets } from "@/factory/asset/service";
 import { ensureInternalOrderLineKitSpecColumns } from "@/factory/intake/kdEvents";
 import "@/factory/kit/permissions";
 
@@ -11,6 +11,7 @@ export const GET = factoryRoute(async (tx, { actor }) => {
   await ensureKitBomRoutingAndIfuSchema(tx);
   await ensureInternalOrderLineKitSpecColumns(tx);
   await ensureDepartmentEquipmentSeed(tx);
+  await syncOverdueCalibrationAssets(tx);
 
   const allUnits = (
     await tx.query(
@@ -33,7 +34,15 @@ export const GET = factoryRoute(async (tx, { actor }) => {
   ).rows;
   const assets = (
     await tx.query(
-      "SELECT id, code, name, asset_type, status, next_calibration_due::text AS next_calibration_due FROM asset.asset WHERE status <> 'RETIRED' ORDER BY code LIMIT 300"
+      `SELECT a.id, a.code, a.name, a.asset_type, a.status,
+              a.next_calibration_due::text AS next_calibration_due,
+              a.location, a.equipment_category, a.model, a.serial_no,
+              o.code AS owner_code, o.name AS owner_name
+         FROM asset.asset a
+         LEFT JOIN core.org_unit o ON o.id = a.owner_org_unit_id
+        WHERE a.status <> 'RETIRED'
+        ORDER BY CASE WHEN o.code = 'P-KIT' THEN 0 WHEN o.code = 'P-QA' THEN 1 ELSE 2 END, a.code
+        LIMIT 500`
     )
   ).rows;
   const lots = (

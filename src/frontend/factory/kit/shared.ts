@@ -17,6 +17,12 @@ export interface KitOptions {
     asset_type: string;
     status: string;
     next_calibration_due: string | null;
+    location?: string | null;
+    equipment_category?: string | null;
+    model?: string | null;
+    serial_no?: string | null;
+    owner_code?: string | null;
+    owner_name?: string | null;
   }[];
   lots: {
     id: string;
@@ -131,6 +137,9 @@ export interface StepFunctionalFlags {
   require_env_log: boolean;
   require_yield_reconcile: boolean;
   require_label_ifu_check: boolean;
+  require_asset?: boolean;
+  equipment_group?: string | null;
+  extra_asset_ids?: string[];
   expected_output?: string;
 }
 
@@ -1157,5 +1166,130 @@ export function parseAbtKitLotCode(lotCode: string | null | undefined): {
     summaryShort: [formText, matchedTube ? `Tube ${matchedTube.code}` : ""].filter(Boolean).join(" · "),
     summaryDetail: [formText, tubeText, mixText].filter(Boolean).join(" · "),
   };
+}
+
+export const ASSET_TYPE_GROUP_LABELS: Record<string, string> = {
+  PCR: "Máy Real-time PCR / Luân nhiệt",
+  BALANCE: "Cân phân tích / Máy đo pH chuẩn",
+  CENTRIFUGE: "Máy ly tâm lạnh / Spindown",
+  SPECTROPHOTOMETER: "Máy quang phổ (NanoDrop / OD / Đọc gel)",
+  FREEZER: "Tủ âm sâu (-20°C / -80°C) & Tủ mát",
+  OTHER: "Tủ ATSH / Robot chiết rót / Máy khuấy / Pipet & Khác",
+  HPLC: "Hệ thống Sắc ký HPLC",
+  SYNTHESIZER: "Máy tổng hợp Oligo",
+  MASS_SPEC: "Hệ thống Khối phổ (LC-MS)",
+};
+
+export const EQUIPMENT_CATEGORY_PRESETS: string[] = [
+  "Tủ ATSH",
+  "Pipet",
+  "Máy đo pH",
+  "Cân phân tích",
+  "Máy khuấy từ",
+  "Máy ly tâm / Spindown",
+  "Robot / Máy chiết rót",
+  "Máy Real-time PCR",
+  "Máy đông khô",
+  "Tủ âm / Tủ mát",
+];
+
+export type KitAssetOption = KitOptions["assets"][number];
+
+export interface EquipmentGroupOptionItem {
+  value: string;
+  label: string;
+  count: number;
+}
+
+/**
+ * Builds structured equipment group filter options from the active factory asset catalog:
+ * - `TYPE:<asset_type>`: standard asset type taxonomy
+ * - `CAT:<equipment_category>`: fine-grained operational subgroup from Tab 4 (e.g. Pipet, Tủ ATSH, Máy đo pH)
+ * - `LOC:<location>`: room/work-area where equipment is physically installed
+ */
+export function buildEquipmentGroupOptions(assets: KitAssetOption[] = []): {
+  systemTypes: EquipmentGroupOptionItem[];
+  categories: EquipmentGroupOptionItem[];
+  locations: EquipmentGroupOptionItem[];
+} {
+  const typeCounts = new Map<string, number>();
+  const catCounts = new Map<string, number>();
+  const locCounts = new Map<string, number>();
+
+  for (const a of assets) {
+    if (a.asset_type) {
+      typeCounts.set(a.asset_type, (typeCounts.get(a.asset_type) ?? 0) + 1);
+    }
+    const cat = String(a.equipment_category || "").trim();
+    if (cat) {
+      catCounts.set(cat, (catCounts.get(cat) ?? 0) + 1);
+    }
+    const loc = String(a.location || "").trim();
+    if (loc) {
+      locCounts.set(loc, (locCounts.get(loc) ?? 0) + 1);
+    }
+  }
+
+  // Ensure standard presets are also selectable as categories even before machines are tagged
+  for (const presetCat of EQUIPMENT_CATEGORY_PRESETS) {
+    if (!catCounts.has(presetCat)) {
+      catCounts.set(presetCat, 0);
+    }
+  }
+
+  const systemTypes: EquipmentGroupOptionItem[] = Object.entries(ASSET_TYPE_GROUP_LABELS).map(([k, lbl]) => ({
+    value: `TYPE:${k}`,
+    label: lbl,
+    count: typeCounts.get(k) ?? 0,
+  }));
+
+  const categories: EquipmentGroupOptionItem[] = Array.from(catCounts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "vi"))
+    .map(([cat, count]) => ({
+      value: `CAT:${cat}`,
+      label: cat,
+      count,
+    }));
+
+  const locations: EquipmentGroupOptionItem[] = Array.from(locCounts.entries())
+    .sort((a, b) => a[0].localeCompare(b[0], "vi"))
+    .map(([loc, count]) => ({
+      value: `LOC:${loc}`,
+      label: loc,
+      count,
+    }));
+
+  return { systemTypes, categories, locations };
+}
+
+export function formatEquipmentGroupLabel(groupKey: string | null | undefined): string {
+  const raw = String(groupKey || "").trim();
+  if (!raw) return "Mọi thiết bị";
+  if (raw.startsWith("TYPE:")) {
+    const code = raw.slice(5);
+    return ASSET_TYPE_GROUP_LABELS[code] ?? code;
+  }
+  if (raw.startsWith("CAT:")) return raw.slice(4);
+  if (raw.startsWith("LOC:")) return `Vị trí: ${raw.slice(4)}`;
+  return ASSET_TYPE_GROUP_LABELS[raw] ?? raw;
+}
+
+export function matchesEquipmentGroup(asset: KitAssetOption, groupKey: string | null | undefined): boolean {
+  const raw = String(groupKey || "").trim();
+  if (!raw) return true;
+  if (raw.startsWith("TYPE:")) {
+    return asset.asset_type === raw.slice(5);
+  }
+  if (raw.startsWith("CAT:")) {
+    const target = raw.slice(4).trim().toLowerCase();
+    const cat = String(asset.equipment_category || "").trim().toLowerCase();
+    const name = String(asset.name || "").trim().toLowerCase();
+    return (cat && (cat === target || cat.includes(target) || target.includes(cat))) || name.includes(target);
+  }
+  if (raw.startsWith("LOC:")) {
+    const target = raw.slice(4).trim().toLowerCase();
+    return String(asset.location || "").trim().toLowerCase() === target;
+  }
+  return asset.asset_type === raw || String(asset.equipment_category || "").trim() === raw;
 }
 

@@ -558,6 +558,7 @@ export interface ProductionStepRow {
   required_training_doc_code: string | null;
   required_asset_id: string | null;
   asset_id: string | null;
+  functional_flags?: Record<string, unknown>;
   param_schema: RoutingStepParamDef[];
   param_values: Record<string, unknown>;
   is_qc: boolean;
@@ -1325,6 +1326,53 @@ async function evaluateStepParamsAndDeviation(
   return dev.deviation_id;
 }
 
+export const REQUIRE_STEP_ASSET_MSG = "Bước công đoạn này yêu cầu chọn thiết bị thực hiện (còn hạn hiệu chuẩn).";
+
+function resolveStepAssetSelection(
+  row: { asset_id?: string | null; required_asset_id?: string | null; functional_flags?: Record<string, unknown> },
+  payload: Record<string, unknown>
+): { assetId: string | null; extraAssetIds: string[]; hasExtraPayload: boolean } {
+  let assetId: string | null = row.asset_id ?? row.required_asset_id ?? null;
+  if ("asset_id" in payload) {
+    const raw = payload.asset_id;
+    assetId = raw && String(raw).trim() ? String(raw).trim() : null;
+  }
+  const rawExtras = Array.isArray(payload.extra_asset_ids)
+    ? payload.extra_asset_ids
+    : Array.isArray(row.functional_flags?.extra_asset_ids)
+      ? (row.functional_flags?.extra_asset_ids as unknown[])
+      : [];
+  const extraAssetIds = Array.from(
+    new Set(rawExtras.map((x) => String(x || "").trim()).filter((id) => Boolean(id) && id !== assetId))
+  );
+  return { assetId, extraAssetIds, hasExtraPayload: Array.isArray(payload.extra_asset_ids) };
+}
+
+async function assertStepAssetsUsable(tx: Tx, assetId: string | null, extraAssetIds: string[]): Promise<void> {
+  const ids = [assetId, ...extraAssetIds].filter((id): id is string => Boolean(id && UUID_RE.test(id)));
+  for (const id of Array.from(new Set(ids))) {
+    await assertUsable(tx, id);
+  }
+}
+
+function buildStepAssetFlagsPatch(
+  row: { asset_id?: string | null; required_asset_id?: string | null; functional_flags?: Record<string, unknown> },
+  payload: Record<string, unknown>
+): { asset_id: string | null; functional_flags?: Record<string, unknown> } {
+  const { assetId, extraAssetIds, hasExtraPayload } = resolveStepAssetSelection(row, payload);
+  return {
+    asset_id: assetId,
+    ...(hasExtraPayload
+      ? {
+          functional_flags: {
+            ...(row.functional_flags && typeof row.functional_flags === "object" ? row.functional_flags : {}),
+            extra_asset_ids: extraAssetIds,
+          },
+        }
+      : {}),
+  };
+}
+
 /**
  * Electronic Batch Record (EBR) Step State Machine (docs/nha-may/02 §8.3):
  * PENDING → IN_PROGRESS → AWAITING_CHECK → DONE ✍
@@ -1385,19 +1433,27 @@ export const productionStepMachine = defineMachine<ProductionStepStatus, Product
             isUserTrainedForSop(tx, actor.userId, row.required_training_doc_code ?? row.sop_doc_code),
         },
         {
+          code: "ASSET_REQUIRED",
+          message: REQUIRE_STEP_ASSET_MSG,
+          check: ({ row, payload }) => {
+            if (!row.functional_flags?.require_asset) return true;
+            const { assetId } = resolveStepAssetSelection(row, payload);
+            return Boolean(assetId);
+          },
+        },
+        {
           code: "ASSET_CHECK",
           message: "Thiết bị sử dụng cho công đoạn không sẵn sàng hoặc đã quá hạn hiệu chuẩn.",
           check: async ({ tx, row, payload }) => {
-            const assetId = (payload.asset_id as string | undefined) ?? row.asset_id ?? row.required_asset_id;
-            if (!assetId) return true;
-            await assertUsable(tx, assetId);
+            const { assetId, extraAssetIds } = resolveStepAssetSelection(row, payload);
+            await assertStepAssetsUsable(tx, assetId, extraAssetIds);
             return true;
           },
         },
       ],
       patch: ({ row, payload }) => ({
         started_at: new Date(),
-        asset_id: (payload.asset_id as string | undefined) ?? row.asset_id ?? row.required_asset_id,
+        ...buildStepAssetFlagsPatch(row, payload),
       }),
       effects: async ({ tx, actor, row }) => {
         const order = (
@@ -1444,6 +1500,24 @@ export const productionStepMachine = defineMachine<ProductionStepStatus, Product
           },
         },
         {
+          code: "ASSET_REQUIRED",
+          message: REQUIRE_STEP_ASSET_MSG,
+          check: ({ row, payload }) => {
+            if (!row.functional_flags?.require_asset) return true;
+            const { assetId } = resolveStepAssetSelection(row, payload);
+            return Boolean(assetId);
+          },
+        },
+        {
+          code: "ASSET_CHECK",
+          message: "Thiết bị sử dụng cho công đoạn không sẵn sàng hoặc đã quá hạn hiệu chuẩn.",
+          check: async ({ tx, row, payload }) => {
+            const { assetId, extraAssetIds } = resolveStepAssetSelection(row, payload);
+            await assertStepAssetsUsable(tx, assetId, extraAssetIds);
+            return true;
+          },
+        },
+        {
           code: "MISSING_PARAMS",
           message: "Vui lòng nhập đầy đủ các thông số bắt buộc của công đoạn.",
           check: ({ row, payload }) => {
@@ -1454,6 +1528,7 @@ export const productionStepMachine = defineMachine<ProductionStepStatus, Product
         },
       ],
       patch: ({ actor, row, payload }) => ({
+        ...buildStepAssetFlagsPatch(row, payload),
         param_values: (payload.param_values ?? row.param_values ?? {}) as Record<string, unknown>,
         notes: payload.notes ? String(payload.notes) : row.notes,
         performed_by: actor.userId,
@@ -1503,6 +1578,24 @@ export const productionStepMachine = defineMachine<ProductionStepStatus, Product
           },
         },
         {
+          code: "ASSET_REQUIRED",
+          message: REQUIRE_STEP_ASSET_MSG,
+          check: ({ row, payload }) => {
+            if (!row.functional_flags?.require_asset) return true;
+            const { assetId } = resolveStepAssetSelection(row, payload);
+            return Boolean(assetId);
+          },
+        },
+        {
+          code: "ASSET_CHECK",
+          message: "Thiết bị sử dụng cho công đoạn không sẵn sàng hoặc đã quá hạn hiệu chuẩn.",
+          check: async ({ tx, row, payload }) => {
+            const { assetId, extraAssetIds } = resolveStepAssetSelection(row, payload);
+            await assertStepAssetsUsable(tx, assetId, extraAssetIds);
+            return true;
+          },
+        },
+        {
           code: "MISSING_PARAMS",
           message: "Vui lòng nhập đầy đủ các thông số bắt buộc của công đoạn.",
           check: ({ row, payload }) => {
@@ -1513,6 +1606,7 @@ export const productionStepMachine = defineMachine<ProductionStepStatus, Product
         },
       ],
       patch: ({ actor, row, payload }) => ({
+        ...buildStepAssetFlagsPatch(row, payload),
         param_values: (payload.param_values ?? row.param_values ?? {}) as Record<string, unknown>,
         notes: payload.notes ? String(payload.notes) : row.notes,
         performed_by: actor.userId,
@@ -3075,11 +3169,91 @@ export async function assignStepOperator(
   return updated;
 }
 
+const selectStepEquipmentSchema = z.object({
+  step_id: z.string().uuid("Chọn bước công đoạn EBR"),
+  asset_id: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? null : v),
+    z.string().uuid("Mã ID thiết bị không hợp lệ").nullable()
+  ),
+  extra_asset_ids: z.array(z.string().uuid("Mã ID thiết bị phụ trợ không hợp lệ")).max(10).default([]),
+});
+
+/**
+ * Selects and validates (via `assertUsable` calibration & availability checks) the primary
+ * and auxiliary equipment used on an EBR step (`asset_id` + `functional_flags.extra_asset_ids`).
+ */
+export async function selectStepEquipment(tx: Tx, actor: AuthzActor, orderId: string, input: unknown) {
+  await ensureKitDailyTrackerAndQcGateSchema(tx);
+  const d = parseInput(selectStepEquipmentSchema, input);
+  const step = (
+    await tx.query(
+      `SELECT s.*, o.org_unit_id
+         FROM kit.production_step s
+         JOIN kit.production_order o ON o.id = s.order_id
+        WHERE s.id = $1 AND s.order_id = $2 FOR UPDATE OF s`,
+      [d.step_id, orderId]
+    )
+  ).rows[0] as (ProductionStepRow & { org_unit_id: string }) | undefined;
+  if (!step) throw notFound("bước công đoạn EBR");
+
+  const hasQcPerm =
+    step.is_qc &&
+    ((await hasFactoryPermission(tx, actor, "qms.qc.analyze", step.org_unit_id)) ||
+      (await hasFactoryPermission(tx, actor, "qms.qc.review", step.org_unit_id)) ||
+      (await hasFactoryPermission(tx, actor, "qms.qc.analyze")) ||
+      (await hasFactoryPermission(tx, actor, "qms.qc.review")));
+  if (!hasQcPerm && !(await hasFactoryPermission(tx, actor, "kit.order.manage", step.org_unit_id))) {
+    await authorize(tx, actor, "kit.ebr.execute", step.org_unit_id);
+  }
+  if (step.status === "DONE" || step.status === "SKIPPED") {
+    throw invalid("Không thể thay đổi thiết bị khi công đoạn EBR đã hoàn tất hoặc đã bỏ qua.");
+  }
+
+  const dedupExtras = Array.from(new Set(d.extra_asset_ids.filter((id) => id && id !== d.asset_id)));
+  await assertStepAssetsUsable(tx, d.asset_id, dedupExtras);
+
+  const curFlags = step.functional_flags && typeof step.functional_flags === "object" ? step.functional_flags : {};
+  const nextFlags = { ...curFlags, extra_asset_ids: dedupExtras };
+
+  const updated = (
+    await tx.query(
+      `UPDATE kit.production_step
+          SET asset_id = $2,
+              functional_flags = $3::jsonb,
+              updated_at = now()
+        WHERE id = $1
+        RETURNING *`,
+      [d.step_id, d.asset_id, JSON.stringify(nextFlags)]
+    )
+  ).rows[0];
+
+  await writeAudit(tx, actor, {
+    entityType: "kit_production_step",
+    entityId: d.step_id,
+    action: "select_step_asset",
+    changes: {
+      asset_id: [step.asset_id ?? null, d.asset_id],
+      extra_asset_ids: [
+        Array.isArray(curFlags.extra_asset_ids) ? curFlags.extra_asset_ids : [],
+        dedupExtras,
+      ],
+    },
+  });
+  return updated;
+}
+
 export async function verifyStepQcGate(
   tx: Tx,
   actor: AuthzActor,
   orderId: string,
-  input: { step_id?: string; decision?: "REQUEST_QC" | "PASS" | "REJECT"; note?: string; param_values?: Record<string, unknown> }
+  input: {
+    step_id?: string;
+    decision?: "REQUEST_QC" | "PASS" | "REJECT";
+    note?: string;
+    param_values?: Record<string, unknown>;
+    asset_id?: string | null;
+    extra_asset_ids?: string[];
+  }
 ) {
   await ensureKitDailyTrackerAndQcGateSchema(tx);
   const stepId = String(input.step_id ?? "").trim();
@@ -3100,9 +3274,22 @@ export async function verifyStepQcGate(
   const decision = input.decision ?? "PASS";
   const note = input.note?.trim() || null;
   const mergedParams = { ...(step.param_values || {}), ...(input.param_values || {}) };
+  const assetPayload: Record<string, unknown> = {};
+  if ("asset_id" in input) assetPayload.asset_id = input.asset_id ?? null;
+  if (Array.isArray(input.extra_asset_ids)) assetPayload.extra_asset_ids = input.extra_asset_ids;
+  const resolvedAssets = resolveStepAssetSelection(step, assetPayload);
+  const nextFlagsJson = resolvedAssets.hasExtraPayload
+    ? JSON.stringify({
+        ...(step.functional_flags && typeof step.functional_flags === "object" ? step.functional_flags : {}),
+        extra_asset_ids: resolvedAssets.extraAssetIds,
+      })
+    : null;
 
   if (decision === "REQUEST_QC") {
     await authorize(tx, actor, "kit.ebr.execute", step.org_unit_id);
+    if (resolvedAssets.assetId || resolvedAssets.extraAssetIds.length > 0) {
+      await assertStepAssetsUsable(tx, resolvedAssets.assetId, resolvedAssets.extraAssetIds);
+    }
     const upd = (
       await tx.query(
         `UPDATE kit.production_step
@@ -3111,11 +3298,13 @@ export async function verifyStepQcGate(
                 qc_gate_note = coalesce($3, qc_gate_note),
                 started_at = coalesce(started_at, now()),
                 performed_by = coalesce(performed_by, $4),
+                asset_id = $5,
+                functional_flags = coalesce($6::jsonb, functional_flags),
                 status = CASE WHEN status = 'PENDING' THEN 'IN_PROGRESS' ELSE status END,
                 updated_at = now()
           WHERE id = $1
           RETURNING *`,
-        [stepId, JSON.stringify(mergedParams), note, actor.userId]
+        [stepId, JSON.stringify(mergedParams), note, actor.userId, resolvedAssets.assetId, nextFlagsJson]
       )
     ).rows[0];
 
@@ -3143,6 +3332,10 @@ export async function verifyStepQcGate(
   }
 
   if (decision === "PASS") {
+    if (step.functional_flags?.require_asset && !resolvedAssets.assetId) {
+      throw invalid(REQUIRE_STEP_ASSET_MSG, undefined, "ASSET_REQUIRED");
+    }
+    await assertStepAssetsUsable(tx, resolvedAssets.assetId, resolvedAssets.extraAssetIds);
     const phVal = mergedParams?.ph ?? mergedParams?.actual_ph ?? mergedParams?.pH ?? mergedParams?.PH;
     if (phVal !== undefined && phVal !== null && String(phVal).trim() !== "") {
       const phNum = Number(String(phVal).trim());
@@ -3160,6 +3353,8 @@ export async function verifyStepQcGate(
                 qc_verified_at = now(),
                 qc_gate_note = coalesce($3, 'Đạt kiểm soát chất lượng trung gian (IPQC) — Cho phép chuyển công đoạn tiếp theo'),
                 param_values = $4::jsonb,
+                asset_id = $6,
+                functional_flags = coalesce($7::jsonb, functional_flags),
                 started_at = coalesce(started_at, now()),
                 completed_at = coalesce(completed_at, now()),
                 checked_by = $5,
@@ -3169,7 +3364,7 @@ export async function verifyStepQcGate(
                 updated_at = now()
           WHERE id = $1
           RETURNING *`,
-        [stepId, actor.name || "Chuyên viên QA/QC", note, JSON.stringify(mergedParams), actor.userId]
+        [stepId, actor.name || "Chuyên viên QA/QC", note, JSON.stringify(mergedParams), actor.userId, resolvedAssets.assetId, nextFlagsJson]
       )
     ).rows[0];
 
@@ -3639,10 +3834,14 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
   const stepsRaw = (
     await tx.query(
       `SELECT s.*, a.code AS asset_code, a.name AS asset_name,
+              a.status AS asset_status, a.next_calibration_due::text AS asset_calibration_due,
+              a.location AS asset_location, a.equipment_category AS asset_equipment_category,
+              ra.code AS required_asset_code, ra.name AS required_asset_name,
               pp.display_name AS performed_by_name, kp.display_name AS checked_by_name,
               d.code AS deviation_code, d.severity AS deviation_severity
          FROM kit.production_step s
          LEFT JOIN asset.asset a ON a.id = coalesce(s.asset_id, s.required_asset_id)
+         LEFT JOIN asset.asset ra ON ra.id = s.required_asset_id
          LEFT JOIN core.user_profile pp ON pp.user_id = s.performed_by
          LEFT JOIN core.user_profile kp ON kp.user_id = s.checked_by
          LEFT JOIN qms.deviation d ON d.id = s.deviation_id
@@ -3650,11 +3849,58 @@ export async function getProductionOrderDetail(tx: Tx, actor: AuthzActor, id: st
         ORDER BY s.seq`,
       [id]
     )
-  ).rows as (ProductionStepRow & Record<string, unknown>)[];
+  ).rows as (ProductionStepRow & {
+    asset_code: string | null;
+    asset_name: string | null;
+    asset_status: string | null;
+    asset_calibration_due: string | null;
+    asset_location: string | null;
+    asset_equipment_category: string | null;
+    required_asset_code: string | null;
+    required_asset_name: string | null;
+    performed_by_name: string | null;
+    checked_by_name: string | null;
+    deviation_code: string | null;
+    deviation_severity: string | null;
+  })[];
+
+  const allExtraAssetIds = Array.from(
+    new Set(
+      stepsRaw.flatMap((s) =>
+        Array.isArray(s.functional_flags?.extra_asset_ids)
+          ? (s.functional_flags.extra_asset_ids as unknown[])
+              .map((x) => String(x || "").trim())
+              .filter((aid) => UUID_RE.test(aid))
+          : []
+      )
+    )
+  );
+  const extraAssetMap = new Map<
+    string,
+    { id: string; code: string; name: string; status: string; next_calibration_due: string | null }
+  >();
+  if (allExtraAssetIds.length > 0) {
+    const extraRows = (
+      await tx.query(
+        `SELECT id, code, name, status, next_calibration_due::text AS next_calibration_due
+           FROM asset.asset WHERE id = ANY($1::uuid[])`,
+        [allExtraAssetIds]
+      )
+    ).rows;
+    for (const r of extraRows) {
+      extraAssetMap.set(String(r.id), r);
+    }
+  }
 
   const steps = [];
   for (const s of stepsRaw) {
-    steps.push({ ...s, allowed_actions: await listAllowedActions(tx, productionStepMachine, actor, s) });
+    const extraIds = Array.isArray(s.functional_flags?.extra_asset_ids)
+      ? (s.functional_flags.extra_asset_ids as unknown[]).map((x) => String(x || "").trim())
+      : [];
+    const extra_assets = extraIds
+      .map((aid) => extraAssetMap.get(aid))
+      .filter((x): x is { id: string; code: string; name: string; status: string; next_calibration_due: string | null } => Boolean(x));
+    steps.push({ ...s, extra_assets, allowed_actions: await listAllowedActions(tx, productionStepMachine, actor, s) });
   }
 
   const orderExpYmd = toYmd(order.expiry_date);

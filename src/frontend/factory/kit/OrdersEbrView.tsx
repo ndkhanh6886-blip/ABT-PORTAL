@@ -14,7 +14,10 @@ import {
   ABT_TUBE_STRIP_CATALOG,
   ACTION_LABELS,
   buildAbtKitLotCode,
+  formatEquipmentGroupLabel,
+  type KitAssetOption,
   type KitOptions,
+  matchesEquipmentGroup,
   parseAbtKitLotCode,
   ROLE_LABELS,
   STEP_CATEGORY_LABELS,
@@ -29,6 +32,33 @@ const SHIFT_LABELS: Record<string, string> = {
 };
 
 const PRESET_OPERATORS: string[] = [];
+
+const REQUIRE_STEP_ASSET_MSG =
+  "Bước công đoạn này yêu cầu chọn thiết bị thực hiện (còn hạn hiệu chuẩn).";
+
+/** Returns whether an asset is currently in service and within its calibration window. */
+function isKitAssetUsable(
+  asset: { status?: string | null; next_calibration_due?: string | null } | null | undefined,
+  todayStr: string
+): boolean {
+  if (!asset || asset.status !== "IN_SERVICE") return false;
+  if (!asset.next_calibration_due) return true;
+  return String(asset.next_calibration_due).slice(0, 10) >= todayStr;
+}
+
+/** Formats a readable asset option label showing availability and calibration due date. */
+function formatKitAssetOptionLabel(a: KitAssetOption, todayStr: string): string {
+  const usable = isKitAssetUsable(a, todayStr);
+  const dueStr = a.next_calibration_due ? String(a.next_calibration_due).slice(0, 10) : "";
+  const statusSuffix = usable
+    ? ""
+    : a.status === "OUT_OF_CALIBRATION" || (dueStr && dueStr < todayStr)
+      ? " (QUÁ HẠN HC)"
+      : ` (${a.status})`;
+  const locPart = a.location ? ` [${a.location}]` : "";
+  const duePart = dueStr ? ` · HC: ${dueStr}` : "";
+  return `${usable ? "✅" : "⛔"} ${a.code} — ${a.name}${locPart}${duePart}${statusSuffix}`;
+}
 
 function isStepActivelyWaitingQc(s: any, allSteps: any[]): boolean {
   if (!s.is_qc || s.qc_gate_status !== "WAITING_QC" || s.status === "DONE" || s.status === "SKIPPED") {
@@ -142,6 +172,12 @@ export function OrdersEbrView({
   const didAutoSelectRef = useRef(false);
 
   const [stepParams, setStepParams] = useState<Record<string, Record<string, string>>>({});
+  const [stepAssetEdits, setStepAssetEdits] = useState<
+    Record<string, { asset_id: string; extra_asset_ids: string[] }>
+  >({});
+  const [openAssetPanelStepIds, setOpenAssetPanelStepIds] = useState<Record<string, boolean>>({});
+  const [showAllAssetsStepIds, setShowAllAssetsStepIds] = useState<Record<string, boolean>>({});
+  const [savingStepAssetId, setSavingStepAssetId] = useState<string | null>(null);
   const [stepExpandOverrides, setStepExpandOverrides] = useState<Record<string, boolean>>({});
   const [expandAllSteps, setExpandAllSteps] = useState(false);
   const [editingAssignStepId, setEditingAssignStepId] = useState<string | null>(null);
@@ -210,6 +246,10 @@ export function OrdersEbrView({
 
   useEffect(() => {
     setStepExpandOverrides({});
+    setStepAssetEdits({});
+    setOpenAssetPanelStepIds({});
+    setShowAllAssetsStepIds({});
+    setSavingStepAssetId(null);
     setEditingAssignStepId(null);
     setLotSwapNotice(null);
     if (selectedOrderId) loadDetail(selectedOrderId);
@@ -452,11 +492,26 @@ export function OrdersEbrView({
               })
               .join("<br/>")
           : "Ghi nhận hoàn thành theo SOP";
+      const extraAssets: any[] = Array.isArray(s.extra_assets) ? s.extra_assets : [];
+      const assetGroupLabel = s.functional_flags?.equipment_group
+        ? formatEquipmentGroupLabel(s.functional_flags.equipment_group)
+        : "";
+      const primaryAssetHtml = s.asset_code
+        ? `<b>${s.asset_code}</b> (${s.asset_name || ""})`
+        : assetGroupLabel
+          ? `<span style="color:#64748b">[Nhóm TB: ${assetGroupLabel}]</span>`
+          : "—";
+      const extraAssetHtml =
+        extraAssets.length > 0
+          ? `<br/><span style="font-size:10px;color:#475569">+ TB phụ: ${extraAssets
+              .map((a: any) => `${a.code} (${a.name})`)
+              .join(", ")}</span>`
+          : "";
       return `
         <tr>
           <td style="text-align:center;font-weight:700">B${s.seq}</td>
           <td><b>${s.step_code} — ${s.step_name}</b><br/><span style="font-size:10px;color:#475569">${s.instructions || ""}</span></td>
-          <td>SOP: <b>${s.sop_doc_code || "—"}</b><br/>Thiết bị: ${s.asset_code ? `${s.asset_code} (${s.asset_name})` : "—"}</td>
+          <td>SOP: <b>${s.sop_doc_code || "—"}</b><br/>Thiết bị: ${primaryAssetHtml}${extraAssetHtml}</td>
           <td style="font-size:11px">${paramStr}</td>
           <td>${s.assigned_to_name || s.performed_by_name || "................"}<br/><span style="font-size:10px;color:#475569">${s.status}</span></td>
           <td style="text-align:center">${s.is_qc ? `<b>IPQC GATE</b><br/>(${s.qc_gate_status || "WAITING_QC"})` : "—"}</td>
@@ -925,6 +980,38 @@ export function OrdersEbrView({
     }
   };
 
+  const handleSaveStepAsset = async (
+    orderId: string,
+    stepId: string,
+    assetId: string | null,
+    extraAssetIds: string[]
+  ) => {
+    setError(null);
+    setSavingStepAssetId(stepId);
+    try {
+      await api(`/api/factory/kit/orders/${orderId}`, {
+        method: "POST",
+        json: {
+          operation: "select_step_asset",
+          step_id: stepId,
+          asset_id: assetId,
+          extra_asset_ids: extraAssetIds,
+        },
+      });
+      setStepAssetEdits((prev) => {
+        if (!(stepId in prev)) return prev;
+        const next = { ...prev };
+        delete next[stepId];
+        return next;
+      });
+      await loadDetail(orderId);
+    } catch (err) {
+      setError(err);
+    } finally {
+      setSavingStepAssetId((cur) => (cur === stepId ? null : cur));
+    }
+  };
+
   const handleVerifyQcGate = async (
     orderId: string,
     step: any,
@@ -932,6 +1019,14 @@ export function OrdersEbrView({
     customParams?: Record<string, string>
   ) => {
     setError(null);
+    const assetEdit = stepAssetEdits[step.id];
+    const resolvedAssetId = assetEdit !== undefined ? assetEdit.asset_id || null : (step.asset_id ?? null);
+    const resolvedExtraAssetIds =
+      assetEdit !== undefined
+        ? assetEdit.extra_asset_ids
+        : Array.isArray(step.functional_flags?.extra_asset_ids)
+          ? step.functional_flags.extra_asset_ids
+          : [];
     try {
       await api(`/api/factory/kit/orders/${orderId}`, {
         method: "POST",
@@ -941,7 +1036,15 @@ export function OrdersEbrView({
           decision,
           note: qcGateNotes[step.id] ?? step.qc_gate_note ?? "",
           param_values: customParams ?? stepParams[step.id] ?? step.param_values ?? {},
+          asset_id: resolvedAssetId,
+          extra_asset_ids: resolvedExtraAssetIds,
         },
+      });
+      setStepAssetEdits((prev) => {
+        if (!(step.id in prev)) return prev;
+        const next = { ...prev };
+        delete next[step.id];
+        return next;
       });
       await loadOrders();
       if (selectedOrderId === orderId) await loadDetail(orderId);
@@ -2693,6 +2796,54 @@ export function OrdersEbrView({
                           {stepsList.map((s: any) => {
                             const schema: any[] = Array.isArray(s.param_schema) ? s.param_schema : [];
                             const curVals = { ...(s.param_values || {}), ...(stepParams[s.id] || {}) };
+                            const stepFlags = (s.functional_flags || {}) as Record<string, any>;
+                            const requireAsset = Boolean(stepFlags.require_asset);
+                            const equipmentGroup =
+                              typeof stepFlags.equipment_group === "string" ? stepFlags.equipment_group : "";
+                            const savedExtraIds: string[] = Array.isArray(stepFlags.extra_asset_ids)
+                              ? stepFlags.extra_asset_ids.filter(
+                                  (id: any): id is string => typeof id === "string" && id.length > 0
+                                )
+                              : [];
+                            const assetEdit = stepAssetEdits[s.id];
+                            const curAssetId = assetEdit !== undefined ? assetEdit.asset_id : String(s.asset_id ?? "");
+                            const curExtraIds = assetEdit !== undefined ? assetEdit.extra_asset_ids : savedExtraIds;
+                            const allAssets: KitAssetOption[] = options?.assets ?? [];
+                            const todayStr = vnToday();
+                            const selectedPrimaryAsset = allAssets.find((a) => a.id === curAssetId) ?? null;
+                            const curAssetStatus = selectedPrimaryAsset?.status ?? s.asset_status ?? null;
+                            const curAssetCalDue =
+                              selectedPrimaryAsset?.next_calibration_due ?? s.asset_calibration_due ?? null;
+                            const curAssetUsable = curAssetId
+                              ? isKitAssetUsable(
+                                  { status: curAssetStatus, next_calibration_due: curAssetCalDue },
+                                  todayStr
+                                )
+                              : false;
+                            const stepAssetDirty =
+                              curAssetId !== String(s.asset_id ?? "") ||
+                              JSON.stringify(curExtraIds) !== JSON.stringify(savedExtraIds);
+                            const stepAssetLocked = s.status === "DONE" || s.status === "SKIPPED";
+                            const showAssetPanel =
+                              requireAsset ||
+                              Boolean(equipmentGroup) ||
+                              Boolean(s.required_asset_id) ||
+                              Boolean(curAssetId) ||
+                              curExtraIds.length > 0 ||
+                              Boolean(openAssetPanelStepIds[s.id]);
+                            const showAllAssets = Boolean(showAllAssetsStepIds[s.id]) || !equipmentGroup;
+                            const filteredGroupAssets = showAllAssets
+                              ? allAssets
+                              : allAssets.filter((a) => matchesEquipmentGroup(a, equipmentGroup));
+                            const primaryDropdownAssets = allAssets.filter(
+                              (a) =>
+                                filteredGroupAssets.some((fa) => fa.id === a.id) ||
+                                a.id === curAssetId ||
+                                a.id === s.required_asset_id
+                            );
+                            const auxiliaryDropdownAssets = filteredGroupAssets.filter(
+                              (a) => a.id !== curAssetId && !curExtraIds.includes(a.id)
+                            );
                             const blockingPrevQc = stepsList.find(
                               (prev: any) => prev.seq < s.seq && prev.is_qc && prev.qc_gate_status !== "PASSED"
                             );
@@ -2750,16 +2901,25 @@ export function OrdersEbrView({
                                 if (a.action === "complete_for_check" && !s.requires_check_signature) return false;
                                 return true;
                               })
-                              .map((a: any) =>
-                                allRequiredParamsFilled && (a.action === "complete" || a.action === "complete_for_check")
-                                  ? {
-                                      ...a,
-                                      blockedBy: (a.blockedBy || []).filter(
-                                        (msg: string) => msg !== "Vui lòng nhập đầy đủ các thông số bắt buộc của công đoạn."
-                                      ),
-                                    }
-                                  : a
-                              );
+                              .map((a: any) => {
+                                let blockedBy: string[] = Array.isArray(a.blockedBy) ? a.blockedBy : [];
+                                if (
+                                  allRequiredParamsFilled &&
+                                  (a.action === "complete" || a.action === "complete_for_check")
+                                ) {
+                                  blockedBy = blockedBy.filter(
+                                    (msg: string) => msg !== "Vui lòng nhập đầy đủ các thông số bắt buộc của công đoạn."
+                                  );
+                                }
+                                if (
+                                  curAssetId &&
+                                  curAssetUsable &&
+                                  (a.action === "start" || a.action === "complete" || a.action === "complete_for_check")
+                                ) {
+                                  blockedBy = blockedBy.filter((msg: string) => msg !== REQUIRE_STEP_ASSET_MSG);
+                                }
+                                return blockedBy.length !== (a.blockedBy || []).length ? { ...a, blockedBy } : a;
+                              });
 
                             return (
                               <div
@@ -2799,11 +2959,25 @@ export function OrdersEbrView({
                                             · SOP: {s.sop_doc_code}
                                           </span>
                                         )}
-                                        {s.asset_code && (
+                                        {(selectedPrimaryAsset?.code || s.asset_code) ? (
                                           <span>
-                                            · TB: <b>{s.asset_code}</b>
+                                            · TB: <b>{selectedPrimaryAsset?.code ?? s.asset_code}</b>
+                                            {curExtraIds.length > 0 ? ` (+${curExtraIds.length})` : ""}
+                                            {curAssetId && !curAssetUsable && (
+                                              <span className="text-rose-600 dark:text-rose-400 font-semibold">
+                                                {" "}
+                                                (Quá hạn HC/Khóa)
+                                              </span>
+                                            )}
                                           </span>
-                                        )}
+                                        ) : (requireAsset || equipmentGroup) ? (
+                                          <span className="text-amber-700 dark:text-amber-300 font-medium">
+                                            · 🔧{" "}
+                                            {requireAsset
+                                              ? "Cần chọn thiết bị"
+                                              : `Nhóm TB: ${formatEquipmentGroupLabel(equipmentGroup)}`}
+                                          </span>
+                                        ) : null}
                                         {(s.performed_by_name || s.assigned_to_name) && (
                                           <span>
                                             · 👨‍🔬 <b>{s.performed_by_name || s.assigned_to_name}</b>
@@ -2895,14 +3069,256 @@ export function OrdersEbrView({
                                             </span>
                                           )}
                                         </div>
-                                        <button
-                                          type="button"
-                                          onClick={() => setEditingAssignStepId((cur) => (cur === s.id ? null : s.id))}
-                                          className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-semibold text-sky-700 dark:text-sky-300 cursor-pointer shrink-0"
-                                        >
-                                          {editingAssignStepId === s.id ? "Đóng" : "✏️ Phân công / Đổi ca"}
-                                        </button>
+                                        <div className="flex items-center gap-1.5 shrink-0">
+                                          {!showAssetPanel && !stepAssetLocked && (
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setOpenAssetPanelStepIds((prev) => ({ ...prev, [s.id]: true }))
+                                              }
+                                              className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-semibold text-indigo-700 dark:text-indigo-300 cursor-pointer shrink-0"
+                                            >
+                                              🔧 Gắn thiết bị
+                                            </button>
+                                          )}
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditingAssignStepId((cur) => (cur === s.id ? null : s.id))}
+                                            className="px-2 py-0.5 rounded border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 text-[11px] font-semibold text-sky-700 dark:text-sky-300 cursor-pointer shrink-0"
+                                          >
+                                            {editingAssignStepId === s.id ? "Đóng" : "✏️ Phân công / Đổi ca"}
+                                          </button>
+                                        </div>
                                       </div>
+
+                                    {showAssetPanel && (
+                                      <div className="rounded-lg border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 p-2.5 space-y-2">
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                                            <span className="font-semibold text-indigo-900 dark:text-indigo-200">
+                                              🔧 Thiết bị thực hiện & Kiểm soát Hiệu chuẩn
+                                            </span>
+                                            {requireAsset ? (
+                                              <span className="px-1.5 py-0.5 rounded bg-rose-100 text-rose-800 dark:bg-rose-900/40 dark:text-rose-200 text-[10px] font-semibold">
+                                                Bắt buộc chọn TB
+                                              </span>
+                                            ) : (
+                                              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300 text-[10px]">
+                                                Theo dõi TB (tùy chọn)
+                                              </span>
+                                            )}
+                                            {equipmentGroup && (
+                                              <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-200 text-[10px] font-medium">
+                                                Nhóm: {formatEquipmentGroupLabel(equipmentGroup)}
+                                              </span>
+                                            )}
+                                            {s.required_asset_code && (
+                                              <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200 text-[10px]">
+                                                Mặc định QTr: {s.required_asset_code}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="flex items-center gap-1.5">
+                                            {equipmentGroup && (
+                                              <button
+                                                type="button"
+                                                onClick={() =>
+                                                  setShowAllAssetsStepIds((prev) => ({
+                                                    ...prev,
+                                                    [s.id]: !prev[s.id],
+                                                  }))
+                                                }
+                                                className="px-2 py-0.5 rounded border border-indigo-200 dark:border-indigo-800 bg-white dark:bg-slate-900 text-[10px] font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 cursor-pointer"
+                                              >
+                                                {showAllAssetsStepIds[s.id] ? "Lọc theo nhóm" : "Hiện tất cả TB"}
+                                              </button>
+                                            )}
+                                            {!requireAsset &&
+                                              !equipmentGroup &&
+                                              !s.required_asset_id &&
+                                              !curAssetId &&
+                                              curExtraIds.length === 0 && (
+                                                <button
+                                                  type="button"
+                                                  onClick={() =>
+                                                    setOpenAssetPanelStepIds((prev) => ({
+                                                      ...prev,
+                                                      [s.id]: false,
+                                                    }))
+                                                  }
+                                                  className="px-2 py-0.5 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-[10px] text-slate-600 dark:text-slate-300 cursor-pointer"
+                                                >
+                                                  Ẩn
+                                                </button>
+                                              )}
+                                          </div>
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <select
+                                            value={curAssetId}
+                                            disabled={stepAssetLocked}
+                                            onChange={(e) => {
+                                              const nextId = e.target.value;
+                                              setStepAssetEdits((prev) => ({
+                                                ...prev,
+                                                [s.id]: {
+                                                  asset_id: nextId,
+                                                  extra_asset_ids: curExtraIds.filter((id) => id !== nextId),
+                                                },
+                                              }));
+                                            }}
+                                            className="min-w-[260px] flex-1 rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 py-1.5 text-xs disabled:opacity-60"
+                                          >
+                                            <option value="">-- Chọn thiết bị chính --</option>
+                                            {curAssetId &&
+                                              !primaryDropdownAssets.some((a) => a.id === curAssetId) &&
+                                              s.asset_code && (
+                                                <option value={curAssetId}>
+                                                  {s.asset_code} — {s.asset_name}
+                                                </option>
+                                              )}
+                                            {primaryDropdownAssets.map((a) => (
+                                              <option key={a.id} value={a.id}>
+                                                {formatKitAssetOptionLabel(a, todayStr)}
+                                              </option>
+                                            ))}
+                                          </select>
+
+                                          {!stepAssetLocked && (
+                                            <button
+                                              type="button"
+                                              disabled={!stepAssetDirty || savingStepAssetId === s.id}
+                                              onClick={() =>
+                                                handleSaveStepAsset(
+                                                  detail.order.id,
+                                                  s.id,
+                                                  curAssetId || null,
+                                                  curExtraIds
+                                                )
+                                              }
+                                              className={`px-3 py-1.5 rounded-md text-xs font-semibold cursor-pointer shrink-0 disabled:opacity-50 ${
+                                                stepAssetDirty
+                                                  ? "bg-indigo-600 text-white hover:bg-indigo-700"
+                                                  : "border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300"
+                                              }`}
+                                            >
+                                              {savingStepAssetId === s.id
+                                                ? "Đang lưu..."
+                                                : stepAssetDirty
+                                                  ? "💾 Lưu thiết bị"
+                                                  : "✓ Đã lưu TB"}
+                                            </button>
+                                          )}
+                                        </div>
+
+                                        {curAssetId ? (
+                                          <div
+                                            className={`text-[11px] flex flex-wrap items-center gap-2 ${
+                                              curAssetUsable
+                                                ? "text-emerald-700 dark:text-emerald-300"
+                                                : "text-rose-700 dark:text-rose-300 font-semibold"
+                                            }`}
+                                          >
+                                            <span>
+                                              {curAssetUsable
+                                                ? `✅ Thiết bị sẵn sàng sản xuất${curAssetCalDue ? ` · Hạn hiệu chuẩn: ${String(curAssetCalDue).slice(0, 10)}` : ""}`
+                                                : `⛔ Thiết bị không khả dụng / quá hạn HC (${curAssetStatus ?? "UNKNOWN"}${curAssetCalDue ? ` · Hạn HC: ${String(curAssetCalDue).slice(0, 10)}` : ""}) — Hệ thống khóa chạy công đoạn`}
+                                            </span>
+                                            {(selectedPrimaryAsset?.location || s.asset_location) && (
+                                              <span className="text-slate-500 dark:text-slate-400 font-normal">
+                                                · Vị trí: {selectedPrimaryAsset?.location ?? s.asset_location}
+                                              </span>
+                                            )}
+                                          </div>
+                                        ) : requireAsset ? (
+                                          <div className="text-[11px] text-amber-700 dark:text-amber-300">
+                                            ⚠️ Bước này bắt buộc chọn thiết bị còn hạn hiệu chuẩn trước khi Bắt đầu hoặc Hoàn tất.
+                                          </div>
+                                        ) : null}
+
+                                        {(curExtraIds.length > 0 ||
+                                          (!stepAssetLocked && auxiliaryDropdownAssets.length > 0)) && (
+                                          <div className="pt-1 border-t border-indigo-100 dark:border-indigo-900/50 space-y-1.5">
+                                            <div className="flex flex-wrap items-center gap-1.5">
+                                              <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">
+                                                Thiết bị phụ / dùng kèm:
+                                              </span>
+                                              {curExtraIds.map((extraId) => {
+                                                const fromOpts = allAssets.find((a) => a.id === extraId);
+                                                const fromStep = (
+                                                  Array.isArray(s.extra_assets) ? s.extra_assets : []
+                                                ).find((a: any) => a.id === extraId);
+                                                const code = fromOpts?.code ?? fromStep?.code ?? extraId.slice(0, 8);
+                                                const name = fromOpts?.name ?? fromStep?.name ?? "";
+                                                const extraUsable = isKitAssetUsable(
+                                                  fromOpts ?? fromStep ?? null,
+                                                  todayStr
+                                                );
+                                                return (
+                                                  <span
+                                                    key={extraId}
+                                                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] border ${
+                                                      extraUsable
+                                                        ? "bg-white dark:bg-slate-900 border-indigo-200 dark:border-indigo-800 text-slate-700 dark:text-slate-200"
+                                                        : "bg-rose-50 dark:bg-rose-950/40 border-rose-300 text-rose-800 dark:text-rose-200"
+                                                    }`}
+                                                  >
+                                                    <span>{extraUsable ? "✅" : "⛔"}</span>
+                                                    <span className="font-mono font-semibold">{code}</span>
+                                                    {name && <span className="truncate max-w-[180px]">— {name}</span>}
+                                                    {!stepAssetLocked && (
+                                                      <button
+                                                        type="button"
+                                                        title="Gỡ thiết bị phụ"
+                                                        onClick={() =>
+                                                          setStepAssetEdits((prev) => ({
+                                                            ...prev,
+                                                            [s.id]: {
+                                                              asset_id: curAssetId,
+                                                              extra_asset_ids: curExtraIds.filter(
+                                                                (id) => id !== extraId
+                                                              ),
+                                                            },
+                                                          }))
+                                                        }
+                                                        className="ml-0.5 text-slate-400 hover:text-rose-600 font-bold cursor-pointer"
+                                                      >
+                                                        ×
+                                                      </button>
+                                                    )}
+                                                  </span>
+                                                );
+                                              })}
+                                            </div>
+                                            {!stepAssetLocked && auxiliaryDropdownAssets.length > 0 && (
+                                              <select
+                                                value=""
+                                                onChange={(e) => {
+                                                  const addId = e.target.value;
+                                                  if (!addId || curExtraIds.includes(addId)) return;
+                                                  setStepAssetEdits((prev) => ({
+                                                    ...prev,
+                                                    [s.id]: {
+                                                      asset_id: curAssetId,
+                                                      extra_asset_ids: [...curExtraIds, addId],
+                                                    },
+                                                  }));
+                                                }}
+                                                className="w-full sm:w-auto min-w-[260px] rounded-md border border-dashed border-indigo-300 dark:border-indigo-800 bg-white dark:bg-slate-900 px-2 py-1 text-[11px]"
+                                              >
+                                                <option value="">+ Thêm thiết bị phụ (Pipet, nhiệt ẩm kế, cân...)</option>
+                                                {auxiliaryDropdownAssets.map((a) => (
+                                                  <option key={a.id} value={a.id}>
+                                                    {formatKitAssetOptionLabel(a, todayStr)}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
 
                                       {editingAssignStepId === s.id && (
                                         <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap items-center gap-2">
@@ -3078,8 +3494,18 @@ export function OrdersEbrView({
                                           version={s.version}
                                           actions={filteredStepActions}
                                           labels={ACTION_LABELS}
-                                          extraPayload={{ param_values: curVals }}
+                                          extraPayload={{
+                                            param_values: curVals,
+                                            asset_id: curAssetId || null,
+                                            extra_asset_ids: curExtraIds,
+                                          }}
                                           onDone={() => {
+                                            setStepAssetEdits((prev) => {
+                                              if (!(s.id in prev)) return prev;
+                                              const next = { ...prev };
+                                              delete next[s.id];
+                                              return next;
+                                            });
                                             loadDetail(detail.order.id);
                                             loadOrders();
                                           }}

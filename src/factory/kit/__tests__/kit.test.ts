@@ -24,6 +24,7 @@ import {
   productionOrderMachine,
   productionStepMachine,
   selectDraftMaterialLot,
+  selectStepEquipment,
   swapOrderMaterialLot,
   updateMaterialActuals,
   updateOrderDates,
@@ -951,5 +952,179 @@ describe("Phase 4b — Module Phòng Sản xuất Kit (kit schema)", () => {
     expect(byLot3.get(lotC.id).oh).toBe(100);
     expect(byLot3.get(lotA.id).oh).toBe(80);
     expect(byLot3.get(lotA.id).res).toBe(0);
+  });
+
+  it("6. Cấu hình nhóm thiết bị & bắt buộc chọn thiết bị trên Routing, khóa thiết bị quá hạn HC và ghi nhận thiết bị chính/phụ trong EBR", async () => {
+    const site = await makeSite();
+    const { operator, checker } = await setupKitTeam(site);
+
+    const suffix = Date.now().toString(36).slice(-4).toUpperCase();
+    const kitItem = await makeItem(site, {
+      code: `KIT-EQP-${suffix}`,
+      item_type: "FINISHED_KIT",
+      base_uom: "pcs",
+      shelf_life_days: 365,
+    });
+    const reagentItem = await makeItem(site, {
+      code: `REA-EQP-${suffix}`,
+      item_type: "REAGENT",
+      base_uom: "mL",
+    });
+    await stockedLot(site, reagentItem.id, 100, "2028-06-01", { uom: "mL" });
+
+    await grant(site.admin, ["asset.manage", "asset.view"], site.dept);
+    const overduePh = await withTransaction((tx) =>
+      createAsset(tx, site.admin, {
+        name: "Máy đo pH quá hạn HC",
+        asset_type: "OTHER",
+        equipment_category: "Máy đo pH",
+        location: "Phòng Pha chế Đệm Tách chiết (ISO 7)",
+        owner_org_unit_id: site.dept,
+        next_calibration_due: "2020-01-01",
+      })
+    );
+    const validPh = await withTransaction((tx) =>
+      createAsset(tx, site.admin, {
+        name: "Máy đo pH chuẩn",
+        asset_type: "OTHER",
+        equipment_category: "Máy đo pH",
+        location: "Phòng Pha chế Đệm Tách chiết (ISO 7)",
+        owner_org_unit_id: site.dept,
+        next_calibration_due: "2028-12-31",
+      })
+    );
+    const validPipette = await withTransaction((tx) =>
+      createAsset(tx, site.admin, {
+        name: "Pipet đơn kênh 100-1000µL",
+        asset_type: "OTHER",
+        equipment_category: "Pipet đơn kênh",
+        location: "Phòng Pha chế Đệm Tách chiết (ISO 7)",
+        owner_org_unit_id: site.dept,
+        next_calibration_due: "2028-12-31",
+      })
+    );
+
+    const bom = await withTransaction(async (tx) => {
+      const b = await createBom(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: "BOM Kit Equipment Test",
+        tests_per_kit: 50,
+        shelf_life_days: 365,
+      });
+      await addBomLine(tx, operator, {
+        bom_id: b.id,
+        component_item_id: reagentItem.id,
+        qty_per_base: 5,
+        uom: "mL",
+        box_no: 1,
+        component_role: "EXTRACTION_BUFFER",
+      });
+      return b;
+    });
+    await act(bomMachine, operator, bom.id, "submit_review");
+    await act(bomMachine, checker, bom.id, "approve", signed);
+
+    const rt = await withTransaction(async (tx) => {
+      const r = await createRouting(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        name: "Routing Equipment Tracking Test",
+      });
+      await addRoutingStep(tx, operator, {
+        routing_id: r.id,
+        seq: 10,
+        step_code: "STEP-EQP-10",
+        step_name: "Hiệu chỉnh pH Đệm",
+        category: "FORMULATION",
+        work_center: "Phòng Pha chế Đệm Tách chiết (ISO 7)",
+        instructions: "Đo pH bằng máy đo pH còn hạn hiệu chuẩn.",
+        required_asset_id: "",
+        requires_check_signature: false,
+        functional_flags: {
+          require_asset: true,
+          equipment_group: "CAT:Máy đo pH",
+        },
+      });
+      return r;
+    });
+    await act(routingMachine, operator, rt.id, "submit_review");
+    await act(routingMachine, checker, rt.id, "approve", signed);
+
+    const order = await withTransaction((tx) =>
+      createProductionOrder(tx, operator, {
+        org_unit_id: site.dept,
+        product_item_id: kitItem.id,
+        warehouse_id: site.warehouse,
+        planned_qty: 10,
+        no_retention: true,
+      })
+    );
+    await act(productionOrderMachine, operator, order.id, "confirm");
+    await withTransaction((tx) => issueOrderMaterials(tx, operator, order.id));
+    await withTransaction((tx) =>
+      verifyLineClearance(tx, operator, order.id, {
+        uv_sterilized: true,
+        prev_labels_cleared: true,
+        bench_sanitized: true,
+        env_temp_ok: true,
+      })
+    );
+
+    const detail0 = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+    const step1 = detail0.steps[0];
+    expect(step1.functional_flags?.require_asset).toBe(true);
+    expect(step1.functional_flags?.equipment_group).toBe("CAT:Máy đo pH");
+
+    // 1. Starting step without selecting a primary asset must fail ASSET_REQUIRED
+    await expect(act(productionStepMachine, operator, step1.id, "start")).rejects.toMatchObject({
+      code: "GUARD_FAILED",
+      details: [{ code: "ASSET_REQUIRED" }],
+    });
+
+    // 2. Selecting overdue primary asset must fail ASSET_CALIBRATION_DUE
+    await expect(
+      withTransaction((tx) =>
+        selectStepEquipment(tx, operator, order.id, {
+          step_id: step1.id,
+          asset_id: overduePh.id,
+          extra_asset_ids: [],
+        })
+      )
+    ).rejects.toMatchObject({ code: "ASSET_CALIBRATION_DUE" });
+
+    // 3. Selecting overdue auxiliary asset must also fail ASSET_CALIBRATION_DUE
+    await expect(
+      withTransaction((tx) =>
+        selectStepEquipment(tx, operator, order.id, {
+          step_id: step1.id,
+          asset_id: validPh.id,
+          extra_asset_ids: [overduePh.id],
+        })
+      )
+    ).rejects.toMatchObject({ code: "ASSET_CALIBRATION_DUE" });
+
+    // 4. Select valid primary pH meter + valid auxiliary pipette -> succeeds
+    await withTransaction((tx) =>
+      selectStepEquipment(tx, operator, order.id, {
+        step_id: step1.id,
+        asset_id: validPh.id,
+        extra_asset_ids: [validPipette.id],
+      })
+    );
+
+    // 5. Start and complete step1 -> persisted primary + auxiliary equipment returned in detail
+    await act(productionStepMachine, operator, step1.id, "start");
+    await act(productionStepMachine, operator, step1.id, "complete", signed);
+
+    const detailDone = await withTransaction((tx) => getProductionOrderDetail(tx, operator, order.id));
+    expect(detailDone.steps[0].status).toBe("DONE");
+    expect(detailDone.steps[0].asset_id).toBe(validPh.id);
+    expect(detailDone.steps[0].asset_code).toBe(validPh.code);
+    expect(detailDone.steps[0].extra_assets).toHaveLength(1);
+    expect(detailDone.steps[0].extra_assets[0]).toMatchObject({
+      id: validPipette.id,
+      code: validPipette.code,
+    });
   });
 });

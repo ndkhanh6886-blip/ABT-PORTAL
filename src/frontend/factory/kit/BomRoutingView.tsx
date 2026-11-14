@@ -10,8 +10,11 @@ import {
   ABT_TUBE_STRIP_CATALOG,
   ACTION_LABELS,
   buildAbtKitLotCode,
+  buildEquipmentGroupOptions,
   CONTAINER_LABELS,
+  formatEquipmentGroupLabel,
   type KitOptions,
+  matchesEquipmentGroup,
   parseAbtKitLotCode,
   ROLE_LABELS,
   ROUTING_STANDARD_TEMPLATES,
@@ -314,11 +317,56 @@ export function BomRoutingView({
       require_env_log: true,
       require_yield_reconcile: false,
       require_label_ifu_check: false,
+      require_asset: false,
+      equipment_group: "",
     },
     params: [
       { key: "temp_c", label: "Nhiệt độ phòng pha chế", type: "number", unit: "°C", min: "18", max: "25", required: true },
     ] as StepParamDraft[],
   });
+
+  const equipmentGroupOpts = buildEquipmentGroupOptions(options.assets);
+  const workCenterSuggestions = Array.from(
+    new Set(
+      [
+        ...WORK_CENTER_PRESETS,
+        ...(options.assets || []).map((a) => String(a.location || "").trim()).filter(Boolean),
+        ...(routingDetail?.steps || []).map((s: any) => String(s.work_center || "").trim()).filter(Boolean),
+      ].filter(Boolean)
+    )
+  );
+
+  const renderEquipmentGroupOptions = () => (
+    <>
+      <option value="">-- Mọi thiết bị / Không giới hạn nhóm --</option>
+      <optgroup label="📦 Phân nhóm chi tiết (Tab 4 · Thiết bị)">
+        {equipmentGroupOpts.categories.map((g) => (
+          <option key={g.value} value={g.value}>
+            {g.label} {g.count > 0 ? `(${g.count} máy)` : "(chưa gắn máy)"}
+          </option>
+        ))}
+      </optgroup>
+      <optgroup label="🔬 Nhóm thiết bị chuẩn hệ thống">
+        {equipmentGroupOpts.systemTypes.map((g) => (
+          <option key={g.value} value={g.value}>
+            {g.label} ({g.count} máy)
+          </option>
+        ))}
+      </optgroup>
+      {equipmentGroupOpts.locations.length > 0 && (
+        <optgroup label="📍 Theo Khu vực / Phòng đặt máy">
+          {equipmentGroupOpts.locations.map((g) => (
+            <option key={g.value} value={g.value}>
+              {g.label} ({g.count} máy)
+            </option>
+          ))}
+        </optgroup>
+      )}
+    </>
+  );
+
+  const filterAssetsByGroup = (groupKey?: string | null) =>
+    (options.assets || []).filter((a) => matchesEquipmentGroup(a, groupKey));
 
   const loadList = useCallback(async () => {
     setError(null);
@@ -1205,6 +1253,8 @@ export function BomRoutingView({
         require_env_log: Boolean(spec.defaultFlags.require_env_log),
         require_yield_reconcile: Boolean(spec.defaultFlags.require_yield_reconcile),
         require_label_ifu_check: Boolean(spec.defaultFlags.require_label_ifu_check),
+        require_asset: Boolean(spec.defaultFlags.require_asset ?? prev.functional_flags.require_asset),
+        equipment_group: spec.defaultFlags.equipment_group ?? prev.functional_flags.equipment_group ?? "",
       },
       params: JSON.parse(JSON.stringify(spec.defaultParams)),
     }));
@@ -1234,6 +1284,8 @@ export function BomRoutingView({
         require_env_log: Boolean(flags.require_env_log),
         require_yield_reconcile: Boolean(flags.require_yield_reconcile),
         require_label_ifu_check: Boolean(flags.require_label_ifu_check),
+        require_asset: Boolean(flags.require_asset || s.required_asset_id || flags.equipment_group),
+        equipment_group: String(flags.equipment_group || ""),
       },
       params: Array.isArray(s.param_schema)
         ? s.param_schema.map((p: any) => ({
@@ -1276,6 +1328,8 @@ export function BomRoutingView({
         require_env_log: Boolean(spec.defaultFlags.require_env_log),
         require_yield_reconcile: Boolean(spec.defaultFlags.require_yield_reconcile),
         require_label_ifu_check: Boolean(spec.defaultFlags.require_label_ifu_check),
+        require_asset: Boolean(spec.defaultFlags.require_asset),
+        equipment_group: String(spec.defaultFlags.equipment_group || ""),
       },
       params: JSON.parse(JSON.stringify(spec.defaultParams)),
     });
@@ -4334,6 +4388,68 @@ export function BomRoutingView({
                                 />
                               </Field>
 
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                                <Field label="Nhóm thiết bị hiển thị để chọn khi SX (Tùy chọn)">
+                                  <select
+                                    className={inputClass}
+                                    value={st.functional_flags.equipment_group || ""}
+                                    onChange={(e) => {
+                                      const nextGroup = e.target.value;
+                                      setRtDraftSteps((prev) =>
+                                        prev.map((item, i) => {
+                                          if (i !== idx) return item;
+                                          const curAsset = options.assets.find((a) => a.id === item.required_asset_id);
+                                          const keepAsset = curAsset && matchesEquipmentGroup(curAsset, nextGroup) ? item.required_asset_id : "";
+                                          return {
+                                            ...item,
+                                            required_asset_id: keepAsset,
+                                            functional_flags: {
+                                              ...item.functional_flags,
+                                              equipment_group: nextGroup,
+                                              require_asset: Boolean(nextGroup || keepAsset || item.functional_flags.require_asset),
+                                            },
+                                          };
+                                        })
+                                      );
+                                    }}
+                                  >
+                                    {renderEquipmentGroupOptions()}
+                                  </select>
+                                </Field>
+                                <Field label="Thiết bị cố định / Mặc định (Tùy chọn)">
+                                  <select
+                                    className={inputClass}
+                                    value={st.required_asset_id || ""}
+                                    onChange={(e) => {
+                                      const nextAssetId = e.target.value;
+                                      setRtDraftSteps((prev) =>
+                                        prev.map((item, i) =>
+                                          i === idx
+                                            ? {
+                                                ...item,
+                                                required_asset_id: nextAssetId,
+                                                functional_flags: {
+                                                  ...item.functional_flags,
+                                                  require_asset: Boolean(nextAssetId || item.functional_flags.equipment_group || item.functional_flags.require_asset),
+                                                },
+                                              }
+                                            : item
+                                        )
+                                      );
+                                    }}
+                                  >
+                                    <option value="">-- Chọn máy thực tế khi chạy Lệnh SX --</option>
+                                    {filterAssetsByGroup(st.functional_flags.equipment_group).map((a) => (
+                                      <option key={a.id} value={a.id}>
+                                        {a.code} — {a.name}
+                                        {a.equipment_category ? ` [${a.equipment_category}]` : ""}
+                                        {a.status !== "IN_SERVICE" ? ` (${a.status})` : ""}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </Field>
+                              </div>
+
                               {/* Các cờ chức năng đánh dấu cho từng bước */}
                               <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
                                 <div className="text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1.5">
@@ -4476,6 +4592,28 @@ export function BomRoutingView({
                                     />
                                     🏷️ Đối chiếu 100% Nhãn &amp; Tờ HDSD (IFU)
                                   </label>
+                                  <label className="flex items-center gap-1.5 font-semibold text-indigo-800 dark:text-indigo-300 cursor-pointer">
+                                    <input
+                                      type="checkbox"
+                                      checked={Boolean(st.functional_flags.require_asset)}
+                                      onChange={(e) =>
+                                        setRtDraftSteps((prev) =>
+                                          prev.map((item, i) =>
+                                            i === idx
+                                              ? {
+                                                  ...item,
+                                                  functional_flags: {
+                                                    ...item.functional_flags,
+                                                    require_asset: e.target.checked,
+                                                  },
+                                                }
+                                              : item
+                                          )
+                                        )
+                                      }
+                                    />
+                                    🔧 Bắt buộc chọn &amp; ghi nhận Thiết bị (Kiểm soát hạn HC)
+                                  </label>
                                 </div>
                               </div>
                             </div>
@@ -4502,7 +4640,7 @@ export function BomRoutingView({
               )}
 
               <datalist id="work-center-presets-list">
-                {WORK_CENTER_PRESETS.map((wc) => (
+                {workCenterSuggestions.map((wc) => (
                   <option key={wc} value={wc} />
                 ))}
               </datalist>
@@ -4863,8 +5001,15 @@ export function BomRoutingView({
                             {s.std_duration_min && (
                               <div className="text-[11px] text-slate-600 dark:text-slate-300">⏱️ Định mức: {s.std_duration_min} phút</div>
                             )}
+                            {flags.equipment_group && (
+                              <div className="text-[11px] font-medium text-indigo-700 dark:text-indigo-300">
+                                🔧 Nhóm TB: {formatEquipmentGroupLabel(flags.equipment_group)}
+                              </div>
+                            )}
                             {s.asset_code && (
-                              <div className="text-[11px] text-slate-600 dark:text-slate-400">⚙️ TB: {s.asset_code}</div>
+                              <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                                ⚙️ TB mặc định: <b>{s.asset_code}</b>
+                              </div>
                             )}
                           </td>
                           <td className="px-3 py-2.5 text-xs space-y-1">
@@ -4917,6 +5062,11 @@ export function BomRoutingView({
                               {flags.require_label_ifu_check && (
                                 <span className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-200 text-[10px] font-medium">
                                   🏷️ Soát Nhãn &amp; IFU
+                                </span>
+                              )}
+                              {flags.require_asset && (
+                                <span className="inline-block px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-200 border border-indigo-200 dark:border-indigo-800 text-[10px] font-semibold">
+                                  🔧 Ghi nhận Thiết bị &amp; HC
                                 </span>
                               )}
                             </div>
@@ -5061,18 +5211,16 @@ export function BomRoutingView({
                       </Field>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                      <div className="md:col-span-2">
-                        <Field label="Phòng sạch / Khu vực sản xuất (Work Center)">
-                          <input
-                            list="work-center-presets-list"
-                            className={inputClass}
-                            placeholder="VD: Phòng sạch Pha chế (Class 10,000 / ISO 7)"
-                            value={stepForm.work_center}
-                            onChange={(e) => setStepForm({ ...stepForm, work_center: e.target.value })}
-                          />
-                        </Field>
-                      </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <Field label="Phòng sạch / Khu vực sản xuất (Work Center)">
+                        <input
+                          list="work-center-presets-list"
+                          className={inputClass}
+                          placeholder="VD: Phòng sạch Pha chế (Class 10,000 / ISO 7)"
+                          value={stepForm.work_center}
+                          onChange={(e) => setStepForm({ ...stepForm, work_center: e.target.value })}
+                        />
+                      </Field>
                       <Field label="Mã SOP hướng dẫn">
                         <input
                           className={`${inputClass} font-mono`}
@@ -5080,16 +5228,53 @@ export function BomRoutingView({
                           onChange={(e) => setStepForm({ ...stepForm, sop_doc_code: e.target.value })}
                         />
                       </Field>
-                      <Field label="Thiết bị bắt buộc">
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      <Field label="Nhóm thiết bị hiển thị để chọn khi SX (Tùy chọn)">
+                        <select
+                          className={inputClass}
+                          value={stepForm.functional_flags.equipment_group}
+                          onChange={(e) => {
+                            const nextGroup = e.target.value;
+                            const curAsset = options.assets.find((a) => a.id === stepForm.required_asset_id);
+                            const keepAsset = curAsset && matchesEquipmentGroup(curAsset, nextGroup) ? stepForm.required_asset_id : "";
+                            setStepForm({
+                              ...stepForm,
+                              required_asset_id: keepAsset,
+                              functional_flags: {
+                                ...stepForm.functional_flags,
+                                equipment_group: nextGroup,
+                                require_asset: Boolean(nextGroup || keepAsset || stepForm.functional_flags.require_asset),
+                              },
+                            });
+                          }}
+                        >
+                          {renderEquipmentGroupOptions()}
+                        </select>
+                      </Field>
+                      <Field label="Thiết bị cố định / Mặc định (Tùy chọn)">
                         <select
                           className={inputClass}
                           value={stepForm.required_asset_id}
-                          onChange={(e) => setStepForm({ ...stepForm, required_asset_id: e.target.value })}
+                          onChange={(e) => {
+                            const nextAssetId = e.target.value;
+                            setStepForm({
+                              ...stepForm,
+                              required_asset_id: nextAssetId,
+                              functional_flags: {
+                                ...stepForm.functional_flags,
+                                require_asset: Boolean(nextAssetId || stepForm.functional_flags.equipment_group || stepForm.functional_flags.require_asset),
+                              },
+                            });
+                          }}
                         >
-                          <option value="">-- Không cố định --</option>
-                          {options.assets.map((a) => (
+                          <option value="">-- Chọn máy thực tế khi chạy Lệnh SX --</option>
+                          {filterAssetsByGroup(stepForm.functional_flags.equipment_group).map((a) => (
                             <option key={a.id} value={a.id}>
                               {a.code} — {a.name}
+                              {a.equipment_category ? ` [${a.equipment_category}]` : ""}
+                              {a.status !== "IN_SERVICE" ? ` (${a.status})` : ""}
                             </option>
                           ))}
                         </select>
@@ -5332,6 +5517,19 @@ export function BomRoutingView({
                             }
                           />
                           🏷️ Kiểm tra đối chiếu 100% Nhãn &amp; Tờ HDSD (IFU)
+                        </label>
+                        <label className="flex items-center gap-1.5 font-semibold text-indigo-800 dark:text-indigo-300 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={Boolean(stepForm.functional_flags.require_asset)}
+                            onChange={(e) =>
+                              setStepForm({
+                                ...stepForm,
+                                functional_flags: { ...stepForm.functional_flags, require_asset: e.target.checked },
+                              })
+                            }
+                          />
+                          🔧 Bắt buộc chọn &amp; ghi nhận Thiết bị (Kiểm soát hạn HC)
                         </label>
                         <label className="flex items-center gap-1.5 text-slate-600 dark:text-slate-400 cursor-pointer">
                           <input

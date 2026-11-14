@@ -1329,6 +1329,8 @@ const functionalFlagsSchema = z
     require_env_log: z.boolean().optional(),
     require_yield_reconcile: z.boolean().optional(),
     require_label_ifu_check: z.boolean().optional(),
+    require_asset: z.boolean().optional(),
+    equipment_group: z.string().trim().max(120).optional().nullable(),
     expected_output: z.string().trim().max(300).optional().nullable(),
   })
   .passthrough()
@@ -1347,7 +1349,10 @@ const routingStepItemSchema = z.object({
   instructions: z.string().trim().min(3, "nhập hướng dẫn thao tác công đoạn").max(4000),
   sop_doc_code: z.string().trim().max(80).optional().nullable(),
   required_training_doc_code: z.string().trim().max(80).optional().nullable(),
-  required_asset_id: z.string().uuid().optional().nullable(),
+  required_asset_id: z.preprocess(
+    (v) => (v === "" || v === undefined || v === null ? null : v),
+    z.string().uuid().nullable()
+  ),
   param_schema: z.array(paramFieldSchema).max(30).default([]),
   is_qc: z.boolean().default(false),
   qc_spec_id: z.string().uuid().optional().nullable(),
@@ -1459,6 +1464,11 @@ export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) 
   const category = d.category || (inferCategoryFromFunction(stepFn) as any);
   const isQc = Boolean(d.is_qc || d.functional_flags?.qc_gate || stepFn === "IPQC_PH_GATE");
   const dualSign = Boolean(d.requires_check_signature || d.functional_flags?.dual_sign);
+  const eqGroup = d.functional_flags?.equipment_group ? String(d.functional_flags.equipment_group).trim() : null;
+  const reqAsset =
+    d.functional_flags?.require_asset !== undefined
+      ? Boolean(d.functional_flags.require_asset)
+      : Boolean(d.required_asset_id || eqGroup);
   const flags = {
     qc_gate: isQc,
     dual_sign: dualSign,
@@ -1467,6 +1477,8 @@ export async function addRoutingStep(tx: Tx, actor: AuthzActor, input: unknown) 
     require_env_log: Boolean(d.functional_flags?.require_env_log ?? ["LINE_CLEARANCE", "FORMULATION_MIXING", "LYOPHILIZATION"].includes(stepFn)),
     require_yield_reconcile: Boolean(d.functional_flags?.require_yield_reconcile ?? ["DISPENSING_ALIQUOT", "FQC_RELEASE_HANDOVER"].includes(stepFn)),
     require_label_ifu_check: Boolean(d.functional_flags?.require_label_ifu_check ?? stepFn === "LABELING_IFU_PACKAGING"),
+    require_asset: reqAsset,
+    equipment_group: eqGroup,
     expected_output: d.functional_flags?.expected_output ?? null,
   };
 
@@ -1526,6 +1538,11 @@ export async function updateRoutingStep(tx: Tx, actor: AuthzActor, routingId: st
   const category = d.category || existing.category || inferCategoryFromFunction(stepFn);
   const isQc = Boolean(d.is_qc || d.functional_flags?.qc_gate || stepFn === "IPQC_PH_GATE");
   const dualSign = Boolean(d.requires_check_signature || d.functional_flags?.dual_sign);
+  const eqGroup = d.functional_flags?.equipment_group ? String(d.functional_flags.equipment_group).trim() : null;
+  const reqAsset =
+    d.functional_flags?.require_asset !== undefined
+      ? Boolean(d.functional_flags.require_asset)
+      : Boolean(d.required_asset_id || eqGroup);
   const flags = {
     qc_gate: isQc,
     dual_sign: dualSign,
@@ -1534,6 +1551,8 @@ export async function updateRoutingStep(tx: Tx, actor: AuthzActor, routingId: st
     require_env_log: Boolean(d.functional_flags?.require_env_log ?? ["LINE_CLEARANCE", "FORMULATION_MIXING", "LYOPHILIZATION"].includes(stepFn)),
     require_yield_reconcile: Boolean(d.functional_flags?.require_yield_reconcile ?? ["DISPENSING_ALIQUOT", "FQC_RELEASE_HANDOVER"].includes(stepFn)),
     require_label_ifu_check: Boolean(d.functional_flags?.require_label_ifu_check ?? stepFn === "LABELING_IFU_PACKAGING"),
+    require_asset: reqAsset,
+    equipment_group: eqGroup,
     expected_output: d.functional_flags?.expected_output ?? null,
   };
 

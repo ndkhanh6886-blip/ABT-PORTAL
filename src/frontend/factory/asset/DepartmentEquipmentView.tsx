@@ -5,6 +5,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtDate } from "../api";
 import { Button, Card, Empty, ErrorNote, Field, inputClass, StatusBadge, Table } from "../ui";
+import { EQUIPMENT_CATEGORY_PRESETS, WORK_CENTER_PRESETS } from "../kit/shared";
 
 const ASSET_TYPE_LABELS: Record<string, string> = {
   PCR: "Máy Real-time PCR / Luân nhiệt",
@@ -95,6 +96,8 @@ export function DepartmentEquipmentView({
   const [newAssetForm, setNewAssetForm] = useState({
     dept_code: deptCode || "P-RD",
     asset_type: "PCR",
+    equipment_category: "",
+    location: "",
     name: "",
     manufacturer: "",
     model: "",
@@ -133,6 +136,8 @@ export function DepartmentEquipmentView({
         json: {
           dept_code: deptCode || newAssetForm.dept_code,
           asset_type: newAssetForm.asset_type,
+          equipment_category: newAssetForm.equipment_category.trim() || null,
+          location: newAssetForm.location.trim() || null,
           name: newAssetForm.name,
           manufacturer: newAssetForm.manufacturer || null,
           model: newAssetForm.model || null,
@@ -143,7 +148,7 @@ export function DepartmentEquipmentView({
       }),
     onSuccess: () => {
       setShowAddAsset(false);
-      setNewAssetForm((p) => ({ ...p, name: "", model: "", serial_no: "" }));
+      setNewAssetForm((p) => ({ ...p, name: "", model: "", serial_no: "", equipment_category: "", location: "" }));
       refreshAll();
     },
   });
@@ -206,6 +211,14 @@ export function DepartmentEquipmentView({
 
   const inServiceCount = assets.filter((a) => a.status === "IN_SERVICE").length;
   const maintCount = assets.filter((a) => a.status !== "IN_SERVICE").length;
+  const uniqueLocations = Array.from(
+    new Set(assets.map((a: any) => String(a.location || "").trim()).filter(Boolean))
+  );
+  const uniqueCategories = Array.from(
+    new Set(assets.map((a: any) => String(a.equipment_category || "").trim()).filter(Boolean))
+  );
+  const categoryDatalist = Array.from(new Set([...EQUIPMENT_CATEGORY_PRESETS, ...uniqueCategories]));
+  const locationDatalist = Array.from(new Set([...WORK_CENTER_PRESETS, ...uniqueLocations]));
 
   return (
     <div className="flex flex-col gap-3">
@@ -620,74 +633,107 @@ export function DepartmentEquipmentView({
               e.preventDefault();
               createAssetMut.mutate();
             }}
-            className="mb-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-7 gap-2 items-end"
+            className="mb-3 p-3 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950/50 space-y-2"
           >
-            {!deptCode && (
-              <Field label="Phòng quản lý *">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-2 items-end">
+              {!deptCode && (
+                <Field label="Phòng quản lý *">
+                  <select
+                    className={inputClass}
+                    value={newAssetForm.dept_code}
+                    onChange={(e) => setNewAssetForm({ ...newAssetForm, dept_code: e.target.value })}
+                  >
+                    <option value="P-RD">Nghiên cứu R&D</option>
+                    <option value="P-KIT">Sản xuất Kit</option>
+                    <option value="P-QA">QA/QC</option>
+                    <option value="P-OLIGO">Tổng hợp Oligo</option>
+                    <option value="P-DEVICE">Kỹ thuật – Thiết bị</option>
+                  </select>
+                </Field>
+              )}
+              <Field label="Nhóm thiết bị chuẩn *">
                 <select
                   className={inputClass}
-                  value={newAssetForm.dept_code}
-                  onChange={(e) => setNewAssetForm({ ...newAssetForm, dept_code: e.target.value })}
+                  value={newAssetForm.asset_type}
+                  onChange={(e) => setNewAssetForm({ ...newAssetForm, asset_type: e.target.value })}
                 >
-                  <option value="P-RD">Nghiên cứu R&D</option>
-                  <option value="P-KIT">Sản xuất Kit</option>
-                  <option value="P-QA">QA/QC</option>
-                  <option value="P-OLIGO">Tổng hợp Oligo</option>
-                  <option value="P-DEVICE">Kỹ thuật – Thiết bị</option>
+                  {Object.entries(ASSET_TYPE_LABELS).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
                 </select>
               </Field>
-            )}
-            <Field label="Nhóm thiết bị *">
-              <select
-                className={inputClass}
-                value={newAssetForm.asset_type}
-                onChange={(e) => setNewAssetForm({ ...newAssetForm, asset_type: e.target.value })}
-              >
-                {Object.entries(ASSET_TYPE_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>
-                    {v}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <div className="sm:col-span-2">
-              <Field label="Tên thiết bị *">
+              <Field label="Phân nhóm chi tiết (Chọn khi SX)">
                 <input
+                  list="asset-category-presets-list"
                   className={inputClass}
-                  placeholder="VD: Máy Real-time PCR Bio-Rad CFX96..."
-                  value={newAssetForm.name}
-                  onChange={(e) => setNewAssetForm({ ...newAssetForm, name: e.target.value })}
-                  required
+                  placeholder="VD: Pipet, Tủ ATSH, Máy đo pH..."
+                  value={newAssetForm.equipment_category}
+                  onChange={(e) => setNewAssetForm({ ...newAssetForm, equipment_category: e.target.value })}
                 />
               </Field>
-            </div>
-            <Field label="Hãng & Model">
-              <input
-                className={inputClass}
-                placeholder="VD: Bio-Rad CFX96"
-                value={newAssetForm.model}
-                onChange={(e) => setNewAssetForm({ ...newAssetForm, model: e.target.value })}
-              />
-            </Field>
-            <Field label="Số Serial & Hạn HC">
-              <div className="flex gap-1">
+              <Field label="Vị trí / Khu vực phòng">
                 <input
+                  list="asset-location-presets-list"
                   className={inputClass}
-                  placeholder="Serial"
-                  value={newAssetForm.serial_no}
-                  onChange={(e) => setNewAssetForm({ ...newAssetForm, serial_no: e.target.value })}
+                  placeholder="VD: Phòng Pha chế Kit (ISO 7)"
+                  value={newAssetForm.location}
+                  onChange={(e) => setNewAssetForm({ ...newAssetForm, location: e.target.value })}
                 />
-                <input
-                  type="date"
-                  className={inputClass}
-                  value={newAssetForm.next_calibration_due}
-                  onChange={(e) => setNewAssetForm({ ...newAssetForm, next_calibration_due: e.target.value })}
-                />
+              </Field>
+              <div className="sm:col-span-2">
+                <Field label="Tên thiết bị *">
+                  <input
+                    className={inputClass}
+                    placeholder="VD: Máy Real-time PCR Bio-Rad CFX96..."
+                    value={newAssetForm.name}
+                    onChange={(e) => setNewAssetForm({ ...newAssetForm, name: e.target.value })}
+                    required
+                  />
+                </Field>
               </div>
-            </Field>
-            <Button type="submit" disabled={createAssetMut.isPending}>
-              Lưu thiết bị
-            </Button>
+              <Field label="Hãng & Model">
+                <input
+                  className={inputClass}
+                  placeholder="VD: Bio-Rad CFX96"
+                  value={newAssetForm.model}
+                  onChange={(e) => setNewAssetForm({ ...newAssetForm, model: e.target.value })}
+                />
+              </Field>
+              <Field label="Số Serial & Hạn HC">
+                <div className="flex gap-1">
+                  <input
+                    className={inputClass}
+                    placeholder="Serial"
+                    value={newAssetForm.serial_no}
+                    onChange={(e) => setNewAssetForm({ ...newAssetForm, serial_no: e.target.value })}
+                  />
+                  <input
+                    type="date"
+                    className={inputClass}
+                    value={newAssetForm.next_calibration_due}
+                    onChange={(e) => setNewAssetForm({ ...newAssetForm, next_calibration_due: e.target.value })}
+                  />
+                </div>
+              </Field>
+              <div className="flex items-end">
+                <Button type="submit" disabled={createAssetMut.isPending}>
+                  Lưu thiết bị
+                </Button>
+              </div>
+            </div>
+            <datalist id="asset-category-presets-list">
+              {categoryDatalist.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+            <datalist id="asset-location-presets-list">
+              {locationDatalist.map((loc) => (
+                <option key={loc} value={loc} />
+              ))}
+            </datalist>
+            <ErrorNote error={createAssetMut.error} />
           </form>
         )}
 
@@ -695,12 +741,6 @@ export function DepartmentEquipmentView({
           <Empty>Chưa có thiết bị nào trong danh mục.</Empty>
         ) : (
           (() => {
-            const uniqueLocations = Array.from(
-              new Set(assets.map((a: any) => String(a.location || "").trim()).filter(Boolean))
-            );
-            const uniqueCategories = Array.from(
-              new Set(assets.map((a: any) => String(a.equipment_category || "").trim()).filter(Boolean))
-            );
             const q = assetSearch.trim().toLowerCase();
             const filteredAssets = assets.filter((a: any) => {
               if (locationFilter !== "ALL" && String(a.location || "") !== locationFilter) return false;
