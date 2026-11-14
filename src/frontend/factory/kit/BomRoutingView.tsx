@@ -673,7 +673,8 @@ export function BomRoutingView({
         </div>
         <div class="header">
           <div>
-            <div style="font-size: 11px; font-weight: bold; color: #0284c7;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOLAB SOLUTIONS)</div>
+            <img src="${typeof window !== "undefined" ? window.location.origin : ""}/logo-abt.png" alt="ABT" style="height: 34px; object-fit: contain; display: block; margin-bottom: 4px;" />
+            <div style="font-size: 11px; font-weight: bold; color: #0284c7;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT</div>
             <h1>HƯỚNG DẪN SỬ DỤNG (INSTRUCTIONS FOR USE — IFU)</h1>
             <div style="font-size: 13px; font-weight: bold;">${b.product_name} (${mode === "ALIQUOTED" ? `${b.product_code} — Dạng Chia Sẵn .D.IC` : b.product_code})</div>
           </div>
@@ -3544,7 +3545,7 @@ export function BomRoutingView({
                     mfgDate: "01/11/2026",
                     expDate: "01/11/2027",
                     lotNumber: `LOT-${String(bomDetail.bom.product_code || "KIT").replace(/[^A-Z0-9]/gi, "").slice(0, 6)}-2611`,
-                    manufacturer: "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOLAB)",
+                    manufacturer: "CÔNG TY TNHH GIẢI PHÁP Y SINH ABT",
                     udiDi: labelIfuForm.udi_di || "(01)08936192830117",
                     phValue: bomDetail.bom.ph_min != null ? `${bomDetail.bom.ph_min} – ${bomDetail.bom.ph_max}` : "8.30 ± 0.1",
                     tccsCode: bomDetail.bom.tccs_code || "TCCS 01:2026/ABT",

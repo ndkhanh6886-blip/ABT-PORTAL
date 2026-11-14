@@ -160,7 +160,7 @@ function printOligoInvoiceSchedule(
   </div>
   <div class="Header">
     <div>
-      <div style="font-weight:800;font-size:13px;color:#0369a1;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOLAB)</div>
+      <div style="font-weight:800;font-size:13px;color:#0369a1;">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT</div>
       <div style="font-size:11px;color:#475569;">Phân hệ Sản xuất &amp; Tổng hợp Oligo — Chứng từ phối hợp Kinh doanh &amp; Kế toán</div>
     </div>
     <div style="text-align:right;">

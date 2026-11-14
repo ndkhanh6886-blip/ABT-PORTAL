@@ -115,11 +115,11 @@ export const LABEL_SIZE_PRESETS: Array<{
 ];
 
 export interface LabelPackagingHint {
-  box_no?: number;
+  box_no?: number | string;
   box_name?: string;
   component_name?: string;
   container_type?: string;
-  fill_qty?: number;
+  fill_qty?: number | string;
   fill_uom?: string;
   units_per_kit?: number;
   storage_temp?: string;
@@ -174,36 +174,36 @@ export function buildDefaultLabelBundle(
         ],
     positions_json: isSemiFinished
       ? {
-          logo: { x: 3, y: 2.5, width_mm: 14, height_mm: 5.5 },
-          product_name: { x: 19, y: 2.5, fontSize: 8.5, bold: true, hidePrefix: true },
-          product_code: { x: 19, y: 7.5, fontSize: 7, bold: true, prefix: "Mã BTP:" },
-          specification: { x: 3, y: 13, fontSize: 6.5, prefix: "Quy cách:" },
-          ph_value: { x: 3, y: 17.5, fontSize: 7, bold: true, prefix: "pH chuẩn:" },
-          lot_number: { x: 3, y: 22, fontSize: 7, bold: true, prefix: "LOT:" },
-          mfg_date: { x: 3, y: 26.5, fontSize: 6.5, prefix: "NSX:" },
-          exp_date: { x: 3, y: 31, fontSize: 6.5, bold: true, prefix: "HSD:" },
-          storage: { x: 3, y: 35.5, fontSize: 6.5, prefix: "Bảo quản:" },
-          qr_code: { x: 54, y: 13, size_mm: 13 },
-          [tempSymbol]: { x: 48, y: 29, size_mm: 8.5 },
-          symbol_caution: { x: 59, y: 29.5, size_mm: 7 },
+          logo: { x: 2.5, y: 2.2, width_mm: 13.5, height_mm: 7.1 },
+          product_name: { x: 17.5, y: 2.2, fontSize: 7.5, bold: true, hidePrefix: true },
+          product_code: { x: 17.5, y: 8.8, fontSize: 6.5, bold: true, prefix: "Mã BTP:" },
+          lot_number: { x: 3, y: 14, fontSize: 6.8, bold: true, prefix: "LOT:" },
+          specification: { x: 3, y: 18, fontSize: 6.3, prefix: "Quy cách:" },
+          ph_value: { x: 29, y: 18, fontSize: 6.3, bold: true, prefix: "pH:" },
+          mfg_date: { x: 3, y: 22, fontSize: 6.3, prefix: "NSX:" },
+          exp_date: { x: 27, y: 22, fontSize: 6.3, bold: true, prefix: "HSD:" },
+          storage: { x: 3, y: 26, fontSize: 6.3, prefix: "Bảo quản:" },
+          qr_code: { x: 53.5, y: 13.5, size_mm: 13.5 },
+          [tempSymbol]: { x: 45, y: 30.5, size_mm: 7 },
+          symbol_caution: { x: 59.5, y: 31, size_mm: 6.5 },
         }
       : {
-          logo: { x: 3.5, y: 3, width_mm: 16, height_mm: 6.5 },
-          product_name: { x: 22, y: 3, fontSize: 9.5, bold: true, hidePrefix: true },
-          product_code: { x: 22, y: 8.5, fontSize: 7.5, bold: true, prefix: "REF:" },
-          specification: { x: 48, y: 8.5, fontSize: 7.5, bold: true, prefix: "Quy cách:" },
-          lot_number: { x: 3.5, y: 15, fontSize: 7.5, bold: true, prefix: "LOT:" },
-          mfg_date: { x: 3.5, y: 20, fontSize: 7, prefix: "NSX:" },
-          exp_date: { x: 3.5, y: 25, fontSize: 7, bold: true, prefix: "HSD:" },
-          storage: { x: 3.5, y: 30, fontSize: 7, prefix: "Bảo quản:" },
-          extra_text: { x: 3.5, y: 35, fontSize: 6.5, hidePrefix: true },
-          manufacturer: { x: 3.5, y: 44.5, fontSize: 6, bold: true, hidePrefix: true },
-          qr_code: { x: 81, y: 14, size_mm: 15 },
-          symbol_ivd: { x: 46, y: 36, size_mm: 6.5 },
-          [tempSymbol]: { x: 55, y: 35, size_mm: 8.5 },
-          symbol_ifu: { x: 66, y: 36, size_mm: 6.5 },
-          symbol_keep_dry: { x: 75, y: 36, size_mm: 6.5 },
-          symbol_sunlight: { x: 84, y: 36, size_mm: 6.5 },
+          logo: { x: 3, y: 2.4, width_mm: 17.5, height_mm: 9.2 },
+          product_name: { x: 22, y: 2.3, fontSize: 8.2, bold: true, hidePrefix: true },
+          product_code: { x: 22, y: 10.4, fontSize: 7.2, bold: true, prefix: "REF:" },
+          specification: { x: 49, y: 10.4, fontSize: 7.2, bold: true, prefix: "Quy cách:" },
+          lot_number: { x: 3.5, y: 16.5, fontSize: 7.4, bold: true, prefix: "LOT:" },
+          mfg_date: { x: 3.5, y: 20.5, fontSize: 7, prefix: "NSX:" },
+          exp_date: { x: 36, y: 20.5, fontSize: 7, bold: true, prefix: "HSD:" },
+          storage: { x: 3.5, y: 24.5, fontSize: 7, prefix: "Bảo quản:" },
+          extra_text: { x: 3.5, y: 28.5, fontSize: 6.5, hidePrefix: true },
+          manufacturer: { x: 3.5, y: 41.2, fontSize: 5.8, bold: true, hidePrefix: true },
+          qr_code: { x: 80.5, y: 15.5, size_mm: 15.5 },
+          symbol_ivd: { x: 51, y: 38.5, size_mm: 6 },
+          [tempSymbol]: { x: 61.5, y: 37.5, size_mm: 7.5 },
+          symbol_ifu: { x: 76.5, y: 38.5, size_mm: 6 },
+          symbol_keep_dry: { x: 84, y: 38.5, size_mm: 6 },
+          symbol_sunlight: { x: 91.5, y: 38.5, size_mm: 6 },
         },
   };
 
@@ -222,15 +222,15 @@ export function buildDefaultLabelBundle(
       (isPcr ? "Hộp 1: Hóa chất Khuếch đại PCR" : "Hộp 1: Hóa chất & Đệm Tách chiết"),
     display_fields: ["logo", "product_name", "extra_text", "lot_number", "exp_date", "storage", "qr_code", "symbol_ivd", tempSymbol],
     positions_json: {
-      logo: { x: 3, y: 2.5, width_mm: 13, height_mm: 5.5 },
-      product_name: { x: 18, y: 2.5, fontSize: 8, bold: true, hidePrefix: true },
-      extra_text: { x: 18, y: 7.5, fontSize: 7, bold: true, hidePrefix: true },
-      lot_number: { x: 3, y: 14.5, fontSize: 7, bold: true, prefix: "LOT:" },
-      exp_date: { x: 3, y: 19.5, fontSize: 7, bold: true, prefix: "HSD:" },
-      storage: { x: 3, y: 24.5, fontSize: 6.5, prefix: "Bảo quản:" },
-      qr_code: { x: 64, y: 13, size_mm: 12.5 },
-      symbol_ivd: { x: 46, y: 30, size_mm: 6 },
-      [tempSymbol]: { x: 55, y: 29, size_mm: 8 },
+      logo: { x: 3, y: 2.3, width_mm: 14, height_mm: 7.4 },
+      product_name: { x: 18.5, y: 2.2, fontSize: 7.5, bold: true, hidePrefix: true },
+      extra_text: { x: 18.5, y: 8.8, fontSize: 6.8, bold: true, hidePrefix: true },
+      lot_number: { x: 3, y: 15.5, fontSize: 7, bold: true, prefix: "LOT:" },
+      exp_date: { x: 3, y: 19.8, fontSize: 6.8, bold: true, prefix: "HSD:" },
+      storage: { x: 3, y: 24, fontSize: 6.5, prefix: "Bảo quản:" },
+      qr_code: { x: 63.5, y: 14, size_mm: 13 },
+      symbol_ivd: { x: 52, y: 31, size_mm: 6 },
+      [tempSymbol]: { x: 62.5, y: 30, size_mm: 7.2 },
     },
   };
 
@@ -296,6 +296,32 @@ export function buildDefaultLabelBundle(
   return { outer_box: outerBox, sub_box: subBox, tube, extra_components: extraComponents };
 }
 
+function isLegacyOuterPositions(pos?: Record<string, LabelElementPos> | null): boolean {
+  if (!pos) return false;
+  const legacyFinished =
+    pos.lot_number?.y === 15 &&
+    pos.mfg_date?.y === 20 &&
+    pos.exp_date?.y === 25 &&
+    pos.storage?.y === 30 &&
+    pos.extra_text?.y === 35;
+  const legacySemi =
+    pos.specification?.y === 13 &&
+    pos.ph_value?.y === 17.5 &&
+    pos.lot_number?.y === 22 &&
+    pos.storage?.y === 35.5;
+  return Boolean(legacyFinished || legacySemi);
+}
+
+function isLegacySubBoxPositions(pos?: Record<string, LabelElementPos> | null): boolean {
+  if (!pos) return false;
+  return Boolean(
+    pos.lot_number?.y === 14.5 &&
+      pos.exp_date?.y === 19.5 &&
+      pos.storage?.y === 24.5 &&
+      pos.symbol_ivd?.x === 46
+  );
+}
+
 export function normalizeLabelBundle(
   raw: unknown,
   sample?: Partial<LabelSampleData>,
@@ -331,8 +357,26 @@ export function normalizeLabelBundle(
           positions_json: { ...defaults.tube.positions_json, ...(c?.positions_json || {}) },
         }));
   return {
-    outer_box: obj.outer_box && typeof obj.outer_box === "object" ? { ...defaults.outer_box, ...obj.outer_box } : defaults.outer_box,
-    sub_box: obj.sub_box && typeof obj.sub_box === "object" ? { ...defaults.sub_box, ...obj.sub_box } : defaults.sub_box,
+    outer_box:
+      obj.outer_box && typeof obj.outer_box === "object"
+        ? {
+            ...defaults.outer_box,
+            ...obj.outer_box,
+            positions_json: isLegacyOuterPositions(obj.outer_box.positions_json)
+              ? defaults.outer_box.positions_json
+              : { ...defaults.outer_box.positions_json, ...(obj.outer_box.positions_json || {}) },
+          }
+        : defaults.outer_box,
+    sub_box:
+      obj.sub_box && typeof obj.sub_box === "object"
+        ? {
+            ...defaults.sub_box,
+            ...obj.sub_box,
+            positions_json: isLegacySubBoxPositions(obj.sub_box.positions_json)
+              ? defaults.sub_box.positions_json
+              : { ...defaults.sub_box.positions_json, ...(obj.sub_box.positions_json || {}) },
+          }
+        : defaults.sub_box,
     tube:
       obj.tube && typeof obj.tube === "object"
         ? {
@@ -395,22 +439,22 @@ export function renderIsoSymbolSvg(fieldId: string, pos?: LabelElementPos): Reac
       const tMin = pos?.tempMin !== undefined ? pos.tempMin : defaultMin;
       const tMax = pos?.tempMax !== undefined ? pos.tempMax : defaultMax;
       return (
-        <svg viewBox="0 0 46 28" style={{ width: "100%", height: "100%", overflow: "visible" }}>
-          <path d="M21 5v12.5a3.5 3.5 0 1 1-3 0V5a1.5 1.5 0 1 1 3 0z" fill="none" stroke="#000" strokeWidth="1.6" />
-          <circle cx="19.5" cy="20" r="2.2" fill="#000" />
-          <line x1="19.5" y1="10" x2="19.5" y2="19" stroke="#000" strokeWidth="1.5" />
+        <svg viewBox="0 0 56 30" style={{ width: "100%", height: "100%", overflow: "visible" }}>
+          <path d="M29.5 6v12.2a3.6 3.6 0 1 1-3 0V6a1.5 1.5 0 1 1 3 0z" fill="none" stroke="#000" strokeWidth="1.6" />
+          <circle cx="28" cy="21.5" r="2.1" fill="#000" />
+          <line x1="28" y1="11" x2="28" y2="21.5" stroke="#000" strokeWidth="1.5" />
           {tMax && (
             <>
-              <line x1="23" y1="6.5" x2="31" y2="6.5" stroke="#000" strokeWidth="1.6" />
-              <text x="27" y="5" fontSize="6.5" fontWeight="bold" fontFamily="Arial, sans-serif" textAnchor="middle" fill="#000">
+              <line x1="31.5" y1="7.5" x2="38.5" y2="7.5" stroke="#000" strokeWidth="1.5" />
+              <text x="33" y="5.8" fontSize="6.2" fontWeight="bold" fontFamily="Arial, sans-serif" textAnchor="start" fill="#000">
                 {tMax}
               </text>
             </>
           )}
           {tMin && (
             <>
-              <line x1="8" y1="16.5" x2="16" y2="16.5" stroke="#000" strokeWidth="1.6" />
-              <text x="11" y="23.5" fontSize="6.5" fontWeight="bold" fontFamily="Arial, sans-serif" textAnchor="middle" fill="#000">
+              <line x1="17" y1="17.5" x2="24" y2="17.5" stroke="#000" strokeWidth="1.5" />
+              <text x="23" y="24.5" fontSize="6.2" fontWeight="bold" fontFamily="Arial, sans-serif" textAnchor="end" fill="#000">
                 {tMin}
               </text>
             </>
@@ -637,7 +681,10 @@ export function VisualLabelCanvas({
       case "ph_value":
         return { prefix, value: sample.phValue || "8.30 ± 0.1" };
       case "manufacturer":
-        return { prefix, value: sample.manufacturer };
+        return {
+          prefix,
+          value: (sample.manufacturer || "").replace(/\s*\(ABT\s+BIO[^)]*\)/gi, "").trim(),
+        };
       case "extra_text":
         return { prefix, value: config.extra_text || sample.tccsCode || "" };
       default:
@@ -711,10 +758,10 @@ export function VisualLabelCanvas({
           setDraggingField(fieldId);
         };
 
-        // 1. Logo ABT
+        // 1. Logo ABT (official company logo PNG)
         if (fieldId === "logo") {
-          const wMm = pos.width_mm ?? (config.width_mm >= 65 ? 15 : 10);
-          const hMm = pos.height_mm ?? (config.width_mm >= 65 ? 6 : 4.2);
+          const wMm = pos.width_mm ?? (config.width_mm >= 65 ? 17.5 : 11);
+          const hMm = pos.height_mm ?? (config.width_mm >= 65 ? 9.2 : 5.8);
           return (
             <div
               key={fieldId}
@@ -733,15 +780,19 @@ export function VisualLabelCanvas({
                 alignItems: "center",
               }}
             >
-              <svg viewBox="0 0 120 44" style={{ width: "100%", height: "100%" }}>
-                <rect x="2" y="4" width="116" height="36" rx="6" fill="#0284c7" />
-                <text x="60" y="26" fontSize="22" fontWeight="900" fontFamily="Arial, sans-serif" textAnchor="middle" fill="#ffffff" letterSpacing="2">
-                  ABT
-                </text>
-                <text x="60" y="36.5" fontSize="6.5" fontWeight="bold" fontFamily="Arial, sans-serif" textAnchor="middle" fill="#e0f2fe" letterSpacing="1.2">
-                  BIOLAB SOLUTIONS
-                </text>
-              </svg>
+              <img
+                src="/logo-abt.png"
+                alt="ABT"
+                draggable={false}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "contain",
+                  objectPosition: "left center",
+                  display: "block",
+                  pointerEvents: "none",
+                }}
+              />
             </div>
           );
         }
@@ -777,7 +828,11 @@ export function VisualLabelCanvas({
         if (fieldId.startsWith("symbol_")) {
           const symOpt = SYMBOL_OPTIONS.find((s) => s.id === fieldId);
           const sMm = pos.size_mm ?? symOpt?.defaultSize ?? 6.5;
-          const isWide = fieldId === "symbol_lot" || fieldId === "symbol_ivd" || fieldId.startsWith("symbol_temp");
+          const widthRatio = fieldId.startsWith("symbol_temp")
+            ? 1.8
+            : fieldId === "symbol_lot" || fieldId === "symbol_ivd"
+              ? 1.48
+              : 1;
           return (
             <div
               key={fieldId}
@@ -787,7 +842,7 @@ export function VisualLabelCanvas({
                 position: "absolute",
                 left: `${leftPx}px`,
                 top: `${topPx}px`,
-                width: `${(isWide ? sMm * 1.45 : sMm) * scale}px`,
+                width: `${sMm * widthRatio * scale}px`,
                 height: `${sMm * scale}px`,
                 cursor: interactive ? "grab" : "default",
                 outline: isSelected ? "1.5px dashed #2563eb" : "none",
@@ -801,6 +856,26 @@ export function VisualLabelCanvas({
 
         // 4. Text / Data Field
         const { prefix, value } = getFieldText(fieldId, pos);
+        const qrPos = config.display_fields.includes("qr_code") ? config.positions_json["qr_code"] : undefined;
+        const qrSizeMm = qrPos?.size_mm ?? config.qr_size_mm ?? 12;
+        const nextToQr =
+          Boolean(qrPos) &&
+          fieldId !== "product_name" &&
+          pos.x < qrPos!.x - 8 &&
+          pos.y >= qrPos!.y - 1.5 &&
+          pos.y <= qrPos!.y + qrSizeMm + 1;
+        let rightEdgeMm = nextToQr ? qrPos!.x - 1.5 : config.width_mm - 2;
+        if (fieldId === "manufacturer" && pos.y >= 34) {
+          const leftmostBottomSymX = config.display_fields
+            .filter((f) => f.startsWith("symbol_"))
+            .map((f) => config.positions_json[f])
+            .filter((sp) => sp && sp.x > pos.x + 12 && sp.y >= 33)
+            .reduce((minX, sp) => Math.min(minX, sp!.x), config.width_mm - 2);
+          rightEdgeMm = Math.min(rightEdgeMm, leftmostBottomSymX - 1.5);
+        }
+        const maxWidthPx = Math.max(24, (rightEdgeMm - pos.x) * scale);
+        const isProductTitle = fieldId === "product_name";
+        const isWrapLine = config.width_mm >= 65 && (fieldId === "storage" || fieldId === "extra_text");
         return (
           <div
             key={fieldId}
@@ -810,11 +885,22 @@ export function VisualLabelCanvas({
               position: "absolute",
               left: `${leftPx}px`,
               top: `${topPx}px`,
+              maxWidth: `${maxWidthPx}px`,
               fontSize: `${fontPx}px`,
               fontWeight: pos.bold || fieldId === "product_name" || fieldId === "product_code" ? 700 : 500,
               color: fieldId === "product_name" ? "#0f172a" : "#111827",
-              lineHeight: 1.18,
-              whiteSpace: "nowrap",
+              lineHeight: isProductTitle ? 1.15 : isWrapLine ? 1.16 : 1.18,
+              whiteSpace: isProductTitle || isWrapLine ? "normal" : "nowrap",
+              overflow: "hidden",
+              ...(isProductTitle
+                ? {
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical" as const,
+                  }
+                : !isWrapLine
+                  ? { textOverflow: "ellipsis" }
+                  : {}),
               cursor: interactive ? "grab" : "default",
               outline: isSelected ? "1.5px dashed #2563eb" : "none",
               backgroundColor: isSelected ? "rgba(37,99,235,0.10)" : "transparent",
@@ -1089,7 +1175,7 @@ export function KitLabelStudio({
   };
 
   const applyPresetSize = (preset: (typeof LABEL_SIZE_PRESETS)[number]) => {
-    const freshDefaults = buildDefaultLabelBundle(sample, isSemiFinished);
+    const freshDefaults = buildDefaultLabelBundle(sample, isSemiFinished, undefined, packagingItems);
     const defaultPos =
       preset.width_mm <= 40
         ? freshDefaults.tube.positions_json
@@ -1105,12 +1191,12 @@ export function KitLabelStudio({
       labels_per_row: preset.labels_per_row,
       label_gap_mm: preset.label_gap_mm,
       vertical_gap_mm: preset.vertical_gap_mm,
-      positions_json: { ...defaultPos, ...currentConfig.positions_json },
+      positions_json: defaultPos,
     });
   };
 
   const resetAutoLayout = () => {
-    const defaults = buildDefaultLabelBundle(sample, isSemiFinished);
+    const defaults = buildDefaultLabelBundle(sample, isSemiFinished, undefined, packagingItems);
     const fresh =
       activeTarget === "outer_box"
         ? defaults.outer_box

@@ -478,7 +478,8 @@ export function OrdersEbrView({
   </div>
   <div class="header">
     <div>
-      <div style="font-weight:800;font-size:13px;color:#0369a1">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT (ABT BIOLOGICAL SOLUTIONS)</div>
+      <img src="${typeof window !== "undefined" ? window.location.origin : ""}/logo-abt.png" alt="ABT" style="height:32px;object-fit:contain;display:block;margin-bottom:3px;" />
+      <div style="font-weight:800;font-size:13px;color:#0369a1">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT</div>
       <div style="font-size:11px;color:#475569">Khối Kỹ Thuật & Sản Xuất Sinh Phẩm Chẩn Đoán In-Vitro (IVD) · ISO 13485:2016</div>
     </div>
     <div style="text-align:right;font-family:monospace;font-size:11px">
@@ -636,15 +637,18 @@ export function OrdersEbrView({
     .btn { background: #0284c7; color: #fff; border: none; padding: 8px 16px; border-radius: 6px; font-weight: 700; cursor: pointer; }
     .sheet-title { font-size: 13px; font-weight: 800; color: #0f172a; margin: 10px 0 8px; text-transform: uppercase; }
     .outer-sticker { width: 95mm; min-height: 65mm; background: #fff; border: 2px solid #0f172a; border-radius: 6px; padding: 3.5mm; box-sizing: border-box; box-shadow: 0 4px 12px rgba(0,0,0,0.08); margin-bottom: 14px; display: flex; flex-direction: column; justify-content: space-between; }
-    .outer-hdr { display: flex; justify-content: space-between; align-items: center; background: #0c4a6e; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 9.5px; font-weight: 800; letter-spacing: 0.4px; }
-    .ivd-box { border: 1.5px solid #fff; padding: 1px 5px; font-weight: 900; font-size: 9px; border-radius: 2px; }
-    .prod-name { font-size: 13px; font-weight: 800; color: #0f172a; margin: 5px 0 2px; line-height: 1.25; }
-    .prod-sub { font-size: 9.5px; color: #334155; margin-bottom: 5px; }
-    .iso-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 8px; font-size: 10px; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; padding: 5px 0; font-family: monospace; }
+    .outer-hdr { display: flex; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #0284c7; padding: 2px 2px 4px; color: #0f172a; font-size: 9px; font-weight: 800; }
+    .outer-brand { display: flex; align-items: center; gap: 6px; }
+    .outer-brand img { height: 22px; width: auto; object-fit: contain; display: block; }
+    .ivd-box { border: 1.5px solid #0f172a; padding: 1px 5px; font-weight: 900; font-size: 9px; border-radius: 2px; color: #0f172a; background: #f8fafc; }
+    .prod-name { font-size: 12.5px; font-weight: 800; color: #0f172a; margin: 4px 0 2px; line-height: 1.22; }
+    .prod-sub { font-size: 9px; color: #334155; margin-bottom: 4px; }
+    .iso-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 3px 8px; font-size: 9.5px; border-top: 1px solid #cbd5e1; border-bottom: 1px solid #cbd5e1; padding: 4px 0; font-family: monospace; }
     .iso-sym { display: inline-block; border: 1px solid #0f172a; padding: 0 3px; font-weight: 800; font-size: 8.5px; margin-right: 4px; background: #f8fafc; }
-    .barcode-row { display: flex; justify-content: space-between; align-items: center; padding-top: 5px; gap: 8px; }
+    .barcode-row { display: flex; justify-content: space-between; align-items: center; padding-top: 4px; gap: 8px; }
     .barcode-bars { min-height: 24px; }
     .udi-txt { font-family: monospace; font-size: 8.5px; color: #0f172a; margin-top: 2px; }
+    .mfr-foot { font-size: 8.5px; font-weight: 800; color: #0f172a; margin-top: 3px; padding-top: 2px; border-top: 1px solid #e2e8f0; }
     .tube-grid { display: flex; flex-wrap: wrap; gap: 10px; }
     .tube-sticker { width: 52mm; min-height: 26mm; background: #fff; border: 1.5px solid #0f172a; border-radius: 5px; padding: 2.5mm; box-sizing: border-box; font-size: 9px; }
     .tube-top { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #cbd5e1; padding-bottom: 2px; margin-bottom: 3px; }
@@ -672,7 +676,10 @@ export function OrdersEbrView({
   <div class="outer-sticker">
     <div>
       <div class="outer-hdr">
-        <span>ABT BIOLOGICAL SOLUTIONS · ISO 13485</span>
+        <div class="outer-brand">
+          <img src="${typeof window !== "undefined" ? window.location.origin : ""}/logo-abt.png" alt="ABT" />
+          <span style="color:#0369a1;">ISO 13485:2016</span>
+        </div>
         <span class="ivd-box">IVD</span>
       </div>
       <div class="prod-name">${o.product_name}</div>
@@ -696,6 +703,7 @@ export function OrdersEbrView({
           ${qr2dSvg}
         </div>
       </div>
+      <div class="mfr-foot">CÔNG TY TNHH GIẢI PHÁP Y SINH ABT</div>
     </div>
   </div>
 
@@ -1978,16 +1986,20 @@ export function OrdersEbrView({
                           </div>
                           <div className="w-full max-w-[440px] bg-white text-slate-950 rounded-lg border-2 border-slate-900 shadow-lg p-3.5 space-y-2">
                             {/* Header thương hiệu + IVD */}
-                            <div className="flex items-center justify-between bg-sky-900 text-white px-2.5 py-1.5 rounded">
-                              <div>
-                                <div className="text-[11px] font-black tracking-wide">ABT BIOLOGICAL SOLUTIONS</div>
-                                <div className="text-[9px] text-sky-200">ISO 13485:2016 · In-Vitro Diagnostic Medical Device</div>
+                            <div className="flex items-center justify-between border-b border-sky-600 pb-1.5">
+                              <div className="flex items-center gap-2">
+                                <img src="/logo-abt.png" alt="ABT" className="h-7 w-auto object-contain" />
+                                <div className="text-[9px] text-slate-600 font-semibold leading-tight">
+                                  ISO 13485:2016
+                                  <br />
+                                  In-Vitro Diagnostic
+                                </div>
                               </div>
                               <div className="flex items-center gap-1.5">
-                                <span className="px-1.5 py-0.5 border-2 border-white rounded text-[10px] font-black tracking-widest bg-sky-950">
+                                <span className="px-1.5 py-0.5 border-2 border-slate-900 rounded text-[10px] font-black tracking-widest bg-slate-50 text-slate-950">
                                   IVD
                                 </span>
-                                <span className="px-1.5 py-0.5 bg-white text-sky-950 rounded text-[9px] font-extrabold font-mono">
+                                <span className="px-1.5 py-0.5 bg-sky-50 text-sky-950 border border-sky-300 rounded text-[9px] font-extrabold font-mono">
                                   {detail.order.bom_storage_condition || "-20°C"}
                                 </span>
                               </div>
@@ -2077,6 +2089,9 @@ export function OrdersEbrView({
                                 </svg>
                                 <span className="text-[7.5px] font-mono font-bold text-slate-700 mt-0.5">2D GS1</span>
                               </div>
+                            </div>
+                            <div className="text-[9.5px] font-extrabold text-slate-900 pt-1 border-t border-slate-200">
+                              CÔNG TY TNHH GIẢI PHÁP Y SINH ABT
                             </div>
                           </div>
                         </div>

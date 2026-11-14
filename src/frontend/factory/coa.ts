@@ -65,20 +65,45 @@ export function openPrintWindowSync(title = "Đang chuẩn bị bản in..."): W
   return w;
 }
 
+function waitForDocumentImagesAndPrint(doc: Document | null | undefined, onPrint: () => void) {
+  const imgs = doc ? Array.from(doc.images || []) : [];
+  const pending = imgs.filter((img) => !img.complete);
+  if (pending.length === 0) {
+    setTimeout(onPrint, 180);
+    return;
+  }
+  let fired = false;
+  const trigger = () => {
+    if (fired) return;
+    fired = true;
+    onPrint();
+  };
+  let remaining = pending.length;
+  const onDone = () => {
+    remaining -= 1;
+    if (remaining <= 0) trigger();
+  };
+  pending.forEach((img) => {
+    img.addEventListener("load", onDone, { once: true });
+    img.addEventListener("error", onDone, { once: true });
+  });
+  setTimeout(trigger, 600);
+}
+
 export function renderHtmlToPrintWindow(html: string, existingWin?: Window | null) {
   const w = existingWin ?? window.open("", "_blank", "width=1020,height=860");
   if (w) {
     w.document.open();
     w.document.write(html);
     w.document.close();
-    setTimeout(() => {
+    waitForDocumentImagesAndPrint(w.document, () => {
       try {
         w.focus();
         w.print();
       } catch {
         // user can also click the Print button inside the window
       }
-    }, 250);
+    });
     return;
   }
 
@@ -96,10 +121,10 @@ export function renderHtmlToPrintWindow(html: string, existingWin?: Window | nul
   doc.open();
   doc.write(html);
   doc.close();
-  setTimeout(() => {
+  waitForDocumentImagesAndPrint(doc, () => {
     frame.contentWindow?.focus();
     frame.contentWindow?.print();
-  }, 250);
+  });
   setTimeout(() => {
     frame.remove();
     style.remove();
@@ -110,7 +135,12 @@ export function renderHtmlToPrintWindow(html: string, existingWin?: Window | nul
 export function printElementHtml(el: HTMLElement | null, title = "Bản in Tem Nhãn Sản Phẩm") {
   if (!el) return;
   const win = openPrintWindowSync(title);
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
   const clone = el.cloneNode(true) as HTMLElement;
+  // Resolve relative image URLs so about:blank print popups always render /logo-abt.png cleanly
+  clone.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
+    if (img.src) img.setAttribute("src", img.src);
+  });
   // Clean up interactive selection outlines & dark background grids for crisp label printing
   clone.querySelectorAll<HTMLElement>("*").forEach((node) => {
     if (node.style?.outline && node.style.outline.includes("dashed")) {
@@ -120,7 +150,8 @@ export function printElementHtml(el: HTMLElement | null, title = "Bản in Tem N
       node.style.backgroundImage = "none";
     }
   });
-  const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8"><title>${esc(title)}</title><style>
+  const baseTag = origin ? `<base href="${esc(origin)}/">` : "";
+  const html = `<!doctype html><html lang="vi"><head><meta charset="utf-8">${baseTag}<title>${esc(title)}</title><style>
 @page { margin: 8mm }
 body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 16px; background: #f1f5f9; color: #0f172a }
 .no-print { max-width: 980px; margin: 0 auto 14px; display: flex; justify-content: space-between; align-items: center; background: #fff; padding: 10px 14px; border-radius: 6px; border: 1px solid #cbd5e1; font-size: 12px }
