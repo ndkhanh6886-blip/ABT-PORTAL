@@ -2974,9 +2974,9 @@ export function BomRoutingView({
                         "Hộp",
                         "Vai trò",
                         "Mã VT / Bán TP",
-                        "Định mức (Thường / Chia sẵn .D.IC)",
+                        "Định mức",
                         "🫙 Đánh dấu Vật chứa & Loại Nhãn",
-                        "Cấu hình Nổ BOM (Demo / Lưu QC / Thay thế)",
+                        "Cấu hình Nổ BOM",
                         "Thao tác",
                       ]}
                     >
@@ -3011,28 +3011,28 @@ export function BomRoutingView({
 
                           return (
                             <tr key={l.id} className={editingLineId === l.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
-                              <td className="px-3 py-2 text-xs">{l.line_no}</td>
-                              <td className="px-3 py-2 text-xs font-medium">Hộp {l.box_no}</td>
-                              <td className="px-3 py-2 text-xs">{ROLE_LABELS[l.component_role] ?? l.component_role}</td>
-                              <td className="px-3 py-2 text-xs">
+                              <td className="px-2 py-2 text-xs w-7">{l.line_no}</td>
+                              <td className="px-2 py-2 text-xs font-medium whitespace-nowrap w-12">Hộp {l.box_no}</td>
+                              <td className="px-2 py-2 text-xs w-20">{ROLE_LABELS[l.component_role] ?? l.component_role}</td>
+                              <td className="px-2 py-2 text-xs max-w-[175px]">
                                 <span className="font-mono font-semibold">{l.component_code}</span> — {l.component_name}
                               </td>
-                              <td className="px-3 py-2 text-xs font-semibold">
+                              <td className="px-2 py-2 text-xs font-semibold w-[72px] max-w-[80px] whitespace-nowrap">
                                 <div>
                                   {fmtQty(l.qty_per_base)} {l.uom}
-                                  {Number(l.scrap_pct) > 0 && (
-                                    <span className="ml-1 text-[10px] font-normal text-stone-400">
-                                      (+{fmtQty(l.scrap_pct)}% hao hụt)
-                                    </span>
-                                  )}
                                 </div>
+                                {Number(l.scrap_pct) > 0 && (
+                                  <div className="text-[10px] font-normal text-stone-400">
+                                    +{fmtQty(l.scrap_pct)}%
+                                  </div>
+                                )}
                                 {l.qty_per_base_aliquoted != null && (
-                                  <div className="text-[11px] text-sky-700 font-mono">
+                                  <div className="text-[10px] text-sky-700 font-mono">
                                     .D.IC: {fmtQty(l.qty_per_base_aliquoted)} {l.uom}
                                   </div>
                                 )}
                               </td>
-                              <td className="px-3 py-2 text-xs">
+                              <td className="px-2 py-2 text-xs">
                                 {lineClass.kind === "FILLABLE_SOLUTION" ? (
                                   <div className="space-y-1">
                                     <div className="flex items-center gap-1">
@@ -3040,7 +3040,7 @@ export function BomRoutingView({
                                         🫙 Đựng trong:
                                       </span>
                                       <select
-                                        className="rounded border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[11px] font-medium text-slate-800 dark:text-slate-100 max-w-[230px]"
+                                        className="rounded border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[11px] font-medium text-slate-800 dark:text-slate-100 max-w-[205px]"
                                         value={l.bundle_parent_code || ""}
                                         disabled={bomDetail.bom.status === "OBSOLETE"}
                                         onChange={(e) => handleQuickPairContainer(l, e.target.value)}
@@ -3093,23 +3093,25 @@ export function BomRoutingView({
                                   </div>
                                 )}
                               </td>
-                              <td className="px-3 py-2 text-[11px] text-stone-600 space-x-1">
-                                <span className="px-1.5 py-0.5 rounded bg-stone-100">
-                                  {l.is_bundled ? `Đi kèm (${l.bundle_parent_code || "ngoài"})` : "Trừ kho"}
-                                </span>
-                                {l.is_demo_fixed_component ? (
-                                  <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Demo: Cố định 1 bộ</span>
-                                ) : (
-                                  <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">Demo: Co giãn theo test</span>
-                                )}
-                                {l.include_in_qc_retention !== false && (
-                                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">+Mẫu lưu QC</span>
-                                )}
-                                {l.allow_substitute && (
-                                  <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Cho thay thế</span>
-                                )}
+                              <td className="px-2 py-2 text-[10px] text-stone-600 max-w-[165px]">
+                                <div className="flex flex-wrap gap-1">
+                                  <span className="px-1.5 py-0.5 rounded bg-stone-100 whitespace-nowrap">
+                                    {l.is_bundled ? `Đi kèm (${l.bundle_parent_code || "ngoài"})` : "Trừ kho"}
+                                  </span>
+                                  {l.is_demo_fixed_component ? (
+                                    <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 whitespace-nowrap">Demo: Cố định 1 bộ</span>
+                                  ) : (
+                                    <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800 whitespace-nowrap">Demo: Co giãn</span>
+                                  )}
+                                  {l.include_in_qc_retention !== false && (
+                                    <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800 whitespace-nowrap">+Mẫu lưu QC</span>
+                                  )}
+                                  {l.allow_substitute && (
+                                    <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800 whitespace-nowrap">Cho thay thế</span>
+                                  )}
+                                </div>
                               </td>
-                              <td className="px-3 py-2 text-xs whitespace-nowrap">
+                              <td className="px-2 py-2 text-xs whitespace-nowrap">
                                 {bomDetail.bom.status !== "OBSOLETE" && (
                                   <div className="flex items-center gap-1.5">
                                     <button
