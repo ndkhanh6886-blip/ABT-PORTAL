@@ -29,6 +29,70 @@ import {
   type LabelSampleData,
 } from "./KitLabelStudio";
 
+function classifyBomLineForPackaging(l: any): {
+  kind: "PRIMARY_CONTAINER" | "OUTER_BOX_OR_ACCESSORY" | "FILLABLE_SOLUTION";
+  containerType?: string;
+  capacityMl?: number;
+} {
+  const code = String(l?.component_code || "").trim().toUpperCase();
+  const name = String(l?.component_name || "").trim().toLowerCase();
+  const uom = String(l?.uom || "").trim().toLowerCase();
+  const role = String(l?.component_role || "REAGENT").toUpperCase();
+
+  const isVolumeOrMassUom =
+    uom === "ml" || uom === "µl" || uom === "ul" || uom === "l" || uom === "g" || uom === "mg" || uom === "rxn" || uom === "test";
+  if (!isVolumeOrMassUom) {
+    if (
+      /^CTN2(\b|$)|^CT2(\b|$)/.test(code) ||
+      (name.includes("cryotube") && (name.includes("2.0ml") || name.includes("2ml"))) ||
+      (name.includes("microtube") && (name.includes("2.0ml") || name.includes("2ml")))
+    ) {
+      return { kind: "PRIMARY_CONTAINER", containerType: "TUBE_2_0ML", capacityMl: 2.0 };
+    }
+    if (
+      /^CTT1\.5|^CTN1\.5|^CT1\.5|^T1\.5(\b|$)/.test(code) ||
+      (name.includes("cryotube") && name.includes("1.5ml")) ||
+      (name.includes("tube") && name.includes("1.5ml") && !name.includes("túi"))
+    ) {
+      return { kind: "PRIMARY_CONTAINER", containerType: "TUBE_1_5ML", capacityMl: 1.5 };
+    }
+    if (/^CTT0\.5|^CTN0\.5|^CT0\.5/.test(code) || (name.includes("cryotube") && name.includes("0.5ml"))) {
+      return { kind: "PRIMARY_CONTAINER", containerType: "TUBE_0_5ML", capacityMl: 0.5 };
+    }
+    const cppMatch = code.match(/^CPP(\d+)/);
+    if (cppMatch || name.includes("chai nhựa") || name.includes("lọ nhựa") || name.includes("chai pet") || name.includes("chai hdpe")) {
+      const cap = cppMatch ? Number(cppMatch[1]) : 15;
+      return {
+        kind: "PRIMARY_CONTAINER",
+        containerType: cap >= 25 ? "BOTTLE_50ML" : "BOTTLE_10ML",
+        capacityMl: cap,
+      };
+    }
+  }
+
+  if (
+    role === "PACKAGING" ||
+    role === "DOCUMENT_IFU" ||
+    Boolean(l?.is_demo_fixed_component) ||
+    /^(HG|DG|TEM|LBL|IFU|HDSD|BOX|BAG|TUI|ZIP|FOAM|XOP|CSR|T1\.5B|MN5N|CNM|DSC|NBM)/.test(code) ||
+    name.includes("hộp giấy") ||
+    name.includes("đế giấy") ||
+    name.includes("nhãn") ||
+    name.includes("tờ hướng dẫn") ||
+    name.includes("cột lọc") ||
+    name.includes("spin column") ||
+    name.includes("collection tube") ||
+    name.includes("túi zip") ||
+    name.includes("túi nhôm") ||
+    name.includes("màng nhôm") ||
+    name.includes("cuộn màng")
+  ) {
+    return { kind: "OUTER_BOX_OR_ACCESSORY" };
+  }
+
+  return { kind: "FILLABLE_SOLUTION" };
+}
+
 export function BomRoutingView({
   options,
   onRefreshOptions,
@@ -852,7 +916,44 @@ export function BomRoutingView({
         method: "POST",
         json: { kind: "sync_packaging" },
       });
-      await loadBomDetail(selectedBomId);
+      await loadBomDetail(selectedBomId, lineSearch, lineBoxFilter);
+      await loadList();
+    } catch (err) {
+      setError(err);
+    }
+  };
+
+  const handleQuickPairContainer = async (solutionLine: any, containerCode: string) => {
+    if (!selectedBomId || !solutionLine?.id) return;
+    setError(null);
+    try {
+      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+        method: "POST",
+        json: {
+          kind: "update_line",
+          line_id: solutionLine.id,
+          component_item_id: solutionLine.component_item_id,
+          qty_per_base: Number(solutionLine.qty_per_base),
+          qty_per_base_aliquoted:
+            solutionLine.qty_per_base_aliquoted != null ? Number(solutionLine.qty_per_base_aliquoted) : null,
+          uom: solutionLine.uom,
+          scrap_pct: Number(solutionLine.scrap_pct ?? 0),
+          box_no: Number(solutionLine.box_no ?? 1),
+          component_role: solutionLine.component_role,
+          is_critical: solutionLine.is_critical !== false,
+          is_bundled: Boolean(solutionLine.is_bundled),
+          bundle_parent_code: containerCode.trim() || null,
+          allow_substitute: Boolean(solutionLine.allow_substitute),
+          is_mix_component: solutionLine.is_mix_component !== false,
+          is_demo_fixed_component: Boolean(solutionLine.is_demo_fixed_component),
+          include_in_qc_retention: solutionLine.include_in_qc_retention !== false,
+        },
+      });
+      await api(`/api/factory/kit/boms/${selectedBomId}`, {
+        method: "POST",
+        json: { kind: "sync_packaging" },
+      });
+      await loadBomDetail(selectedBomId, lineSearch, lineBoxFilter);
       await loadList();
     } catch (err) {
       setError(err);
@@ -2787,6 +2888,22 @@ export function BomRoutingView({
                             />
                           </div>
                         </Field>
+                        <Field label="🫙 Đựng trong Vật chứa (Mã Ống/Chai trong BOM)">
+                          <select
+                            className={inputClass}
+                            value={lineForm.bundle_parent_code}
+                            onChange={(e) => setLineForm({ ...lineForm, bundle_parent_code: e.target.value })}
+                          >
+                            <option value="">-- Tự động ghép hoặc Không áp dụng --</option>
+                            {bomDetail.lines
+                              .filter((cand: any) => classifyBomLineForPackaging(cand).kind === "PRIMARY_CONTAINER")
+                              .map((cand: any) => (
+                                <option key={cand.id} value={cand.component_code}>
+                                  {cand.component_code} — {cand.component_name} ({fmtQty(cand.qty_per_base)} {cand.uom})
+                                </option>
+                              ))}
+                          </select>
+                        </Field>
                       </div>
                       <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                         <div className="flex flex-wrap gap-3 text-xs text-stone-700 dark:text-stone-300">
@@ -2858,68 +2975,164 @@ export function BomRoutingView({
                         "Vai trò",
                         "Mã VT / Bán TP",
                         "Định mức (Thường / Chia sẵn .D.IC)",
-                        "Hao hụt",
+                        "🫙 Đánh dấu Vật chứa & Loại Nhãn",
                         "Cấu hình Nổ BOM (Demo / Lưu QC / Thay thế)",
                         "Thao tác",
                       ]}
                     >
-                      {bomDetail.lines.map((l: any) => (
-                        <tr key={l.id} className={editingLineId === l.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
-                          <td className="px-3 py-2 text-xs">{l.line_no}</td>
-                          <td className="px-3 py-2 text-xs font-medium">Hộp {l.box_no}</td>
-                          <td className="px-3 py-2 text-xs">{ROLE_LABELS[l.component_role] ?? l.component_role}</td>
-                          <td className="px-3 py-2 text-xs">
-                            <span className="font-mono font-semibold">{l.component_code}</span> — {l.component_name}
-                          </td>
-                          <td className="px-3 py-2 text-xs font-semibold">
-                            <div>
-                              {fmtQty(l.qty_per_base)} {l.uom}
-                            </div>
-                            {l.qty_per_base_aliquoted != null && (
-                              <div className="text-[11px] text-sky-700 font-mono">
-                                .D.IC: {fmtQty(l.qty_per_base_aliquoted)} {l.uom}
-                              </div>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-xs">{fmtQty(l.scrap_pct)}%</td>
-                          <td className="px-3 py-2 text-[11px] text-stone-600 space-x-1">
-                            <span className="px-1.5 py-0.5 rounded bg-stone-100">
-                              {l.is_bundled ? `Đi kèm (${l.bundle_parent_code || "ngoài"})` : "Trừ kho"}
-                            </span>
-                            {l.is_demo_fixed_component ? (
-                              <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Demo: Cố định 1 bộ</span>
-                            ) : (
-                              <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">Demo: Co giãn theo test</span>
-                            )}
-                            {l.include_in_qc_retention !== false && (
-                              <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">+Mẫu lưu QC</span>
-                            )}
-                            {l.allow_substitute && (
-                              <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Cho thay thế</span>
-                            )}
-                          </td>
-                          <td className="px-3 py-2 text-xs whitespace-nowrap">
-                            {bomDetail.bom.status !== "OBSOLETE" && (
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => handleStartEditLine(l)}
-                                  className="px-2 py-1 rounded-md text-[11px] font-bold bg-sky-600/15 text-sky-700 dark:text-sky-300 border border-sky-500/40 hover:bg-sky-600 hover:text-white transition"
-                                >
-                                  ✏️ Sửa
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteBomLine(l.id)}
-                                  className="px-2 py-1 rounded-md text-[11px] font-bold bg-rose-600/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:bg-rose-600 hover:text-white transition"
-                                >
-                                  🗑️ Xóa
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                      {(() => {
+                        const containerLines = bomDetail.lines.filter(
+                          (cand: any) => classifyBomLineForPackaging(cand).kind === "PRIMARY_CONTAINER"
+                        );
+                        return bomDetail.lines.map((l: any) => {
+                          const lineClass = classifyBomLineForPackaging(l);
+                          const pairedContainer =
+                            lineClass.kind === "FILLABLE_SOLUTION" && l.bundle_parent_code
+                              ? containerLines.find(
+                                  (c: any) =>
+                                    String(c.component_code || "").toUpperCase() ===
+                                    String(l.bundle_parent_code || "").toUpperCase()
+                                )
+                              : null;
+                          const heldSolutions =
+                            lineClass.kind === "PRIMARY_CONTAINER"
+                              ? bomDetail.lines.filter(
+                                  (sol: any) =>
+                                    classifyBomLineForPackaging(sol).kind === "FILLABLE_SOLUTION" &&
+                                    String(sol.bundle_parent_code || "").toUpperCase() ===
+                                      String(l.component_code || "").toUpperCase()
+                                )
+                              : [];
+                          const pairedUnits = pairedContainer ? Math.max(1, Math.round(Number(pairedContainer.qty_per_base) || 1)) : 1;
+                          const pairedFillPerUnit =
+                            pairedContainer && pairedUnits > 0
+                              ? Math.round((Number(l.qty_per_base || 0) / pairedUnits) * 1000) / 1000
+                              : Number(l.qty_per_base || 0);
+
+                          return (
+                            <tr key={l.id} className={editingLineId === l.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
+                              <td className="px-3 py-2 text-xs">{l.line_no}</td>
+                              <td className="px-3 py-2 text-xs font-medium">Hộp {l.box_no}</td>
+                              <td className="px-3 py-2 text-xs">{ROLE_LABELS[l.component_role] ?? l.component_role}</td>
+                              <td className="px-3 py-2 text-xs">
+                                <span className="font-mono font-semibold">{l.component_code}</span> — {l.component_name}
+                              </td>
+                              <td className="px-3 py-2 text-xs font-semibold">
+                                <div>
+                                  {fmtQty(l.qty_per_base)} {l.uom}
+                                  {Number(l.scrap_pct) > 0 && (
+                                    <span className="ml-1 text-[10px] font-normal text-stone-400">
+                                      (+{fmtQty(l.scrap_pct)}% hao hụt)
+                                    </span>
+                                  )}
+                                </div>
+                                {l.qty_per_base_aliquoted != null && (
+                                  <div className="text-[11px] text-sky-700 font-mono">
+                                    .D.IC: {fmtQty(l.qty_per_base_aliquoted)} {l.uom}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-xs">
+                                {lineClass.kind === "FILLABLE_SOLUTION" ? (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-[11px] font-semibold text-sky-700 dark:text-sky-300 whitespace-nowrap">
+                                        🫙 Đựng trong:
+                                      </span>
+                                      <select
+                                        className="rounded border border-sky-300 dark:border-sky-700 bg-white dark:bg-slate-900 px-1.5 py-0.5 text-[11px] font-medium text-slate-800 dark:text-slate-100 max-w-[230px]"
+                                        value={l.bundle_parent_code || ""}
+                                        disabled={bomDetail.bom.status === "OBSOLETE"}
+                                        onChange={(e) => handleQuickPairContainer(l, e.target.value)}
+                                        title="Chọn ống/chai rỗng trong BOM chứa dung dịch này (Hệ thống sẽ tự động chia thể tích & cập nhật số nhãn cần in)"
+                                      >
+                                        <option value="">-- Tự ghép theo dung tích --</option>
+                                        {containerLines.map((c: any) => {
+                                          const cUnits = Math.max(1, Math.round(Number(c.qty_per_base) || 1));
+                                          const fillEach =
+                                            cUnits > 0
+                                              ? Math.round((Number(l.qty_per_base || 0) / cUnits) * 1000) / 1000
+                                              : Number(l.qty_per_base || 0);
+                                          return (
+                                            <option key={c.id} value={c.component_code}>
+                                              {c.component_code} ({cUnits} ống × {fmtQty(fillEach)} {l.uom}/ống)
+                                            </option>
+                                          );
+                                        })}
+                                      </select>
+                                    </div>
+                                    {pairedContainer ? (
+                                      <div className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold">
+                                        🏷️ Sinh {pairedUnits} nhãn giống nhau ({fmtQty(pairedFillPerUnit)} {l.uom}/ống)
+                                      </div>
+                                    ) : (
+                                      <div className="text-[10px] text-slate-500">
+                                        🏷️ Bấm &ldquo;⚡ Tự nạp quy cách&rdquo; hoặc chọn ống chứa ở trên
+                                      </div>
+                                    )}
+                                  </div>
+                                ) : lineClass.kind === "PRIMARY_CONTAINER" ? (
+                                  <div className="space-y-0.5">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 text-[11px] font-semibold">
+                                      🫙 Vật chứa sơ cấp ({fmtQty(l.qty_per_base)} {l.uom})
+                                    </span>
+                                    <div className="text-[10px] text-slate-500">
+                                      {heldSolutions.length > 0
+                                        ? `Đang chứa: ${heldSolutions.map((s: any) => s.component_code).join(", ")} (Không tạo dòng ống thừa)`
+                                        : "Ống/Chai rỗng dùng để chiết dung dịch trong BOM"}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="space-y-0.5">
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 text-[11px] font-semibold">
+                                      📦 Vỏ hộp / Bao bì ngoài
+                                    </span>
+                                    <div className="text-[10px] text-slate-500">
+                                      Sinh 01 Nhãn Hộp Ngoài sản phẩm
+                                    </div>
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-[11px] text-stone-600 space-x-1">
+                                <span className="px-1.5 py-0.5 rounded bg-stone-100">
+                                  {l.is_bundled ? `Đi kèm (${l.bundle_parent_code || "ngoài"})` : "Trừ kho"}
+                                </span>
+                                {l.is_demo_fixed_component ? (
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800">Demo: Cố định 1 bộ</span>
+                                ) : (
+                                  <span className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-800">Demo: Co giãn theo test</span>
+                                )}
+                                {l.include_in_qc_retention !== false && (
+                                  <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">+Mẫu lưu QC</span>
+                                )}
+                                {l.allow_substitute && (
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Cho thay thế</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-xs whitespace-nowrap">
+                                {bomDetail.bom.status !== "OBSOLETE" && (
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleStartEditLine(l)}
+                                      className="px-2 py-1 rounded-md text-[11px] font-bold bg-sky-600/15 text-sky-700 dark:text-sky-300 border border-sky-500/40 hover:bg-sky-600 hover:text-white transition"
+                                    >
+                                      ✏️ Sửa
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteBomLine(l.id)}
+                                      className="px-2 py-1 rounded-md text-[11px] font-bold bg-rose-600/15 text-rose-600 dark:text-rose-400 border border-rose-500/30 hover:bg-rose-600 hover:text-white transition"
+                                    >
+                                      🗑️ Xóa
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        });
+                      })()}
                     </Table>
                   )}
 
@@ -3157,7 +3370,7 @@ export function BomRoutingView({
                         <div className="flex flex-wrap items-center justify-center gap-2">
                           {bomDetail.lines.length > 0 && (
                             <Button onClick={handleSyncPackaging}>
-                              ⚡ Tự nạp {bomDetail.lines.length} quy cách Ống/Chai từ danh sách BOM
+                              ⚡ Tự nạp quy cách Ống/Chai từ danh sách BOM
                             </Button>
                           )}
                           <Button
@@ -3173,18 +3386,30 @@ export function BomRoutingView({
                       )}
                     </div>
                   ) : (
-                    <Table head={["Hộp", "Tên ống / thành phần", "Loại bao bì", "Thể tích nạp", "Số ống/Kit", "Bảo quản", "Thao tác"]}>
+                    <Table head={["Hộp", "Tên ống / thành phần", "Loại bao bì", "Thể tích nạp / ống", "Số ống & Số nhãn / Kit", "Bảo quản", "Thao tác"]}>
                       {bomDetail.packaging.map((pk: any) => (
                         <tr key={pk.id} className={editingPackId === pk.id ? "bg-sky-50/70 dark:bg-sky-950/30" : ""}>
                           <td className="px-3 py-2 text-xs font-medium">
                             Hộp {pk.box_no}: {pk.box_name}
                           </td>
-                          <td className="px-3 py-2 text-xs font-semibold">{pk.component_name}</td>
-                          <td className="px-3 py-2 text-xs">{CONTAINER_LABELS[pk.container_type] ?? pk.container_type}</td>
                           <td className="px-3 py-2 text-xs">
-                            {fmtQty(pk.fill_qty)} {pk.fill_uom}
+                            <div className="font-semibold">{pk.component_name}</div>
+                            {pk.label_spec && (
+                              <div className="text-[11px] text-sky-700 dark:text-sky-300 mt-0.5">
+                                🫙 {pk.label_spec}
+                              </div>
+                            )}
                           </td>
-                          <td className="px-3 py-2 text-xs">{pk.units_per_kit} ống</td>
+                          <td className="px-3 py-2 text-xs">{CONTAINER_LABELS[pk.container_type] ?? pk.container_type}</td>
+                          <td className="px-3 py-2 text-xs font-semibold">
+                            {fmtQty(pk.fill_qty)} {pk.fill_uom} / ống
+                          </td>
+                          <td className="px-3 py-2 text-xs">
+                            <div className="font-bold">{pk.units_per_kit} ống</div>
+                            <div className="inline-flex items-center gap-1 mt-0.5 px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] font-semibold">
+                              🏷️ {pk.units_per_kit} nhãn giống nhau
+                            </div>
+                          </td>
                           <td className="px-3 py-2 text-xs font-mono">{pk.storage_temp}</td>
                           <td className="px-3 py-2 text-xs whitespace-nowrap">
                             {bomDetail.bom.status !== "OBSOLETE" && (
@@ -3456,59 +3681,117 @@ export function BomRoutingView({
                             />
                           </div>
                         ) : (
-                          <div
-                            ref={labelPreviewRef}
-                            className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-center p-3 rounded-lg bg-slate-950/80 border border-slate-800 overflow-x-auto"
-                          >
-                            {/* Nhãn Hộp Ngoài */}
-                            <div className="xl:col-span-7 flex flex-col items-center gap-2">
-                              <div className="text-[11px] font-bold text-sky-300">
-                                📦 {labelBundle.outer_box.name} ({labelBundle.outer_box.width_mm}×{labelBundle.outer_box.height_mm} mm)
-                              </div>
-                              <VisualLabelCanvas
-                                config={labelBundle.outer_box}
-                                sample={sampleData}
-                                scale={labelBundle.outer_box.width_mm >= 90 ? 3.5 : 4.2}
-                                interactive={false}
-                              />
-                            </div>
-
-                            {/* Nhãn Ống / Chai Thành Phần Thực Tế */}
-                            <div className="xl:col-span-5 flex flex-col items-center gap-2">
-                              <div className="text-[11px] font-bold text-emerald-300">
-                                🧪 Thành phần #1: {labelBundle.tube.extra_text || labelBundle.tube.name} ({labelBundle.tube.width_mm}×{labelBundle.tube.height_mm} mm)
-                              </div>
-                              <div className="flex flex-wrap justify-center gap-2">
-                                {Array.from({ length: Math.min(2, labelBundle.tube.labels_per_row || 2) }).map((_, idx) => (
-                                  <VisualLabelCanvas
-                                    key={idx}
-                                    config={labelBundle.tube}
-                                    sample={sampleData}
-                                    scale={labelBundle.tube.width_mm <= 45 ? 4.0 : 3.2}
-                                    interactive={false}
-                                  />
+                          <div className="space-y-2.5">
+                            {/* Thanh tổng hợp số lượng nhãn thực tế cần in cho 01 Hộp Kit */}
+                            <div className="p-2.5 rounded-lg bg-sky-950/60 border border-sky-500/40 flex flex-wrap items-center justify-between gap-2 text-xs">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className="font-extrabold text-sky-300">📋 Định mức Nhãn cần in cho 01 Hộp Kit:</span>
+                                <span className="px-2 py-0.5 rounded-md bg-sky-500/20 border border-sky-400/40 text-sky-200 font-bold">
+                                  📦 01 Nhãn Hộp Ngoài
+                                </span>
+                                {(bomDetail.packaging || []).map((pk: any, pIdx: number) => (
+                                  <span
+                                    key={pk.id || pIdx}
+                                    className="px-2 py-0.5 rounded-md bg-emerald-500/20 border border-emerald-400/40 text-emerald-200 font-bold"
+                                  >
+                                    🧪 {String(pk.units_per_kit || 1).padStart(2, "0")} Nhãn giống nhau cho {pk.component_name} ({fmtQty(pk.fill_qty)} {pk.fill_uom}/ống)
+                                  </span>
                                 ))}
                               </div>
-                              {(labelBundle.extra_components || []).map((ext, extIdx) => (
-                                <div key={`ext-prev-${extIdx}`} className="flex flex-col items-center gap-1 pt-2 border-t border-slate-800 w-full">
-                                  <div className="text-[11px] font-bold text-teal-300">
-                                    🧪 Thành phần #{extIdx + 2}: {ext.extra_text || ext.name} ({ext.width_mm}×{ext.height_mm} mm)
-                                  </div>
-                                  <div className="flex flex-wrap justify-center gap-2">
-                                    {Array.from({ length: Math.min(2, ext.labels_per_row || 1) }).map((_, idx) => (
-                                      <VisualLabelCanvas
-                                        key={idx}
-                                        config={ext}
-                                        sample={sampleData}
-                                        scale={ext.width_mm <= 45 ? 4.0 : 3.2}
-                                        interactive={false}
-                                      />
-                                    ))}
-                                  </div>
+                              <div className="text-[11px] text-slate-300 font-semibold">
+                                Tổng cộng:{" "}
+                                <span className="text-amber-300 font-extrabold">
+                                  {1 +
+                                    (bomDetail.packaging || []).reduce(
+                                      (acc: number, pk: any) => acc + Math.max(1, Number(pk.units_per_kit || 1)),
+                                      0
+                                    )}{" "}
+                                  tem nhãn / 01 Hộp Kit
+                                </span>
+                              </div>
+                            </div>
+
+                            <div
+                              ref={labelPreviewRef}
+                              className="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start p-3 rounded-lg bg-slate-950/80 border border-slate-800 overflow-x-auto"
+                            >
+                              {/* Nhãn Hộp Ngoài */}
+                              <div className="xl:col-span-6 flex flex-col items-center gap-2">
+                                <div className="text-[11px] font-bold text-sky-300">
+                                  📦 01 × {labelBundle.outer_box.name} ({labelBundle.outer_box.width_mm}×{labelBundle.outer_box.height_mm} mm)
                                 </div>
-                              ))}
-                              <div className="text-[10px] text-slate-400">
-                                Khổ cuộn in nhiệt: {labelBundle.tube.labels_per_row} tem/hàng (Khoảng cách ngang {labelBundle.tube.label_gap_mm}mm)
+                                <VisualLabelCanvas
+                                  config={labelBundle.outer_box}
+                                  sample={sampleData}
+                                  scale={labelBundle.outer_box.width_mm >= 90 ? 3.5 : 4.2}
+                                  interactive={false}
+                                />
+                              </div>
+
+                              {/* Nhãn Ống / Chai Thành Phần Thực Tế (Hiển thị đúng số lượng nhãn giống nhau theo units_per_kit) */}
+                              <div className="xl:col-span-6 flex flex-col items-center gap-2.5">
+                                {(() => {
+                                  const firstPkg = (bomDetail.packaging || [])[0];
+                                  const firstUnits = Math.max(1, Number(firstPkg?.units_per_kit || labelBundle.tube.labels_per_row || 1));
+                                  const renderFirstCount = Math.min(10, firstUnits);
+                                  return (
+                                    <div className="flex flex-col items-center gap-1.5 w-full">
+                                      <div className="text-[11px] font-bold text-emerald-300 text-center">
+                                        🧪 Thành phần #1 ({firstUnits} nhãn giống nhau): {labelBundle.tube.extra_text || labelBundle.tube.name} ({labelBundle.tube.width_mm}×{labelBundle.tube.height_mm} mm)
+                                      </div>
+                                      <div className="flex flex-wrap justify-center gap-2">
+                                        {Array.from({ length: renderFirstCount }).map((_, idx) => (
+                                          <div key={idx} className="flex flex-col items-center gap-0.5">
+                                            <span className="text-[9px] font-mono text-emerald-400/90">
+                                              Nhãn #{idx + 1}/{firstUnits}
+                                            </span>
+                                            <VisualLabelCanvas
+                                              config={labelBundle.tube}
+                                              sample={sampleData}
+                                              scale={labelBundle.tube.width_mm <= 45 ? 3.8 : 3.0}
+                                              interactive={false}
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
+                                      {firstUnits > renderFirstCount && (
+                                        <div className="text-[10px] text-emerald-300/80 italic">
+                                          (+{firstUnits - renderFirstCount} nhãn giống hệt nữa khi in thực tế — tổng {firstUnits} nhãn/Kit)
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+                                {(labelBundle.extra_components || []).map((ext, extIdx) => {
+                                  const extPkg = (bomDetail.packaging || [])[extIdx + 1];
+                                  const extUnits = Math.max(1, Number(extPkg?.units_per_kit || ext.labels_per_row || 1));
+                                  const renderExtCount = Math.min(10, extUnits);
+                                  return (
+                                    <div key={`ext-prev-${extIdx}`} className="flex flex-col items-center gap-1.5 pt-2 border-t border-slate-800 w-full">
+                                      <div className="text-[11px] font-bold text-teal-300 text-center">
+                                        🧪 Thành phần #{extIdx + 2} ({extUnits} nhãn giống nhau): {ext.extra_text || ext.name} ({ext.width_mm}×{ext.height_mm} mm)
+                                      </div>
+                                      <div className="flex flex-wrap justify-center gap-2">
+                                        {Array.from({ length: renderExtCount }).map((_, idx) => (
+                                          <div key={idx} className="flex flex-col items-center gap-0.5">
+                                            <span className="text-[9px] font-mono text-teal-400/90">
+                                              Nhãn #{idx + 1}/{extUnits}
+                                            </span>
+                                            <VisualLabelCanvas
+                                              config={ext}
+                                              sample={sampleData}
+                                              scale={ext.width_mm <= 45 ? 3.8 : 3.0}
+                                              interactive={false}
+                                            />
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                                <div className="text-[10px] text-slate-400">
+                                  Khổ cuộn in nhiệt: {labelBundle.tube.labels_per_row} tem/hàng (Khoảng cách ngang {labelBundle.tube.label_gap_mm}mm)
+                                </div>
                               </div>
                             </div>
                           </div>

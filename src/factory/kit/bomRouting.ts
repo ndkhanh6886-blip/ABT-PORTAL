@@ -607,6 +607,12 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
   const boxNo = Math.max(1, Number(input.box_no ?? existing.box_no ?? 1));
   const role = String(input.component_role || existing.component_role || "REAGENT");
   const isBundled = input.is_bundled !== undefined ? Boolean(input.is_bundled) : Boolean(existing.is_bundled);
+  const bundleParentCode =
+    input.bundle_parent_code !== undefined
+      ? input.bundle_parent_code
+        ? String(input.bundle_parent_code).trim()
+        : null
+      : existing.bundle_parent_code ?? null;
   const allowSub = input.allow_substitute !== undefined ? Boolean(input.allow_substitute) : Boolean(existing.allow_substitute);
   const isDemoFixed =
     input.is_demo_fixed_component !== undefined
@@ -628,11 +634,12 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
               box_no = $7,
               component_role = $8,
               is_bundled = $9,
-              allow_substitute = $10,
-              is_demo_fixed_component = $11,
-              is_mix_component = $12,
-              include_in_qc_retention = $13,
-              updated_by = $14,
+              bundle_parent_code = $10,
+              allow_substitute = $11,
+              is_demo_fixed_component = $12,
+              is_mix_component = $13,
+              include_in_qc_retention = $14,
+              updated_by = $15,
               updated_at = now()
         WHERE id = $1
         RETURNING *`,
@@ -646,6 +653,7 @@ export async function updateBomLine(tx: Tx, actor: AuthzActor, bomId: string, in
         boxNo,
         role,
         isBundled,
+        bundleParentCode,
         allowSub,
         isDemoFixed,
         !isDemoFixed,
@@ -933,6 +941,63 @@ export async function deleteKitPackaging(tx: Tx, actor: AuthzActor, bomId: strin
   return { deleted: true, id: packId };
 }
 
+function parsePrimaryContainerLineSpec(code: string, name: string): {
+  isContainer: boolean;
+  containerType: "TUBE_0_5ML" | "TUBE_1_5ML" | "TUBE_2_0ML" | "BOTTLE_10ML" | "BOTTLE_50ML";
+  capacityMl: number;
+} {
+  const c = code.trim().toUpperCase();
+  const n = name.trim().toLowerCase();
+  // Exclude bulk sample tubes (e.g. T1.5B = 100/200 tubes BIOFIL for user sample prep)
+  if (/^T1\.5B$/i.test(c) || n.includes("biofil")) {
+    return { isContainer: false, containerType: "TUBE_1_5ML", capacityMl: 1.5 };
+  }
+  const isCryoOrBottle =
+    /^(CTN|CTT|CPP|CN\d|CT\d|CHAI|LO-|TUBE-)/i.test(c) ||
+    n.includes("cryotube") ||
+    n.includes("chai nhựa") ||
+    n.includes("chai thủy tinh") ||
+    n.includes("lọ nhựa") ||
+    n.includes("lọ thủy tinh") ||
+    n.includes("microtube");
+  if (!isCryoOrBottle) {
+    return { isContainer: false, containerType: "TUBE_1_5ML", capacityMl: 1.5 };
+  }
+  const volMatch = `${c} ${n}`.match(/(\d+(?:[.,]\d+)?)\s*ml/i);
+  const cap = volMatch ? Number(volMatch[1].replace(",", ".")) : c.startsWith("CPP") ? Number(c.replace(/\D+/g, "")) || 15 : 2.0;
+  if (cap <= 0.6) return { isContainer: true, containerType: "TUBE_0_5ML", capacityMl: cap || 0.5 };
+  if (cap <= 1.6) return { isContainer: true, containerType: "TUBE_1_5ML", capacityMl: cap || 1.5 };
+  if (cap <= 2.5) return { isContainer: true, containerType: "TUBE_2_0ML", capacityMl: cap || 2.0 };
+  if (cap <= 25) return { isContainer: true, containerType: "BOTTLE_10ML", capacityMl: cap || 15 };
+  return { isContainer: true, containerType: "BOTTLE_50ML", capacityMl: cap || 60 };
+}
+
+function isNonFillablePackagingOrAccessory(code: string, name: string, role: string): boolean {
+  const c = code.trim().toUpperCase();
+  const n = name.trim().toLowerCase();
+  const r = role.trim().toUpperCase();
+  if (r === "PACKAGING" || r === "PCR_TUBE_STRIP") return true;
+  if (
+    /^(HGM|DGM|HGPK|HGT|DGT|HGU|DGU|CNM|CNN|CNV|FAL|TIP|VT-TUBE-|TEM|NHAN|HDSD|CSR|T1\.5B|MN5N)/i.test(c)
+  ) {
+    return true;
+  }
+  if (
+    n.includes("hộp giấy") ||
+    n.includes("đế giấy") ||
+    n.includes("đế hộp") ||
+    n.includes("cột silica") ||
+    n.includes("chày nghiền") ||
+    n.includes("máng nhựa") ||
+    n.includes("túi zip") ||
+    n.includes("túi nhôm") ||
+    n.includes("tem nhãn")
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId: string) {
   const bom = (await tx.query("SELECT * FROM kit.bom WHERE id = $1 FOR UPDATE", [bomId])).rows[0] as KitBomRow | undefined;
   if (!bom) throw notFound("định mức BOM");
@@ -951,45 +1016,153 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
     )
   ).rows as Array<Record<string, unknown>>;
 
-  const existingRows = (await tx.query("SELECT component_name FROM kit.kit_packaging WHERE bom_id = $1", [bomId])).rows as Array<{
-    component_name: string;
-  }>;
-  const existingSet = new Set(existingRows.map((r) => r.component_name.trim().toLowerCase()));
+  // Rebuild packaging specs cleanly from BOM lines + container pairings
+  await tx.query("DELETE FROM kit.kit_packaging WHERE bom_id = $1", [bomId]);
 
   const isPcrKit = String((bom as any).bom_category || "PCR Kit") === "PCR Kit";
   const defaultStorage = String((bom as any).storage_condition || (isPcrKit ? "-20°C" : "15-25°C")).slice(0, 60);
 
-  // Filter to chemical/reagent/buffer/control components first; if none exist, fall back to all non-box lines
-  const chemicalLines = lines.filter((l) => {
-    const role = String(l.component_role || "REAGENT").toUpperCase();
-    const code = String(l.component_code || "").toUpperCase();
-    if (role === "PACKAGING" || role === "PCR_TUBE_STRIP") return false;
-    if (/^(HGM|DGM|HGPK|HGU|DGU|CTT|CNM|CNN|CNV|FAL|TIP|VT-TUBE-|TEM|NHAN|HDSD)/i.test(code)) return false;
-    return true;
-  });
-  const targetLines = chemicalLines.length > 0 ? chemicalLines : lines;
+  type ContainerSlot = {
+    lineId: string;
+    boxNo: number;
+    code: string;
+    name: string;
+    totalUnits: number;
+    remainingUnits: number;
+    containerType: "TUBE_0_5ML" | "TUBE_1_5ML" | "TUBE_2_0ML" | "BOTTLE_10ML" | "BOTTLE_50ML";
+    capacityMl: number;
+    linkedToSolutionCode: string | null;
+  };
+
+  const containerSlots: ContainerSlot[] = [];
+  const fillableLines: Array<Record<string, unknown>> = [];
+
+  for (const l of lines) {
+    const code = String(l.component_code || "").trim();
+    const name = String(l.component_name || "").trim();
+    const role = String(l.component_role || "REAGENT").trim();
+    const cSpec = parsePrimaryContainerLineSpec(code, name);
+    if (cSpec.isContainer) {
+      const units = Math.max(1, Math.round(Number(l.qty_per_base || 1)));
+      containerSlots.push({
+        lineId: String(l.id),
+        boxNo: Number(l.box_no || 1),
+        code,
+        name,
+        totalUnits: units,
+        remainingUnits: units,
+        containerType: cSpec.containerType,
+        capacityMl: cSpec.capacityMl,
+        linkedToSolutionCode: l.bundle_parent_code ? String(l.bundle_parent_code).trim().toUpperCase() : null,
+      });
+      continue;
+    }
+    if (isNonFillablePackagingOrAccessory(code, name, role)) {
+      continue;
+    }
+    fillableLines.push(l);
+  }
+
+  const targetLines = fillableLines.length > 0 ? fillableLines : lines.filter((l) => !parsePrimaryContainerLineSpec(String(l.component_code || ""), String(l.component_name || "")).isContainer);
+
+  // Count how many fillable lines explicitly reference each container code
+  const explicitRefCount = new Map<string, number>();
+  for (const l of targetLines) {
+    const parentCode = String(l.bundle_parent_code || "").trim().toUpperCase();
+    if (parentCode) {
+      explicitRefCount.set(parentCode, (explicitRefCount.get(parentCode) ?? 0) + 1);
+    }
+  }
 
   let added = 0;
   for (const l of targetLines) {
+    const lineId = String(l.id);
     const role = String(l.component_role || "REAGENT").toUpperCase();
     const code = String(l.component_code || "");
     const name = String(l.component_name || code);
-    const compTitle = `${code} — ${name}`;
-    if (existingSet.has(compTitle.trim().toLowerCase()) || existingSet.has(name.trim().toLowerCase())) {
-      continue;
-    }
-    const qty = Number(l.qty_per_base || 1);
+    const boxNo = Number(l.box_no || 1);
+    const totalQty = Number(l.qty_per_base || 1);
     const uom = String(l.uom || (isPcrKit ? "µL" : "mL"));
     const uomLower = uom.toLowerCase();
-    let containerType = isPcrKit ? "TUBE_1_5ML" : "BOTTLE_10ML";
-    if (role === "PCR_TUBE_STRIP") containerType = "STRIP_8";
-    else if (uomLower === "ml" && qty >= 25) containerType = "BOTTLE_50ML";
-    else if (uomLower === "ml" && qty >= 3) containerType = "BOTTLE_10ML";
-    else if (uomLower === "ml" && qty < 3) containerType = "TUBE_2_0ML";
-    else if ((uomLower === "µl" || uomLower === "ul") && qty <= 500) containerType = "TUBE_0_5ML";
-    else if ((uomLower === "µl" || uomLower === "ul") && qty > 1500) containerType = "TUBE_2_0ML";
+    const volMl = uomLower === "µl" || uomLower === "ul" ? totalQty / 1000 : uomLower === "ml" ? totalQty : 0;
 
-    const boxNo = Number(l.box_no || 1);
+    // 1. Check explicit pairing (solution -> container OR container -> solution)
+    const explicitCode = String(l.bundle_parent_code || "").trim().toUpperCase();
+    let matchedSlot: ContainerSlot | undefined = containerSlots.find(
+      (cs) =>
+        (explicitCode && cs.code.toUpperCase() === explicitCode) ||
+        (cs.linkedToSolutionCode && cs.linkedToSolutionCode === code.toUpperCase())
+    );
+
+    let allocatedUnits = 1;
+    if (matchedSlot) {
+      const refCnt = explicitRefCount.get(matchedSlot.code.toUpperCase()) || 1;
+      if (refCnt === 1) {
+        allocatedUnits = matchedSlot.totalUnits;
+        matchedSlot.remainingUnits = 0;
+      } else {
+        allocatedUnits = Math.max(1, Math.floor(matchedSlot.totalUnits / refCnt));
+        matchedSlot.remainingUnits = Math.max(0, matchedSlot.remainingUnits - allocatedUnits);
+      }
+    } else {
+      // 2. Smart auto-pairing within the same box
+      const boxLines = targetLines.filter((x) => Number(x.box_no || 1) === boxNo);
+      const boxContainers = containerSlots.filter((cs) => cs.boxNo === boxNo && cs.remainingUnits > 0);
+
+      if (boxLines.length === 1 && boxContainers.length === 1) {
+        // Classic 1-solution + 1-container-type case (e.g., ST044 5 mL + CTN2 5 cái -> 5 tubes x 1 mL)
+        matchedSlot = boxContainers[0];
+        allocatedUnits = matchedSlot.remainingUnits;
+        matchedSlot.remainingUnits = 0;
+      } else if (volMl > 0 && boxContainers.length > 0) {
+        // First check if a single unit of an available container fits volMl
+        const singleFit = boxContainers
+          .filter((cs) => cs.capacityMl >= volMl * 0.85)
+          .sort((a, b) => a.capacityMl - b.capacityMl)[0];
+        if (singleFit) {
+          matchedSlot = singleFit;
+          allocatedUnits = 1;
+          matchedSlot.remainingUnits -= 1;
+        } else {
+          // Check if splitting across remainingUnits of a container fits (e.g., 5 mL across 5 x 2.0 mL tubes)
+          const multiFit = boxContainers.find(
+            (cs) => cs.remainingUnits > 1 && volMl / cs.remainingUnits <= cs.capacityMl * 1.05
+          );
+          if (multiFit) {
+            matchedSlot = multiFit;
+            allocatedUnits = multiFit.remainingUnits;
+            multiFit.remainingUnits = 0;
+          }
+        }
+      }
+
+      if (matchedSlot) {
+        await tx.query("UPDATE kit.bom_line SET bundle_parent_code = $2 WHERE id = $1", [lineId, matchedSlot.code]);
+      }
+    }
+
+    let containerType: string = isPcrKit ? "TUBE_1_5ML" : "BOTTLE_10ML";
+    if (matchedSlot) {
+      containerType = matchedSlot.containerType;
+    } else if (role === "PCR_TUBE_STRIP") {
+      containerType = "STRIP_8";
+    } else if (uomLower === "ml" && totalQty >= 25) {
+      containerType = "BOTTLE_50ML";
+    } else if (uomLower === "ml" && totalQty >= 3) {
+      containerType = "BOTTLE_10ML";
+    } else if (uomLower === "ml" && totalQty < 3) {
+      containerType = "TUBE_2_0ML";
+    } else if ((uomLower === "µl" || uomLower === "ul") && totalQty <= 500) {
+      containerType = "TUBE_0_5ML";
+    } else if ((uomLower === "µl" || uomLower === "ul") && totalQty > 1500) {
+      containerType = "TUBE_2_0ML";
+    }
+
+    const unitsPerKit = Math.max(1, allocatedUnits);
+    const fillQtyPerUnit =
+      unitsPerKit > 1 && totalQty > 0 ? Math.round((totalQty / unitsPerKit) * 1000) / 1000 : totalQty > 0 ? totalQty : 1;
+
+    const compTitle = `${code} — ${name}`;
     const boxName =
       boxNo === 1
         ? isPcrKit
@@ -997,6 +1170,9 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
           : "Hộp 1: Hóa chất & Đệm Tách chiết"
         : `Hộp ${boxNo}: Thành phần phụ trợ`;
     const storageTemp = String(l.storage_condition || defaultStorage).slice(0, 60);
+    const labelSpec = matchedSlot
+      ? `Đựng trong: ${matchedSlot.code} (${matchedSlot.name}) · ${unitsPerKit} nhãn giống nhau × ${fillQtyPerUnit} ${uom}`
+      : `Tem ống/chai ${code} (${unitsPerKit} × ${fillQtyPerUnit} ${uom})`;
 
     await tx.query(
       `INSERT INTO kit.kit_packaging
@@ -1008,14 +1184,13 @@ export async function syncPackagingFromBomLines(tx: Tx, actor: AuthzActor, bomId
         boxName,
         compTitle.slice(0, 200),
         containerType,
-        qty > 0 ? qty : 1,
+        fillQtyPerUnit,
         uom,
-        1,
+        unitsPerKit,
         storageTemp,
-        `Tem ống/chai ${code} (${qty} ${uom})`,
+        labelSpec.slice(0, 300),
       ]
     );
-    existingSet.add(compTitle.trim().toLowerCase());
     added++;
   }
 

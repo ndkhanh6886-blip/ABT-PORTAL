@@ -308,19 +308,40 @@ export function normalizeLabelBundle(
     return { ...defaults, extra_components: defaults.extra_components || [] };
   }
   const obj = raw as Partial<KitLabelDesignBundle>;
-  const hasSavedExtras = Array.isArray(obj.extra_components) && obj.extra_components.length > 0;
-  return {
-    outer_box: obj.outer_box && typeof obj.outer_box === "object" ? { ...defaults.outer_box, ...obj.outer_box } : defaults.outer_box,
-    sub_box: obj.sub_box && typeof obj.sub_box === "object" ? { ...defaults.sub_box, ...obj.sub_box } : defaults.sub_box,
-    tube: obj.tube && typeof obj.tube === "object" ? { ...defaults.tube, ...obj.tube } : defaults.tube,
-    extra_components: hasSavedExtras
-      ? obj.extra_components!.map((c, idx) => ({
+  const expectedExtrasCount = packagingItems && packagingItems.length > 0 ? Math.max(0, packagingItems.length - 1) : null;
+  const savedExtras = Array.isArray(obj.extra_components) ? obj.extra_components : [];
+  const mergedExtras: LabelTargetConfig[] =
+    expectedExtrasCount !== null
+      ? (defaults.extra_components || []).map((defExt, idx) => {
+          const saved = savedExtras[idx];
+          return saved
+            ? {
+                ...defExt,
+                ...saved,
+                name: defExt.name,
+                extra_text: defExt.extra_text,
+                positions_json: { ...defExt.positions_json, ...(saved.positions_json || {}) },
+              }
+            : defExt;
+        })
+      : savedExtras.map((c, idx) => ({
           ...defaults.tube,
           ...c,
           name: c?.name || `Nhãn Thành Phần #${idx + 2}`,
           positions_json: { ...defaults.tube.positions_json, ...(c?.positions_json || {}) },
-        }))
-      : defaults.extra_components || [],
+        }));
+  return {
+    outer_box: obj.outer_box && typeof obj.outer_box === "object" ? { ...defaults.outer_box, ...obj.outer_box } : defaults.outer_box,
+    sub_box: obj.sub_box && typeof obj.sub_box === "object" ? { ...defaults.sub_box, ...obj.sub_box } : defaults.sub_box,
+    tube:
+      obj.tube && typeof obj.tube === "object"
+        ? {
+            ...defaults.tube,
+            ...obj.tube,
+            extra_text: packagingItems && packagingItems.length > 0 ? defaults.tube.extra_text : obj.tube.extra_text || defaults.tube.extra_text,
+          }
+        : defaults.tube,
+    extra_components: mergedExtras,
   };
 }
 
