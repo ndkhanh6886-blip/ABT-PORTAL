@@ -307,22 +307,32 @@ export async function ensureFactoryBootstrapped(tx: Tx, actor: AuthzActor): Prom
     }
   }
 
-  // 4. Ensure Column-based Oligo Synthesizers exist
+  // 4. Ensure Column-based Oligo Synthesizers exist (Honya HY-15: 8 cột, Honya HY-12: 12 cột, K&A H-16: 16 cột)
   if (synthsCount === 0 && oligoUnitId) {
     const synthConfigs = [
       {
-        code: "SYN-COL-08",
-        name: "Máy tổng hợp Oligo 8 cột (ABI 394 / MerMade 8-Column)",
-        model: "MerMade-8C",
-        serial_no: "MM8C-2026-01",
+        code: "HY-15",
+        name: "Honya HY-15",
+        manufacturer: "Honya Biotech",
+        model: "HY-15",
+        serial_no: "HY15-ABT-001",
         column_positions: 8,
       },
       {
-        code: "SYN-COL-48",
-        name: "Máy tổng hợp Oligo 48 cột (Dr. Oligo 48-Column)",
-        model: "DrOligo-48C",
-        serial_no: "DRO48-2026-02",
-        column_positions: 48,
+        code: "HY-12",
+        name: "Honya HY-12",
+        manufacturer: "Honya Biotech",
+        model: "HY-12",
+        serial_no: "HY12-ABT-002",
+        column_positions: 12,
+      },
+      {
+        code: "KA-16",
+        name: "K&A H-16",
+        manufacturer: "K&A Labs GmbH",
+        model: "KA-16",
+        serial_no: "KA16-ABT-003",
+        column_positions: 16,
       },
     ];
     for (const sc of synthConfigs) {
@@ -330,10 +340,10 @@ export async function ensureFactoryBootstrapped(tx: Tx, actor: AuthzActor): Prom
         await tx.query(
           `INSERT INTO asset.asset
              (code, name, asset_type, owner_org_unit_id, manufacturer, model, serial_no, status, next_calibration_due, created_by, updated_by)
-           VALUES ($1, $2, 'SYNTHESIZER', $3, 'Biolytic / ABI', $4, $5, 'IN_SERVICE', '2028-12-31', $6, $6)
+           VALUES ($1, $2, 'SYNTHESIZER', $3, $4, $5, $6, 'IN_SERVICE', '2028-12-31', $7, $7)
            ON CONFLICT (code) DO UPDATE SET status = 'IN_SERVICE'
            RETURNING id`,
-          [sc.code, sc.name, oligoUnitId, sc.model, sc.serial_no, rootActor.userId]
+          [sc.code, sc.name, oligoUnitId, sc.manufacturer, sc.model, sc.serial_no, rootActor.userId]
         )
       ).rows[0];
       await tx.query(

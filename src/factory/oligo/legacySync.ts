@@ -97,25 +97,41 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
 
     const allowDemoSeed = process.env.FACTORY_ALLOW_DEMO_SEED === "1" || force;
 
-    // 2. Máy tổng hợp Oligo từ OligoFlow cũ (OligoMaker 96-I, Dr. Oligo 48, K&A H-16) — Thiết bị riêng của Phòng Sản xuất Oligo (P-OLIGO)
+    // 2. Máy tổng hợp Oligo chuẩn từ OligoFlow (Honya HY-15: 8 cột, Honya HY-12: 12 cột, K&A H-16: 16 cột)
+    // Dọn dẹp các mã máy giả định cũ (OM-96, DO-48, SYN-COL-08, SYN-COL-48) nếu đã từng sinh ra
+    await tx.query(`
+      UPDATE asset.asset
+         SET status = 'RETIRED'
+       WHERE code IN ('OM-96', 'DO-48', 'SYN-COL-08', 'SYN-COL-48')
+         AND status <> 'RETIRED'
+    `);
+    await tx.query(`
+      DELETE FROM oligo.synthesizer
+       WHERE asset_id IN (
+         SELECT a.id FROM asset.asset a
+          WHERE a.code IN ('OM-96', 'DO-48', 'SYN-COL-08', 'SYN-COL-48')
+            AND NOT EXISTS (SELECT 1 FROM oligo.synthesis_batch b WHERE b.synthesizer_id = a.id)
+       )
+    `);
+
     const legacySynthesizers = [
       {
-        code: "OM-96",
-        name: "OligoMaker 96-I",
-        manufacturer: "OligoMaker ApS (Denmark)",
-        model: "OM-96",
-        serial_no: "OM96-ABT-001",
-        positions: 96,
-        scales: ["25NMOL", "50NMOL", "100NMOL", "200NMOL"],
+        code: "HY-15",
+        name: "Honya HY-15",
+        manufacturer: "Honya Biotech",
+        model: "HY-15",
+        serial_no: "HY15-ABT-001",
+        positions: 8,
+        scales: ["25NMOL", "50NMOL", "100NMOL", "200NMOL", "250NMOL", "500NMOL", "1000NMOL"],
       },
       {
-        code: "DO-48",
-        name: "Dr. Oligo 48",
-        manufacturer: "Biolytic Lab Performance",
-        model: "DO-48",
-        serial_no: "DO48-ABT-002",
-        positions: 48,
-        scales: ["50NMOL", "100NMOL", "200NMOL", "500NMOL", "1000NMOL"],
+        code: "HY-12",
+        name: "Honya HY-12",
+        manufacturer: "Honya Biotech",
+        model: "HY-12",
+        serial_no: "HY12-ABT-002",
+        positions: 12,
+        scales: ["25NMOL", "50NMOL", "100NMOL", "200NMOL", "250NMOL", "500NMOL", "1000NMOL"],
       },
       {
         code: "KA-16",
@@ -124,7 +140,7 @@ export async function ensureLegacyOligoDataSeeded(tx: Tx, force = false): Promis
         model: "KA-16",
         serial_no: "KA16-ABT-003",
         positions: 16,
-        scales: ["50NMOL", "100NMOL", "200NMOL", "250NMOL", "500NMOL", "1000NMOL"],
+        scales: ["25NMOL", "50NMOL", "100NMOL", "200NMOL", "250NMOL", "500NMOL", "1000NMOL"],
       },
     ];
     for (const syn of legacySynthesizers) {
